@@ -1,0 +1,69 @@
+{
+  "case_id": "LOWVOLT_001_FLMD_COURTROOM_5D",
+  "domain": "low_voltage_structured_cabling",
+  "expected_packets": [
+    {
+      "family": "quantity_conflict",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "device:cat6a_shielded_cable",
+      "must_contain_quantities": [
+        36,
+        34
+      ]
+    },
+    {
+      "family": "vendor_mismatch",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "requirement:certification",
+      "must_contain_text": [
+        "testing",
+        "certification",
+        "excluded"
+      ]
+    },
+    {
+      "family": "customer_responsibility",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "av_components",
+      "must_contain_text": [
+        "FLMD IT personnel",
+        "furnish",
+        "associated audio/video"
+      ]
+    },
+    {
+      "family": "scope_inclusion",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "demo_existing_video_cabling",
+      "must_contain_text": [
+        "Demo",
+        "removal",
+        "existing video cabling"
+      ]
+    },
+    {
+      "family": "missing_info",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "partial_award",
+      "must_contain_text": [
+        "all, some, or none",
+        "purchase order",
+        "not final exclusion"
+      ]
+    }
+  ],
+  "forbidden": [
+    {
+      "condition": "speaker_cable_quantity_merged_with_cat6a_quantity"
+    },
+    {
+      "condition": "owner_furnished_av_components_become_vendor_scope"
+    },
+    {
+      "condition": "partial_award_language_treated_as_final_scope_exclusion_without_po"
+    },
+    {
+      "condition": "rg59_count_merged_with_cat6a_video_output_count"
+    }
+  ]
+}

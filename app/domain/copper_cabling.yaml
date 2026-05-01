@@ -1,0 +1,1597 @@
+{
+  "domain_pack_id": "copper_cabling",
+  "version": "0.4.0-generated",
+  "name": "Copper Cabling / Low Voltage Evidence Domain Pack",
+  "status": "generated_reference_pack",
+  "description": "Large deterministic alias, authority, packet, and risk reference for Purtera Evidence Compiler copper/low-voltage hardening.",
+  "artifact_role_patterns": {
+    "approved_site_roster": {
+      "filename_contains": [
+        "site_list",
+        "site roster",
+        "drop_schedule",
+        "drop schedule",
+        "cable_schedule",
+        "cable schedule",
+        "device_schedule",
+        "room_schedule",
+        "floor_plan_extract",
+        "addendum_schedule"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "entity",
+        "quantity",
+        "scope_item",
+        "constraint",
+        "open_question"
+      ]
+    },
+    "current_addendum": {
+      "filename_contains": [
+        "addendum",
+        "clarification",
+        "bulletin",
+        "revision",
+        "rfi_response",
+        "scope_clarification"
+      ],
+      "authority_class": "current_addendum",
+      "beats": [
+        "formal_rfp",
+        "formal_sow",
+        "meeting_note",
+        "vendor_quote"
+      ]
+    },
+    "formal_rfp": {
+      "filename_contains": [
+        "rfp",
+        "bid",
+        "solicitation",
+        "specification",
+        "specs",
+        "scope"
+      ],
+      "authority_class": "formal_rfp"
+    },
+    "formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement_of_work",
+        "scope_of_work",
+        "work_order"
+      ],
+      "authority_class": "formal_sow"
+    },
+    "vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "vendor",
+        "bom",
+        "bill_of_material",
+        "bill of material",
+        "po",
+        "purchase_order",
+        "pricing",
+        "material_quote"
+      ],
+      "authority_class": "vendor_quote",
+      "cannot_govern": [
+        "scope_inclusion",
+        "scope_exclusion",
+        "approved_quantity"
+      ]
+    },
+    "customer_current_authored": {
+      "filename_contains": [
+        "customer_email",
+        "scope_email",
+        "clarification_email",
+        "access_email",
+        "approval_email"
+      ],
+      "authority_class": "customer_current_authored"
+    },
+    "meeting_note": {
+      "filename_contains": [
+        "kickoff",
+        "meeting",
+        "transcript",
+        "notes",
+        "walkthrough"
+      ],
+      "authority_class": "meeting_note",
+      "requires_review_for_scope_change": true
+    },
+    "test_results": {
+      "filename_contains": [
+        "fluke",
+        "dsx",
+        "linkiq",
+        "certification",
+        "test_result",
+        "test results",
+        "wiremap",
+        "closeout"
+      ],
+      "authority_class": "field_test_result"
+    }
+  },
+  "authority_lattice": {
+    "ranks": {
+      "current_addendum": 95,
+      "customer_current_authored": 90,
+      "approved_site_roster": 85,
+      "formal_sow": 82,
+      "formal_rfp": 78,
+      "field_test_result": 76,
+      "vendor_quote": 55,
+      "meeting_note": 52,
+      "internal_pm_note": 45,
+      "quoted_old_email": 20,
+      "deleted_text": 0,
+      "rejected": 0
+    },
+    "hard_rules": [
+      "vendor_quote_never_governs_scope_inclusion_or_exclusion",
+      "vendor_quote_can_create_vendor_mismatch_but_not_scope_truth",
+      "approved_site_roster_governs_vendor_quote_for_quantity_conflict",
+      "current_addendum_governs_original_rfp_for_revised_scope",
+      "customer_current_authored_governs_quoted_old_email",
+      "deleted_text_never_governs",
+      "meeting_note_scope_change_requires_needs_review"
+    ],
+    "packet_family_overrides": {
+      "quantity_conflict": {
+        "governing_preference": [
+          "approved_site_roster",
+          "current_addendum",
+          "formal_sow",
+          "vendor_quote"
+        ]
+      },
+      "vendor_mismatch": {
+        "governing_preference": [
+          "approved_site_roster",
+          "current_addendum",
+          "formal_sow",
+          "vendor_quote"
+        ]
+      },
+      "scope_exclusion": {
+        "governing_preference": [
+          "current_addendum",
+          "customer_current_authored",
+          "formal_sow",
+          "formal_rfp",
+          "meeting_note",
+          "vendor_quote"
+        ]
+      },
+      "site_access": {
+        "governing_preference": [
+          "customer_current_authored",
+          "current_addendum",
+          "formal_sow",
+          "meeting_note"
+        ]
+      },
+      "missing_info": {
+        "governing_preference": [
+          "customer_current_authored",
+          "current_addendum",
+          "approved_site_roster",
+          "formal_sow",
+          "meeting_note",
+          "vendor_quote"
+        ]
+      }
+    }
+  },
+  "header_aliases": {
+    "project": [
+      "Project",
+      "Job",
+      "Job Number",
+      "Project Number",
+      "Customer Project"
+    ],
+    "site": [
+      "Site",
+      "Facility",
+      "Building",
+      "School",
+      "Campus",
+      "Store",
+      "Venue"
+    ],
+    "building": [
+      "Building",
+      "Bldg",
+      "Structure"
+    ],
+    "floor": [
+      "Floor",
+      "Level",
+      "FL"
+    ],
+    "wing": [
+      "Wing",
+      "Sector"
+    ],
+    "area": [
+      "Area",
+      "Region",
+      "Zone"
+    ],
+    "room": [
+      "Room",
+      "Room #",
+      "Room Number",
+      "Space"
+    ],
+    "location": [
+      "Location",
+      "Position",
+      "Place",
+      "Mounting Location",
+      "Area Name"
+    ],
+    "plate_id": [
+      "Plate ID",
+      "Plate",
+      "Outlet ID",
+      "Drop ID",
+      "Jack ID",
+      "Cable ID",
+      "Plate #"
+    ],
+    "mdf": [
+      "MDF",
+      "Main Distribution Frame",
+      "Main Telecom Room",
+      "Core Room"
+    ],
+    "idf": [
+      "IDF",
+      "Intermediate Distribution Frame",
+      "Telecom Closet",
+      "Network Closet",
+      "Wiring Closet"
+    ],
+    "device": [
+      "Device",
+      "Asset",
+      "Equipment",
+      "Camera",
+      "AP",
+      "Reader",
+      "Hostname",
+      "Endpoint"
+    ],
+    "description": [
+      "Description",
+      "Desc",
+      "Details",
+      "Summary",
+      "Line Item",
+      "Item"
+    ],
+    "quantity": [
+      "Qty",
+      "Qty.",
+      "Quantity",
+      "Count",
+      "#",
+      "No.",
+      "Units",
+      "Total Qty",
+      "# Drops",
+      "Quoted Qty",
+      "Bid Qty"
+    ],
+    "uom": [
+      "UOM",
+      "Unit",
+      "Units",
+      "EA",
+      "Each",
+      "LF",
+      "FT",
+      "Feet",
+      "Lot"
+    ],
+    "material_spec": [
+      "Material Spec",
+      "Material / Spec",
+      "Spec",
+      "Cable Type",
+      "Cable Spec",
+      "Quoted Material / Spec"
+    ],
+    "included": [
+      "Included",
+      "Included?",
+      "In Scope?",
+      "Base Bid",
+      "Quoted",
+      "Provided"
+    ],
+    "notes": [
+      "Notes",
+      "Comments",
+      "Clarifications",
+      "Assumptions",
+      "Remarks"
+    ],
+    "access": [
+      "Access",
+      "Access Window",
+      "Hours",
+      "Site Access",
+      "Work Window"
+    ],
+    "certification": [
+      "Certification",
+      "Testing",
+      "Test Standard",
+      "Certify",
+      "Tester Export",
+      "Fluke"
+    ],
+    "labeling": [
+      "Label",
+      "Labeling",
+      "Label Standard",
+      "Cable ID Standard"
+    ]
+  },
+  "identity_clusters": {
+    "rj45": {
+      "canonical_key": "rj45",
+      "display_name": "RJ45 termination / data jack",
+      "item_kind": "termination",
+      "material_family": "connector",
+      "comparison_group": "copper_endpoint",
+      "synonyms": [
+        "rj45",
+        "rj-45",
+        "8p8c",
+        "data jack",
+        "jack",
+        "modular jack",
+        "keystone jack",
+        "keystone",
+        "termination",
+        "terminations",
+        "terminated jack",
+        "data outlet",
+        "voice data outlet",
+        "voice/data outlet",
+        "comm outlet",
+        "communications outlet",
+        "work area outlet",
+        "wao",
+        "network outlet",
+        "ethernet outlet",
+        "ethernet jack",
+        "data port",
+        "network port",
+        "port",
+        "drop termination",
+        "data point",
+        "information outlet",
+        "telecom outlet",
+        "wall jack",
+        "wall plate jack",
+        "cat6 jack",
+        "cat6a jack",
+        "copper jack",
+        "copper termination"
+      ],
+      "required_any_tokens": [
+        [
+          "rj45"
+        ],
+        [
+          "rj",
+          "45"
+        ],
+        [
+          "data",
+          "jack"
+        ],
+        [
+          "comm",
+          "outlet"
+        ],
+        [
+          "work",
+          "area",
+          "outlet"
+        ],
+        [
+          "termination"
+        ]
+      ],
+      "negative_tokens": [
+        "power",
+        "speaker",
+        "audio",
+        "hdmi",
+        "coax",
+        "fiber"
+      ]
+    },
+    "data_drop": {
+      "canonical_key": "data_drop",
+      "display_name": "Copper data drop / horizontal run",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_drop",
+      "synonyms": [
+        "drop",
+        "drops",
+        "data drop",
+        "data drops",
+        "cable drop",
+        "network drop",
+        "ethernet drop",
+        "horizontal cable",
+        "horizontal cabling",
+        "copper run",
+        "copper runs",
+        "data run",
+        "data runs",
+        "station cable",
+        "station cabling",
+        "cat6 drop",
+        "cat6a drop",
+        "structured cabling drop",
+        "low voltage drop",
+        "telecom drop",
+        "communications drop",
+        "wire run",
+        "cable run",
+        "runs",
+        "home run",
+        "home-run",
+        "home run cabling",
+        "per outlet cabling"
+      ],
+      "required_any_tokens": [
+        [
+          "drop"
+        ],
+        [
+          "data",
+          "run"
+        ],
+        [
+          "cable",
+          "run"
+        ],
+        [
+          "horizontal",
+          "cabling"
+        ]
+      ],
+      "negative_tokens": [
+        "power",
+        "audio",
+        "speaker",
+        "fiber",
+        "rg59",
+        "coax"
+      ]
+    },
+    "cat6": {
+      "canonical_key": "cat6",
+      "display_name": "Category 6 cable, shielding unspecified",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category",
+      "synonyms": [
+        "cat6",
+        "cat 6",
+        "cat-6",
+        "category 6",
+        "category six",
+        "c6",
+        "cat vi",
+        "six cable"
+      ],
+      "required_any_tokens": [
+        [
+          "cat6"
+        ],
+        [
+          "cat",
+          "6"
+        ],
+        [
+          "category",
+          "6"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6a",
+        "6a",
+        "fiber",
+        "coax",
+        "speaker",
+        "power"
+      ]
+    },
+    "cat6_utp": {
+      "canonical_key": "cat6_utp",
+      "display_name": "Category 6 UTP cable",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category_shielding",
+      "synonyms": [
+        "cat6 utp",
+        "cat 6 utp",
+        "cat-6 utp",
+        "category 6 utp",
+        "cat6 unshielded",
+        "cat 6 unshielded",
+        "unshielded cat6",
+        "unshielded category 6",
+        "cat6 non shielded",
+        "cat6 non-shielded",
+        "cat6 cable unshielded",
+        "utp cat6",
+        "utp category 6",
+        "cat6 data cable",
+        "cat6 horizontal cable",
+        "cat6 plenum utp",
+        "cat6 riser utp"
+      ],
+      "required_any_tokens": [
+        [
+          "cat6",
+          "utp"
+        ],
+        [
+          "cat",
+          "6",
+          "utp"
+        ],
+        [
+          "cat6",
+          "unshielded"
+        ],
+        [
+          "category",
+          "6",
+          "unshielded"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6a",
+        "stp",
+        "shielded",
+        "fiber",
+        "power"
+      ]
+    },
+    "cat6_stp": {
+      "canonical_key": "cat6_stp",
+      "display_name": "Category 6 STP/shielded cable",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category_shielding",
+      "synonyms": [
+        "cat6 stp",
+        "cat 6 stp",
+        "cat-6 stp",
+        "category 6 stp",
+        "cat6 shielded",
+        "shielded cat6",
+        "shielded category 6",
+        "cat6 ftp",
+        "cat6 sftp",
+        "cat6 screened",
+        "stp cat6",
+        "shielded twisted pair cat6",
+        "cat6 shielded cable"
+      ],
+      "required_any_tokens": [
+        [
+          "cat6",
+          "stp"
+        ],
+        [
+          "cat",
+          "6",
+          "stp"
+        ],
+        [
+          "cat6",
+          "shielded"
+        ],
+        [
+          "category",
+          "6",
+          "shielded"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6a",
+        "utp",
+        "unshielded",
+        "fiber",
+        "power"
+      ]
+    },
+    "cat6a": {
+      "canonical_key": "cat6a",
+      "display_name": "Category 6A cable, shielding unspecified",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category",
+      "synonyms": [
+        "cat6a",
+        "cat 6a",
+        "cat-6a",
+        "category 6a",
+        "augmented category 6",
+        "augmented cat6",
+        "cat six a",
+        "c6a"
+      ],
+      "required_any_tokens": [
+        [
+          "cat6a"
+        ],
+        [
+          "cat",
+          "6a"
+        ],
+        [
+          "category",
+          "6a"
+        ],
+        [
+          "augmented",
+          "category",
+          "6"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6 utp",
+        "cat6 stp",
+        "fiber",
+        "power"
+      ]
+    },
+    "cat6a_utp": {
+      "canonical_key": "cat6a_utp",
+      "display_name": "Category 6A UTP cable",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category_shielding",
+      "synonyms": [
+        "cat6a utp",
+        "cat 6a utp",
+        "category 6a utp",
+        "cat6a unshielded",
+        "unshielded cat6a",
+        "cat6a non shielded",
+        "cat6a non-shielded",
+        "utp cat6a",
+        "cat6a plenum utp"
+      ],
+      "required_any_tokens": [
+        [
+          "cat6a",
+          "utp"
+        ],
+        [
+          "cat",
+          "6a",
+          "utp"
+        ],
+        [
+          "cat6a",
+          "unshielded"
+        ]
+      ],
+      "negative_tokens": [
+        "stp",
+        "shielded",
+        "fiber",
+        "power"
+      ]
+    },
+    "cat6a_stp": {
+      "canonical_key": "cat6a_stp",
+      "display_name": "Category 6A STP/shielded cable",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category_shielding",
+      "synonyms": [
+        "cat6a stp",
+        "cat 6a stp",
+        "category 6a stp",
+        "cat6a shielded",
+        "shielded cat6a",
+        "cat6a ftp",
+        "cat6a sftp",
+        "stp cat6a",
+        "shielded category 6a"
+      ],
+      "required_any_tokens": [
+        [
+          "cat6a",
+          "stp"
+        ],
+        [
+          "cat",
+          "6a",
+          "stp"
+        ],
+        [
+          "cat6a",
+          "shielded"
+        ]
+      ],
+      "negative_tokens": [
+        "utp",
+        "unshielded",
+        "fiber",
+        "power"
+      ]
+    },
+    "cat5e": {
+      "canonical_key": "cat5e",
+      "display_name": "Category 5e cable",
+      "item_kind": "cable_drop",
+      "material_family": "copper_cabling",
+      "comparison_group": "copper_cable_category",
+      "synonyms": [
+        "cat5e",
+        "cat 5e",
+        "cat-5e",
+        "category 5e",
+        "enhanced category 5",
+        "c5e"
+      ],
+      "required_any_tokens": [
+        [
+          "cat5e"
+        ],
+        [
+          "cat",
+          "5e"
+        ],
+        [
+          "category",
+          "5e"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat6a",
+        "fiber",
+        "power"
+      ]
+    },
+    "patch_panel": {
+      "canonical_key": "patch_panel",
+      "display_name": "Patch panel",
+      "item_kind": "patch_panel",
+      "material_family": "copper_accessory",
+      "comparison_group": "copper_accessory",
+      "synonyms": [
+        "patch panel",
+        "patch panels",
+        "48 port patch panel",
+        "24 port patch panel",
+        "keystone patch panel",
+        "modular patch panel",
+        "panel"
+      ],
+      "required_any_tokens": [
+        [
+          "patch",
+          "panel"
+        ],
+        [
+          "keystone",
+          "panel"
+        ]
+      ],
+      "negative_tokens": [
+        "electrical panel",
+        "power panel"
+      ]
+    },
+    "patch_cord": {
+      "canonical_key": "patch_cord",
+      "display_name": "Patch cord / patch cable",
+      "item_kind": "patch_cord",
+      "material_family": "copper_accessory",
+      "comparison_group": "copper_accessory",
+      "synonyms": [
+        "patch cord",
+        "patch cable",
+        "patch lead",
+        "cat6 patch cord",
+        "cat6a patch cord",
+        "ethernet patch cable",
+        "jumper",
+        "copper jumper"
+      ],
+      "required_any_tokens": [
+        [
+          "patch",
+          "cord"
+        ],
+        [
+          "patch",
+          "cable"
+        ],
+        [
+          "jumper"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber jumper"
+      ]
+    },
+    "faceplate": {
+      "canonical_key": "faceplate",
+      "display_name": "Faceplate / wall plate",
+      "item_kind": "faceplate",
+      "material_family": "copper_accessory",
+      "comparison_group": "copper_accessory",
+      "synonyms": [
+        "faceplate",
+        "face plate",
+        "wall plate",
+        "wallplate",
+        "single gang plate",
+        "two port faceplate",
+        "2-port faceplate",
+        "4-port faceplate"
+      ],
+      "required_any_tokens": [
+        [
+          "faceplate"
+        ],
+        [
+          "wall",
+          "plate"
+        ]
+      ],
+      "negative_tokens": [
+        "license plate"
+      ]
+    },
+    "raceway": {
+      "canonical_key": "raceway",
+      "display_name": "Raceway / surface pathway",
+      "item_kind": "raceway",
+      "material_family": "pathway",
+      "comparison_group": "pathway",
+      "synonyms": [
+        "raceway",
+        "surface raceway",
+        "wiremold",
+        "wire mold",
+        "pathway",
+        "surface mount raceway",
+        "cable pathway",
+        "surface channel"
+      ],
+      "required_any_tokens": [
+        [
+          "raceway"
+        ],
+        [
+          "wiremold"
+        ],
+        [
+          "pathway"
+        ]
+      ],
+      "negative_tokens": [
+        "race"
+      ]
+    },
+    "conduit": {
+      "canonical_key": "conduit",
+      "display_name": "Conduit pathway",
+      "item_kind": "conduit",
+      "material_family": "pathway",
+      "comparison_group": "pathway",
+      "synonyms": [
+        "conduit",
+        "emt",
+        "pvc conduit",
+        "rigid conduit",
+        "sleeve",
+        "cable sleeve",
+        "pathway conduit"
+      ],
+      "required_any_tokens": [
+        [
+          "conduit"
+        ],
+        [
+          "emt"
+        ],
+        [
+          "sleeve"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "certification_testing": {
+      "canonical_key": "certification_testing",
+      "display_name": "Cable certification / tester exports",
+      "item_kind": "certification",
+      "material_family": "testing",
+      "comparison_group": "testing_requirement",
+      "synonyms": [
+        "certification",
+        "certify",
+        "certified test",
+        "test report",
+        "tester export",
+        "fluke report",
+        "fluke testing",
+        "certification report",
+        "cable test",
+        "continuity test",
+        "wiremap",
+        "wire map",
+        "permanent link test",
+        "channel test",
+        "tia test",
+        "tia-568",
+        "ansi/tia",
+        "level iv tester",
+        "dsx",
+        "linkiq"
+      ],
+      "required_any_tokens": [
+        [
+          "certification"
+        ],
+        [
+          "test",
+          "report"
+        ],
+        [
+          "tester",
+          "export"
+        ],
+        [
+          "fluke"
+        ],
+        [
+          "wiremap"
+        ]
+      ],
+      "negative_tokens": [
+        "test date only"
+      ]
+    },
+    "labeling": {
+      "canonical_key": "labeling",
+      "display_name": "Cable labeling / label standard",
+      "item_kind": "labeling",
+      "material_family": "documentation",
+      "comparison_group": "documentation_requirement",
+      "synonyms": [
+        "label",
+        "labeling",
+        "label standard",
+        "labeling standard",
+        "cable label",
+        "jack label",
+        "patch panel label",
+        "identifier",
+        "cable id",
+        "plate id"
+      ],
+      "required_any_tokens": [
+        [
+          "label"
+        ],
+        [
+          "labeling"
+        ],
+        [
+          "cable",
+          "id"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "as_built": {
+      "canonical_key": "as_built",
+      "display_name": "As-built / redline documentation",
+      "item_kind": "documentation",
+      "material_family": "documentation",
+      "comparison_group": "documentation_requirement",
+      "synonyms": [
+        "as built",
+        "as-built",
+        "asbuilt",
+        "redline",
+        "redlines",
+        "record drawing",
+        "closeout drawing",
+        "dwg",
+        "marked up drawing"
+      ],
+      "required_any_tokens": [
+        [
+          "as",
+          "built"
+        ],
+        [
+          "redline"
+        ],
+        [
+          "record",
+          "drawing"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "power": {
+      "canonical_key": "power",
+      "display_name": "Power / electrical work",
+      "item_kind": "power",
+      "material_family": "electrical",
+      "comparison_group": "scope_pollution",
+      "scope_pollution_candidate": true,
+      "synonyms": [
+        "power",
+        "electrical",
+        "20 amp",
+        "20a",
+        "120v",
+        "receptacle",
+        "outlet power",
+        "electrical outlet",
+        "circuit",
+        "breaker",
+        "quad outlet",
+        "duplex outlet"
+      ],
+      "required_any_tokens": [
+        [
+          "power"
+        ],
+        [
+          "20",
+          "amp"
+        ],
+        [
+          "electrical"
+        ],
+        [
+          "receptacle"
+        ],
+        [
+          "circuit"
+        ]
+      ],
+      "negative_tokens": [
+        "power over ethernet",
+        "poe"
+      ]
+    },
+    "poe": {
+      "canonical_key": "poe",
+      "display_name": "Power over Ethernet",
+      "item_kind": "network_power",
+      "material_family": "network_dependency",
+      "comparison_group": "network_dependency",
+      "synonyms": [
+        "poe",
+        "poe+",
+        "poe++",
+        "power over ethernet",
+        "802.3af",
+        "802.3at",
+        "802.3bt"
+      ],
+      "required_any_tokens": [
+        [
+          "poe"
+        ],
+        [
+          "power",
+          "over",
+          "ethernet"
+        ],
+        [
+          "802",
+          "3af"
+        ],
+        [
+          "802",
+          "3at"
+        ],
+        [
+          "802",
+          "3bt"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "mdf": {
+      "canonical_key": "mdf",
+      "display_name": "Main Distribution Frame",
+      "item_kind": "telecom_space",
+      "material_family": "site_entity",
+      "comparison_group": "site_readiness",
+      "synonyms": [
+        "mdf",
+        "main distribution frame",
+        "main telecom room",
+        "main telecommunications room",
+        "main comm room",
+        "core room",
+        "main closet"
+      ],
+      "required_any_tokens": [
+        [
+          "mdf"
+        ],
+        [
+          "main",
+          "distribution",
+          "frame"
+        ],
+        [
+          "main",
+          "telecom",
+          "room"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "idf": {
+      "canonical_key": "idf",
+      "display_name": "Intermediate Distribution Frame",
+      "item_kind": "telecom_space",
+      "material_family": "site_entity",
+      "comparison_group": "site_readiness",
+      "synonyms": [
+        "idf",
+        "intermediate distribution frame",
+        "telecom closet",
+        "telecommunications closet",
+        "network closet",
+        "comm closet",
+        "wiring closet",
+        "floor closet"
+      ],
+      "required_any_tokens": [
+        [
+          "idf"
+        ],
+        [
+          "telecom",
+          "closet"
+        ],
+        [
+          "network",
+          "closet"
+        ],
+        [
+          "wiring",
+          "closet"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "lift_access": {
+      "canonical_key": "lift_access",
+      "display_name": "Lift / high-access requirement",
+      "item_kind": "access_constraint",
+      "material_family": "site_access",
+      "comparison_group": "site_access",
+      "synonyms": [
+        "lift",
+        "scissor lift",
+        "boom lift",
+        "man lift",
+        "aerial lift",
+        "elevated work platform",
+        "high reach",
+        "catwalk access"
+      ],
+      "required_any_tokens": [
+        [
+          "lift"
+        ],
+        [
+          "catwalk"
+        ],
+        [
+          "elevated",
+          "work",
+          "platform"
+        ]
+      ],
+      "negative_tokens": [
+        "elevator"
+      ]
+    },
+    "after_hours": {
+      "canonical_key": "after_hours",
+      "display_name": "After-hours / night work",
+      "item_kind": "access_constraint",
+      "material_family": "site_access",
+      "comparison_group": "site_access",
+      "synonyms": [
+        "after hours",
+        "after-hours",
+        "nights",
+        "night work",
+        "weekend",
+        "weekends",
+        "outside business hours",
+        "off hours",
+        "maintenance window"
+      ],
+      "required_any_tokens": [
+        [
+          "after",
+          "hours"
+        ],
+        [
+          "night",
+          "work"
+        ],
+        [
+          "weekend"
+        ],
+        [
+          "maintenance",
+          "window"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "badge_access": {
+      "canonical_key": "badge_access",
+      "display_name": "Badge / escort access requirement",
+      "item_kind": "access_constraint",
+      "material_family": "site_access",
+      "comparison_group": "site_access",
+      "synonyms": [
+        "badge",
+        "badge access",
+        "access badge",
+        "escort",
+        "escorted",
+        "security escort",
+        "site access",
+        "visitor badge",
+        "background check",
+        "greenlight"
+      ],
+      "required_any_tokens": [
+        [
+          "badge"
+        ],
+        [
+          "escort"
+        ],
+        [
+          "background",
+          "check"
+        ],
+        [
+          "site",
+          "access"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "fiber": {
+      "canonical_key": "fiber",
+      "display_name": "Fiber optic cabling",
+      "item_kind": "fiber_cable",
+      "material_family": "fiber",
+      "comparison_group": "fiber",
+      "synonyms": [
+        "fiber",
+        "fibre",
+        "fiber optic",
+        "strand",
+        "fiber strand",
+        "om3",
+        "om4",
+        "os2",
+        "single mode",
+        "singlemode",
+        "multimode",
+        "multi mode",
+        "smf",
+        "mmf"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber"
+        ],
+        [
+          "fibre"
+        ],
+        [
+          "strand"
+        ],
+        [
+          "om3"
+        ],
+        [
+          "om4"
+        ],
+        [
+          "os2"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "rg59": {
+      "canonical_key": "rg59",
+      "display_name": "RG-59 coax cable",
+      "item_kind": "coax_cable",
+      "material_family": "coax",
+      "comparison_group": "low_voltage_av",
+      "synonyms": [
+        "rg59",
+        "rg-59",
+        "coax",
+        "coaxial",
+        "video coax",
+        "bnc cable"
+      ],
+      "required_any_tokens": [
+        [
+          "rg59"
+        ],
+        [
+          "rg",
+          "59"
+        ],
+        [
+          "coax"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "speaker_cable": {
+      "canonical_key": "speaker_cable",
+      "display_name": "Speaker cable",
+      "item_kind": "speaker_cable",
+      "material_family": "av_cabling",
+      "comparison_group": "low_voltage_av",
+      "synonyms": [
+        "speaker cable",
+        "speaker wire",
+        "12 awg speaker",
+        "audio speaker cable",
+        "shielded speaker cable"
+      ],
+      "required_any_tokens": [
+        [
+          "speaker",
+          "cable"
+        ],
+        [
+          "speaker",
+          "wire"
+        ]
+      ],
+      "negative_tokens": []
+    },
+    "audio_cable": {
+      "canonical_key": "audio_cable",
+      "display_name": "Audio signal cable",
+      "item_kind": "audio_cable",
+      "material_family": "av_cabling",
+      "comparison_group": "low_voltage_av",
+      "synonyms": [
+        "audio cable",
+        "audio signal cable",
+        "3 conductor audio",
+        "three conductor audio",
+        "mic cable",
+        "microphone cable",
+        "balanced audio"
+      ],
+      "required_any_tokens": [
+        [
+          "audio",
+          "cable"
+        ],
+        [
+          "audio",
+          "signal"
+        ],
+        [
+          "microphone",
+          "cable"
+        ]
+      ],
+      "negative_tokens": []
+    }
+  },
+  "comparison_rules": {
+    "quantity_comparison": {
+      "primary_roster_authorities": [
+        "approved_site_roster",
+        "current_addendum",
+        "formal_sow"
+      ],
+      "vendor_authorities": [
+        "vendor_quote"
+      ],
+      "prefer_roster_aggregate_totals": true,
+      "fallback_sum_line_items_when_no_aggregate": true,
+      "included_vendor_statuses": [
+        "included",
+        "base_bid",
+        "unknown"
+      ],
+      "excluded_vendor_statuses": [
+        "excluded",
+        "not_included",
+        "by_others",
+        "nic",
+        "optional",
+        "alternate",
+        "allowance",
+        "tbd"
+      ],
+      "edge_type_when_different": "contradicts",
+      "edge_type_when_same": "supports"
+    },
+    "identity_matching": {
+      "exact_canonical_key": 1.0,
+      "synonym_exact": 0.96,
+      "required_token_group": 0.92,
+      "token_overlap_min_score": 0.78,
+      "negative_tokens_block": true,
+      "cat6a_must_not_match_cat6": true,
+      "utp_and_stp_must_not_merge": true,
+      "power_must_not_match_poe": true
+    }
+  },
+  "entity_resolution": {
+    "must_not_merge_patterns": [
+      "IDF-1 vs IDF-10",
+      "Electric #1 vs Electric #2",
+      "Catwalk House Left vs Catwalk House Center",
+      "Proscenium Stage Left vs Proscenium Stage Right",
+      "Backstage Downstage Left vs Backstage Downstage Right",
+      "Cat6 vs Cat6A",
+      "Cat6 UTP vs Cat6 STP",
+      "Power vs PoE"
+    ],
+    "directional_tokens_are_identity_bearing": [
+      "left",
+      "right",
+      "center",
+      "north",
+      "south",
+      "east",
+      "west",
+      "upstage",
+      "downstage",
+      "front",
+      "rear"
+    ],
+    "number_suffixes_are_identity_bearing": true,
+    "ambiguous_alias_review_status": "needs_review"
+  },
+  "packet_hints": {
+    "quantity_conflict": {
+      "triggers": [
+        "approved_scope_quantity_vs_vendor_quote_quantity_differs"
+      ],
+      "severity": "critical",
+      "reason_template": "Approved scope quantity {roster_quantity} for {identity} differs from vendor quote quantity {vendor_quantity}; delta {delta}.",
+      "required_certificate_fields": [
+        "roster_quantity",
+        "vendor_quantity",
+        "delta",
+        "governing_rationale",
+        "minimal_sufficient_atom_ids"
+      ]
+    },
+    "vendor_mismatch": {
+      "triggers": [
+        "material_spec_differs",
+        "quote_short",
+        "quote_overstates",
+        "included_excluded_conflict"
+      ],
+      "severity": "high",
+      "reason_template": "Vendor quote does not match approved material/scope for {identity}: approved {roster_quantity}, quoted {vendor_quantity}.",
+      "required_certificate_fields": [
+        "contradiction_summary",
+        "authority_path",
+        "blast_radius"
+      ]
+    },
+    "scope_exclusion": {
+      "triggers": [
+        "power_excluded",
+        "floor_or_area_excluded",
+        "quote_includes_excluded_scope"
+      ],
+      "severity": "critical",
+      "reason_template": "Current governing scope excludes {identity}; conflicting artifact attempts to include it."
+    },
+    "site_access": {
+      "triggers": [
+        "lift",
+        "catwalk",
+        "after_hours",
+        "badge",
+        "escort",
+        "ceiling_access"
+      ],
+      "severity": "high"
+    },
+    "missing_info": {
+      "triggers": [
+        "raceway_unknown",
+        "conduit_unknown",
+        "certification_format_unknown",
+        "labeling_standard_tbd",
+        "mdf_badge_unknown",
+        "as_built_missing"
+      ],
+      "severity": "medium"
+    },
+    "action_item": {
+      "owner_patterns": {
+        "vendor": [
+          "vendor to",
+          "contractor to",
+          "installer to"
+        ],
+        "customer": [
+          "customer to",
+          "district to",
+          "owner to",
+          "client to"
+        ]
+      }
+    }
+  },
+  "risk_defaults": {
+    "quantity_conflict": 0.92,
+    "vendor_mismatch": 0.86,
+    "scope_exclusion": 0.94,
+    "site_access": 0.8,
+    "missing_info": 0.62,
+    "action_item": 0.42,
+    "scope_inclusion": 0.25
+  },
+  "source_ref_policy": {
+    "required_for_all_atoms": true,
+    "spreadsheet_quantity_columns_exact": true,
+    "aggregate_total_rows_allowed": true,
+    "unsupported_artifacts_must_warn": true,
+    "failed_receipt_gate": 0
+  }
+}

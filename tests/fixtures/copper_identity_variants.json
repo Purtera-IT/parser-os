@@ -1,0 +1,1738 @@
+[
+  {
+    "raw_text": "rj45",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "rj-45",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "8p8c",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "data jack",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "jack",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "modular jack",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "keystone jack",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "keystone",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "termination",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "terminations",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "terminated jack",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "data outlet",
+    "expected_identity": "rj45",
+    "item_kind": "termination",
+    "material_family": "connector",
+    "comparison_group": "copper_endpoint"
+  },
+  {
+    "raw_text": "drop",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "drops",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "data drop",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "data drops",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "cable drop",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "network drop",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "ethernet drop",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "horizontal cable",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "horizontal cabling",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "copper run",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "copper runs",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "data run",
+    "expected_identity": "data_drop",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_drop"
+  },
+  {
+    "raw_text": "cat6",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat 6",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat-6",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "category 6",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "category six",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "c6",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat vi",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "six cable",
+    "expected_identity": "cat6",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat6 utp",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat 6 utp",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat-6 utp",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "category 6 utp",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 unshielded",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat 6 unshielded",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "unshielded cat6",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "unshielded category 6",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 non shielded",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 non-shielded",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 cable unshielded",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "utp cat6",
+    "expected_identity": "cat6_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 stp",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat 6 stp",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat-6 stp",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "category 6 stp",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 shielded",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "shielded cat6",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "shielded category 6",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 ftp",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 sftp",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6 screened",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "stp cat6",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "shielded twisted pair cat6",
+    "expected_identity": "cat6_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat 6a",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat-6a",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "category 6a",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "augmented category 6",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "augmented cat6",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat six a",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "c6a",
+    "expected_identity": "cat6a",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat6a utp",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat 6a utp",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "category 6a utp",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a unshielded",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "unshielded cat6a",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a non shielded",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a non-shielded",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "utp cat6a",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a plenum utp",
+    "expected_identity": "cat6a_utp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a stp",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat 6a stp",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "category 6a stp",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a shielded",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "shielded cat6a",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a ftp",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat6a sftp",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "stp cat6a",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "shielded category 6a",
+    "expected_identity": "cat6a_stp",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category_shielding"
+  },
+  {
+    "raw_text": "cat5e",
+    "expected_identity": "cat5e",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat 5e",
+    "expected_identity": "cat5e",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "cat-5e",
+    "expected_identity": "cat5e",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "category 5e",
+    "expected_identity": "cat5e",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "enhanced category 5",
+    "expected_identity": "cat5e",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "c5e",
+    "expected_identity": "cat5e",
+    "item_kind": "cable_drop",
+    "material_family": "copper_cabling",
+    "comparison_group": "copper_cable_category"
+  },
+  {
+    "raw_text": "patch panel",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "patch panels",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "48 port patch panel",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "24 port patch panel",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "keystone patch panel",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "modular patch panel",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "panel",
+    "expected_identity": "patch_panel",
+    "item_kind": "patch_panel",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "patch cord",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "patch cable",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "patch lead",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "cat6 patch cord",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "cat6a patch cord",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "ethernet patch cable",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "jumper",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "copper jumper",
+    "expected_identity": "patch_cord",
+    "item_kind": "patch_cord",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "faceplate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "face plate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "wall plate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "wallplate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "single gang plate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "two port faceplate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "2-port faceplate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "4-port faceplate",
+    "expected_identity": "faceplate",
+    "item_kind": "faceplate",
+    "material_family": "copper_accessory",
+    "comparison_group": "copper_accessory"
+  },
+  {
+    "raw_text": "raceway",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "surface raceway",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "wiremold",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "wire mold",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "pathway",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "surface mount raceway",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "cable pathway",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "surface channel",
+    "expected_identity": "raceway",
+    "item_kind": "raceway",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "conduit",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "emt",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "pvc conduit",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "rigid conduit",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "sleeve",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "cable sleeve",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "pathway conduit",
+    "expected_identity": "conduit",
+    "item_kind": "conduit",
+    "material_family": "pathway",
+    "comparison_group": "pathway"
+  },
+  {
+    "raw_text": "certification",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "certify",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "certified test",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "test report",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "tester export",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "fluke report",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "fluke testing",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "certification report",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "cable test",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "continuity test",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "wiremap",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "wire map",
+    "expected_identity": "certification_testing",
+    "item_kind": "certification",
+    "material_family": "testing",
+    "comparison_group": "testing_requirement"
+  },
+  {
+    "raw_text": "label",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "labeling",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "label standard",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "labeling standard",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "cable label",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "jack label",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "patch panel label",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "identifier",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "cable id",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "plate id",
+    "expected_identity": "labeling",
+    "item_kind": "labeling",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "as built",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "as-built",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "asbuilt",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "redline",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "redlines",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "record drawing",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "closeout drawing",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "dwg",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "marked up drawing",
+    "expected_identity": "as_built",
+    "item_kind": "documentation",
+    "material_family": "documentation",
+    "comparison_group": "documentation_requirement"
+  },
+  {
+    "raw_text": "power",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "electrical",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "20 amp",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "20a",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "120v",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "receptacle",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "outlet power",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "electrical outlet",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "circuit",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "breaker",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "quad outlet",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "duplex outlet",
+    "expected_identity": "power",
+    "item_kind": "power",
+    "material_family": "electrical",
+    "comparison_group": "scope_pollution"
+  },
+  {
+    "raw_text": "poe",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "poe+",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "poe++",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "power over ethernet",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "802.3af",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "802.3at",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "802.3bt",
+    "expected_identity": "poe",
+    "item_kind": "network_power",
+    "material_family": "network_dependency",
+    "comparison_group": "network_dependency"
+  },
+  {
+    "raw_text": "mdf",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "main distribution frame",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "main telecom room",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "main telecommunications room",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "main comm room",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "core room",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "main closet",
+    "expected_identity": "mdf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "idf",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "intermediate distribution frame",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "telecom closet",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "telecommunications closet",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "network closet",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "comm closet",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "wiring closet",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "floor closet",
+    "expected_identity": "idf",
+    "item_kind": "telecom_space",
+    "material_family": "site_entity",
+    "comparison_group": "site_readiness"
+  },
+  {
+    "raw_text": "lift",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "scissor lift",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "boom lift",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "man lift",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "aerial lift",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "elevated work platform",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "high reach",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "catwalk access",
+    "expected_identity": "lift_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "after hours",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "after-hours",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "nights",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "night work",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "weekend",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "weekends",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "outside business hours",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "off hours",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "maintenance window",
+    "expected_identity": "after_hours",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "badge",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "badge access",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "access badge",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "escort",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "escorted",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "security escort",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "site access",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "visitor badge",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "background check",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "greenlight",
+    "expected_identity": "badge_access",
+    "item_kind": "access_constraint",
+    "material_family": "site_access",
+    "comparison_group": "site_access"
+  },
+  {
+    "raw_text": "fiber",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "fibre",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "fiber optic",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "strand",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "fiber strand",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "om3",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "om4",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "os2",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "single mode",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "singlemode",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "multimode",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "multi mode",
+    "expected_identity": "fiber",
+    "item_kind": "fiber_cable",
+    "material_family": "fiber",
+    "comparison_group": "fiber"
+  },
+  {
+    "raw_text": "rg59",
+    "expected_identity": "rg59",
+    "item_kind": "coax_cable",
+    "material_family": "coax",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "rg-59",
+    "expected_identity": "rg59",
+    "item_kind": "coax_cable",
+    "material_family": "coax",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "coax",
+    "expected_identity": "rg59",
+    "item_kind": "coax_cable",
+    "material_family": "coax",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "coaxial",
+    "expected_identity": "rg59",
+    "item_kind": "coax_cable",
+    "material_family": "coax",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "video coax",
+    "expected_identity": "rg59",
+    "item_kind": "coax_cable",
+    "material_family": "coax",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "bnc cable",
+    "expected_identity": "rg59",
+    "item_kind": "coax_cable",
+    "material_family": "coax",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "speaker cable",
+    "expected_identity": "speaker_cable",
+    "item_kind": "speaker_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "speaker wire",
+    "expected_identity": "speaker_cable",
+    "item_kind": "speaker_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "12 awg speaker",
+    "expected_identity": "speaker_cable",
+    "item_kind": "speaker_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "audio speaker cable",
+    "expected_identity": "speaker_cable",
+    "item_kind": "speaker_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "shielded speaker cable",
+    "expected_identity": "speaker_cable",
+    "item_kind": "speaker_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "audio cable",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "audio signal cable",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "3 conductor audio",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "three conductor audio",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "mic cable",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "microphone cable",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  },
+  {
+    "raw_text": "balanced audio",
+    "expected_identity": "audio_cable",
+    "item_kind": "audio_cable",
+    "material_family": "av_cabling",
+    "comparison_group": "low_voltage_av"
+  }
+]

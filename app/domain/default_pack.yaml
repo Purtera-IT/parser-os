@@ -1,0 +1,45 @@
+pack_id: default_pack
+name: Default Cross-domain Pack
+version: "1.0.0"
+service_lines:
+  - default
+entity_types:
+  - name: site
+    aliases: [site, location, campus, building]
+    examples: ["Main Campus", "West Wing"]
+  - name: device
+    aliases: [device, equipment, asset]
+    examples: ["IP Camera", "Access Point"]
+device_aliases:
+  ip_camera: ["IP Camera", "IP Cameras", "camera", "cameras", "cam", "CCTV", "security camera", "ip cam", "ip cams"]
+  access_point: ["AP", "APs", "access point", "wireless access point"]
+  switch: ["switch", "PoE switch"]
+site_alias_patterns:
+  - "west[-_ ]wing"
+  - "bldg a west"
+  - "main campus north"
+action_aliases:
+  provide_access: ["provide access", "grant access", "arrange access"]
+constraint_patterns:
+  access: ["escort required", "badge required", "after hours", "loading dock", "weekdays"]
+exclusion_patterns:
+  - "out of scope"
+  - "remove from scope"
+  - "do not include"
+customer_instruction_patterns:
+  - "please remove"
+  - "please add"
+  - "go ahead"
+quantity_units:
+  count: ["ea", "each", "units", "count"]
+artifact_role_patterns:
+  quote: ["quote", "vendor", "pricing"]
+risk_defaults:
+  ip_camera_unit_exposure: 300
+  access_point_unit_exposure: 250
+  switch_unit_exposure: 500
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  quantity_conflict: ["quantity mismatch", "does not match"]
+  scope_exclusion: ["exclude", "out of scope", "remove from scope"]

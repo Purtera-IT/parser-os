@@ -1,0 +1,68 @@
+{
+  "case_id": "COPPER_002_WORCESTER_DURKIN_NETWORK_UPGRADES",
+  "domain": "copper_cabling",
+  "expected_packets": [
+    {
+      "family": "scope_exclusion",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "device:wireless_access_point",
+      "must_contain_text": [
+        "DO NOT QUOTE",
+        "WPS IT provides"
+      ],
+      "expected_governing_authority": "formal_specification"
+    },
+    {
+      "family": "scope_inclusion",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "idf:010",
+      "must_contain_text": [
+        "new network cabinet",
+        "basement IDF Room 010"
+      ]
+    },
+    {
+      "family": "scope_inclusion",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "copper:retermination",
+      "must_contain_text": [
+        "Phase B",
+        "re-termination",
+        "existing copper"
+      ]
+    },
+    {
+      "family": "quantity_conflict",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "copper:retermination",
+      "must_contain_quantities": [
+        220,
+        200
+      ]
+    },
+    {
+      "family": "missing_info",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "faulty_endpoints",
+      "must_contain_text": [
+        "faulty endpoints",
+        "pre-determined",
+        "TBD"
+      ]
+    }
+  ],
+  "forbidden": [
+    {
+      "condition": "owner_furnished_ap_becomes_vendor_scope"
+    },
+    {
+      "condition": "addendum_phase_b_ignored"
+    },
+    {
+      "condition": "idf_room_010_merged_with_room_101"
+    },
+    {
+      "condition": "vendor_quote_governs_owner_furnished_scope"
+    }
+  ]
+}

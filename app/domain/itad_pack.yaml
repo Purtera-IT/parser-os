@@ -1,0 +1,42 @@
+pack_id: itad
+name: IT Asset Disposition Pack
+version: "1.0.0"
+service_lines:
+  - itad
+entity_types:
+  - name: device
+    aliases: [laptop, notebook, server]
+    examples: ["laptop", "rack server"]
+device_aliases:
+  laptop:
+    - laptop
+    - laptops
+    - notebook
+  server:
+    - server
+    - rack server
+site_alias_patterns:
+  - "data center"
+action_aliases:
+  chain_of_custody: ["maintain chain of custody"]
+constraint_patterns:
+  compliance:
+    - chain of custody
+    - data destruction
+    - certificate of destruction
+  access:
+    - loading dock
+exclusion_patterns:
+  - not in scope
+customer_instruction_patterns:
+  - proceed
+quantity_units:
+  count: [units, assets]
+artifact_role_patterns:
+  compliance: ["certificate", "destruction"]
+risk_defaults:
+  missing_chain_of_custody_exposure: 10000
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  site_access: ["chain of custody", "compliance"]

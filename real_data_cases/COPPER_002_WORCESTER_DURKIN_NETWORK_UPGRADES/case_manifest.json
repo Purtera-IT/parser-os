@@ -1,0 +1,33 @@
+{
+  "case_id": "COPPER_002_WORCESTER_DURKIN_NETWORK_UPGRADES",
+  "domain": "copper_cabling",
+  "redaction_status": "public_sources_plus_synthetic_supplements",
+  "artifact_count": 10,
+  "project_type": "network upgrade / AP cabling / existing copper re-termination",
+  "clean_or_messy": "messy",
+  "revision_heavy": true,
+  "expected_risks": [
+    "owner-furnished APs quoted incorrectly",
+    "Phase B addendum ignored",
+    "faulty endpoint count missing",
+    "IDF Room 010 entity merge risk",
+    "existing copper re-termination quantity mismatch"
+  ],
+  "notes": "Public online source package plus intentionally constructed supplemental artifacts to match the complexity required by the Purtera Evidence Compiler validation plan. Public PDFs/XLSX are preserved in artifacts/public_sources; synthetic validation companions are marked under artifacts/supplemental.",
+  "public_sources": [
+    {
+      "name": "Worcester bid page",
+      "url": "https://www.worcesterma.gov/finance/purchasing-bids/bids/8689-m6"
+    },
+    {
+      "name": "Specifications and Drawings PDF",
+      "url": "https://www.worcesterma.gov/sites/default/files/bids/8689-M6%20Specificatins%20and%20Drawings.pdf"
+    },
+    {
+      "name": "Addendum 1 PDF",
+      "url": "https://www.worcesterma.gov/sites/default/files/bids/8689-M6-ADDENDUM-1.pdf"
+    }
+  ],
+  "compiler_domain_pack": "copper_cabling",
+  "recommended_command": "python scripts/compile_real_data_case.py real_data_cases/COPPER_002_WORCESTER_DURKIN_NETWORK_UPGRADES --domain-pack copper_cabling --out real_data_cases/COPPER_002_WORCESTER_DURKIN_NETWORK_UPGRADES/outputs/compile_result.json"
+}

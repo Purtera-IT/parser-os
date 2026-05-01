@@ -1,0 +1,15 @@
+[
+  {
+    "packet_id": "pkt_example_replace_me",
+    "case_id": "COPPER_003_BANKS_NETWORK_MODERNIZATION",
+    "family": "vendor_mismatch",
+    "anchor_key": "replace_with_anchor_key",
+    "correct_packet": null,
+    "correct_governing_atom": null,
+    "correct_severity": null,
+    "should_be_status": "needs_review",
+    "missing_evidence": null,
+    "false_positive_reason": null,
+    "reviewer_notes": "Fill this after running review_packets.py."
+  }
+]

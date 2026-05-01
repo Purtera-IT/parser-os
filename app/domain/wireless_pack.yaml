@@ -1,0 +1,43 @@
+pack_id: wireless
+name: Wireless Infrastructure Pack
+version: "1.0.0"
+service_lines:
+  - wireless
+entity_types:
+  - name: device
+    aliases: [ap, access point, switch]
+    examples: ["AP", "PoE switch"]
+device_aliases:
+  access_point:
+    - AP
+    - APs
+    - access point
+    - wireless access point
+  switch:
+    - switch
+    - PoE switch
+site_alias_patterns:
+  - "main campus"
+action_aliases:
+  install_access_point: ["install ap", "install access point"]
+constraint_patterns:
+  access:
+    - ceiling access
+    - lift required
+    - after hours
+exclusion_patterns:
+  - out of scope
+customer_instruction_patterns:
+  - please add
+  - please remove
+quantity_units:
+  count: [aps, units, each]
+artifact_role_patterns:
+  quote: ["wireless quote"]
+risk_defaults:
+  access_point_unit_exposure: 250
+  switch_unit_exposure: 500
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  quantity_conflict: ["ap quantity mismatch"]

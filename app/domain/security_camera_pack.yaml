@@ -1,0 +1,50 @@
+pack_id: security_camera
+name: Security Camera Pack
+version: "1.0.0"
+service_lines:
+  - security_camera
+entity_types:
+  - name: device
+    aliases: [camera, cctv, recorder]
+    examples: ["IP Camera", "NVR"]
+device_aliases:
+  ip_camera:
+    - IP Camera
+    - IP Cameras
+    - camera
+    - cameras
+    - cam
+    - CCTV
+    - security camera
+  nvr:
+    - NVR
+    - recorder
+    - video recorder
+site_alias_patterns:
+  - "west[-_ ]wing"
+action_aliases:
+  provide_lift_access:
+    - provide lift access
+constraint_patterns:
+  access:
+    - escort required
+    - after hours
+    - badge required
+    - loading dock
+exclusion_patterns:
+  - out of scope
+  - remove from scope
+  - do not include
+customer_instruction_patterns:
+  - please remove
+  - please include
+quantity_units:
+  count: [ea, each, cameras]
+artifact_role_patterns:
+  quote: ["camera quote", "camera pricing"]
+risk_defaults:
+  ip_camera_unit_exposure: 300
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  vendor_mismatch: ["vendor quote quantity"]

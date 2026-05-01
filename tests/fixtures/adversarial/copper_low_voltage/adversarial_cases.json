@@ -1,0 +1,53 @@
+{
+  "schema_version": "1",
+  "description": "Synthetic adversarial strings for copper/low-voltage regression (not tied to COPPER_001 paths).",
+  "naming_drift_rj45": [
+    "RJ45",
+    "RJ-45",
+    "data jack",
+    "comm outlet",
+    "work area outlet",
+    "voice data outlet"
+  ],
+  "naming_drift_data_drop": ["data drop", "data drops", "ethernet drop"],
+  "cat6_variants": [
+    { "text": "Cat6", "canonical_key": "cat6" },
+    { "text": "Category 6", "canonical_key": "cat6" },
+    { "text": "Cat6 UTP", "canonical_key": "cat6_utp" },
+    { "text": "Unshielded Cat6", "canonical_key": "cat6_utp" },
+    { "text": "Cat6 STP", "canonical_key": "cat6_stp" },
+    { "text": "Shielded Cat6", "canonical_key": "cat6_stp" },
+    { "text": "Cat6A", "canonical_key": "cat6a" },
+    { "text": "Cat6A UTP", "canonical_key": "cat6a_utp" },
+    { "text": "Cat6A STP", "canonical_key": "cat6a_stp" }
+  ],
+  "quantity_parse_cases": [
+    { "qty": "68", "expect": { "quantity": 68, "quantity_status": "known" } },
+    { "qty": "68 EA", "expect": { "quantity": 68 } },
+    { "qty": "~68", "expect": { "quantity": 68 } },
+    { "qty": "60-68", "expect": { "quantity_status": "range", "quantity_min": 60, "quantity_max": 68 } },
+    { "qty": "included", "expect": { "quantity_status": "included_no_qty" } },
+    { "qty": "TBD", "expect": { "quantity_status": "tbd" } },
+    { "qty": "1 lot", "expect": { "quantity": 1 } }
+  ],
+  "inclusion_cases": [
+    { "included": "Yes", "notes": "", "inclusion_status": "included" },
+    { "included": "No", "notes": "", "inclusion_status": "excluded" },
+    { "included": "Yes", "notes": "by others", "inclusion_status": "excluded" },
+    { "included": "Yes", "notes": "NIC", "inclusion_status": "excluded" },
+    { "included": "Yes", "notes": "alternate pricing", "inclusion_status": "optional" },
+    { "included": "Yes", "notes": "optional add-on line", "inclusion_status": "optional" },
+    { "included": "Yes", "notes": "allowance for spares", "inclusion_status": "allowance" }
+  ],
+  "access_canonical": [
+    { "text": "catwalk and lift required", "canonical_key": "lift_access" },
+    { "text": "after-hours access only", "canonical_key": "after_hours" },
+    { "text": "badge access escort required", "canonical_key": "badge_access" },
+    { "text": "customer provides lift", "canonical_key": "lift_access" }
+  ],
+  "governance_timestamps": {
+    "rfp": "2026-01-10",
+    "addendum": "2026-04-15",
+    "winner_id": "scope_addendum"
+  }
+}

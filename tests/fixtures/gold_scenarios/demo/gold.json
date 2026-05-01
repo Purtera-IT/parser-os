@@ -1,0 +1,49 @@
+{
+  "scenario_id": "demo_project_gold",
+  "project_dir": "../../demo_project",
+  "expected_packets": [
+    {
+      "family": "quantity_conflict",
+      "anchor_key_contains": "site:west_wing",
+      "must_contain_quantities": [91, 72],
+      "expected_status": "needs_review",
+      "forbidden_governing_authority": ["vendor_quote"]
+    },
+    {
+      "family": "scope_exclusion",
+      "anchor_key_contains": "site:west_wing",
+      "must_contain_quantities": [],
+      "expected_status": "needs_review",
+      "forbidden_governing_authority": ["vendor_quote"]
+    },
+    {
+      "family": "site_access",
+      "anchor_key_contains": "site:main_campus",
+      "must_contain_quantities": [],
+      "expected_status": "active",
+      "forbidden_governing_authority": []
+    },
+    {
+      "family": "missing_info",
+      "anchor_key_contains": "unknown",
+      "must_contain_quantities": [],
+      "expected_status": "needs_review",
+      "forbidden_governing_authority": []
+    }
+  ],
+  "expected_governing": [
+    {
+      "family": "scope_exclusion",
+      "anchor_key_contains": "site:main_campus",
+      "governing_authority": "customer_current_authored"
+    }
+  ],
+  "forbidden": [
+    {
+      "condition": "deleted_text_governs"
+    },
+    {
+      "condition": "quoted_old_email_governs_current_conflict"
+    }
+  ]
+}

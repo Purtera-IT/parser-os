@@ -1,0 +1,8 @@
+From: jane.customer@example.com
+Sent: 2026-01-15 09:00
+Subject: Scope update
+
+Please remove West Wing from scope. Main Campus requires escort access after 5pm.
+
+On 2026-01-10, Jane Customer wrote:
+> Please include West Wing in the camera rollout.

@@ -1,0 +1,68 @@
+{
+  "case_id": "COPPER_004_MSCS_DISTRICT_CABLING_SERVICES",
+  "domain": "copper_cabling",
+  "expected_packets": [
+    {
+      "family": "quantity_conflict",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "device:cat6a_classroom_drop",
+      "must_contain_quantities": [
+        80,
+        72
+      ]
+    },
+    {
+      "family": "vendor_mismatch",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "patch_cord:cat6a",
+      "must_contain_text": [
+        "Cat6A",
+        "Cat6"
+      ]
+    },
+    {
+      "family": "site_access",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "badge",
+      "must_contain_text": [
+        "Vendor ID Badge",
+        "greenlight",
+        "school grounds"
+      ]
+    },
+    {
+      "family": "action_item",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "site_survey",
+      "must_contain_text": [
+        "consultation",
+        "site survey",
+        "estimate"
+      ]
+    },
+    {
+      "family": "missing_info",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "faceplates",
+      "must_contain_text": [
+        "faceplates",
+        "drop grouping",
+        "may be short"
+      ]
+    }
+  ],
+  "forbidden": [
+    {
+      "condition": "idf_1_merged_with_idf_10"
+    },
+    {
+      "condition": "vendor_pricing_schedule_governs_project_scope"
+    },
+    {
+      "condition": "patch_cord_quantity_treated_as_drop_quantity"
+    },
+    {
+      "condition": "pallet_or_catalog_quantity_becomes_site_scope"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+.venv/
+.purtera_artifacts/
+tmp_quote_test.xlsx
+__pycache__/
+.pytest_cache/
+*.pyc
+*.sqlite3
+*.db
+dist/
+build/
+*.egg-info/
+real_data_cases/*/artifacts/*
+real_data_cases/*/outputs/*
+!real_data_cases/.gitkeep
+!real_data_cases/*/labels/*.json
+!real_data_cases/*/case_manifest.json
+# Redundant with _handoff_* tree; use folder for source of truth
+COPPER_*_parser_gap_handoff.zip

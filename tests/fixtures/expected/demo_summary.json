@@ -1,0 +1,46 @@
+{
+  "packet_families": [
+    "quantity_conflict",
+    "vendor_mismatch",
+    "scope_exclusion",
+    "site_access",
+    "scope_inclusion",
+    "meeting_decision",
+    "action_item",
+    "missing_info"
+  ],
+  "anchors": {
+    "quantity_conflict": [
+      "device:ip_camera"
+    ],
+    "vendor_mismatch": [
+      "device:ip_camera"
+    ],
+    "scope_exclusion": [
+      "site:west_wing",
+      "site:unknown"
+    ],
+    "site_access": [
+      "site:main_campus",
+      "site:west_wing",
+      "unknown"
+    ],
+    "scope_inclusion": [
+      "device:unknown"
+    ],
+    "meeting_decision": [
+      "meeting_decision:confirmed_west_wing_will_be_treated_as_excluded_pending_written_confirmation"
+    ],
+    "action_item": [
+      "action_item:customer:customer_will_provide_lift_access_for_lobby_camera_installation",
+      "action_item:internal:open_question_confirm_whether_mdf_room_requires_badge_access"
+    ],
+    "missing_info": [
+      "missing_info:open_question_confirm_whether_mdf_room_requires_badge_access",
+      "missing_info:confirmed_west_wing_will_be_treated_as_excluded_pending_written_confirmation"
+    ]
+  },
+  "notes": [
+    "IDs are deterministic but content-sensitive; test families and anchors instead of hard-coded IDs."
+  ]
+}

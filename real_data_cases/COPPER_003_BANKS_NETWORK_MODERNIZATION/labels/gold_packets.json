@@ -1,0 +1,77 @@
+{
+  "case_id": "COPPER_003_BANKS_NETWORK_MODERNIZATION",
+  "domain": "copper_cabling",
+  "expected_packets": [
+    {
+      "family": "quantity_conflict",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "device:cat6a_drop",
+      "must_contain_quantities": [
+        378,
+        360
+      ]
+    },
+    {
+      "family": "vendor_mismatch",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "patch_cord:3ft_cat6a",
+      "must_contain_quantities": [
+        378,
+        360
+      ]
+    },
+    {
+      "family": "vendor_mismatch",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "patch_cord:5ft_cat6a",
+      "must_contain_quantities": [
+        378,
+        360
+      ]
+    },
+    {
+      "family": "missing_info",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "facility_drawings",
+      "must_contain_text": [
+        "site maps",
+        "facility drawings",
+        "not attached"
+      ]
+    },
+    {
+      "family": "missing_info",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "as_built_dwg",
+      "must_contain_text": [
+        "as-built",
+        "DWG",
+        "excluded"
+      ]
+    },
+    {
+      "family": "action_item",
+      "expected_status": "needs_review",
+      "anchor_key_contains": "testing_notice",
+      "must_contain_text": [
+        "notify Owner",
+        "24 hours",
+        "testing"
+      ]
+    }
+  ],
+  "forbidden": [
+    {
+      "condition": "lead_time_or_testing_notice_treated_as_install_date"
+    },
+    {
+      "condition": "missing_drawings_silently_ignored"
+    },
+    {
+      "condition": "fiber_backbone_count_merged_with_copper_drop_count"
+    },
+    {
+      "condition": "patch_cord_count_becomes_drop_count"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+"""Core evidence compilation logic."""

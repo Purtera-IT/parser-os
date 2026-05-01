@@ -1,0 +1,25 @@
+{
+  "case_id": "COPPER_003_BANKS_NETWORK_MODERNIZATION",
+  "domain": "copper_cabling",
+  "redaction_status": "public_sources_plus_synthetic_supplements",
+  "artifact_count": 8,
+  "project_type": "large campus network modernization / Cat6A drops / fiber backbone",
+  "clean_or_messy": "clean-with-gaps",
+  "revision_heavy": false,
+  "expected_risks": [
+    "378 vs 360 Cat6A drop mismatch",
+    "patch cord quantity mismatch",
+    "facility drawings missing",
+    "as-built deliverable missing",
+    "testing notice misparsed as quantity"
+  ],
+  "notes": "Public online source package plus intentionally constructed supplemental artifacts to match the complexity required by the Purtera Evidence Compiler validation plan. Public PDFs/XLSX are preserved in artifacts/public_sources; synthetic validation companions are marked under artifacts/supplemental.",
+  "public_sources": [
+    {
+      "name": "Banks Network Modernization RFP",
+      "url": "https://www.banks.k12.or.us/wp-content/uploads/2026/03/Banks-SD_Network_Modernization_Project_2026.pdf"
+    }
+  ],
+  "compiler_domain_pack": "copper_cabling",
+  "recommended_command": "python scripts/compile_real_data_case.py real_data_cases/COPPER_003_BANKS_NETWORK_MODERNIZATION --domain-pack copper_cabling --out real_data_cases/COPPER_003_BANKS_NETWORK_MODERNIZATION/outputs/compile_result.json"
+}

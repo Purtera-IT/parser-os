@@ -1,0 +1,33 @@
+{
+  "case_id": "COPPER_004_MSCS_DISTRICT_CABLING_SERVICES",
+  "domain": "copper_cabling",
+  "redaction_status": "public_sources_plus_synthetic_supplements",
+  "artifact_count": 13,
+  "project_type": "district-wide structured cabling services / vendor pricing schedule",
+  "clean_or_messy": "messy",
+  "revision_heavy": false,
+  "expected_risks": [
+    "work order vs quote quantity mismatch",
+    "Cat6 vs Cat6A material mismatch",
+    "IDF-1 vs IDF-10 false merge",
+    "badge/background access exclusion",
+    "pricing schedule treated as project scope"
+  ],
+  "notes": "Public online source package plus intentionally constructed supplemental artifacts to match the complexity required by the Purtera Evidence Compiler validation plan. Public PDFs/XLSX are preserved in artifacts/public_sources; synthetic validation companions are marked under artifacts/supplemental.",
+  "public_sources": [
+    {
+      "name": "MSCS Structured Cabling Services RFP",
+      "url": "https://www.scsk12.org/procurement/uploads/bids/2015/RFP%20110725AW%20Network%20Structured%20Cabling%20System%20Services%20Non%20Erate.pdf"
+    },
+    {
+      "name": "MSCS Appendix I Pricing Schedule",
+      "url": "https://www.scsk12.org/procurement/uploads/bids/2015/APPENDIX%20I%20Pricing%20Schedule%20-%20Network%20Structured%20Cabling%20System%20Services%20-%20Non%20Erate.xlsx"
+    },
+    {
+      "name": "MSCS Q&A",
+      "url": "https://www.scsk12.org/procurement/uploads/bids/2015/Questions%20and%20Answers%20RFP%20110725AW%20Network%20Structured%20Cabling%20System%20Services%20Non%20Erate.pdf"
+    }
+  ],
+  "compiler_domain_pack": "copper_cabling",
+  "recommended_command": "python scripts/compile_real_data_case.py real_data_cases/COPPER_004_MSCS_DISTRICT_CABLING_SERVICES --domain-pack copper_cabling --out real_data_cases/COPPER_004_MSCS_DISTRICT_CABLING_SERVICES/outputs/compile_result.json"
+}

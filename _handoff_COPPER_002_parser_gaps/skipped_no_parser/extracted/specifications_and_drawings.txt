@@ -1,0 +1,1156 @@
+
+
+--- PAGE 1 ---
+Overview
+The Worcester Public Schools is soliciting quotes for a wireless network retrofit at a single location. 
+Procurement will include new STP and fiber optic cable installation, re-termination of existing UTP and 
+mounting of new wireless access points. 
+This project is structured into three phases. Award of each phase is budget-dependent, and the District 
+may award:
+Phase A only
+Phases A & B together
+Phases A, B & C together
+There is no guarantee that all phases will be awarded. Vendors must provide pricing exactly as outlined 
+on the attached price sheet, including:
+A total cost for Phase A
+A combined total cost for Phases A & B
+A combined total cost for Phases A, B & C
+All pricing must be all-
+inclusive, covering labor, materials, equipment, and any associated costs 
+required to complete that award scenario.
+A walkthrough of the site will be available on April 22nd, 2026 at 09:00 AM EST 
+Vendors must RSVP for the walkthrough, by emailing your intention to attend the walkthrough. If there 
+are no responses to the RSVP, there will be no walkthrough. Vendors providing a quote are strongly 
+encouraged to attend. RSVPs can be emailed to Dustin VanDyke: vandyked@worcesterschools.net  
+Location:  
+Durkin Administration Building 
+20 Irving St, Worcester, MA 01609 
+All work must be completed NLT June 30th, 2026. 
+Phase A: Wireless network upgrade. 
+The vendor will provide all labor, materials, and equipment for a complete, permanent, and tested 
+Category 6A STP structured cabling system. The vendor will mount and connect district provided wireless 
+access points (WAPs) to specified locations.  
+Vendor 
+work includes the installation of access points, plenum-rated CAT 6A STP cabling, patch panels, 
+wallboxes/jacks and the testing and labeling of all components and cables. The vendor is responsible for 
+determining the length of cabling required and for any additional hardware or supplies required but not 
+specifically listed in this scope of work. Vendor will test all connections for full functionality.  
+Required hardware listed in parts/specifications section. 
+WAP, MDF, and IDF locations are listed in Appendix A.  
+Phase B: Wired network re-termination. 
+The vendor shall provide all labor, materials, and equipment required for the re-termination and testing of 
+existing copper infrastructure to new keystone based patch panels in new or existing network cabinets / 
+racks. 
+Vendor work includes the removal of old patch panels, installation of new keystone based patch panels, 
+and the re-termination of existing copper wiring at patch panels in MDF and IDF locations. Work will also 
+include WPS specified end points that have been pre-determined as faulty and need replacement. 
+Installation of a new network cabinet in basement IDF Room 010 will be required. Vendor will test all 
+connections for full functionality.  
+Required hardware listed 
+in parts/specifications section. 
+MDF, and IDF locations are listed in Appendix A. 
+
+
+--- PAGE 2 ---
+Phase  C:  Fiber  optic  network  upgrade.   
+The  vendor  shall  install  new  single  mode  fiber  (SMF)  between  specified  MDF/IDF  locations.  The  vendor  
+shall
+ 
+provide
+ all  labor,  materials,  and  equipment  required.  
+Vendor  work  includes  the  installation  of  fiber  panel  enclosures,  single  mode  fiber,  and  testing  and  labeling  
+of
+ 
+all
+ 
+components
+ 
+and
+ 
+cables.
+ 
+The
+ 
+vendor
+ 
+is
+ 
+responsible
+ 
+for
+ determining  the  length  of  fiber  cabling  
+required
+ 
+and
+ 
+for
+ 
+any
+ 
+additional
+ 
+hardware
+ 
+or
+ 
+supplies
+ 
+required
+ 
+but
+ 
+not
+ 
+specifically
+ 
+listed
+ 
+in
+ 
+this
+ 
+scope
+ 
+of
+ 
+work.
+ 
+Vendor
+ 
+will
+ 
+test
+ 
+all
+ 
+connections
+ 
+for
+ 
+full
+ 
+functionality.
+ 
+ 
+Required  hardware  listed  in  parts/specifications.   
+MDF,  and  IDF  locations  are  listed  in  Appendix  A.  
+Site  Requirements  &  Safety  
+The  vendor  must  clean  up  at  the  end  of  each  day,  and  no  ceiling  tiles  are  to  be  left  open  overnight.  
+Hazardous
+ 
+materials
+ 
+may
+ 
+exist.
+ 
+A
+ 
+hazardous
+ 
+materials
+ 
+document
+ 
+is
+ 
+located
+ 
+on
+ 
+site
+ 
+for
+ 
+that
+ 
+location.
+ 
+The
+ 
+vendor
+ 
+is
+ 
+responsible
+ 
+for
+ 
+ensuring
+ 
+no
+ 
+hazardous
+ 
+materials
+ 
+are
+ 
+disturbed.
+ 
+If
+ 
+hazardous
+ 
+materials
+ 
+are
+ 
+disturbed,
+ 
+the
+ 
+vendor
+ 
+must
+ 
+stop
+ 
+work
+ 
+immediately
+ 
+and
+ 
+notify
+ 
+an
+ 
+authorized
+ 
+Worcester
+ 
+Public
+ 
+Schools
+ 
+representative.
+ 
+The
+ 
+vendor
+ 
+will
+ 
+be
+ 
+responsible
+ 
+for
+ 
+all
+ 
+costs
+ 
+associated
+ 
+with
+ 
+clean-up
+ 
+and
+ 
+air
+ 
+quality
+ 
+testing
+ 
+by
+ 
+a
+ 
+company
+ 
+of
+ 
+WPS’s
+ 
+choosing.
+ 
+Required  Deliverables  
+Upon  completion,  the  vendor  will  provide  the  WPS  Network  Operations  Team  with  a  document  listing  the  
+patch
+ 
+panel
+ 
+labeling
+ 
+and
+ 
+its
+ 
+associated
+ 
+wall
+ 
+jack/surface
+ 
+jack
+ 
+location.
+ 
+(refer
+ 
+to
+ 
+the
+ 
+labeling
+ 
+section
+ 
+for
+ 
+example
+ 
+document
+ 
+format).
+ 
+The
+ 
+vendor
+ 
+will
+ 
+also
+ 
+provide
+ 
+updated
+ 
+floorplan
+ 
+with
+ 
+any
+ 
+jack
+ 
+or
+ 
+WAP
+ 
+location
+ 
+changes
+ 
+annotated.
+ 
+ 
+ 
+Parts  &  Specifications  
+●  Condition:  All  wiring,  materials,  and  components  are  required  to  be  in  new  condition.  ●  Copper  Cabling  Specs:  All  CAT  6A  STP  cabling  must  be  plenum-rated  and  orange  in  color.  ○  Any  CAT  6A  run  that  exceeds  the  normal  limit  of  100  Meters,  MUST  use  Paige  Datacom  
+Solutions
+ 
+Game
+ 
+Changer
+ 
+CAT
+ 
+6A
+ 
+cable.
+ 
+Use
+ 
+of
+ 
+Game
+ 
+Changer
+ 
+cable
+ 
+must
+ 
+be
+ 
+limited
+ 
+to
+ 
+200
+ 
+Meters.
+ 
+ ○  Any  CAT  6A  run  beyond  100  meters  must  be  certified  to  a  minimum  of  1Gbps  and  
+capable
+ 
+of
+ 
+IEEE
+ 
+802.3at
+ 
+(PoE+)
+ 
+standard
+ 
+for
+ 
+power
+ 
+delivery.
+  ○  Other  than  above  stipulations,  no  wire  run  will  exceed  CAT  6A  specified  maximum  
+distance
+ 
+of
+ 
+100
+ 
+Meters.
+ ○  Final  decisions  on  any  CAT  6A  runs  over  100  meters  will  be  coordinated  with  WPS  IT.  ●  Wiring  Standard:  Vendor  will  use  the  T568B  wiring  scheme  for  all  punch  downs.  ●  Copper  Cable  Routing:  All  copper  cabling  will  be  home  runs  to  the  closest  IDF/MDF  as  marked  
+on
+ 
+Appendix
+ 
+A.
+ ●  Fiber  Cabling  Specs:  New  fiber  cabling  being  installed  must  be  Single  Mode  OS2,  6  Strand,  
+plenum-rated,
+ 
+armored
+ 
+fiber.
+ ○  All  fiber  must  use  the  TIA-598  fiber  color  code  standard  ●  Cable  Protection  &  Management:  Do  not  kink  or  knot  cables.  All  copper  cabling  must  maintain  
+a
+ 
+minimum
+ 
+bend
+ 
+radius
+ 
+of
+ 
+4
+ 
+times
+ 
+the
+ 
+cable’s
+ 
+outer
+ 
+diameter.
+ 
+
+
+--- PAGE 3 ---
+○  Vendor  will  not  exceed  25  lbs  of  pulling  tension  to  avoid  stretching  copper  pairs.  ○  Vendor  will  dress  and  manage  cables  using  Velcro.  ○  EMT  conduit  will  be  required  when  cabling  is  run  in  any  exposed  areas.  ○  All  penetrations  through  walls  or  floors  must  be  sleeved  and  fire-stopped.  ○  J-hooks  (or  existing  J-hooks  /  cable  trays)  will  be  required  when  running  cables  above  
+ceiling
+ 
+tiles
+ 
+to
+ 
+avoid
+ 
+cabling
+ 
+being
+ 
+laid
+ 
+directly
+ 
+across
+ 
+tiles.
+ ●  Service  Loops:  10-foot  service  loops  will  be  used  for  each  drop  at  all  termination  endpoints.  ●  Ceiling  Mounted  Access  Points:  Termination  points  above  ceiling  tiles  where  APs  will  be  
+mounted
+ 
+will
+ 
+include
+ 
+2
+ 
+wiring
+ 
+drops
+ 
+each,
+ 
+punched
+ 
+down
+ 
+in
+ 
+keystones
+ 
+and
+ 
+dressed
+ 
+appropriately
+ 
+inside
+ 
+surface
+ 
+mount
+ 
+boxes
+ 
+such
+ 
+as
+ 
+Panduit
+ 
+CBXQ2IW-A
+ 
+(or
+ 
+equivalent).
+ ○  APs  will  be  installed  between  the  ceiling  tiles  on  the  ceiling  tile  T-Rails  using  the  provided  
+T-Rail
+ 
+mount
+ 
+attachments.
+ ○  For  ceilings  above  12ft  in  height,  please  contact  WPS  IT  to  confirm  location.  Wall  
+mounting
+ 
+may
+ 
+be
+ 
+preferred.
+ 
+ ●  Wall  Mounted  Access  Points:  Vendor  will  run  2  wires  to  junction  boxes  in  the  wall  and  affix  a  
+surface
+ 
+wall
+ 
+faceplate
+ 
+beside
+ 
+where
+ 
+the
+ 
+AP
+ 
+will
+ 
+be
+ 
+mounted.
+ ○  Faceplates  should  be  2-port  keystone  style  wall  plates  such  as  FS  N2FWHLP  (or  
+equivalent).
+ 
+Surface
+ 
+mount
+ 
+boxes
+ 
+can
+ 
+be
+ 
+used
+ 
+instead
+ 
+where
+ 
+required,
+ 
+pending
+ 
+coordination
+ 
+with
+ 
+WPS
+ 
+IT.
+ ○  Wall-mounted  APs  will  not  exceed  a  height  of  12  feet  unless  coordinated  with  WPS  IT.  ●  Access  Point  Placement:  Lighting  structures,  ducts,  and  other  metal  structures  should  be  
+avoided
+ 
+where
+ 
+possible
+ 
+when
+ 
+securely
+ 
+mounting
+ 
+access
+ 
+points
+ 
+using
+ 
+the
+ 
+provided
+ 
+kits
+ 
+in
+ 
+locations
+ 
+marked
+ 
+on
+ 
+Appendix
+ 
+A.
+ ●  Cable  Terminations:  ALL  CAT6A  terminations  and  existing  copper  wiring  re-terminations  will  be  
+to
+ 
+specified
+ 
+keystone
+ 
+style
+ 
+jacks.
+ 
+ ●  Copper  Patch  Panels:  Vendor  is  responsible  for  installing  flat,  24-port  or  48-port,  19-inch  
+rack-mountable
+ 
+patch
+ 
+panels
+ 
+such
+ 
+as
+ FS  Patch  Panel  316985 (or  equivalent).  Terminations  will  
+use
+ FS  CAT  6A  Shielded  Keystone  144797 (or  equivalent).  ●  Patch  Cables:  Vendor  will  patch  in  all  APs  into  designated  switch  ports  provided  by  WPS  IT  
+using
+ 
+appropriate-length
+ 
+orange
+ 
+slim
+ 
+patch
+ 
+cables,
+ 
+such
+ 
+as
+ 
+FS
+ 
+145854
+ 
+(or
+ 
+equivalent).
+ ●  Fiber  Patch  Panels:  Vendor  is  responsible  for  installing  fiber  enclosure  such  as  Century  Fiber  
+Optic
+ 
+FTS-175
+ 
+S/TM
+ 
+(or
+ 
+equivalent)
+ ○  Pre-loaded  3  position  duplex  adapter  plate  loaded  w/LC  sleeves.  ●  Testing:  All  installed  links  will  be  tested  by  the  vendor  using  a  cable  tester  to  ensure  specified  
+pinout,
+ 
+no
+ 
+wiring
+ 
+faults
+ 
+or
+ 
+breaks,
+ 
+and
+ 
+to
+ 
+confirm
+ 
+cable
+ 
+length
+ 
+is
+ 
+within
+ 
+acceptable
+ 
+specifications.
+ 
+ ●  Labeling:  All  labeling  must  be  machine-printed  labels  that  follow  Worcester  Public  Schools  
+Network
+ 
+Operation
+ 
+Team’s
+ 
+specifications.
+ ●  Network  Equipment  Removal:  Any  necessary  removal  of  racked  networking  equipment  will  be  
+coordinated
+ 
+with
+ 
+WPS
+ 
+IT
+ 
+beforehand.
+ ●  Network  Cabinet:  Vendor  will  install  a  new  Legrand  Middle  Atlantic  EWR-8-22SD  network  
+cabinet
+ 
+in
+ 
+the
+ 
+basement
+ 
+IDF
+ 
+Room
+ 
+010.
+ ○  Securely  mount  the  network  cabinet  in  the  location  designated  in  Appendix  A,  adhering  to  
+all
+ 
+manufacturer-specified
+ 
+installation
+ 
+techniques.
+ ○  Install  the  network  cabinet  with  the  door  pivoting  on  the  left-hand  side  (opening  from  the  
+right)
+ 
+Hardware  
+
+
+--- PAGE 4 ---
+Below  is  a  list  of  all  hardware  and  components  previously  mentioned  in  this  specification.  Products  quoted  
+must
+ 
+be
+ 
+as
+ 
+specified
+ 
+or
+ 
+equivalent.
+ 
+If
+ 
+any
+ 
+equivalent
+ 
+hardware
+ 
+or
+ 
+components
+ 
+will
+ 
+be
+ 
+used,
+ 
+please
+ 
+list
+ 
+those
+ 
+in
+ 
+your
+ 
+quote(s).
+  Wireless  Access  Points  -  Provided  by  WPS  IT  -  DO  NOT  QUOTE  Surface  mount  box  -  Panduit  CBXQ2IW-A  Wall  Faceplate  -  FS  N2FWHLP  Copper  Patch  Panels  -  FS  Patch  Panel  316985  Copper  Keystones  -  FS  CAT  6A  Shielded  Keystone  144797  Patch  Cables  -  FS  145854 Fiber  Enclosure  -  Century  Fiber  Optic  FTS-175  S/TM  Network  Cabinet  -  Legrand  Middle  Atlantic  EWR-8-22SD  
+Labeling Vendor  is  responsible  for  labeling  all  cabling  jackets  at  each  end,  within  a  foot  of  termination.  Vendor  will  
+also
+ 
+label
+ 
+all
+ 
+surface
+ 
+mount
+ 
+boxes
+ 
+/
+ 
+wall
+ 
+faceplates
+ 
+per
+ 
+each
+ 
+wiring
+ 
+drop.
+ 
+Labeling
+ 
+format
+ 
+for
+ 
+these
+ 
+components
+ 
+will
+ 
+be
+ 
+as
+ 
+follows:
+ 
+ 
+●  [IDF/MDF  Room  #]  -  [Patch  Panel  ID]  -  [Patch  Panel  Port  #]  (e.g.,  101-A-01).  
+All  copper  patch  panels  and  copper  patch  panel  ports  will  be  labeled  by  vendor.  Labeling  format  for  these  
+components
+ 
+will
+ 
+be
+ 
+as
+ 
+follows:
+ 
+ 
+●  Patch  panels  -  [IDF/MDF  Room  #]  -  [Panel  ID]  (e.g.,  101-A)  ●  Patch  panel  ports  -  [Wiring  Drop  Room  #]  -  [Patch  Panel  ID  and  Patch  Panel  Port  #]  (e.g.,  
+201-A01)
+ 
+All  access  points  will  be  labeled  by  vendor.  Labeling  for  these  components  will  be  as  follows:  
+●  [DAB]  -  [AP  #]  (e.g.,  DAB-001)  
+All  fiber  enclosures  will  be  labeled  by  vendor.  Labeling  in  the  MDF  will  be  applied  to  cassettes.  Labeling  in  
+IDF
+ 
+will
+ 
+be
+ 
+applied
+ 
+to
+ 
+front
+ 
+enclosure
+ 
+screen.
+ 
+Labeling
+ 
+for
+ 
+these
+ 
+components
+ 
+will
+ 
+be
+ 
+as
+ 
+follows:
+ 
+●  MDF  termination  -  [IDF-Room  #]  (e.g.,  IDF-101)  ●  IDF  termination  -  [6  STRANDS  OF  SM  TO  MDF]  
+Labeling  document  to  be  provided  to  WPS  must  be  in  the  format  below:   Patch  Panel  Label  Wall  Jack  Label  
+201-A01  101-A-01  
+201-A02  101-A-02   
+
+
+--- PAGE 5 ---
+Appendix  A  ●  Plan:   ○  Phase  A:  Install  CAT  6A  wiring  for  all  ceiling  mounted  /  wall  mounted  wireless  access  
+points.
+ 
+All
+ 
+cabling
+ 
+must
+ 
+home
+ 
+run
+ 
+to
+ 
+the
+ 
+closest
+ 
+IDF/MDF
+ 
+as
+ 
+labeled
+ 
+on
+ 
+the
+ 
+provided
+ 
+maps
+ 
+in
+ 
+this
+ 
+appendix.
+ 
+Installation
+ 
+of
+ 
+surface
+ 
+mount
+ 
+boxes,
+ 
+wall
+ 
+faceplates,
+ 
+and
+ 
+patch
+ 
+panels
+ 
+as
+ 
+required.
+ 
+All
+ 
+IDFs/MDF
+ 
+and
+ 
+AP
+ 
+mounting
+ 
+/
+ 
+CAT6A
+ 
+wiring
+ 
+locations
+ 
+will
+ 
+be
+ 
+marked
+ 
+on
+ 
+maps
+ 
+below.
+ ○  Phase  B:  Re-termination  of  existing  copper  wiring  to  new  keystone  based  patch  panels.  
+Re-termination
+ 
+of
+ 
+existing
+ 
+wall
+ 
+faceplates
+ 
+/
+ 
+wall
+ 
+jacks
+ 
+as
+ 
+predetermined
+ 
+by
+ 
+WPS
+ 
+IT.
+ 
+Installation
+ 
+of
+ 
+new
+ 
+8U
+ 
+network
+ 
+cabinet
+ 
+in
+ 
+basement
+ 
+IDF
+ 
+Room
+ 
+010
+ 
+in
+ 
+location
+ 
+marked
+ 
+in
+ 
+this
+ 
+appendix.
+ 
+Locations
+ 
+for
+ 
+each
+ 
+IDF/MDF
+ 
+are
+ 
+detailed
+ 
+and
+ 
+marked
+ 
+on
+ 
+maps
+ 
+below.
+ ○  Phase  C:  Installation  of  new  OS2  SM  armored  fiber  wiring  between  MDF/IDF  locations.  
+Installation
+ 
+of
+ 
+new
+ 
+SM
+ 
+fiber
+ 
+enclosures
+ 
+in
+ 
+each
+ 
+IDF
+ 
+and
+ 
+MDF.
+ 
+Locations
+ 
+for
+ 
+each
+ 
+are
+ 
+detailed
+ 
+and
+ 
+marked
+ 
+on
+ 
+maps
+ 
+below.
+ ●  MDF:  ○  1st  floor  in  server  room  closet,  central  to  building,  across  from  east  staircase,  highlighted  
+in
+ 
+yellow.
+ ●  IDFs:  ○  3rd  floor,  room  308A,  southeast  corner  of  building,  highlighted  in  blue  ○  Basement  floor,  Digital  Document  Center  room  010,  northeast  corner  of  building,  
+highlighted
+ 
+in
+ 
+blue
+  
+
+
+--- PAGE 6 ---
+MDF  
+ 
+
+
+
+--- PAGE 7 ---
+Room  308  IDF  
+
+
+
+--- PAGE 8 ---
+Room  010  IDF  
+
+
+
+--- PAGE 9 ---
+AP  /  Wiring  Drop  Locations  Basement   
+
+
+--- PAGE 10 ---
+AP  /  Wiring  Drop  Locations  1st  Floor  
+
+
+--- PAGE 11 ---
+AP  /  Wiring  Drop  Locations  2nd  Floor  
+
+
+--- PAGE 12 ---
+AP  /  Wiring  Drop  Locations  3rd  Floor  
+
+
+--- PAGE 13 ---
+AP  /  Wiring  Drop  Locations  4th  Floor   

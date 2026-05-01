@@ -1,0 +1,25 @@
+{
+  "case_id": "LOWVOLT_001_FLMD_COURTROOM_5D",
+  "domain": "low_voltage_structured_cabling",
+  "redaction_status": "public_sources_plus_synthetic_supplements",
+  "artifact_count": 8,
+  "project_type": "courtroom AV structured cabling / shielded copper / low voltage",
+  "clean_or_messy": "clean",
+  "revision_heavy": false,
+  "expected_risks": [
+    "36 vs 34 Cat6A shielded cable mismatch",
+    "certification excluded",
+    "demo/removal excluded",
+    "owner-furnished AV components quoted incorrectly",
+    "partial award language misread as final scope"
+  ],
+  "notes": "Public online source package plus intentionally constructed supplemental artifacts to match the complexity required by the Purtera Evidence Compiler validation plan. Public PDFs/XLSX are preserved in artifacts/public_sources; synthetic validation companions are marked under artifacts/supplemental.",
+  "public_sources": [
+    {
+      "name": "FLMD Fort Myers Courtroom 5D SOW",
+      "url": "https://www.flmd.uscourts.gov/sites/flmd/files/documents/flmd-structured-cabling-for-fort-myers-courtroom-5d-statement-of-work.pdf"
+    }
+  ],
+  "compiler_domain_pack": "low_voltage_structured_cabling",
+  "recommended_command": "python scripts/compile_real_data_case.py real_data_cases/LOWVOLT_001_FLMD_COURTROOM_5D --domain-pack low_voltage_structured_cabling --out real_data_cases/LOWVOLT_001_FLMD_COURTROOM_5D/outputs/compile_result.json"
+}

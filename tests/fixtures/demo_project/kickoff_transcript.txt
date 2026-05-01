@@ -1,0 +1,7 @@
+[00:00:01] Purtera PM: Starting kickoff for the camera rollout.
+[00:01:12] Jane Customer: Main Campus requires escort access after 5pm.
+[00:02:05] Jane Customer: Please remove West Wing from scope for now.
+[00:03:10] Purtera PM: Confirmed, West Wing will be treated as excluded pending written confirmation.
+[00:04:22] Bob Customer: Customer will provide lift access for lobby camera installation.
+[00:05:30] Purtera PM: Open question: confirm whether MDF room requires badge access.
+[00:06:15] Jane Customer: We may add 5 more IP cameras at Main Campus after the pilot.
