@@ -4,7 +4,7 @@ Evidence Compiler: artifacts -> atoms -> graph -> packets
 
 **Parser OS** — local evidence compiler: artifacts → atoms → graph → packets.
 
-PyPI / install name: `purtera-evidence-mvp` (see `pyproject.toml`). Install from **`parser-os/`**: `cd parser-os && pip install -e ".[dev]"`.
+PyPI / install name: `purtera-evidence-mvp` (see `pyproject.toml`). From this repo root: `pip install -e ".[dev]"`.
 
 ## Current Build Status
 

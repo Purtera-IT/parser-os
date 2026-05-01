@@ -1,6 +1,6 @@
 COPPER_002 — Parser / intake gap handoff (Worcester Durkin validation case)
 ================================================================================
-Generated from: SowSmith/parser-os/real_data_cases/COPPER_002_WORCESTER_DURKIN_NETWORK_UPGRADES/artifacts
+Generated from: real_data_cases/COPPER_002_WORCESTER_DURKIN_NETWORK_UPGRADES/artifacts
 Purpose: These are the file TYPES and concrete samples that fail or under-produce
           atoms in the current Parser OS compiler. Use to improve routing + parsers so
           gold labels (scope_exclusion AP, Phase B, IDF 010, re-termination qty,
@@ -48,7 +48,7 @@ FILE TYPE SUMMARY (what we are testing the pipeline on)
 3) .pdf   — public addenda, compiled disclosure pack, large spec set.
 4) .json  — small source URL list (edge case for transcript/json routing).
 
-RELEVANT CODE (SowSmith/parser-os)
+RELEVANT CODE (repository root)
 ----------------------------------
 - app/parsers/registry.py        — choose_parser(), sample_text only for some ext
 - app/parsers/email_parser.py    — match() vs parse() gap (zero atoms)
