@@ -1,0 +1,708 @@
+"""Standalone visible-box detector.
+
+Primary engine: pypdfium2 + OpenCV (no orbitbrief imports needed for the box
+pipeline).  PyMuPDF is imported lazily and only when the optional
+font-aware text-section detection is enabled (Cfg.detect_text_sections).
+
+Run:
+    python detect_standalone.py --pdf path/to/file.pdf --page 0 --out overlay.png
+"""
+from __future__ import annotations
+
+import argparse
+import re
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import cv2
+import numpy as np
+import pypdfium2 as pdfium
+
+from .overlay.colors_bgr import (
+    BLUE as _BLUE,
+    CYAN as _CYAN,
+    GREEN as _GREEN,
+    GREEN_HDR as _GREEN_HDR,
+    LABEL_BG as _LABEL_BG,
+    ORANGE as _ORANGE,
+    PURPLE as _PURPLE,
+    SUBHDR as _SUBHDR,
+)
+from .overlay.draw_blue_outlines import (
+    draw_regular_blue_wrappers,
+    draw_synthetic_blue_bodies,
+)
+from .overlay.draw_title_highlights import draw_title_band_highlights, _skip_title_alpha
+from .overlay.style import DEFAULT_STYLE
+from .overlay_layers import OverlayLayer, parse_layers_arg
+from .rules import (
+    drawn_title_bboxes,
+    centroid_in_drawn_title,
+    x_scope_for_textsec_caption,
+    row_fill_missing_colhdrs,
+    orange_should_render_with_colhdr,
+    reclassify_thin_stroke_artifacts,
+)
+
+# Font-aware text-section detection lives in its own module.  PyMuPDF is
+# imported lazily inside that module; this file has no PyMuPDF dependency.
+
+# ── bullet / numbered-list pattern for sub-section title detection ─────────────
+#   Matches short-prefix bullets like "1. ", "A. ", "ii) ", "B2. " (1-3 chars).
+#   Deliberately EXCLUDES long-word false positives like "ETC. ", "VERIFIED. ",
+#   "SYSTEM. " that arise from sentence-wrap in all-caps engineering notes.
+_BULLET_PAT = re.compile(r"^\s*(?:\d{1,3}|[A-Za-z]{1,3})[\.\)]\s", re.MULTILINE)
+
+
+def _cell_text_column_headerish(txt: str) -> bool:
+    """True for ALL-CAPS or Title-Case short column labels (e.g. ``Sheet Title``).
+
+    Schedule logic used to require ALL CAPS only, which missed drawing-index
+    style headers.  Reject digit-heavy / long fragments that read like data.
+    """
+    t = (txt or "").strip().replace("\n", " ")
+    if not t or len(t) > 34:
+        return False
+    words = t.split()
+    if not words or len(words) > 5:
+        return False
+    letters = [c for c in t if c.isalpha()]
+    if len(letters) < 2:
+        return False
+    if sum(ch.isdigit() for ch in t) > max(3, len(letters) // 2):
+        return False
+    if all(c.isupper() for c in letters):
+        return True
+    for w in words:
+        m = re.search(r"[A-Za-z]", w)
+        if m is None or not m.group(0).isupper():
+            return False
+    return True
+
+
+def _prune_colhdr_bleeding_foreign_orange(boxes: list) -> list:
+    """Drop ``colhdr_*`` whose centroid lies in an ORANGE cell from another table.
+
+    ``textsec_*`` titles can emit word-tight ``colhdr_*`` that share x/y with a
+    drawing-index data cell (e.g. bottom ``Sheet Title`` column).  The row then
+    shows one cyan ``colhdr`` while flanking cells stay orange — impossible for
+    a real column-header row.  Keep rings only when the hosting ORANGE shares the
+    same wrapper lineage as the colhdr's parent (``v7`` vs ``v7_title``, etc.).
+    """
+    by_id = {b.box_id: b for b in boxes}
+
+    def _anc_id(ancestor: str | None, start: str | None) -> bool:
+        cur: str | None = start
+        for _ in range(256):
+            if cur is None:
+                return False
+            if cur == ancestor:
+                return True
+            bb = by_id.get(cur)
+            cur = bb.parent_box_id if bb else None
+        return False
+
+    def _title_section_wrapper_id(title_box) -> str | None:
+        """``textsec_*_title`` often has ``parent_box_id=None`` (see
+        ``text_section_detection._emit_box``).  Fall back to the smallest
+        non-synthetic BLUE wrapper that contains the title ink."""
+        tid = title_box.parent_box_id
+        if tid:
+            return tid
+        tx0, ty0, tx1, ty1 = title_box.px_bbox
+        wraps = [
+            w for w in by_id.values()
+            if w.color == "BLUE"
+            and not getattr(w, "synthetic", False)
+            and w.px_bbox[0] <= tx0 + 1
+            and w.px_bbox[1] <= ty0 + 1
+            and w.px_bbox[2] >= tx1 - 1
+            and w.px_bbox[3] >= ty1 - 1
+        ]
+        if not wraps:
+            return None
+        wmin = min(
+            wraps,
+            key=lambda w: (w.px_bbox[2] - w.px_bbox[0])
+            * (w.px_bbox[3] - w.px_bbox[1]),
+        )
+        return wmin.box_id
+
+    def _same_table_family(ch_parent: str | None, o_parent: str | None) -> bool:
+        if not ch_parent or not o_parent:
+            return False
+        if ch_parent == o_parent:
+            return True
+        # Title synthetic (``*_title``) is a child of the same BLUE table wrapper
+        # as the ORANGE row cells (``v7_title`` → ``v7``).
+        if _anc_id(o_parent, ch_parent):
+            return True
+        # ORANGE parents are often **row / cell** nodes under the section wrapper
+        # while ``colhdr_*``.parent is ``textsec_*_title`` → wrapper.  Walking only
+        # from the title never visits ``v7_row42`` so every ring was pruned (test5).
+        tb = by_id.get(ch_parent)
+        if tb is not None:
+            t_wrap = _title_section_wrapper_id(tb)
+            if t_wrap and _anc_id(t_wrap, o_parent):
+                return True
+        return False
+
+    oranges = [
+        b for b in boxes
+        if b.color == "ORANGE" and not getattr(b, "synthetic", False)]
+    drop_ids: set[str] = set()
+    for b in boxes:
+        if not getattr(b, "synthetic", False):
+            continue
+        if not b.box_id.startswith("colhdr_"):
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        hcx = 0.5 * (x0 + x1)
+        hcy = 0.5 * (y0 + y1)
+        owner = None
+        for o in oranges:
+            ox0, oy0, ox1, oy1 = o.px_bbox
+            if ox0 < hcx < ox1 and oy0 < hcy < oy1:
+                owner = o
+                break
+        if owner is None:
+            continue
+        if not _same_table_family(b.parent_box_id, owner.parent_box_id):
+            drop_ids.add(b.box_id)
+    if not drop_ids:
+        return boxes
+    return [b for b in boxes if b.box_id not in drop_ids]
+
+
+def _fitz_rect_to_image_px(
+    rect, scale: float, rotate_qt: int, pw: float, ph: float,
+) -> tuple[int, int, int, int]:
+    """Map a PyMuPDF ``Rect`` (PDF pt) to pixel bbox after ``np.rot90`` pipeline."""
+    x0, y0, x1, y1 = float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)
+    qt = int(rotate_qt) % 4
+    if qt == 0:
+        ix0, iy0 = int(x0 * scale), int(y0 * scale)
+        ix1, iy1 = int(x1 * scale), int(y1 * scale)
+    elif qt == 3:
+        ix0, ix1 = int(y0 * scale), int(y1 * scale)
+        iy0, iy1 = int((pw - x1) * scale), int((pw - x0) * scale)
+    elif qt == 1:
+        ix0, ix1 = int((ph - y1) * scale), int((ph - y0) * scale)
+        iy0, iy1 = int(x0 * scale), int(x1 * scale)
+    else:
+        ix0, ix1 = int((pw - x1) * scale), int((pw - x0) * scale)
+        iy0, iy1 = int((ph - y1) * scale), int((ph - y0) * scale)
+    return (min(ix0, ix1), min(iy0, iy1), max(ix0, ix1), max(iy0, iy1))
+
+
+def _px_centroid_in_box(
+    pxb: tuple[int, int, int, int],
+    host: tuple[int, int, int, int],
+) -> bool:
+    x0, y0, x1, y1 = pxb
+    hx0, hy0, hx1, hy1 = host
+    cx = 0.5 * (x0 + x1)
+    cy = 0.5 * (y0 + y1)
+    return hx0 < cx < hx1 and hy0 < cy < hy1
+
+
+def _prune_colhdr_overlapping_titleblock_logos(boxes: list) -> list:
+    """Drop ``colhdr_*`` whose centroid falls inside a ``titleblk*`` logo bbox."""
+    logos = [
+        b for b in boxes
+        if getattr(b, "synthetic", False)
+        and b.color == "PURPLE"
+        and b.box_id.startswith("titleblk")]
+    if not logos:
+        return boxes
+    drop: set[str] = set()
+    for b in boxes:
+        if not b.box_id.startswith("colhdr_"):
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+        for lg in logos:
+            L = lg.px_bbox
+            if L[0] < cx < L[2] and L[1] < cy < L[3]:
+                drop.add(b.box_id)
+                break
+    if not drop:
+        return boxes
+    return [b for b in boxes if b.box_id not in drop]
+
+
+_EXT_MT_ROW_PREFIX_RE = re.compile(r"^(minitable_\d+_ext\d+)")
+
+
+def _prune_mt_extension_cells_under_contour_orange(boxes: list) -> list:
+    """Drop ``minitable_*_ext*_mtcell*`` that sit on real contour ORANGE cells.
+
+    PDF-based mini-table extension can synthesize greens for rows the
+    morphological pipeline already recovered (wide schedules beside a
+    margin mini-table), which reads as bogus green on data.
+    """
+    oranges = [
+        b for b in boxes
+        if b.color == "ORANGE" and not getattr(b, "synthetic", False)
+    ]
+    if not oranges:
+        return boxes
+    drop_ids: set[str] = set()
+    for b in boxes:
+        if not getattr(b, "synthetic", False) or b.color != "GREEN":
+            continue
+        bid = b.box_id
+        if "ext" not in bid or (
+                "_mtcelld" not in bid and "_mtcellh" not in bid):
+            continue
+        mx0, my0, mx1, my1 = b.px_bbox
+        mcx = 0.5 * (mx0 + mx1)
+        mcy = 0.5 * (my0 + my1)
+        m_area = max(1, (mx1 - mx0) * (my1 - my0))
+        for o in oranges:
+            ox0, oy0, ox1, oy1 = o.px_bbox
+            ow, oh = ox1 - ox0, oy1 - oy0
+            if ow < 95 or oh < 7 or oh > 54:
+                continue
+            if not (ox0 < mcx < ox1 and oy0 < mcy < oy1):
+                continue
+            xa, ya = max(mx0, ox0), max(my0, oy0)
+            xb, yb = min(mx1, ox1), min(my1, oy1)
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            if inter / float(m_area) >= 0.32:
+                drop_ids.add(bid)
+                break
+    if not drop_ids:
+        return boxes
+    kept = [b for b in boxes if b.box_id not in drop_ids]
+    # Orphan ``*_ext*_mtrow`` after cell drops — remove empty row rings.
+    prefixes_with_cells: set[str] = set()
+    for b in kept:
+        m = _EXT_MT_ROW_PREFIX_RE.match(b.box_id)
+        if m and "_mtcelld" in b.box_id:
+            prefixes_with_cells.add(m.group(1))
+    drop_rows: set[str] = set()
+    for b in kept:
+        m = _EXT_MT_ROW_PREFIX_RE.match(b.box_id)
+        if not m or not b.box_id.endswith("_mtrow"):
+            continue
+        pfx = m.group(1)
+        if pfx not in prefixes_with_cells:
+            drop_rows.add(b.box_id)
+    if drop_rows:
+        kept = [b for b in kept if b.box_id not in drop_rows]
+    return kept
+
+
+def _titleblk_stray_panel_px(
+    pxb: tuple[int, int, int, int], W: int, cfg: Cfg,
+) -> bool:
+    """True if this purple bbox looks like a bogus ultrawide strip (drop it)."""
+    x0, y0, x1, y1 = pxb
+    bw, bh = x1 - x0, y1 - y0
+    if bh < 6 or bw < 10:
+        return True
+    ar = bw / float(max(bh, 1))
+    if bw > int(W * float(cfg.titleblock_logo_max_panel_width_frac)):
+        return True
+    if (ar > float(cfg.titleblock_logo_max_panel_aspect)
+            and bh < int(cfg.titleblock_logo_stray_max_h_px)):
+        return True
+    return False
+
+
+def _merge_titleblk_vertical_chain(
+    logos: list,
+    gap_y: int,
+    host_bbs: list[tuple[int, int, int, int]],
+    scale: float,
+) -> list:
+    """Stacked raster hits (e.g. wordmark + glyph) → one purple implant."""
+    if len(logos) <= 1:
+        return logos
+
+    def _host_of(pxb):
+        cx = 0.5 * (pxb[0] + pxb[2])
+        cy = 0.5 * (pxb[1] + pxb[3])
+        for hb in host_bbs:
+            if hb[0] < cx < hb[2] and hb[1] < cy < hb[3]:
+                return hb
+        return None
+
+    ordered = sorted(logos, key=lambda b: (b.px_bbox[1], b.px_bbox[0]))
+    groups: list[list] = []
+    cur: list = [ordered[0]]
+    for nxt in ordered[1:]:
+        px = cur[-1].px_bbox
+        nx = nxt.px_bbox
+        gap = nx[1] - px[3]
+        x_ovl = min(px[2], nx[2]) - max(px[0], nx[0])
+        wmin = min(px[2] - px[0], nx[2] - nx[0])
+        h_a = _host_of(px)
+        h_b = _host_of(nx)
+        if (h_a is not None and h_a == h_b and gap <= gap_y
+                and x_ovl >= 0.16 * max(12, wmin)):
+            cur.append(nxt)
+        else:
+            groups.append(cur)
+            cur = [nxt]
+    groups.append(cur)
+    merged: list = []
+    gid = 0
+    for grp in groups:
+        if len(grp) == 1:
+            merged.append(grp[0])
+            continue
+        u0 = min(b.px_bbox[0] for b in grp)
+        u1 = min(b.px_bbox[1] for b in grp)
+        u2 = max(b.px_bbox[2] for b in grp)
+        u3 = max(b.px_bbox[3] for b in grp)
+        ref = grp[0]
+        bid = f"titleblkgrp_{gid}"
+        gid += 1
+        merged.append(replace(
+            ref,
+            box_id=bid,
+            parent_box_id=ref.parent_box_id,
+            px_bbox=(u0, u1, u2, u3),
+            rect=Rect(u0 / scale, u1 / scale, u2 / scale, u3 / scale),
+            area_pt2=(u2 - u0) * (u3 - u1) / (scale * scale),
+        ))
+    return merged
+
+
+def _expand_titleblk_swallow_oranges(
+    logos: list,
+    all_boxes: list,
+    host_bbs: list[tuple[int, int, int, int]],
+    W: int,
+    H: int,
+    scale: float,
+    gap_px: int,
+    max_union_h: int,
+    min_orange_h: int,
+) -> list:
+    """Grow each purple ring to include neighbouring ORANGE in the same host."""
+    oranges = [
+        b for b in all_boxes
+        if b.color == "ORANGE" and not getattr(b, "synthetic", False)]
+    out: list = []
+    for lg in logos:
+        if lg.box_id.startswith(("titleblkslice_", "titleblkvect_", "titleblktext_")):
+            out.append(lg)
+            continue
+        shy = lg.px_bbox[3] - lg.px_bbox[1]
+        if lg.box_id.startswith("titleblkimg") and shy < 56:
+            out.append(lg)
+            continue
+        u = list(lg.px_bbox)
+        seed_h = max(8, u[3] - u[1])
+        cx = 0.5 * (u[0] + u[2])
+        cy = 0.5 * (u[1] + u[3])
+        host = None
+        for hb in host_bbs:
+            if hb[0] < cx < hb[2] and hb[1] < cy < hb[3]:
+                host = hb
+                break
+        cap_h = min(int(max_union_h), int(max(seed_h * 3.2 + 48, seed_h + 96)))
+        for _ in range(10):
+            grown = False
+            infl = (
+                max(0, u[0] - gap_px),
+                max(0, u[1] - gap_px),
+                min(W, u[2] + gap_px),
+                min(H, u[3] + gap_px),
+            )
+            for ob in oranges:
+                ox0, oy0, ox1, oy1 = ob.px_bbox
+                if (oy1 - oy0) < min_orange_h:
+                    continue
+                ocx = 0.5 * (ox0 + ox1)
+                ocy = 0.5 * (oy0 + oy1)
+                if not (infl[0] <= ocx <= infl[2] and infl[1] <= ocy <= infl[3]):
+                    continue
+                if host is not None:
+                    if not (host[0] <= ocx <= host[2] and host[1] <= ocy <= host[3]):
+                        continue
+                    hw = host[2] - host[0]
+                    oh = oy1 - oy0
+                    ow = ox1 - ox0
+                    # Revision / issue rows: full-width hairlines inside the shell.
+                    if hw > 40 and oh < 30 and ow > int(0.84 * hw):
+                        continue
+                nu = [min(u[0], ox0), min(u[1], oy0), max(u[2], ox1), max(u[3], oy1)]
+                if nu[3] - nu[1] > cap_h:
+                    continue
+                if nu != u:
+                    u = nu
+                    grown = True
+            if not grown:
+                break
+        if host is not None:
+            u[0] = max(host[0], u[0])
+            u[1] = max(host[1], u[1])
+            u[2] = min(host[2], u[2])
+            u[3] = min(host[3], u[3])
+        out.append(replace(
+            lg,
+            px_bbox=(u[0], u[1], u[2], u[3]),
+            rect=Rect(u[0] / scale, u[1] / scale, u[2] / scale, u[3] / scale),
+            area_pt2=(u[2] - u[0]) * (u[3] - u[1]) / (scale * scale),
+        ))
+    return out
+
+
+def _finalize_titleblk_boxes(
+    logos: list,
+    all_boxes: list,
+    hosts: list,
+    host_bbs: list[tuple[int, int, int, int]],
+    scale: float,
+    W: int,
+    H: int,
+) -> list:
+    """Clamp purple to narrow BLUE hosts and (for vector implants) tighten to ink."""
+    host_by_id = {h.box_id: h for h in hosts}
+    oranges = [
+        b for b in all_boxes
+        if b.color == "ORANGE" and not getattr(b, "synthetic", False)]
+    out: list = []
+    for lg in logos:
+        x0, y0, x1, y1 = lg.px_bbox
+        hb = None
+        if lg.parent_box_id and lg.parent_box_id in host_by_id:
+            hb = host_by_id[lg.parent_box_id].px_bbox
+        else:
+            best = 0
+            for hbb in host_bbs:
+                xa, ya = max(x0, hbb[0]), max(y0, hbb[1])
+                xb, yb = min(x1, hbb[2]), min(y1, hbb[3])
+                if xb <= xa or yb <= ya:
+                    continue
+                ia = (xb - xa) * (yb - ya)
+                if ia > best:
+                    best = ia
+                    hb = hbb
+        if hb is not None:
+            x0 = max(x0, hb[0] + 1)
+            y0 = max(y0, hb[1] + 1)
+            x1 = min(x1, hb[2] - 1)
+            y1 = min(y1, hb[3] - 1)
+        if lg.box_id.startswith("titleblkimg"):
+            if x1 <= x0 + 6 or y1 <= y0 + 6:
+                continue
+            pid = lg.parent_box_id
+            cx = 0.5 * (x0 + x1)
+            cy = 0.5 * (y0 + y1)
+            for h in hosts:
+                hx0, hy0, hx1, hy1 = h.px_bbox
+                if hx0 < cx < hx1 and hy0 < cy < hy1:
+                    pid = h.box_id
+                    break
+            out.append(replace(
+                lg,
+                parent_box_id=pid,
+                px_bbox=(x0, y0, x1, y1),
+                rect=Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+                area_pt2=(x1 - x0) * (y1 - y0) / (scale * scale),
+            ))
+            continue
+        if lg.box_id.startswith("titleblkslice_"):
+            if x1 <= x0 + 6 or y1 <= y0 + 6:
+                continue
+            out.append(replace(
+                lg,
+                px_bbox=(x0, y0, x1, y1),
+                rect=Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+                area_pt2=(x1 - x0) * (y1 - y0) / (scale * scale),
+            ))
+            continue
+        if lg.box_id.startswith("titleblkvect_"):
+            if x1 <= x0 + 6 or y1 <= y0 + 6:
+                continue
+            out.append(replace(
+                lg,
+                px_bbox=(x0, y0, x1, y1),
+                rect=Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+                area_pt2=(x1 - x0) * (y1 - y0) / (scale * scale),
+            ))
+            continue
+        if lg.box_id.startswith("titleblktext_"):
+            if x1 <= x0 + 6 or y1 <= y0 + 6:
+                continue
+            out.append(replace(
+                lg,
+                px_bbox=(x0, y0, x1, y1),
+                rect=Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+                area_pt2=(x1 - x0) * (y1 - y0) / (scale * scale),
+            ))
+            continue
+        # Vector implants: shrink to union of ORANGE that materially overlaps.
+        ox0, oy0, ox1, oy1 = x0, y0, x1, y1
+        hit = False
+        for ob in oranges:
+            bx0, by0, bx1, by1 = ob.px_bbox
+            xa, ya = max(ox0, bx0), max(oy0, by0)
+            xb, yb = min(ox1, bx1), min(oy1, by1)
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            oa = max(1, (bx1 - bx0) * (by1 - by0))
+            pa = max(1, (ox1 - ox0) * (oy1 - oy0))
+            if inter / float(oa) >= 0.06 or inter / float(pa) >= 0.05:
+                ox0 = min(ox0, bx0)
+                oy0 = min(oy0, by0)
+                ox1 = max(ox1, bx1)
+                oy1 = max(oy1, by1)
+                hit = True
+        if hit:
+            x0, y0, x1, y1 = ox0, oy0, ox1, oy1
+            if hb is not None:
+                x0 = max(x0, hb[0] + 1)
+                y0 = max(y0, hb[1] + 1)
+                x1 = min(x1, hb[2] - 1)
+                y1 = min(y1, hb[3] - 1)
+        if x1 <= x0 + 6 or y1 <= y0 + 6:
+            continue
+        out.append(replace(
+            lg,
+            px_bbox=(x0, y0, x1, y1),
+            rect=Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+            area_pt2=(x1 - x0) * (y1 - y0) / (scale * scale),
+        ))
+    return out
+
+
+def _synthesize_titleblock_logo_boxes(
+    boxes: list,
+    fpage,
+    scale: float,
+    rotate_qt: int,
+    W: int,
+    H: int,
+    cfg: Cfg,
+    img_to_pdf_rect,
+) -> list:
+    """Emit ``titleblkimg_*`` / ``titleblkpanel_*`` synthetic PURPLE rings.
+
+    Targets the right-hand title block: embedded raster placements from the
+    PDF, plus large ORANGE cells that read as **graphic** (sparse text, tall
+    enough to avoid revision-row false positives) inside narrow BLUE shells.
+    """
+    import fitz as _fz_syn
+    pw, ph = float(fpage.rect.width), float(fpage.rect.height)
+    sidebar = cfg.sidebar_w_max_px
+    if sidebar is None:
+        sidebar = max(160, int(W * 0.13))
+    margin_x = int(W * float(cfg.titleblock_logo_margin_frac))
+    max_area = int(W * H * float(cfg.titleblock_logo_max_area_frac))
+
+    hosts: list = []
+    host_bbs: list[tuple[int, int, int, int]] = []
+    for b in boxes:
+        if b.color != "BLUE" or getattr(b, "synthetic", False):
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        bw = x1 - x0
+        if bw > int(sidebar * 1.45):
+            continue
+        cx = 0.5 * (x0 + x1)
+        if cx < margin_x - 8:
+            continue
+        hosts.append(b)
+        host_bbs.append((x0, y0, x1, y1))
+
+    def _centre_in_any_host(pxb: tuple[int, int, int, int]) -> bool:
+        for hb in host_bbs:
+            if _px_centroid_in_box(pxb, hb):
+                return True
+        return False
+
+    def _in_title_block_image(pxb: tuple[int, int, int, int]) -> bool:
+        cx = 0.5 * (pxb[0] + pxb[2])
+        if cx < margin_x:
+            return False
+        if _centre_in_any_host(pxb):
+            return True
+        return cx >= int(W * float(cfg.titleblock_logo_image_fallback_right_frac))
+
+    def _in_title_block_panel(pxb: tuple[int, int, int, int]) -> bool:
+        cx = 0.5 * (pxb[0] + pxb[2])
+        if cx < margin_x:
+            return False
+        # Graphic ORANGE panels must sit inside a detected narrow BLUE shell —
+        # a loose ``x > 0.72 W`` gate mis-tags drawing-index rows on wide sheets.
+        return _centre_in_any_host(pxb)
+
+    existing_ids = {b.box_id for b in boxes}
+    out: list = []
+    px_boxes: list[tuple[int, int, int, int]] = []
+
+    def _add_logo(
+            bid: str, ix0: int, iy0: int, ix1: int, iy1: int, parent_id: str | None,
+            *, gate: str = "image",
+    ):
+        nonlocal out, px_boxes
+        ix0 = max(0, min(W - 1, ix0 - 1))
+        iy0 = max(0, min(H - 1, iy0 - 1))
+        ix1 = max(0, min(W, ix1 + 1))
+        iy1 = max(0, min(H, iy1 + 1))
+        if ix1 <= ix0 + 4 or iy1 <= iy0 + 4:
+            return
+        pxb = (ix0, iy0, ix1, iy1)
+        if gate == "panel":
+            if not _in_title_block_panel(pxb):
+                return
+        else:
+            if not _in_title_block_image(pxb):
+                return
+        area = (ix1 - ix0) * (iy1 - iy0)
+        if area > max_area:
+            return
+        # Suppress duplicates / near-duplicates.
+        for ex in px_boxes:
+            xa, ya = max(ix0, ex[0]), max(iy0, ex[1])
+            xb, yb = min(ix1, ex[2]), min(iy1, ex[3])
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            u = area + (ex[2] - ex[0]) * (ex[3] - ex[1]) - inter
+            if u > 0 and inter / u > 0.55:
+                return
+        if bid in existing_ids:
+            return
+        existing_ids.add(bid)
+        px_boxes.append(pxb)
+        out.append(VisibleBox(
+            box_id=bid,
+            rect=Rect(ix0 / scale, iy0 / scale, ix1 / scale, iy1 / scale),
+            area_pt2=(ix1 - ix0) * (iy1 - iy0) / (scale * scale),
+            fill_ratio=1.0,
+            nested_depth=3,
+            is_outer_wrapper=False,
+            parent_box_id=parent_id,
+            color="PURPLE",
+            px_bbox=pxb,
+            children_count=0,
+            synthetic=True,
+        ))
+
+    # ── Embedded XObject images (logos, seals, photos) ─────────────────────
+    img_idx = 0
+    seen_xref: set[int] = set()
+    for info in fpage.get_images(full=True):
+        xref = int(info[0])
+        if xref in seen_xref:
+            continue
+        seen_xref.add(xref)
+        try:
+            rects = fpage.get_image_rects(xref, transform=False)
+        except (RuntimeError, ValueError, TypeError):
+            continue
+        for ir in rects:
+            ix0, iy0, ix1, iy1 = _fitz_rect_to_image_px(
+                ir, scale, rotate_qt, pw, ph)

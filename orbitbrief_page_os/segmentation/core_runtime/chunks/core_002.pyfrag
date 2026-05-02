@@ -1,0 +1,912 @@
+    """
+    if textpage is not None:
+        try:
+            n = min(textpage.count_chars(), 4000)
+        except Exception:
+            n = 0
+        sum_dx = sum_dy = 0.0
+        used = 0
+        last = None
+        for i in range(n):
+            try:
+                bx = textpage.get_charbox(i)
+            except Exception:
+                continue
+            if not bx:
+                continue
+            cx = (bx[0] + bx[2]) / 2.0
+            cy = (bx[1] + bx[3]) / 2.0
+            if last is not None:
+                dx = cx - last[0]
+                dy = cy - last[1]
+                # Filter noise: large jumps are word/line breaks, not in-word.
+                if abs(dx) < 5 and abs(dy) < 5:
+                    sum_dx += dx
+                    sum_dy += dy
+                    used += 1
+            last = (cx, cy)
+        if used >= 50:
+            abs_dx, abs_dy = abs(sum_dx), abs(sum_dy)
+            if abs_dx > abs_dy * dominance_ratio:
+                return 0 if sum_dx > 0 else 2
+            if abs_dy > abs_dx * dominance_ratio:
+                # PDF y is up → reading down (sum_dy<0) means text was rotated
+                # 90° CW when written; we undo it by rotating the rendered
+                # image 90° CCW = 3 quarter-turns (np.rot90 k=+1).
+                return 1 if sum_dy > 0 else 3
+
+    # Fallback: line-morphology dominance ⇒ rotate-or-not (always 1 turn).
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    bin_img = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 10)
+    h_kern = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
+    v_kern = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25))
+    h_lines = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, h_kern, iterations=1)
+    v_lines = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, v_kern, iterations=1)
+    h_count = int(cv2.countNonZero(h_lines))
+    v_count = int(cv2.countNonZero(v_lines))
+    if h_count == 0:
+        return 1 if v_count > 0 else 0
+    return 1 if (v_count / h_count) >= dominance_ratio else 0
+
+
+from .text_section_detection import (
+    TextSectionConfig,
+    detect_text_sections as _detect_text_sections_impl,
+)
+from .mini_table_detection import (
+    MiniTableConfig,
+    detect_mini_tables as _detect_mini_tables_impl,
+)
+
+
+def _resolve_sidebar_w_max(cfg: "Cfg", page_w_px: int) -> int:
+    """Pick sidebar-width cutoff in image px.  Explicit Cfg value wins;
+    otherwise derive 13% of page render width (= 200 px on a 1530-wide
+    landscape image, which is what TEST_3 / LV PDFs render to at 2.5×)."""
+    if cfg.sidebar_w_max_px is not None and not cfg.auto_calibrate:
+        return cfg.sidebar_w_max_px
+    return max(120, int(page_w_px * 0.13))
+
+
+# ── hairline-split recovery ───────────────────────────────────────────────────
+
+def _fix_hairline_splits(
+    boxes: list[VisibleBox],
+    rgb: np.ndarray,
+    scale: float,
+) -> list[VisibleBox]:
+    """Post-processing pass: recover hairline vertical dividers that the main
+    adaptive threshold (C=10) misses.
+
+    Two modes:
+      A) Full-section scan (Air Separator style):
+         Groups wide (>500 px) non-synthetic ORANGE boxes by parent_box_id.
+         If all siblings share the same full width (no narrower cells already
+         present), the entire group's y-extent is cropped as one tall image and
+         MORPH_OPEN is run with a kernel equal to the *full crop height*.  Only
+         true PDF hairlines that span every row survive; text strokes (which only
+         span a single row) are eliminated.  Requires ≥ 3 dividers to accept.
+
+      B) Narrow-cell interior scan (ELECTRICAL DATA style):
+         For boxes 50–250 px wide and ≥ 8 px tall, scans the interior 20–80%
+         of cell width at C=−5 with a near-full-height MORPH_OPEN kernel and
+         a high vertical-coverage threshold.  Requires EXACTLY 1 interior cluster
+         (the hairline divider) — multi-cluster cells are data rows with text,
+         not hairlines.  Both halves must contain dark pixels (content check).
+
+         Sibling propagation used to copy one row's divider x to every matching
+         sibling; a single false positive (e.g. schedule cells with ``"`` / ``/``)
+         then bisected entire columns.  Propagation now runs only when **≥ 2**
+         independent rows under the same parent agree on divider x (same bin).
+         A lone row may still split only if the peak band is ultra-thin and
+         near the cell centre (true one-row dual-column cells).
+    """
+    from collections import defaultdict
+
+    bgr      = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    MIN_CELL = 15   # px — reject any split producing a cell narrower than this
+    BORDER   = 2    # px — skip drawn-border pixels on each side for interior scans
+
+    # ── helper: cluster raw hot-pixel columns into divider positions ──────────
+    def _cluster(raw_peaks: np.ndarray) -> list[int]:
+        if not len(raw_peaks):
+            return []
+        divs: list[int] = []
+        s = p = int(raw_peaks[0])
+        for px in raw_peaks[1:]:
+            if int(px) - p > 5:
+                divs.append((s + p) // 2)
+                s = int(px)
+            p = int(px)
+        divs.append((s + p) // 2)
+        return divs
+
+    # ── helper: build VisibleBox pieces from divider x-positions ─────────────
+    def _make_pieces(box: VisibleBox, dividers_abs: list[int]) -> list[VisibleBox] | None:
+        x0, y0, x1, y1 = box.px_bbox
+        boundaries = [x0] + [int(d) for d in dividers_abs] + [x1]
+        pieces: list[VisibleBox] = []
+        for i, (bx0, bx1) in enumerate(zip(boundaries, boundaries[1:])):
+            bx0, bx1 = int(bx0), int(bx1)
+            if bx1 - bx0 < MIN_CELL:
+                return None   # any piece too narrow → reject whole split
+            pieces.append(VisibleBox(
+                box_id=f"{box.box_id}_hs{i}",
+                rect=Rect(
+                    x0=bx0 / scale, y0=y0 / scale,
+                    x1=bx1 / scale, y1=y1 / scale,
+                ),
+                area_pt2=((bx1 - bx0) / scale) * ((y1 - y0) / scale),
+                fill_ratio=box.fill_ratio,
+                nested_depth=box.nested_depth,
+                is_outer_wrapper=False,
+                parent_box_id=box.parent_box_id,
+                color="ORANGE",
+                px_bbox=(bx0, y0, bx1, y1),
+                children_count=0,
+                synthetic=False,   # must be False → rendered in Pass 3
+            ))
+        return pieces
+
+    # Separate boxes we might touch from everything else
+    orange_real: list[VisibleBox] = [
+        b for b in boxes
+        if b.color == "ORANGE" and not getattr(b, "synthetic", False)
+    ]
+    others: list[VisibleBox] = [
+        b for b in boxes
+        if b.color != "ORANGE" or getattr(b, "synthetic", False)
+    ]
+
+    remove_ids: set[str] = set()
+    injected:   list[VisibleBox] = []
+
+    # ── MODE A: full-section hairline scan (Air Separator) ────────────────────
+    parent_groups: dict[str, list[VisibleBox]] = defaultdict(list)
+    for b in orange_real:
+        if (b.px_bbox[2] - b.px_bbox[0]) > 500:
+            parent_groups[b.parent_box_id].append(b)
+
+    for parent_id, group in parent_groups.items():
+        widths = [b.px_bbox[2] - b.px_bbox[0] for b in group]
+        max_w  = max(widths)
+        # Skip if any sibling is already narrower (section already split)
+        if min(widths) < max_w * 0.85:
+            continue
+        # Need at least 2 rows so the full-height kernel is meaningful
+        if len(group) < 2:
+            continue
+        # Bounding box of the entire section
+        gx0 = min(b.px_bbox[0] for b in group)
+        gy0 = min(b.px_bbox[1] for b in group)
+        gx1 = max(b.px_bbox[2] for b in group)
+        gy1 = max(b.px_bbox[3] for b in group)
+        crop_h = gy1 - gy0
+        if crop_h < 20 or (gx1 - gx0) < 100:
+            continue
+        # Crop the whole section and run full-height MORPH_OPEN
+        crop = bgr[gy0:gy1, gx0:gx1]
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        thr  = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV, 15, -5)
+        kh   = max(3, crop_h - 2)
+        vk   = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kh))
+        vl   = cv2.morphologyEx(thr, cv2.MORPH_OPEN, vk)
+        col_sums  = vl.sum(axis=0)
+        min_str   = crop_h * 255 * 0.60
+        raw_peaks = np.where(col_sums > min_str)[0]
+        divs_rel  = _cluster(raw_peaks)
+        # Require at least 3 dividers (rules out single text-stroke false positives)
+        if len(divs_rel) < 3:
+            continue
+        divs_abs = [gx0 + d for d in divs_rel]
+        # Skip the topmost box — it is the section title band and must stay whole
+        min_y    = min(b.px_bbox[1] for b in group)
+        for box in group:
+            if box.px_bbox[1] == min_y:
+                continue          # leave title row unsplit
+            pieces = _make_pieces(box, divs_abs)
+            if pieces:
+                remove_ids.add(box.box_id)
+                injected.extend(pieces)
+
+    # ── MODE B: narrow-cell interior scan (ELECTRICAL DATA center divider) ─────
+    # Scans only the interior 20-80% of cell width to skip cell-border peaks.
+    # Requires EXACTLY 1 interior cluster — the hairline divider must be the
+    # only full-height vertical feature inside the cell (filters out data cells
+    # whose multi-column text produces multiple peaks at high coverage).
+    # Both halves must contain dark pixels (text) to avoid blank-cell FPs.
+    #
+    # Phase 1 collects candidates; phase 2 applies splits and restricts sibling
+    # propagation to divider positions confirmed by ≥ 2 rows (same parent).
+    MODE_B_COV_FRAC = 0.965
+    DIV_X_BIN_PX = 5
+    HAIRLINE_MAX_PEAK_BAND_PX = 10
+    SINGLE_ROW_BAND_MAX_PX = 4
+    SINGLE_ROW_FRAC_LO, SINGLE_ROW_FRAC_HI = 0.30, 0.70
+
+    mode_b_candidates: list[tuple[VisibleBox, list[int], list[VisibleBox],
+                                  int, float]] = []
+    for box in orange_real:
+        if box.box_id in remove_ids:
+            continue
+        x0, y0, x1, y1 = box.px_bbox
+        w, h = x1 - x0, y1 - y0
+        if not (50 < w <= 250 and h >= 8):   # h >= 8 catches short sub-header rows
+            continue
+        ix0, ix1 = x0 + BORDER, x1 - BORDER
+        iy0, iy1 = y0 + BORDER, y1 - BORDER
+        crop_w = ix1 - ix0
+        if crop_w < 4 or iy1 - iy0 < 2:
+            continue
+        crop = bgr[iy0:iy1, ix0:ix1]
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        thr  = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV, 15, -5)
+        vk   = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (1, max(3, iy1 - iy0 - 2)))
+        vl   = cv2.morphologyEx(thr, cv2.MORPH_OPEN, vk)
+        col_sums = vl.sum(axis=0)
+        min_str  = (iy1 - iy0) * 255 * MODE_B_COV_FRAC
+        # Search only interior 20-80% — cell borders create peaks at the edges
+        i_start = crop_w // 5
+        i_end   = crop_w * 4 // 5
+        if i_end <= i_start + 4:
+            continue
+        interior_peaks = np.where(col_sums[i_start:i_end] > min_str)[0]
+        if len(interior_peaks) == 0:
+            continue
+        peak_band_w = int(interior_peaks[-1] - interior_peaks[0] + 1)
+        if peak_band_w > HAIRLINE_MAX_PEAK_BAND_PX:
+            continue
+        # Require exactly 1 interior cluster: the hairline divider.
+        # Multi-cluster cells are data rows with text (not a clean hairline).
+        divs_interior = _cluster(interior_peaks)
+        if len(divs_interior) != 1:
+            continue
+        div_rel = divs_interior[0] + i_start   # relative to crop origin
+        # Content check: both halves must have actual dark pixels (text/lines).
+        left_g  = gray[:, :div_rel]
+        right_g = gray[:, div_rel + 1:]
+        MIN_DARK = 0.005   # 0.5 % dark pixels per half is enough for sparse text
+        if left_g.size  == 0 or (left_g  < 200).mean() < MIN_DARK:
+            continue
+        if right_g.size == 0 or (right_g < 200).mean() < MIN_DARK:
+            continue
+        div_abs = ix0 + div_rel
+        divs_abs = [div_abs]
+        pieces = _make_pieces(box, divs_abs)
+        if not pieces:
+            continue
+        div_frac = (float(div_abs) - float(x0)) / float(max(1, w))
+        mode_b_candidates.append(
+            (box, divs_abs, pieces, peak_band_w, div_frac))
+
+    by_key: dict[tuple[str, int], list[tuple[VisibleBox, list[int],
+                list[VisibleBox], int, float]]] = defaultdict(list)
+    for box, divs_abs, pieces, peak_band_w, div_frac in mode_b_candidates:
+        dpx = int(divs_abs[0])
+        key = (box.parent_box_id or "", dpx // DIV_X_BIN_PX)
+        by_key[key].append((box, divs_abs, pieces, peak_band_w, div_frac))
+
+    propagate_ok_keys: set[tuple[str, int]] = {
+        k for k, items in by_key.items() if len(items) >= 2}
+
+    mode_b_ids: set[str] = set()
+    for key, items in by_key.items():
+        apply_items = items
+        if len(items) == 1:
+            _box, _da, _pc, band_w, dfrac = items[0]
+            if not (
+                band_w <= SINGLE_ROW_BAND_MAX_PX
+                and SINGLE_ROW_FRAC_LO <= dfrac <= SINGLE_ROW_FRAC_HI
+            ):
+                apply_items = []
+        for box, divs_abs, pieces, _bw, _df in apply_items:
+            remove_ids.add(box.box_id)
+            mode_b_ids.add(box.box_id)
+            injected.extend(pieces)
+
+    # ── MODE B SIBLING PROPAGATION ────────────────────────────────────────────
+    # Same absolute hairline x to siblings only when ≥ 2 rows already agreed
+    # on that divider bin (``propagate_ok_keys``).  Stops one-row glyph FPs from
+    # slicing an entire schedule column.
+    propagate_jobs: list = []
+    for src_id in list(mode_b_ids):
+        src = next((b for b in orange_real if b.box_id == src_id), None)
+        if src is None:
+            continue
+        src_pieces = sorted(
+            [p for p in injected if p.box_id.startswith(f"{src_id}_hs")],
+            key=lambda p: p.px_bbox[0])
+        if len(src_pieces) < 2:
+            continue
+        divs_abs = [p.px_bbox[2] for p in src_pieces[:-1]]
+        pkey = (src.parent_box_id or "", int(divs_abs[0]) // DIV_X_BIN_PX)
+        if pkey not in propagate_ok_keys:
+            continue
+        propagate_jobs.append((divs_abs, src))
+
+    for divs_abs, src in propagate_jobs:
+        sx0, sy0, sx1, sy1 = src.px_bbox
+        src_w = sx1 - sx0
+        for sib in orange_real:
+            if sib.box_id in remove_ids:
+                continue
+            bx0, by0, bx1, by1 = sib.px_bbox
+            bw, bh = bx1 - bx0, by1 - by0
+            # Must share parent, overlap x range, have similar width, min height
+            if sib.parent_box_id != src.parent_box_id:
+                continue
+            if bx1 <= sx0 or bx0 >= sx1:
+                continue
+            if abs(bw - src_w) > 10:
+                continue
+            if bh < 8:
+                continue
+            pieces = _make_pieces(sib, divs_abs)
+            if pieces:
+                remove_ids.add(sib.box_id)
+                injected.extend(pieces)
+
+    # Rebuild: keep everything that wasn't replaced, add new pieces
+    kept = [b for b in orange_real if b.box_id not in remove_ids]
+    return others + kept + injected
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def detect(pdf_path: str | Path, page_index: int = 0,
+           cfg: Cfg | None = None) -> tuple[VisibleBoxResult, np.ndarray]:
+    """Returns (result, rgb_image_at_render_scale)."""
+    cfg = cfg or Cfg()
+    path = Path(pdf_path)
+
+    # render
+    doc = pdfium.PdfDocument(str(path))
+    page = doc[page_index]
+    scale = cfg.render_scale
+
+    # Auto-pick scale from a low-res probe if requested.  We do a quick
+    # threshold + contour pass at probe scale, find median candidate
+    # height, and pick a final scale that lands median row h on
+    # cfg.target_median_row_h_px (clamped to [auto_scale_min, auto_scale_max]).
+    if cfg.auto_scale:
+        probe_bmp = page.render(scale=cfg.auto_scale_probe, rotation=0)
+        probe_rgb = np.array(probe_bmp.to_pil())
+        probe_gray = cv2.cvtColor(probe_rgb, cv2.COLOR_RGB2GRAY)
+        probe_bin = cv2.adaptiveThreshold(
+            probe_gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV, 15, 10)
+        probe_mask = _line_mask(
+            probe_bin, max(8, int(cfg.line_kernel_px * cfg.auto_scale_probe / cfg.render_scale)),
+            cfg.line_iterations, cfg.seal_kernel_px, cfg.seal_iterations)
+        cnts, _ = cv2.findContours(probe_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        heights = [cv2.boundingRect(c)[3] for c in cnts
+                   if cv2.contourArea(c) > 20]
+        if heights:
+            s_h = sorted(heights)
+            probe_med = s_h[len(s_h) // 2]
+            if probe_med > 0:
+                scale = cfg.auto_scale_probe * (cfg.target_median_row_h_px / probe_med)
+                scale = max(cfg.auto_scale_min, min(cfg.auto_scale_max, scale))
+
+    bmp = page.render(scale=scale, rotation=0)
+    rgb = np.array(bmp.to_pil())   # H×W×3 uint8 RGB, portrait as stored in PDF
+
+    # Capture portrait geometry before rotation (needed for text-coord transforms)
+    H_portrait_px: int = rgb.shape[0]   # portrait height (→ landscape width after CW rotate)
+    page_height_pt: float = page.get_height()   # PDF page height in points
+    textpage = page.get_textpage()              # for sub-section title text extraction
+    # NOTE: doc.close() is deferred until AFTER synthesis, because textpage
+    # is tied to the document's lifetime in pypdfium2.
+
+    # Decide whether to rotate.  When auto_rotate=True (default), measure
+    # horizontal vs vertical line dominance in the freshly rendered image
+    # and rotate 90° CW only if vertical lines clearly dominate
+    # (= portrait-stored landscape sheet — TEST_3 / LV PDFs all match).
+    # Otherwise honour cfg.rotate_cw.
+    if cfg.auto_rotate:
+        cw_quarter_turns = _detect_rotation_quarter_turns(
+            rgb, cfg.rotate_vertical_dominance_ratio, textpage=textpage)
+    else:
+        cw_quarter_turns = 1 if cfg.rotate_cw else 0
+    if cw_quarter_turns:
+        # np.rot90(k=-N) rotates CW by N quarter-turns
+        rgb = np.rot90(rgb, k=-cw_quarter_turns).copy()
+
+    H, W = rgb.shape[:2]
+    total_px = float(H * W)
+    _rotate_decision = cw_quarter_turns
+
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    bin_img = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV,
+        cfg.adaptive_block, cfg.adaptive_C)
+
+    base_mask  = _line_mask(bin_img, cfg.line_kernel_px,       cfg.line_iterations, cfg.seal_kernel_px, cfg.seal_iterations)
+    micro_mask = _line_mask(bin_img, cfg.micro_line_kernel_px,  cfg.line_iterations, cfg.seal_kernel_px, cfg.seal_iterations)
+
+    stats: dict[str, Any] = {"W": W, "H": H, "rejects": {},
+                              "rotated_cw_quarter_turns": _rotate_decision,
+                              "rotated_cw": bool(_rotate_decision == 1),  # core field
+                              "render_scale_used": scale}
+    base_raw  = _candidates(base_mask,  cfg, total_px, stats, "base",  None, None)
+    micro_raw = _candidates(micro_mask, cfg, total_px, stats, "micro", cfg.micro_min_height_px, cfg.micro_min_area_px2)
+
+    # Resolve NMS / containment tolerances.  When an explicit cfg value is
+    # set we use it directly (preserves the current TEST_3 / LV defaults).
+    # When the field is None or auto_calibrate=True, derive from the
+    # median candidate height across all detected pre-NMS candidates so
+    # the tolerances scale with feature size rather than being hard-coded
+    # for one document family.
+    nms_tol_resolved, containment_tol_resolved = _resolve_tolerances(
+        cfg, base_raw + micro_raw)
+    stats["nms_tol_px"]         = nms_tol_resolved
+    stats["containment_tol_px"] = containment_tol_resolved
+
+    all_raw   = _merge(base_raw, micro_raw, nms_tol_resolved)
+    stats["merged"] = len(all_raw)
+
+    validated = []
+    for c in all_raw:
+        large = (c[0] / total_px) >= cfg.perim_small_area_fraction
+        if _perim_ok(c[1], c[2], c[3], c[4], base_mask, H, W, large, cfg):
+            validated.append(c)
+    stats["validated"] = len(validated)
+
+    suppressed = _nms(validated, cfg.nms_iou_threshold,
+                      cfg.nms_identity_area_ratio, nms_tol_resolved)
+    suppressed.sort(key=lambda t: (-t[0], t[1], t[2]))
+    stats["after_nms"] = len(suppressed)
+
+    parent_ids, child_counts, depths = _hierarchy(suppressed, containment_tol_resolved)
+
+    # Pre-build direct-children area index: children_areas[i] = sorted list of
+    # child areas (largest first). Used by Rule B to detect double-detection artifacts
+    # where a box's single child covers nearly the same area as the parent itself.
+    children_areas: list[list[float]] = [[] for _ in suppressed]
+    for j, cand_j in enumerate(suppressed):
+        p = parent_ids[j]
+        if p is not None:
+            children_areas[p].append(float(cand_j[0]))
+
+    # ── Auto-calibration / threshold resolution ──────────────────────────────
+    # Compute per-page row statistics from detected leaf-ish ORANGE cells so
+    # any threshold the user left as None (or auto_calibrate=True) can be
+    # filled from the document's own distribution rather than a global magic
+    # number.  Defaults preserve the current TEST_3 / Low_Voltage tuning.
+    res_thresholds = _resolve_thresholds(cfg, suppressed, parent_ids, child_counts)
+    sidebar_w_max = _resolve_sidebar_w_max(cfg, W)
+    res_thresholds["sidebar_w_max"] = sidebar_w_max
+    stats["thresholds"] = res_thresholds
+    rule_b_thin_h_max = res_thresholds["rule_b_thin_h_max"]
+    rule_b_block_h_min = res_thresholds["rule_b_block_h_min"]
+    gap_row_orange_asp_min = res_thresholds["gap_row_orange_asp_min"]
+    divider_asp_min = res_thresholds["divider_asp_min"]
+
+    boxes: list[VisibleBox] = []
+    for i, cand in enumerate(suppressed):
+        area_px, x, y, w, h, fill = cand
+        par = parent_ids[i]
+
+        if par is None:
+            # Rule 0: top-level → always BLUE
+            outer = True
+        elif child_counts[i] >= cfg.force_blue_min_children:
+            # Rule A: many children → section / table wrapper → BLUE
+            outer = True
+        elif child_counts[i] >= 1:
+            # Rule B: degenerate single-child wrappers only.
+            # Originally Rule B fired for any box with ≥1 child if it was wide
+            # enough or covered enough of its parent.  That mis-classified
+            # multi-cell DATA rows (ch=2-3) as section headers — e.g. an
+            # "RG-11 14 AWG, … | BELDEN | 89120 | CATV/P, CMP RATING" row
+            # whose row-wrapper happened to be full table width was being
+            # painted BLUE.
+            #
+            # A real "section wrapper that only happens to have one detected
+            # child" is the GENERAL-NOTES / single-child-near-duplicate case —
+            # by definition  child_counts == 1.  Multi-child rows are data,
+            # never headers.
+            frac = area_px / suppressed[par][0] if suppressed[par][0] > 0 else 0.0
+            full_col_width = (w >= cfg.rule_b_full_col_w_min)
+            wide_enough_for_frac = (w >= cfg.rule_b_wide_enough_for_frac)
+
+            # Double-detection guard (unchanged).
+            max_child_area = max(children_areas[i]) if children_areas[i] else 0.0
+            child_coverage = max_child_area / area_px if area_px > 0 else 0.0
+            parent_coverage = area_px / suppressed[par][0] if suppressed[par][0] > 0 else 0.0
+            double_detect = (
+                (child_coverage >= 0.88)
+                or (parent_coverage >= 0.90)
+                or (h < 25 and w < 230)
+            )
+
+            # Height gate (config-driven, see Cfg.rule_b_thin_h_max /
+            # rule_b_block_h_min).  Allow either:
+            #   • ch == 1 with h ≤ thin_h_max (thin label band) or
+            #     h ≥ block_h_min (large content block).
+            #   • ch == 2 with h ≥ block_h_min (real section wrapper with
+            #     header-strip + body-content children).
+            # Thin ch=2 boxes are multi-cell DATA rows and stay ORANGE.
+            ch_height_ok = (
+                (child_counts[i] == 1
+                 and (h <= rule_b_thin_h_max or h >= rule_b_block_h_min))
+                or (child_counts[i] == 2 and h >= rule_b_block_h_min)
+            )
+            # Wide, thin, single-child rows are almost always table **data** or a
+            # **column-header** band — not a section shell.  ``full_col_width``
+            # alone must not force BLUE there (otherwise bogus blue rectangles
+            # sit on cellular rows and TAG/MFGR header strips on many drawing sets).
+            thin_slack = 8
+            wide_thin_row = (
+                child_counts[i] == 1
+                and h <= rule_b_thin_h_max + thin_slack
+                and w >= int(W * 0.36)
+            )
+            area_path = (
+                frac >= cfg.force_blue_wrapper_area_fraction
+                and wide_enough_for_frac
+            )
+            if wide_thin_row:
+                base_outer = area_path
+            else:
+                base_outer = area_path or full_col_width
+            outer = ch_height_ok and (not double_detect) and base_outer
+        else:
+            # Rule C: leaf, no children → ORANGE
+            outer = False
+
+        color = "BLUE" if outer else "ORANGE"
+        boxes.append(VisibleBox(
+            box_id=f"v{i}",
+            rect=Rect(x/scale, y/scale, (x+w)/scale, (y+h)/scale),
+            area_pt2=area_px / scale**2,
+            fill_ratio=fill,
+            nested_depth=depths[i],
+            is_outer_wrapper=outer,
+            parent_box_id=(f"v{par}" if par is not None else None),
+            color=color,
+            px_bbox=(x, y, x+w, y+h),
+            children_count=child_counts[i],
+        ))
+
+    stats["total"] = len(boxes)
+    stats["blue"]   = sum(1 for b in boxes if b.color == "BLUE")
+    stats["orange"] = sum(1 for b in boxes if b.color == "ORANGE")
+
+    # ── Universal thin-stroke artifact rule (rules/thin_stroke_artifacts) ─────
+    # The "parentless = BLUE wrapper" classification above (line ~498) is
+    # correct for real cells but mis-promotes thin black-stroke decoration
+    # lines (e.g. drawn underlines beneath inline headings on test7 like
+    # ``MAIN FLOOR OCCUPANT LOAD``) to BLUE.  Reclassify these as ORANGE
+    # so they don't render as small blue rectangles competing with real
+    # section wrappers.  Discriminator: parentless leaf, h<=10 image px,
+    # height/width aspect ratio <= 0.1.  See RULES.md Rule 8.
+    boxes = reclassify_thin_stroke_artifacts(boxes)
+
+    # ── Post-Rule-8 re-classification: leafless wrappers → ORANGE ─────────
+    # The contour classifier above colours boxes BLUE when they have at
+    # least one detected child (Rule B in the classifier).  Rule 8
+    # subsequently DROPS thin-stroke decoration children (typographic
+    # underlines beneath in-cell sub-titles like ``EXTERIOR WALL`` inside
+    # the WALL column of EXTERIOR WALL ASSEMBLIES on test7).  After
+    # those drops, the parent BLUE wrapper has no remaining visible
+    # children — it's effectively a data cell that was misread as a
+    # wrapper because of a typographic underline that no longer renders.
+    # Recolor such leafless ``v*`` BLUE wrappers to ORANGE so the table
+    # data cells render uniformly orange.
+    #
+    # The rule is safe because Rule 8 only drops thin-stroke artifacts;
+    # legit cell-content children (other contour cells, table rows,
+    # text-section bodies) are not dropped.  A BLUE wrapper whose only
+    # children were thin-strokes is by definition a data cell with a
+    # decorative underline, not a structural shell.
+    contour_blue = [
+        b for b in boxes
+        if (not getattr(b, "synthetic", False)
+            and getattr(b, "color", None) == "BLUE"
+            and (getattr(b, "box_id", "") or "").startswith("v"))
+    ]
+    if contour_blue:
+        # Build child-count map keyed on parent_box_id, including ALL
+        # remaining boxes (synthetic and contour).
+        from collections import defaultdict
+        remaining_kids: dict[str, int] = defaultdict(int)
+        for b in boxes:
+            pid = getattr(b, "parent_box_id", None)
+            if pid:
+                remaining_kids[pid] += 1
+        for b in contour_blue:
+            if remaining_kids.get(b.box_id, 0) == 0:
+                # No surviving children — recolor as ORANGE.
+                try:
+                    setattr(b, "color", "ORANGE")
+                except Exception:
+                    object.__setattr__(b, "color", "ORANGE")
+
+    stats["blue"]   = sum(1 for b in boxes if b.color == "BLUE")
+    stats["orange"] = sum(1 for b in boxes if b.color == "ORANGE")
+
+    # ── synthesize section wrappers + title row boxes ─────────────────────────
+    synthetic = _synthesize_section_boxes(boxes, scale, cfg=cfg,
+                                          orange_asp_min=gap_row_orange_asp_min,
+                                          sidebar_w_max=sidebar_w_max,
+                                          textpage=textpage,
+                                          H_portrait_px=H_portrait_px,
+                                          page_height_pt=page_height_pt)
+    doc.close()   # safe to close now — textpage no longer needed
+
+    if synthetic:
+        boxes = boxes + synthetic
+        stats["synthetic"] = len(synthetic)
+        stats["total"] = len(boxes)
+        stats["blue"]   = sum(1 for b in boxes if b.color == "BLUE")
+        stats["orange"] = sum(1 for b in boxes if b.color == "ORANGE")
+
+    # ── synthesize gap-cell ORANGE border boxes ───────────────────────────────
+    gap_cells = _synthesize_gap_cells(
+        boxes, scale, cfg=cfg,
+        divider_asp_min=divider_asp_min,
+        sidebar_w_max=sidebar_w_max,
+        gray=gray,
+        pdf_path=str(path),
+        page_index=page_index,
+        rotate_qt=_rotate_decision % 4,
+    )
+    if gap_cells:
+        boxes = boxes + gap_cells
+        stats["gap_cells"] = len(gap_cells)
+        stats["total"] = len(boxes)
+        stats["orange"] = sum(1 for b in boxes if b.color == "ORANGE")
+
+    # ── Universal thin-header-row rule (rules/thin_header_row) ────────────
+    # headers (e.g. test7's ``TYPE | WALL | HEIGHT | FRR | STC | LB``
+    # row above EXTERIOR WALL ASSEMBLIES).  Emit synthetic ``colhdr_*``
+    # boxes for those cells so the renderer paints them CYAN —
+    # distinguishing column headers from regular data cells.
+    # See RULES.md Rule 14.
+    from orbitbrief_page_os.segmentation.rules import find_thin_header_rows
+    _thin_hdr_pairs = find_thin_header_rows(boxes)
+    if _thin_hdr_pairs:
+        # Reuse the highest current colhdr_* id so we don't collide
+        # with the existing colhdr emission pipeline.
+        _existing_chr_ids = [
+            int(b.box_id.split("_", 1)[1])
+            for b in boxes
+            if (getattr(b, "box_id", "") or "").startswith("colhdr_")
+            and b.box_id.split("_", 1)[1].isdigit()
+        ]
+        _next_chr_id = max(_existing_chr_ids, default=-1) + 1
+        _thin_hdr_synth = []
+        for _wrap, _cells in _thin_hdr_pairs:
+            for _c in _cells:
+                _cx0, _cy0, _cx1, _cy1 = _c.px_bbox
+                _bid = f"colhdr_{_next_chr_id}"
+                _next_chr_id += 1
+                _thin_hdr_synth.append(VisibleBox(
+                    box_id=_bid,
+                    rect=Rect(_cx0/scale, _cy0/scale,
+                              _cx1/scale, _cy1/scale),
+                    area_pt2=(_cx1-_cx0)*(_cy1-_cy0)/(scale*scale),
+                    fill_ratio=1.0,
+                    nested_depth=getattr(_c, "nested_depth", 2) + 1,
+                    is_outer_wrapper=False,
+                    parent_box_id=_wrap.box_id,
+                    color="BLUE",
+                    px_bbox=(_cx0, _cy0, _cx1, _cy1),
+                    children_count=0,
+                    synthetic=True,
+                ))
+        if _thin_hdr_synth:
+            boxes = boxes + _thin_hdr_synth
+            stats["thin_header_colhdrs"] = len(_thin_hdr_synth)
+            stats["total"] = len(boxes)
+
+    # ── Text-section detection (font-based, optional) ────────────────────────
+    # Bold ALL-CAPS spans become BLUE header bands; the text below each
+    # header (in the same column, up to the next header) becomes an ORANGE
+    # section box.  Only fires when the page has at least
+    # cfg.text_section_min_headers_per_page candidates, so it's a no-op on
+    # tabular pages where the box detector already does the work.
+    if cfg.detect_text_sections:
+        text_sections = _detect_text_sections_impl(
+            str(path), page_index,
+            scale=scale,
+            cw_quarter_turns=_rotate_decision,
+            visible_box_cls=VisibleBox,
+            rect_cls=Rect,
+            cfg=TextSectionConfig(
+                enabled=cfg.detect_text_sections,
+                min_header_chars=cfg.text_section_min_header_chars,
+                min_headers_per_page=cfg.text_section_min_headers_per_page,
+                max_header_height_pt=cfg.text_section_max_header_height_pt,
+                column_x_tol_pt=cfg.text_section_column_x_tol_pt,
+                band_pad_pt=cfg.text_section_band_pad_pt,
+            ),
+            # Pass already-detected boxes so text-section bboxes get
+            # clamped to the smallest containing BLUE wrapper (= the
+            # outer page frame on text-heavy pages, which keeps body
+            # wrappers from spilling into a side title block).
+            existing_boxes=boxes,
+        )
+        if text_sections:
+            boxes = boxes + text_sections
+            stats["text_sections"] = len(text_sections)
+            stats["total"]  = len(boxes)
+            stats["blue"]   = sum(1 for b in boxes if b.color == "BLUE")
+            stats["orange"] = sum(1 for b in boxes if b.color == "ORANGE")
+
+    # ── Mini-table detection (aligned text blocks) ──────────────────────────
+    if cfg.detect_mini_tables:
+        mini_tables = _detect_mini_tables_impl(
+            str(path), page_index,
+            scale=scale,
+            cw_quarter_turns=_rotate_decision,
+            visible_box_cls=VisibleBox,
+            rect_cls=Rect,
+            cfg=MiniTableConfig(
+                enabled=cfg.detect_mini_tables,
+                min_rows=cfg.mini_table_min_rows,
+                min_cols=cfg.mini_table_min_cols,
+                col_tol_pt=cfg.mini_table_col_tol_pt,
+                line_h_pt_max=cfg.mini_table_line_h_pt_max,
+                cell_pad_pt=cfg.mini_table_cell_pad_pt,
+            ),
+            existing_boxes=boxes,
+        )
+        if mini_tables:
+            boxes = boxes + mini_tables
+            stats["mini_tables"] = sum(
+                1 for b in mini_tables if b.box_id.endswith("_mtable"))
+            stats["mini_table_cells"] = sum(
+                1 for b in mini_tables if b.box_id.endswith("_mtcell"))
+            stats["total"]  = len(boxes)
+            stats["orange"] = sum(1 for b in boxes if b.color == "ORANGE")
+
+    # ── Universal abbreviation-tables rule (rules/abbreviation_tables) ────
+    # The generic mini_table_detection's strict cell-length filters
+    # (cell_max_reading_len_pt = 60, max_cell_len_pt = 35,
+    # max_avg_cell_len_pt = 22) were calibrated for narrow numeric/
+    # code schedule tables.  Abbreviation lists with ENGLISH-WORD
+    # definitions (e.g. test7's two-pair ABBREVIATIONS section:
+    # ``ACT  ACOUSTIC CEILING TILE  N/A  NOT APPLICABLE``) have
+    # definition cells in the 50-110 pt range — too long for the
+    # generic detector but well within "table cell" territory (paragraph
+    # wrap is 300+ pt).
+    #
+    # The dedicated detector finds 2-column or 4-column lists where
+    # the columns alternate short-anchor (abbreviation) and longer
+    # cell (definition), with regular line pitch.  See RULES.md
+    # Rule 16 / abbreviation_tables.py docstring for full discriminators.
+    from orbitbrief_page_os.segmentation.rules import find_abbreviation_tables
+    _abbr_tables = find_abbreviation_tables(str(path), page_index)
+    if _abbr_tables:
+        # Reuse mt_id counter so ids don't collide with the generic
+        # mini_table emission.
+        _existing_mt_ids = [
+            int(b.box_id.split("_", 2)[1])
+            for b in boxes
+            if b.box_id.startswith("minitable_")
+            and b.box_id.split("_", 2)[1].isdigit()
+        ]
+        _next_mt_id = max(_existing_mt_ids, default=0) + 1
+        _abbr_synth = []
+        # Convert PDF coordinates → image pixel coordinates.
+        # Use the same scale/rotation as the rest of the pipeline.
+        for _t in _abbr_tables:
+            tx0p, ty0p, tx1p, ty1p = _t["bbox_pdf"]
+            tx0 = int(tx0p * scale)
+            ty0 = int(ty0p * scale)
+            tx1 = int(tx1p * scale)
+            ty1 = int(ty1p * scale)
+            _mt_id = _next_mt_id
+            _next_mt_id += 1
+            # Frame box (GREEN _mtable)
+            _abbr_synth.append(VisibleBox(
+                box_id=f"minitable_{_mt_id}_mtable",
+                rect=Rect(tx0/scale, ty0/scale, tx1/scale, ty1/scale),
+                area_pt2=(tx1-tx0)*(ty1-ty0)/(scale*scale),
+                fill_ratio=1.0,
+                nested_depth=4,
+                is_outer_wrapper=False,
+                parent_box_id=None,
+                color="GREEN",
+                px_bbox=(tx0, ty0, tx1, ty1),
+                children_count=0,
+                synthetic=True,
+            ))
+            for _r, _row in enumerate(_t["rows"]):
+                _row_cell_pxs = []
+                for _c, (_sb, _stxt) in enumerate(_row):
+                    _cx0 = int(_sb[0] * scale)
+                    _cy0 = int(_sb[1] * scale)
+                    _cx1 = int(_sb[2] * scale)
+                    _cy1 = int(_sb[3] * scale)
+                    _row_cell_pxs.append((_cx0, _cy0, _cx1, _cy1))
+                    _abbr_synth.append(VisibleBox(
+                        box_id=f"minitable_{_mt_id}_r{_r}c{_c}_mtcelld",
+                        rect=Rect(_cx0/scale, _cy0/scale,
+                                   _cx1/scale, _cy1/scale),
+                        area_pt2=(_cx1-_cx0)*(_cy1-_cy0)/(scale*scale),
+                        fill_ratio=1.0,
+                        nested_depth=5,
+                        is_outer_wrapper=False,
+                        parent_box_id=f"minitable_{_mt_id}_mtable",
+                        color="GREEN",
+                        px_bbox=(_cx0, _cy0, _cx1, _cy1),
+                        children_count=0,
+                        synthetic=True,
+                    ))
+                # Per-row RED wrapper(s) (mtrow).  For 4-column
+                # abbreviation tables (two parallel abbr+defn pairs),
+                # emit TWO row wrappers — one for cells [0,1] (left
+                # pair) and one for cells [2,3] (right pair) — so it
+                # reads as two distinct entries on each visual line,
+                # not one entry split across the whole width.  For
+                # 2-column tables, emit a single wrapper as before.
+                _n_cols = _t["n_cols"]
+                if _n_cols == 4 and len(_row_cell_pxs) == 4:
+                    _pair_groups = [
+                        (0, _row_cell_pxs[0:2]),
+                        (1, _row_cell_pxs[2:4]),
+                    ]
+                else:
+                    _pair_groups = [(0, _row_cell_pxs)] if _row_cell_pxs else []
+                for _pi, _pair in _pair_groups:
+                    if not _pair:
+                        continue
+                    _rx0 = min(p[0] for p in _pair) - 1
+                    _ry0 = min(p[1] for p in _pair) - 1
+                    _rx1 = max(p[2] for p in _pair) + 1
+                    _ry1 = max(p[3] for p in _pair) + 1
+                    _suf = f"p{_pi}_" if len(_pair_groups) > 1 else ""
+                    _abbr_synth.append(VisibleBox(
+                        box_id=f"minitable_{_mt_id}_r{_r}_{_suf}mtrow",
+                        rect=Rect(_rx0/scale, _ry0/scale,
+                                   _rx1/scale, _ry1/scale),
+                        area_pt2=(_rx1-_rx0)*(_ry1-_ry0)/(scale*scale),
+                        fill_ratio=1.0,
+                        nested_depth=4,
+                        is_outer_wrapper=False,
+                        parent_box_id=f"minitable_{_mt_id}_mtable",
+                        color="RED",
+                        px_bbox=(_rx0, _ry0, _rx1, _ry1),
+                        children_count=0,
+                        synthetic=True,
+                    ))
+        if _abbr_synth:
+            boxes = boxes + _abbr_synth
+            stats["abbr_tables"] = len(_abbr_tables)
+            stats["total"] = len(boxes)
+
+    # ── Extend mini-table coverage (done inside fitz block below) ───────────
+    if False and mini_tables:  # placeholder — real code is in fitz block
+        all_orange_ns = [b for b in boxes
+                         if b.color == "ORANGE"]   # include synthetic wrappers too
+        frames = [b for b in mini_tables if b.box_id.endswith("_mtable")]
+        existing_cell_keys = {b.box_id for b in boxes}
+        extension_boxes: list = []
+
+        for fr in frames:
+            fx0, fy0, fx1, fy1 = fr.px_bbox
+            # Find smallest wrapper (ORANGE synthetic or BLUE non-synth)
+            # that fully contains this frame AND is larger than it.
+            candidates = []
+            synth_orange = [b for b in boxes if b.color == "ORANGE" and getattr(b,"synthetic",False)]
+            for wb in (synth_orange + [b for b in boxes
+                                           if b.color == "BLUE"
+                                           and not getattr(b, "synthetic", False)]):
+                wx0, wy0, wx1, wy1 = wb.px_bbox
+                if wx0 <= fx0 and wy0 <= fy0 and fx1 <= wx1 and fy1 <= wy1:
+                    area = (wx1-wx0)*(wy1-wy0)
+                    candidates.append((area, wb))
+            if not candidates:
+                continue
+            # Use the tightest (smallest area) wrapper.
+            _, wrapper = min(candidates, key=lambda x: x[0])
+            wx0, wy0, wx1, wy1 = wrapper.px_bbox

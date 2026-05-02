@@ -1,0 +1,700 @@
+            if (ix1 - ix0) < cfg.titleblock_logo_min_side_px:
+                continue
+            if (iy1 - iy0) < cfg.titleblock_logo_min_side_px:
+                continue
+            pxb = (ix0, iy0, ix1, iy1)
+            parent_id = None
+            best_ia = 0
+            for h in hosts:
+                hb = h.px_bbox
+                xa, ya = max(ix0, hb[0]), max(iy0, hb[1])
+                xb, yb = min(ix1, hb[2]), min(iy1, hb[3])
+                if xb <= xa or yb <= ya:
+                    continue
+                ia = (xb - xa) * (yb - ya)
+                if ia > best_ia:
+                    best_ia = ia
+                    parent_id = h.box_id
+            _add_logo(f"titleblkimg_{img_idx}", ix0, iy0, ix1, iy1, parent_id,
+                      gate="image")
+            img_idx += 1
+
+    # ── Vector-only mark in upper BLUE band (no usable XObject, some ``nti`` PDFs)
+    page_drawings = fpage.get_drawings() or []
+    draw_fb_idx = 0
+    for h in hosts:
+        hx0, hy0, hx1, hy1 = h.px_bbox
+        bw_c = hx1 - hx0
+        bh_c = hy1 - hy0
+        if bh_c < 62 or bw_c < 100 or bw_c > 252:
+            continue
+        band_bot = hy0 + max(30, min(int(0.46 * bh_c), 132))
+        band_px = (hx0 + 2, hy0 + 2, hx1 - 2, band_bot)
+        band_area = max(1, (band_px[2] - band_px[0]) * (band_px[3] - band_px[1]))
+        cov = 0
+        for ex in px_boxes:
+            xa = max(band_px[0], ex[0])
+            ya = max(band_px[1], ex[1])
+            xb = min(band_px[2], ex[2])
+            yb = min(band_px[3], ex[3])
+            if xb > xa and yb > ya:
+                cov += (xb - xa) * (yb - ya)
+        if cov / float(band_area) > 0.34:
+            continue
+        clip = img_to_pdf_rect(band_px[0], band_px[1], band_px[2], band_px[3])
+        if clip.is_empty or clip.width < 1.5 or clip.height < 1.5:
+            continue
+        clip_area = max(1e-6, float(clip.width * clip.height))
+        best_ir = None
+        best_a = 0.0
+        for d in page_drawings:
+            r = d.get("rect")
+            if r is None or r.is_empty:
+                continue
+            if r.width < 0.32 or r.height < 0.32:
+                continue
+            if not clip.intersects(r):
+                continue
+            ir = clip & r
+            if ir.is_empty:
+                continue
+            a = float(ir.get_area()) if hasattr(ir, "get_area") else (
+                ir.width * ir.height)
+            if a < 5.0:
+                continue
+            if ir.width > 0.88 * clip.width and ir.height > 0.20 * clip.height:
+                continue
+            if a > 0.78 * clip_area:
+                continue
+            if ir.width > 0.78 * clip.width:
+                continue
+            if a > best_a:
+                best_a = a
+                best_ir = ir
+        if best_ir is None or best_ir.is_empty:
+            continue
+        irf = _fz_syn.Rect(
+            float(best_ir.x0), float(best_ir.y0),
+            float(best_ir.x1), float(best_ir.y1))
+        vix0, viy0, vix1, viy1 = _fitz_rect_to_image_px(
+            irf, scale, rotate_qt, pw, ph)
+        vix0 = max(hx0 + 1, vix0 - 4)
+        viy0 = max(hy0 + 1, viy0 - 4)
+        vix1 = min(hx1 - 1, vix1 + 4)
+        viy1 = min(band_bot, viy1 + 5)
+        if vix1 <= vix0 + 10 or viy1 <= viy0 + 8:
+            continue
+        parent_id = None
+        if _px_centroid_in_box((vix0, viy0, vix1, viy1), h.px_bbox):
+            parent_id = h.box_id
+        _add_logo(
+            f"titleblkvect_{draw_fb_idx}", vix0, viy0, vix1, viy1, parent_id,
+            gate="panel")
+        draw_fb_idx += 1
+
+    # ── Vector “logo panels”: big ORANGE, sparse text, inside title shell ───
+    panel_idx = 0
+    for b in boxes:
+        if b.color != "ORANGE" or getattr(b, "synthetic", False):
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        pxb = (x0, y0, x1, y1)
+        if not _in_title_block_panel(pxb):
+            continue
+        bw, bh = x1 - x0, y1 - y0
+        area = bw * bh
+        if area < cfg.titleblock_logo_panel_min_area_px2:
+            continue
+        if area > cfg.titleblock_logo_panel_max_area_px2:
+            continue
+        if bh < cfg.titleblock_logo_panel_min_height_px:
+            continue
+        ar = bw / float(max(bh, 1))
+        if ar < 0.22 or ar > 7.5:
+            continue
+        if (ar > float(cfg.titleblock_logo_max_panel_aspect)
+                and bh < int(cfg.titleblock_logo_stray_max_h_px)):
+            continue
+        clip = img_to_pdf_rect(x0, y0, x1, y1)
+        txt = (fpage.get_textbox(clip) or "").strip()
+        n_alpha = sum(1 for c in txt if c.isalpha())
+        nlines = txt.count("\n") + (1 if txt else 0)
+        if len(txt) > cfg.titleblock_logo_panel_max_text_chars:
+            continue
+        if nlines > cfg.titleblock_logo_panel_max_lines:
+            continue
+        if n_alpha > cfg.titleblock_logo_panel_max_alpha_chars:
+            continue
+        # Skip revision-style dense short rows (many digits / slashes).
+        if txt and sum(ch.isdigit() for ch in txt) > max(10, n_alpha // 2):
+            continue
+        parent_id = None
+        for h in hosts:
+            if _px_centroid_in_box(pxb, h.px_bbox):
+                parent_id = h.box_id
+                break
+        if parent_id is None:
+            continue
+        # Skip ORANGE that mostly duplicates an embedded image we already boxed.
+        ov_best = 0.0
+        for ex in px_boxes:
+            xa, ya = max(x0, ex[0]), max(y0, ex[1])
+            xb, yb = min(x1, ex[2]), min(y1, ex[3])
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            ov_best = max(ov_best, inter / float(area))
+        if ov_best > 0.72:
+            continue
+        _add_logo(f"titleblkpanel_{panel_idx}", x0, y0, x1, y1, parent_id,
+                  gate="panel")
+        panel_idx += 1
+
+    # ── First visual band inside tall ORANGE (e.g. ``nti`` dingbats + first line)
+    slice_idx = 0
+    _slice_parent_ids: set[str] = set()
+    for b in boxes:
+        if b.color != "ORANGE" or getattr(b, "synthetic", False):
+            continue
+        if b.box_id in _slice_parent_ids:
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        pxb = (x0, y0, x1, y1)
+        if not _in_title_block_panel(pxb):
+            continue
+        bh = y1 - y0
+        bw = x1 - x0
+        if bh < 96 or bw > 220 or bw < 90:
+            continue
+        clip = img_to_pdf_rect(x0, y0, x1, y1)
+        words = fpage.get_text("words", clip=clip) or []
+        if len(words) < 1:
+            continue
+        ws = sorted(words, key=lambda w: (w[1], w[0]))
+        bands: list[list] = []
+        cur = [ws[0]]
+        for j in range(1, len(ws)):
+            pr, w = cur[-1], ws[j]
+            if (w[1] - pr[3] > 13.0
+                    or w[1] - cur[0][1] > 34.0):
+                bands.append(cur)
+                cur = [w]
+            else:
+                cur.append(w)
+        bands.append(cur)
+        if len(bands) < 1:
+            continue
+        first = bands[0]
+        fx0 = min(w[0] for w in first)
+        fy0 = min(w[1] for w in first)
+        fx1 = max(w[2] for w in first)
+        fy1 = max(w[3] for w in first)
+        fh_px = (fy1 - fy0) * scale
+        if len(bands) >= 2:
+            if fh_px > 72 or fh_px < 10:
+                continue
+        else:
+            # One text band in a tall cell (e.g. ``nti`` + address as one line group).
+            if bh < 88 or fh_px > 72 or fh_px < 8:
+                continue
+            if len(first) > 14:
+                continue
+        ir = _fz_syn.Rect(fx0, fy0, fx1, fy1)
+        ix0, iy0, ix1, iy1 = _fitz_rect_to_image_px(
+            ir, scale, rotate_qt, pw, ph)
+        ix0 = max(x0 + 1, ix0 - 3)
+        iy0 = max(y0 + 1, iy0 - 3)
+        ix1 = min(x1 - 1, ix1 + 3)
+        iy1 = min(y1 - 1, iy1 + 3)
+        if ix1 <= ix0 + 8 or iy1 <= iy0 + 10:
+            continue
+        parent_id = None
+        for h in hosts:
+            if _px_centroid_in_box((ix0, iy0, ix1, iy1), h.px_bbox):
+                parent_id = h.box_id
+                break
+        if parent_id is None:
+            continue
+        _add_logo(f"titleblkslice_{slice_idx}", ix0, iy0, ix1, iy1, parent_id,
+                  gate="panel")
+        _slice_parent_ids.add(b.box_id)
+        slice_idx += 1
+
+    # ── Wordmarks (vector text logos like ``nti``) ───────────────────────────
+    word_idx = 0
+    for b in boxes:
+        if b.color != "ORANGE" or getattr(b, "synthetic", False):
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        pxb = (x0, y0, x1, y1)
+        if not _in_title_block_panel(pxb):
+            continue
+        bw, bh = x1 - x0, y1 - y0
+        area = bw * bh
+        if area < cfg.titleblock_logo_wordmark_min_area_px2:
+            continue
+        if area > cfg.titleblock_logo_wordmark_max_area_px2:
+            continue
+        if bh < 20 or bh > 220:
+            continue
+        if bw < 32 or bw > 520:
+            continue
+        ar = bw / float(max(bh, 1))
+        if ar < 0.28 or ar > 5.8:
+            continue
+        clip = img_to_pdf_rect(x0, y0, x1, y1)
+        txt = (fpage.get_textbox(clip) or "").strip()
+        n_alpha = sum(1 for c in txt if c.isalpha())
+        nlines = txt.count("\n") + (1 if txt else 0)
+        if n_alpha > cfg.titleblock_logo_wordmark_max_alpha_chars:
+            continue
+        if nlines > cfg.titleblock_logo_wordmark_max_lines:
+            continue
+        if txt and sum(ch.isdigit() for ch in txt) > max(12, n_alpha // 2):
+            continue
+        parent_id = None
+        for h in hosts:
+            if _px_centroid_in_box(pxb, h.px_bbox):
+                parent_id = h.box_id
+                break
+        if parent_id is None:
+            continue
+        ov_best = 0.0
+        for ex in px_boxes:
+            xa, ya = max(x0, ex[0]), max(y0, ex[1])
+            xb, yb = min(x1, ex[2]), min(y1, ex[3])
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            ov_best = max(ov_best, inter / float(area))
+        if ov_best > 0.62:
+            continue
+        _add_logo(f"titleblkword_{word_idx}", x0, y0, x1, y1, parent_id,
+                  gate="panel")
+        word_idx += 1
+
+    # ── PDF text spans (``nti`` + tagline) inside narrow BLUE when no image hit
+    text_fb_idx = 0
+    _nti_txt_pat = re.compile(r"\bnti\b", re.I)
+    for h in hosts:
+        hx0, hy0, hx1, hy1 = h.px_bbox
+        bh_c = hy1 - hy0
+        bw_c = hx1 - hx0
+        if bh_c < 58 or bw_c < 100 or bw_c > 260:
+            continue
+        band_bot = hy0 + max(28, min(int(0.50 * bh_c), 140))
+        band_px = (hx0 + 2, hy0 + 2, hx1 - 2, band_bot)
+        b_area = max(1, (band_px[2] - band_px[0]) * (band_px[3] - band_px[1]))
+        cov = 0
+        for ex in px_boxes:
+            xa = max(band_px[0], ex[0])
+            ya = max(band_px[1], ex[1])
+            xb = min(band_px[2], ex[2])
+            yb = min(band_px[3], ex[3])
+            if xb > xa and yb > ya:
+                cov += (xb - xa) * (yb - ya)
+        if cov / float(b_area) > 0.30:
+            continue
+        clip = img_to_pdf_rect(hx0, hy0, hx1, hy1)
+        td = fpage.get_text("dict", clip=clip) or {}
+        span_rects: list = []
+        for block in td.get("blocks") or []:
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines") or []:
+                for sp in line.get("spans") or []:
+                    st = (sp.get("text") or "").strip()
+                    if not st:
+                        continue
+                    if (not _nti_txt_pat.search(st)
+                            and "network technologies" not in st.lower()):
+                        continue
+                    bb = sp.get("bbox")
+                    if not bb or len(bb) < 4:
+                        continue
+                    span_rects.append(
+                        _fz_syn.Rect(float(bb[0]), float(bb[1]),
+                                     float(bb[2]), float(bb[3])))
+        if not span_rects:
+            continue
+        ur = span_rects[0]
+        for rr in span_rects[1:]:
+            ur |= rr
+        ix0, iy0, ix1, iy1 = _fitz_rect_to_image_px(
+            ur, scale, rotate_qt, pw, ph)
+        ix0 = max(hx0 + 1, ix0 - 16)
+        iy0 = max(hy0 + 1, iy0 - 12)
+        ix1 = min(hx1 - 1, ix1 + 16)
+        iy1 = min(hy0 + int(0.54 * bh_c), iy1 + 18)
+        if ix1 <= ix0 + 14 or iy1 <= iy0 + 12:
+            continue
+        parent_id = h.box_id if _px_centroid_in_box(
+            (ix0, iy0, ix1, iy1), h.px_bbox) else None
+        _add_logo(
+            f"titleblktext_{text_fb_idx}", ix0, iy0, ix1, iy1, parent_id,
+            gate="panel")
+        text_fb_idx += 1
+
+    out = [b for b in out if not _titleblk_stray_panel_px(b.px_bbox, W, cfg)]
+    out = _merge_titleblk_vertical_chain(
+        out, int(cfg.titleblock_logo_merge_gap_y_px), host_bbs, scale)
+    out = _expand_titleblk_swallow_oranges(
+        out, boxes, host_bbs, W, H, scale,
+        int(cfg.titleblock_logo_expand_gap_px),
+        int(cfg.titleblock_logo_expand_max_height_px),
+        int(cfg.titleblock_logo_expand_min_orange_h_px),
+    )
+    return _finalize_titleblk_boxes(out, boxes, hosts, host_bbs, scale, W, H)
+
+
+# ── tiny BBox stand-in ───────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Rect:
+    x0: float; y0: float; x1: float; y1: float
+
+
+# ── data types ────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class VisibleBox:
+    box_id: str
+    rect: Rect
+    area_pt2: float
+    fill_ratio: float
+    nested_depth: int
+    is_outer_wrapper: bool
+    parent_box_id: str | None
+    color: str                  # "BLUE", "ORANGE", "GREEN", "RED", "PURPLE", …
+    px_bbox: tuple[int,int,int,int] = field(default_factory=tuple)
+    children_count: int = 0
+    synthetic: bool = False      # True = post-generated section/title box
+
+
+@dataclass
+class VisibleBoxResult:
+    boxes: list[VisibleBox]
+    image_width: int
+    image_height: int
+    debug_stats: dict[str, Any]
+
+
+# ── config ────────────────────────────────────────────────────────────────────
+
+@dataclass
+class Cfg:
+    render_scale: float = 2.5
+
+    # adaptive threshold
+    adaptive_block: int = 15
+    adaptive_C: int = 10
+
+    # base-pass morphology
+    line_kernel_px: int = 25
+    line_iterations: int = 2
+
+    # micro-pass morphology
+    micro_line_kernel_px: int = 12
+    micro_min_area_px2: float = 150.0  # ← lowered from 200
+    micro_min_height_px: int = 6      # ← lowered from 8
+
+    # gap-seal dilation
+    seal_kernel_px: int = 3
+    seal_iterations: int = 2        # ← bumped from 1→2: better closes outer-frame gaps
+
+    # candidate size/shape
+    min_area_px2: float = 200.0      # ← lowered from 500: catches small cells in dense tables
+    max_area_fraction: float = 0.97
+    min_width_px: int = 15
+    min_height_px: int = 6           # ← lowered from 10: catches ~2.4pt rows at 2.5x scale
+    min_aspect: float = 0.018       # allows thin separator columns (~19px wide, 740px tall)
+    max_aspect: float = 120.0       # ← raised from 50: h=6px × w=390px rows give asp≈65 (section headers)
+    min_fill_ratio: float = 0.15    # ← loosened slightly (from 0.18)
+    min_polygon_vertices: int = 4
+    max_polygon_vertices: int = 24  # ← more room for complex outlines
+    polygon_epsilon_ratio: float = 0.02  # ← finer approx (was 0.03)
+
+    # perimeter validation (asymmetric)
+    perim_small_area_fraction: float = 0.04
+    perim_small_min_sides: int = 4
+    perim_small_min_coverage: float = 0.30   # ← slightly loosened (was 0.35)
+    perim_large_min_sides: int = 2
+    perim_large_min_coverage: float = 0.12   # ← slightly loosened (was 0.15)
+    perim_sample_px: int = 5
+    perim_edge_margin_px: int = 8            # ← wider edge auto-pass zone
+
+    # NMS.  nms_tol_px is the soft-overlap tolerance.  Set to None to
+    # auto-derive from the page's median candidate height (≈ 0.7 × median,
+    # clamped to [4, 14]).
+    nms_iou_threshold: float = 0.85
+    nms_identity_area_ratio: float = 0.88    # near-duplicate suppression threshold
+    nms_tol_px: int | None = 10
+
+    # hierarchy / color rules.  containment_tol_px is the soft-containment
+    # tolerance.  Set to None to auto-derive (≈ 1.4 × median candidate
+    # height, clamped to [8, 24]).
+    containment_tol_px: int | None = 16
+    # Rule A: ≥ N children → structural wrapper → BLUE (works for tables)
+    force_blue_min_children: int = 3
+    # Rule B: ch=1 box whose child is a near-duplicate of itself AND is large
+    # relative to parent → treat as standalone section wrapper → BLUE.
+    # Catches text-block sections like "GENERAL NOTES" that have only an
+    # outer + inner border rectangle detected.
+    force_blue_wrapper_area_fraction: float = 0.020  # ≥ 2.0 % of parent area
+
+    # Rule B height gates (px).  Section-wrapper candidates with ch ∈ {1, 2}
+    # must satisfy a height range to be promoted to BLUE.  This separates
+    # legitimate label bands and large content blocks from data rows that
+    # happen to have a single inner child detected.  Set to None to enable
+    # auto-calibration from per-page median row height.
+    rule_b_thin_h_max: int | None = 20         # h ≤ this → thin-label-band branch
+    rule_b_block_h_min: int | None = 60        # h ≥ this → large-content-block branch
+
+    # Rule B width gates (px).
+    rule_b_full_col_w_min: int = 130            # w ≥ this → "spec-section column wide" → BLUE eligible
+    rule_b_wide_enough_for_frac: int = 150      # w ≥ this → can use area-fraction path
+
+    # Gap-row detection (the thin full-width strips that become BLUE
+    # synthetic title bands).  Real header strips are very narrow
+    # (asp 30-65); data rows that happened to merge into one cell are
+    # asp ≈ 20-25 and must NOT qualify.
+    gap_row_h_max: int = 30                     # max strip height (px)
+    gap_row_w_frac: float = 0.85                # min width as fraction of wrapper
+    gap_row_orange_asp_min: float | None = 25.0 # ORANGE strips: aspect threshold
+    gap_row_blue_asp_min: float = 10.0          # BLUE strips: aspect threshold (more lenient)
+    gap_row_blue_top_offset_px: int = 30        # BLUE strip must start ≥ N px below wrapper top
+
+    # Gap-cell synthesis no-gap-zone rules.  A full-width ORANGE cell
+    # blacklists its y-range from gap-cell projection IF it looks like
+    # a real divider strip OR a paragraph body.
+    divider_h_max: int = 18                     # h ≤ this AND aspect ok → header divider
+    divider_asp_min: float | None = 25.0        # min aspect to qualify as divider
+    body_block_h_min: int = 30                  # h > this → paragraph body
+
+    # Sub-label detection ("SPLITTERS"-style rows).
+    sublabel_w_frac: float = 0.85               # combined width as fraction of wrapper
+    sublabel_isolation_gap_min: int = 5         # min gap (px) between title band and sublabel
+    sublabel_isolation_gap_blue: int = 8        # min gap inside _blue_inter branch
+
+    # Title-band column-header extension.  When the gap_row sits flush
+    # against a row of cells (gap ≤ this), extend the band to cover them.
+    column_header_h_max_floor: int = 15         # min ceiling for header_h_max
+    column_header_h_max_factor: float = 2.1     # ceiling multiplier vs gap_row height
+
+    # Table wrappers (gap-cell synthesis).
+    table_wrapper_min_w: int = 100              # min width to qualify as a table
+
+    # Sidebar table threshold (px).  Wrappers narrower than this are treated
+    # as side tables (REVISIONS-style): processed at d=1, eligible for the
+    # narrow-aspect gap_row branch, and accepted by gap-cell synth even
+    # without ≥ 3 children.  Set to None to derive from page width
+    # (page_w * 0.13 is the rule used; preserves 200 px on a 1530-px-wide
+    # rendered page).
+    sidebar_w_max_px: int | None = 200
+
+    # Render rotation.
+    # When auto_rotate=True (default), the renderer measures horizontal vs
+    # vertical line dominance in the freshly rendered image and rotates
+    # 90° CW only if vertical lines clearly dominate (= portrait-stored
+    # landscape sheet).  When auto_rotate=False, rotate_cw is used as
+    # an explicit override.
+    auto_rotate: bool = True
+    rotate_cw: bool = True
+    rotate_vertical_dominance_ratio: float = 1.15  # vert/horiz must exceed this to rotate
+
+    # Render scale.
+    # When auto_scale=True (opt-in; OFF by default to preserve regressions),
+    # the renderer probes at scale=auto_scale_probe and re-renders at a
+    # scale that lands the median detected row height at
+    # target_median_row_h_px.  When False, render_scale above is used
+    # verbatim.  Bounded to [auto_scale_min, auto_scale_max] so we never
+    # blow up memory on tiny features.
+    auto_scale: bool = False
+    auto_scale_probe: float = 1.0
+    target_median_row_h_px: int = 14
+    auto_scale_min: float = 1.0
+    auto_scale_max: float = 4.0
+
+    # Auto-calibration: when True, fields above set to None are derived
+    # from per-page statistics (median row height, median aspect).
+    # Defaults preserve the current TEST_3 / Low_Voltage tuning.
+    auto_calibrate: bool = False
+
+    # ── Text-section detection (font-based) ────────────────────────────────
+    # Finds BOLD ALL-CAPS section-title spans via PyMuPDF font info and
+    # paints a BLUE band over each one.  The band spans the FULL column
+    # width (not just the header text bbox) so the title is clearly
+    # highlighted.  No body wrapper is drawn — only the title.
+    # Reading-direction-aware so it works on sideways-stored pages.
+    detect_text_sections: bool = True
+    text_section_min_header_chars: int = 2     # short tokens like "C.I." count
+    text_section_min_headers_per_page: int = 4
+    text_section_max_header_height_pt: float = 20.0
+    text_section_column_x_tol_pt: float = 14.0   # spans within this dx are "same column"
+    text_section_band_pad_pt: float = 1.0        # PDF-pt pad around header bbox
+                                                  # (just enough for the underline below the bold text)
+
+    # ── Mini-table detection (font-less; aligned-text-span based) ──────────
+    # Finds multi-row multi-column aligned text blocks embedded in body
+    # paragraphs (e.g. a small "NAIL SIZE / LENGTH / DIAMETER" table
+    # inside a wood-framing note) and emits synthetic grid cells so
+    # downstream consumers know the text is tabular.
+    detect_mini_tables: bool = True
+    mini_table_min_rows: int = 3
+    mini_table_min_cols: int = 2       # 2-col abbreviation lists are real mini-tables too
+    mini_table_col_tol_pt: float = 14.0   # wide enough for slight variations
+    mini_table_line_h_pt_max: float = 18.0
+    mini_table_cell_pad_pt: float = 0.0
+    # ── Hairline-split recovery ─────────────────────────────────────────────
+    fix_hairline_splits: bool = True   # recover missed hairline column dividers
+
+    # ── Title-block logos / raster images (purple rings) ─────────────────────
+    detect_titleblock_logos: bool = True
+    titleblock_logo_margin_frac: float = 0.62   # x-centre must be ≥ this × W
+    # Embedded images only: allow placements just outside a narrow host if still
+    # on the far right (stamps / bleed).  Vector panels **require** a host.
+    titleblock_logo_image_fallback_right_frac: float = 0.76
+    titleblock_logo_min_side_px: int = 16
+    titleblock_logo_max_area_frac: float = 0.12  # skip huge / full-page art
+    titleblock_logo_panel_min_area_px2: int = 2600
+    titleblock_logo_panel_max_area_px2: int = 260_000
+    titleblock_logo_panel_min_height_px: int = 30
+    titleblock_logo_panel_max_text_chars: int = 140
+    titleblock_logo_panel_max_lines: int = 8
+    titleblock_logo_panel_max_alpha_chars: int = 110
+    titleblock_logo_max_panel_aspect: float = 4.15
+    titleblock_logo_stray_max_h_px: int = 44
+    titleblock_logo_max_panel_width_frac: float = 0.46
+    titleblock_logo_expand_gap_px: int = 12
+    titleblock_logo_merge_gap_y_px: int = 14
+    # Cap vertical swallow so we do not absorb revision-table rows under a logo.
+    titleblock_logo_expand_max_height_px: int = 320
+    titleblock_logo_expand_min_orange_h_px: int = 19
+    # Compact wordmarks (``nti``-style): ORANGE in host, small/medium footprint.
+    titleblock_logo_wordmark_min_area_px2: int = 720
+    titleblock_logo_wordmark_max_area_px2: int = 118_000
+    titleblock_logo_wordmark_max_alpha_chars: int = 52
+    titleblock_logo_wordmark_max_lines: int = 7
+
+
+# ── type alias ────────────────────────────────────────────────────────────────
+_Cand = tuple[float, int, int, int, int, float]  # area,x,y,w,h,fill
+
+
+# ── auto-calibration helper ───────────────────────────────────────────────────
+
+def _resolve_thresholds(
+    cfg: "Cfg",
+    suppressed: list[_Cand],
+    parent_ids: list[int | None],
+    child_counts: list[int],
+) -> dict[str, Any]:
+    """Resolve every Cfg threshold that's None (or every threshold when
+    cfg.auto_calibrate=True) from per-page row statistics.
+
+    Returns a dict with the resolved values, also recorded in stats so
+    callers / regression tests can introspect what was used.
+    """
+    # Sample leaf-ish ORANGE candidates: depth ≥ 2, ch == 0 (no children
+    # — an actual cell), bounded width to skip tiny artifacts.  These are
+    # the cells that drive "what's a typical row" on this page.
+    heights: list[int] = []
+    aspects: list[float] = []
+    for i, (_, _, _, w, h, _) in enumerate(suppressed):
+        if parent_ids[i] is None:
+            continue
+        if child_counts[i] != 0:
+            continue
+        if h <= 1 or w <= 1:
+            continue
+        heights.append(h)
+        aspects.append(w / float(h))
+
+    def _median(xs: list[float]) -> float:
+        if not xs:
+            return 0.0
+        s = sorted(xs)
+        return s[len(s) // 2]
+
+    median_h   = _median([float(v) for v in heights])
+    median_asp = _median(aspects)
+
+    auto = bool(cfg.auto_calibrate)
+
+    def _pick(value, derived, fallback):
+        # Explicit field value wins.  None or auto_calibrate=True falls back
+        # to derived (if usable) else fallback.
+        if value is not None and not auto:
+            return value
+        if derived is not None and derived > 0:
+            return derived
+        return fallback
+
+    # Heuristics: row half-height for thin label band; ~3.5× row for body.
+    derived_thin   = max(int(median_h * 0.6), 12) if median_h > 0 else None
+    derived_block  = max(int(median_h * 4.0), 60) if median_h > 0 else None
+    # Real headers are notably wider than typical rows in aspect terms.
+    derived_gap_asp = max(median_asp * 1.8, 25.0) if median_asp > 0 else None
+    derived_div_asp = derived_gap_asp
+
+    return {
+        "median_row_h": median_h,
+        "median_row_asp": median_asp,
+        "rule_b_thin_h_max": _pick(cfg.rule_b_thin_h_max, derived_thin, 20),
+        "rule_b_block_h_min": _pick(cfg.rule_b_block_h_min, derived_block, 80),
+        "gap_row_orange_asp_min": _pick(cfg.gap_row_orange_asp_min,
+                                        derived_gap_asp, 25.0),
+        "divider_asp_min": _pick(cfg.divider_asp_min,
+                                 derived_div_asp, 25.0),
+        # sidebar resolution happens at the call site since it needs page width.
+    }
+
+
+def _resolve_tolerances(cfg: "Cfg",
+                        candidates: list[_Cand]) -> tuple[int, int]:
+    """Return (nms_tol_px, containment_tol_px), resolved per-page.
+
+    Explicit Cfg values win unless cfg.auto_calibrate=True.  Otherwise:
+        nms_tol_px         ≈ round(median_h * 0.7), clamped to [4, 14]
+        containment_tol_px ≈ round(median_h * 1.4), clamped to [8, 24]
+    """
+    explicit_nms  = cfg.nms_tol_px         if not cfg.auto_calibrate else None
+    explicit_cont = cfg.containment_tol_px if not cfg.auto_calibrate else None
+    if explicit_nms is not None and explicit_cont is not None:
+        return explicit_nms, explicit_cont
+
+    heights = [h for (_, _, _, w, h, _) in candidates if h > 0 and w > 0]
+    if heights:
+        s = sorted(heights)
+        median_h = s[len(s) // 2]
+    else:
+        median_h = 14   # nothing detected yet → safe-ish default
+    nms_derived  = max(4, min(14, round(median_h * 0.7)))
+    cont_derived = max(8, min(24, round(median_h * 1.4)))
+
+    nms_tol  = explicit_nms  if explicit_nms  is not None else nms_derived
+    cont_tol = explicit_cont if explicit_cont is not None else cont_derived
+    return nms_tol, cont_tol
+
+
+def _detect_rotation_quarter_turns(rgb: np.ndarray,
+                                    dominance_ratio: float,
+                                    textpage=None) -> int:
+    """Decide how many CW quarter-turns the rendered image needs.
+
+    Returns 0, 1 (90° CW), 2 (180°), or 3 (270° CW = 90° CCW).
+    Implemented as np.rot90 k = -returned-value, so values match `np.rot90`
+    in the negative-k (CW) convention.
+
+    Primary signal — character reading direction.  PDF text characters are
+    emitted in reading order; consecutive chars within a word have a small
+    position delta along the reading direction.  Sum those deltas across
+    a sample of chars to find the dominant axis:
+
+        Σdx >> 0 → text reads LEFT→RIGHT in PDF coords        → 0 turns
+        Σdx << 0 → text reads RIGHT→LEFT in PDF coords        → 2 turns (180°)
+        Σdy >> 0 → text reads BOTTOM→TOP in PDF coords        → 1 turn  (90° CW)
+        Σdy << 0 → text reads TOP→BOTTOM in PDF coords        → 3 turns (90° CCW)
+
+    Fallback — line-morphology dominance (for pages with no text).
+    Distinguishes only "rotate" from "don't rotate"; falls back to 1 turn.

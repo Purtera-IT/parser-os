@@ -1,0 +1,711 @@
+            # All cells already emitted for this mini-table.
+            mt_base = fr.box_id.replace("_mtable", "_")
+            existing = [b for b in boxes
+                        if b.box_id.startswith(mt_base) and "_mtcell" in b.box_id]
+            if not existing:
+                continue
+            # Measure existing column x-midpoints and row height.
+            col_xs: set[float] = set()
+            for c in existing:
+                col_xs.add((c.px_bbox[0] + c.px_bbox[2]) / 2)
+            col_xs_sorted = sorted(col_xs)
+            col_tol_img = max(8, int(fx1 - fx0) // 3)
+            row_hs = sorted(c.px_bbox[3] - c.px_bbox[1] for c in existing)
+            med_rh = row_hs[len(row_hs)//2] if row_hs else 9
+            existing_row_ys: set[int] = set()
+            for c in existing:
+                existing_row_ys.add(c.px_bbox[1])
+            # Collect REPRESENTATIVE cells per existing row so we can
+            # use their PDF bboxes to locate the same pattern higher up.
+            # The mini-table uses PDF text extraction for cells — so we
+            # re-use the same _img_to_pdf_rect2 and get_textbox approach
+            # to find new rows.
+            scan_y = wy0
+            ext_row_num = 1000
+            while scan_y < wy1 - med_rh:
+                covered = any(abs(scan_y - ey) <= med_rh + 2
+                              for ey in existing_row_ys)
+                if not covered:
+                    # For each expected column position, try to read a
+                    # cell-sized PDF region and check if it has text.
+                    row_cell_candidates = []
+                    for cx in col_xs_sorted:
+                        cw = max(6, col_tol_img)
+                        cpx = (int(cx - cw), int(scan_y), int(cx + cw), int(scan_y + med_rh + 2))
+                        # Check if any existing non-synthetic orange cell
+                        # overlaps this position (to use its exact bbox).
+                        hit = None
+                        for ob in all_orange_ns:
+                            if getattr(ob, "synthetic", False):
+                                continue
+                            ox0,oy0,ox1,oy1 = ob.px_bbox
+                            if (abs(oy0 - scan_y) <= med_rh + 3
+                                    and abs((ox0+ox1)/2 - cx) <= col_tol_img):
+                                hit = ob
+                                break
+                        if hit:
+                            row_cell_candidates.append(hit.px_bbox)
+                    if len(row_cell_candidates) < 1:
+                        scan_y += 1
+                        continue
+                    actual_y = min(p[1] for p in row_cell_candidates)
+                    matching = len(row_cell_candidates)
+                    if matching >= 1:
+                        ext_row_num += 1
+                        row_cell_pxs = []
+                        for cell in sorted(row_cell_candidates, key=lambda p: p[0]):
+                            cx0, cy0, cx1, cy1 = cell
+                            bid = f"{mt_base}ext{ext_row_num}_c{int(cx0)}_mtcelld"
+                            if bid not in existing_cell_keys:
+                                existing_cell_keys.add(bid)
+                                extension_boxes.append(VisibleBox(
+                                    box_id=bid,
+                                    rect=Rect(cx0/scale, cy0/scale,
+                                              cx1/scale, cy1/scale),
+                                    area_pt2=(cx1-cx0)*(cy1-cy0)/scale**2,
+                                    fill_ratio=1.0,
+                                    nested_depth=5,
+                                    is_outer_wrapper=False,
+                                    parent_box_id=fr.box_id,
+                                    color="GREEN",
+                                    px_bbox=(cx0, cy0, cx1, cy1),
+                                    children_count=0,
+                                    synthetic=True,
+                                ))
+                                row_cell_pxs.append((cx0, cy0, cx1, cy1))
+                                existing_row_ys.add(cy0)
+                        if len(row_cell_pxs) >= 2:
+                            rx0 = min(p[0] for p in row_cell_pxs) - 1
+                            ry0 = min(p[1] for p in row_cell_pxs) - 1
+                            rx1 = max(p[2] for p in row_cell_pxs) + 1
+                            ry1 = max(p[3] for p in row_cell_pxs) + 1
+                            rid = f"{mt_base}ext{ext_row_num}_mtrow"
+                            extension_boxes.append(VisibleBox(
+                                box_id=rid,
+                                rect=Rect(rx0/scale, ry0/scale,
+                                          rx1/scale, ry1/scale),
+                                area_pt2=(rx1-rx0)*(ry1-ry0)/scale**2,
+                                fill_ratio=1.0,
+                                nested_depth=4,
+                                is_outer_wrapper=False,
+                                parent_box_id=fr.box_id,
+                                color="RED",
+                                px_bbox=(rx0, ry0, rx1, ry1),
+                                children_count=0,
+                                synthetic=True,
+                            ))
+                    scan_y = int(actual_y) + med_rh + 1
+                else:
+                    scan_y += med_rh
+        if extension_boxes:
+            boxes = list(boxes) + extension_boxes
+            stats["mt_extension_cells"] = len(
+                [b for b in extension_boxes if "_mtcelld" in b.box_id])
+
+    # ── Drop spec-section title bands whose content is a numbered list ──────
+    # Geometric detection sometimes places a `_sec_X_title` band over the
+    # FIRST row of a numbered list (because the "1." marker creates a
+    # gap-row pattern visually).  A numbered list is clearly not a
+    # section title — open the PDF, count "N." markers in the band's
+    # bbox area, and drop the band when at least 3 such markers
+    # dominate the text content.
+    try:
+        import fitz as _fitz_post  # noqa: WPS433 (re-import is fine — module scope)
+        import re as _re
+        _fdoc = _fitz_post.open(str(path))
+        try:
+            _fpage = _fdoc[page_index]
+            _page_rot = (_fpage.rotation % 360) // 90
+            # detector rotates CCW by `_rotate_decision` quarter-turns
+            # to render upright; PyMuPDF text is in PDF native coords,
+            # so we map our image (rx, ry) bbox back to PDF coords.
+            def _img_to_pdf_rect(ix0, iy0, ix1, iy1):
+                # Reverse of `_pdf_pt_to_image_xy` for sideways=qt%4∈(1,3)
+                qt = _rotate_decision % 4
+                pw, ph = _fpage.rect.width, _fpage.rect.height
+                if qt == 0:
+                    return (ix0/scale, iy0/scale, ix1/scale, iy1/scale)
+                if qt == 3:        # CCW 90: image_x = PDF_y, image_y = (pw - PDF_x)
+                    px0 = pw - iy1/scale
+                    px1 = pw - iy0/scale
+                    py0 = ix0/scale
+                    py1 = ix1/scale
+                    return (px0, py0, px1, py1)
+                if qt == 1:        # CW 90: image_x = (ph - PDF_y), image_y = PDF_x
+                    py0 = ph - ix1/scale
+                    py1 = ph - ix0/scale
+                    px0 = iy0/scale
+                    px1 = iy1/scale
+                    return (px0, py0, px1, py1)
+                # qt==2: 180
+                return (pw - ix1/scale, ph - iy1/scale,
+                        pw - ix0/scale, ph - iy0/scale)
+            _kept = []
+            for b in boxes:
+                drop = False
+                if ("_title" in b.box_id and getattr(b, "synthetic", False)
+                        and b.color == "BLUE"):
+                    # Check the AREA IMMEDIATELY BELOW the band (= the
+                    # section content the band is supposed to label).
+                    bx0, by0, bx1, by1 = b.px_bbox
+                    band_h = max(8, by1 - by0)
+                    look_h = min(150, band_h * 6)
+                    look_img = (bx0, by1, bx1, min(by1 + look_h, H))
+                    px0, py0, px1, py1 = _img_to_pdf_rect(*look_img)
+                    rect = _fitz_post.Rect(min(px0, px1), min(py0, py1),
+                                           max(px0, px1), max(py0, py1))
+                    txt = _fpage.get_textbox(rect) or ""
+                    # Strip leading title text on its own line if any —
+                    # PyMuPDF often puts the band's title text on the
+                    # first line because the rect spills into the title
+                    # row above by ~1 px.
+                    markers = _re.findall(r"\b\d{1,3}\s*[.)]", txt)
+                    # Count text-bearing lines.
+                    non_empty_lines = [ln for ln in txt.split("\n")
+                                       if ln.strip()]
+                    list_lines = [ln for ln in non_empty_lines
+                                  if _re.match(r"^\s*\d{1,3}\s*[.)]\s",
+                                                ln + " ")]
+                    # Drop the band if the area below is dominated by a
+                    # numbered-list pattern: ≥ 3 markers AND ≥ 60 % of
+                    # text lines start with a numbered-list marker.
+                    if len(markers) >= 3 and non_empty_lines and \
+                            (len(list_lines) / len(non_empty_lines)) >= 0.60:
+                        drop = True
+                if not drop:
+                    _kept.append(b)
+            if len(_kept) != len(boxes):
+                stats["dropped_numbered_list_bands"] = len(boxes) - len(_kept)
+                boxes = _kept
+                stats["blue"]   = sum(1 for x in boxes if x.color == "BLUE")
+                stats["orange"] = sum(1 for x in boxes if x.color == "ORANGE")
+                stats["total"]  = len(boxes)
+
+            # ── Column-header row tagging ────────────────────────────
+            # For each BLUE title band, find the FIRST ROW of ORANGE
+            # cells just below it.  If those cells contain ALL-CAPS
+            # text (the table column header convention: TAG / SERVICE
+            # / FLUID / FLOW RATE / ...), wrap each one in a synthetic
+            # BLUE title band so they're visibly tagged as headers.
+            #
+            # Filter out ``textsec_*_title`` boxes marked
+            # ``is_subheader`` — these are in-cell sub-titles like
+            # ``EXTERIOR WALL`` inside a WALL column data cell of an
+            # EXTERIOR WALL ASSEMBLIES table, NOT real schedule titles.
+            # Letting them seed colhdr detection would paint cyan
+            # ``colhdr_*`` rings on random data text inside the cell
+            # instead of on the actual TYPE/WALL/HEIGHT row.  See
+            # RULES.md Rule 12 for sub-header marking discriminators.
+            blue_titles = [b for b in boxes
+                           if "_title" in b.box_id
+                           and b.color == "BLUE"
+                           and getattr(b, "synthetic", False)
+                           and not getattr(b, "is_subheader", False)]
+            orange_cells = [b for b in boxes
+                            if b.color == "ORANGE"
+                            and not getattr(b, "synthetic", False)]
+            existing_synth_ids = {b.box_id for b in boxes}
+
+            def _img_to_pdf_rect2(ix0, iy0, ix1, iy1):
+                qt = _rotate_decision % 4
+                pw, ph = _fpage.rect.width, _fpage.rect.height
+                if qt == 0:
+                    return _fitz_post.Rect(ix0/scale, iy0/scale,
+                                            ix1/scale, iy1/scale)
+                if qt == 3:
+                    px0 = pw - iy1/scale; px1 = pw - iy0/scale
+                    py0 = ix0/scale; py1 = ix1/scale
+                    return _fitz_post.Rect(min(px0,px1), min(py0,py1),
+                                            max(px0,px1), max(py0,py1))
+                if qt == 1:
+                    py0 = ph - ix1/scale; py1 = ph - ix0/scale
+                    px0 = iy0/scale; px1 = iy1/scale
+                    return _fitz_post.Rect(min(px0,px1), min(py0,py1),
+                                            max(px0,px1), max(py0,py1))
+                return _fitz_post.Rect(pw - ix1/scale, ph - iy1/scale,
+                                        pw - ix0/scale, ph - iy0/scale)
+
+            def _pdf_rect_to_px(rect: "_fitz_post.Rect") -> tuple[int, int, int, int]:
+                """Inverse of image→PDF mapping used by ``_img_to_pdf_rect2``."""
+                qt = _rotate_decision % 4
+                pw, ph = _fpage.rect.width, _fpage.rect.height
+                x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
+                if qt == 0:
+                    ix0, iy0 = int(x0 * scale), int(y0 * scale)
+                    ix1, iy1 = int(x1 * scale), int(y1 * scale)
+                elif qt == 3:
+                    ix0, ix1 = int(y0 * scale), int(y1 * scale)
+                    iy0, iy1 = int((pw - x1) * scale), int((pw - x0) * scale)
+                elif qt == 1:
+                    ix0, ix1 = int((ph - y1) * scale), int((ph - y0) * scale)
+                    iy0, iy1 = int(x0 * scale), int(x1 * scale)
+                else:  # qt == 2
+                    ix0, ix1 = int((pw - x1) * scale), int((pw - x0) * scale)
+                    iy0, iy1 = int((ph - y1) * scale), int((ph - y0) * scale)
+                return (min(ix0, ix1), min(iy0, iy1), max(ix0, ix1), max(iy0, iy1))
+
+            def _split_header_cell_by_words(
+                    cx0: int, cy0: int, cx1: int, cy1: int,
+                    relaxed: bool = False,
+            ) -> list[tuple[int, int, int, int]]:
+                """When the contour detector merges several column headers into one
+                ORANGE cell, split it along PDF ``words`` clustered in **image X**.
+
+                On rotated pages (e.g. qt=1 landscape), a single table row maps to
+                a tall, narrow PDF clip — sorting words by PDF ``x0`` never sees
+                column gaps.  Image-space ``x`` matches the viewer's left-to-right
+                column order for every ``_rotate_decision`` value."""
+                span_img = cx1 - cx0
+                ch_img = max(cy1 - cy0, 1)
+                if span_img < 24:
+                    return []
+                # Tall merged ORANGE (header + many body rows): ``get_text`` on the
+                # full bbox pulls unrelated PDF lines and breaks X-clustering.  Clip
+                # word harvest to a **shallow top band** — column headers live there.
+                eff_cy1 = cy1
+                if ch_img > 52:
+                    eff_cy1 = min(cy1, cy0 + min(62, max(34, int(0.20 * ch_img))))
+                clip = _img_to_pdf_rect2(cx0, cy0, cx1, eff_cy1)
+                words = _fpage.get_text("words", clip=clip) or []
+                picked_ix: list[tuple[int, int, int, int]] = []
+                for w in words:
+                    wx0, wy0, wx1, wy1 = w[0], w[1], w[2], w[3]
+                    if wx1 <= clip.x0 or wx0 >= clip.x1:
+                        continue
+                    if wy1 <= clip.y0 or wy0 >= clip.y1:
+                        continue
+                    ix0, iy0, ix1, iy1 = _pdf_rect_to_px(
+                        _fitz_post.Rect(wx0, wy0, wx1, wy1))
+                    ix0 = max(ix0, cx0)
+                    iy0 = max(iy0, cy0)
+                    ix1 = min(ix1, cx1)
+                    iy1 = min(iy1, cy1)
+                    if ix1 <= ix0 or iy1 <= iy0:
+                        continue
+                    ov = min(iy1, cy1) - max(iy0, cy0)
+                    _ov_frac = 0.12 if relaxed else 0.22
+                    if ov < _ov_frac * min(ch_img, max(iy1 - iy0, 1)):
+                        continue
+                    picked_ix.append((ix0, iy0, ix1, iy1))
+                if len(picked_ix) < 2:
+                    return []
+                picked_ix.sort(key=lambda t: t[0])
+                gap_tol_img = (
+                    max(4, int(0.0040 * span_img)) if relaxed
+                    else max(8, int(0.012 * span_img)))
+                clusters: list[list[tuple[int, int, int, int]]] = [
+                    [picked_ix[0]]]
+                for t in picked_ix[1:]:
+                    prev = clusters[-1][-1]
+                    if t[0] - prev[2] > gap_tol_img:
+                        clusters.append([t])
+                    else:
+                        clusters[-1].append(t)
+                if len(clusters) < 2:
+                    return []
+                out: list[tuple[int, int, int, int]] = []
+                for cl in clusters:
+                    rx0 = min(x[0] for x in cl)
+                    ry0 = min(x[1] for x in cl)
+                    rx1 = max(x[2] for x in cl)
+                    ry1 = max(x[3] for x in cl)
+                    rx0 = max(rx0, cx0)
+                    ry0 = max(ry0, cy0)
+                    rx1 = min(rx1, cx1)
+                    ry1 = min(ry1, cy1)
+                    if rx1 - rx0 >= 8 and ry1 - ry0 >= 4:
+                        out.append((rx0, ry0, rx1, ry1))
+                return out if len(out) >= 2 else []
+
+            def _logical_header_row(cells: list) -> list:
+                """Expand merged wide ORANGE cells into one entry per column label."""
+                if not cells:
+                    return []
+                row_x0 = min(c.px_bbox[0] for c in cells)
+                row_x1 = max(c.px_bbox[2] for c in cells)
+                span = max(row_x1 - row_x0, 1)
+                logical: list = []
+                for cell in cells:
+                    bx0, by0, bx1, by1 = cell.px_bbox
+                    bw = bx1 - bx0
+                    # Only attempt splits that look like merged header columns.
+                    if bw >= max(100, int(0.18 * span)) and len(cells) >= 1:
+                        subs = _split_header_cell_by_words(bx0, by0, bx1, by1)
+                        if len(subs) < 2:
+                            subs = _split_header_cell_by_words(
+                                bx0, by0, bx1, by1, relaxed=True)
+                        elif (bx1 - bx0) >= 1000:
+                            # Wide merged schedule header (e.g. AIR SEPARATOR):
+                            # default image-space gaps still merge adjacent labels;
+                            # relaxed gaps recover the full column count.  Narrow
+                            # tables (TEST_3) stay on the default split so blue
+                            # ``colhdr_*`` counts remain inside regression bands.
+                            sub_r = _split_header_cell_by_words(
+                                bx0, by0, bx1, by1, relaxed=True)
+                            if len(sub_r) > len(subs) and len(sub_r) <= 24:
+                                subs = sub_r
+                        if len(subs) >= 2:
+                            for sb in subs:
+                                logical.append(SimpleNamespace(px_bbox=sb))
+                            continue
+                    logical.append(cell)
+                return logical
+
+            def _tight_colhdr_px_bbox(cx0: int, cy0: int, cx1: int, cy1: int
+                                      ) -> tuple[int, int, int, int]:
+                """Union of PDF ``words`` inside a header cell, in image pixels.
+
+                Per-column ORANGE cells (BOILER-style) would otherwise get
+                ``colhdr_*`` bands as large as the whole cell; word-tight boxes
+                match merged-row splits (AIR-style) and stay visually distinct
+                from alpha-filled schedule **title** bands.
+                """
+                clip = _img_to_pdf_rect2(cx0, cy0, cx1, cy1)
+                words = _fpage.get_text("words", clip=clip) or []
+                xs0: list[int] = []
+                ys0: list[int] = []
+                xs1: list[int] = []
+                ys1: list[int] = []
+                for w in words:
+                    ix0, iy0, ix1, iy1 = _pdf_rect_to_px(
+                        _fitz_post.Rect(w[0], w[1], w[2], w[3]))
+                    ix0 = max(ix0, cx0)
+                    iy0 = max(iy0, cy0)
+                    ix1 = min(ix1, cx1)
+                    iy1 = min(iy1, cy1)
+                    if ix1 <= ix0 or iy1 <= iy0:
+                        continue
+                    xs0.append(ix0)
+                    ys0.append(iy0)
+                    xs1.append(ix1)
+                    ys1.append(iy1)
+                if not xs0:
+                    return (cx0, cy0, cx1, cy1)
+                tx0 = min(xs0)
+                ty0 = min(ys0)
+                tx1 = max(xs1)
+                ty1 = max(ys1)
+                pad = 2
+                tx0 = max(cx0, tx0 - pad)
+                ty0 = max(cy0, ty0 - pad)
+                tx1 = min(cx1, tx1 + pad)
+                ty1 = min(cy1, ty1 + pad)
+                if tx1 - tx0 < 6 or ty1 - ty0 < 3:
+                    return (cx0, cy0, cx1, cy1)
+                return (tx0, ty0, tx1, ty1)
+
+            def _row_is_data_row(row_cells: list) -> bool:
+                """True when an orange row looks like data (not another header tier)."""
+                numeric_cells = 0
+                for cell in row_cells:
+                    cx0, cy0, cx1, cy1 = cell.px_bbox
+                    rect = _img_to_pdf_rect2(cx0, cy0, cx1, cy1)
+                    txt = (_fpage.get_textbox(rect) or "").strip()
+                    if not txt:
+                        continue
+                    letters = [c for c in txt if c.isalpha()]
+                    digits = [c for c in txt if c.isdigit()]
+                    if letters and any(c.islower() for c in letters):
+                        return True
+                    if digits and not letters:
+                        numeric_cells += 1
+                        if numeric_cells >= 2:
+                            return True
+                return False
+
+            def _row_median_h(row_cells: list) -> float:
+                if not row_cells:
+                    return 0.0
+                hs = [c.px_bbox[3] - c.px_bbox[1] for c in row_cells]
+                return float(sorted(hs)[len(hs) // 2])
+
+            def _smallest_nonsynth_blue_wrapper(ix0: int, iy0: int, ix1: int, iy1: int):
+                """Tightest BLUE non-synthetic box that fully contains the bbox."""
+                hits = []
+                for w in boxes:
+                    if w.color != "BLUE" or getattr(w, "synthetic", False):
+                        continue
+                    wx0, wy0, wx1, wy1 = w.px_bbox
+                    if wx0 <= ix0 and wy0 <= iy0 and wx1 >= ix1 and wy1 >= iy1:
+                        hits.append(w)
+                if not hits:
+                    return None
+                return min(
+                    hits,
+                    key=lambda w: (w.px_bbox[2] - w.px_bbox[0])
+                    * (w.px_bbox[3] - w.px_bbox[1]),
+                )
+
+            def _strip_orange_duplicates_this_title(
+                    strip_row: list, title_cmp: str,
+                    title_ty0: int, title_ty1: int) -> bool:
+                """True when the thin ORANGE strip is the same ``… SCHEDULE``
+                glue as this BLUE ``*_title`` (should stay filled blue only).
+
+                ``*_title`` boxes are often taller than the ink; a real
+                ``MOTOR DATA`` band can sit partly inside that bbox while
+                ``get_textbox`` still reads ``PUMP SCHEDULE`` bleed.  Require
+                the strip's **bottom** to lie within the **upper** portion of
+                the title band before treating text as a duplicate caption."""
+                if not strip_row:
+                    return False
+                tt = re.sub(
+                    r"\s+", " ", (title_cmp or "").replace("\n", " ")
+                    ).strip()
+                if not tt:
+                    return False
+                ix0 = min(c.px_bbox[0] for c in strip_row)
+                iy0 = min(c.px_bbox[1] for c in strip_row)
+                ix1 = max(c.px_bbox[2] for c in strip_row)
+                iy1 = max(c.px_bbox[3] for c in strip_row)
+                rect = _img_to_pdf_rect2(ix0, iy0, ix1, iy1)
+                txt = (_fpage.get_textbox(rect) or "").strip()
+                t1 = re.sub(r"\s+", " ", txt.replace("\n", " ")).strip()
+                if re.search(r"\bDATA\b", t1, re.I):
+                    return False
+                nt = t1.replace(" ", "").upper()
+                nu = tt.replace(" ", "").upper()
+                if not nt or not nu:
+                    return False
+                _text_dup = nt == nu or (
+                    re.search(r"\bSCHEDULE\b", t1, re.I)
+                    and len(t1) <= 56
+                    and (nu in nt or nt in nu))
+                if not _text_dup:
+                    return False
+                _tht = max(title_ty1 - title_ty0, 1)
+                _core_ty1 = title_ty0 + max(1, int(0.55 * _tht))
+                if iy1 > _core_ty1 + 8:
+                    return False
+                return True
+
+            chr_id = 0
+            subhdr_id = 0
+            new_chr_boxes = []
+            for tb in blue_titles:
+                tx0, ty0, tx1, ty1 = tb.px_bbox
+                t_w = tx1 - tx0
+                t_h = ty1 - ty0
+                if t_w < 80 or t_h < 6:        # tiny bands aren't section titles
+                    continue
+                # Text-section titles are only as wide as the bold header
+                # (see ``text_section_detection``).  Column-header ORANGE
+                # cells often sit entirely to the RIGHT of that band, so the
+                # strict ``seeds`` overlap test finds nothing and we never
+                # emit ``colhdr_*`` — e.g. "AIR SEPARATOR SCHEDULE" vs TAG/MFGR.
+                wsec = _smallest_nonsynth_blue_wrapper(tx0, ty0, tx1, ty1)
+                sx0, sx1 = (
+                    (wsec.px_bbox[0], wsec.px_bbox[2]) if wsec is not None
+                    else (tx0, tx1))
+                tw_t = tx1 - tx0
+                sw_t = sx1 - sx0
+                if tw_t <= 220 and (wsec is None or sw_t < tw_t + 48):
+                    _hx0, _hx1 = tx0, tx1
+                elif (tb.box_id.startswith("textsec_")
+                        and tw_t <= 220
+                        and sw_t > min(980, int(W * 0.72))):
+                    # Universal caption x-scope rule (rules/colhdr_x_scope):
+                    # narrow textsec captions on sheet-scale shells get a
+                    # position-aware horizontal scope so far-right title-block
+                    # captions cannot bleed into unrelated schedules.
+                    _hx0, _hx1 = x_scope_for_textsec_caption(
+                        tx0=tx0, tx1=tx1, sx0=sx0, sx1=sx1, page_w=W)
+                else:
+                    _hx0, _hx1 = sx0, sx1
+                # Step 1: pick a SEED cell — the one immediately below the
+                # title (smallest y > title's y1, x range overlaps title).
+                lookdown = max(40, int(t_h * 6))
+                seeds = [c for c in orange_cells
+                         if (ty1 - 2) <= c.px_bbox[1] <= (ty1 + lookdown)
+                         and c.px_bbox[2] > tx0 and c.px_bbox[0] < tx1]
+                if not seeds and tb.box_id.startswith("textsec_"):
+                    seeds = [c for c in orange_cells
+                             if (ty1 - 2) <= c.px_bbox[1] <= (ty1 + lookdown)
+                             and c.px_bbox[2] > _hx0 and c.px_bbox[0] < _hx1]
+                if not seeds:
+                    # Narrow sidebars (e.g. ``REVISIONS / ISSUE DATES``): the first
+                    # ORANGE header row often **starts above** ``ty1`` because the
+                    # contour merges with the caption strip — the strict ``ty1-2``
+                    # gate would miss it and we would never emit ``colhdr_*``.
+                    seeds = [
+                        c for c in orange_cells
+                        if c.px_bbox[1] < ty1 + lookdown
+                        and c.px_bbox[3] > ty1 - 4
+                        and c.px_bbox[2] > tx0
+                        and c.px_bbox[0] < tx1
+                        and c.px_bbox[1] >= ty0 - 14
+                    ]
+                if not seeds:
+                    continue
+                seed_y_strict = min(c.px_bbox[1] for c in seeds)
+                # ``*_sec*_title`` bands often swallow both the caption strip **and**
+                # the ORANGE column-header row.  Strict ``(ty1-2) <= py1`` then skips
+                # every header cell (tops lie **above** ``ty1-2``) and ``seed_y``
+                # lands on the first **data** row — ``colhdr_*`` never fires (T001
+                # symbol legends).  When the strict anchor sits on/just past the
+                # title bottom, also consider oranges whose tops lie in the lower
+                # **interior** of the title bbox (below a small top margin so we do
+                # not pick up the caption line).
+                _glue_floor = ty0 + max(12, int(0.20 * max(t_h, 8)))
+                seed_y = seed_y_strict
+                if seed_y_strict >= ty1 - 4 and ty1 > ty0 + 10:
+                    _glue = [
+                        c for c in orange_cells
+                        if c.px_bbox[2] > tx0 and c.px_bbox[0] < tx1
+                        and c.px_bbox[1] >= _glue_floor
+                        and c.px_bbox[1] < ty1 - 1
+                        and c.px_bbox[3] > ty0 + 4
+                    ]
+                    if _glue:
+                        seed_y = min(seed_y_strict, min(c.px_bbox[1] for c in _glue))
+                _glue_rescued_header = (
+                    seed_y_strict >= ty1 - 8
+                    and seed_y < ty1 - 2
+                    and seed_y < seed_y_strict - 3)
+                # Step 2: collect FIRST ROW = ALL cells at the same y as
+                # the seed (across the WHOLE table width — not just under
+                # the title — because column headers usually extend
+                # beyond the title's text width).  Horizontal clip ``_hx0.._hx1``
+                # was chosen above (title-only vs wrapper vs sheet-safe wing).
+                first_row = [c for c in orange_cells
+                             if abs(c.px_bbox[1] - seed_y) <= 8
+                             and c.px_bbox[2] > _hx0 and c.px_bbox[0] < _hx1]
+                if not first_row:
+                    continue
+                # Merge-detector often glues 2–3 column labels into one ORANGE
+                # contour; split those via PDF word x-gaps before caps counting.
+                first_logical = _logical_header_row(first_row)
+                second_seed = min(
+                    (c.px_bbox[1] for c in orange_cells
+                     if c.px_bbox[1] > seed_y + 5
+                     and c.px_bbox[2] > _hx0 - 50
+                     and c.px_bbox[0] < _hx1 + 50),
+                    default=None,
+                )
+                second_row: list = []
+                second_logical: list = []
+                if second_seed is not None:
+                    # Universal x-clip: second_row must stay within the same
+                    # horizontal scope as first_row.  Without this, a narrow
+                    # title-block caption (e.g. textsec_9 for the CODE strip)
+                    # whose strict-scope seeds came from its own tiny cell can
+                    # "reach across" to the y-band of an unrelated wide
+                    # schedule and claim its data-row cells as colhdrs.  Test5
+                    # symptom: cyan rings appearing on pump-schedule data rows.
+                    second_row = [c for c in orange_cells
+                                  if abs(c.px_bbox[1] - second_seed) <= 5
+                                  and c.px_bbox[2] > _hx0
+                                  and c.px_bbox[0] < _hx1]
+                    second_logical = _logical_header_row(second_row)
+
+                two_tier = False
+                colhdr_logical = first_logical
+                subhdr_logical: list = []
+
+                # Full-width thin strip **above** the main header seed row
+                # (e.g. ``MOTOR DATA`` / ``ELECTRICAL DATA``) — its ``y0`` is
+                # outside the ±8 px ``first_row`` band so it never landed in
+                # ``first_logical``; detect it here and pair with the row at
+                # ``seed_y`` (RPM / HP / …) as ``subhdr_*`` + ``colhdr_*``.
+                _sched_tit = (_fpage.get_textbox(
+                    _img_to_pdf_rect2(tx0, ty0, tx1, ty1)) or "")
+                # Tight clip **only** for comparing a thin ORANGE strip to this
+                # title — the full ``*_title`` bbox often bleeds into the next
+                # section's ``… SCHEDULE`` string in ``get_textbox``.
+                _th = max(ty1 - ty0, 1)
+                _tw = max(tx1 - tx0, 1)
+                _t_y0 = int(ty0 + min(10, int(0.22 * _th)))
+                _t_y1 = int(ty1 - min(6, int(0.10 * _th)))
+                _t_x0 = int(tx0 + min(14, int(0.20 * _tw)))
+                _t_x1 = int(tx1 - min(14, int(0.20 * _tw)))
+                if _t_y1 <= _t_y0 or _t_x1 <= _t_x0:
+                    _t_y0, _t_y1, _t_x0, _t_x1 = ty0, ty1, tx0, tx1
+                _sched_tit_trim = (_fpage.get_textbox(
+                    _img_to_pdf_rect2(_t_x0, _t_y0, _t_x1, _t_y1)) or "")
+                _tit_for_dup = (
+                    (_sched_tit_trim or "").strip()
+                    or (_sched_tit or "").strip())
+                if not _tit_for_dup.strip():
+                    _twrect = _img_to_pdf_rect2(tx0, ty0, tx1, ty1)
+                    _words = _fpage.get_text("words", clip=_twrect) or []
+                    if _words:
+                        _words = sorted(
+                            _words, key=lambda w: (round(w[1] / 2.0), w[0]))
+                        _tit_for_dup = " ".join(
+                            w[4] for w in _words if w[4]).strip()
+                span_xw = max(80, sx1 - sx0)
+                strip_cands = [
+                    c for c in orange_cells
+                    if seed_y - 38 <= c.px_bbox[1] < seed_y - 1
+                    and 5 <= (c.px_bbox[3] - c.px_bbox[1]) <= 38
+                    and (c.px_bbox[2] - c.px_bbox[0]) > 0.45 * span_xw
+                    and c.px_bbox[2] > _hx0 - 40 and c.px_bbox[0] < _hx1 + 40
+                ]
+                log_strip: list = []
+                strip_boxes: list = []
+                if strip_cands:
+                    # ``strip_cands`` can contain **several** thin full-width
+                    # rows (``PUMP SCHEDULE`` title glue + ``MOTOR DATA``).  The
+                    # top band is often the same words as the BLUE ``*_title``
+                    # and must not become ``subhdr_*`` — pick the first band
+                    # that is **not** a main ``… SCHEDULE`` caption.
+                    _band_y0s = sorted({c.px_bbox[1] for c in strip_cands})
+                    for _y_key in _band_y0s:
+                        _band = [
+                            c for c in strip_cands
+                            if abs(c.px_bbox[1] - _y_key) <= 8]
+                        if not _band:
+                            continue
+                        _bspan = (
+                            max(c.px_bbox[2] for c in _band)
+                            - min(c.px_bbox[0] for c in _band))
+                        if _bspan < 0.40 * span_xw:
+                            continue
+                        if _strip_orange_duplicates_this_title(
+                                _band, _tit_for_dup, ty0, ty1):
+                            continue
+                        strip_boxes = _band
+                        log_strip = _logical_header_row(strip_boxes)
+                        break
+                strip_two = False
+                _h_hdr = _row_median_h(first_row)
+                _h_follow = (_row_median_h(second_row) if second_row else 99.0)
+                # Hairline / sub-label row under TAG|RPM|… is short; do **not**
+                # use ``_row_is_data_row`` here — numeric-only slivers read as data.
+                _thin_follow = (
+                    second_row
+                    and _h_follow <= max(13, int(0.70 * _h_hdr)))
+                # Gate on ``strip_cands`` (not ``log_strip``): every wide band
+                # may be a ``… SCHEDULE`` title row we skip for ``subhdr_*``, but
+                # we still need ``strip_two`` so the thin nest row (AMPS/…) can
+                # attach (BOILER-style).
+                if (strip_cands
+                        and re.search(r"\bSCHEDULE\b", _sched_tit, re.I)
+                        and max(c.px_bbox[3] for c in strip_cands) <= seed_y + 14
+                        and second_seed is not None
+                        and _thin_follow):
+                    third_seed_st = min(
+                        (c.px_bbox[1] for c in orange_cells
+                         if c.px_bbox[1] > second_seed + 5
+                         and c.px_bbox[2] > _hx0 - 50
+                         and c.px_bbox[0] < _hx1 + 50),
+                        default=None,
+                    )
+                    if third_seed_st is not None:
+                        tr_st = [c for c in orange_cells
+                                 if abs(c.px_bbox[1] - third_seed_st) <= 5
+                                 and c.px_bbox[2] > _hx0
+                                 and c.px_bbox[0] < _hx1]
+                        if _row_is_data_row(tr_st):
+                            strip_two = True
+                            two_tier = True
+                            subhdr_logical = list(log_strip)
+                            # ``second_row`` here is the first ORANGE band under
+                            # ``seed_y`` (often **below** ``first_row`` when
+                            # ``seed_y`` sits on a thin glue row).  When it is a
+                            # 2–4 cell non-data band with data beneath — e.g.
+                            # AMPS/WATTS | VOLTS/PH whose PDF words sit inside
+                            # taller column boxes so ``nest2`` row pickers never
+                            # see a separate ORANGE ``y0`` — append as
+                            # ``subhdr_*`` in addition to the full-width strip.
+                            if (second_row

@@ -1,0 +1,833 @@
+                                    and not _row_is_data_row(second_row)
+                                    and _row_median_h(second_row) <= 13):
+                                _strip_nest = list(
+                                    _logical_header_row(second_row))
+                                # HS / merge-detector can still expose the thin
+                                # follow row as **one** ORANGE bar (< 100 px
+                                # wide) before later column splits; recover
+                                # AMPS/WATTS | VOLTS/PH via a relaxed PDF split.
+                                if (len(_strip_nest) == 1 and len(second_row) == 1
+                                        and _row_median_h(second_row) <= 13):
+                                    _c0 = second_row[0]
+                                    _bx0, _by0, _bx1, _by1 = _c0.px_bbox
+                                    _subs = _split_header_cell_by_words(
+                                        _bx0, _by0, _bx1, _by1, relaxed=True)
+                                    if len(_subs) >= 2:
+                                        _strip_nest = [
+                                            SimpleNamespace(px_bbox=_s)
+                                            for _s in _subs]
+                                if 2 <= len(_strip_nest) <= 4:
+                                    subhdr_logical = subhdr_logical + _strip_nest
+
+                if len(first_logical) < 2 and not strip_two:
+                    if (second_seed is not None and len(second_logical) >= 3
+                            and re.search(r"\bSCHEDULE\b", _sched_tit, re.I)):
+                        third_seed = min(
+                            (c.px_bbox[1] for c in orange_cells
+                             if c.px_bbox[1] > second_seed + 5
+                             and c.px_bbox[2] > _hx0 - 50
+                             and c.px_bbox[0] < _hx1 + 50),
+                            default=None,
+                        )
+                        if third_seed is not None:
+                            third_row = [
+                                c for c in orange_cells
+                                if abs(c.px_bbox[1] - third_seed) <= 5
+                                and c.px_bbox[2] > _hx0
+                                and c.px_bbox[0] < _hx1]
+                            if _row_is_data_row(third_row):
+                                two_tier = True
+                                subhdr_logical = list(first_logical)
+                                colhdr_logical = second_logical
+                    if not two_tier:
+                        # Single merged header row is normal for **narrow** sidebars
+                        # (``REVISIONS / ISSUE DATES``) — they are not ``… SCHEDULE``
+                        # tables, so the two-tier unlock above never fires.  Do not
+                        # ``continue`` or we would never emit ``colhdr_*`` there.
+                        if (tx1 - tx0) > 220:
+                            continue
+                elif (not strip_two
+                      and second_seed is not None
+                      and re.search(r"\bSCHEDULE\b", _sched_tit, re.I)
+                      and len(first_logical) < len(second_logical)
+                      and len(second_logical) >= 3):
+                    third_seed = min(
+                        (c.px_bbox[1] for c in orange_cells
+                         if c.px_bbox[1] > second_seed + 5
+                         and c.px_bbox[2] > _hx0 - 50
+                         and c.px_bbox[0] < _hx1 + 50),
+                        default=None,
+                    )
+                    if third_seed is not None:
+                        third_row = [
+                            c for c in orange_cells
+                            if abs(c.px_bbox[1] - third_seed) <= 5
+                            and c.px_bbox[2] > _hx0
+                            and c.px_bbox[0] < _hx1]
+                        if _row_is_data_row(third_row):
+                            two_tier = True
+                            subhdr_logical = list(first_logical)
+                            colhdr_logical = second_logical
+
+                # Caps on the row we tag as ``colhdr_*`` (second tier when
+                # ``two_tier`` — e.g. RPM / HP / VOLTS — not the MOTOR DATA band).
+                caps_cells = []
+                for cell in colhdr_logical:
+                    cx0, cy0, cx1, cy1 = cell.px_bbox
+                    rect = _img_to_pdf_rect2(cx0, cy0, cx1, cy1)
+                    txt = (_fpage.get_textbox(rect) or "").strip().replace("\n", " ")
+                    if not _cell_text_column_headerish(txt):
+                        continue
+                    caps_cells.append(cell)
+                _nlog = max(1, len(colhdr_logical))
+                if not two_tier:
+                    # ≥6 logical columns: preserve the strict the strict gates (TEST_3).
+                    # 2–5 columns (Drawing Index, small legends): merged ORANGE rows
+                    # cannot satisfy ``min_caps == 4`` / ``min_frac == 4`` — scale down.
+                    if _nlog >= 6:
+                        _min_caps = 4
+                        _min_frac = max(4, int(_nlog * 0.60))
+                    else:
+                        _min_caps = max(2, int(_nlog * 0.45))
+                        _min_frac = max(2, int(_nlog * 0.50))
+                else:
+                    _min_caps = max(2, int(_nlog * 0.45))
+                    _min_frac = max(2, int(_nlog * 0.50))
+                if len(caps_cells) < _min_caps or len(caps_cells) < _min_frac:
+                    tsched = (_fpage.get_textbox(
+                        _img_to_pdf_rect2(tx0, ty0, tx1, ty1)) or "")
+                    if re.search(r"\bSCHEDULE\b", tsched, re.I):
+                        _many_narrow = (
+                            len(first_row) >= 6
+                            and all((c.px_bbox[2] - c.px_bbox[0]) <= 220
+                                    for c in first_row))
+                        _split_ok = len(first_logical) >= 6
+                        _split_ok2 = two_tier and len(colhdr_logical) >= 3
+                        if _many_narrow or _split_ok or _split_ok2:
+                            caps_cells = list(colhdr_logical)
+                    # Sidebar / revision blocks: PDF ``get_textbox`` on the merged
+                    # header row is often empty — ``caps_cells`` would stay empty and
+                    # we'd skip the whole ``colhdr_*`` pass.  Fall back to geometry.
+                    if ((tx1 - tx0) <= 220 and len(caps_cells) < _min_caps
+                            and colhdr_logical):
+                        caps_cells = list(colhdr_logical)
+                        _min_caps = 1
+                        _min_frac = 1
+                    # Wide symbol-legend tables: ``seed_y`` glue recovered the real
+                    # header row from inside a swallowing ``*_sec*_title`` band, but
+                    # ``get_textbox`` on many tiny ORANGE cells is still empty so
+                    # ``_cell_text_column_headerish`` never reaches ``_min_frac``.
+                    # Trust the row geometry (same as narrow sidebar fallback).
+                    if (_glue_rescued_header and (tx1 - tx0) > 220
+                            and len(caps_cells) < _min_caps
+                            and len(colhdr_logical) >= 2):
+                        caps_cells = list(colhdr_logical)
+                        _min_caps = 2
+                        _min_frac = 2
+                    if len(caps_cells) < _min_caps or len(caps_cells) < _min_frac:
+                        continue
+
+                if not two_tier:
+                    # Wide tables: require a data-looking row under the header band
+                    # so we do not tag body as ``colhdr_*``.  Narrow sidebars skip this
+                    # — the next ORANGE band is often still header glue / grid noise.
+                    if second_seed is not None and (tx1 - tx0) > 220:
+                        is_data_row = _row_is_data_row(second_row)
+                        if not is_data_row:
+                            ttxt = (_fpage.get_textbox(
+                                _img_to_pdf_rect2(tx0, ty0, tx1, ty1)) or "")
+                            if (re.search(r"\bSCHEDULE\b", ttxt, re.I)
+                                    and len(first_logical) >= 6):
+                                is_data_row = True
+                        if not is_data_row:
+                            continue
+
+                for cell in subhdr_logical:
+                    subhdr_id += 1
+                    cx0, cy0, cx1, cy1 = _tight_colhdr_px_bbox(*cell.px_bbox)
+                    bid = f"subhdr_{subhdr_id}"
+                    if bid in existing_synth_ids:
+                        continue
+                    new_chr_boxes.append(VisibleBox(
+                        box_id=bid,
+                        rect=Rect(cx0/scale, cy0/scale,
+                                  cx1/scale, cy1/scale),
+                        area_pt2=(cx1-cx0)*(cy1-cy0)/(scale*scale),
+                        fill_ratio=1.0,
+                        nested_depth=4,
+                        is_outer_wrapper=False,
+                        parent_box_id=tb.box_id,
+                        color="BLUE",
+                        px_bbox=(cx0, cy0, cx1, cy1),
+                        children_count=0,
+                        synthetic=True,
+                    ))
+                colhdr_px_used: list[tuple[int, int, int, int]] = []
+                _hdr_emit = 0
+                # Narrow captions (sidebar / revisions): the first ORANGE header row
+                # often **overlaps** the ``*_title`` bbox.  Never harvest ``colhdr_*``
+                # ink from above ``ty1`` — that paints cyan on the caption.  Pull the
+                # clip a few px **into** the overlap so ``get_text("words")`` still
+                # sees NO./DATE/… when the merged row is glued to the title strip.
+                _narrow_cap = (tx1 - tx0) <= 210
+                # Wide ``*_sec*_title`` bands can swallow the ORANGE header row so
+                # ``ty1`` sits on the cell bottom.  Using ``ty1`` as ``_ty_cut`` then
+                # makes ``by_top == ty1`` and ``by1 <= by_top+3`` skips every
+                # ``colhdr_*`` emit.  When glue lifted ``seed_y`` into that interior
+                # row, clip at ``seed_y`` instead of ``ty1``.
+                if _glue_rescued_header and not _narrow_cap:
+                    _ty_cut = max(ty0 + 2, seed_y - 2)
+                else:
+                    _ty_cut = max(ty0 + 2, ty1 - (9 if _narrow_cap else 0))
+
+                def _clip_colhdr_y0(by0: int, by1: int) -> int:
+                    """Top of the PDF clip for ``colhdr_*`` word harvest.
+
+                    ``*_title`` bottoms can extend **past** the ORANGE header row
+                    (rotated sheets / loose blue boxes).  ``max(by0, _ty_cut)``
+                    then sits below ``by1`` and every ``colhdr_*`` is skipped
+                    while ``subhdr_*`` still paints (test5 regression).
+                    """
+                    _raw = max(by0, _ty_cut)
+                    _cap = max(by0 + 1, by1 - 4)
+                    return min(_raw, _cap)
+
+                # Single merged header row under a **narrow** caption: PDF words are
+                # often empty — one wide ``_tight_colhdr`` ring reads as cyan on the
+                # caption.  Prefer fixed column slices below ``_ty_cut`` instead.
+                # Use ``first_logical`` (pre-caps filter): ``caps_cells`` can drop to
+                # two entries when one column fails the headerish test while the row
+                # is still a single merged ORANGE contour — we still want 3 cyan rings.
+                # Also: PDF word-split can yield **several** logical cells from **one**
+                # merged ORANGE row — ``_tight_colhdr`` then collapses each slice; for
+                # narrow sidebars, equal-width rings on the **union** row read better.
+                _one_orange_row = len(first_row) == 1
+                _wide_merged = (
+                    _one_orange_row
+                    and (first_row[0].px_bbox[2] - first_row[0].px_bbox[0]) >= 72)
+                if (_narrow_cap and len(first_logical) == 1) or (
+                        _narrow_cap and _wide_merged and 2 <= len(first_logical) <= 5):
+                    _c0 = first_row[0]
+                    bx0, by0, bx1, by1 = _c0.px_bbox
+                    by_top = _clip_colhdr_y0(by0, by1)
+                    if by1 > by_top + 3:
+                        bw = bx1 - bx0
+                        if bw >= 72:
+                            ncols = min(5, max(2, int(round(bw / 50.0))))
+                            step = bw / float(ncols)
+                            for j in range(ncols):
+                                ex0 = int(bx0 + j * step + 1)
+                                ex1 = int(bx0 + (j + 1) * step - 1)
+                                if ex1 <= ex0 + 4:
+                                    continue
+                                # Do **not** call ``_tight_colhdr_px_bbox`` here — on narrow
+                                # merged rows PyMuPDF often returns one wide union so all three
+                                # slices collapse to an identical bbox.
+                                cx0, cy0, cx1, cy1 = ex0, by_top, ex1, by1
+                                chr_id += 1
+                                colhdr_px_used.append((cx0, cy0, cx1, cy1))
+                                bid = f"colhdr_{chr_id}"
+                                if bid in existing_synth_ids:
+                                    continue
+                                new_chr_boxes.append(VisibleBox(
+                                    box_id=bid,
+                                    rect=Rect(cx0/scale, cy0/scale,
+                                              cx1/scale, cy1/scale),
+                                    area_pt2=(cx1-cx0)*(cy1-cy0)/(scale*scale),
+                                    fill_ratio=1.0,
+                                    nested_depth=4,
+                                    is_outer_wrapper=False,
+                                    parent_box_id=tb.box_id,
+                                    color="BLUE",
+                                    px_bbox=(cx0, cy0, cx1, cy1),
+                                    children_count=0,
+                                    synthetic=True,
+                                ))
+                                existing_synth_ids.add(bid)
+                                _hdr_emit += 1
+                else:
+                    for cell in caps_cells:
+                        bx0, by0, bx1, by1 = cell.px_bbox
+                        by_top = _clip_colhdr_y0(by0, by1)
+                        if by1 <= by_top + 3:
+                            continue
+                        cx0, cy0, cx1, cy1 = _tight_colhdr_px_bbox(
+                            bx0, by_top, bx1, by1)
+                        if cx1 <= cx0 + 4 or cy1 <= cy0 + 2:
+                            continue
+                        chr_id += 1
+                        colhdr_px_used.append((cx0, cy0, cx1, cy1))
+                        bid = f"colhdr_{chr_id}"
+                        if bid in existing_synth_ids:
+                            continue
+                        new_chr_boxes.append(VisibleBox(
+                            box_id=bid,
+                            rect=Rect(cx0/scale, cy0/scale,
+                                      cx1/scale, cy1/scale),
+                            area_pt2=(cx1-cx0)*(cy1-cy0)/(scale*scale),
+                            fill_ratio=1.0,
+                            nested_depth=4,
+                            is_outer_wrapper=False,
+                            parent_box_id=tb.box_id,
+                            color="BLUE",
+                            px_bbox=(cx0, cy0, cx1, cy1),
+                            children_count=0,
+                            synthetic=True,
+                        ))
+                        existing_synth_ids.add(bid)
+                        _hdr_emit += 1
+                # Nested thin sub-header row **immediately below** the main
+                # ``colhdr_*`` row (``second_row``): AMPS/WATTS | VOLTS/PH under
+                # ELECTRICAL DATA.  Uses the same ``second_seed`` / ``third`` data
+                # test as ``strip_two`` but without the full-width strip above
+                # ``seed_y`` (BOILER-style).
+                nest2_sub_logical: list = []
+                # Thin sub-header tier (AMPS/WATTS | VOLTS/PH) can sit **below** the
+                # main ``colhdr_*`` ORANGE band while still sharing ``seed_y`` with
+                # the top of that band (``first_row`` spans multiple ``y0`` values).
+                # Using ``second_row`` (first band strictly under ``seed_y``) then
+                # points at the wrong row — pick the first ORANGE band strictly
+                # **below** ``max(first_row y0)`` instead.
+                _fy_hi = max(c.px_bbox[1] for c in first_row)
+                _nest2_y0 = min(
+                    (c.px_bbox[1] for c in orange_cells
+                     if c.px_bbox[1] > _fy_hi + 3
+                     and c.px_bbox[2] > _hx0 - 50
+                     and c.px_bbox[0] < _hx1 + 50),
+                    default=None,
+                )
+                _nest2_row_cells = (
+                    [c for c in orange_cells
+                     if _nest2_y0 is not None
+                     and abs(c.px_bbox[1] - _nest2_y0) <= 5
+                     and c.px_bbox[2] > _hx0
+                     and c.px_bbox[0] < _hx1]
+                    if _nest2_y0 is not None else [])
+                _nest2_second_logical = list(
+                    _logical_header_row(_nest2_row_cells))
+                _nest2_bot = max(
+                    (c.px_bbox[3] for c in _nest2_row_cells), default=0)
+                _nest2_base = (
+                    re.search(r"\bSCHEDULE\b", _sched_tit, re.I)
+                    and _nest2_row_cells
+                    and not _row_is_data_row(_nest2_row_cells)
+                    and _row_median_h(_nest2_row_cells) <= 13)
+                # ``strip_two`` sets ``two_tier`` True (MOTOR DATA + RPM row).
+                # BOILER can still match ``strip_two`` on a thin strip above the
+                # main header while the AMPS row is ``_nest2_row_cells`` — emit
+                # those as ``subhdr_*`` when the main tier is a dense grid and the
+                # nest row stays 2–4 logical cells (MOTOR follow rows are wider).
+                if _nest2_base:
+                    third_seed_n2 = min(
+                        (c.px_bbox[1] for c in orange_cells
+                         if c.px_bbox[1] > _nest2_bot + 3
+                         and c.px_bbox[2] > _hx0 - 50
+                         and c.px_bbox[0] < _hx1 + 50),
+                        default=None,
+                    )
+                    if third_seed_n2 is not None:
+                        tr_n2 = [c for c in orange_cells
+                                 if abs(c.px_bbox[1] - third_seed_n2) <= 5
+                                 and c.px_bbox[2] > _hx0
+                                 and c.px_bbox[0] < _hx1]
+                        if _row_is_data_row(tr_n2):
+                            if (not two_tier and not strip_two
+                                    and len(colhdr_logical) >= 4):
+                                nest2_sub_logical = list(_nest2_second_logical)
+                            elif (strip_two
+                                    and len(first_logical) >= 4
+                                    and 2 <= len(_nest2_second_logical) <= 4):
+                                nest2_sub_logical = list(_nest2_second_logical)
+                for cell in nest2_sub_logical:
+                    subhdr_id += 1
+                    nx0, ny0, nx1, ny1 = cell.px_bbox
+                    hx0, hy0, hx1, hy1 = _tight_colhdr_px_bbox(nx0, ny0, nx1, ny1)
+                    bid_n = f"subhdr_{subhdr_id}"
+                    if bid_n in existing_synth_ids:
+                        continue
+                    new_chr_boxes.append(VisibleBox(
+                        box_id=bid_n,
+                        rect=Rect(hx0/scale, hy0/scale,
+                                  hx1/scale, hy1/scale),
+                        area_pt2=(hx1-hx0)*(hy1-hy0)/(scale*scale),
+                        fill_ratio=1.0,
+                        nested_depth=4,
+                        is_outer_wrapper=False,
+                        parent_box_id=tb.box_id,
+                        color="BLUE",
+                        px_bbox=(hx0, hy0, hx1, hy1),
+                        children_count=0,
+                        synthetic=True,
+                    ))
+
+            # ── Column headers when no ``*_title`` seeds colhdr (Drawing Index) ───
+            # Section title row is often one full-width ORANGE strip; the real
+            # column labels are Title Case on the next row.  ``blue_titles`` never
+            # fires, so emit ``colhdr_*`` from geometry + PDF text here.
+            def _ov_frac_cell_colhdr(
+                    inner: tuple[int, int, int, int],
+                    outer: tuple[int, int, int, int],
+            ) -> float:
+                ix0, iy0, ix1, iy1 = inner
+                ox0, oy0, ox1, oy1 = outer
+                xa, ya = max(ix0, ox0), max(iy0, oy0)
+                xb, yb = min(ix1, ox1), min(iy1, oy1)
+                if xb <= xa or yb <= ya:
+                    return 0.0
+                inter = (xb - xa) * (yb - ya)
+                ia = max(1, (ix1 - ix0) * (iy1 - iy0))
+                return inter / float(ia)
+
+            _colhdr_tight_existing: list[tuple[int, int, int, int]] = [
+                tuple(b.px_bbox) for b in new_chr_boxes
+                if b.box_id.startswith("colhdr_")]
+
+            def _colhdr_already_covers(sx0, sy0, sx1, sy1):
+                for ex in _colhdr_tight_existing:
+                    if _ov_frac_cell_colhdr((sx0, sy0, sx1, sy1), ex) >= 0.38:
+                        return True
+                return False
+
+            # Include ~250 px wide spec-column wrappers (``ch`` is often 2 there —
+            # the contour tree is shallow even when many ORANGE cells sit inside).
+            _wrap_candidates = [
+                w for w in boxes
+                if w.color == "BLUE"
+                and not getattr(w, "synthetic", False)
+                and (w.px_bbox[2] - w.px_bbox[0]) >= 200
+                and 2 <= w.children_count <= 500
+                and w.nested_depth >= 1
+            ]
+            for wrap in _wrap_candidates:
+                wx0, wy0, wx1, wy1 = wrap.px_bbox
+                _ww = wx1 - wx0
+                _inner = [
+                    c for c in orange_cells
+                    if (wx0 + 6) <= (c.px_bbox[0] + c.px_bbox[2]) // 2 <= (wx1 - 6)
+                    and (wy0 + 4) <= (c.px_bbox[1] + c.px_bbox[3]) // 2 <= (wy1 - 4)
+                ]
+                if len(_inner) < 3:
+                    continue
+                _by_row: dict[int, list] = {}
+                for c in _inner:
+                    cy = (c.px_bbox[1] + c.px_bbox[3]) // 2
+                    yk = (cy // 8) * 8
+                    _by_row.setdefault(yk, []).append(c)
+                if len(_by_row) < 2:
+                    continue
+                _rows_s = sorted(_by_row.items(), key=lambda kv: kv[0])
+                _ix = 0
+                while _ix < len(_rows_s):
+                    _cells_top = _rows_s[_ix][1]
+                    if len(_cells_top) == 1:
+                        _c0 = _cells_top[0]
+                        _cw0 = _c0.px_bbox[2] - _c0.px_bbox[0]
+                        _ch0 = _c0.px_bbox[3] - _c0.px_bbox[1]
+                        # Thin full-width strip = section title (Drawing Index caption).
+                        # A **tall** full-width box is usually a merged table block —
+                        # do not skip it or we never reach the column-header row.
+                        if _cw0 > 0.64 * _ww and _ch0 <= max(
+                                26, int(0.13 * (wy1 - wy0))):
+                            _ix += 1
+                            continue
+                    break
+                if _ix >= len(_rows_s):
+                    continue
+                _hdr_yk = _rows_s[_ix][0]
+                # Column headers live in the **upper** part of the wrapper.  Mid-body
+                # ALL-CAPS data (e.g. ``CABLING RISER DIAGRAM`` in a drawing index) must
+                # never pick up ``colhdr_*`` cyan rings if row bucketing ever misfires.
+                _h_wrap = max(1, wy1 - wy0)
+                if _hdr_yk > wy0 + max(55, int(0.12 * _h_wrap)):
+                    continue
+                _hdr_cells = sorted(_rows_s[_ix][1], key=lambda c: c.px_bbox[0])
+                _hdr_log = _logical_header_row(_hdr_cells)
+                # Drawing-index tables: one tall ORANGE swallows header + body; PDF
+                # word clips under rotation often miss ``Sheet Number`` tokens.  When
+                # the merged cell is spec-width and the **top band** still reads like
+                # a sheet index, fall back to equal-width column slices.
+                if len(_hdr_log) < 2 and len(_hdr_cells) == 1:
+                    c0 = _hdr_cells[0]
+                    bx0, by0, bx1, by1 = c0.px_bbox
+                    bw, bh = bx1 - bx0, by1 - by0
+                    if _ww <= 280 and bw >= int(0.52 * _ww) and bh >= 55:
+                        band_h = min(52, max(30, int(0.15 * bh)))
+                        band_y1 = min(by1, by0 + band_h)
+                        _probe = (
+                            _fpage.get_textbox(
+                                _img_to_pdf_rect2(bx0, by0, bx1, band_y1)) or ""
+                        ).upper()
+                        if "SHEET" in _probe and (
+                                "NUMBER" in _probe or "TITLE" in _probe):
+                            ncols = max(2, min(5, int(round(bw / 76.0))))
+                            step = bw / float(ncols)
+                            _hdr_log = [
+                                SimpleNamespace(px_bbox=(
+                                    int(bx0 + j * step + 1),
+                                    by0 + 2,
+                                    int(bx0 + (j + 1) * step - 1),
+                                    band_y1,
+                                ))
+                                for j in range(ncols)
+                            ]
+                if len(_hdr_log) < 2:
+                    continue
+                _span_hdr = (
+                    max(c.px_bbox[2] for c in _hdr_cells)
+                    - min(c.px_bbox[0] for c in _hdr_cells))
+                if _span_hdr < int(0.32 * _ww):
+                    continue
+                _caps_fb: list = []
+                _caps_fb_empty: list = []  # cells where text query returned nothing (coord mapping issue)
+                for _cell in _hdr_log:
+                    _x0, _y0, _x1, _y1 = _cell.px_bbox
+                    _tx = (_fpage.get_textbox(
+                        _img_to_pdf_rect2(_x0, _y0, _x1, _y1)) or ""
+                    ).strip().replace("\n", " ")
+                    if not _tx:
+                        _caps_fb_empty.append(_cell)
+                        continue
+                    if not _cell_text_column_headerish(_tx):
+                        continue
+                    _caps_fb.append(_cell)
+                # Fallback: if text queries all returned empty (PDF coordinate
+                # mapping failure on rotated PDFs), treat empty-text cells as
+                # passing when the structural signal is strong — i.e. _ix was
+                # advanced past a full-width title strip (the standard section
+                # pattern) and there are >= 2 cells in the candidate row.
+                if not _caps_fb and _caps_fb_empty and _ix > 0 and len(_hdr_log) >= 2:
+                    _caps_fb = _caps_fb_empty
+                _min_fb = max(2, int(len(_hdr_log) * 0.45))
+                if len(_caps_fb) < _min_fb:
+                    continue
+                if _ix + 1 >= len(_rows_s):
+                    continue
+                _next_cells = _rows_s[_ix + 1][1]
+                if not _next_cells:
+                    continue
+                if not _row_is_data_row(_next_cells):
+                    _digit = False
+                    for _c in _next_cells:
+                        _t2 = (_fpage.get_textbox(
+                            _img_to_pdf_rect2(*_c.px_bbox)) or "").strip()
+                        if any(ch.isdigit() for ch in _t2):
+                            _digit = True
+                            break
+                    if not _digit:
+                        continue
+                # Only cells that actually read as labels — not the whole logical row
+                # when 2-of-3 gates pass (avoids cyan on ``T902`` / ``14 OF 18`` slices).
+                for _cell in _caps_fb:
+                    _cx0, _cy0, _cx1, _cy1 = _cell.px_bbox
+                    _tx0, _ty0, _tx1, _ty1 = _tight_colhdr_px_bbox(
+                        _cx0, _cy0, _cx1, _cy1)
+                    if _colhdr_already_covers(_tx0, _ty0, _tx1, _ty1):
+                        continue
+                    chr_id += 1
+                    _bidw = f"colhdr_{chr_id}"
+                    if _bidw in existing_synth_ids:
+                        continue
+                    new_chr_boxes.append(VisibleBox(
+                        box_id=_bidw,
+                        rect=Rect(_tx0/scale, _ty0/scale,
+                                  _tx1/scale, _ty1/scale),
+                        area_pt2=(_tx1-_tx0)*(_ty1-_ty0)/(scale*scale),
+                        fill_ratio=1.0,
+                        nested_depth=4,
+                        is_outer_wrapper=False,
+                        parent_box_id=wrap.box_id,
+                        color="BLUE",
+                        px_bbox=(_tx0, _ty0, _tx1, _ty1),
+                        children_count=0,
+                        synthetic=True,
+                    ))
+                    existing_synth_ids.add(_bidw)
+                    _colhdr_tight_existing.append((_tx0, _ty0, _tx1, _ty1))
+
+            if new_chr_boxes:
+                boxes = boxes + new_chr_boxes
+                boxes = _prune_colhdr_bleeding_foreign_orange(boxes)
+                # ── Universal row-fill rule (rules/colhdr_row_fill.py) ────────
+                # If a non-synthetic ORANGE cell sits at the same y-row as
+                # existing cyan rings under the same parent AND has no
+                # green ring of its own, it earns a cyan ring too —
+                # purely structural, no per-text rule.  Recovers merged
+                # column headers like "DIMENSIONS / LENGTH x WIDTH x HEIGHT"
+                # that fail upstream caps gates.  See rules/colhdr_row_fill.py
+                # for the canonical statement of this rule; the inline impl
+                # below mirrors it exactly.
+                _existing_colhdr = [
+                    b for b in boxes if b.box_id.startswith("colhdr_")]
+                _existing_subhdr_bboxes = [
+                    b.px_bbox for b in boxes
+                    if b.box_id.startswith("subhdr_")]
+                # Group existing colhdr by (parent_box_id, y-band)
+                from collections import defaultdict as _ddl
+                _row_groups: dict[tuple[str, int], list] = _ddl(list)
+                for h in _existing_colhdr:
+                    pid = getattr(h, "parent_box_id", None) or ""
+                    ymid = int(round(0.5 * (h.px_bbox[1] + h.px_bbox[3])))
+                    yk = (ymid // 12) * 12
+                    _row_groups[(pid, yk)].append(h)
+
+                _existing_colhdr_bboxes = [b.px_bbox for b in _existing_colhdr]
+
+                def _has_overlap(bb1, bb2_list, min_frac=0.5):
+                    """True when bb1 already substantially overlaps any bb in list."""
+                    x0, y0, x1, y1 = bb1
+                    a = max(1, (x1 - x0) * (y1 - y0))
+                    for (ox0, oy0, ox1, oy1) in bb2_list:
+                        xa, ya = max(x0, ox0), max(y0, oy0)
+                        xb, yb = min(x1, ox1), min(y1, oy1)
+                        if xb <= xa or yb <= ya:
+                            continue
+                        if (xb - xa) * (yb - ya) / a >= min_frac:
+                            return True
+                    return False
+
+                _orange_cells = [
+                    b for b in boxes
+                    if b.color == "ORANGE" and not getattr(b, "synthetic", False)
+                ]
+                _fill_emitted: list = []
+                for (pid, yk), siblings in _row_groups.items():
+                    sib_y0 = min(s.px_bbox[1] for s in siblings)
+                    sib_y1 = max(s.px_bbox[3] for s in siblings)
+                    band_y0 = sib_y0 - 12
+                    band_y1 = sib_y1 + 12
+                    _band_orange = [
+                        c for c in _orange_cells
+                        if (getattr(c, "parent_box_id", None) or "") == pid
+                        and not (c.px_bbox[3] < band_y0 or c.px_bbox[1] > band_y1)
+                        and (c.px_bbox[3] - c.px_bbox[1]) <= 50
+                    ]
+                    if len(siblings) >= 2:
+                        sib_x0 = min(s.px_bbox[0] for s in siblings)
+                        sib_x1 = max(s.px_bbox[2] for s in siblings)
+                    elif len(siblings) == 1 and len(_band_orange) >= 4:
+                        sib_x0 = min(c.px_bbox[0] for c in _band_orange)
+                        sib_x1 = max(c.px_bbox[2] for c in _band_orange)
+                    else:
+                        continue
+                    # Find candidate ORANGE cells: x-overlap with the row's
+                    # x-extent, y inside the band.  Skip cells already
+                    # covered by a colhdr or subhdr (green).
+                    for c in _orange_cells:
+                        cx0, cy0, cx1, cy1 = c.px_bbox
+                        if cx1 <= sib_x0 - 4 or cx0 >= sib_x1 + 4:
+                            continue
+                        if cy0 < band_y0 or cy1 > band_y1:
+                            continue
+                        if cy1 - cy0 > 50:  # too tall — likely a multi-row span
+                            continue
+                        if _has_overlap((cx0, cy0, cx1, cy1),
+                                         _existing_colhdr_bboxes,
+                                         min_frac=0.20):
+                            continue
+                        if _has_overlap((cx0, cy0, cx1, cy1),
+                                         _existing_subhdr_bboxes,
+                                         min_frac=0.20):
+                            continue  # green takes precedence
+                        # Emit a tight word-bounded cyan ring inside the cell
+                        # using fitz, falling back to the cell bbox if no
+                        # word-extraction is possible.
+                        try:
+                            tx0, ty0, tx1, ty1 = _tight_colhdr_px_bbox(
+                                cx0, cy0, cx1, cy1)
+                        except Exception:
+                            tx0, ty0, tx1, ty1 = cx0, cy0, cx1, cy1
+                        if tx1 - tx0 < 4 or ty1 - ty0 < 4:
+                            tx0, ty0, tx1, ty1 = cx0, cy0, cx1, cy1
+                        chr_id += 1
+                        _bid_fill = f"colhdr_{chr_id}"
+                        if _bid_fill in existing_synth_ids:
+                            continue
+                        _fill_emitted.append(VisibleBox(
+                            box_id=_bid_fill,
+                            rect=Rect(tx0/scale, ty0/scale,
+                                      tx1/scale, ty1/scale),
+                            area_pt2=(tx1-tx0)*(ty1-ty0)/(scale*scale),
+                            fill_ratio=1.0,
+                            nested_depth=4,
+                            is_outer_wrapper=False,
+                            parent_box_id=pid,
+                            color="BLUE",
+                            px_bbox=(tx0, ty0, tx1, ty1),
+                            children_count=0,
+                            synthetic=True,
+                        ))
+                        existing_synth_ids.add(_bid_fill)
+                        # Register so subsequent rows don't re-emit
+                        _existing_colhdr_bboxes.append((tx0, ty0, tx1, ty1))
+                if _fill_emitted:
+                    boxes = boxes + _fill_emitted
+                stats["column_header_cells"] = sum(
+                    1 for b in boxes if b.box_id.startswith("colhdr_"))
+                stats["subheader_cells"] = sum(
+                    1 for b in boxes if b.box_id.startswith("subhdr_"))
+                stats["blue"]  = sum(1 for x in boxes if x.color == "BLUE")
+                stats["total"] = len(boxes)
+
+            # ── Extend mini-table coverage via PDF text ──────────────────
+            # For each detected mini-table frame, find its containing
+            # ORANGE/BLUE wrapper and extend the column grid to cover
+            # rows not detected because they lack individual orange cells
+            # (e.g. text-only rows that sit in a big orange wrapper).
+            if mini_tables:
+                mt_frames = [b for b in mini_tables if b.box_id.endswith("_mtable")]
+                all_wrapper_boxes = [b for b in boxes
+                                     if b.color in ("ORANGE", "BLUE")]
+                ext_cell_boxes: list = []
+                ec_keys = {b.box_id for b in boxes}
+
+                def _postprune_mt_greens_empty_text(boxlist: list) -> list:
+                    """Post-pass: drop synthetic mini-table **cell** greens that
+                    contain **no** PDF text.
+
+                    Simpler than sandwich heuristics: after all greens are
+                    placed, ask PyMuPDF ``words`` inside each cell bbox (slightly
+                    inset in image px to reduce neighbour bleed).  No
+                    alphanumeric token ⇒ remove — typical empty gutter box.
+                    """
+                    inset = 2
+                    drop_idx: set[int] = set()
+                    for i, b in enumerate(boxlist):
+                        if b.color != "GREEN" or not getattr(b, "synthetic", False):
+                            continue
+                        if "_mtable" in b.box_id:
+                            continue
+                        if "_mtcelld" not in b.box_id and "_mtcellh" not in b.box_id:
+                            continue
+                        x0, y0, x1, y1 = b.px_bbox
+                        x0 += inset
+                        y0 += inset
+                        x1 -= inset
+                        y1 -= inset
+                        if x1 <= x0 or y1 <= y0:
+                            drop_idx.add(i)
+                            continue
+                        pl, pb, pr, pt = _img_to_pdf_rect(x0, y0, x1, y1)
+                        rect = _fitz_post.Rect(
+                            min(pl, pr), min(pb, pt),
+                            max(pl, pr), max(pb, pt))
+                        words = _fpage.get_text("words", clip=rect)
+                        has_txt = False
+                        for w in words:
+                            t = (w[4] or "").strip()
+                            if t and any(ch.isalnum() for ch in t):
+                                has_txt = True
+                                break
+                        if not has_txt:
+                            drop_idx.add(i)
+                    if not drop_idx:
+                        return boxlist
+                    return [b for j, b in enumerate(boxlist) if j not in drop_idx]
+
+                for fr in mt_frames:
+                    fx0, fy0, fx1, fy1 = fr.px_bbox
+                    # Find existing cells for this frame.
+                    mt_base = fr.box_id.replace("_mtable", "_")
+                    existing = [b for b in boxes
+                                if b.box_id.startswith(mt_base) and "_mtcell" in b.box_id]
+                    if not existing:
+                        continue
+                    # Build stable column anchors from existing mini-table
+                    # cells.  We infer row-wise column positions first, then
+                    # take per-column medians so jitter does not create fake
+                    # extra columns (which fragments long descriptions).
+                    from collections import defaultdict as _dd
+                    rhs = sorted(c.px_bbox[3]-c.px_bbox[1] for c in existing)
+                    med_rh2 = rhs[len(rhs)//2] if rhs else 9
+                    row_tol2 = max(2, med_rh2 // 2)
+
+                    ex_ys = {(c.px_bbox[1] + c.px_bbox[3]) // 2 for c in existing}
+
+                    row_buckets_existing: dict[int, list] = _dd(list)
+                    for c in existing:
+                        cy_c = (c.px_bbox[1] + c.px_bbox[3]) // 2
+                        best_bucket = None
+                        for bk in row_buckets_existing.keys():
+                            if abs(cy_c - bk) <= row_tol2:
+                                best_bucket = bk
+                                break
+                        if best_bucket is None:
+                            best_bucket = cy_c
+                        row_buckets_existing[best_bucket].append(c)
+
+                    row_centers_sorted = []
+                    for _, rcells in sorted(row_buckets_existing.items()):
+                        xs = sorted((cc.px_bbox[0] + cc.px_bbox[2]) // 2 for cc in rcells)
+                        if len(xs) >= 2:
+                            row_centers_sorted.append(xs)
+
+                    col_xs_s: list[int] = []
+                    if row_centers_sorted:
+                        n_cols = max(2, int(round(
+                            sum(len(xs) for xs in row_centers_sorted)
+                            / len(row_centers_sorted)
+                        )))
+                        n_cols = min(n_cols, max(len(xs) for xs in row_centers_sorted))
+                        n_cols = min(n_cols, 8)
+                        by_idx: dict[int, list] = _dd(list)
+                        for xs in row_centers_sorted:
+                            if len(xs) < n_cols:
+                                continue
+                            for i in range(n_cols):
+                                by_idx[i].append(xs[i])
+                        for i in range(n_cols):
+                            vals = sorted(by_idx.get(i, []))
+                            if vals:
+                                col_xs_s.append(vals[len(vals)//2])
+                    if len(col_xs_s) < 2:
+                        # Fallback: dedupe raw x-centres with a tolerance.
+                        raw_centers = sorted((c.px_bbox[0] + c.px_bbox[2]) // 2 for c in existing)
+                        for cx in raw_centers:
+                            if not col_xs_s or abs(cx - col_xs_s[-1]) > max(10, row_tol2):
+                                col_xs_s.append(cx)
+                        if len(col_xs_s) < 2 and raw_centers:
+                            col_xs_s = [raw_centers[0], raw_centers[-1]]
+
+                    # Find the smallest wrapper that contains this frame.
+                    best_w = None
+                    for wb in all_wrapper_boxes:
+                        wx0,wy0,wx1,wy1 = wb.px_bbox
+                        if wx0<=fx0 and wy0<=fy0 and fx1<=wx1 and fy1<=wy1:
+                            area = (wx1-wx0)*(wy1-wy0)
+                            if best_w is None or area < best_w[0]:
+                                best_w = (area, wb)
+                    if not best_w:
+                        continue
+                    _,wrapper = best_w
+                    wx0,wy0,wx1,wy1 = wrapper.px_bbox
+
+                    # PDF-first extension: get ALL words in the wrapper,
+                    # group them by line-stack position (= one abbreviation
+                    # row per group), then assign each word-group to the
+                    # correct column based on its image-x position.
+                    qt2 = _rotate_decision % 4
+                    ph2 = _fpage.rect.height
+                    pw2 = _fpage.rect.width
+
+                    def _pdf_word_to_img(px0, py0, px1, py1):
+                        """PDF word bbox → image pixel bbox."""
+                        if qt2 == 0:
+                            xs = [px0*scale, px1*scale]
+                            ys = [py0*scale, py1*scale]
+                        elif qt2 == 1:
+                            xs = [(ph2-py1)*scale, (ph2-py0)*scale]
+                            ys = [px0*scale, px1*scale]
+                        elif qt2 == 3:
+                            xs = [py0*scale, py1*scale]
+                            ys = [(pw2-px1)*scale, (pw2-px0)*scale]
+                        else:
+                            xs = [(pw2-px1)*scale, (pw2-px0)*scale]
+                            ys = [(ph2-py1)*scale, (ph2-py0)*scale]
+                        return (int(min(xs)), int(min(ys)),
+                                int(max(xs)), int(max(ys)))
+
+                    # Fetch all words inside the wrapper.
+                    wrap_pdf = _fitz_post.Rect(*_img_to_pdf_rect(wx0, wy0, wx1, wy1))
+                    all_words = _fpage.get_text("words", clip=wrap_pdf)
+
+                    # Convert every word to image coords.
+                    img_words = []

@@ -1,0 +1,700 @@
+                        _sbl_y1 = max(c.px_bbox[3] for c in _sbl_grp)
+                        _sbl_h_thresh = max(gr_h * 2.0, 20)
+                        if (_sbl_w >= 0.85 * wrap_w
+                                and _sbl_h_max <= _sbl_h_thresh
+                                and (_sbl_y1 - _sbl_y0) <= 22):
+                            _make_title(
+                                wrapper,
+                                f"{wrapper.box_id}_sec{si}_sublabel",
+                                px[0], _sbl_y0, px[2], _sbl_y1)
+
+        # ── no separators: check for parallel column layout first ────────────
+        # If 2+ orange children share the same top-y AND together span most of
+        # the wrapper width but each spans < 70% individually, AND there is a
+        # gap above them (> 15 px) — each column gets its own title band.
+        # Example: "CABLING CONTRACTOR TO PROVIDE | SECURITY … | ELECTRICAL …"
+        else:
+            made_col_titles = False
+            # Group orange children by top-y (5px tolerance bucket)
+            y_groups: dict[int, list] = {}
+            for c in children:
+                bucket = round(c.px_bbox[1] / 5) * 5
+                y_groups.setdefault(bucket, []).append(c)
+
+            for _bucket, group in sorted(y_groups.items()):
+                if len(group) < 2:
+                    continue
+                g_top = min(c.px_bbox[1] for c in group)
+                gap   = g_top - px[1]
+                combined_w = sum(c.px_bbox[2] - c.px_bbox[0] for c in group)
+                max_w      = max(c.px_bbox[2] - c.px_bbox[0] for c in group)
+                if (combined_w > 0.60 * wrap_w
+                        and max_w < 0.70 * wrap_w
+                        and gap > 15):
+                    # Title bands stop at the **top** of the parallel orange row.
+                    # Do **not** extend into the row itself — that row is table column
+                    # headers (cyan ``colhdr_*``), not a blue ``*_title`` caption.
+                    title_bottom = g_top
+
+                    # Full-width orange strip immediately above the parallel row
+                    # (e.g. "DRAWING INDEX"): one ``*_title`` band — never per-column
+                    # ``*_col*_title`` strips, which slice the caption into 3 blue boxes.
+                    _strip_gap = [
+                        c for c in children
+                        if c.px_bbox[3] <= g_top + 6
+                        and (c.px_bbox[2] - c.px_bbox[0]) > 0.72 * wrap_w]
+                    if _strip_gap:
+                        _sy0 = min(c.px_bbox[1] for c in _strip_gap)
+                        _sy1 = max(c.px_bbox[3] for c in _strip_gap)
+                        _make_title(wrapper, f"{wrapper.box_id}_title",
+                                    px[0], _sy0, px[2], _sy1)
+                        made_col_titles = True
+                        break
+
+                    # ── two-tier detection ──────────────────────────────────
+                    # If a near-full-width BLUE child sits in the gap (e.g. a
+                    # "RESPONSIBILITY MATRIX" title bar), split the header area
+                    # into two tiers:
+                    #   Tier 1 — one full-width band: wrapper-top → blue_anchor.bottom
+                    #   Tier 2 — per-column bands:    blue_anchor.bottom → title_bottom
+                    # Without a full-width BLUE anchor → standard per-column bands.
+                    gap_blue_wide = [b for b in blue_kids
+                                     if px[1] - 4 <= b.px_bbox[1]
+                                     and b.px_bbox[3] <= g_top + 4
+                                     and (b.px_bbox[2] - b.px_bbox[0]) > 0.75 * wrap_w
+                                     and not getattr(b, "synthetic", False)]
+                    if gap_blue_wide:
+                        blue_anchor = min(gap_blue_wide, key=lambda b: b.px_bbox[1])
+                        # Tier 1: full-width title band for the section header
+                        _make_title(wrapper, f"{wrapper.box_id}_title",
+                                    px[0], px[1], px[2], blue_anchor.px_bbox[3])
+                        # Tier 2: per-column bands for column-header row(s) below anchor.
+                        # ONLY fire when the blue anchor is a pure title (no children).
+                        # If it already has children (e.g. a structured header like a
+                        # component-list section title with embedded column-label cells),
+                        # those children are already part of the header — don't double-cover.
+                        col_top = blue_anchor.px_bbox[3]
+                        if col_top < title_bottom - 4 and blue_anchor.children_count == 0:
+                            for ci, col in enumerate(
+                                    sorted(group, key=lambda c: c.px_bbox[0])):
+                                _make_title(wrapper,
+                                            f"{wrapper.box_id}_col{ci}_title",
+                                            col.px_bbox[0], col_top,
+                                            col.px_bbox[2], title_bottom)
+                    else:
+                        # Per-column bands cover only the **gap** above the first
+                        # parallel row (e.g. tri-column notes above a 3-way split).
+                        # Using ``g_top`` as the bottom edge avoids painting blue down
+                        # through column headers (those use ``colhdr_*`` cyan only).
+                        for ci, col in enumerate(
+                                sorted(group, key=lambda c: c.px_bbox[0])):
+                            _make_title(wrapper,
+                                        f"{wrapper.box_id}_col{ci}_title",
+                                        col.px_bbox[0], px[1],
+                                        col.px_bbox[2], title_bottom)
+                    made_col_titles = True
+                    break  # topmost parallel group only
+
+            if not made_col_titles:
+                # If the gap from wrapper top to first orange child exceeds
+                # 50 px, the gap area IS the title (e.g. large page-title text).
+                # In that case: prefer a full-width BLUE span (like a labelled
+                # header box) as the title boundary; otherwise stop at
+                # first-orange top so we don't bleed into content cells below.
+                # For smaller gaps, use the compact-row detection which extends
+                # to include column-header cells.
+                if children:
+                    min_orange_y = min(c.px_bbox[1] for c in children)
+                    if min_orange_y - px[1] > 50:
+                        # Check for a full-width BLUE span that defines the title
+                        wide_blue = [b for b in blue_kids
+                                     if (b.px_bbox[2]-b.px_bbox[0]) > 0.55 * wrap_w
+                                     and (b.px_bbox[3]-b.px_bbox[1]) < 0.35 * wrap_h
+                                     and b.px_bbox[1] <= min_orange_y]
+                        if wide_blue:
+                            title_y1 = min(wide_blue,
+                                           key=lambda b: b.px_bbox[1]).px_bbox[3]
+                        else:
+                            title_y1 = min_orange_y
+                        _make_title(wrapper, f"{wrapper.box_id}_title",
+                                    px[0], px[1], px[2], title_y1)
+                        continue
+                title_y1 = _title_bottom(px[0], px[2], px[1], px[3],
+                                         wrap_h, children)
+                if title_y1 is None: continue
+                # ── Column-header extension (no-gap_rows path) ─────────────────
+                # The BLUE anchor bar (found by _title_bottom) acts as a column-
+                # header background.  Its actual content cells live just below it
+                # (they're grandchildren of the wrapper, so not in `children`).
+                # Scan ALL non-synthetic ORANGE boxes in the correct x-band and in
+                # the narrow y-window [title_y1-3, title_y1+18] to find them.
+                # If their combined width covers ≥ 50% of the wrapper → include.
+                _hdr_ext = [b for b in boxes
+                            if not getattr(b, "synthetic", False)
+                            and b.color == "ORANGE"
+                            and b.px_bbox[0] >= px[0] - 5
+                            and b.px_bbox[2] <= px[2] + 5
+                            and title_y1 - 3 <= b.px_bbox[1] <= title_y1 + 18
+                            and (b.px_bbox[3] - b.px_bbox[1]) < 15]
+                if _hdr_ext:
+                    _hdr_comb_w = sum(b.px_bbox[2] - b.px_bbox[0] for b in _hdr_ext)
+                    if _hdr_comb_w >= 0.50 * wrap_w:
+                        title_y1 = max(b.px_bbox[3] for b in _hdr_ext)
+                _make_title(wrapper, f"{wrapper.box_id}_title",
+                            px[0], px[1], px[2], title_y1)
+
+    return synthetic
+
+
+def _detect_dark_hlines(gray: np.ndarray,
+                        x0: int, x1: int, y0: int, y1: int,
+                        dark_thresh: int = 100,
+                        coverage: float = 0.40) -> list[list[int]]:
+    """Return merged y-bands of horizontal dark lines within a column strip.
+
+    Scans each row in the strip; a row qualifies if ≥ `coverage` fraction of
+    its pixels are darker than `dark_thresh`.  Consecutive qualifying rows are
+    merged into bands.  This catches cell-border lines that are drawn in dark
+    gray (not orange) and therefore missed by the contour detector.
+    """
+    col = gray[y0:y1, x0:x1]          # shape (h, w)
+    width = max(x1 - x0, 1)
+    bands: list[list[int]] = []
+    for dy, row in enumerate(col):
+        dark_frac = float(np.sum(row < dark_thresh)) / width
+        if dark_frac >= coverage:
+            abs_y = y0 + dy
+            if bands and abs_y <= bands[-1][1] + 1:
+                bands[-1][1] = abs_y
+            else:
+                bands.append([abs_y, abs_y])
+    return bands
+
+
+def _detect_dark_vlines(gray: np.ndarray,
+                        x0: int, x1: int, y0: int, y1: int,
+                        dark_thresh: int = 130,
+                        coverage: float = 0.48,
+                        min_dark_run_frac: float = 0.0) -> list[list[int]]:
+    """Return merged x-bands of **vertical** dark strokes within a ROI.
+
+    Mirrors `_detect_dark_hlines` but scans columns.  Catches thin black/grey
+    table grid lines that never became their own ORANGE contours, so a
+    single merged header cell can still be split for gap-cell projection.
+
+    When ``min_dark_run_frac`` > 0, a column must also contain a **contiguous**
+    vertical run of dark pixels of at least that fraction of the ROI height.
+    This rejects letter stems (e.g. the vertical bar of ``R`` in ``RATE``)
+    that fooled the old ``coverage``-only test and produced orange cuts
+    through header text.
+    """
+    Hg, Wg = gray.shape
+    x0 = max(0, min(x0, Wg - 1))
+    x1 = max(x0 + 1, min(x1, Wg))
+    y0 = max(0, min(y0, Hg - 1))
+    y1 = max(y0 + 1, min(y1, Hg))
+    roi = gray[y0:y1, x0:x1]
+    h, w = roi.shape
+    if h < 6 or w < 4:
+        return []
+    bands: list[list[int]] = []
+    for dx in range(w):
+        col = roi[:, dx]
+        dark = col < dark_thresh
+        dark_frac = float(np.sum(dark)) / float(max(h, 1))
+        if dark_frac < coverage:
+            continue
+        if min_dark_run_frac > 0:
+            run = best = 0
+            for v in dark:
+                if v:
+                    run += 1
+                    if run > best:
+                        best = run
+                else:
+                    run = 0
+            if best / float(h) < min_dark_run_frac:
+                continue
+        abs_x = x0 + dx
+        if bands and abs_x <= bands[-1][1] + 1:
+            bands[-1][1] = abs_x
+        else:
+            bands.append([abs_x, abs_x])
+    return bands
+
+
+def _gap_img_to_pdf_rect2(
+        ix0: int, iy0: int, ix1: int, iy1: int,
+        fpage: Any, scale: float, rotate_qt: int,
+) -> Any:
+    """Image bbox → PDF ``Rect`` (same convention as colhdr ``_img_to_pdf_rect2``)."""
+    import fitz as _fz
+    pw, ph = fpage.rect.width, fpage.rect.height
+    qt = rotate_qt % 4
+    if qt == 0:
+        return _fz.Rect(ix0 / scale, iy0 / scale, ix1 / scale, iy1 / scale)
+    if qt == 3:
+        px0 = pw - iy1 / scale
+        px1 = pw - iy0 / scale
+        py0 = ix0 / scale
+        py1 = ix1 / scale
+        return _fz.Rect(min(px0, px1), min(py0, py1), max(px0, px1), max(py0, py1))
+    if qt == 1:
+        py0 = ph - ix1 / scale
+        py1 = ph - ix0 / scale
+        px0 = iy0 / scale
+        px1 = iy1 / scale
+        return _fz.Rect(min(px0, px1), min(py0, py1), max(px0, px1), max(py0, py1))
+    return _fz.Rect(pw - ix1 / scale, ph - iy1 / scale,
+                    pw - ix0 / scale, ph - iy0 / scale)
+
+
+def _gap_pdf_rect_to_px(
+        rect: Any, fpage: Any, scale: float, rotate_qt: int,
+) -> tuple[int, int, int, int]:
+    """Inverse of ``_gap_img_to_pdf_rect2``."""
+    pw, ph = fpage.rect.width, fpage.rect.height
+    qt = rotate_qt % 4
+    x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
+    if qt == 0:
+        ix0, iy0 = int(x0 * scale), int(y0 * scale)
+        ix1, iy1 = int(x1 * scale), int(y1 * scale)
+    elif qt == 3:
+        ix0, ix1 = int(y0 * scale), int(y1 * scale)
+        iy0, iy1 = int((pw - x1) * scale), int((pw - x0) * scale)
+    elif qt == 1:
+        ix0, ix1 = int((ph - y1) * scale), int((ph - y0) * scale)
+        iy0, iy1 = int(x0 * scale), int(x1 * scale)
+    else:
+        ix0, ix1 = int((pw - x1) * scale), int((pw - x0) * scale)
+        iy0, iy1 = int((ph - y1) * scale), int((ph - y0) * scale)
+    return (min(ix0, ix1), min(iy0, iy1), max(ix0, ix1), max(iy0, iy1))
+
+
+def _gap_header_subcols_pdf_words(
+        bx0: int, by0: int, bx1: int, by1: int,
+        fpage: Any, scale: float, rotate_qt: int,
+) -> list[tuple[int, int]] | None:
+    """Column x-ranges from PDF ``words`` when grey vlines miss faint grid ink."""
+    clip = _gap_img_to_pdf_rect2(bx0, by0, bx1, by1, fpage, scale, rotate_qt)
+    cw = clip.width
+    ch = max(clip.height, 1e-6)
+    if cw < 24:
+        return None
+    words = fpage.get_text("words", clip=clip) or []
+    picked: list[tuple[float, float, float, float]] = []
+    for w in words:
+        wx0, wy0, wx1, wy1 = w[0], w[1], w[2], w[3]
+        if wx1 <= clip.x0 or wx0 >= clip.x1:
+            continue
+        if wy1 <= clip.y0 or wy0 >= clip.y1:
+            continue
+        ov = min(wy1, clip.y1) - max(wy0, clip.y0)
+        if ov < 0.22 * min(ch, max(wy1 - wy0, 1e-6)):
+            continue
+        picked.append((wx0, wy0, wx1, wy1))
+    if len(picked) < 2:
+        return None
+    picked.sort(key=lambda t: t[0])
+    gap_tol = max(5.5, 0.014 * cw)
+    clusters: list[list[tuple[float, float, float, float]]] = [[picked[0]]]
+    for t in picked[1:]:
+        prev = clusters[-1][-1]
+        if t[0] - prev[2] > gap_tol:
+            clusters.append([t])
+        else:
+            clusters[-1].append(t)
+    if len(clusters) < 2:
+        return None
+    strips: list[tuple[int, int]] = []
+    for cl in clusters:
+        rx0 = min(x[0] for x in cl)
+        ry0 = min(x[1] for x in cl)
+        rx1 = max(x[2] for x in cl)
+        ry1 = max(x[3] for x in cl)
+        pad = 1.2
+        import fitz as _fz
+        rpdf = _fz.Rect(
+            max(clip.x0, rx0 - pad), max(clip.y0, ry0 - pad),
+            min(clip.x1, rx1 + pad), min(clip.y1, ry1 + pad),
+        )
+        ix0, iy0, ix1, iy1 = _gap_pdf_rect_to_px(rpdf, fpage, scale, rotate_qt)
+        ix0 = max(ix0, bx0)
+        iy0 = max(iy0, by0)
+        ix1 = min(ix1, bx1)
+        iy1 = min(iy1, by1)
+        if ix1 - ix0 >= 8:
+            strips.append((ix0, ix1))
+    return strips if len(strips) >= 2 else None
+
+
+def _gap_merge_vline_word_x_subcols(
+        bx0: int, bx1: int,
+        v_subs: list[tuple[int, int]] | None,
+        w_subs: list[tuple[int, int]] | None,
+        *, min_w: int = 8, tol: int = 4,
+) -> list[tuple[int, int]] | None:
+    """Union x-boundaries from grey vlines + PDF words → column strips."""
+    if not v_subs and not w_subs:
+        return None
+    if v_subs and not w_subs:
+        return v_subs
+    if w_subs and not v_subs:
+        return w_subs
+    cuts: list[int] = [bx0, bx1]
+    for a, b in v_subs:
+        cuts.extend([max(bx0, a), min(bx1, b)])
+    for a, b in w_subs:
+        cuts.extend([max(bx0, a), min(bx1, b)])
+    cuts = sorted(set(cuts))
+    merged: list[int] = []
+    for x in cuts:
+        if not merged or x - merged[-1] > tol:
+            merged.append(x)
+        else:
+            merged[-1] = (merged[-1] + x) // 2
+    out = [(merged[i], merged[i + 1])
+           for i in range(len(merged) - 1)
+           if merged[i + 1] - merged[i] >= min_w]
+    return out if len(out) >= 2 else None
+
+
+def _subcols_from_vline_bands(
+        bx0: int, bx1: int, bands: list[list[int]],
+        *, min_col_w: int = 16, max_band_w: int = 8,
+) -> list[tuple[int, int]] | None:
+    """Turn thin vertical line bands into column x-ranges inside [bx0, bx1]."""
+    thin = [b for b in bands if (b[1] - b[0] + 1) <= max_band_w]
+    if not thin:
+        return None
+    prev = bx0
+    out: list[tuple[int, int]] = []
+    for b0, b1 in thin:
+        gap_right = b0 - 1
+        if gap_right - prev >= min_col_w:
+            out.append((prev, gap_right))
+        prev = b1 + 1
+    if bx1 - prev >= min_col_w:
+        out.append((prev, bx1))
+    return out if len(out) >= 2 else None
+
+
+def _synthesize_gap_cells(boxes: list[VisibleBox], scale: float,
+                          cfg: "Cfg | None" = None,
+                          divider_asp_min: float | None = None,
+                          sidebar_w_max: int = 200,
+                          gray: np.ndarray | None = None,
+                          pdf_path: str | None = None,
+                          page_index: int = 0,
+                          rotate_qt: int = 0) -> list[VisibleBox]:
+    """Synthesize ORANGE border boxes for undetected cell gaps within tables.
+
+    Many table rows have borders too thin for the morphological detector to form
+    closed rectangles; instead only thin 6-12px separator lines are found.
+    This function treats those lines as row-dividers and creates ORANGE boxes for
+    the gaps between them so every row gets an orange border in the overlay.
+
+    `cfg` provides pixel/aspect thresholds; `divider_asp_min` (resolved by
+    auto-calibration upstream) overrides `cfg.divider_asp_min` for the
+    "thin full-width = real divider" gate.
+    """
+    cfg = cfg or Cfg()
+    _div_asp_min = (divider_asp_min if divider_asp_min is not None
+                    else cfg.divider_asp_min)
+    if _div_asp_min is None:
+        _div_asp_min = 25.0
+    synthetic: list[VisibleBox] = []
+    syn_id = 0
+
+    _gap_doc = None
+    _gap_fpage = None
+    if pdf_path:
+        try:
+            import fitz as _fitz_gap  # noqa: WPS433
+            _gap_doc = _fitz_gap.open(pdf_path)
+            _gap_fpage = _gap_doc[page_index]
+        except Exception:
+            _gap_doc = None
+            _gap_fpage = None
+
+    # Standard tables: depth ≥ 2, ≥ 3 detected children.
+    # Sidebar tables (e.g. REVISIONS AND ISSUE DATES at d=1, ch=1, narrow):
+    # also accepted so their internal row separators get column-projected.
+    table_wrappers = [
+        b for b in boxes
+        if b.color == "BLUE"
+        and not getattr(b, "synthetic", False)
+        and (b.px_bbox[2] - b.px_bbox[0]) > cfg.table_wrapper_min_w
+        and (
+            (b.nested_depth >= 2 and b.children_count >= 3)
+            or (b.nested_depth >= 1 and (b.px_bbox[2] - b.px_bbox[0]) <= sidebar_w_max)
+        )
+    ]
+    # Small schedule tables are often depth-1 BLUE (direct child of the page
+    # frame).  They were excluded from ``table_wrappers`` above, so gap-cell
+    # synthesis — including merged-header vline splits — never ran.  Keep this
+    # list **tight** (few children, moderate width) so large LV tables do not
+    # explode into thousands of synthetic oranges.
+    schedule_wrappers_d1 = [
+        b for b in boxes
+        if b.color == "BLUE"
+        and not getattr(b, "synthetic", False)
+        and b.nested_depth == 1
+        and 3 <= b.children_count <= 8
+        and 480 <= (b.px_bbox[2] - b.px_bbox[0]) <= 1700
+        # Short vertical extent ⇒ a schedule strip, not a whole LV page body.
+        and (b.px_bbox[3] - b.px_bbox[1]) <= 380
+    ]
+    seen_wrap: set[str] = set()
+    wrappers_to_process: list[VisibleBox] = []
+    for w in table_wrappers + schedule_wrappers_d1:
+        if w.box_id in seen_wrap:
+            continue
+        seen_wrap.add(w.box_id)
+        wrappers_to_process.append(w)
+
+    for wrapper in wrappers_to_process:
+        wx0, wy0, wx1, wy1 = wrapper.px_bbox
+        wrap_w = wx1 - wx0
+
+        # All non-synthetic ORANGE boxes inside this wrapper (any depth).
+        # Skip thin full-width strips (h ≤ divider_h_max, high aspect) — section
+        # divider bars that are not real table cells.
+        orange_in = [
+            b for b in boxes
+            if b.color == "ORANGE"
+            and not getattr(b, "synthetic", False)
+            and wx0 - 3 <= b.px_bbox[0] and b.px_bbox[2] <= wx1 + 3
+            and wy0 <= b.px_bbox[1] and b.px_bbox[3] <= wy1
+            and not (
+                (b.px_bbox[2] - b.px_bbox[0]) > wrap_w * 0.80
+                and (b.px_bbox[3] - b.px_bbox[1]) <= cfg.divider_h_max
+                and (b.px_bbox[2] - b.px_bbox[0]) / max(1, b.px_bbox[3] - b.px_bbox[1]) > _div_asp_min
+            )
+        ]
+        # No orange children?  For a narrow sidebar table (REVISIONS-style)
+        # we still want to draw row outlines via the dark-line scan, so
+        # treat the wrapper as a single full-width column.  For wider
+        # wrappers without orange children, there is genuinely nothing to
+        # synthesize and we skip.
+        if not orange_in:
+            if wrap_w <= sidebar_w_max:
+                orange_in = []     # explicit: stay empty, columns dict will get the synthetic full-width column below
+            else:
+                continue
+
+        # Collect synthetic title-band y-ranges for this wrapper.
+        # These span the full width and must NOT have gap cells created inside
+        # them — the title band already provides the visual indicator.
+        # We include: (a) title bands parented to this wrapper, and (b) full-width
+        # detected ORANGE boxes that were excluded from orange_in above.
+        title_intervals: list[tuple[int, int]] = []
+        for b in boxes:
+            bx0, by0, bx1, by1 = b.px_bbox
+            in_wrapper = (wx0 - 3 <= bx0 and bx1 <= wx1 + 3
+                          and wy0 <= by0 and by1 <= wy1)
+            if not in_wrapper:
+                continue
+            # Synthetic title bands (any color) inside this wrapper
+            if getattr(b, "synthetic", False) and (
+                    b.box_id.endswith(("_title", "_sublabel"))
+                    or b.box_id.startswith("colhdr_")
+                    or b.box_id.startswith("subhdr_")):
+                title_intervals.append((by0, by1))
+            # Two kinds of full-width non-synthetic ORANGE cells block
+            # gap-cell creation in their y-range:
+            #   • Thin header strips — h ≤ cfg.divider_h_max AND
+            #     aspect > _div_asp_min (real divider bars).
+            #   • Tall body cells — h > cfg.body_block_h_min
+            #     (full-width text bodies like a paragraph block; the
+            #     schedule columns above must NOT be projected into them).
+            elif (b.color == "ORANGE"
+                  and not getattr(b, "synthetic", False)
+                  and (bx1 - bx0) > wrap_w * 0.80):
+                _h = by1 - by0
+                _asp = (bx1 - bx0) / max(1, _h)
+                if (_h <= cfg.divider_h_max and _asp > _div_asp_min) or _h > cfg.body_block_h_min:
+                    title_intervals.append((by0, by1))
+
+        wrap_h_px = wy1 - wy0
+
+        def _wide_merged_header_subcols(ob: VisibleBox) -> list[tuple[int, int]] | None:
+            """Split one fat ORANGE (e.g. TAG+MFGR+SERVICE) using grey grid vlines.
+
+            Gates are **strict** so normal data cells (short but only modestly
+            wide) do not explode into dozens of synthetic gap columns on TEST_3.
+            """
+            if gray is None:
+                return None
+            bx0, by0, bx1, by1 = ob.px_bbox
+            bw, bh = bx1 - bx0, by1 - by0
+            if bh < 8 or bw < 120:
+                return None
+            # Single-line-ish compact row (schedule column-header strip;
+            # allow extra vertical padding above the text in the bbox).
+            if bh > 34:
+                return None
+            # Skip thin full-width schedule dividers (handled elsewhere).
+            if bw > wrap_w * 0.92 and bh <= cfg.divider_h_max:
+                return None
+            # Must be a *very* wide flat strip (merged multi-column header).
+            if bw < max(160, int(0.26 * wrap_w)):
+                return None
+            # Full-wrapper **tall** rows are usually body blocks, not header strips.
+            if bw >= int(0.88 * wrap_w) and bh > 30:
+                return None
+            # Do not treat a cell as "tall vs wrapper" when the wrapper itself is
+            # a short schedule strip (~1–3 rows): 0.2×wrap_h would be tiny and
+            # would reject legitimate ~24px header rows (e.g. AIR SEPARATOR).
+            if wrap_h_px > 90 and bh > int(0.48 * wrap_h_px):
+                return None
+            if bw / float(bh) < 11.5:
+                return None
+            # Use the **full** cell height so grid lines (top→bottom of row) are
+            # found; pair with a long contiguous dark run so glyph stems inside
+            # words do not become false column boundaries.
+            vb = _detect_dark_vlines(
+                gray, bx0, bx1, by0, by1,
+                dark_thresh=120, coverage=0.42,
+                min_dark_run_frac=0.74,
+            )
+            subs_v = _subcols_from_vline_bands(bx0, bx1, vb, max_band_w=8)
+            subs_w: list[tuple[int, int]] | None = None
+            if _gap_fpage is not None:
+                subs_w = _gap_header_subcols_pdf_words(
+                    bx0, by0, bx1, by1, _gap_fpage, scale, rotate_qt % 4)
+            subs = _gap_merge_vline_word_x_subcols(bx0, bx1, subs_v, subs_w)
+            if subs is None:
+                subs = subs_v if subs_v else subs_w
+            if subs is not None and len(subs) > 14:
+                subs = subs_v if subs_v else subs_w
+            if subs is None or len(subs) < 2 or len(subs) > 14:
+                return None
+            return subs
+
+        # Group by x-column (same x0 ± 3, x1 ± 3).  Wide merged header rows
+        # are split on imaged vertical grid lines so each column gets its own
+        # horizontal dark-line scan and orange gapcell outlines.
+        columns: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        for ob in orange_in:
+            bx0, by0, bx1, by1 = ob.px_bbox
+            subs = _wide_merged_header_subcols(ob)
+            if subs:
+                for sx0, sx1 in subs:
+                    matched = False
+                    for (cx0, cx1) in list(columns.keys()):
+                        if abs(sx0 - cx0) <= 3 and abs(sx1 - cx1) <= 3:
+                            columns[(cx0, cx1)].append((by0, by1))
+                            matched = True
+                            break
+                    if not matched:
+                        columns[(sx0, sx1)] = [(by0, by1)]
+                # Short schedule wrappers often have no ≥5px ``gap_top``/``gap_bot``
+                # bands left after title-row checkpoints — the column loop alone
+                # would emit nothing.  Draw one orange outline per vline column
+                # for this header row so merged TAG/MFGR/SERVICE cells still show
+                # internal grid boundaries.
+                for sx0, sx1 in subs:
+                    if sx1 - sx0 < 8 or by1 - by0 < 4:
+                        continue
+                    synthetic.append(VisibleBox(
+                        box_id=f"gapcell_hdr_{syn_id}",
+                        rect=Rect(sx0 / scale, by0 / scale,
+                                  sx1 / scale, by1 / scale),
+                        area_pt2=(sx1 - sx0) * (by1 - by0) / scale ** 2,
+                        fill_ratio=0.5,
+                        nested_depth=wrapper.nested_depth + 1,
+                        is_outer_wrapper=False,
+                        parent_box_id=wrapper.box_id,
+                        color="ORANGE",
+                        px_bbox=(sx0, by0, sx1, by1),
+                        children_count=0,
+                    ))
+                    object.__setattr__(synthetic[-1], "synthetic", True)
+                    syn_id += 1
+                continue
+            matched = False
+            for (cx0, cx1) in list(columns.keys()):
+                if abs(bx0 - cx0) <= 3 and abs(bx1 - cx1) <= 3:
+                    columns[(cx0, cx1)].append((by0, by1))
+                    matched = True
+                    break
+            if not matched:
+                columns[(bx0, bx1)] = [(by0, by1)]
+
+        # Sidebar-table case: no detected columns → use the wrapper as
+        # one full-width "column" so row separators still get traced.
+        if not columns:
+            columns[(wx0, wx1)] = []
+
+        def _merge_intervals(ivs: list[tuple[int,int]],
+                              tol: int = 5) -> list[list[int]]:
+            out: list[list[int]] = []
+            for (a, b) in sorted(ivs):
+                if out and a <= out[-1][1] + tol:
+                    out[-1][1] = max(out[-1][1], b)
+                else:
+                    out.append([a, b])
+            return out
+
+        for (col_x0, col_x1), intervals in columns.items():
+            # Start with orange-detected separators for this column
+            merged = _merge_intervals(intervals, tol=5)
+
+            # ── Dark-line scan ───────────────────────────────────────────────
+            # Scan the grayscale image directly for horizontal dark lines in
+            # this column.  These catch borders drawn in dark gray (not orange)
+            # that the contour detector misses (e.g. the line between
+            # "2' SOLID BOTTOMPLATE" and "8' SOLID BOTTOMPLATE").
+            if gray is not None:
+                dark_bands = _detect_dark_hlines(
+                    gray, col_x0, col_x1, wy0, wy1,
+                    dark_thresh=140, coverage=0.50,
+                )
+                for [dy0, dy1] in dark_bands:
+                    # Only add if not already covered by an orange separator
+                    if not any(dy0 <= m[1] + 2 and dy1 >= m[0] - 2
+                               for m in merged):
+                        merged.append([dy0, dy1])
+                merged.sort(key=lambda x: x[0])
+                merged = _merge_intervals(
+                    [(m[0], m[1]) for m in merged], tol=3
+                )
+
+            # Add title-band intervals as checkpoints so gap cells are never
+            # created inside section headers / full-width divider rows.
+            if title_intervals:
+                for (ti0, ti1) in title_intervals:
+                    merged.append([ti0, ti1])
+                merged.sort(key=lambda x: x[0])
+                merged = _merge_intervals([(m[0], m[1]) for m in merged], tol=2)
+
+            # Synthesize content gap cells between consecutive separators
+            checkpoints = [[wy0, wy0]] + merged + [[wy1, wy1]]
+            for i in range(len(checkpoints) - 1):
+                gap_top = checkpoints[i][1]
+                gap_bot = checkpoints[i + 1][0]
+                if gap_bot - gap_top >= 5:
+                    # Skip if this gap falls entirely within a title-band interval
+                    # (handles any residual overlap after checkpoint merging)
+                    if any(ti0 - 2 <= gap_top and gap_bot <= ti1 + 2
+                           for (ti0, ti1) in title_intervals):
+                        continue
+                    syn = VisibleBox(
+                        box_id=f"gapcell_{syn_id}",
+                        rect=Rect(col_x0 / scale, gap_top / scale,
+                                  col_x1 / scale, gap_bot / scale),
+                        area_pt2=(col_x1 - col_x0) * (gap_bot - gap_top) / scale ** 2,
+                        fill_ratio=0.5,
+                        nested_depth=wrapper.nested_depth + 1,
+                        is_outer_wrapper=False,
+                        parent_box_id=wrapper.box_id,
+                        color="ORANGE",
+                        px_bbox=(col_x0, gap_top, col_x1, gap_bot),
+                        children_count=0,
+                    )
+                    object.__setattr__(syn, "synthetic", True)
+                    synthetic.append(syn)
+                    syn_id += 1
+
+    if _gap_doc is not None:

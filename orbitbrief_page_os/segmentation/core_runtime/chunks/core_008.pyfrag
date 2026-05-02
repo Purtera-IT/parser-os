@@ -1,0 +1,40 @@
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--pdf",   required=True)
+    ap.add_argument("--page",  type=int, default=0)
+    ap.add_argument("--out",   default="overlay_standalone.png",
+                    help="Output PNG path")
+    ap.add_argument("--scale", type=float, default=2.5)
+    ap.add_argument("--no-labels", action="store_true")
+    ap.add_argument(
+        "--layers", default="all", choices=("all", "blue"),
+        help="Overlay passes: 'all' (default) or 'blue' = BLUE_FAMILY only "
+             "(wrappers + title bands + *_body — no orange/cyan/green/purple).")
+    args = ap.parse_args()
+
+    cfg = Cfg(render_scale=args.scale)
+    result, rgb = detect(args.pdf, page_index=args.page, cfg=cfg)
+
+    print(f"\n=== page {args.page} ===")
+    s = result.debug_stats
+    print(f"  image: {s['W']}×{s['H']}  |  merged: {s['merged']}  |  validated: {s['validated']}  |  after_nms: {s['after_nms']}")
+    print(f"  BLUE={s['blue']}  ORANGE={s['orange']}  total={s['total']}")
+    print("  rejections:", {k:v for k,v in s['rejects'].items() if v>0})
+
+    # Print hierarchy summary
+    for b in result.boxes:
+        print(f"  [{b.color:6s}] {b.box_id:5s} depth={b.nested_depth} ch={b.children_count:3d}  "
+              f"px=({b.px_bbox[0]},{b.px_bbox[1]},{b.px_bbox[2]},{b.px_bbox[3]})  "
+              f"parent={b.parent_box_id}")
+
+    _layers = parse_layers_arg(args.layers)
+    out = render_overlay(
+        rgb, result, args.out,
+        draw_labels=not args.no_labels,
+        layers=_layers,
+    )
+    print(f"\nSaved → {out}  (layers={args.layers!r})")

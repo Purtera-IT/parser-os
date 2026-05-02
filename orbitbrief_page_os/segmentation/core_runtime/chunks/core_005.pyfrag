@@ -1,0 +1,700 @@
+                    for w in all_words:
+                        ix0w, iy0w, ix1w, iy1w = _pdf_word_to_img(w[0], w[1], w[2], w[3])
+                        img_words.append((ix0w, iy0w, ix1w, iy1w, w[4]))
+
+                    # Group words by STRICT line position — each unique
+                    # horizontal band (one abbreviation row) is its own
+                    # group.  Two words belong to the same line only if
+                    # their image-Y centres are within ½× the row
+                    # height of each other.  Using a tighter tolerance
+                    # here prevents multiple rows from merging into one
+                    # cell.
+                    from collections import defaultdict as _ddc
+
+                    def _ext_split_mega_line(wl: list, rh_med: int):
+                        """Split a bucket that accidentally merged many PDF baselines.
+
+                        When ``get_text('words')`` puts dozens of tokens at nearly
+                        the same image-y (or our first pass merged them), one
+                        pass of midpoint column rules invents a fat middle cell
+                        (FT/FEET, HEAD/WASTE/WET, …).  Break on a real y-step.
+                        """
+                        if len(wl) <= 18:
+                            return [wl]
+                        gap_y = max(2.8, float(rh_med) * 0.30)
+                        ws = sorted(wl, key=lambda w: (w[1] + w[3]) * 0.5)
+                        chunks: list[list] = []
+                        cur = [ws[0]]
+                        for w in ws[1:]:
+                            cy = (w[1] + w[3]) * 0.5
+                            pcy = (cur[-1][1] + cur[-1][3]) * 0.5
+                            if cy - pcy > gap_y:
+                                chunks.append(cur)
+                                cur = [w]
+                            else:
+                                cur.append(w)
+                        chunks.append(cur)
+                        out = [c for c in chunks if len(c) >= 2]
+                        return out if out else [wl]
+
+                    # Tighter than ``row_tol2``: extension line keys must not
+                    # merge adjacent spec rows whose centres differ by ~6–8 px.
+                    half_rh = max(2, min(row_tol2, max(3, med_rh2 // 3)))
+                    line_buckets: dict = _ddc(list)
+                    for wrd in img_words:
+                        cy_w = (wrd[1] + wrd[3]) // 2
+                        # Find existing bucket within half_rh.
+                        best_bucket = None
+                        for bk in line_buckets.keys():
+                            if abs(cy_w - bk) <= half_rh:
+                                best_bucket = bk
+                                break
+                        if best_bucket is None:
+                            best_bucket = cy_w
+                        line_buckets[best_bucket].append(wrd)
+
+                    erow = 2000
+                    for line_cy, wrd_list in sorted(line_buckets.items()):
+                        # Skip rows already covered by existing mini-table
+                        # rows (compare centre-to-centre, not top-y).
+                        if any(abs(line_cy - ey) <= row_tol2 for ey in ex_ys):
+                            continue
+                        for wrd_list in _ext_split_mega_line(wrd_list, med_rh2):
+                            line_cy2 = int(
+                                sum((w[1] + w[3]) // 2 for w in wrd_list)
+                                / max(1, len(wrd_list)))
+                            if any(abs(line_cy2 - ey) <= row_tol2 for ey in ex_ys):
+                                continue
+                            # Many words ⇒ one PDF "line" absorbed multiple logical
+                            # rows — only the outermost column anchors are stable;
+                            # interior anchors become fake gutter columns.
+                            anchor_xs = col_xs_s
+                            if len(wrd_list) >= 22 and len(col_xs_s) >= 2:
+                                anchor_xs = [col_xs_s[0], col_xs_s[-1]]
+                            elif len(col_xs_s) >= 4 and len(wrd_list) >= 12:
+                                anchor_xs = [col_xs_s[0], col_xs_s[-1]]
+                            # Assign each word to a column by image-X centre,
+                            # using stable boundaries between inferred columns.
+                            col_groups: dict[int, list] = _ddc(list)
+                            boundaries: list[float] = []
+                            if len(anchor_xs) >= 2:
+                                boundaries = [
+                                    (anchor_xs[i] + anchor_xs[i + 1]) * 0.5
+                                    for i in range(len(anchor_xs) - 1)
+                                ]
+                            for wrd in wrd_list:
+                                wcx = (wrd[0] + wrd[2]) // 2
+                                if len(anchor_xs) < 2:
+                                    continue
+                                col_idx = 0
+                                while col_idx < len(boundaries) and wcx > boundaries[col_idx]:
+                                    col_idx += 1
+                                best_col = anchor_xs[col_idx]
+                                # Do NOT gate by distance to the column anchor: long
+                                # description phrases extend far to the right of the
+                                # anchor but still belong in this band (midpoints
+                                # between anchors already decided the column).
+                                col_groups[best_col].append(wrd)
+                            if len(col_groups) < 2:
+                                continue
+                            # Build one cell per column: union of word bboxes.
+                            row_pxs = []
+                            for col_cx, words_in_col in sorted(col_groups.items()):
+                                if not words_in_col:
+                                    continue
+                                cix0 = min(w[0] for w in words_in_col)
+                                ciy0 = min(w[1] for w in words_in_col)
+                                cix1 = max(w[2] for w in words_in_col)
+                                ciy1 = max(w[3] for w in words_in_col)
+                                row_pxs.append((max(cix0, wx0), ciy0,
+                                                min(cix1, wx1), ciy1))
+                            if len(row_pxs) < 2:
+                                continue
+                            # Extension-only: bogus *third* column between two real
+                            # cells shows up two ways:
+                            #   (a) **Narrow** gutter glyph — middle width << neighbours.
+                            #   (b) **Wide bridge** — line bucketing merged many PDF
+                            #       words at nearly the same y; boundary assignment
+                            #       dumps a swath of unrelated tokens into the middle
+                            #       bucket, whose bbox **spans the horizontal gap**
+                            #       between left and right cells (reads as a green
+                            #       “roof” over the red row connector).
+                            row_pxs.sort(key=lambda r: r[0])
+                            if len(row_pxs) == 3:
+                                bwL = row_pxs[0][2] - row_pxs[0][0]
+                                bwM = row_pxs[1][2] - row_pxs[1][0]
+                                bwR = row_pxs[2][2] - row_pxs[2][0]
+                                l1x = row_pxs[0][2]
+                                r0x = row_pxs[2][0]
+                                m0, m1x = row_pxs[1][0], row_pxs[1][2]
+                                drop_mid = False
+                                if bwM < 26 and bwM < 0.40 * max(bwL, bwR):
+                                    drop_mid = True
+                                elif l1x < r0x:
+                                    gwidth = r0x - l1x
+                                    cover = max(
+                                        0.0, min(float(m1x), float(r0x))
+                                        - max(float(m0), float(l1x)))
+                                    if gwidth > 10.0 and cover / gwidth > 0.52:
+                                        drop_mid = True
+                                if drop_mid:
+                                    row_pxs = [row_pxs[0], row_pxs[2]]
+                            if len(row_pxs) < 2:
+                                continue
+                            erow += 1
+                            rp_list = []
+                            for ix0, iy0, ix1, iy1 in row_pxs:
+                                if ix1 <= ix0 or iy1 <= iy0:
+                                    continue
+                                bid = f"{mt_base}ext{erow}_c{ix0}_mtcelld"
+                                if bid not in ec_keys:
+                                    ec_keys.add(bid)
+                                    ext_cell_boxes.append(VisibleBox(
+                                        box_id=bid,
+                                        rect=Rect(ix0/scale, iy0/scale,
+                                                  ix1/scale, iy1/scale),
+                                        area_pt2=(ix1-ix0)*(iy1-iy0)/scale**2,
+                                        fill_ratio=1.0, nested_depth=5,
+                                        is_outer_wrapper=False,
+                                        parent_box_id=fr.box_id, color="GREEN",
+                                        px_bbox=(ix0, iy0, ix1, iy1),
+                                        children_count=0, synthetic=True,
+                                    ))
+                                    rp_list.append((ix0, iy0, ix1, iy1))
+                                    ex_ys.add((iy0 + iy1) // 2)
+                            if len(rp_list) >= 2:
+                                rx0 = min(p[0] for p in rp_list) - 1
+                                ry0 = min(p[1] for p in rp_list) - 1
+                                rx1 = max(p[2] for p in rp_list) + 1
+                                ry1 = max(p[3] for p in rp_list) + 1
+                                ext_cell_boxes.append(VisibleBox(
+                                    box_id=f"{mt_base}ext{erow}_mtrow",
+                                    rect=Rect(rx0/scale, ry0/scale,
+                                              rx1/scale, ry1/scale),
+                                    area_pt2=(rx1-rx0)*(ry1-ry0)/scale**2,
+                                    fill_ratio=1.0, nested_depth=4,
+                                    is_outer_wrapper=False,
+                                    parent_box_id=fr.box_id, color="RED",
+                                    px_bbox=(rx0, ry0, rx1, ry1),
+                                    children_count=0, synthetic=True,
+                                ))
+
+                if ext_cell_boxes:
+                    boxes = list(boxes) + ext_cell_boxes
+                boxes = _postprune_mt_greens_empty_text(boxes)
+                boxes = _prune_mt_extension_cells_under_contour_orange(boxes)
+                if ext_cell_boxes:
+                    stats["mt_extension_cells"] = len(
+                        [b for b in ext_cell_boxes if "_mtcelld" in b.box_id])
+                stats["total"] = len(boxes)
+
+            if cfg.detect_titleblock_logos:
+                _logo_boxes = _synthesize_titleblock_logo_boxes(
+                    list(boxes), _fpage, scale, _rotate_decision, W, H, cfg,
+                    _img_to_pdf_rect2)
+                if _logo_boxes:
+                    boxes = _prune_colhdr_overlapping_titleblock_logos(
+                        list(boxes) + _logo_boxes)
+                    stats["titleblock_logos"] = len(_logo_boxes)
+                    stats["purple_boxes"] = sum(
+                        1 for x in boxes if x.color == "PURPLE")
+                    stats["total"] = len(boxes)
+        finally:
+            _fdoc.close()
+    except Exception:
+        pass
+
+    # ── Post-processing: recover hairline vertical dividers ───────────────────
+    if cfg.fix_hairline_splits:
+        boxes = _fix_hairline_splits(list(boxes), rgb, scale)
+        stats["total"] = len(boxes)
+
+    return VisibleBoxResult(boxes=boxes, image_width=W,
+                            image_height=H, debug_stats=stats), rgb
+
+
+# ── text-extraction helpers (pypdfium2) ──────────────────────────────────────
+
+def _rot_px_to_pdf_rect(rx0: int, ry0: int, rx1: int, ry1: int,
+                         H_portrait_px: int, page_height_pt: float,
+                         scale: float) -> tuple[float, float, float, float]:
+    """Convert a landscape-pixel bounding box to PDF native coordinates.
+
+    After np.rot90(k=-1) the landscape image has:
+        landscape_x (rx) = H_portrait_px - 1 - portrait_row  (left=portrait bottom)
+        landscape_y (ry) = portrait_col                        (top=portrait left)
+
+    Inverse:
+        portrait_col      = ry                   → pdf_x = ry / scale
+        portrait_row      = H_portrait_px-1 - rx → pdf_y (bottom-up) = page_h - portrait_row/scale
+
+    Returns (pdf_left, pdf_bottom, pdf_right, pdf_top) in PDF native coords.
+    """
+    pdf_left   = ry0 / scale
+    pdf_right  = ry1 / scale
+    # rx0 = smaller rx = top of landscape box → larger portrait_row → smaller pdf_y
+    pdf_top    = page_height_pt - (H_portrait_px - 1 - rx0) / scale
+    pdf_bottom = page_height_pt - (H_portrait_px - 1 - rx1) / scale
+    if pdf_top < pdf_bottom:
+        pdf_top, pdf_bottom = pdf_bottom, pdf_top
+    return pdf_left, pdf_bottom, pdf_right, pdf_top
+
+
+def _find_bullet_start_ry(rx0: int, ry0: int, rx1: int, ry1: int,
+                           textpage,
+                           H_portrait_px: int, page_height_pt: float,
+                           scale: float,
+                           strip_w: int = 10,
+                           max_scan_px: int = 250) -> tuple[int | None, bool]:
+    """Find the landscape-y coordinate where bullet/numbered items FIRST appear.
+
+    Scans thin landscape-y strips (each strip_w pixels wide) from the top of
+    the box.  Each strip spans the full landscape-x width of the box, which
+    corresponds to a narrow portrait-x band — capturing one column of text
+    characters.  The first strip whose extracted text matches a bullet pattern
+    gives us the title/content boundary.
+
+    Returns (first_bullet_ry, has_any_bullets).
+    has_any_bullets=False → box has no bullet content at all → skip title synthesis.
+    first_bullet_ry=None but has_any_bullets=True → bullets exist but start beyond
+    max_scan_px (very long preamble); caller may still synthesize a title.
+    """
+    # Quick full-box check first — avoids strip scanning for non-bullet boxes
+    l, b, r, t = _rot_px_to_pdf_rect(rx0, ry0, rx1, ry1,
+                                      H_portrait_px, page_height_pt, scale)
+    try:
+        full_text = textpage.get_text_bounded(l, b, r, t)
+    except Exception:
+        return None, False
+    if not _BULLET_PAT.search(full_text):
+        return None, False
+
+    # Scan strips in landscape-y (= portrait-x) direction with 50% overlap
+    step = max(1, strip_w // 2)
+    scan_end = min(ry1, ry0 + max_scan_px)
+    for sry in range(ry0, scan_end, step):
+        sry1 = min(ry1, sry + strip_w)
+        l2, b2, r2, t2 = _rot_px_to_pdf_rect(rx0, sry, rx1, sry1,
+                                               H_portrait_px, page_height_pt, scale)
+        try:
+            strip_text = textpage.get_text_bounded(l2, b2, r2, t2).strip()
+        except Exception:
+            continue
+        if strip_text and _BULLET_PAT.search(strip_text):
+            return sry, True
+
+    return None, True   # bullets present but preamble > max_scan_px
+
+
+# ── overlay ───────────────────────────────────────────────────────────────────
+
+def _synthesize_section_boxes(boxes: list[VisibleBox], scale: float,
+                               cfg: "Cfg | None" = None,
+                               orange_asp_min: float | None = None,
+                               sidebar_w_max: int = 200,
+                               textpage=None,
+                               H_portrait_px: int | None = None,
+                               page_height_pt: float | None = None) -> list[VisibleBox]:
+    """
+    For every large BLUE wrapper, synthesize a wide BLUE title-row band over the
+    first row of each section.
+
+    Handles two separator orientations automatically:
+      Gap COLUMNS  (thin vertical lines) → portrait-style tables.
+                   Sections are x-ranges; title = top row of each x-section.
+      Gap ROWS     (thin horizontal lines) → landscape-style tables.
+                   Sections are y-ranges; title = top row of each y-section.
+      No separator → single title spanning the full wrapper.
+
+    `cfg` provides pixel/aspect thresholds; `orange_asp_min` (resolved by
+    auto-calibration upstream) overrides cfg.gap_row_orange_asp_min for the
+    ORANGE gap-row aspect gate.
+    """
+    cfg = cfg or Cfg()
+    _orange_asp_min = (orange_asp_min if orange_asp_min is not None
+                       else cfg.gap_row_orange_asp_min)
+    if _orange_asp_min is None:
+        _orange_asp_min = 25.0
+    synthetic: list[VisibleBox] = []
+
+    def _make_title(wrapper, box_id, bx0, by0, bx1, by1):
+        if by1 <= by0:   # guard against inverted / zero-height bands
+            return
+        synthetic.append(VisibleBox(
+            box_id=box_id,
+            rect=Rect(bx0/scale, by0/scale, bx1/scale, by1/scale),
+            area_pt2=(bx1-bx0)*(by1-by0)/scale**2,
+            fill_ratio=1.0,
+            nested_depth=wrapper.nested_depth + 1,
+            is_outer_wrapper=False,
+            parent_box_id=wrapper.box_id,
+            color="BLUE",
+            px_bbox=(bx0, by0, bx1, by1),
+            children_count=0,
+            synthetic=True,
+        ))
+
+    for wrapper in boxes:
+        px = wrapper.px_bbox
+        wrap_h = px[3] - px[1]
+        wrap_w = px[2] - px[0]
+        if wrap_h < 50 or wrap_w < 50:
+            continue
+        # Depth 0/1 = outer page frame / border — never synthesize title bands
+        # EXCEPT for narrow stand-alone tables that are direct children of the
+        # page frame (e.g. the REVISIONS AND ISSUE DATES sidebar table).
+        # A narrow d=1 wrapper (w ≤ 200 px) is a clearly delimited side table,
+        # not the page-wide inner border — process it like a normal section.
+        if wrapper.nested_depth < 2 and not (
+            wrapper.color == "BLUE" and wrap_w <= sidebar_w_max
+        ):
+            continue
+
+        # ── ORANGE wrapper with BLUE child gap ────────────────────────────────
+        # Some section wrappers are classified ORANGE (area fraction just below
+        # the BLUE threshold) but structurally act identically to BLUE wrappers:
+        # they have a ~1-line title gap above a BLUE inner frame.
+        # We synthesize the title for them here and skip all further logic.
+        if wrapper.color == "ORANGE":
+            if wrapper.nested_depth < 2:
+                continue
+            blue_kids_o = [b for b in boxes
+                           if b.parent_box_id == wrapper.box_id
+                           and b.color == "BLUE"
+                           and not getattr(b, "synthetic", False)]
+            if blue_kids_o:
+                topmost = min(blue_kids_o, key=lambda b: b.px_bbox[1])
+                gap = topmost.px_bbox[1] - px[1]
+                if 8 < gap < 0.5 * wrap_h:   # valid title region
+                    _make_title(wrapper, f"{wrapper.box_id}_title",
+                                px[0], px[1], px[2], topmost.px_bbox[1])
+            continue
+
+        if wrapper.color != "BLUE":
+            continue
+
+        children = [b for b in boxes
+                    if b.parent_box_id == wrapper.box_id and b.color == "ORANGE"]
+
+        # BLUE non-wrapper children: section title cells have blue fill → detected BLUE
+        blue_kids = [b for b in boxes
+                     if b.parent_box_id == wrapper.box_id
+                     and b.color == "BLUE"
+                     and b.box_id != wrapper.box_id
+                     and not getattr(b, "synthetic", False)]
+
+        # All direct children (ORANGE + BLUE, non-synthetic) — used for gap_row detection.
+        # BLUE cells that are thin & full-width are section-header separators and must be
+        # included in gap_rows even though they're BLUE, not just ORANGE.
+        children_all = [b for b in boxes
+                        if b.parent_box_id == wrapper.box_id
+                        and not getattr(b, "synthetic", False)]
+
+        if len(children) < 2:
+            # Rule A: wrapper has BLUE children and the topmost BLUE child starts
+            # >8 px below the wrapper top → that gap IS the title.
+            # Only applies at depth ≥ 2 to skip outer page frames.
+            if blue_kids and wrapper.nested_depth >= 2:
+                topmost_blue = min(blue_kids, key=lambda b: b.px_bbox[1])
+                gap = topmost_blue.px_bbox[1] - px[1]
+                if gap > 8:
+                    _make_title(wrapper, f"{wrapper.box_id}_title",
+                                px[0], px[1], px[2], topmost_blue.px_bbox[1])
+
+            # Rule B: text-content box — use PDF strip-scanning to find where
+            # bullet/numbered items begin.  The region above is the section title.
+            # Only fires when NO blue-kid gap was found, to avoid double-banding.
+            elif (textpage is not None
+                  and H_portrait_px is not None
+                  and page_height_pt is not None
+                  and not blue_kids):
+                bullet_ry, has_bullets = _find_bullet_start_ry(
+                    px[0], px[1], px[2], px[3],
+                    textpage, H_portrait_px, page_height_pt, scale)
+                # Only create a title band when there is a visible gap above the
+                # first bullet (≥ 8 px ≈ half a text line at 2.5× render scale).
+                if bullet_ry is not None and (bullet_ry - px[1]) >= 8:
+                    _make_title(wrapper, f"{wrapper.box_id}_title",
+                                px[0], px[1], px[2], bullet_ry)
+
+            continue
+
+        def _title_bottom(sx0, sx1, sy_top, sy_bot, sec_h, orange_cells):
+            """Return bottom-y of title row for a section.
+            Priority: full-width BLUE title cell > first row of ORANGE cells.
+            A 'full-width title cell' is a BLUE child spanning >55% of sec width
+            and located at or near the top of the section, with small height.
+            """
+            sec_w = sx1 - sx0
+            # Look for BLUE wide title spans inside this section
+            spans = [b for b in blue_kids
+                     if b.px_bbox[0] >= sx0 - 8 and b.px_bbox[2] <= sx1 + 8
+                     and b.px_bbox[1] >= sy_top - 8 and b.px_bbox[3] <= sy_bot + 8
+                     and (b.px_bbox[2] - b.px_bbox[0]) > 0.55 * sec_w
+                     and (b.px_bbox[3] - b.px_bbox[1]) < 0.35 * sec_h]
+            if spans:
+                top_span = min(spans, key=lambda b: b.px_bbox[1])
+                return top_span.px_bbox[3]
+            # Fall back: first row of orange cells
+            if not orange_cells:
+                return None
+            min_y = min(c.px_bbox[1] for c in orange_cells)
+            first_row = [c for c in orange_cells
+                         if c.px_bbox[1] <= min_y + 5
+                         and (c.px_bbox[3] - c.px_bbox[1]) < 0.35 * sec_h]
+            if not first_row:
+                return None
+            return max(c.px_bbox[3] for c in first_row)
+
+        # ── detect separator type ────────────────────────────────────────────
+        # Gap COLUMNS: thin (w<30), very tall (>40% wrap_h), very narrow aspect
+        gap_cols = sorted(
+            [c for c in children
+             if (c.px_bbox[2]-c.px_bbox[0]) < 30
+             and (c.px_bbox[3]-c.px_bbox[1]) > 0.40*wrap_h
+             and (c.px_bbox[2]-c.px_bbox[0]) / max(1, c.px_bbox[3]-c.px_bbox[1]) < 0.06],
+            key=lambda b: b.px_bbox[0],
+        )
+        # Gap ROWS: thin (h<30), near-full-width (>85% wrap_w), very wide aspect.
+        # Uses children_all (ORANGE + BLUE), with colour-aware aspect thresholds:
+        #   ORANGE cells: aspect > 25  (real header strips have h=6-12 → asp 32+;
+        #       data rows like the SERIES 6/11 connector row have h≈16 → asp≈24
+        #       and were previously misclassified as gap_rows, painting their
+        #       y-range as a section title band).
+        #   BLUE cells:   aspect > 10  AND top ≥ 30 px below wrapper top
+        #       (lower threshold captures "MATV SYSTEM NOTES" which is BLUE, asp≈14;
+        #        position guard excludes BLUE cells at the wrapper top that are title
+        #        anchors for the two-tier / parallel-column path)
+        # For narrow sidebars (e.g. REVISIONS table w≈144), the absolute aspect
+        # threshold of 25 is too strict — a 132x15 strip has asp=8.8.  Scale
+        # the ORANGE aspect requirement down for narrow wrappers so legitimate
+        # title strips inside small tables still qualify.
+        _local_orange_asp = (
+            min(_orange_asp_min, max(5.0, wrap_w / 20.0))
+            if wrap_w <= sidebar_w_max else _orange_asp_min
+        )
+        gap_rows = sorted(
+            [c for c in children_all
+             if (c.px_bbox[3]-c.px_bbox[1]) < cfg.gap_row_h_max
+             and (c.px_bbox[2]-c.px_bbox[0]) > cfg.gap_row_w_frac * wrap_w
+             and (
+                 (c.color == "ORANGE"
+                  and (c.px_bbox[2]-c.px_bbox[0]) / max(1, c.px_bbox[3]-c.px_bbox[1]) > _local_orange_asp)
+                 or
+                 (c.color == "BLUE"
+                  and (c.px_bbox[2]-c.px_bbox[0]) / max(1, c.px_bbox[3]-c.px_bbox[1]) > cfg.gap_row_blue_asp_min
+                  and c.px_bbox[1] > px[1] + cfg.gap_row_blue_top_offset_px)
+             )],
+            key=lambda b: b.px_bbox[1],
+        )
+
+        # ── portrait table: gap columns → x-sections, horizontal title bands ─
+        if gap_cols:
+            boundaries = [px[0]]
+            for gc in gap_cols:
+                boundaries.extend([gc.px_bbox[0], gc.px_bbox[2]])
+            boundaries.append(px[2])
+            x_ranges = [(boundaries[i], boundaries[i+1])
+                        for i in range(0, len(boundaries)-1, 2)
+                        if boundaries[i+1]-boundaries[i] > 20]
+
+            sy0 = px[1]
+            for si, (sx0, sx1) in enumerate(x_ranges):
+                sec_cells = [c for c in children
+                             if c.px_bbox[0] >= sx0-3 and c.px_bbox[2] <= sx1+3
+                             and c not in gap_cols]
+                title_y1 = _title_bottom(sx0, sx1, sy0, px[3], wrap_h, sec_cells)
+                if title_y1 is None: continue
+                _make_title(wrapper, f"{wrapper.box_id}_sec{si}_title",
+                            sx0, sy0, sx1, title_y1)
+
+        # ── landscape table: gap rows ARE the section titles ─────────────────
+        # Each full-width thin cell is the title row of its section.
+        # Section[i] runs from gap_rows[i].top to gap_rows[i+1].top (or wrapper bottom).
+        # Title band = from gap_row top through the first column-header row below it.
+        elif gap_rows:
+            for si, gr in enumerate(gap_rows):
+                sy0_sec = gr.px_bbox[1]   # top of this section (= top of title row)
+                sy1_sec = (gap_rows[si+1].px_bbox[1]
+                           if si+1 < len(gap_rows) else px[3])
+                sec_h = sy1_sec - sy0_sec
+
+                # Orange cells below the title row (column headers + data)
+                sub_cells = [c for c in children
+                             if c.px_bbox[1] > gr.px_bbox[3] - 3
+                             and c.px_bbox[3] <= sy1_sec + 3
+                             and c not in gap_rows]
+
+                if sub_cells:
+                    gr_h = gr.px_bbox[3] - gr.px_bbox[1]
+                    grpx_bot = gr.px_bbox[3]
+
+                    # ── Find first multi-column row (skip lone spanning cells) ──
+                    # Group sub_cells by top-y (5px buckets); pick the first
+                    # bucket with 2+ cells.  Single-cell buckets are tall spanning
+                    # cells in one column — skip them to reach the real header row.
+                    _sub_by_y: dict[int, list] = {}
+                    for _c in sub_cells:
+                        _bucket = round(_c.px_bbox[1] / 5) * 5
+                        _sub_by_y.setdefault(_bucket, []).append(_c)
+                    first_row_cells: list | None = None
+                    for _bkt, _grp in sorted(_sub_by_y.items()):
+                        if len(_grp) >= 2:
+                            first_row_cells = _grp
+                            break
+                    # Fallback: use the first cell if no multi-column row found
+                    if first_row_cells is None:
+                        _min_y2 = min(c.px_bbox[1] for c in sub_cells)
+                        first_row_cells = [c for c in sub_cells
+                                           if c.px_bbox[1] <= _min_y2 + 5]
+                    min_y2 = min(c.px_bbox[1] for c in first_row_cells)
+
+                    # ── Decide whether first row is a column header ────────────
+                    # We only extend the title band to include the first row when
+                    # it is clearly a column-header row, not a data row.
+                    # Three conditions signal a column header:
+
+                    # A) A BLUE full-width child sits between separator and first
+                    #    cells → it is a column-label bar; cells after it are hdrs.
+                    _blue_inter = [b for b in children_all
+                                   if b.color == "BLUE"
+                                   and not getattr(b, "synthetic", False)
+                                   and grpx_bot - 3 < b.px_bbox[1]
+                                   and b.px_bbox[3] < min_y2 + 5
+                                   and (b.px_bbox[2] - b.px_bbox[0]) > 0.80 * wrap_w]
+
+                    # B) A lone tall spanning cell precedes the first multi-column
+                    #    row → that spanning cell is a multi-row content cell; the
+                    #    first multi-column row is the actual column-header row.
+                    #    Guard: the precursor must start > 8 px after the separator
+                    #    bottom; a precursor that starts immediately (≤ 8 px) is
+                    #    just the first data cell starting right at the section top,
+                    #    not a header-spanning cell.
+                    _precursors = [c for c in sub_cells if c.px_bbox[1] < min_y2]
+                    _has_precursor = (
+                        min_y2 > grpx_bot + 5
+                        and any(
+                            c.px_bbox[1] > grpx_bot + 8
+                            and len(_sub_by_y.get(round(c.px_bbox[1] / 5) * 5, [])) == 1
+                            for c in _precursors
+                        )
+                    )
+
+                    # C) First-row cells are notably shorter than typical data rows
+                    #    → compact label row, not full-height content cells.
+                    #    Use MEDIAN of first-row cell heights to ignore stray
+                    #    small cells (thin separators, gap cells) that land in
+                    #    the same y-bucket as the real first-row cells.
+                    #    Threshold 0.65: first row must be < 65% of typical height.
+                    #    Require ≥ 3 sub_cells AND ≥ 2 first-row cells, otherwise
+                    #    median-based heuristics aren't statistically meaningful
+                    #    and a single full-width data row in a sparse section can
+                    #    accidentally fire the rule (e.g. COAXIAL section with
+                    #    only v14 + v18 → v18 looks "shorter" → title band runs
+                    #    over the data row).
+                    _all_h = sorted(c.px_bbox[3] - c.px_bbox[1] for c in sub_cells)
+                    _typical_h = _all_h[len(_all_h) // 2] if _all_h else 0
+                    _first_h_sorted = sorted(
+                        c.px_bbox[3] - c.px_bbox[1] for c in first_row_cells
+                    )
+                    _first_h = _first_h_sorted[len(_first_h_sorted) // 2]
+                    _has_short_header = (
+                        len(sub_cells) >= 3
+                        and len(first_row_cells) >= 2
+                        and _typical_h > 0
+                        and _first_h < _typical_h * 0.65
+                    )
+
+                    # Four signals that the first row is a column-header row:
+                    # (si==0) First gap_row is the main table title; the rows
+                    #         immediately below it are always column headers.
+                    # (A)     BLUE full-width bar between separator and first cells.
+                    # (B)     Lone tall spanning cell precedes first multi-col row.
+                    # (C)     First row cells are shorter than typical data rows.
+                    _should_extend = (
+                        si == 0
+                        or bool(_blue_inter)
+                        or _has_precursor
+                        or _has_short_header
+                    )
+                    if _should_extend:
+                        if _blue_inter:
+                            # Condition A fired: a BLUE full-width bar IS the
+                            # column-header area.  Anchor the title band at
+                            # that bar's bottom.
+                            title_y1 = max(b.px_bbox[3] for b in _blue_inter)
+                            # If there is a clearly visible gap (> 8 px)
+                            # between the blue bar and the first detected
+                            # ORANGE row, that gap holds an undetected
+                            # sub-label (e.g. "SPLITTERS").  Extend the band
+                            # to cover the gap (stop 2 px before the first
+                            # data row) so:
+                            #   • the sub-label text is shaded blue, AND
+                            #   • the SUB-LABEL rule below (which requires
+                            #     gap > 5 px to title_y1) no longer fires on
+                            #     the next data row, leaving it white.
+                            _gap_to_first = min_y2 - title_y1
+                            if _gap_to_first > 8:
+                                title_y1 = max(title_y1, min_y2 - 2)
+                        else:
+                            # B or C fired: extend band to include the first
+                            # ORANGE row (the compact column-header label row).
+                            # Height threshold: 2.1× separator, floored at 15px so
+                            # very thin separators (h ≤ 7px) don't reject 13px hdrs.
+                            _hdr_h_max = max(gr_h * 2.1, 15)
+                            hdr_row = [c for c in first_row_cells
+                                       if (c.px_bbox[3] - c.px_bbox[1]) < 0.35 * sec_h
+                                       and (c.px_bbox[3] - c.px_bbox[1]) <= _hdr_h_max]
+                            title_y1 = (max(c.px_bbox[3] for c in hdr_row)
+                                        if hdr_row else grpx_bot)
+                    else:
+                        # Section divider with no column-header evidence →
+                        # band covers only the separator row.
+                        # Exception: if there's a visible gap between the
+                        # separator bottom and the first content cell —
+                        # "floating" header text like "MATV SYSTEM NOTES"
+                        # lives in that gap.  Extend the band to cover it so
+                        # the header is highlighted blue.
+                        title_y1 = grpx_bot
+                        _first_sc_y = min(c.px_bbox[1] for c in sub_cells)
+                        _gap_to_content = _first_sc_y - grpx_bot
+                        if 5 < _gap_to_content <= 35:
+                            title_y1 = _first_sc_y
+                else:
+                    title_y1 = gr.px_bbox[3]
+
+                _make_title(wrapper, f"{wrapper.box_id}_sec{si}_title",
+                            px[0], sy0_sec, px[2], title_y1)
+
+                # ── Sub-section label rows ("SPLITTERS"-style) ────────────────
+                # A multi-cell row whose individual cells are each too narrow
+                # to qualify as a gap_row (< 85% wrapper width) but whose
+                # combined width ≥ 85% is a virtual section separator.
+                # Detect: first row of data cells below title_y1 that is thin
+                # (height ≤ 2× gap-row height), has ≥ 2 cells spanning ≥ 85%
+                # of wrapper width, and has at least one more row below it
+                # (so we're not accidentally labelling the only data row).
+                _sub_below = [c for c in sub_cells
+                              if c.px_bbox[1] >= title_y1 - 3]
+                if _sub_below:
+                    _sbl_by_y: dict[int, list] = {}
+                    for _sc in _sub_below:
+                        _sbkt = round(_sc.px_bbox[1] / 5) * 5
+                        _sbl_by_y.setdefault(_sbkt, []).append(_sc)
+                    _sbl_bkt, _sbl_grp = sorted(_sbl_by_y.items())[0]
+                    _sbl_grp_y1 = max(c.px_bbox[3] for c in _sbl_grp)
+                    _sbl_rest = [c for c in _sub_below
+                                 if c.px_bbox[1] > _sbl_grp_y1 - 3]
+                    _sbl_y0_check = min(c.px_bbox[1] for c in _sbl_grp)
+                    # Require a visible gap (> 5 px) between the title-band
+                    # bottom and the candidate sublabel row.  A gap this size
+                    # distinguishes "SPLITTERS"-style section labels (which are
+                    # separated from the column-header band by a few pixels)
+                    # from normal data rows that start flush against the
+                    # column-header cells (gap ≤ 4 px = just a grid line).
+                    if len(_sbl_grp) >= 2 and _sbl_rest and _sbl_y0_check > title_y1 + 5:
+                        _sbl_w = sum(c.px_bbox[2] - c.px_bbox[0]
+                                     for c in _sbl_grp)
+                        _sbl_h_max = max(c.px_bbox[3] - c.px_bbox[1]
+                                         for c in _sbl_grp)
+                        _sbl_y0 = min(c.px_bbox[1] for c in _sbl_grp)

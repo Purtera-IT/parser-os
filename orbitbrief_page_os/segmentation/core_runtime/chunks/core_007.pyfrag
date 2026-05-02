@@ -1,0 +1,957 @@
+        try:
+            _gap_doc.close()
+        except Exception:
+            pass
+    return synthetic
+
+
+# ── overlay ───────────────────────────────────────────────────────────────────
+# BGR palette: ``overlay/colors_bgr.py`` (imported above as ``_BLUE``, …).
+
+
+def _colhdr_skip_ids_row_orange_uniformity(
+        colhdr_boxes: list,
+        regular_boxes: list,
+        img_w: int,
+) -> set[str]:
+    """Keep ``colhdr_*`` cyan from painting a **striped** row (orange + cyan).
+
+    Two cases:
+
+    1. **Centroid mix** — some ``colhdr_*`` centroids land inside contour ORANGE
+       and some do not (same ``parent_box_id`` + y-band): suppress all cyan so
+       ORANGE can outline the whole row.
+
+    2. **Narrow-cluster bleed** — ``colhdr_*`` cluster covers **only part** of the
+       page width, yet contour ORANGE cells sit **entirely to the left** of that
+       cluster with no ring centroid inside them (CP-2 / ``textsec_9`` vs pump
+       TAG).  Full-width real header rows (TAG…REMARKS) are **not** gated here so
+       cyan column headers stay cyan.
+    """
+    oranges = [
+        b for b in regular_boxes
+        if b.color == "ORANGE"
+        and not getattr(b, "synthetic", False)
+    ]
+    if not oranges or not colhdr_boxes:
+        return set()
+
+    def _centroid_in_orange(hb, ob) -> bool:
+        hcx = 0.5 * (hb.px_bbox[0] + hb.px_bbox[2])
+        hcy = 0.5 * (hb.px_bbox[1] + hb.px_bbox[3])
+        ox0, oy0, ox1, oy1 = ob.px_bbox
+        return ox0 < hcx < ox1 and oy0 < hcy < oy1
+
+    def _centroid_in_any_orange(hb) -> bool:
+        for ob in oranges:
+            if _centroid_in_orange(hb, ob):
+                return True
+        return False
+
+    skip: set[str] = set()
+
+    # ── Case 1: same parent + y-band, mixed centroid-in-orange ─────────────
+    from collections import defaultdict as _dd_row
+    by_parent_y: dict[tuple[str, int], list] = _dd_row(list)
+    for hb in colhdr_boxes:
+        pid = getattr(hb, "parent_box_id", None) or ""
+        ymid = int(round(0.5 * (hb.px_bbox[1] + hb.px_bbox[3])))
+        yk = (ymid // 12) * 12
+        by_parent_y[(pid, yk)].append(hb)
+    for _grp in by_parent_y.values():
+        if len(_grp) < 2:
+            continue
+        flags = [_centroid_in_any_orange(h) for h in _grp]
+        if any(flags) and not all(flags):
+            for h in _grp:
+                skip.add(h.box_id)
+
+    # ── Case 2: narrow cluster + left-side ORANGE orphans (bleed rows only) ─
+    # Exemption first: if ANY colhdr in the cluster is parented to a
+    # ``textsec_*_title`` or ``vN_title`` band, the cluster sits inside a
+    # legitimate schedule's header row.  Left-side ORANGE cells without
+    # cyan rings are upstream-emitter misses (e.g. TAG/MFGR/SERVICE on
+    # pump5), not evidence of incidental cyan to suppress.  The "narrow
+    # cluster" gate was tuned for sidebars without a real schedule title
+    # above them; a wide-titled schedule should never trigger it.
+    by_y: dict[int, list] = _dd_row(list)
+    for hb in colhdr_boxes:
+        ymid = int(round(0.5 * (hb.px_bbox[1] + hb.px_bbox[3])))
+        yk = (ymid // 12) * 12
+        by_y[yk].append(hb)
+    for _grp in by_y.values():
+        H = [h for h in _grp if h.box_id not in skip]
+        if not H:
+            continue
+        row_y0 = min(h.px_bbox[1] for h in H) - 4
+        row_y1 = max(h.px_bbox[3] for h in H) + 4
+        hx_lo = min(h.px_bbox[0] for h in H)
+        hx_hi = max(h.px_bbox[2] for h in H)
+        cluster_w = hx_hi - hx_lo
+        if cluster_w >= int(0.44 * float(img_w)):
+            continue
+        # Exemption: parent _title band signals legitimate schedule context.
+        any_real_schedule_parent = any(
+            (getattr(h, "parent_box_id", None) or "").startswith(("textsec_",))
+            or (getattr(h, "parent_box_id", None) or "").endswith("_title")
+            or (getattr(h, "parent_box_id", None) or "").startswith("v")
+            for h in H
+        )
+        if any_real_schedule_parent:
+            continue
+        # Harvest ORANGE cells on this row band left of the cluster for orphan
+        # detection only (full-width headers skip above).
+        _reach_l = max(520, int(0.42 * float(img_w)))
+        x_lo = max(0, hx_lo - _reach_l)
+        x_hi = min(max(1, img_w) - 1, hx_hi + 90)
+        o_row: list = []
+        for ob in oranges:
+            ox0, oy0, ox1, oy1 = ob.px_bbox
+            ow, oh = ox1 - ox0, oy1 - oy0
+            if ow < 26 or oh < 6 or oh > 58:
+                continue
+            if ox1 <= x_lo or ox0 >= x_hi:
+                continue
+            if oy1 <= row_y0 or oy0 >= row_y1:
+                continue
+            o_row.append(ob)
+        if not o_row:
+            continue
+
+        def _orange_claimed(ob) -> bool:
+            """True when some ``colhdr_*`` ring centroid lies inside this ORANGE."""
+            for hb in H:
+                if _centroid_in_orange(hb, ob):
+                    return True
+            return False
+
+        _left_gap = max(24, int(0.012 * float(img_w)))
+        left_orphans = [
+            ob for ob in o_row
+            if (not _orange_claimed(ob)
+                and ob.px_bbox[2] <= hx_lo - _left_gap)]
+        if left_orphans:
+            for h in H:
+                skip.add(h.box_id)
+
+    return skip
+
+
+def _draw_dashed_rect(img, p1: tuple[int, int], p2: tuple[int, int],
+                      color, thickness: int = 1, dash: int = 6, gap: int = 4):
+    """Draw a dashed rectangle on ``img`` between ``p1`` and ``p2``.
+
+    OpenCV has no native dashed line; we approximate by drawing many
+    short segments with ``gap``-pixel breaks between them.
+    """
+    x0, y0 = p1
+    x1, y1 = p2
+    # Top + bottom edges
+    for x in range(x0, x1, dash + gap):
+        cv2.line(img, (x, y0), (min(x + dash, x1), y0), color, thickness)
+        cv2.line(img, (x, y1), (min(x + dash, x1), y1), color, thickness)
+    # Left + right edges
+    for y in range(y0, y1, dash + gap):
+        cv2.line(img, (x0, y), (x0, min(y + dash, y1)), color, thickness)
+        cv2.line(img, (x1, y), (x1, min(y + dash, y1)), color, thickness)
+
+def render_overlay(rgb: np.ndarray, result: VisibleBoxResult,
+                   out_path: str | Path, *, draw_labels: bool = True,
+                   layers: OverlayLayer | None = None) -> Path:
+    """Paint ``result`` onto a copy of ``rgb`` and write ``out_path``.
+
+    ``layers`` selects which overlay passes run (defaults to full stack).  See
+    ``overlay_layers.OverlayLayer`` — use ``BLUE_FAMILY`` to review structural
+    blue without orange / cyan / green / purple noise.
+    """
+    if layers is None:
+        layers = OverlayLayer.ALL
+    canvas = cv2.cvtColor(rgb.copy(), cv2.COLOR_RGB2BGR)
+    _ow = int(canvas.shape[1])
+    _oh = int(canvas.shape[0])
+
+    regular = [b for b in result.boxes if not getattr(b, "synthetic", False)]
+    synth   = [b for b in result.boxes if     getattr(b, "synthetic", False)]
+    synth_by_id = {b.box_id: b for b in synth}
+    titleblk_boxes = [b for b in synth if b.box_id.startswith("titleblk")]
+
+    # ── Universal logos-not-icons rule ───────────────────────────────────
+    # PURPLE is reserved for actual title-block logos (corporate
+    # marks, project seals, drawing-set logos).  Synthetic
+    # ``titleblkvect_*`` drawings whose centroid sits inside a
+    # non-synthetic ORANGE ``v*`` leaf cell are NOT logos — they're
+    # in-cell column icons (e.g. the ``F1`` / ``F2`` / ``R1`` / ``R2``
+    # / ``R3`` diamond markers in the TYPE column of test7's FLOOR
+    # ASSEMBLIES and ROOF ASSEMBLIES tables).
+    #
+    # Two-stage filtering:
+    #   - ``titleblk_boxes`` (used for PURPLE rendering AND for
+    #     geometric suppression of neighbors): unchanged from
+    #     detection.  Icon regions still suppress neighboring ORANGE
+    #     gap-cells / contour cells from rendering.
+    #   - ``titleblk_render_boxes`` (used ONLY for the actual PURPLE
+    #     ring drawing): filtered to exclude in-cell icons, so they
+    #     don't render as purple.
+    #
+    # Rationale: keeping icons in ``titleblk_boxes`` for suppression
+    # ensures the ORANGE / gap-cell rings AROUND the icon are
+    # suppressed too — so the icon region appears empty in the
+    # overlay (no purple, no orange, no rings).  A future dedicated
+    # icon-legend detector will be free to add its own rendering.
+    _orange_leaves_for_purple = [
+        b for b in regular
+        if (getattr(b, "color", None) == "ORANGE"
+            and (getattr(b, "box_id", "") or "").startswith("v"))
+    ]
+    if _orange_leaves_for_purple:
+        # Compute the title-block strip column bounds from the titleblk_boxes
+        # themselves so the strip filter is universal and PDF-agnostic.
+        # Any orange v* cell that sits >= 90% inside this strip is a sidebar
+        # wrapper decorating a logo row — NOT a data-cell holding an inline
+        # icon — and must be excluded from the suppressor.
+        _titleblk_strip_x0: int | None = None
+        _titleblk_strip_x1: int | None = None
+        if titleblk_boxes:
+            _titleblk_strip_x0 = min(b.px_bbox[0] for b in titleblk_boxes)
+            _titleblk_strip_x1 = max(b.px_bbox[2] for b in titleblk_boxes)
+
+        def _orange_is_titleblk_wrapper(ol) -> bool:
+            """True if this orange cell is a sidebar wrapper, not a data cell."""
+            # Check 1: same parent as any titleblk box (sibling wrappers)
+            ol_parent = getattr(ol, "parent_box_id", None) or ""
+            for tb in titleblk_boxes:
+                if ol_parent and ol_parent == getattr(tb, "parent_box_id", None):
+                    return True
+            # Check 2: directly tagged as titleblock structure
+            if (getattr(ol, "box_id", "") or "").startswith("tbstruct_"):
+                return True
+            # Check 3: parent is tagged as titleblock structure
+            if ol_parent.startswith("tbstruct_"):
+                return True
+            # Check 4: geometric fallback — cell is >= 90% inside the strip column
+            if _titleblk_strip_x0 is not None:
+                ox0, _oy0, ox1, _oy1 = ol.px_bbox
+                cell_w = max(1, ox1 - ox0)
+                strip_overlap = max(
+                    0,
+                    min(ox1, _titleblk_strip_x1) - max(ox0, _titleblk_strip_x0),
+                )
+                if strip_overlap / cell_w >= 0.90:
+                    return True
+            return False
+
+        # Build filtered suppressor list: only orange cells that are genuine
+        # data cells (not title-block sidebar wrappers).
+        _data_orange_leaves = [
+            ol for ol in _orange_leaves_for_purple
+            if not _orange_is_titleblk_wrapper(ol)
+        ]
+
+        def _purple_inside_orange_cell(p) -> bool:
+            x0, y0, x1, y1 = p.px_bbox
+            cx = 0.5 * (x0 + x1)
+            cy = 0.5 * (y0 + y1)
+            for ol in _data_orange_leaves:
+                ox0, oy0, ox1, oy1 = ol.px_bbox
+                if ox0 <= cx <= ox1 and oy0 <= cy <= oy1:
+                    return True
+            return False
+        titleblk_render_boxes = [
+            b for b in titleblk_boxes
+            if not _purple_inside_orange_cell(b)
+        ]
+    else:
+        titleblk_render_boxes = list(titleblk_boxes)
+
+    # ── Universal title-overrides-rings rule (rules/title_overrides_rings) ────
+    # A title-washed cell is purely a title — no cyan/green rings inside.
+    _drawn_title_bboxes = drawn_title_bboxes(result.boxes, _skip_title_alpha)
+
+    def _centroid_in_drawn_title(bbox: tuple[int, int, int, int]) -> bool:
+        return centroid_in_drawn_title(bbox, _drawn_title_bboxes)
+
+    def _titleblk_px_for_blue_cuts(tb) -> tuple[int, int, int, int]:
+        """Match pass-3.5 padding for small ``titleblkimg_*`` when clipping BLUE."""
+        x0, y0, x1, y1 = tb.px_bbox
+        if tb.box_id.startswith("titleblkimg"):
+            mh, mw = y1 - y0, x1 - x0
+            if min(mh, mw) < 52:
+                pad = 7
+                x0 = max(0, x0 - pad)
+                y0 = max(0, y0 - pad)
+                x1 = min(_ow - 1, x1 + pad)
+                y1 = min(_oh - 1, y1 + pad)
+        return (x0, y0, x1, y1)
+    colhdr_boxes = [b for b in synth if b.box_id.startswith("colhdr_")]
+    _need_colhdr_draw = bool(layers & (OverlayLayer.ORANGE | OverlayLayer.CYAN_COLHDR))
+    if _need_colhdr_draw:
+        _colhdr_skip_mixed_row = _colhdr_skip_ids_row_orange_uniformity(
+            colhdr_boxes, regular, _ow)
+        colhdr_boxes_draw = [
+            b for b in colhdr_boxes if b.box_id not in _colhdr_skip_mixed_row]
+    else:
+        _colhdr_skip_mixed_row = set()
+        colhdr_boxes_draw = []
+    # Narrow BLUE table shells (revision blocks, sidebars): ``text_section_detection``
+    # can leave tiny ``textsec_*`` title/body boxes **inside** the same strip — they
+    # draw as bogus blue bricks over column headers.  Suppress those overlays here.
+    _narrow_tab_hosts = [
+        b for b in regular
+        if b.color == "BLUE"
+        and not getattr(b, "synthetic", False)
+        and (b.px_bbox[2] - b.px_bbox[0]) <= 230
+        and (b.px_bbox[3] - b.px_bbox[1]) >= 72
+    ]
+
+    def _centroid_in_host(pxb: tuple[int, int, int, int], host) -> bool:
+        hx0, hy0, hx1, hy1 = host.px_bbox
+        cx = 0.5 * (pxb[0] + pxb[2])
+        cy = 0.5 * (pxb[1] + pxb[3])
+        return hx0 < cx < hx1 and hy0 < cy < hy1
+
+    def _px_centroid_in_titleblk_band(pxb: tuple[int, int, int, int]) -> bool:
+        cx = 0.5 * (pxb[0] + pxb[2])
+        cy = 0.5 * (pxb[1] + pxb[3])
+        pad = 3
+        for t in titleblk_boxes:
+            x0, y0, x1, y1 = t.px_bbox
+            if x0 - pad <= cx <= x1 + pad and y0 - pad <= cy <= y1 + pad:
+                return True
+        return False
+
+    def _textsec_splinter_inside_narrow_table(tb) -> bool:
+        if (tb.box_id.startswith("textsec_")
+                and _px_centroid_in_titleblk_band(tb.px_bbox)):
+            return True
+        if not tb.box_id.startswith("textsec_"):
+            return False
+        for host in _narrow_tab_hosts:
+            if _centroid_in_host(tb.px_bbox, host):
+                return True
+        return False
+
+    def _mtcell_suppressed_by_contour_orange(
+            mx0: int, my0: int, mx1: int, my1: int,
+    ) -> bool:
+        """Skip mini-table greens that sit on contour ORANGE schedule cells."""
+        mcx = 0.5 * (mx0 + mx1)
+        mcy = 0.5 * (my0 + my1)
+        m_area = max(1, (mx1 - mx0) * (my1 - my0))
+        for ob in regular:
+            if ob.color != "ORANGE":
+                continue
+            ox0, oy0, ox1, oy1 = ob.px_bbox
+            ow, oh = ox1 - ox0, oy1 - oy0
+            if ow < 95 or oh < 7 or oh > 54:
+                continue
+            if not (ox0 < mcx < ox1 and oy0 < mcy < oy1):
+                continue
+            xa, ya = max(mx0, ox0), max(my0, oy0)
+            xb, yb = min(mx1, ox1), min(my1, oy1)
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            if inter / float(m_area) >= 0.32:
+                return True
+        return False
+
+    def _orange_suppressed_by_colhdr(ox0: int, oy0: int, ox1: int, oy1: int) -> bool:
+        """Universal coexistence rule (rules/orange_cyan_coexist.py):
+        orange cell outline and cyan column-header ring coexist on the
+        same cell — never suppress orange because cyan exists.  Renders
+        orange in Pass 3, cyan in Pass 3.4 on top.  Both visible.
+        """
+        return not orange_should_render_with_colhdr()
+
+    def _overlay_obscured_by_titleblk(
+            ax0: int, ay0: int, ax1: int, ay1: int, *, pad: int = 0,
+    ) -> bool:
+        """Skip drawing a rect when it fights a ``titleblk*`` logo implant.
+
+        Used for ORANGE (incl. gapcells), ``subhdr_*``, mini-table green/red,
+        and ``colhdr_*`` so logo marks read as **purple-first** in the sidebar.
+
+        ``pad`` expands purple for gap-grids / address bands under a logo.
+        """
+        if not titleblk_boxes:
+            return False
+        oa = max(1, (ax1 - ax0) * (ay1 - ay0))
+        oh = ay1 - ay0
+        ow = ax1 - ax0
+        ocx = 0.5 * (ax0 + ax1)
+        ocy = 0.5 * (ay0 + ay1)
+        p = int(pad)
+        right_sheet = ax0 > int(_ow * 0.64)
+        narrowish = ow <= 215
+        for tb in titleblk_boxes:
+            L0, L1, L2, L3 = tb.px_bbox
+            E0, E1, E2, E3 = L0 - p, L1 - p, L2 + p, L3 + p
+            if E0 - 1 < ocx < E2 + 1 and E1 - 1 < ocy < E3 + 1:
+                return True
+            xa, ya = max(ax0, E0), max(ay0, E1)
+            xb, yb = min(ax1, E2), min(ay1, E3)
+            if xb <= xa or yb <= ya:
+                continue
+            inter = (xb - xa) * (yb - ya)
+            ta = max(1, (E2 - E0) * (E3 - E1))
+            if inter / float(oa) >= 0.052:
+                return True
+            if inter / float(ta) >= 0.038:
+                return True
+            if inter >= 55:
+                return True
+            if p > 0 and inter >= 28 and inter / float(oa) >= 0.025:
+                return True
+            corners = 0
+            for px, py in ((ax0, ay0), (ax1, ay0), (ax1, ay1), (ax0, ay1)):
+                if E0 <= px <= E2 and E1 <= py <= E3:
+                    corners += 1
+            if corners >= 2:
+                return True
+            if corners >= 1 and oa <= 2200:
+                return True
+            if oh < 36 and inter >= 5:
+                x_ovl = xb - xa
+                if x_ovl >= 0.12 * max(10, ow):
+                    return True
+            if ow < 38 and inter >= 5:
+                y_ovl = yb - ya
+                if y_ovl >= 0.12 * max(10, oh):
+                    return True
+            if right_sheet and narrowish and p == 0:
+                y_ovl = yb - ya
+                x_ovl = xb - xa
+                if y_ovl >= int(0.40 * oh) and x_ovl >= int(0.16 * ow):
+                    return True
+        return False
+
+    def _orange_suppressed_by_titleblk(
+            ox0: int, oy0: int, ox1: int, oy1: int, *, pad: int = 0,
+    ) -> bool:
+        return _overlay_obscured_by_titleblk(ox0, oy0, ox1, oy1, pad=pad)
+
+    def _draw_orange(box, canvas):
+        x0, y0, x1, y1 = box.px_bbox
+        h = y1 - y0
+        w = x1 - x0
+        is_syn = getattr(box, "synthetic", False)
+
+        # Spec-section title-band dividers (TEST_3 etc.) are typically
+        # ~245-260 px wide, h ≤ 18.  They're handled via title-band
+        # bottom edges in Pass 3 below — skip ONLY that narrow size
+        # range here so legitimate wider table cells (e.g. an ITEM
+        # column at 314 px) still get their normal cell outlines.
+        if 245 <= w <= 260 and h <= 18:
+            return
+
+        bid = getattr(box, "box_id", "") or ""
+        # Synthetic core gap slivers are micro-bands between already-drawn
+        # separators.  Dedicated line_repair_* boxes, however, are meant to paint
+        # missed black rules and must stay visible.
+        if is_syn and h <= 5 and bid.startswith(("gapcell_", "gapsep_")):
+            return
+
+        # Microscopic separator / repair rules are drawn as filled 1 px strokes.
+        if h <= 2 or w <= 2 or bid.startswith("line_repair_"):
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), _ORANGE, cv2.FILLED)
+        else:
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), _ORANGE, DEFAULT_STYLE.orange_cell_px)
+
+    # Pass 1: regular BLUE (largest first) — ``overlay/draw_blue_outlines.py``
+    _titleblk_px_overlap_bbs = [
+        _titleblk_px_for_blue_cuts(tb) for tb in titleblk_boxes]
+    draw_regular_blue_wrappers(
+        canvas,
+        sorted(regular, key=lambda b: -b.area_pt2),
+        layers=layers,
+        spec_orange_inset=bool(layers & OverlayLayer.ORANGE),
+        synth_by_id=synth_by_id,
+        titleblk_px_bboxes=_titleblk_px_overlap_bbs,
+        draw_labels=draw_labels,
+        colhdr_boxes=colhdr_boxes,
+    )
+
+    # Pass 1.5: synthesized gap-cell ORANGE borders + projected separator strips.
+    # gapsep_ boxes are solid-filled thin strips projected from other columns;
+    # gapcell_ boxes are the content-cell outlines between separators.
+    # ``gapcell_hdr_*`` is deferred to pass 3.2 so merged parent ORANGE cells
+    # (pass 3) do not paint over the per-column header splits.
+    syn_orange = [b for b in synth
+                  if (b.box_id.startswith("gapcell_") or b.box_id.startswith("gapsep_"))
+                  and not b.box_id.startswith("gapcell_hdr_")]
+    _gap_orange_titleblk_pad = 26
+    if layers & OverlayLayer.ORANGE:
+        for gc in sorted(syn_orange, key=lambda b: -b.area_pt2):
+            gx0, gy0, gx1, gy1 = gc.px_bbox
+            if _orange_suppressed_by_colhdr(gx0, gy0, gx1, gy1):
+                continue
+            if _orange_suppressed_by_titleblk(
+                    gx0, gy0, gx1, gy1, pad=_gap_orange_titleblk_pad):
+                continue
+            _draw_orange(gc, canvas)
+
+    # Pass 1.75: ``subhdr_*`` greens **before** the blue title alpha fill so any
+    # box that shares pixels with a ``*_title`` band does not show a green ring
+    # on top of the filled caption (legitimate rows like ``MOTOR DATA`` stay
+    # visible **below** the inked title area).
+    if layers & OverlayLayer.SUBHDR:
+        for sb in sorted(
+                (b for b in synth if b.box_id.startswith("subhdr_")),
+                key=lambda b: -b.area_pt2,
+        ):
+            x0, y0, x1, y1 = sb.px_bbox
+            if _overlay_obscured_by_titleblk(x0, y0, x1, y1, pad=22):
+                continue
+            # Universal: a title-washed cell is purely a title — no green
+            # subhdr ring inside it either.
+            if _centroid_in_drawn_title((x0, y0, x1, y1)):
+                continue
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), _SUBHDR, DEFAULT_STYLE.subhdr_px)
+
+    # Pre-Pass 2: build mccol column suppression helper.
+    # Any box whose centroid falls inside a mccol_*_col_* region is suppressed
+    # from all passes below — the mccol renderer owns that territory exclusively.
+    _mccol_col_regions_early = [
+        b.px_bbox for b in synth
+        if "_col_" in b.box_id
+        and b.box_id.startswith("mccol_")
+        and not b.box_id.endswith("_group")
+    ]
+
+    def _suppressed_by_mccol(px_bbox) -> bool:
+        if not _mccol_col_regions_early:
+            return False
+        bx0, by0, bx1, by1 = px_bbox
+        cx = 0.5 * (bx0 + bx1)
+        cy = 0.5 * (by0 + by1)
+        for rx0, ry0, rx1, ry1 in _mccol_col_regions_early:
+            if rx0 <= cx <= rx1 and ry0 <= cy <= ry1:
+                return True
+        return False
+
+    # Pass 2 / 2.5: title washes + ``*_body`` outlines live under ``overlay/``.
+    title_bands = [b for b in synth if b.box_id.endswith(("_title", "_sublabel"))]
+    main_bands  = [b for b in title_bands if b.box_id.endswith("_title")]
+    sub_bands   = [b for b in title_bands if b.box_id.endswith("_sublabel")]
+    if layers & OverlayLayer.BLUE_TITLE:
+        # Build a complete box index covering BOTH synthetic and regular
+        # boxes.  The title-skip gate needs to look up the parent wrapper
+        # of a candidate narrow title to decide whether it's a real
+        # labelled section (parent body extends well below) or a splinter.
+        # Parents are typically regular contour wrappers (e.g. v3 for the
+        # ABBREVIATIONS column), which are NOT in synth_by_id.
+        _box_by_id = {b.box_id: b for b in result.boxes}
+        # Only suppress textsec title bands whose centroid falls inside mccol columns
+        # if they are BODY-type (wide overbroad wrappers). Keep TITLE bands — they
+        # are the cyan-style header labels that should show.
+        _main_bands_draw = [
+            b for b in main_bands
+            if not (_suppressed_by_mccol(b.px_bbox) and b.box_id.startswith("textsec_"))
+        ]
+        _sub_bands_draw = [b for b in sub_bands if not _suppressed_by_mccol(b.px_bbox)]
+        _title_bands_draw = [b for b in title_bands if b in _main_bands_draw or b in _sub_bands_draw]
+        draw_title_band_highlights(
+            canvas,
+            main_bands=_main_bands_draw,
+            sub_bands=_sub_bands_draw,
+            title_bands=_title_bands_draw,
+            colhdr_boxes=colhdr_boxes,
+            textsec_splinter_inside_narrow_table=_textsec_splinter_inside_narrow_table,
+            synth_by_id=synth_by_id,
+            box_by_id=_box_by_id,
+        )
+    if layers & OverlayLayer.BLUE_BODY:
+        body_wrappers = [b for b in synth
+                         if b.box_id.endswith(("_body", "_continuation"))
+                         and not _suppressed_by_mccol(b.px_bbox)]
+        draw_synthetic_blue_bodies(
+            canvas,
+            body_wrappers,
+            skip_if_titleblk_band=_px_centroid_in_titleblk_band,
+            skip_if_splinter=_textsec_splinter_inside_narrow_table,
+        )
+
+    # Pass 2.6: synthetic mini-table cells & row wrappers.
+    #   • data cells   (_mtcelld): solid thin GREEN border
+    #   • header cells (_mtcellh): DASHED lighter-green border
+    #   • row wrappers (_mtrow):   thin ORANGE ring (matches contour row bands)
+    # Draw row wrappers FIRST so cells appear on top of them (cells
+    # remain crisp; the ring stays visible around the outside only).
+
+    # Build set of spurious cross-column minitable IDs: any minitable whose
+    # _mtable frame box spans more than one mccol column is a false detection
+    # (e.g. ARCHITECTURAL+STRUCTURAL treated as parallel abbreviation pairs).
+    _bad_minitable_ids: set[str] = set()
+    if _mccol_col_regions_early:
+        for mc in synth:
+            if mc.box_id.endswith("_mtable"):
+                mx0, my0, mx1, my1 = mc.px_bbox
+                # Count how many mccol col boxes this frame overlaps
+                cols_hit = sum(
+                    1 for rx0, ry0, rx1, ry1 in _mccol_col_regions_early
+                    if mx0 < rx1 and mx1 > rx0 and my0 < ry1 and my1 > ry0
+                )
+                if cols_hit > 1:
+                    # Spurious cross-column detection — extract base id
+                    # e.g. 'minitable_1_mtable' -> 'minitable_1'
+                    base = "_".join(mc.box_id.split("_")[:2])
+                    _bad_minitable_ids.add(base)
+
+    if layers & OverlayLayer.MINI_TABLE:
+        for mc in synth:
+            if mc.box_id.endswith("_mtrow"):
+                x0, y0, x1, y1 = mc.px_bbox
+                if _overlay_obscured_by_titleblk(x0, y0, x1, y1, pad=22):
+                    continue
+                base = "_".join(mc.box_id.split("_")[:2])
+                if base in _bad_minitable_ids:
+                    continue
+                # Match contour row styling — users read these as ORANGE row bands.
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), _ORANGE, DEFAULT_STYLE.orange_cell_px)
+        for mc in synth:
+            if mc.box_id.endswith("_mtcelld"):
+                x0, y0, x1, y1 = mc.px_bbox
+                if _overlay_obscured_by_titleblk(x0, y0, x1, y1, pad=22):
+                    continue
+                base = "_".join(mc.box_id.split("_")[:2])
+                if base in _bad_minitable_ids:
+                    continue
+                if _mtcell_suppressed_by_contour_orange(x0, y0, x1, y1):
+                    continue
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), _GREEN, DEFAULT_STYLE.green_cell_px)
+            elif mc.box_id.endswith("_mtcellh"):
+                x0, y0, x1, y1 = mc.px_bbox
+                if _overlay_obscured_by_titleblk(x0, y0, x1, y1, pad=22):
+                    continue
+                base = "_".join(mc.box_id.split("_")[:2])
+                if base in _bad_minitable_ids:
+                    continue
+                if _mtcell_suppressed_by_contour_orange(x0, y0, x1, y1):
+                    continue
+                _draw_dashed_rect(canvas, (x0, y0), (x1, y1),
+                                  _GREEN_HDR, thickness=DEFAULT_STYLE.green_cell_px, dash=DEFAULT_STYLE.dashed_dash_px, gap=DEFAULT_STYLE.dashed_gap_px)
+
+    # Pass 3: ORANGE — regular cells on top of blue / title / gapcells from 1.5.
+    # (a) Normal detected orange cells (table rows, large cells).  Skip cells
+    #     that have a ``colhdr_*`` cyan ring so headers read as CYAN only.
+    if layers & OverlayLayer.ORANGE:
+        for box in sorted(regular, key=lambda b: -b.area_pt2):
+            if box.color == "ORANGE":
+                x0, y0, x1, y1 = box.px_bbox
+                if _orange_suppressed_by_colhdr(x0, y0, x1, y1):
+                    continue
+                if _orange_suppressed_by_titleblk(x0, y0, x1, y1):
+                    continue
+                _draw_orange(box, canvas)
+        # (a2) Merged header row: per-column ``gapcell_hdr_*`` outlines **after** the
+        # fat parent ORANGE so vertical dividers (TAG | MFGR | SERVICE) stay visible.
+        hdr_cells = [b for b in synth if b.box_id.startswith("gapcell_hdr_")]
+        for gc in sorted(hdr_cells, key=lambda b: -b.area_pt2):
+            gx0, gy0, gx1, gy1 = gc.px_bbox
+            if _orange_suppressed_by_colhdr(gx0, gy0, gx1, gy1):
+                continue
+            if _orange_suppressed_by_titleblk(
+                    gx0, gy0, gx1, gy1, pad=_gap_orange_titleblk_pad):
+                continue
+            _draw_orange(gc, canvas)
+        # (b) For every spec-section title band (~250 px wide), draw a crisp 2 px
+        #     orange line at its bottom edge.  This is the title/content separator and
+        #     it is guaranteed to be visible for ALL spec sections, uniformly.
+        for tb in title_bands:
+            bw = tb.px_bbox[2] - tb.px_bbox[0]
+            if 245 <= bw <= 260:   # spec-section outer title bands only
+                x0, _, x1, y1 = tb.px_bbox
+                cv2.line(canvas, (x0, y1), (x1, y1), _ORANGE, DEFAULT_STYLE.orange_separator_px)
+
+    # Pass 3.4: column-header highlights — **outline only**, text-tight bbox.
+    # Skips the ``*_title`` alpha fill so "BOILER SCHEDULE" / ``textsec_*``
+    # stays a filled caption band while TAG/MFGR/… reads like AIR (ring
+    # around words, not a solid blue cell).  Cyan ring vs blue titles.
+    def _colhdr_skip_for_titleblk_overlay(
+            hx0: int, hy0: int, hx1: int, hy1: int,
+    ) -> bool:
+        """Hide cyan only when the ring sits in the **right** title-block strip.
+
+        Schedule ``colhdr_*`` lives left of ~0.62·W; broad ``_overlay_obscured_*``
+        rules were suppressing cyan on multi-column headers (test5 regression).
+        """
+        hcx = 0.5 * (hx0 + hx1)
+        if hcx <= int(_ow * 0.62):
+            return False
+        hcy = 0.5 * (hy0 + hy1)
+        for tb in titleblk_boxes:
+            L0, L1, L2, L3 = tb.px_bbox
+            if L0 < hcx < L2 and L1 < hcy < L3:
+                return True
+        return False
+
+    if layers & OverlayLayer.CYAN_COLHDR:
+        for hb in sorted(colhdr_boxes_draw, key=lambda b: -b.area_pt2):
+            x0, y0, x1, y1 = hb.px_bbox
+            if _colhdr_skip_for_titleblk_overlay(x0, y0, x1, y1):
+                continue
+            # Universal: a title-washed cell is purely a title — no cyan
+            # ring inside it.  Skip when this colhdr's centroid falls in
+            # any drawn title band.
+            # Exception: when the colhdr's parent_box_id IS that title band
+            # (e.g. responsibility matrix where the column-header strip IS the
+            # sec0_title row), the centroid will always be inside the title band
+            # by construction — don't suppress those.
+            _hb_parent = getattr(hb, "parent_box_id", None) or ""
+            _in_own_parent_title = any(
+                tb.box_id == _hb_parent
+                for tb in title_bands
+            ) if _hb_parent else False
+            if not _in_own_parent_title and _centroid_in_drawn_title((x0, y0, x1, y1)):
+                continue
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), _CYAN, DEFAULT_STYLE.cyan_colhdr_px)
+
+    # Pass 3.5: title-block logos & graphic panels (``titleblk*``) — on top so
+    # they read clearly over revision grids / colhdr rings in the same strip.
+    if layers & OverlayLayer.PURPLE_LOGO:
+        logo_boxes = titleblk_render_boxes
+
+        # Build a list of non-synthetic BLUE boxes in the title-block strip
+        # so we can extend a purple ring downward to include cells like
+        # "ISSUED FOR CONSTRUCTION" that sit directly below a logo cluster
+        # but were classified BLUE rather than ORANGE (so the upstream
+        # extension rule missed them).
+        _strip_blue = [
+            b for b in result.boxes
+            if b.color == "BLUE"
+            and getattr(b, "synthetic", False)
+            and b.box_id.startswith("v")
+            and b.px_bbox[0] > int(0.88 * _ow)  # right-margin strip only
+        ]
+
+        def _extend_purple_into_adjacent_blue(
+            x0: int, y0: int, x1: int, y1: int
+        ) -> tuple[int, int, int, int]:
+            """Grow the purple ring downward into a directly-adjacent BLUE
+            strip cell if that cell is narrow enough to be a label row
+            (height < 300px) and starts within 35px below the current box."""
+            for _ in range(3):  # max 3 extensions
+                grew = False
+                for sb in _strip_blue:
+                    sx0, sy0, sx1, sy1 = sb.px_bbox
+                    # Must start within 35px below current bottom
+                    if not (y1 <= sy0 <= y1 + 35):
+                        continue
+                    # Must overlap x-range
+                    if sx1 < x0 or sx0 > x1:
+                        continue
+                    # Must be a narrow-height cell (label, not a full section)
+                    if sy1 - sy0 > 300:
+                        continue
+                    y1 = sy1
+                    grew = True
+                    break
+                if not grew:
+                    break
+            return x0, y0, x1, y1
+
+        for lb in sorted(logo_boxes, key=lambda b: -b.area_pt2):
+            # Small ``titleblkimg_*`` uses the same padded ring as BLUE edge cuts.
+            x0, y0, x1, y1 = _titleblk_px_for_blue_cuts(lb)
+            # Extend downward into adjacent BLUE strip cells
+            x0, y0, x1, y1 = _extend_purple_into_adjacent_blue(x0, y0, x1, y1)
+            # Thicker than mini-table / colhdr rings so logos read as top priority.
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), _PURPLE, DEFAULT_STYLE.purple_logo_px)
+
+    # Pass 3.6: multi-column contact/team blocks (``mccol_*`` synthetic boxes).
+    # Emitted by MultiColContactPass (order 237) for borderless PROJECT TEAM /
+    # CONSULTANTS sections that have no raster borders.
+    # Draw order: group wrapper → title → heading → col boxes → col-labels → body
+    _mccol_boxes = [b for b in synth if b.box_id.startswith("mccol_")]
+
+    # mccol col regions already computed above (_mccol_col_regions_early = _suppressed_by_mccol)
+
+    if _mccol_boxes and layers & OverlayLayer.BLUE_WRAPPERS:
+        for b in _mccol_boxes:
+            if b.box_id.endswith("_group"):
+                x0, y0, x1, y1 = b.px_bbox
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), _BLUE, DEFAULT_STYLE.blue_wrapper_px)
+    if _mccol_boxes and layers & OverlayLayer.BLUE_TITLE:
+        for b in _mccol_boxes:
+            if b.box_id.endswith("_title") or b.box_id.endswith("_heading"):
+                x0, y0, x1, y1 = b.px_bbox
+                overlay = canvas.copy()
+                cv2.rectangle(overlay, (x0, y0), (x1, y1), _BLUE, -1)
+                cv2.addWeighted(overlay, DEFAULT_STYLE.title_alpha, canvas, 1 - DEFAULT_STYLE.title_alpha, 0, canvas)
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), _BLUE, DEFAULT_STYLE.blue_wrapper_px)
+        # Per-column boxes (BLUE outline, slightly thicker to be visible)
+        for b in _mccol_boxes:
+            if "_col_" in b.box_id and not b.box_id.endswith("_group"):
+                x0, y0, x1, y1 = b.px_bbox
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), _BLUE, DEFAULT_STYLE.blue_wrapper_px + 1)
+    if _mccol_boxes and layers & OverlayLayer.CYAN_COLHDR:
+        for b in _mccol_boxes:
+            if "_hdr_" in b.box_id:
+                x0, y0, x1, y1 = b.px_bbox
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), _CYAN, DEFAULT_STYLE.cyan_colhdr_px)
+
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out), canvas)
+    return out
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _line_mask(bin_img, kpx, kiter, spx, siter):
+    h = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (kpx, 1)), iterations=kiter)
+    v = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (1, kpx)), iterations=kiter)
+    mask = cv2.add(h, v)
+    return cv2.dilate(mask,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (spx, spx)), iterations=siter)
+
+
+def _candidates(mask, cfg: Cfg, total_px, stats, name, min_h_ov, min_a_ov):
+    min_h = min_h_ov if min_h_ov is not None else cfg.min_height_px
+    min_a = min_a_ov if min_a_ov is not None else cfg.min_area_px2
+    max_a = total_px * cfg.max_area_fraction
+    R = stats["rejects"]
+
+    cnts, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    stats[f"{name}_contours"] = len(cnts)
+    out: list[_Cand] = []
+    for cnt in cnts:
+        area = float(cv2.contourArea(cnt))
+        if area < min_a:   R[f"{name}:small"] = R.get(f"{name}:small", 0)+1; continue
+        if area > max_a:   R[f"{name}:large"] = R.get(f"{name}:large", 0)+1; continue
+        x,y,w,h = cv2.boundingRect(cnt)
+        if w < cfg.min_width_px:  R[f"{name}:narrow"] = R.get(f"{name}:narrow",0)+1; continue
+        if h < min_h:             R[f"{name}:short"]  = R.get(f"{name}:short", 0)+1; continue
+        asp = w/float(h)
+        if asp < cfg.min_aspect or asp > cfg.max_aspect:
+            R[f"{name}:aspect"] = R.get(f"{name}:aspect",0)+1; continue
+        fill = area / float(w*h)
+        if fill < cfg.min_fill_ratio:
+            R[f"{name}:fill"] = R.get(f"{name}:fill",0)+1; continue
+        peri = cv2.arcLength(cnt, True)
+        # Clamp epsilon so it never exceeds 40% of the short dimension —
+        # prevents thin cells (gap columns) from collapsing to 2 vertices
+        eps = min(cfg.polygon_epsilon_ratio * peri, 0.4 * min(w, h))
+        approx = cv2.approxPolyDP(cnt, eps, True)
+        vtx = len(approx)
+        if vtx < cfg.min_polygon_vertices or vtx > cfg.max_polygon_vertices:
+            R[f"{name}:poly"] = R.get(f"{name}:poly",0)+1; continue
+        out.append((area, x, y, w, h, fill))
+    stats[f"{name}_cands"] = len(out)
+    return out
+
+
+def _merge(base, micro, tol):
+    merged = list(base)
+    for mc in micro:
+        dup = any(
+            _iou(mc, bc) > 0.40 or
+            (_contained(mc, bc, tol) and mc[0]/bc[0] > 0.65 if bc[0]>0 else False)
+            for bc in merged
+        )
+        if not dup:
+            merged.append(mc)
+    return merged
+
+
+def _perim_ok(x, y, w, h, mask, H, W, large, cfg: Cfg):
+    t  = cfg.perim_sample_px
+    em = cfg.perim_edge_margin_px
+
+    def cov(r0,r1,c0,c1):
+        r0,r1 = max(0,r0), min(H,r1)
+        c0,c1 = max(0,c0), min(W,c1)
+        if r0>=r1 or c0>=c1: return 1.0
+        reg = mask[r0:r1, c0:c1]
+        return float(np.count_nonzero(reg)) / reg.size
+
+    sides = [
+        (cov(y-t, y+t, x, x+w),             y <= em),
+        (cov(y+h-t, y+h+t, x, x+w),         y+h >= H-em),
+        (cov(y, y+h, x-t, x+t),              x <= em),
+        (cov(y, y+h, x+w-t, x+w+t),          x+w >= W-em),
+    ]
+    if large:
+        mc, ms = cfg.perim_large_min_coverage, cfg.perim_large_min_sides
+    else:
+        mc, ms = cfg.perim_small_min_coverage, cfg.perim_small_min_sides
+
+    return sum(1 for (c, edge) in sides if edge or c >= mc) >= ms
+
+
+def _nms(cands, iou_thr, id_ratio, tol):
+    cands = sorted(cands, key=lambda t: -t[0])
+    kept: list[_Cand] = []
+    for c in cands:
+        drop = False
+        for k in kept:
+            nested = _contained(c,k,tol) or _contained(k,c,tol)
+            if nested:
+                ratio = min(c[0],k[0])/max(c[0],k[0]) if max(c[0],k[0])>0 else 0
+                if ratio >= id_ratio: drop=True; break
+                continue
+            if _iou(c,k) >= iou_thr: drop=True; break
+        if not drop:
+            kept.append(c)
+    return kept
+
+
+def _hierarchy(boxes, tol):
+    n = len(boxes)
+    par  = [None]*n
+    kids = [0]*n
+    for i in range(n):
+        best_j, best_a = None, float("inf")
+        for j in range(n):
+            if i==j or boxes[j][0] <= boxes[i][0]: continue
+            if _contained(boxes[i], boxes[j], tol) and boxes[j][0] < best_a:
+                best_j, best_a = j, boxes[j][0]
+        par[i] = best_j
+        if best_j is not None:
+            kids[best_j] += 1
+
+    depths = [0]*n
+    for i in range(n):
+        d, cur, seen = 0, par[i], set()
+        while cur is not None and cur not in seen:
+            d += 1; seen.add(cur); cur = par[cur]
+        depths[i] = d
+    return par, kids, depths
+
+
+def _contained(inner: _Cand, outer: _Cand, tol: int) -> bool:
+    """Soft-containment with an overlap guard.
+
+    Edges are allowed to coincide / spill out by up to `tol` px on every side
+    (so cells that share a wall with their wrapper still count as inside).
+    But the inner box must ALSO actually overlap the outer's interior on
+    BOTH axes — otherwise a strip sitting just above an adjacent row gets
+    mis-parented to it (e.g. CONNECTORS strip at y=555-562 was being
+    treated as a child of v25 at y=565-581 even though it's entirely
+    outside v25 vertically).
+    """
+    _, ix, iy, iw, ih, _ = inner
+    _, ox, oy, ow, oh, _ = outer
+    edge_ok = (
+        ox - tol <= ix
+        and oy - tol <= iy
+        and ix + iw <= ox + ow + tol
+        and iy + ih <= oy + oh + tol
+    )
+    if not edge_ok:
+        return False
+    overlap_x = min(ix + iw, ox + ow) - max(ix, ox)
+    overlap_y = min(iy + ih, oy + oh) - max(iy, oy)
+    return overlap_x > 0 and overlap_y > 0
+
+
+def _iou(a: _Cand, b: _Cand) -> float:
+    _,ax,ay,aw,ah,_ = a;  _,bx,by,bw,bh,_ = b
+    ix0,iy0 = max(ax,bx), max(ay,by)
+    ix1,iy1 = min(ax+aw,bx+bw), min(ay+ah,by+bh)
+    if ix1<=ix0 or iy1<=iy0: return 0.0
+    inter = float((ix1-ix0)*(iy1-iy0))
+    union = float(aw*ah+bw*bh) - inter
+    return inter/union if union>0 else 0.0
