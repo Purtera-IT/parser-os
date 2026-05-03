@@ -17,6 +17,7 @@ from app.core.schemas import (
     AtomType,
     AuthorityClass,
     EvidenceAtom,
+    ParserOutput,
     ReviewStatus,
     SourceRef,
     ParserCapability,
@@ -24,7 +25,17 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_email
+from app.parsers.structured_projection import (
+    derived_files_for,
+    make_page,
+    make_paragraph,
+    make_section,
+    make_structured_document,
+    stamp_section_and_block_ids,
+)
 from app.domain.schemas import DomainPack
+
+STRUCTURED_SCHEMA_EMAIL = "orbitbrief.email.structured.v1"
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\s?-\s?\d{1,2}(?::\d{2})?\s?(?:am|pm)\b", re.I)
@@ -127,6 +138,20 @@ class EmailParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
+        return self.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        ).atoms
+
+    def parse_artifact_full(
+        self,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        domain_pack: DomainPack | None = None,
+    ) -> ParserOutput:
         del domain_pack
         text = _extract_email_text(path)
         blocks = self._split_blocks(text)
@@ -142,7 +167,102 @@ class EmailParser(BaseParser):
                     authority=authority,
                 )
             )
-        return atoms
+        structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
+        stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        return ParserOutput(
+            atoms=atoms,
+            derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _build_structured_doc(
+        self,
+        *,
+        filename: str,
+        blocks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Render an email thread as one page per message, newest first.
+        Quoted history lives under its own subsection so an LLM can
+        skip it without losing context.
+        """
+        pages: list[dict[str, Any]] = []
+        for index, block in enumerate(blocks):
+            sender = block.get("sender") or "unknown"
+            sent_at = block.get("sent_at") or ""
+            quoted = block.get("quoted")
+            heading = f"Message {index + 1}: {sender}"
+            if sent_at:
+                heading = f"{heading} ({sent_at})"
+            metadata: list[str] = []
+            if sender and sender != "unknown":
+                metadata.append(f"sender: {sender}")
+            if sent_at:
+                metadata.append(f"sent_at: {sent_at}")
+            metadata.append(f"quoted: {quoted}")
+
+            body_lines: list[str] = []
+            quoted_lines: list[str] = []
+            for line in block.get("lines", []) or []:
+                stripped = line.strip()
+                if stripped.startswith(">"):
+                    quoted_lines.append(stripped.lstrip("> ").strip())
+                elif stripped.lower().startswith(("from:", "sent:", "date:", "subject:", "to:", "cc:", "bcc:")):
+                    metadata.append(stripped)
+                else:
+                    body_lines.append(stripped)
+            body_text = "\n".join(line for line in body_lines if line).strip()
+            section_blocks: list[dict[str, Any]] = []
+            if body_text:
+                section_blocks.append(make_paragraph(body_text))
+            section = make_section(
+                heading=heading,
+                level=2,
+                blocks=section_blocks,
+                subsections=(
+                    [
+                        make_section(
+                            heading="Quoted history",
+                            level=3,
+                            blocks=[
+                                make_paragraph(
+                                    "\n".join(line for line in quoted_lines if line)
+                                )
+                            ],
+                        )
+                    ]
+                    if quoted_lines
+                    else []
+                ),
+            )
+            pages.append(
+                make_page(
+                    page=index,
+                    title=heading,
+                    metadata=metadata,
+                    sections=[section],
+                )
+            )
+        if not pages:
+            pages.append(
+                make_page(
+                    page=0,
+                    title=filename,
+                    sections=[
+                        make_section(
+                            heading=filename,
+                            level=2,
+                            blocks=[make_paragraph("(empty email)")],
+                        )
+                    ],
+                )
+            )
+        return make_structured_document(
+            schema_version=STRUCTURED_SCHEMA_EMAIL,
+            filename=filename,
+            artifact_type=ArtifactType.email.value,
+            title=filename,
+            metadata=[f"message_count: {len(blocks)}"],
+            pages=pages,
+        )
 
     def _split_blocks(self, text: str) -> list[dict[str, Any]]:
         lines = text.splitlines()

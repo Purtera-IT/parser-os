@@ -696,5 +696,7 @@ def _detect_rotation_quarter_turns(rgb: np.ndarray,
         Σdy >> 0 → text reads BOTTOM→TOP in PDF coords        → 1 turn  (90° CW)
         Σdy << 0 → text reads TOP→BOTTOM in PDF coords        → 3 turns (90° CCW)
 
-    Fallback — line-morphology dominance (for pages with no text).
-    Distinguishes only "rotate" from "don't rotate"; falls back to 1 turn.
+    Fallback — line-morphology dominance when ``used < 50`` (sparse text).
+    If the raster is already portrait (H>W), returns 0 — vertical rulings
+    otherwise mimic a sideways sheet.  Landscape-first rasters use vert/horiz
+    line counts; may return 1 turn for portrait-stored landscape sheets.

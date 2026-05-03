@@ -8,6 +8,9 @@ from .cellular_title import CellularTitlePass, detect_cellular_titles
 from .raster_line_repair import RasterLineRepairPass, extract_sidebar_line_repairs
 from .placeholders import NoOpSemanticPass, build_future_noops
 from .multicol_contact import MultiColContactPass
+from .cover_page_title_bands import CoverPageTitleBandsPass
+from .prose_layout_bands import ProseLayoutBandsPass
+from .toc_layout_bands import TocLayoutBandsPass
 
 __all__ = [
     "OverlayPass",
@@ -28,4 +31,7 @@ __all__ = [
     "NoOpSemanticPass",
     "build_future_noops",
     "MultiColContactPass",
+    "CoverPageTitleBandsPass",
+    "ProseLayoutBandsPass",
+    "TocLayoutBandsPass",
 ]

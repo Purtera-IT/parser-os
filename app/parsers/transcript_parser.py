@@ -22,6 +22,7 @@ from app.core.schemas import (
     AtomType,
     AuthorityClass,
     EvidenceAtom,
+    ParserOutput,
     ReviewStatus,
     SourceRef,
     ParserCapability,
@@ -29,7 +30,18 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_transcript
+from app.parsers.structured_projection import (
+    derived_files_for,
+    make_bullet_list,
+    make_page,
+    make_paragraph,
+    make_section,
+    make_structured_document,
+    stamp_section_and_block_ids,
+)
 from app.domain.schemas import DomainPack
+
+STRUCTURED_SCHEMA_TRANSCRIPT = "orbitbrief.transcript.structured.v1"
 
 DECISION_RE = re.compile(
     r"\b(decision:|decided|agreed|confirmed|approved|we will|the plan is|final decision)\b",
@@ -146,6 +158,20 @@ class TranscriptParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
+        return self.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        ).atoms
+
+    def parse_artifact_full(
+        self,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        domain_pack: DomainPack | None = None,
+    ) -> ParserOutput:
         del domain_pack
         segments = self._segments_from_path(path)
         atoms: list[EvidenceAtom] = []
@@ -158,7 +184,93 @@ class TranscriptParser(BaseParser):
                     segment=segment,
                 )
             )
-        return atoms
+        structured_doc = self._build_structured_doc(filename=path.name, segments=segments)
+        stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        return ParserOutput(
+            atoms=atoms,
+            derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _build_structured_doc(
+        self,
+        *,
+        filename: str,
+        segments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Render a transcript as a single page with one section per topic
+        (Decisions, Action Items, Open Questions, Constraints, Discussion).
+        Each utterance becomes a bullet item carrying its speaker and
+        timestamp in plain text so an LLM can quote it directly.
+        """
+        bucket_order = [
+            "Decisions",
+            "Action Items",
+            "Open Questions",
+            "Constraints",
+            "Discussion",
+        ]
+        buckets: dict[str, list[dict[str, Any]]] = {label: [] for label in bucket_order}
+
+        for segment in segments:
+            text = str(segment.get("text", "")).strip()
+            if not text:
+                continue
+            speaker = segment.get("speaker") or "Unknown"
+            timestamp = segment.get("timestamp_start")
+            stamp = f" [{timestamp}]" if timestamp else ""
+            bullet_text = f"**{speaker}**{stamp}: {text}"
+            section = (segment.get("section") or "").strip().lower()
+            target = "Discussion"
+            if "decision" in section:
+                target = "Decisions"
+            elif "action" in section:
+                target = "Action Items"
+            elif "question" in section:
+                target = "Open Questions"
+            elif "constraint" in section:
+                target = "Constraints"
+            else:
+                lowered = text.lower()
+                if DECISION_RE.search(text):
+                    target = "Decisions"
+                elif ACTION_RE.search(text):
+                    target = "Action Items"
+                elif QUESTION_RE.search(text):
+                    target = "Open Questions"
+                elif CONSTRAINT_RE.search(text):
+                    target = "Constraints"
+                del lowered
+            buckets[target].append({"text": bullet_text, "children": []})
+
+        sections: list[dict[str, Any]] = []
+        for label in bucket_order:
+            items = buckets[label]
+            if not items:
+                continue
+            sections.append(
+                make_section(
+                    heading=label,
+                    level=2,
+                    blocks=[make_bullet_list(items=items)],
+                )
+            )
+        if not sections:
+            sections.append(
+                make_section(
+                    heading="Transcript",
+                    level=2,
+                    blocks=[make_paragraph("(empty transcript)")],
+                )
+            )
+        page = make_page(page=0, title=filename, sections=sections)
+        return make_structured_document(
+            schema_version=STRUCTURED_SCHEMA_TRANSCRIPT,
+            filename=filename,
+            artifact_type=ArtifactType.transcript.value,
+            title=filename,
+            metadata=[f"utterance_count: {len(segments)}"],
+            pages=[page],
+        )
 
     def _segments_from_path(self, path: Path) -> list[dict[str, Any]]:
         suffix = path.suffix.lower()

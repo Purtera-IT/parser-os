@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 import cv2
 
-from .colors_bgr import BLUE, SUBHDR
+from .colors_bgr import BLUE, COVER_FOOTER, PURPLE, RED, SUBHDR
 from .style import DEFAULT_STYLE
 
 
@@ -128,6 +128,27 @@ def _skip_title_alpha(tb: Any, box_by_id: dict[str, Any] | None = None) -> bool:
     the title's bottom (the body of the section); a splinter doesn't.
     """
     bid = getattr(tb, "box_id", "") or ""
+    if getattr(tb, "cover_footer_band", False):
+        return False
+    if getattr(tb, "subhdr_red_band", False):
+        return False
+    if getattr(tb, "subbullet_green_band", False):
+        return False
+    if getattr(tb, "subbullet_purple_band", False):
+        return False
+    if bid.startswith("rfpcover_"):
+        return False
+    if bid.startswith((
+        "prosehead_",
+        "prosesub_",
+        "prosebullet_",
+        "prosesubbul_",
+        "prosesubsubbul_",
+        "toc_heading_",
+        "toc_top_",
+        "toc_sub_",
+    )):
+        return False
     if bid.startswith("textsec_"):
         return False
     if bid.startswith("tbstruct_") and bid.endswith("_title"):
@@ -210,8 +231,24 @@ def draw_title_band_highlights(
         # rather than the regular blue title wash.  A sub-header is a
         # title that's nested inside a SECTION X.Y parent (Rule 12).
         subheader_bands: list = []
+        cover_footer_bands: list = []
+        red_bands: list = []
+        subbullet_green_bands: list = []
+        subbullet_purple_bands: list = []
         for tb in main_bands:
             if _skip_title_alpha(tb, box_by_id):
+                continue
+            if getattr(tb, "subbullet_purple_band", False):
+                subbullet_purple_bands.append(tb)
+                continue
+            if getattr(tb, "subbullet_green_band", False):
+                subbullet_green_bands.append(tb)
+                continue
+            if getattr(tb, "subhdr_red_band", False):
+                red_bands.append(tb)
+                continue
+            if getattr(tb, "cover_footer_band", False):
+                cover_footer_bands.append(tb)
                 continue
             # Sub-headers handled in a separate pass with SUBHDR colour.
             if getattr(tb, "is_subheader", False):
@@ -297,6 +334,42 @@ def draw_title_band_highlights(
                             break
                 cv2.rectangle(overlay2, (x0, y0), (x1, y1), SUBHDR, cv2.FILLED)
             cv2.addWeighted(overlay2, DEFAULT_STYLE.title_alpha, canvas, 1.0 - DEFAULT_STYLE.title_alpha, 0, canvas)
+        if cover_footer_bands:
+            overlay_y = canvas.copy()
+            for tb in cover_footer_bands:
+                x0, y0, x1, y1 = tb.px_bbox
+                cv2.rectangle(overlay_y, (x0, y0), (x1, y1), COVER_FOOTER, cv2.FILLED)
+            cv2.addWeighted(
+                overlay_y, DEFAULT_STYLE.title_alpha, canvas,
+                1.0 - DEFAULT_STYLE.title_alpha, 0, canvas,
+            )
+        if red_bands:
+            overlay_r = canvas.copy()
+            for tb in red_bands:
+                x0, y0, x1, y1 = tb.px_bbox
+                cv2.rectangle(overlay_r, (x0, y0), (x1, y1), RED, cv2.FILLED)
+            cv2.addWeighted(
+                overlay_r, DEFAULT_STYLE.title_alpha, canvas,
+                1.0 - DEFAULT_STYLE.title_alpha, 0, canvas,
+            )
+        if subbullet_green_bands:
+            overlay_g = canvas.copy()
+            for tb in subbullet_green_bands:
+                x0, y0, x1, y1 = tb.px_bbox
+                cv2.rectangle(overlay_g, (x0, y0), (x1, y1), SUBHDR, cv2.FILLED)
+            cv2.addWeighted(
+                overlay_g, DEFAULT_STYLE.title_alpha, canvas,
+                1.0 - DEFAULT_STYLE.title_alpha, 0, canvas,
+            )
+        if subbullet_purple_bands:
+            overlay_p = canvas.copy()
+            for tb in subbullet_purple_bands:
+                x0, y0, x1, y1 = tb.px_bbox
+                cv2.rectangle(overlay_p, (x0, y0), (x1, y1), PURPLE, cv2.FILLED)
+            cv2.addWeighted(
+                overlay_p, DEFAULT_STYLE.title_alpha, canvas,
+                1.0 - DEFAULT_STYLE.title_alpha, 0, canvas,
+            )
     if sub_bands:
         overlay = canvas.copy()
         for tb in sub_bands:

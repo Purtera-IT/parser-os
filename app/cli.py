@@ -6,6 +6,10 @@ from pathlib import Path
 import typer
 
 from app.core.compiler import compile_project
+from app.core.orbitbrief_envelope import (
+    build_orbitbrief_envelope,
+    write_orbitbrief_envelope,
+)
 
 app = typer.Typer(help="Purtera Evidence Compiler MVP CLI")
 
@@ -21,6 +25,16 @@ def compile(
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable incremental artifact cache reuse"),
     allow_errors: bool = typer.Option(False, "--allow-errors"),
     allow_unverified_receipts: bool = typer.Option(False, "--allow-unverified-receipts"),
+    orbitbrief_out: Path | None = typer.Option(
+        None,
+        "--orbitbrief-out",
+        help="Directory for the orbitbrief.input.{json,md} envelope (defaults to <project>/.orbitbrief).",
+    ),
+    skip_orbitbrief: bool = typer.Option(
+        False,
+        "--skip-orbitbrief",
+        help="Skip writing the OrbitBrief project envelope.",
+    ),
 ) -> None:
     """Compile a project directory into structured evidence JSON."""
     result = compile_project(
@@ -37,6 +51,17 @@ def compile(
     if trace_out is not None and result.trace is not None:
         trace_out.parent.mkdir(parents=True, exist_ok=True)
         trace_out.write_text(result.trace.model_dump_json(indent=2), encoding="utf-8")
+    envelope_paths: tuple[Path, Path] | None = None
+    if not skip_orbitbrief:
+        envelope = build_orbitbrief_envelope(
+            project_dir=project_dir,
+            compile_result=result,
+        )
+        envelope_paths = write_orbitbrief_envelope(
+            project_dir=project_dir,
+            envelope=envelope,
+            out_dir=orbitbrief_out,
+        )
     warning_count = len(result.warnings)
     error_count = len([w for w in result.warnings if str(w).startswith("ERROR:")])
     manifest = result.manifest
@@ -64,6 +89,8 @@ def compile(
                 "cache_hits": manifest.cache_hits if manifest is not None else 0,
                 "cache_misses": manifest.cache_misses if manifest is not None else 0,
                 "reused_artifact_ids": manifest.reused_artifact_ids if manifest is not None else [],
+                "orbitbrief_envelope_json": str(envelope_paths[0]) if envelope_paths else None,
+                "orbitbrief_envelope_md": str(envelope_paths[1]) if envelope_paths else None,
             }
         )
     )
@@ -80,6 +107,43 @@ def compile(
                 }
             )
         )
+
+
+@app.command("orbitbrief-envelope")
+def orbitbrief_envelope(
+    project_dir: Path = typer.Argument(..., help="Project directory containing the source artifacts."),
+    compile_result: Path = typer.Option(..., "--compile-result", help="Path to a CompileResult JSON file."),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help="Where to write the envelope (defaults to <project>/.orbitbrief).",
+    ),
+) -> None:
+    """Render an OrbitBrief envelope (JSON + markdown) from a saved compile result."""
+    from app.core.schemas import CompileResult  # local import keeps CLI startup snappy
+
+    payload = json.loads(compile_result.read_text(encoding="utf-8"))
+    result = CompileResult.model_validate(payload)
+    envelope = build_orbitbrief_envelope(
+        project_dir=project_dir,
+        compile_result=result,
+    )
+    json_path, md_path = write_orbitbrief_envelope(
+        project_dir=project_dir,
+        envelope=envelope,
+        out_dir=out_dir,
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "envelope_json": str(json_path),
+                "envelope_md": str(md_path),
+                "documents": len(envelope.get("documents", [])),
+                "atoms": len(envelope.get("atoms", [])),
+                "packets": len(envelope.get("packets", [])),
+            }
+        )
+    )
 
 
 @app.command()

@@ -19,7 +19,7 @@ from .overlay_layers import OverlayLayer, parse_layers_arg
 
 
 def _box_to_dict(b: VisibleBox) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "box_id": b.box_id,
         "rect": [b.rect.x0, b.rect.y0, b.rect.x1, b.rect.y1],
         "area_pt2": b.area_pt2,
@@ -32,6 +32,21 @@ def _box_to_dict(b: VisibleBox) -> dict[str, Any]:
         "children_count": b.children_count,
         "synthetic": b.synthetic,
     }
+    # Surface the marker attributes that downstream passes attach to a
+    # box via ``object.__setattr__``.  These drive overlay rendering
+    # (yellow footer / red sub-header / green & purple bullet bands)
+    # and are required for the color-driven structured extractor to
+    # tell what role each box should play.
+    for marker in (
+        "cover_footer_band",
+        "subhdr_red_band",
+        "subbullet_green_band",
+        "subbullet_purple_band",
+        "is_subheader",
+    ):
+        if getattr(b, marker, False):
+            out[marker] = True
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
         "text artifacts (use same path as --json-out, e.g. out.json → out.extraction.md).",
     )
     ap.add_argument(
+        "--structured-out",
+        default=None,
+        help="After --json-out, also write a clean color-driven structured JSON "
+        "to this path (e.g. compiled_artifacts/page.structured.json).",
+    )
+    ap.add_argument(
         "--pipeline-plan", action="store_true",
         help="Print the ordered pipeline stages before running detection.",
     )
@@ -68,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.extraction_out and not args.json_out:
         ap.error("--extraction-out requires --json-out")
+    if args.structured_out and not args.json_out:
+        ap.error("--structured-out requires --json-out")
 
     cfg = Cfg(render_scale=args.scale)
     if args.geometry_only:
@@ -83,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
         f"  image: {s['W']}x{s['H']}  |  merged: {s['merged']}  |  "
         f"validated: {s['validated']}  |  after_nms: {s['after_nms']}"
     )
-    print(f"  BLUE={s['blue']}  ORANGE={s['orange']}  total={s['total']}")
+    blue_n = sum(1 for b in result.boxes if b.color == "BLUE")
+    orange_n = sum(1 for b in result.boxes if b.color == "ORANGE")
+    print(f"  BLUE={blue_n}  ORANGE={orange_n}  total={len(result.boxes)}")
     print("  rejections:", {k: v for k, v in s["rejects"].items() if v > 0})
 
     for b in result.boxes:
@@ -117,6 +142,12 @@ def main(argv: list[str] | None = None) -> int:
             paths = write_extraction_artifacts(args.extraction_out, doc)
             for k, v in paths.items():
                 print(f"Extraction {k} -> {v}")
+        if args.structured_out:
+            from .structured_extract import extract_structured, write_structured
+
+            structured_doc = extract_structured(payload, pdf_path=args.pdf)
+            written = write_structured(args.structured_out, structured_doc)
+            print(f"Structured -> {written}")
     return 0
 
 

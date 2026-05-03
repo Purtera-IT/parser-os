@@ -16,6 +16,7 @@ from app.core.schemas import (
     AtomType,
     AuthorityClass,
     EvidenceAtom,
+    ParserOutput,
     ReviewStatus,
     SourceRef,
     ParserCapability,
@@ -23,7 +24,19 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_docx
+from app.parsers.structured_projection import (
+    derived_files_for,
+    make_bullet_list,
+    make_page,
+    make_paragraph,
+    make_section,
+    make_structured_document,
+    make_table,
+    stamp_section_and_block_ids,
+)
 from app.domain.schemas import DomainPack
+
+STRUCTURED_SCHEMA_DOCX = "orbitbrief.docx.structured.v1"
 
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
@@ -78,6 +91,20 @@ class DocxParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
+        return self.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        ).atoms
+
+    def parse_artifact_full(
+        self,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        domain_pack: DomainPack | None = None,
+    ) -> ParserOutput:
         del domain_pack
         document = Document(path)
         atoms: list[EvidenceAtom] = []
@@ -131,7 +158,107 @@ class DocxParser(BaseParser):
                 path=path,
             )
         )
-        return atoms
+
+        structured_doc = self._build_structured_doc(filename=path.name, document=document)
+        stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        return ParserOutput(
+            atoms=atoms,
+            derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _build_structured_doc(
+        self,
+        *,
+        filename: str,
+        document: Any,
+    ) -> dict[str, Any]:
+        """Build a structured doc from the DOCX, walking the body element
+        sequentially so paragraphs, bullets, and tables stay in source
+        order.  Headings open new sections; consecutive bullets fuse
+        into a bullet_list block.
+        """
+        sections: list[dict[str, Any]] = []
+        current_blocks: list[dict[str, Any]] = []
+        current_heading = filename
+        current_level = 1
+        pending_bullets: list[dict[str, Any]] = []
+
+        def flush_bullets() -> None:
+            nonlocal pending_bullets
+            if pending_bullets:
+                current_blocks.append(make_bullet_list(items=pending_bullets))
+                pending_bullets = []
+
+        def flush_section() -> None:
+            nonlocal current_blocks, current_heading, current_level
+            flush_bullets()
+            if current_blocks or current_heading:
+                sections.append(
+                    make_section(
+                        heading=current_heading,
+                        level=current_level,
+                        blocks=current_blocks,
+                    )
+                )
+            current_blocks = []
+
+        for paragraph in document.paragraphs:
+            text = (paragraph.text or "").strip()
+            style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
+            is_heading = style_name.startswith("heading")
+            is_list = "list" in style_name or "bullet" in style_name
+            if is_heading and text:
+                flush_section()
+                current_heading = text
+                # Heading 1 -> level 2, Heading 2 -> level 3, etc.
+                m = re.search(r"\d+", style_name)
+                level = (int(m.group()) + 1) if m else 2
+                current_level = max(2, min(level, 6))
+                continue
+            if not text:
+                continue
+            if is_list:
+                pending_bullets.append({"text": text, "children": []})
+            else:
+                flush_bullets()
+                current_blocks.append(make_paragraph(text))
+
+        for table in document.tables:
+            try:
+                cells = [[(c.text or "").strip() for c in row.cells] for row in table.rows]
+            except Exception:
+                continue
+            if not cells:
+                continue
+            columns = cells[0] or [f"col_{i + 1}" for i in range(len(cells[0]))]
+            columns = [c or f"col_{i + 1}" for i, c in enumerate(columns)]
+            rows: list[dict[str, Any]] = []
+            for raw in cells[1:]:
+                if all(not v for v in raw):
+                    continue
+                rows.append({columns[i]: raw[i] if i < len(raw) else "" for i in range(len(columns))})
+            flush_bullets()
+            current_blocks.append(make_table(columns=columns, rows=rows))
+
+        flush_section()
+
+        if not sections:
+            sections.append(
+                make_section(
+                    heading=filename,
+                    level=2,
+                    blocks=[make_paragraph("(empty document)")],
+                )
+            )
+        page = make_page(page=0, title=filename, sections=sections)
+        return make_structured_document(
+            schema_version=STRUCTURED_SCHEMA_DOCX,
+            filename=filename,
+            artifact_type=ArtifactType.docx.value,
+            title=filename,
+            metadata=[],
+            pages=[page],
+        )
 
     def _extract_tracked_change_atoms(
         self,

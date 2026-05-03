@@ -35,7 +35,15 @@
                 # image 90° CCW = 3 quarter-turns (np.rot90 k=+1).
                 return 1 if sum_dy > 0 else 3
 
-    # Fallback: line-morphology dominance ⇒ rotate-or-not (always 1 turn).
+    # Fallback: line-morphology dominance ⇒ rotate-or-not (90° CW vs none).
+    # Portrait-first renders (H>W) are already upright for normal Letter-style
+    # PDFs; vertical ruling lines on covers/forms otherwise look like a
+    # "sideways sheet" and falsely trigger rotation.  Sideways workbooks that
+    # need this path render landscape-first (W>=H) from pdfium at rotation=0.
+    H_px, W_px = int(rgb.shape[0]), int(rgb.shape[1])
+    if H_px > W_px:
+        return 0
+
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     bin_img = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 10)

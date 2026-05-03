@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.ids import stable_id
-from app.core.schemas import CandidateAtom, EvidenceAtom
+from app.core.schemas import CandidateAtom, EvidenceAtom, ParserDerivedFile
 from app.storage.repositories import load_cache_payload, save_cache_payload
 
 
@@ -36,6 +36,7 @@ class CachedArtifactResult(BaseModel):
     atoms: list[EvidenceAtom] = Field(default_factory=list)
     receipts: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    derived_files: list[ParserDerivedFile] = Field(default_factory=list)
     created_at: str
 
 
@@ -112,6 +113,7 @@ def build_cached_artifact_result(
     candidates: list[CandidateAtom],
     atoms: list[EvidenceAtom],
     warnings: list[str],
+    derived_files: list[ParserDerivedFile] | None = None,
 ) -> CachedArtifactResult:
     return CachedArtifactResult(
         artifact_id=artifact_id,
@@ -125,5 +127,6 @@ def build_cached_artifact_result(
         atoms=list(atoms),
         receipts=[],
         warnings=list(warnings),
+        derived_files=list(derived_files or []),
         created_at=_now_iso(),
     )

@@ -42,6 +42,8 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.csv
     if suffix == ".docx":
         return ArtifactType.docx
+    if suffix == ".pdf":
+        return ArtifactType.pdf
     if suffix in {".eml"}:
         return ArtifactType.email
     if suffix in {".txt", ".md", ".vtt", ".srt", ".json"}:

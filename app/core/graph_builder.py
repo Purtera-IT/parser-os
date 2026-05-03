@@ -199,6 +199,21 @@ def _build_edge(
     *,
     metadata: dict[str, Any] | None = None,
 ) -> EvidenceEdge:
+    """Build an :class:`EvidenceEdge` and stamp cross-artifact provenance.
+
+    ``metadata['cross_artifact']`` is set to ``True`` whenever the two
+    atoms come from different source artifacts.  ``from_artifact_id`` /
+    ``to_artifact_id`` are also added so OrbitBrief can render a
+    "this PDF says X but this email says Y" badge directly from the
+    edge alone.
+    """
+    meta = dict(metadata or {})
+    meta.setdefault("from_artifact_id", from_atom.artifact_id)
+    meta.setdefault("to_artifact_id", to_atom.artifact_id)
+    if from_atom.artifact_id != to_atom.artifact_id:
+        meta.setdefault("cross_artifact", True)
+    else:
+        meta.setdefault("cross_artifact", False)
     return EvidenceEdge(
         id=_edge_id(project_id, edge_type, from_atom.id, to_atom.id, reason),
         project_id=project_id,
@@ -207,7 +222,7 @@ def _build_edge(
         edge_type=edge_type,
         reason=reason,
         confidence=confidence,
-        metadata=dict(metadata or {}),
+        metadata=meta,
     )
 
 
@@ -455,6 +470,58 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 metadata=meta,
             )
         )
+
+    # Cross-artifact reinforcement: when an instruction or constraint in
+    # one artifact (e.g. customer email, transcript decision) lines up
+    # with a scope/quantity/exclusion in another (e.g. PDF SOW, XLSX
+    # roster), record a "supports" edge with ``cross_artifact=True`` so
+    # downstream packetizers can show OrbitBrief readers a single
+    # cross-source story instead of two unrelated atoms.
+    cross_artifact_pairs: list[tuple[AtomType, set[AtomType]]] = [
+        (AtomType.customer_instruction, {AtomType.scope_item, AtomType.quantity, AtomType.exclusion}),
+        (AtomType.decision, {AtomType.scope_item, AtomType.quantity, AtomType.exclusion, AtomType.constraint}),
+        (AtomType.action_item, {AtomType.scope_item, AtomType.quantity}),
+        (AtomType.constraint, {AtomType.scope_item, AtomType.quantity}),
+        (AtomType.exclusion, {AtomType.scope_item, AtomType.quantity}),
+        (AtomType.open_question, {AtomType.scope_item, AtomType.quantity, AtomType.constraint}),
+    ]
+    seeds_by_type: dict[AtomType, list[EvidenceAtom]] = {}
+    for atom in ordered:
+        seeds_by_type.setdefault(atom.atom_type, []).append(atom)
+    for source_type, target_types in cross_artifact_pairs:
+        sources = seeds_by_type.get(source_type) or []
+        targets: list[EvidenceAtom] = []
+        for tt in target_types:
+            targets.extend(seeds_by_type.get(tt) or [])
+        for source in sources:
+            src_keys = set(source.entity_keys)
+            if not src_keys:
+                continue
+            for target in targets:
+                if source.id == target.id:
+                    continue
+                if source.artifact_id == target.artifact_id:
+                    continue
+                shared = src_keys.intersection(set(target.entity_keys))
+                if not shared:
+                    continue
+                shared_label = ", ".join(sorted(shared)[:4])
+                push(
+                    _build_edge(
+                        project_id,
+                        EdgeType.supports,
+                        source,
+                        target,
+                        f"Cross-artifact reinforcement on {shared_label}",
+                        0.78,
+                        metadata={
+                            "shared_entity_keys": sorted(shared),
+                            "source_atom_type": source.atom_type.value,
+                            "target_atom_type": target.atom_type.value,
+                            "edge_family": "cross_artifact_co_mention",
+                        },
+                    )
+                )
 
     semantic_candidates = propose_semantic_link_candidates(ordered, domain_pack=pack)
     for candidate in semantic_candidates:

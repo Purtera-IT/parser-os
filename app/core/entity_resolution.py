@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import re
 from difflib import SequenceMatcher
 
 from app.core.ids import stable_id
-from app.core.normalizers import normalize_entity_key
+from app.core.normalizers import normalize_entity_key, normalize_text
 from app.core.schemas import EntityRecord, EvidenceAtom, ReviewStatus
+from app.domain import get_active_domain_pack
+from app.domain.schemas import DomainPack
 
 try:
     from rapidfuzz import fuzz
 except Exception:  # pragma: no cover - fallback path
     fuzz = None
+
 
 def _fuzzy_score(a: str, b: str) -> float:
     if fuzz is not None:
@@ -17,15 +21,69 @@ def _fuzzy_score(a: str, b: str) -> float:
     return SequenceMatcher(a=a, b=b).ratio() * 100.0
 
 
-def extract_entity_records(project_id: str, atoms: list[EvidenceAtom]) -> list[EntityRecord]:
+def _build_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
+    """Build ``{entity_type: {normalized_alias: canonical_value}}`` from a
+    domain pack so any alias spotted in an atom resolves to the same
+    canonical key.
+
+    Order of precedence:
+    * ``device_aliases`` -> entity_type ``device``
+    * ``entity_types[].aliases`` -> entity_type as named
+    """
+    out: dict[str, dict[str, str]] = {"device": {}}
+    for canonical, aliases in (pack.device_aliases or {}).items():
+        slot = out.setdefault("device", {})
+        slot[canonical.lower()] = canonical
+        for alias in aliases:
+            slot[normalize_text(alias)] = canonical
+    for entity in pack.entity_types or []:
+        slot = out.setdefault(entity.name, {})
+        slot[entity.name.lower()] = entity.name
+        for alias in entity.aliases:
+            slot[normalize_text(alias)] = entity.name
+        for example in entity.examples:
+            slot[normalize_text(example)] = example
+    return out
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def _canonical_alias_key(
+    entity_type: str,
+    raw_value: str,
+    alias_index: dict[str, dict[str, str]],
+) -> str:
+    """Return the canonical entity key for ``raw_value`` using the
+    domain-pack alias table; falls back to the regular normalizer.
+    """
+    table = alias_index.get(entity_type) or {}
+    needle = normalize_text(raw_value)
+    if needle and needle in table:
+        return f"{entity_type}:{_slugify(table[needle])}"
+    if needle:
+        for alias, canonical in table.items():
+            if alias and alias in needle:
+                return f"{entity_type}:{_slugify(canonical)}"
+    return normalize_entity_key(entity_type, raw_value)
+
+
+def extract_entity_records(
+    project_id: str,
+    atoms: list[EvidenceAtom],
+    *,
+    pack: DomainPack | None = None,
+) -> list[EntityRecord]:
+    pack = pack or get_active_domain_pack()
+    alias_index = _build_alias_index(pack)
     grouped: dict[str, dict] = {}
     for atom in atoms:
         for key in atom.entity_keys:
             if ":" not in key:
                 continue
             entity_type, raw_value = key.split(":", 1)
-            canonical_key = normalize_entity_key(entity_type, raw_value)
-            canonical_name = canonical_key.split(":", 1)[1].replace("_", " ")
+            canonical_key = _canonical_alias_key(entity_type, raw_value, alias_index)
             if canonical_key not in grouped:
                 grouped[canonical_key] = {
                     "entity_type": entity_type,

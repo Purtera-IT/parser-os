@@ -17,8 +17,11 @@ from .._core_detect_standalone import render_overlay as core_render_overlay
 from ..overlay_layers import OverlayLayer
 from ..passes import (
     CellularTitlePass,
+    CoverPageTitleBandsPass,
     GridCellCompletionPass,
     MultiColContactPass,
+    ProseLayoutBandsPass,
+    TocLayoutBandsPass,
     VisibleBoxPass,
     OverlayPass,
     PageContext,
@@ -41,7 +44,10 @@ class OverlayPipeline:
         TitleBlockDetectionPass(),     # 205 — after cleanup so its boxes are never filtered
         GridCellCompletionPass(),      # 230
         CellularTitlePass(),           # 235
-        MultiColContactPass(),         # 237 — borderless multi-col contact blocks
+        ProseLayoutBandsPass(),        # 236 — fitz-driven prose page overlays
+        CoverPageTitleBandsPass(),     # 236 — portrait RFP cover title/footer bands
+        TocLayoutBandsPass(),          # 237 — table-of-contents specific overlays
+        MultiColContactPass(),         # 238 — borderless multi-col contact blocks
         RasterLineRepairPass(),        # 240
     ])
 
@@ -80,6 +86,9 @@ def build_pipeline(config: PipelineConfig | None = None, extra_passes: Iterable[
         TitleBlockDetectionPass(),
         GridCellCompletionPass(),
         CellularTitlePass(),
+        ProseLayoutBandsPass(),
+        CoverPageTitleBandsPass(),
+        TocLayoutBandsPass(),
         MultiColContactPass(),
         RasterLineRepairPass(),
     ]

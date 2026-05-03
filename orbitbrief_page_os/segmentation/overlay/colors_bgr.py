@@ -10,6 +10,8 @@ CYAN = (255, 220, 0)
 PURPLE = (200, 48, 200)
 # Merged sub-header row (e.g. MOTOR DATA)
 SUBHDR = (60, 200, 60)
+# RFP / memo cover footer (BGR yellow)
+COVER_FOOTER = (0, 255, 255)
 # Contour cells, gap cells, spec rules, mini-table row rings
 ORANGE = (0, 150, 255)
 # Mini-table data / header cell outlines

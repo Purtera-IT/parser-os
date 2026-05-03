@@ -11,9 +11,27 @@ Emitted boxes:
 """
 from __future__ import annotations
 
+import re
+
 from ..core.models import Rect, VisibleBox, VisibleBoxResult
 from .base import PageContext, PassInfo, PipelineState
 from ..rules.multicol_contact_block import find_multicol_contact_blocks
+
+
+def _is_v_box(b: VisibleBox) -> bool:
+    return (
+        not getattr(b, "synthetic", False)
+        and bool(re.fullmatch(r"v\d+", b.box_id or ""))
+    )
+
+
+def _bbox_overlaps(a: tuple[int, int, int, int],
+                   b: tuple[int, int, int, int]) -> bool:
+    if a[2] <= b[0] or b[2] <= a[0]:
+        return False
+    if a[3] <= b[1] or b[3] <= a[1]:
+        return False
+    return True
 
 
 def _make_box(
@@ -48,7 +66,7 @@ class MultiColContactPass:
     """Detects borderless multi-column team/consultant contact blocks."""
 
     info: PassInfo = PassInfo(
-        order=237,
+        order=238,
         name="multicol_contact_block",
         stage="semantic",
         layer_flag=None,
@@ -70,9 +88,25 @@ class MultiColContactPass:
         # Render scale: pixels per PDF point
         scale: float = ctx.cfg.render_scale if ctx.cfg else 2.5
 
+        # Suppress mccol detections inside any real ``vN`` table region.
+        # The contour pass already owns those rectangles and our cell
+        # detection mis-fires when it sees evenly spaced column-header
+        # text inside table cells, drawing tiny blue/cyan boxes over
+        # cell content.  Universal — any document with detected tables.
+        v_table_bboxes = [
+            tuple(b.px_bbox) for b in state.result.boxes if _is_v_box(b)
+        ]
+
         new_boxes: list[VisibleBox] = []
 
         for gi, group in enumerate(groups):
+            gx0, gy0, gx1, gy1 = group.group_bbox
+            group_px = (
+                int(gx0 * scale), int(gy0 * scale),
+                int(gx1 * scale), int(gy1 * scale),
+            )
+            if any(_bbox_overlaps(group_px, vb) for vb in v_table_bboxes):
+                continue
             prefix = f"mccol_{gi}"
 
             # 1. Group wrapper (BLUE)

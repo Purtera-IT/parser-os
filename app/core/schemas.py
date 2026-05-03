@@ -20,6 +20,7 @@ class ArtifactType(str, Enum):
     vendor_quote = "vendor_quote"
     po = "po"
     txt = "txt"
+    pdf = "pdf"
 
 
 class AtomType(str, Enum):
@@ -131,10 +132,26 @@ class CandidateAtom(BaseModel):
     validation_reasons: list[str] = Field(default_factory=list)
 
 
+class ParserDerivedFile(BaseModel):
+    """A file the parser wants persisted next to the source artifact.
+
+    Used to keep parser side-effects (e.g. ``orbitbrief_pdf``'s
+    ``structured.json`` projection) in lock-step with the artifact
+    cache: the compiler writes these out on both fresh parses AND
+    cache hits, so on-disk projections never go stale.
+    """
+
+    relative_path: str
+    content_kind: Literal["json", "markdown", "text"] = "text"
+    content_json: Any | None = None
+    content_text: str | None = None
+
+
 class ParserOutput(BaseModel):
     candidates: list[CandidateAtom] = Field(default_factory=list)
     atoms: list[EvidenceAtom] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    derived_files: list[ParserDerivedFile] = Field(default_factory=list)
 
 
 class CandidateSummary(BaseModel):

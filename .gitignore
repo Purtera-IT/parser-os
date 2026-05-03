@@ -19,3 +19,8 @@ COPPER_*_parser_gap_handoff.zip
 
 # Local overlay / extraction dumps (regenerate from PDF + detect)
 compiled_artifacts/
+# Parser-emitted side files (structured.json / structured.md) live next
+# to the source artifact under "<stem>.derived/" — regenerated on every
+# compile, so don't track them.
+*.derived/
+.orbitbrief/

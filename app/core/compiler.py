@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Callable
@@ -24,7 +25,14 @@ from app.core.manifest import (
 from app.core.packet_certificates import build_packet_certificate
 from app.core.packetizer import build_packets
 from app.core.risk import packet_pm_sort_key, score_packet_risk
-from app.core.schemas import COMPILER_VERSION, SCHEMA_VERSION, CandidateAtom, CompileResult, ParserOutput
+from app.core.schemas import (
+    COMPILER_VERSION,
+    SCHEMA_VERSION,
+    CandidateAtom,
+    CompileResult,
+    ParserDerivedFile,
+    ParserOutput,
+)
 from app.core.source_replay import attach_receipts_to_atoms, summarize_receipts
 from app.core.telemetry import CompileTelemetry
 from app.core.validators import validate_compile_result
@@ -34,8 +42,69 @@ from app.learning.calibration import apply_calibration
 from app.parsers.parser_router import choose_parser
 
 
+_DERIVED_DIR_SUFFIXES = (".derived",)
+
+
+def _materialize_derived_files(
+    artifact: Path,
+    derived_files: list[ParserDerivedFile],
+) -> None:
+    """Write parser-emitted derived files next to ``artifact``.
+
+    ``relative_path`` is interpreted relative to the artifact's parent
+    directory so a parser can write into ``<stem>.derived/...`` or any
+    other sibling location.  Path traversal is rejected up-front to
+    keep the cache safe (a malicious cache entry can't escape the
+    project directory).
+    """
+    base = artifact.parent.resolve()
+    for entry in derived_files:
+        rel = (entry.relative_path or "").strip()
+        if not rel:
+            continue
+        target = (base / rel).resolve()
+        try:
+            target.relative_to(base)
+        except ValueError:
+            # Path tried to escape the artifact directory — skip.
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if entry.content_kind == "json":
+            target.write_text(
+                json.dumps(entry.content_json, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        elif entry.content_kind in {"markdown", "text"}:
+            target.write_text(entry.content_text or "", encoding="utf-8")
+
+
+def _is_derived_path(path: Path, project_dir: Path) -> bool:
+    """Return True when ``path`` is inside a parser-managed derived dir.
+
+    Parsers (e.g. orbitbrief_pdf) materialize structured artifacts into
+    sibling ``<stem>.derived/`` directories next to their source.  These
+    are downstream consumer outputs (OrbitBrief input format), not
+    inputs to compile — skip them so they don't get re-routed as
+    unknown ``.json`` artifacts on the next compile pass.
+    """
+    try:
+        rel = path.relative_to(project_dir)
+    except ValueError:
+        return False
+    return any(
+        part.endswith(_DERIVED_DIR_SUFFIXES) for part in rel.parts[:-1]
+    )
+
+
 def _iter_artifacts(project_dir: Path) -> list[Path]:
-    return sorted([p for p in project_dir.rglob("*") if p.is_file()], key=lambda p: str(p).lower())
+    return sorted(
+        [
+            p
+            for p in project_dir.rglob("*")
+            if p.is_file() and not _is_derived_path(p, project_dir)
+        ],
+        key=lambda p: str(p).lower(),
+    )
 
 
 def compile_project(
@@ -127,26 +196,26 @@ def compile_project(
                             domain_pack_id=resolved_domain_pack.pack_id,
                             domain_pack_version=resolved_domain_pack.version,
                         )
+                    parsed_derived_files: list[ParserDerivedFile] = []
                     if cached is not None:
                         parsed_atoms = list(cached.atoms)
                         parsed_candidates = list(cached.candidates)
                         per_artifact_warnings.extend(cached.warnings)
+                        parsed_derived_files = list(cached.derived_files)
                         cache_hits += 1
                         reused_artifact_ids.append(artifact_id)
                         cache_hit = True
                     else:
-                        parser_result = parser.parse_artifact(
+                        parser_result = parser.parse_artifact_full(
                             project_id=resolved_project_id,
                             artifact_id=artifact_id,
                             path=artifact,
                             domain_pack=resolved_domain_pack,
                         )
-                        if isinstance(parser_result, ParserOutput):
-                            parsed_atoms = list(parser_result.atoms)
-                            parsed_candidates = list(parser_result.candidates)
-                            per_artifact_warnings.extend(parser_result.warnings)
-                        else:
-                            parsed_atoms = list(parser_result)
+                        parsed_atoms = list(parser_result.atoms)
+                        parsed_candidates = list(parser_result.candidates)
+                        per_artifact_warnings.extend(parser_result.warnings)
+                        parsed_derived_files = list(parser_result.derived_files)
                         if use_cache:
                             save_cached_artifact_result(
                                 build_cached_artifact_result(
@@ -159,9 +228,17 @@ def compile_project(
                                     candidates=parsed_candidates,
                                     atoms=parsed_atoms,
                                     warnings=per_artifact_warnings,
+                                    derived_files=parsed_derived_files,
                                 )
                             )
                         cache_misses += 1
+                    # Materialize parser-emitted derived files next to
+                    # the source artifact on every pass — cache or no
+                    # cache.  This is what keeps OrbitBrief PDF
+                    # ``structured.json`` projections in lock-step with
+                    # the cached atom set.
+                    if parsed_derived_files:
+                        _materialize_derived_files(artifact, parsed_derived_files)
                     if parser_routing:
                         parser_routing[-1]["cache_hit"] = cache_hit
                     candidates.extend(parsed_candidates)
@@ -222,7 +299,9 @@ def compile_project(
         telemetry.end_stage(stage, output_count=len(atoms), warnings=replay_warnings)
 
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
-        entities = resolve_aliases(extract_entity_records(resolved_project_id, atoms))
+        entities = resolve_aliases(
+            extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
+        )
         telemetry.end_stage(stage, output_count=len(entities))
 
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:

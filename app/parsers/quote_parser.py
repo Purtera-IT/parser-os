@@ -17,6 +17,7 @@ from app.core.schemas import (
     AtomType,
     AuthorityClass,
     EvidenceAtom,
+    ParserOutput,
     ReviewStatus,
     SourceRef,
     ParserCapability,
@@ -24,7 +25,18 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_quote
+from app.parsers.structured_projection import (
+    derived_files_for,
+    make_page,
+    make_paragraph,
+    make_section,
+    make_structured_document,
+    make_table,
+    stamp_section_and_block_ids,
+)
 from app.domain.schemas import DomainPack
+
+STRUCTURED_SCHEMA_QUOTE = "orbitbrief.quote.structured.v1"
 
 # Canonical column keys -> normalized header substring aliases (lowercase, punctuation-stripped variants added at match time).
 HEADER_ALIASES: dict[str, set[str]] = {
@@ -938,15 +950,157 @@ class QuoteParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
+        return self.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        ).atoms
+
+    def parse_artifact_full(
+        self,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        domain_pack: DomainPack | None = None,
+    ) -> ParserOutput:
         del domain_pack
         suffix = path.suffix.lower()
         if suffix == ".xlsx":
-            return self._parse_xlsx(project_id=project_id, artifact_id=artifact_id, path=path)
-        if suffix == ".csv":
-            return self._parse_csv(project_id=project_id, artifact_id=artifact_id, path=path)
-        if suffix == ".txt":
-            return self._parse_txt(project_id=project_id, artifact_id=artifact_id, path=path)
-        return []
+            atoms = self._parse_xlsx(project_id=project_id, artifact_id=artifact_id, path=path)
+            sheets = self._collect_sheet_rows_xlsx(path)
+            artifact_type = ArtifactType.xlsx
+        elif suffix == ".csv":
+            atoms = self._parse_csv(project_id=project_id, artifact_id=artifact_id, path=path)
+            sheets = self._collect_sheet_rows_csv(path)
+            artifact_type = ArtifactType.csv
+        elif suffix == ".txt":
+            atoms = self._parse_txt(project_id=project_id, artifact_id=artifact_id, path=path)
+            sheets = self._collect_sheet_rows_txt(path)
+            artifact_type = ArtifactType.txt
+        else:
+            return ParserOutput(atoms=[])
+
+        structured_doc = self._build_structured_doc(
+            filename=path.name,
+            artifact_type=artifact_type,
+            sheets=sheets,
+        )
+        stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        return ParserOutput(
+            atoms=atoms,
+            derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _collect_sheet_rows_xlsx(self, path: Path) -> list[dict[str, Any]]:
+        try:
+            workbook = load_workbook(path, read_only=True, data_only=True)
+        except Exception:
+            return []
+        return [
+            {"name": sheet.title, "rows": [list(row) for row in sheet.iter_rows(values_only=True)]}
+            for sheet in workbook.worksheets
+        ]
+
+    def _collect_sheet_rows_csv(self, path: Path) -> list[dict[str, Any]]:
+        try:
+            text_head = path.read_text(encoding="utf-8", errors="ignore")[:8192]
+            first_line = text_head.splitlines()[0] if text_head else ""
+            delimiter = ","
+            if first_line.count("|") > first_line.count(",") and "|" in first_line:
+                delimiter = "|"
+            elif "\t" in first_line and first_line.count("\t") > first_line.count(","):
+                delimiter = "\t"
+            with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
+                reader = csv.reader(handle, delimiter=delimiter)
+                rows = [list(row) for row in reader]
+            return [{"name": "csv", "rows": rows}]
+        except Exception:
+            return []
+
+    def _collect_sheet_rows_txt(self, path: Path) -> list[dict[str, Any]]:
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+            lines = [line for line in content.splitlines() if line.strip()]
+            rows = [re.split(r"[,\t|]", line) for line in lines]
+            return [{"name": "text", "rows": rows}]
+        except Exception:
+            return []
+
+    def _build_structured_doc(
+        self,
+        *,
+        filename: str,
+        artifact_type: ArtifactType,
+        sheets: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Render a vendor quote as one page per sheet/section: each
+        page hosts the priced line-item table so OrbitBrief can show
+        the LLM exactly which lines were quoted, in source order.
+        """
+        pages: list[dict[str, Any]] = []
+        for index, sheet in enumerate(sheets):
+            name = sheet.get("name") or f"sheet_{index}"
+            rows = sheet.get("rows") or []
+            section_blocks: list[dict[str, Any]] = []
+            idx, hmap, _, _ = _detect_header_advanced(rows, scan_limit=40) if rows else (None, {}, None, None)
+            if idx is not None and rows:
+                header_row = rows[idx] or []
+                columns = [
+                    (str(c).strip() if c is not None else "") or f"col_{i + 1}"
+                    for i, c in enumerate(header_row)
+                ]
+                table_rows: list[dict[str, Any]] = []
+                for row_index in range(idx + 1, len(rows)):
+                    row = rows[row_index] or []
+                    if all(str(c or "").strip() == "" for c in row):
+                        continue
+                    cells: dict[str, Any] = {}
+                    for col_index, col_name in enumerate(columns):
+                        value = row[col_index] if col_index < len(row) else ""
+                        cells[col_name] = "" if value is None else str(value).strip()
+                    table_rows.append(cells)
+                if table_rows:
+                    section_blocks.append(make_table(columns=columns, rows=table_rows))
+            if not section_blocks:
+                snippet: list[str] = []
+                for row in rows[:25]:
+                    line = " | ".join(str(c).strip() for c in (row or []) if c is not None and str(c).strip())
+                    if line:
+                        snippet.append(line)
+                if snippet:
+                    section_blocks.append(make_paragraph("\n".join(snippet)))
+            pages.append(
+                make_page(
+                    page=index,
+                    title=name,
+                    sections=[
+                        make_section(heading=name, level=2, blocks=section_blocks)
+                    ],
+                )
+            )
+        if not pages:
+            pages.append(
+                make_page(
+                    page=0,
+                    title=filename,
+                    sections=[
+                        make_section(
+                            heading=filename,
+                            level=2,
+                            blocks=[make_paragraph("(empty quote)")],
+                        )
+                    ],
+                )
+            )
+        return make_structured_document(
+            schema_version=STRUCTURED_SCHEMA_QUOTE,
+            filename=filename,
+            artifact_type=artifact_type.value,
+            title=filename,
+            metadata=[f"sheet: {s.get('name')}" for s in sheets if s.get("name")],
+            pages=pages,
+        )
 
     @classmethod
     def looks_like_quote_artifact(cls, path: Path) -> bool:

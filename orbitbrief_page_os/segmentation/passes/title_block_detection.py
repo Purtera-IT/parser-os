@@ -34,6 +34,7 @@ All thresholds are exposed through Cfg (``tbd_*`` prefix).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -667,6 +668,24 @@ def detect_title_block(
                     prev[9] = min(prev[9], border_x)
             else:
                 merged.append(list(r))
+
+    # Portrait memo/RFP covers: centered body copy bleeds serifs into the
+    # right-margin strip as a few ultra-narrow "cells".  Real drawing title
+    # blocks use materially wider text panels (typically ≥35 % of strip width).
+    # Skip emission entirely so downstream cover-title synthesis can own the page.
+    if merged and H > W:
+        has_v_wrapper = any(
+            b.color == "BLUE"
+            and not getattr(b, "synthetic", False)
+            and re.fullmatch(r"v\d+", b.box_id or "")
+            for b in boxes
+        )
+        if not has_v_wrapper:
+            strip_w = max(1, W - int(effective_x0))
+            cont_widths = [max(0, int(m[2]) - int(m[0])) for m in merged]
+            mw = max(cont_widths) if cont_widths else 0
+            if mw < max(100, int(0.35 * strip_w)) and len(merged) <= 6:
+                return [], effective_x0
 
     # -----------------------------------------------------------------------
     # Phase 3: classify and emit boxes.

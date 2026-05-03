@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -13,7 +14,7 @@ from app.core.normalizers import normalize_text
 from app.core.segments import ArtifactSegment
 from app.core.schemas import EvidenceAtom, EvidenceReceipt, SourceRef
 
-VERIFIER_VERSION = "source_replay_v1"
+VERIFIER_VERSION = "source_replay_v2"
 _STOP_WORDS = {
     "the",
     "and",
@@ -203,6 +204,133 @@ def _verify_docx_locator(atom: EvidenceAtom, source_ref: SourceRef, path: Path) 
     return _receipt(atom, source_ref, "unsupported", "DOCX locator type is not currently supported")
 
 
+def _verify_pdf_block(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
+    """Verify an OrbitBrief PDF atom against the persisted structured doc.
+
+    The OrbitBrief PDF parser writes a deterministic
+    ``<stem>.derived/structured.json`` next to every parsed PDF.  We
+    look up the atom's ``block_id`` (or ``row_index`` for table cells,
+    or ``bullet_path`` for bullets) inside that doc and check that the
+    atom's text actually came from there.  This makes PDF receipts
+    first-class — same status as XLSX rows and DOCX paragraphs.
+    """
+    locator = source_ref.locator
+    block_id = locator.get("block_id")
+    if not block_id:
+        return _receipt(atom, source_ref, "unsupported", "PDF locator missing block_id")
+    structured = _load_structured_doc(path)
+    if structured is None:
+        return _receipt(
+            atom,
+            source_ref,
+            "unsupported",
+            "Structured PDF doc not present (run orbitbrief_pdf parser first)",
+        )
+    block = _find_block(structured, block_id)
+    if block is None:
+        return _receipt(atom, source_ref, "failed", f"block_id {block_id} not found in structured doc")
+
+    snippet = _block_to_snippet(block, locator)
+    if not snippet:
+        return _receipt(atom, source_ref, "failed", "Located PDF block contained no text")
+    if _snippet_matches_atom(atom, snippet):
+        return _receipt(atom, source_ref, "verified", "PDF block locator verified", snippet)
+    return _receipt(atom, source_ref, "failed", "PDF block found but text did not match atom", snippet)
+
+
+def _structured_doc_path_for(pdf_path: Path) -> Path:
+    return pdf_path.with_name(f"{pdf_path.stem}.derived") / "structured.json"
+
+
+def _load_structured_doc(pdf_path: Path) -> dict[str, Any] | None:
+    out = _structured_doc_path_for(pdf_path)
+    if not out.is_file():
+        return None
+    try:
+        return json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _find_block(structured: dict[str, Any], block_id: str) -> dict[str, Any] | None:
+    for page in structured.get("pages", []) or []:
+        match = _walk_sections_for_block(page.get("sections", []) or [], block_id)
+        if match is not None:
+            return match
+    return None
+
+
+def _walk_sections_for_block(sections: list[dict[str, Any]], block_id: str) -> dict[str, Any] | None:
+    for section in sections:
+        for block in section.get("blocks", []) or []:
+            if block.get("id") == block_id:
+                return block
+        nested = _walk_sections_for_block(section.get("subsections", []) or [], block_id)
+        if nested is not None:
+            return nested
+    return None
+
+
+def _block_to_snippet(block: dict[str, Any], locator: dict[str, Any]) -> str:
+    kind = block.get("kind")
+    if kind == "paragraph":
+        return str(block.get("text") or "")
+    if kind == "note":
+        return str(block.get("text") or "")
+    if kind == "bullet_list":
+        bullet_path = locator.get("bullet_path")
+        if isinstance(bullet_path, list) and bullet_path:
+            item = _bullet_at_path(block.get("items", []) or [], bullet_path)
+            if item is not None:
+                return str(item.get("text") or "")
+        if locator.get("bullet_role") == "intro":
+            return str(block.get("intro") or "")
+        # Fallback: stitch the whole list together so the snippet still
+        # contains the atom text somewhere.
+        parts: list[str] = []
+        intro = block.get("intro")
+        if intro:
+            parts.append(str(intro))
+        parts.extend(_flatten_bullets(block.get("items", []) or []))
+        return " | ".join(parts)
+    if kind == "table":
+        row_index = locator.get("row_index")
+        rows = block.get("rows", []) or []
+        if isinstance(row_index, int) and 0 <= row_index < len(rows):
+            cells = rows[row_index]
+            if isinstance(cells, dict):
+                return " | ".join(f"{k}: {v}" for k, v in cells.items() if v is not None)
+        return str(block.get("raw_text") or "")
+    return ""
+
+
+def _bullet_at_path(items: list[dict[str, Any]], path: list[int]) -> dict[str, Any] | None:
+    if not path:
+        return None
+    current = items
+    node: dict[str, Any] | None = None
+    for index in path:
+        if not isinstance(index, int) or index < 0 or index >= len(current):
+            return None
+        node = current[index]
+        if not isinstance(node, dict):
+            return None
+        current = node.get("children", []) or []
+    return node
+
+
+def _flatten_bullets(items: list[dict[str, Any]]) -> list[str]:
+    out: list[str] = []
+    for item in items:
+        text = item.get("text")
+        if text:
+            out.append(str(text))
+        children = item.get("children")
+        if children:
+            out.extend(_flatten_bullets(children))
+    return out
+
+
 def replay_source_ref(atom: EvidenceAtom, source_ref: SourceRef, artifact_paths: dict[str, Path]) -> EvidenceReceipt:
     path = artifact_paths.get(source_ref.artifact_id)
     if path is None or not path.exists():
@@ -216,6 +344,8 @@ def replay_source_ref(atom: EvidenceAtom, source_ref: SourceRef, artifact_paths:
             return _verify_line_range(atom, source_ref, path)
         if suffix == ".docx":
             return _verify_docx_locator(atom, source_ref, path)
+        if suffix == ".pdf":
+            return _verify_pdf_block(atom, source_ref, path)
         if suffix in {".txt", ".md", ".eml", ".vtt", ".srt", ".json"}:
             return _verify_line_range(atom, source_ref, path)
     except Exception as exc:  # pragma: no cover

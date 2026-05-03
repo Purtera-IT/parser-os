@@ -1,0 +1,6 @@
+{
+  "description": "Optional per-overlay heading overrides (merge into built-in TSC lists).",
+  "followon_headings_extra": ["My Custom Section"],
+  "followon_headings_replace": [],
+  "major_band_titles_extra": []
+}

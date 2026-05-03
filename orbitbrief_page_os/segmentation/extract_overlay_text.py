@@ -455,6 +455,1290 @@ def _prose_header_from_full_text(full_text: str) -> dict[str, Any]:
     return out
 
 
+# Split a single-line RFP / memo cover when PyMuPDF flattens the text layer.
+_COVER_LINE_SPLIT_TAIL = re.compile(
+    r"\s+(?=Request for Proposal(?:\s*\(?RFP\)?)?\b|Confidential\b|"
+    r"(?:\d{4}\s*[\u2013\u2014\-\u2212]?\s*\d{4}(?:\s+Deployment)?)\b)",
+    re.I,
+)
+
+
+def _split_flat_cover_title_line(flat: str) -> list[str]:
+    """Split one flattened cover string into ordered title + subtitle fragments."""
+    flat = re.sub(r"\s+", " ", (flat or "").strip())
+    if not flat:
+        return []
+    parts = [p.strip() for p in _COVER_LINE_SPLIT_TAIL.split(flat) if p.strip()]
+    if len(parts) <= 1:
+        return [flat]
+    first = parts[0]
+    m = re.match(r"^(.+?\([^)]+\))\s+([A-Z].+)$", first)
+    if m:
+        return [m.group(1).strip(), m.group(2).strip()] + parts[1:]
+    return parts
+
+
+def _parse_cover_page_title_subtitles(raw_text: str) -> tuple[str, list[str]]:
+    """Return ``(primary_title, subtitle_lines)`` from title-block cell text."""
+    raw = (raw_text or "").strip()
+    if not raw:
+        return "", []
+    lines = [re.sub(r"\s+", " ", ln.strip()) for ln in raw.splitlines() if ln.strip()]
+    if len(lines) >= 2:
+        return lines[0], lines[1:]
+    flat = lines[0] if lines else raw
+    segs = _split_flat_cover_title_line(flat)
+    if not segs:
+        return "", []
+    return segs[0], segs[1:]
+
+
+def _cover_page_tail_after_cell(page, cover_cell_text: str) -> str:
+    """Text on the page after the title-box clip (e.g. *Confidential*, deployment)."""
+    whole = _norm(page.get_text("text") or "")
+    if not whole:
+        return ""
+    cell = _norm((cover_cell_text or "").split("\n\n")[0].strip())
+    if cell:
+        if whole.startswith(cell):
+            return whole[len(cell) :].strip()
+        idx = whole.find(cell)
+        if idx >= 0:
+            return whole[idx + len(cell) :].strip()
+    m = re.search(r"\(\s*RFP\s*\)\s*(.+)$", whole, re.I | re.S)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def _split_cover_tail_segments(tail: str) -> list[str]:
+    """Split trailing cover lines (*Confidential*, deployment years, …)."""
+    tail = (tail or "").strip()
+    if not tail:
+        return []
+    parts = [p.strip() for p in _COVER_LINE_SPLIT_TAIL.split(tail) if p.strip()]
+    if len(parts) > 1:
+        return [_polish_cover_year_line(p) for p in parts]
+    m = re.match(r"^(Confidential)\s+(.+)$", tail, re.I)
+    if m:
+        return [
+            m.group(1),
+            _polish_cover_year_line(m.group(2).strip()),
+        ]
+    return [_polish_cover_year_line(tail)]
+
+
+def _polish_cover_year_line(s: str) -> str:
+    """Normalize thin/no-break separators between four-digit years (PDF quirk)."""
+    if not s:
+        return s
+    return re.sub(
+        r"(\d{4})\s*[\u202f\u00a0\u2009\u2007\u2013\u2014\-\u2212.]+\s*(\d{4})",
+        r"\1–\2",
+        s,
+        count=1,
+    )
+
+
+# --- Flattened RFP body pages (Introduction + Project Scope) -----------------
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[“\"A-Z])")
+
+
+def _split_sentences_for_readability(text: str) -> list[str]:
+    """Turn a flattened paragraph into short strings (sentence-ish chunks)."""
+    t = _norm(text)
+    if not t:
+        return []
+    parts = [p.strip() for p in _SENTENCE_BREAK.split(t) if p.strip()]
+    return parts if len(parts) > 1 else ([t] if t else [])
+
+
+def _detach_trailing_prose_from_bullets(items: list[str]) -> tuple[list[str], list[str]]:
+    """When the last ``•`` chunk still contains post-list paragraphs, peel them off."""
+    if not items:
+        return [], []
+    last = items[-1]
+    for pat in (
+        r"\s+(This program will\b.*)$",
+        r"\s+(Partnership with\b.*)$",
+        r"\s+(TSC is seeking\b.*)$",
+        r"\s+(The partner\(s\) must demonstrate prior\b.*)$",
+    ):
+        m = re.search(pat, last, re.I | re.S)
+        if m:
+            fixed = last[: m.start()].rstrip()
+            tail = m.group(1).strip()
+            out = list(items[:-1]) + ([fixed] if fixed else [])
+            extra = _split_sentences_for_readability(tail)
+            return out, extra
+    return items, []
+
+
+def _prose_and_bullets_from_block(block: str) -> tuple[list[str], list[str], list[str]]:
+    """Split ``block`` into opening sentences, ``•`` bullet lines, and closing sentences."""
+    block = (block or "").strip()
+    if not block:
+        return [], [], []
+    if "•" not in block:
+        return _split_sentences_for_readability(block), [], []
+    first = block.index("•")
+    head = block[:first].strip()
+    tail = block[first:].strip()
+    raw_items = re.findall(r"•\s*([^\•]+)", tail)
+    items = [x.strip() for x in raw_items if x.strip()]
+    items, extra_sents = _detach_trailing_prose_from_bullets(items)
+    opening = _split_sentences_for_readability(head)
+    return opening, items, extra_sents
+
+
+def _build_body_markdown(
+    paragraphs: list[str],
+    bullets: list[str],
+    closing: list[str] | None = None,
+) -> str:
+    chunks: list[str] = []
+    if paragraphs:
+        chunks.append("\n\n".join(paragraphs))
+    if bullets:
+        chunks.append("\n".join(f"- {b}" for b in bullets))
+    if closing:
+        chunks.append("\n\n".join(closing))
+    return "\n\n".join(chunks).strip()
+
+
+_SQUARE_BULLET_RE = re.compile(r"[▪\u25aa\u25ab\u2023]")
+
+# ``Label:`` lines that introduce the following rows (PDF ``o`` / ``▪`` siblings) are not
+# peer “content bullets”; they scope the nested list. Applied as ``role: "list_intro"``.
+_COLON_LIST_INTRO_MAX_CHARS = 120
+_COLON_LIST_INTRO_MAX_WORDS = 18
+
+
+def _is_colon_list_intro_label(text: str) -> bool:
+    """Whether *text* is a list introducer (``Includes:``, ``Lift usage required for:``).
+
+    Heuristic: trailing colon, modest length, few words before the colon, not a
+    multi-clause line. Content bullets rarely end with ``:``; when they do, they
+    are usually longer or sentence-like.
+    """
+    t = (text or "").strip()
+    if not t.endswith(":"):
+        return False
+    core = t[:-1].strip()
+    if not core or ";" in core:
+        return False
+    if len(t) > _COLON_LIST_INTRO_MAX_CHARS:
+        return False
+    n_words = len(core.split())
+    if n_words > _COLON_LIST_INTRO_MAX_WORDS:
+        return False
+    return True
+
+
+def _annotate_colon_list_intro_roles(node: dict[str, Any]) -> None:
+    """Set ``role`` to ``list_intro`` on nodes whose text introduces child bullets."""
+    for ch in node.get("children") or []:
+        if isinstance(ch, dict):
+            _annotate_colon_list_intro_roles(ch)
+    ch = node.get("children") or []
+    tx = (node.get("text") or "").strip()
+    if ch and _is_colon_list_intro_label(tx):
+        node["role"] = "list_intro"
+
+
+def _split_on_square_bullets(s: str) -> dict[str, Any] | None:
+    """If *s* uses small-square bullets, return ``{text, children}`` else ``None``."""
+    s = (s or "").strip()
+    if not s or not _SQUARE_BULLET_RE.search(s):
+        return None
+    parts = [p.strip() for p in _SQUARE_BULLET_RE.split(s) if p.strip()]
+    if len(parts) < 2:
+        return None
+    head, *rest = parts
+    return {
+        "text": head,
+        "children": [{"text": r, "children": []} for r in rest],
+    }
+
+
+def _split_tsc_bullet_item_fragments(raw: str) -> list[str]:
+    """Split merged ``Petsense Stores (PTS) • …`` tails into separate top bullets."""
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if "Petsense Stores (PTS)" in raw and "•" in raw:
+        bits = re.split(r"\s+(?=Petsense Stores \(PTS\)\s*•\s*)", raw)
+        bits = [b.strip() for b in bits if b.strip()]
+        if len(bits) > 1:
+            out: list[str] = []
+            for b in bits:
+                out.extend(_split_tsc_bullet_item_fragments(b))
+            return out
+    return [raw]
+
+
+def _stitch_pts_heading_into_following(items: list[Any]) -> list[str]:
+    """When ``…runs Petsense Stores (PTS)`` shares a line with the next ``•`` bullet, merge."""
+    raw_items = [str(x) for x in items]
+    out: list[str] = []
+    i = 0
+    while i < len(raw_items):
+        s = raw_items[i].rstrip()
+        if re.search(r"(?i)\s+Petsense Stores \(PTS\)\s*$", s) and i + 1 < len(raw_items):
+            head = re.sub(r"(?i)\s+Petsense Stores \(PTS\)\s*$", "", s).rstrip()
+            nxt = raw_items[i + 1].lstrip()
+            out.append(head)
+            out.append(f"Petsense Stores (PTS) {nxt}")
+            i += 2
+            continue
+        out.append(raw_items[i])
+        i += 1
+    return out
+
+
+def _maybe_split_pts_existing_scope(root: dict[str, Any]) -> dict[str, Any]:
+    """Turn ``Petsense Stores (PTS) Existing:`` into PTS → Existing/Scope hierarchy."""
+    tx = (root.get("text") or "").strip()
+    m = re.match(
+        r"(?i)^(Petsense Stores\s*\(PTS\))\s+(Existing|Scope):\s*$",
+        tx,
+    )
+    if not m:
+        return root
+    label = m.group(2)
+    lab = "Existing:" if label.lower() == "existing" else "Scope:"
+    return {
+        "text": m.group(1).strip(),
+        "children": [{"text": lab, "children": list(root.get("children") or [])}],
+    }
+
+
+def _parse_single_tsc_top_bullet(s: str) -> dict[str, Any]:
+    """One ``•``-segment: optional `` o `` level-2 rows and ``▪`` level-3 rows."""
+    s = re.sub(r"^[•\u2022]\s*", "", (s or "").strip())
+    if not s:
+        return {"text": "", "children": []}
+    if not re.search(r"\s+o\s+", s, re.I):
+        sq = _split_on_square_bullets(s)
+        return sq if sq else {"text": s, "children": []}
+    parts = [p.strip() for p in re.split(r"\s+o\s+", s, flags=re.I) if p.strip()]
+    head = parts[0]
+    children: list[dict[str, Any]] = []
+    for p in parts[1:]:
+        sq = _split_on_square_bullets(p)
+        if sq:
+            children.append(sq)
+        else:
+            children.append({"text": p, "children": []})
+    head_sq = _split_on_square_bullets(head)
+    if head_sq:
+        return {
+            "text": head_sq["text"],
+            "children": (head_sq.get("children") or []) + children,
+        }
+    return {"text": head, "children": children}
+
+
+def _split_closing_quote_then_policy_sentence(t: str) -> tuple[str, str | None]:
+    """Split ``…\"ready\" Any long … will be the responsibility…`` when PDF drops the callout box."""
+    if len(t) < 70:
+        return t, None
+    best: tuple[str, str] | None = None
+
+    def consider(head: str, tail: str) -> None:
+        nonlocal best
+        h, ta = head.strip(), tail.strip()
+        if len(h) > 100 or len(ta) < 50:
+            return
+        if not re.search(
+            r"(?i)\b(will be|shall be|must be|responsibility of|liable for|indemnif|warranty|disclaimer)\b",
+            ta,
+        ):
+            return
+        best = (h, ta)
+
+    for m in re.finditer(r"(\u201d)\s+([A-Z])", t):
+        consider(t[: m.end(1)], t[m.start(2) :])
+
+    if "\u201d" not in t:
+        for m in re.finditer(r'(")\s+([A-Z])', t):
+            if t[: m.start(1)].count('"') % 2 == 0:
+                continue
+            consider(t[: m.end(1)], t[m.start(2) :])
+
+    if best:
+        return best
+    return t, None
+
+
+def _split_glued_callout_suffix(text: str) -> tuple[str, str | None]:
+    """When PDF flattening joins a callout after a bullet phrase, return ``(main, callout)``."""
+    t = (text or "").strip()
+    if not t:
+        return t, None
+
+    m = re.search(
+        r"(?i)(?<=\S)\s+(NOTE|WARNING|CAUTION|IMPORTANT|REMINDER|ALERT)\s*:\s+",
+        t,
+    )
+    if m:
+        head = t[: m.start()].strip()
+        tail = t[m.start() :].strip()
+        if head and len(tail) > 5:
+            return head, tail
+
+    m2 = re.search(r"(?<=\S)[\s\u00a0]*[\u26a0\u26a1\u2757][\uFE0F\u20E3]?\s+", t)
+    if m2 and m2.start() > 4 and m2.end() < len(t) - 15:
+        head = t[: m2.start()].strip()
+        tail = t[m2.end() :].strip()
+        if head and len(tail) > 15:
+            return head, tail
+
+    m4 = re.search(r"(?i)(?<=\bTSC)\s+(Partner\s+is\s+responsible\b)", t)
+    if m4:
+        head = t[: m4.start()].strip()
+        tail = t[m4.start(1) :].strip()
+        if head and len(tail) > 25:
+            return head, tail
+
+    return _split_closing_quote_then_policy_sentence(t)
+
+
+def _peel_glued_callout_segments(text: str) -> list[str]:
+    """Left-to-right: main bullet text, then zero or more callout-only strings."""
+    cur = (text or "").strip()
+    if not cur:
+        return []
+    out: list[str] = []
+    while True:
+        head, tail = _split_glued_callout_suffix(cur)
+        if tail and head:
+            out.append(head)
+            cur = tail
+        else:
+            out.append(cur)
+            break
+    return out
+
+
+def _expand_glued_note_callouts_in_node(node: dict[str, Any]) -> None:
+    """Split glued callouts (NOTE:, ⚠, policy sentences) that were concatenated onto a bullet line."""
+    ch = node.get("children")
+    if not isinstance(ch, list) or not ch:
+        return
+    new_ch: list[dict[str, Any]] = []
+    for c in ch:
+        if not isinstance(c, dict):
+            continue
+        _expand_glued_note_callouts_in_node(c)
+        tx = str(c.get("text") or "")
+        segments = _peel_glued_callout_segments(tx)
+        if len(segments) == 1:
+            new_ch.append(c)
+        else:
+            c["text"] = segments[0]
+            new_ch.append(c)
+            for seg in segments[1:]:
+                new_ch.append({"text": seg, "children": [], "role": "note_callout"})
+    node["children"] = new_ch
+
+
+def _expand_glued_note_callouts_in_tree(roots: list[dict[str, Any]]) -> None:
+    """Split glued callouts on any depth; at root list, peeled callouts follow as siblings."""
+    i = 0
+    while i < len(roots):
+        n = roots[i]
+        if not isinstance(n, dict):
+            i += 1
+            continue
+        _expand_glued_note_callouts_in_node(n)
+        tx = str(n.get("text") or "")
+        segments = _peel_glued_callout_segments(tx)
+        if len(segments) > 1:
+            n["text"] = segments[0]
+            for j, seg in enumerate(segments[1:]):
+                roots.insert(
+                    i + 1 + j,
+                    {"text": seg, "children": [], "role": "note_callout"},
+                )
+            i += len(segments)
+        else:
+            i += 1
+
+
+def _render_bullet_tree_md(roots: list[dict[str, Any]], depth: int = 0) -> str:
+    lines: list[str] = []
+    pad = "  " * depth
+    for node in roots:
+        tx = (node.get("text") or "").strip()
+        if not tx:
+            continue
+        ch = node.get("children") or []
+        role = node.get("role")
+        if role == "note_callout":
+            lines.append(f"{pad}> {_md_cell(tx)}")
+            continue
+        if role == "list_intro" and ch:
+            lines.append(f"{pad}**{_md_cell(tx)}**")
+            sub = _render_bullet_tree_md(ch, depth + 1)
+            if sub.strip():
+                lines.append(sub)
+            continue
+        lines.append(f"{pad}- {_md_cell(tx)}")
+        if ch:
+            lines.append(_render_bullet_tree_md(ch, depth + 1))
+    return "\n".join(x for x in lines if x)
+
+
+def _find_petsense_pts_root_index(roots: list[dict[str, Any]]) -> int | None:
+    for i, r in enumerate(roots):
+        tx = (r.get("text") or "").strip()
+        if re.match(r"(?i)^Petsense Stores \(PTS\)\s*$", tx):
+            return i
+    return None
+
+
+def _take_tsc_subsection_header(paragraphs: list[str]) -> tuple[str, list[str]]:
+    """TSC subsection title + remaining prose. Long run-in lines keep prose; title is canonical."""
+    for i, p in enumerate(paragraphs):
+        ps = str(p).strip()
+        if not ps:
+            continue
+        if re.search(r"(?i)tractor supply", ps) and (
+            re.search(r"\(tsc\)", ps) or re.search(r"\bTSC\b", ps)
+        ):
+            if re.match(r"(?i)^Tractor Supply Stores \(TSC\)\s*$", ps):
+                return ps, [
+                    str(x).strip()
+                    for j, x in enumerate(paragraphs)
+                    if j != i and str(x).strip()
+                ]
+            return "Tractor Supply Stores (TSC)", [
+                str(x).strip() for x in paragraphs if str(x).strip()
+            ]
+    return "Tractor Supply Stores (TSC)", [
+        str(x).strip() for x in paragraphs if str(x).strip()
+    ]
+
+
+def _maybe_promote_store_subsections(
+    sec: dict[str, Any], roots: list[dict[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """When the PDF nests PTS bullets (Scope, etc.) as peers of ``Petsense Stores (PTS)``,
+    emit ``subsections`` so each bold block is a unit: header + ``bullet_tree`` only under it.
+    """
+    pts_i = _find_petsense_pts_root_index(roots)
+    if pts_i is None:
+        return None
+    paras = sec.get("paragraphs")
+    if not isinstance(paras, list):
+        paras = []
+    if not any(
+        re.search(r"(?i)tractor supply", str(p))
+        and (
+            re.search(r"\(tsc\)", str(p), re.I) or re.search(r"\bTSC\b", str(p))
+        )
+        for p in paras
+    ):
+        return None
+    pts = roots[pts_i]
+    tail = roots[pts_i + 1 :]
+    merged_pts_items: list[dict[str, Any]] = list(pts.get("children") or []) + tail
+    tsc_block = roots[:pts_i]
+    hdr, rest = _take_tsc_subsection_header([str(x) for x in paras])
+    sec["paragraphs"] = rest
+    out: list[dict[str, Any]] = []
+    if tsc_block:
+        out.append({"header": hdr, "bullet_tree": tsc_block})
+    out.append({"header": "Petsense Stores (PTS)", "bullet_tree": merged_pts_items})
+    return out
+
+
+def _render_subsections_md(subs: list[dict[str, Any]], depth: int = 0) -> str:
+    parts: list[str] = []
+    for sub in subs:
+        h = (sub.get("header") or "").strip()
+        chunk: list[str] = []
+        if h:
+            if depth == 0:
+                chunk.append(f"**{_md_cell(h)}**")
+            else:
+                level = min(2 + depth, 6)
+                chunk.append(f"{'#' * level} {_md_cell(h)}")
+        st = (sub.get("subtitle") or "").strip()
+        if st:
+            chunk.append(f"### {_md_cell(st)}")
+        ps = sub.get("paragraphs")
+        if isinstance(ps, list) and ps:
+            para_txt = "\n\n".join(
+                _md_cell(str(p)) for p in ps if str(p).strip()
+            ).strip()
+            if para_txt:
+                chunk.append(para_txt)
+        bt = sub.get("bullet_tree")
+        if isinstance(bt, list) and bt:
+            md = _render_bullet_tree_md(bt, 0)
+            if md.strip():
+                chunk.append(md)
+        else:
+            bullets = sub.get("bullet_items")
+            if isinstance(bullets, list) and bullets:
+                flat = "\n".join(
+                    f"- {_md_cell(str(b))}"
+                    for b in bullets
+                    if str(b).strip()
+                )
+                if flat.strip():
+                    chunk.append(flat)
+        nested = sub.get("subsections")
+        if isinstance(nested, list) and nested:
+            sm = _render_subsections_md(nested, depth + 1)
+            if sm.strip():
+                chunk.append(sm)
+        if chunk:
+            parts.append("\n\n".join(x for x in chunk if str(x).strip()))
+    return "\n\n".join(parts).strip()
+
+
+def _attach_nested_bullet_tree_to_section(sec: dict[str, Any]) -> None:
+    """Parse ``o`` / ``▪`` into ``bullet_tree`` or ``subsections``; drop flat ``bullet_items``.
+
+    TSC vs PTS store blocks become ``subsections`` each with ``header`` + ``bullet_tree`` so
+    PTS content (Scope, etc.) is not a sibling of the PTS header in JSON.
+
+    ``body`` keeps remaining prose (``paragraphs`` + ``closing_paragraphs``) only.
+    """
+    items = sec.get("bullet_items")
+    if not isinstance(items, list) or not items:
+        return
+    items = _stitch_pts_heading_into_following(items)
+    blob = "\n".join(str(x) for x in items)
+    if not re.search(r"(?:\s+o\s+|[▪\u25aa\u25ab])", blob, re.I):
+        return
+    roots: list[dict[str, Any]] = []
+    for raw in items:
+        for frag in _split_tsc_bullet_item_fragments(str(raw)):
+            roots.append(_maybe_split_pts_existing_scope(_parse_single_tsc_top_bullet(frag)))
+    roots = [r for r in roots if (r.get("text") or "").strip() or r.get("children")]
+    if not roots:
+        return
+    for r in roots:
+        _annotate_colon_list_intro_roles(r)
+    _expand_glued_note_callouts_in_tree(roots)
+    subs = _maybe_promote_store_subsections(sec, roots)
+    if subs is not None:
+        sec["subsections"] = subs
+    else:
+        sec["bullet_tree"] = roots
+    sec.pop("bullet_items", None)
+    paras = [str(p).strip() for p in (sec.get("paragraphs") or []) if str(p).strip()]
+    head = "\n\n".join(paras).strip() if paras else ""
+    closing = sec.get("closing_paragraphs")
+    body_parts: list[str] = []
+    if head:
+        body_parts.append(head)
+    if isinstance(closing, list) and closing:
+        tail = "\n\n".join(str(c).strip() for c in closing if str(c).strip())
+        if tail:
+            body_parts.append(tail)
+    sec["body"] = "\n\n".join(body_parts).strip()
+
+
+def _structure_introduction_project_scope_sections(
+    full_text: str,
+) -> list[dict[str, Any]] | None:
+    """Detect TSC-style *Introduction* / *Project Scope* on one flattened line.
+
+    Emits two ``kind: notes`` sections with ``paragraphs`` + ``bullet_items`` for
+    LLM-friendly JSON (no reliance on visible-box wrappers).
+    """
+    t = _norm(full_text)
+    if len(t) < 400 or not re.match(r"^Introduction\b", t, re.I):
+        return None
+    m = re.search(r"\bProject\s+Scope\b", t, re.I)
+    if not m:
+        return None
+    intro_block = t[: m.start()].strip()
+    scope_block = t[m.end() :].strip()
+    intro_block = re.sub(r"^Introduction\s+", "", intro_block, flags=re.I).strip()
+    scope_block = re.sub(r"^Project\s+Scope\s+", "", scope_block, flags=re.I).strip()
+    if not intro_block or not scope_block:
+        return None
+
+    out: list[dict[str, Any]] = []
+    for title, body, y0 in (
+        ("Introduction", intro_block, 10.0),
+        ("Project Scope", scope_block, 500.0),
+    ):
+        paras, bullets, closing = _prose_and_bullets_from_block(body)
+        if not paras and not bullets:
+            continue
+        sec: dict[str, Any] = {
+            "kind": "notes",
+            "title": title,
+            "paragraphs": paras,
+            "bullet_items": bullets,
+            "body": _build_body_markdown(paras, bullets, closing or None),
+        }
+        if closing:
+            sec["closing_paragraphs"] = closing
+        sec["_presentation_sort"] = _section_presentation_sort(
+            title, "notes", None, (0.0, y0, 1.0, y0 + 1.0)
+        )
+        _attach_nested_bullet_tree_to_section(sec)
+        out.append(sec)
+    return out or None
+
+
+# --- TSC RFP pages after Introduction (continuation + follow-on headings) -----
+# Canonical title lists live in ``headings.builtin``; merge per-overlay JSON via
+# ``heading_template`` (see ``headings.template`` + ``document.heading_analysis``).
+
+from orbitbrief_page_os.segmentation.headings.builtin import (
+    TSC_FOLLOWON_HEADINGS as _TSC_FOLLOWON_HEADINGS,
+    TSC_MAJOR_BAND_SECTION_TITLES as _TSC_MAJOR_BAND_SECTION_TITLES,
+)
+
+# Minor PDF headings (small bold) that continue a *major* block started on the prior page.
+# Keys must match ``title`` from split text; values = required ``title`` of last section on page N-1.
+_TSC_MINOR_SUBTITLE_CONTINUES_MAJOR: dict[str, str] = {
+    "Operational Expectations": "Warehousing & Inventory Management",
+}
+
+# ``_TSC_FOLLOWON_HEADINGS`` also lists strings that are *major* splitters, but a few
+# are reused visually as small-bold lines under another major (same PDF page).
+_SUBTITLE_OK_ALSO_MAJOR_HEADING: frozenset[str] = frozenset({"Inventory Management"})
+
+# Same-page major (blue) followed by bold sub-heads split as separate ``notes`` — fold
+# them under one section with ``subsections`` (LLM + MD hierarchy).
+_TSC_SAME_PAGE_MAJOR_CHILD_TITLES: dict[str, tuple[str, ...]] = {
+    "Kitting & Asset Management": (
+        "Kitting Requirements",
+        "Labeling & Asset Tracking",
+        "Quality Control",
+        "Shipping & Logistics",
+        "Shipping Requirements",
+        "Coordination",
+    ),
+}
+
+# Within a merged ``subsections`` list, some bold lines are *bands* (large/blue in PDF)
+# and the following known headers belong *under* that band, not as siblings of the band.
+_TSC_INTERMEDIATE_BAND_ABSORBS: dict[str, tuple[str, ...]] = {
+    "Shipping & Logistics": ("Shipping Requirements",),
+}
+
+_SUBTITLE_SMALL_WORDS = frozenset(
+    "a an and as at but by for from in into la le of on or per se the to via vs".split()
+)
+
+
+def _looks_like_run_in_subtitle_line(text: str) -> bool:
+    """Short Title-Case line that behaves like a PDF sub-head before bullets."""
+    t = (text or "").strip()
+    if not t or len(t) > 56:
+        return False
+    if "\n" in t or "\r" in t:
+        return False
+    words = t.split()
+    if len(words) < 2 or len(words) > 10:
+        return False
+    if t.count(".") > 1:
+        return False
+    if t.endswith(".") and len(words) > 4:
+        return False
+    if "(" in t and ")" in t and len(t) > 40:
+        return False
+    if any(w and w[0].isdigit() for w in words):
+        return False
+    for w in words:
+        core = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", w)
+        if not core:
+            return False
+        low = core.lower()
+        if low in _SUBTITLE_SMALL_WORDS:
+            continue
+        if core[0].islower():
+            return False
+    return True
+
+
+def _is_tsc_prose_colon_intro_before_bullets(text: str) -> bool:
+    """True for ``…as follows:`` / short colon lines that introduce the bullet block."""
+    t = (text or "").strip()
+    if not t.endswith(":"):
+        return False
+    if len(t) > 220:
+        return False
+    if _is_colon_list_intro_label(t):
+        return True
+    tl = t.lower()
+    if tl.endswith("as follows:") or tl.endswith("conducted as follows:"):
+        return True
+    return False
+
+
+def _maybe_hoist_trailing_colon_intro_into_bullet_tree(sec: dict[str, Any]) -> None:
+    """When the last ``paragraphs`` line introduces the following ``bullet_tree`` (colon
+    block before ``•`` rows in the PDF), wrap the tree under that line as ``list_intro``.
+    """
+    if str(sec.get("kind")) != "notes":
+        return
+    paras = sec.get("paragraphs")
+    tree = sec.get("bullet_tree")
+    if not isinstance(paras, list) or len(paras) < 1:
+        return
+    if not isinstance(tree, list) or not tree:
+        return
+    last = str(paras[-1]).strip()
+    if not _is_tsc_prose_colon_intro_before_bullets(last):
+        return
+    head_paras = [str(p).strip() for p in paras[:-1] if str(p).strip()]
+    sec["paragraphs"] = head_paras
+    intro = {"text": last, "children": list(tree), "role": "list_intro"}
+    sec["bullet_tree"] = [intro]
+    _annotate_colon_list_intro_roles(intro)
+    _recompute_sec_body_after_paragraph_change(sec)
+
+
+def _recompute_sec_body_after_paragraph_change(sec: dict[str, Any]) -> None:
+    """Refresh ``body`` after ``paragraphs`` / subtitle edits."""
+    paras = [str(p).strip() for p in (sec.get("paragraphs") or []) if str(p).strip()]
+    closing = sec.get("closing_paragraphs")
+    if sec.get("bullet_tree") or sec.get("subsections"):
+        head = "\n\n".join(paras).strip() if paras else ""
+        parts: list[str] = []
+        if head:
+            parts.append(head)
+        if isinstance(closing, list) and closing:
+            tail = "\n\n".join(str(c).strip() for c in closing if str(c).strip())
+            if tail:
+                parts.append(tail)
+        sec["body"] = "\n\n".join(parts).strip()
+    else:
+        bullets = [str(b) for b in (sec.get("bullet_items") or []) if str(b).strip()]
+        sec["body"] = _build_body_markdown(
+            paras,
+            bullets,
+            closing if isinstance(closing, list) else None,
+        )
+
+
+def _maybe_hoist_trailing_paragraph_as_subtitle(sec: dict[str, Any]) -> None:
+    """Move a trailing ``paragraphs[-1]`` line into ``subtitle`` when it reads like a
+    small-bold sub-head (same page as the section ``title`` major block).
+    """
+    if str(sec.get("kind")) != "notes":
+        return
+    if sec.get("subtitle") or sec.get("parent_major_section"):
+        return
+    paras = sec.get("paragraphs")
+    if not isinstance(paras, list) or len(paras) < 2:
+        return
+    has_list = bool(
+        sec.get("bullet_tree")
+        or sec.get("subsections")
+        or (
+            isinstance(sec.get("bullet_items"), list)
+            and any(str(x).strip() for x in sec["bullet_items"])
+        )
+    )
+    if not has_list:
+        return
+    cand = str(paras[-1]).strip()
+    if not _looks_like_run_in_subtitle_line(cand):
+        return
+    title = str(sec.get("title") or "").strip()
+    if cand.casefold() == title.casefold():
+        return
+    if cand in _TSC_FOLLOWON_HEADINGS and cand not in _SUBTITLE_OK_ALSO_MAJOR_HEADING:
+        return
+    sec["subtitle"] = cand
+    sec["paragraphs"] = [str(p).strip() for p in paras[:-1] if str(p).strip()]
+    _recompute_sec_body_after_paragraph_change(sec)
+
+
+def _hoist_run_in_subtitles_all_sections(sections: list[dict[str, Any]]) -> None:
+    for sec in sections:
+        _maybe_hoist_trailing_paragraph_as_subtitle(sec)
+
+
+def _subsection_dict_from_absorbed_notes(sec: dict[str, Any]) -> dict[str, Any]:
+    """Strip an absorbed ``notes`` section down to a ``subsections`` entry."""
+    title = str(sec.get("title") or "").strip()
+    out: dict[str, Any] = {"header": title}
+    for k in (
+        "subtitle",
+        "paragraphs",
+        "bullet_tree",
+        "bullet_items",
+        "closing_paragraphs",
+    ):
+        v = sec.get(k)
+        if v is None or v == [] or v == "":
+            continue
+        out[k] = v
+    return out
+
+
+def _nest_tsc_subsections_under_intermediate_bands(
+    subs: list[dict[str, Any]],
+) -> None:
+    """Fold configured ``(band header) → (child headers…)`` chains into nested ``subsections``.
+
+    Extends ``_TSC_INTERMEDIATE_BAND_ABSORBS`` for other PDFs where a mid-page band owns
+    the next one or more bold sub-heads without changing the top-level major merge.
+    """
+    if not subs:
+        return
+    absorb = _TSC_INTERMEDIATE_BAND_ABSORBS
+    out: list[dict[str, Any]] = []
+    i = 0
+    while i < len(subs):
+        cur = subs[i]
+        h = str(cur.get("header") or "").strip()
+        want = absorb.get(h)
+        if not want:
+            out.append(cur)
+            i += 1
+            continue
+        gathered: list[dict[str, Any]] = []
+        j = i + 1
+        for w in want:
+            if j >= len(subs):
+                break
+            if str(subs[j].get("header") or "").strip() != w:
+                break
+            gathered.append(subs[j])
+            j += 1
+        if gathered:
+            cur["subsections"] = gathered
+            cur["hierarchy"] = "intermediate_band_with_nested_subheads"
+            out.append(cur)
+            i = j
+        else:
+            out.append(cur)
+            i += 1
+    subs[:] = out
+    for s in subs:
+        inner = s.get("subsections")
+        if isinstance(inner, list) and inner:
+            _nest_tsc_subsections_under_intermediate_bands(inner)
+
+
+def _merge_tsc_same_page_major_with_child_sections(
+    sections: list[dict[str, Any]],
+) -> None:
+    """Fold consecutive child ``notes`` under one major (PDF blue band + bold sub-heads)."""
+    for major, expected in _TSC_SAME_PAGE_MAJOR_CHILD_TITLES.items():
+        i = None
+        for k, s in enumerate(sections):
+            if s.get("kind") == "notes" and str(s.get("title") or "") == major:
+                i = k
+                break
+        if i is None:
+            continue
+        major_sec = sections[i]
+        if major_sec.get("bullet_tree") or major_sec.get("subsections"):
+            continue
+        if major_sec.get("parent_major_section"):
+            continue
+        j = i + 1
+        gathered: list[dict[str, Any]] = []
+        for want in expected:
+            if j >= len(sections):
+                break
+            s = sections[j]
+            if s.get("kind") != "notes" or str(s.get("title") or "") != want:
+                break
+            gathered.append(s)
+            j += 1
+        if not gathered:
+            continue
+        major_sec["subsections"] = [
+            _subsection_dict_from_absorbed_notes(x) for x in gathered
+        ]
+        _nest_tsc_subsections_under_intermediate_bands(major_sec["subsections"])
+        major_sec["hierarchy"] = "major_with_same_page_subsections"
+        major_sec.pop("bullet_items", None)
+        paras = [
+            str(p).strip()
+            for p in (major_sec.get("paragraphs") or [])
+            if str(p).strip()
+        ]
+        major_sec["body"] = "\n\n".join(paras).strip() if paras else ""
+        del sections[i + 1 : i + 1 + len(gathered)]
+
+
+def _slug_section_id(title: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", (title or "").lower()).strip("-")
+    return s or "section"
+
+
+def _collect_tsc_followon_heading_hits(
+    t: str,
+    headings: tuple[str, ...] | None = None,
+) -> list[tuple[int, str]]:
+    """Return ``(start, heading)`` pairs left-to-right, dropping nested matches."""
+    t = _norm(t)
+    hset = headings if headings is not None else _TSC_FOLLOWON_HEADINGS
+    candidates = [(t.find(h), h) for h in hset if t.find(h) >= 0]
+    if not candidates:
+        return []
+    candidates.sort(key=lambda x: (x[0], -len(x[1])))
+    picked: list[tuple[int, str]] = []
+    for j, h in candidates:
+        end = j + len(h)
+        overlapped = False
+        for pj, ph in picked:
+            p_end = pj + len(ph)
+            if j < p_end and end > pj:
+                overlapped = True
+                break
+        if overlapped:
+            continue
+        picked.append((j, h))
+    picked.sort(key=lambda x: x[0])
+    return picked
+
+
+def _first_tsc_followon_heading(
+    text: str,
+    headings: tuple[str, ...] | None = None,
+) -> tuple[int, str] | None:
+    hits = _collect_tsc_followon_heading_hits(text, headings)
+    return hits[0] if hits else None
+
+
+def _prior_page_last_structured_section_title(doc: Any, page_index: int) -> str | None:
+    """Best-effort title of the last notes-like section on *page_index - 1*."""
+    if page_index <= 0:
+        return None
+    try:
+        prev = _norm(doc[page_index - 1].get_text("text") or "")
+    except Exception:
+        return None
+    if not prev:
+        return None
+    secs = _structure_introduction_project_scope_sections(prev)
+    if secs:
+        return str(secs[-1].get("title") or "") or None
+    fol = _structure_tsc_followon_sections(prev)
+    if fol:
+        return str(fol[-1].get("title") or "") or None
+    return None
+
+
+def _structure_tsc_followon_sections(
+    remainder: str,
+    headings: tuple[str, ...] | None = None,
+    major_band: frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Split *remainder* at known TSC headings into ``kind: notes`` sections."""
+    t = (remainder or "").strip()
+    if not t:
+        return []
+    hset = headings if headings is not None else _TSC_FOLLOWON_HEADINGS
+    mset = major_band if major_band is not None else _TSC_MAJOR_BAND_SECTION_TITLES
+    hits = _collect_tsc_followon_heading_hits(t, hset)
+    if not hits:
+        return []
+    out: list[dict[str, Any]] = []
+    for i, (j, h) in enumerate(hits):
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(t)
+        chunk = t[j:end].strip()
+        body = chunk[len(h) :].strip() if chunk.startswith(h) else chunk
+        paras, bullets, closing = _prose_and_bullets_from_block(body)
+        if not paras and not bullets and not closing:
+            continue
+        y0 = float(j)
+        sec: dict[str, Any] = {
+            "kind": "notes",
+            "title": h,
+            "paragraphs": paras,
+            "bullet_items": bullets,
+            "body": _build_body_markdown(paras, bullets, closing or None),
+        }
+        if closing:
+            sec["closing_paragraphs"] = closing
+        sec["_presentation_sort"] = _section_presentation_sort(
+            h, "notes", None, (0.0, y0, 1.0, y0 + 1.0)
+        )
+        _attach_nested_bullet_tree_to_section(sec)
+        if h in mset:
+            sec["heading_tier"] = "major"
+        _maybe_hoist_trailing_colon_intro_into_bullet_tree(sec)
+        out.append(sec)
+    return out
+
+
+def _annotate_tsc_subtitle_under_parent_major(
+    sections: list[dict[str, Any]],
+    doc: Any,
+    page_index: int,
+    pdf_path: str,
+) -> None:
+    """When the first section title is a known *minor* subtitle that belongs under the
+    prior page's last *major* heading (e.g. Operational Expectations under Warehousing),
+    set ``parent_major_section`` + ``continues_from`` so JSON/Markdown reflect hierarchy.
+    """
+    if page_index <= 0 or not sections:
+        return
+    first = sections[0]
+    if str(first.get("kind")) != "notes":
+        return
+    title = str(first.get("title") or "").strip()
+    parent_required = _TSC_MINOR_SUBTITLE_CONTINUES_MAJOR.get(title)
+    if not parent_required:
+        return
+    prior_last = _prior_page_last_structured_section_title(doc, page_index)
+    if not prior_last or prior_last != parent_required:
+        return
+    sl = _slug_section_id(parent_required)
+    first["parent_major_section"] = parent_required
+    first["parent_major_slug"] = sl
+    first["hierarchy"] = "subtitle_continuation_under_major"
+    first["continues_from"] = {
+        "page_index": page_index - 1,
+        "section_title": parent_required,
+        "section_slug": sl,
+        "relation": "logical_subtitle_under_prior_page_major",
+        "subtitle": title,
+        "source_pdf": pdf_path,
+        "merge_key": f"p{page_index - 1}:{sl}",
+        "reader_note": (
+            f"This heading continues the «{parent_required}» block from the prior page "
+            "(minor heading under the same major section as in the PDF)."
+        ),
+    }
+
+
+def _prefix_is_tsc_hollow_bullet_continuation(
+    prefix: str,
+    followon_headings: tuple[str, ...] | None = None,
+) -> bool:
+    """True when *prefix* is a leading `` o `` run (page break mid nested list), no ``•``."""
+    p = _norm(prefix or "")
+    if len(p) < 8:
+        return False
+    if "•" in p or "\u2022" in p:
+        return False
+    if not re.match(r"(?i)^o\s+\S", p):
+        return False
+    low = p.lower()
+    fh = followon_headings if followon_headings is not None else _TSC_FOLLOWON_HEADINGS
+    for h in fh:
+        hl = h.strip().lower()
+        if len(hl) >= 12 and low.startswith(hl):
+            return False
+    return True
+
+
+def _parse_tsc_o_only_bullet_run(prefix: str) -> list[dict[str, Any]]:
+    """Parse ``o A o B`` (no top ``•`` row) into flat ``bullet_tree`` nodes."""
+    p = _norm(prefix)
+    p = re.sub(r"(?i)^o\s+", "", p).strip()
+    if not p:
+        return []
+    parts = re.split(r"\s+o\s+", p, flags=re.I)
+    return [{"text": x.strip(), "children": []} for x in parts if x.strip()]
+
+
+def _maybe_tsc_continuation_and_followon_sections(
+    full_text: str,
+    doc: Any,
+    page_index: int,
+    pdf_path: str,
+    *,
+    followon_headings: tuple[str, ...] | None = None,
+    major_band: frozenset[str] | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """When a page does not start with *Introduction*, peel prose before the first
+    known follow-on heading and attach it logically to the prior page's last section.
+
+    Returns ``(continuation_document_meta_or_None, new_sections)``.
+    """
+    if page_index <= 0:
+        return None, []
+    t = _norm(full_text)
+    if not t or re.match(r"^Introduction\b", t, re.I):
+        return None, []
+    hit = _first_tsc_followon_heading(t, followon_headings)
+    if not hit:
+        return None, []
+    j, heading = hit
+    if j == 0:
+        follow = _structure_tsc_followon_sections(t, followon_headings, major_band)
+        return None, follow
+    prefix = t[:j].strip()
+    remainder = t[j:].strip()
+    prior_title = _prior_page_last_structured_section_title(doc, page_index)
+    attach_title = prior_title or "Project Scope"
+
+    if _prefix_is_tsc_hollow_bullet_continuation(prefix, followon_headings):
+        tree = _parse_tsc_o_only_bullet_run(prefix)
+        _expand_glued_note_callouts_in_tree(tree)
+        body = _render_bullet_tree_md(tree, 0).strip()
+        cont_sec: dict[str, Any] = {
+            "kind": "notes_continuation",
+            "title": None,
+            "paragraphs": [],
+            "bullet_tree": tree,
+            "body": body,
+            "continues_from": {
+                "page_index": page_index - 1,
+                "section_title": attach_title,
+                "section_slug": _slug_section_id(attach_title),
+                "relation": "tsc_hollow_bullet_continuation",
+                "source_pdf": pdf_path,
+                "merge_key": f"p{page_index - 1}:{_slug_section_id(attach_title)}",
+                "reader_note": (
+                    f"Hollow-circle (`` o ``) lines continue a nested list from section "
+                    f"«{attach_title}» on the prior PDF page (typically children of a "
+                    "colon intro such as “Align delivery timing with:”); merge these "
+                    "nodes under that list intro when assembling the full document."
+                ),
+            },
+            "_presentation_sort": _section_presentation_sort(
+                "Continuation", "notes_continuation", None, (0.0, -1.0, 1.0, 0.0)
+            ),
+        }
+        meta = {
+            "prior_page_index": page_index - 1,
+            "attach_to_section_title": attach_title,
+            "attach_to_section_slug": _slug_section_id(attach_title),
+            "continuation_bullet_nodes": len(tree),
+            "next_heading_on_this_page": heading,
+            "source_pdf": pdf_path,
+            "merge_key": f"p{page_index - 1}:{_slug_section_id(attach_title)}",
+        }
+        follow = _structure_tsc_followon_sections(
+            remainder, followon_headings, major_band
+        )
+        return meta, [cont_sec] + follow
+
+    if len(prefix) < 12:
+        follow = _structure_tsc_followon_sections(t, followon_headings, major_band)
+        return None, follow
+    paras = _split_sentences_for_readability(prefix)
+    cont_sec = {
+        "kind": "notes_continuation",
+        "title": None,
+        "paragraphs": paras,
+        "bullet_items": [],
+        "body": "\n\n".join(paras).strip(),
+        "continues_from": {
+            "page_index": page_index - 1,
+            "section_title": attach_title,
+            "section_slug": _slug_section_id(attach_title),
+            "relation": "same_logical_section",
+            "source_pdf": pdf_path,
+            "merge_key": f"p{page_index - 1}:{_slug_section_id(attach_title)}",
+            "reader_note": (
+                "These sentences continue the prior page before the next heading; "
+                "merge with that section when assembling a full document."
+            ),
+        },
+        "_presentation_sort": _section_presentation_sort(
+            "Continuation", "notes_continuation", None, (0.0, -1.0, 1.0, 0.0)
+        ),
+    }
+    meta = {
+        "prior_page_index": page_index - 1,
+        "attach_to_section_title": attach_title,
+        "attach_to_section_slug": _slug_section_id(attach_title),
+        "sentence_count": len(paras),
+        "next_heading_on_this_page": heading,
+        "source_pdf": pdf_path,
+        "merge_key": f"p{page_index - 1}:{_slug_section_id(attach_title)}",
+    }
+    follow = _structure_tsc_followon_sections(remainder, followon_headings, major_band)
+    return meta, [cont_sec] + follow
+
+
+def _extract_tbstruct_cover_text(
+    page,
+    boxes: list[dict],
+    scale: float,
+    *,
+    rotated_cw: bool,
+    page_height_pt: float,
+) -> str:
+    """Text inside synthetic ``tbstruct_*`` / ``tbtext_*`` cells (cover / margin).
+
+    When the detector finds no ``v\\d+`` body wrappers, these cells still carry
+    the real cover copy; ``page.get_text('text')`` is often one flattened line on
+    rotated pages, so we clip the cell and use word-rebuilt lines.
+    """
+    tb_parents = [
+        b
+        for b in boxes
+        if re.fullmatch(r"tbstruct_\d+", str(b.get("box_id") or ""))
+        and b.get("color") == "BLUE"
+    ]
+    if not tb_parents:
+        return ""
+    parent_ids = {str(b.get("box_id")) for b in tb_parents}
+    parts: list[str] = []
+    for b in sorted(boxes, key=lambda x: (x.get("px_bbox") or [0, 0, 0, 0])[1]):
+        bid = str(b.get("box_id") or "")
+        pid = str(b.get("parent_box_id") or "")
+        if (
+            bid.startswith("tbtext_")
+            and pid in parent_ids
+            and b.get("color") == "ORANGE"
+        ):
+            try:
+                r = _pdf_rect(
+                    b["px_bbox"],
+                    scale,
+                    pad=1.0,
+                    rotated_cw=rotated_cw,
+                    page_height_pt=page_height_pt,
+                )
+                flat = (_text_in_rect(page, r) or "").strip()
+                if flat:
+                    t = flat
+                else:
+                    t = _text_in_rect_preserve_lines(
+                        page,
+                        r,
+                        rotated_cw=rotated_cw,
+                        page_height_pt=page_height_pt,
+                    ).strip()
+                if t:
+                    parts.append(t)
+            except Exception:
+                pass
+    if parts:
+        return "\n\n".join(parts)
+    for w in sorted(tb_parents, key=lambda x: x["px_bbox"][1]):
+        try:
+            r = _pdf_rect(
+                w["px_bbox"],
+                scale,
+                pad=1.0,
+                rotated_cw=rotated_cw,
+                page_height_pt=page_height_pt,
+            )
+            flat = (_text_in_rect(page, r) or "").strip()
+            if flat:
+                t = flat
+            else:
+                t = _text_in_rect_preserve_lines(
+                    page,
+                    r,
+                    rotated_cw=rotated_cw,
+                    page_height_pt=page_height_pt,
+                ).strip()
+            if t:
+                parts.append(t)
+        except Exception:
+            pass
+    return "\n\n".join(parts) if parts else ""
+
+
 def _split_title_line_from_margin(margin_text: str) -> tuple[str, str | None]:
     """Strip architectural ``TITLE:`` (single- or multi-line) from a right title-block
     strip. The value belongs in ``document.sheet_title`` — a *label for the whole
@@ -2377,6 +3661,8 @@ def _presentation_tier(title: str, kind: str, placement: str | None) -> int:
     """
     if (placement or "").lower() == "trailing_margin":
         return 100
+    if str(kind) == "notes_continuation":
+        return -10
     u = re.sub(r"[\s_]+", " ", (title or "")).upper().strip()
     if not u:
         u = ""
@@ -2706,6 +3992,12 @@ def _build_document(data: dict[str, Any], pdf_path: str, page_index: int) -> dic
         full_text = _norm(page.get_text("text") or "")
     except Exception:
         full_text = ""
+
+    from orbitbrief_page_os.segmentation.headings.template import (
+        resolve_effective_headings,
+    )
+
+    _fh, _major_band = resolve_effective_headings(data)
 
     # Build document header from PURPLE region text (fallback: full page)
     tb_text_parts: list[str] = []
@@ -3192,9 +4484,88 @@ def _build_document(data: dict[str, Any], pdf_path: str, page_index: int) -> dic
             # not part of ``sections`` anymore. If a caller still wants the raw
             # margin text, ``full_text`` on the root remains available.
 
+    # Cover / RFP title page: detector emits ``tbstruct_*`` + ``tbtext_*`` but no
+    # ``v\\d+`` wrappers, so nothing clips the boxed title. Reconstruct lines from
+    # the cell (rotated pages need word clustering) and split title vs subtitles.
+    # Skip when many tbstruct cells exist (e.g. drawing sidebar) — that is not a
+    # single-box cover and would concatenate unrelated strips.  Page 0 allows up
+    # to two legacy margin cells; centered covers often suppress those cells and
+    # rely on full-page text instead.
+    tb_struct_n = sum(
+        1
+        for b in boxes
+        if re.fullmatch(r"tbstruct_\d+", str(b.get("box_id") or ""))
+    )
+    cover_tb_ok = tb_struct_n <= 1 or (page_index == 0 and tb_struct_n <= 2)
+    if not body_wrappers and cover_tb_ok:
+        cover_raw = _extract_tbstruct_cover_text(
+            page,
+            boxes,
+            scale,
+            rotated_cw=rotated_cw,
+            page_height_pt=page_height_pt,
+        )
+        if len(cover_raw.strip()) < 40 and page_index == 0:
+            try:
+                alt = (page.get_text("text") or "").strip()
+            except Exception:
+                alt = ""
+            if len(alt) > len(cover_raw.strip()):
+                cover_raw = alt
+        if cover_raw.strip():
+            c_title, c_subs = _parse_cover_page_title_subtitles(cover_raw)
+            tail = _cover_page_tail_after_cell(page, cover_raw)
+            if tail:
+                for ex in _split_cover_tail_segments(tail):
+                    exs = ex.strip()
+                    if not exs or exs == c_title or exs in c_subs:
+                        continue
+                    c_subs.append(exs)
+            c_subs = [_polish_cover_year_line(x) for x in c_subs]
+            if c_title:
+                header["title"] = c_title
+            if c_subs:
+                header["subtitles"] = c_subs
+            if c_title or c_subs:
+                full_text = "\n".join(
+                    [x for x in ([c_title] if c_title else []) + c_subs if x]
+                )
+
+    if not sections and full_text:
+        rfp_secs = _structure_introduction_project_scope_sections(full_text)
+        if rfp_secs:
+            sections.extend(rfp_secs)
+            header["structured_layout"] = "introduction_project_scope"
+
+    if not sections and page_index > 0 and full_text.strip():
+        cmeta, more_secs = _maybe_tsc_continuation_and_followon_sections(
+            full_text,
+            doc,
+            page_index,
+            pdf_path,
+            followon_headings=_fh,
+            major_band=_major_band,
+        )
+        if more_secs:
+            sections.extend(more_secs)
+            if cmeta:
+                header["continuation"] = cmeta
+            header["structured_layout"] = (
+                header.get("structured_layout") or "tsc_followon"
+            )
+
+    if sections and page_index > 0:
+        _annotate_tsc_subtitle_under_parent_major(
+            sections, doc, page_index, pdf_path
+        )
+
     _drop_duplicate_matrix_fingerprints(sections)
     _refine_work_order_presentation(sections)
     sections = _sort_sections_by_presentation(sections)
+
+    if sections:
+        _hoist_run_in_subtitles_all_sections(sections)
+        _merge_tsc_same_page_major_with_child_sections(sections)
 
     if abbr_scoped:
         _apply_scoped_abbreviations_to_mccol_sections(sections, abbr_scoped)
@@ -3220,6 +4591,8 @@ def _build_document(data: dict[str, Any], pdf_path: str, page_index: int) -> dic
                 for k in (
                     "sheet_number",
                     "sheet_title",
+                    "title",
+                    "subtitles",
                     "project",
                     "client",
                     "architect",
@@ -3231,6 +4604,8 @@ def _build_document(data: dict[str, Any], pdf_path: str, page_index: int) -> dic
                     "total_units",
                     "start_date",
                     "header_block",
+                    "structured_layout",
+                    "continuation",
                 )
                 if k in header
             },
@@ -3240,6 +4615,22 @@ def _build_document(data: dict[str, Any], pdf_path: str, page_index: int) -> dic
         "full_text": full_text,
         "_internals": extraction_internals,
     }
+    try:
+        from orbitbrief_page_os.segmentation.headings.compose import (
+            attach_heading_analysis,
+        )
+
+        attach_heading_analysis(
+            out,
+            page,
+            full_text,
+            data,
+            followon_used=_fh,
+            major_used=_major_band,
+            page_index=page_index,
+        )
+    except Exception:
+        pass
     return out
 
 
@@ -3655,9 +5046,22 @@ def _md_cell(s: str) -> str:
 def _render_markdown(d: dict[str, Any]) -> str:
     L: list[str] = []
     doc = d.get("document") or {}
+    cover_title = (doc.get("title") or "").strip()
+    cover_subs = [
+        str(x).strip()
+        for x in (doc.get("subtitles") or [])
+        if isinstance(x, str) and str(x).strip()
+    ]
     sn = doc.get("sheet_number") or ""
     st = doc.get("sheet_title") or ""
-    if sn and st:
+    if cover_title:
+        L.append(f"# {_md_cell(cover_title)}\n\n")
+        if cover_subs:
+            L.append("**Subtitles**\n\n")
+            for line in cover_subs:
+                L.append(f"- {_md_cell(line)}\n")
+            L.append("\n")
+    elif sn and st:
         L.append(f"# Sheet {sn} — {st}\n\n")
     elif sn:
         L.append(f"# Sheet {sn}\n\n")
@@ -3691,9 +5095,60 @@ def _render_markdown(d: dict[str, Any]) -> str:
         kind = s.get("kind")
         if kind == "mccol" and (s.get("section_heading") or "").strip():
             title = s["section_heading"].strip()
+        elif kind == "notes_continuation":
+            cf = s.get("continues_from") or {}
+            st = cf.get("section_title") or "prior section"
+            pidx = cf.get("page_index")
+            title = (
+                f"Continuation (after page {int(pidx) + 1} — «{st}»)"
+                if pidx is not None
+                else f"Continuation — «{st}»"
+            )
         else:
             title = s.get("title") or f"Section {i}"
-        L.append(f"## {title}\n\n")
+        pm = (s.get("parent_major_section") or "").strip()
+        sub_here = (s.get("subtitle") or "").strip()
+        if kind == "notes_continuation":
+            L.append(f"## {_md_cell(str(title))}\n\n")
+        elif pm and str(kind) == "notes":
+            L.append(f"## {_md_cell(pm)}\n\n")
+            L.append(f"### {_md_cell(str(title))}\n\n")
+            cf0 = s.get("continues_from") or {}
+            mk0 = str(cf0.get("merge_key") or "")
+            if mk0:
+                L.append(
+                    f"> **Hierarchy** (`{mk0}`): subsection «{_md_cell(str(title))}» under major "
+                    f"«{_md_cell(pm)}» (PDF `page_index` **{cf0.get('page_index', '')}**). "
+                    f"{cf0.get('reader_note', '')}\n\n"
+                )
+        elif sub_here and str(kind) == "notes":
+            L.append(f"## {_md_cell(str(title))}\n\n")
+            L.append(f"### {_md_cell(sub_here)}\n\n")
+        else:
+            title_m = _md_cell(str(title))
+            if str(kind) == "notes" and str(s.get("heading_tier") or "") == "major":
+                L.append(f"# {title_m}\n\n")
+            else:
+                L.append(f"## {title_m}\n\n")
+        if kind == "notes_continuation":
+            cf = s.get("continues_from") or {}
+            mk = cf.get("merge_key", "")
+            L.append(
+                f"> **Cross-page link** (`{mk}`): attach to section "
+                f"«{cf.get('section_title', '')}» on PDF `page_index` **{cf.get('page_index')}**. "
+                f"{cf.get('reader_note', '')}\n\n"
+            )
+            paras = s.get("paragraphs") or []
+            for p in paras:
+                ps = str(p).strip()
+                if ps:
+                    L.append(ps + "\n\n")
+            bt_cont = s.get("bullet_tree")
+            if isinstance(bt_cont, list) and bt_cont:
+                trc = _render_bullet_tree_md(bt_cont, 0)
+                if trc.strip():
+                    L.append(trc + "\n\n")
+            continue
         if kind == "abbreviations":
             for e in s.get("entries") or []:
                 if not isinstance(e, dict):
@@ -3863,9 +5318,53 @@ def _render_markdown(d: dict[str, Any]) -> str:
                 L.append("### Note\n\n")
                 L.append(f"> {_md_cell(fn)}\n\n")
         else:  # notes / prose
+            paras = s.get("paragraphs")
+            bullets = s.get("bullet_items")
+            closing = s.get("closing_paragraphs")
             body = s.get("body") or ""
-            if body:
-                L.append(body + "\n\n")
+            tree = s.get("bullet_tree")
+            subs = s.get("subsections")
+            if isinstance(paras, list) and paras and any(str(p).strip() for p in paras):
+                for p in paras:
+                    ps = str(p).strip()
+                    if ps:
+                        L.append(ps + "\n\n")
+            if isinstance(subs, list) and subs:
+                sm = _render_subsections_md(subs)
+                if sm.strip():
+                    L.append(sm + "\n\n")
+            elif isinstance(tree, list) and tree:
+                tr = _render_bullet_tree_md(tree, 0)
+                if tr.strip():
+                    L.append(tr + "\n\n")
+            elif isinstance(bullets, list) and bullets:
+                for b in bullets:
+                    bs = str(b).strip()
+                    if bs:
+                        L.append(f"- {_md_cell(bs)}\n")
+                L.append("\n")
+            if isinstance(closing, list) and closing:
+                for p in closing:
+                    ps = str(p).strip()
+                    if ps:
+                        L.append(ps + "\n\n")
+            else:
+                had_list = (
+                    (isinstance(subs, list) and bool(subs))
+                    or (isinstance(tree, list) and bool(tree))
+                    or (
+                        isinstance(bullets, list)
+                        and any(str(b).strip() for b in bullets)
+                    )
+                )
+                if body and not had_list:
+                    para_join = ""
+                    if isinstance(paras, list) and paras:
+                        para_join = "\n\n".join(
+                            str(p).strip() for p in paras if str(p).strip()
+                        ).strip()
+                    if not (para_join and body.strip() == para_join):
+                        L.append(body + "\n\n")
 
     # Root ``abbreviations`` (same list) when not already emitted as a section
     abbr = d.get("abbreviations") or []
@@ -3882,9 +5381,15 @@ def _render_markdown(d: dict[str, Any]) -> str:
                 L.append(f"- **{sym}**\n")
         L.append("\n")
 
-    # Full-page text as reliable fallback
+    # Full-page text as reliable fallback (skip when structured sections duplicate it)
     full = (d.get("full_text") or "").strip()
-    if full:
+    doc_meta = d.get("document") or {}
+    _sl = doc_meta.get("structured_layout")
+    if (
+        full
+        and _sl not in ("introduction_project_scope", "tsc_followon")
+        and not doc_meta.get("continuation")
+    ):
         L.append("## Full page text (verbatim)\n\n")
         L.append("```text\n")
         L.append(full)

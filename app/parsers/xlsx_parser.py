@@ -18,6 +18,7 @@ from app.core.schemas import (
     AtomType,
     AuthorityClass,
     EvidenceAtom,
+    ParserOutput,
     ReviewStatus,
     SourceRef,
     ParserCapability,
@@ -25,10 +26,20 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_xlsx
+from app.parsers.structured_projection import (
+    derived_files_for,
+    make_page,
+    make_section,
+    make_structured_document,
+    make_table,
+    stamp_section_and_block_ids,
+)
 from app.domain.schemas import DomainPack
 
 parser_name = "xlsx"
-parser_version = "xlsx_parser_v2_0"
+parser_version = "xlsx_parser_v2_1"
+STRUCTURED_SCHEMA_XLSX = "orbitbrief.xlsx.structured.v1"
+STRUCTURED_SCHEMA_CSV = "orbitbrief.csv.structured.v1"
 
 # Canonical column role -> normalized header tokens (lowercase, punctuation-stripped variants).
 HEADER_ALIASES: dict[str, set[str]] = {
@@ -573,18 +584,59 @@ class XlsxParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
+        """Back-compat wrapper that returns a flat list of atoms.
+
+        Prefer :meth:`parse_artifact_full` — that surfaces the
+        ``structured.json`` / ``structured.md`` derived files to the
+        compiler so the OrbitBrief envelope can render this workbook
+        with the same fidelity it gets for PDFs.
+        """
+        return self.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        ).atoms
+
+    def parse_artifact_full(
+        self,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        domain_pack: DomainPack | None = None,
+    ) -> ParserOutput:
         del domain_pack
         suffix = path.suffix.lower()
         if suffix == ".csv":
-            return self._parse_csv(project_id=project_id, artifact_id=artifact_id, path=path)
-        return self._parse_xlsx(project_id=project_id, artifact_id=artifact_id, path=path)
+            atoms, sheets = self._parse_csv(project_id=project_id, artifact_id=artifact_id, path=path)
+            schema = STRUCTURED_SCHEMA_CSV
+            artifact_type = ArtifactType.csv
+        else:
+            atoms, sheets = self._parse_xlsx(project_id=project_id, artifact_id=artifact_id, path=path)
+            schema = STRUCTURED_SCHEMA_XLSX
+            artifact_type = ArtifactType.xlsx
 
-    def _parse_xlsx(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
+        structured_doc = self._build_structured_doc(
+            schema=schema,
+            artifact_type=artifact_type,
+            filename=path.name,
+            sheets=sheets,
+        )
+        stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        return ParserOutput(
+            atoms=atoms,
+            derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _parse_xlsx(
+        self, project_id: str, artifact_id: str, path: Path
+    ) -> tuple[list[EvidenceAtom], list[dict[str, Any]]]:
         try:
             workbook = load_workbook(path, read_only=True, data_only=True)
         except Exception:
-            return []
+            return [], []
         atoms: list[EvidenceAtom] = []
+        sheets: list[dict[str, Any]] = []
         for sheet in workbook.worksheets:
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
             atoms.extend(
@@ -597,22 +649,107 @@ class XlsxParser(BaseParser):
                     rows=rows,
                 )
             )
-        return atoms
+            sheets.append({"name": sheet.title, "rows": rows})
+        return atoms, sheets
 
-    def _parse_csv(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
+    def _parse_csv(
+        self, project_id: str, artifact_id: str, path: Path
+    ) -> tuple[list[EvidenceAtom], list[dict[str, Any]]]:
         try:
             with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
                 reader = csv.reader(handle)
                 rows = [list(row) for row in reader]
         except Exception:
-            return []
-        return self._parse_sheet_rows(
+            return [], []
+        sheet_atoms = self._parse_sheet_rows(
             project_id=project_id,
             artifact_id=artifact_id,
             filename=path.name,
             artifact_type=ArtifactType.csv,
             sheet_name="csv",
             rows=rows,
+        )
+        return sheet_atoms, [{"name": "csv", "rows": rows}]
+
+    def _build_structured_doc(
+        self,
+        *,
+        schema: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheets: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Render every sheet as a page with one section that contains the
+        full table.  Empty / structureless sheets become a tiny note so
+        downstream consumers can still see they exist.
+        """
+        pages: list[dict[str, Any]] = []
+        for index, sheet in enumerate(sheets):
+            sheet_name = sheet["name"]
+            rows = sheet["rows"]
+            section_blocks: list[dict[str, Any]] = []
+            model = _detect_header(rows) if rows else None
+            if model and model.header_idx >= 0:
+                header_row_idx = model.header_idx
+                header_row = rows[header_row_idx] or []
+                if model.header_mode == "pair" and header_row_idx + 1 < len(rows):
+                    bot = rows[header_row_idx + 1] or []
+                    columns = [
+                        " ".join(part for part in (str(a or "").strip(), str(b or "").strip()) if part).strip()
+                        or f"col_{i + 1}"
+                        for i, (a, b) in enumerate(
+                            zip(header_row, bot + [None] * (len(header_row) - len(bot)))
+                        )
+                    ]
+                    data_start = header_row_idx + 2
+                else:
+                    columns = [
+                        (str(c).strip() if c is not None else "") or f"col_{i + 1}"
+                        for i, c in enumerate(header_row)
+                    ]
+                    data_start = header_row_idx + 1
+                table_rows: list[dict[str, Any]] = []
+                for row_idx in range(data_start, len(rows)):
+                    row = rows[row_idx] or []
+                    if all(str(c or "").strip() == "" for c in row):
+                        continue
+                    cells: dict[str, Any] = {}
+                    for col_idx, col_name in enumerate(columns):
+                        if col_idx < len(row):
+                            value = row[col_idx]
+                        else:
+                            value = ""
+                        cells[col_name] = "" if value is None else str(value).strip()
+                    table_rows.append(cells)
+                if table_rows:
+                    section_blocks.append(make_table(columns=columns, rows=table_rows))
+            if not section_blocks:
+                # Sheet has no detectable header; fall back to a raw textual
+                # dump so the LLM still has something to look at.
+                snippet_lines: list[str] = []
+                for row in rows[:25]:
+                    line = " | ".join(str(c).strip() for c in (row or []) if c is not None and str(c).strip())
+                    if line:
+                        snippet_lines.append(line)
+                if snippet_lines:
+                    section_blocks.append(
+                        {"kind": "paragraph", "text": "\n".join(snippet_lines)}
+                    )
+            section = make_section(heading=sheet_name, level=2, blocks=section_blocks)
+            pages.append(
+                make_page(
+                    page=index,
+                    title=sheet_name,
+                    sections=[section],
+                )
+            )
+        return make_structured_document(
+            schema_version=schema,
+            filename=filename,
+            artifact_type=artifact_type.value,
+            title=filename,
+            metadata=[f"sheet: {s['name']}" for s in sheets],
+            pages=pages,
         )
 
     def _build_source_ref(

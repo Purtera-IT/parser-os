@@ -46,7 +46,7 @@ def test_xlsx_parser_emits_atoms_with_provenance(tmp_path) -> None:
     assert "sheet" in first_ref.locator
     assert "row" in first_ref.locator
     assert first_ref.locator["sheet"] == "site_roster"
-    assert first_ref.parser_version == "xlsx_parser_v2_0"
+    assert first_ref.parser_version == "xlsx_parser_v2_1"
 
 
 def test_copper_drop_schedule_wide_totals(tmp_path) -> None:
@@ -224,7 +224,7 @@ def test_every_atom_has_source_ref_and_parser_version(tmp_path) -> None:
     for a in atoms:
         assert a.source_refs
         for ref in a.source_refs:
-            assert ref.parser_version == "xlsx_parser_v2_0"
+            assert ref.parser_version == "xlsx_parser_v2_1"
             assert ref.filename == "sr.xlsx"
             assert "columns" in ref.locator
             assert "row" in ref.locator
