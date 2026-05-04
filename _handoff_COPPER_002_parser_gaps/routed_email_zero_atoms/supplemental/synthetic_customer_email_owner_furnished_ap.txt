@@ -1,9 +1,0 @@
-From: WPS IT <wpsit@example.org>
-To: Vendor <vendor@example.com>
-Subject: AP equipment clarification
-
-Current instruction:
-Please do not quote wireless access point hardware. WPS IT will provide AP hardware.
-Your cabling scope should include pathway/cabling/termination/testing and labeling only.
-
-Please separate any optional hardware alternates from base bid.

@@ -1,9 +1,0 @@
-PM Field Note - Durkin Admin Network Upgrade
-
-During walkthrough, team discussed that several existing endpoints are faulty.
-The addendum says replacement of pre-determined faulty endpoints is in scope, but the actual endpoint list was not attached to the bidder package available here.
-
-PM must confirm:
-- exact faulty endpoint list
-- whether endpoints are copper terminations, jacks, patch panel ports, or device-side failures
-- whether IDF Room 010 requires after-hours building access
