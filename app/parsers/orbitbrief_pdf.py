@@ -56,6 +56,340 @@ TABLE_ROW_CONFIDENCE = 0.92  # tables are the most-trustworthy structure on a pa
 PDF_MAGIC = b"%PDF-"
 
 
+# ─── PRODUCTION_GAPS P1.1: Q&A-aware paragraph segmentation ───
+# When PDF text extraction collapses an entire pre-proposal Q&A
+# transcript into a single paragraph block, downstream packet anchors
+# become unusable 2,400-character keys.  This regex splits a paragraph
+# at every Q-marker / A-marker boundary so each Q-pair becomes its own
+# atom (with its own entity_keys, qa:qN markers, etc.).
+_QA_BOUNDARY_REGEX = re.compile(r"(?=(?:^|\s)[QA]\d{1,3}\.\s)")
+_QA_PAIR_PROBE = re.compile(r"\b[QA]\d{1,3}\.\s")
+
+
+def _split_qa_blob(text: str) -> list[str]:
+    """Split a paragraph at Q\\d. / A\\d. boundaries.
+
+    Returns the original text as a singleton if no boundaries are
+    found, or fewer than 2 distinct Q-or-A markers are present.
+    """
+    if not text:
+        return []
+    markers = _QA_PAIR_PROBE.findall(text)
+    if len(markers) < 2:
+        return [text]
+    parts = [p.strip() for p in _QA_BOUNDARY_REGEX.split(text) if p.strip()]
+    # Coalesce consecutive Q-then-A into one chunk so downstream packet
+    # anchors get the full Q+A context but two pairs don't get fused.
+    merged: list[str] = []
+    pending: str | None = None
+    for part in parts:
+        if pending is None:
+            pending = part
+            continue
+        # If pending starts with Q\d. and this one starts with A\d. with
+        # the *same* number, merge them; otherwise flush pending and
+        # start fresh.
+        m_pending = re.match(r"\b([QA])(\d{1,3})\.", pending)
+        m_part = re.match(r"\b([QA])(\d{1,3})\.", part)
+        if (
+            m_pending
+            and m_part
+            and m_pending.group(1) == "Q"
+            and m_part.group(1) == "A"
+            and m_pending.group(2) == m_part.group(2)
+        ):
+            pending = f"{pending} {part}".strip()
+        else:
+            merged.append(pending)
+            pending = part
+    if pending:
+        merged.append(pending)
+    return merged or [text]
+
+
+# ─── PRODUCTION_GAPS P1.2: form-field template detection ───
+# Vendor-info forms ("FULL LEGAL NAME (PRINT) ...", "Federal Taxpayer
+# Number (ID#)", "col_4: DATE") add atom-count noise without scope
+# value.  We detect these by counting form-field markers and skip
+# atom emission entirely when the paragraph is dominated by them.
+#
+# Strong markers — fingerprints unique to vendor-info templates.
+_FORM_FIELD_STRONG_MARKERS = (
+    "(print)",
+    "(in ink)",
+    "(if applicable)",
+    "(if different",
+    "id#",
+    "fein",
+    "duns",
+    "spin",
+    "frn",
+    "ein number",
+    "ssn number",
+    "tin number",
+    "______",
+)
+# Weak markers — placeholder column-names produced by the structured
+# table extractor when the source row had no proper header.  They show
+# up in legitimate tables (NATOMAS school list) too, so we only let
+# them count *when paired with a strong marker*.  See Week 6 P6.6 —
+# without this distinction the school list (5 placeholder columns) was
+# blanket-rejected as a form-field template.
+_FORM_FIELD_WEAK_MARKERS = (
+    "col_1:",
+    "col_2:",
+    "col_3:",
+    "col_4:",
+    "col_5:",
+    "col_6:",
+    "col_7:",
+    "col_8:",
+)
+_FORM_FIELD_MARKERS = _FORM_FIELD_STRONG_MARKERS + _FORM_FIELD_WEAK_MARKERS
+_FORM_FIELD_KEYWORDS = (
+    "full legal name",
+    "federal taxpayer number",
+    "billing name",
+    "purchase order address",
+    "payment address",
+    "business name",
+    "dba name",
+    "authorized representative",
+    "contact name/title",
+    "name (print",
+    "address:",
+    "telephone:",
+    "fax:",
+    "fax number",
+    "tax id",
+    "tax id#",
+    "tax id number",
+    "tax identification number",
+    "duns number",
+    "fein number",
+)
+
+
+def _looks_like_form_field(text: str) -> bool:
+    """Detect vendor-info form-field templates.
+
+    Decision rules (any one is sufficient):
+      * ≥1 strong marker AND ≥1 other marker (strong or weak)
+      * ≥3 form-field keywords ("Full Legal Name", "FEIN Number", …)
+      * Long underscore run (blank form line) plus any marker
+
+    Weak markers alone (the placeholder ``col_N:`` column names) are
+    NOT enough — they appear in legitimate tables (NATOMAS school
+    list) when the structured extractor couldn't infer headers.
+
+    Tuned against the VT-CAM "FULL LEGAL NAME (PRINT) (Company name as
+    it appears with your Federal Taxpayer Number): ..." templates that
+    were emitting at 0.92 confidence with 0 entity keys.
+    """
+    if not text:
+        return False
+    text_lower = text.lower()
+    strong_hits = sum(1 for m in _FORM_FIELD_STRONG_MARKERS if m in text_lower)
+    weak_hits = sum(1 for m in _FORM_FIELD_WEAK_MARKERS if m in text_lower)
+    if strong_hits >= 2:
+        return True
+    if strong_hits >= 1 and (strong_hits + weak_hits) >= 2:
+        return True
+    keyword_hits = sum(1 for kw in _FORM_FIELD_KEYWORDS if kw in text_lower)
+    if keyword_hits >= 3:
+        return True
+    if "____" in text and (strong_hits + weak_hits) >= 1:
+        return True
+    return False
+
+
+# ─── PRODUCTION_GAPS P1.3: page-footer / page-header detection ───
+# Example: "RFP 25-107 Wireless Equipment November 20, 2024 Technology
+# Services Department Page 17 of 25".  These appear once per page (often
+# as both a footer and a redundant header band) and contribute pure
+# noise — they're the same string with only the page number changing,
+# so they pollute the atom set with N copies per N-page PDF.
+_PAGE_NUMBER_PATTERN = re.compile(r"\bpage\s+\d+\s+of\s+\d+\b", re.IGNORECASE)
+_PAGE_FOOTER_HINTS = (
+    "rfp ",
+    "rfp#",
+    "rfp:",
+    "request for proposal",
+    "purchase order",
+    "po #",
+    "section ",
+    "exhibit ",
+    "addendum",
+    "all rights reserved",
+    "copyright",
+    "confidential",
+    "proprietary",
+)
+
+
+def _looks_like_page_footer(text: str) -> bool:
+    """Detect repeating page-footer / page-header band text.
+
+    Two complementary signals:
+    1. The literal "Page N of M" pattern (very high precision) — by
+       itself enough when text is short.
+    2. A "Page N" suffix on a short line (≤ 220 chars) — common for
+       footers that omit the "of M" half.
+
+    A short line containing "Page N of M" but no Q\\d./A\\d. or
+    sentence-shaped scope content is treated as a footer.  Q&A
+    paragraphs slip past because the splitter handles them earlier.
+    """
+    if not text:
+        return False
+    if len(text) > 240:
+        return False  # Real footers are short; long blocks are scope.
+    if _PAGE_NUMBER_PATTERN.search(text):
+        return True
+    # "Page 17" alone (no "of M") on a short line that also carries an
+    # RFP/footer hint is also a footer.
+    if re.search(r"\bpage\s+\d+\b", text, re.IGNORECASE):
+        text_lower = text.lower()
+        if any(hint in text_lower for hint in _PAGE_FOOTER_HINTS):
+            # Make sure it doesn't carry quantitative info that scope
+            # atoms care about.
+            has_money = bool(re.search(r"\$\s*\d", text))
+            has_qty = bool(re.search(r"\b\d+(?:,\d{3})*\s*(?:cameras?|aps?|drops?|outlets?|jacks?|users?|licenses?|installations?)\b", text, re.IGNORECASE))
+            if not (has_money or has_qty):
+                return True
+    return False
+
+
+# Page-footer band prefix detector.  When PDF text extraction folds the
+# header/footer band into the start of a real paragraph (Natomas: every
+# page yielded one mega-atom of "RFP 25-107 ... Page N of 25 <real
+# scope content>"), we want to *strip* the band, not drop the atom.
+# The pattern: a short prefix ending in "Page N of M" (or "Page N").
+_PAGE_BAND_PREFIX = re.compile(
+    r"^[^.\n]{1,220}?\bPage\s+\d+(?:\s+of\s+\d+)?\b\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_page_band_prefix(text: str) -> str:
+    """Remove a page-footer/header band prefix from the start of ``text``.
+
+    Returns the original ``text`` unchanged when no clean band prefix
+    is detectable, or the band itself looks like real content (e.g.
+    contains a sentence ending before the "Page N").  Always preserves
+    the substantive paragraph that follows.
+
+    See PRODUCTION_GAPS.md P1.3.  This is the prefix-stripping
+    counterpart to ``_looks_like_page_footer`` — short stand-alone
+    bands get filtered entirely; embedded bands at the start of long
+    paragraphs get cleaned in place.
+    """
+    if not text or len(text) <= 240:
+        # Short atoms are either a real footer (handled by
+        # _looks_like_page_footer) or short scope text we shouldn't
+        # touch.
+        return text
+    match = _PAGE_BAND_PREFIX.match(text)
+    if not match:
+        return text
+    prefix = match.group(0)
+    # Safety: only strip when the prefix doesn't itself contain a
+    # complete sentence (no period inside) and includes RFP-style
+    # footer hints.
+    prefix_lower = prefix.lower()
+    if not any(hint in prefix_lower for hint in _PAGE_FOOTER_HINTS):
+        return text
+    if "." in prefix.rstrip():
+        return text  # Has a sentence — don't strip.
+    remainder = text[match.end():].lstrip()
+    if len(remainder) < 30:
+        return text  # Nothing left worth keeping.
+    return remainder
+
+
+# ─── PRODUCTION_GAPS P1.4: title-case fragment / bullet-noise filter ───
+# Example: bullet items like "Cost Proposal", "Project Description",
+# "Equipment/Service Installed" emit as standalone atoms because the
+# proposal-format checklist gets exploded one-bullet-per-atom.  These
+# carry no scope info — they're just labels for what the vendor's
+# proposal must include.  A real scope atom either has a verb, a
+# number, or names a real device/site.
+_FRAGMENT_DEVICE_HINTS = (
+    "camera", "controller", "panel", " ap ", "switch", "router",
+    "cable", "drop", "jack", "speaker", "antenna",
+    "horn", "strobe", "detector", "reader", "sensor", "monitor",
+    "display", "projector", "rack", "ups", "battery",
+    "fiber", "voltage", "amp", "watt", "ghz", "mhz", "mbps", "gbps",
+    "psi", "bbe", "btu", "cfm",
+)
+# Verbs in modal/imperative form that signal scope sentences.  We use
+# more specific patterns than "install" alone (which matches the
+# noun "Installed" in proposal-format checklists like
+# "Equipment/Service Installed").
+_FRAGMENT_SENTENCE_VERBS = re.compile(
+    r"\b(shall|will|must|may|should)\s+(?:provide|install|supply|furnish|"
+    r"deliver|coordinate|configure|test|commission|warrant|comply|maintain|"
+    r"submit|describe|confirm|include|require|offer|design|review)\b"
+    r"|"
+    r"\b(?:provided|installed|furnished|configured|tested|commissioned|delivered|"
+    r"submitted|warranted|maintained)\s+by\s+\w+",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_fragment(text: str) -> bool:
+    """Drop bullet-list-fragment-noise atoms like "Cost Proposal".
+
+    Conservative: only drops atoms that
+    - are short (≤ 45 chars),
+    - have no digits or pricing,
+    - have no scope-sentence verb (modal "shall provide"-type pattern),
+    - have no device/contract keyword,
+    - have ≤ 4 tokens,
+    - and read as a noun-only label (every non-stop token starts with
+      an uppercase letter).
+
+    Real short scope atoms ("100 Mbps wireless", "Cisco Catalyst 9166I",
+    "Provide all conduits") pass because they carry digits, device
+    hints, or modal verbs.
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped or len(stripped) > 45:
+        return False
+    # Numbers usually indicate quantitative scope.
+    if re.search(r"\d", stripped):
+        return False
+    text_lower = stripped.lower()
+    # Modal-verb scope sentences ("shall provide ...") never look like
+    # bullet-fragment labels.
+    if _FRAGMENT_SENTENCE_VERBS.search(stripped):
+        return False
+    # Has a device / contract keyword?
+    if any(h in text_lower for h in _FRAGMENT_DEVICE_HINTS):
+        return False
+    # Token check.  We want short noun-phrase labels, not full sentences.
+    tokens = re.findall(r"[A-Za-z][A-Za-z\-]*", stripped)
+    if len(tokens) > 6:
+        return False
+    # Stop words that don't count toward "all tokens are Title-Case"
+    # (so phrases like "Cost & Schedule" don't get rejected for the
+    # lowercase "and").
+    stop = {"of", "and", "the", "for", "to", "in", "on", "at", "or", "an", "a"}
+    significant = [t for t in tokens if t.lower() not in stop]
+    if not significant:
+        return False
+    # Bullet-list label heuristic: every significant token starts with
+    # an uppercase letter (Title Case or ALL CAPS).
+    if all(t[0].isupper() for t in significant) and len(tokens) <= 6:
+        return True
+    # Single-/two-word atoms with no info = noise.
+    if len(tokens) <= 2 and len(stripped) <= 25:
+        return True
+    return False
+
+
 class OrbitBriefPdfParser(BaseParser):
     """Parses ``.pdf`` artifacts into the OrbitBrief structured schema and EvidenceAtoms."""
 
@@ -210,10 +544,44 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     document_metadata: list[str] = []
     seen_metadata: set[str] = set()
 
+    # P2.1: pre-scan the PDF for per-page text length so we can fast-path
+    # low-text pages (scanned drawings, image-only floor plans) without
+    # running the heavyweight layout-detection pipeline on them.  These
+    # pages contribute 0 atoms either way — we pay 5-10s/page for nothing
+    # otherwise.  See PRODUCTION_GAPS.md P2.1.
+    page_text_lengths: list[int] = []
     with fitz.open(str(pdf_path)) as doc:
         page_count = len(doc)
+        for page_idx in range(page_count):
+            try:
+                page_text = doc[page_idx].get_text("text") or ""
+            except Exception:  # pragma: no cover — bad page shouldn't kill compile
+                page_text = ""
+            page_text_lengths.append(len(page_text.strip()))
+
+    # Threshold: a page with <80 characters of extractable text after
+    # stripping is almost certainly a scanned drawing or blank.  Real
+    # Q&A / scope text exceeds this on every page we've measured.
+    LOW_TEXT_PAGE_THRESHOLD = 80
 
     for page_index in range(page_count):
+        if page_text_lengths[page_index] < LOW_TEXT_PAGE_THRESHOLD:
+            # Fast path: skip the heavyweight pipeline; emit a marker
+            # page so the structured doc still records the page exists
+            # (with metadata noting why it was skipped).
+            pages.append(
+                {
+                    "page": page_index,
+                    "title": None,
+                    "metadata": [
+                        f"[low-text page (≤{LOW_TEXT_PAGE_THRESHOLD} chars) "
+                        f"— likely scanned image; layout pipeline skipped for perf]"
+                    ],
+                    "outline": [],
+                    "sections": [],
+                }
+            )
+            continue
         state = pipeline.run(str(pdf_path), page_index=page_index, cfg=cfg)
         result = state.result
         assert result is not None, "overlay pipeline produced no result"
@@ -463,6 +831,54 @@ def _atoms_for_block(
         text = (block.get("text") or "").strip()
         if not text:
             return
+        # P1.2: skip vendor-info form-field templates entirely — they
+        # carry no scope content and pollute downstream anchors.
+        if _looks_like_form_field(text):
+            return
+        # P1.3: skip page-footer / page-header band text (e.g. "RFP
+        # 25-107 Wireless Equipment ... Page 17 of 25").  These appear
+        # once per page and bloat the atom set N-fold for an N-page PDF.
+        if _looks_like_page_footer(text):
+            return
+        # P1.3 (band-prefix variant): when PDF extraction folded the
+        # header/footer band into the *start* of a real paragraph,
+        # strip the band rather than drop the atom.
+        text = _strip_page_band_prefix(text)
+        if not text or len(text) < 10:
+            return
+        # P1.4: skip pure-title-case bullet-fragment labels like "Cost
+        # Proposal", "Project Description", "Addendums".  These come
+        # from proposal-format checklists and carry no scope data.
+        if _looks_like_fragment(text):
+            return
+        # P1.1: when a paragraph contains ≥2 Q\d. / A\d. markers, split
+        # it into one atom per Q&A pair so packet anchors don't end up
+        # as 2,400-char transcripts.  Single-Q paragraphs and
+        # paragraphs without Q&A markers fall through to the original
+        # single-atom path below.
+        qa_chunks = _split_qa_blob(text)
+        if len(qa_chunks) >= 2:
+            for chunk_idx, chunk in enumerate(qa_chunks):
+                atom_type, authority = _classify_text_block(
+                    text=chunk, section_path=section_path, kind="paragraph"
+                )
+                yield _make_atom(
+                    text=chunk,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=atom_type,
+                    authority_class=authority,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={
+                        **base_locator,
+                        "qa_chunk_index": chunk_idx,
+                        "qa_chunk_count": len(qa_chunks),
+                    },
+                    value={"kind": "paragraph", "qa_split": True},
+                )
+            return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="paragraph")
         yield _make_atom(
             text=text,
@@ -534,6 +950,24 @@ def _atoms_for_block(
             row_text = _row_to_text(row)
             if not row_text:
                 continue
+            # P1.2: skip table rows that are obviously vendor-info form
+            # templates (the VT-CAM "FULL LEGAL NAME (PRINT) ... |
+            # CONTACT NAME/TITLE | FEDERAL TAXPAYER NUMBER (ID#)"
+            # rows).  A table row is a form template when its text
+            # would qualify as one if it appeared as a paragraph.
+            if _looks_like_form_field(row_text):
+                continue
+            # P1.3: skip table rows that are repeated page-footer
+            # bands (some PDF extractors fold multi-line footers into
+            # a single-row table).
+            if _looks_like_page_footer(row_text):
+                continue
+            # P1.7: skip fused multi-row cells where the "column name"
+            # is actually data from a previous row (e.g. "AIR-DNA-E:
+            # AIR-DNA-E-T-5Y | ... | 500: 500").  These produce noise
+            # part_number entities and confuse the quantity_conflict rule.
+            if isinstance(row, dict) and _looks_like_fused_table_row(row):
+                continue
             yield _make_atom(
                 text=row_text,
                 project_id=project_id,
@@ -555,6 +989,13 @@ def _atoms_for_block(
     if kind == "note":
         text = (block.get("text") or "").strip()
         if not text:
+            return
+        text = _strip_page_band_prefix(text)
+        if not text or len(text) < 10:
+            return
+        # P1.3 / P1.2 / P1.4: notes also catch page-footer text and
+        # form-field templates on some layouts; same filters as paragraph.
+        if _looks_like_form_field(text) or _looks_like_page_footer(text) or _looks_like_fragment(text):
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="note")
         yield _make_atom(
@@ -586,6 +1027,9 @@ def _atoms_for_bullet(
 ) -> Iterator[EvidenceAtom]:
     text = (item.get("text") or "").strip()
     if text:
+        # Strip page-band prefix that some extractors fold into bullet text.
+        text = _strip_page_band_prefix(text)
+    if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text) and not _looks_like_fragment(text):
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="bullet")
         yield _make_atom(
             text=text,
@@ -627,6 +1071,76 @@ def _row_to_text(row: dict[str, Any]) -> str:
             continue
         parts.append(f"{col}: {s}")
     return " | ".join(parts)
+
+
+# ─── PRODUCTION_GAPS P1.7: fused table-row detection ───
+# When OrbitBrief PDF table extraction confuses a 2-row vertical fold
+# for a 1-row horizontal fold, we get atoms like:
+#   "AIR-DNA-E: AIR-DNA-E-T-5Y | Wireless Cisco DNA On-Prem Essential,
+#    Term Lic: Wireless Cisco DNA On-Prem Essential, 5Y Term, ... | 500: 500"
+# The "column names" are actually data values from a previous row.
+# Detection signals (any one is sufficient):
+#   1. ≥2 columns whose name == value (e.g. ``500: 500``).
+#   2. ≥2 columns whose name looks like a SKU (uppercase + digits,
+#      length 3-30, with ``-`` or ``_``).
+#   3. ≥1 column whose name is a multi-word phrase containing
+#      vendor/product keywords ("Cisco DNA"-type strings).
+_SKU_SHAPED_COLUMN = re.compile(r"^[A-Z][A-Z0-9_]{1,8}(?:[-/][A-Z0-9_]{1,12}){1,4}$")
+_DATA_SHAPED_HEADER_PHRASES = (
+    "wireless cisco dna",
+    "ceiling grid clip",
+    "low profile mounting",
+    "universal mounting bracket",
+    "single pack option",
+    "dna on-prem",
+    "dna on prem",
+    "perpetual network stack",
+    "essentials",
+)
+
+
+def _looks_like_fused_table_row(row: dict[str, Any]) -> bool:
+    """Detect rows where the "column name" was actually data from a
+    previous row in the source PDF.
+
+    Returns True iff at least 2 strong signals fire (so a single
+    coincidence — e.g. an actual column literally named "500" with
+    value "500" — doesn't trigger).  The caller can drop or downgrade
+    such atoms to keep them from polluting entity_keys.
+    """
+    if not row:
+        return False
+    same_value_cells = 0
+    sku_columns = 0
+    data_phrase_columns = 0
+    for col, val in row.items():
+        if val is None:
+            continue
+        col_str = str(col).strip()
+        val_str = str(val).strip()
+        if not col_str or not val_str:
+            continue
+        # Signal 1: col == val (e.g. "500: 500"). One match is rare in
+        # legitimate tables (a column literally named "500" with value
+        # "500" would be an extreme oddity), so any single hit counts.
+        if col_str == val_str and re.search(r"[A-Z0-9]", col_str):
+            same_value_cells += 1
+        # Signal 2: column name looks like a SKU.
+        if _SKU_SHAPED_COLUMN.match(col_str):
+            sku_columns += 1
+        # Signal 3: column name is a long Cisco DNA / vendor phrase.
+        col_lower = col_str.lower()
+        if len(col_str) > 25 and any(p in col_lower for p in _DATA_SHAPED_HEADER_PHRASES):
+            data_phrase_columns += 1
+    signals = (
+        (1 if same_value_cells >= 1 else 0)
+        + (1 if sku_columns >= 1 else 0)
+        + (1 if data_phrase_columns >= 1 else 0)
+    )
+    # Two independent signals → confidently fused.  One signal alone is
+    # ambiguous (could be a real table that happens to have a SKU
+    # column heading or a "500: 500" coincidence).
+    return signals >= 2
 
 
 def _make_atom(
@@ -753,11 +1267,140 @@ _SECTION_RULES: list[tuple[re.Pattern[str], AtomType, AuthorityClass]] = [
 # Block-text overrides — applied after section rules, only when the text
 # itself is unambiguous (modal verbs / question marks).  These let a
 # constraint sentence in a "scope" section still be tagged as a constraint.
+#
+# Order matters within a list: more-specific patterns first.  Each rule
+# returns its own AtomType regardless of section context.
 _TEXT_OVERRIDES: list[tuple[re.Pattern[str], AtomType]] = [
+    # Open question shapes — vendor-asked clarification (Q\d., trailing ?)
+    (re.compile(r"^\s*Q\s*\d+\.\s"), AtomType.open_question),
     (re.compile(r"\?\s*$"), AtomType.open_question),
+    # Strong exclusion shapes that the original list missed.  The
+    # VT-CAM addendum carries many of these ("would not be needed",
+    # "no plans for", "not at this time", "is not currently") that
+    # used to default to scope_item.  See PRODUCTION_GAPS / Week 5.
+    (re.compile(r"\b(would\s+not\s+be\s+(?:needed|needing|required|requiring)|likely\s+not\s+be\s+needed)\b", re.I), AtomType.exclusion),
+    (re.compile(r"\b(no\s+plans?\s+for|not\s+at\s+this\s+time|not\s+currently|is\s+not\s+currently|do\s+not\s+(?:plan|intend|expect)\s+to)\b", re.I), AtomType.exclusion),
+    (re.compile(r"\b(not\s+a\s+part\s+of|not\s+included|not\s+in\s+scope|out\s+of\s+scope)\b", re.I), AtomType.exclusion),
+    (re.compile(r"\b(by\s+(?:others|gc|owner|customer|vendor)|n\.?i\.?c\.?|provided\s+by\s+(?:others|owner))\b", re.I), AtomType.exclusion),
+    (re.compile(r"^\s*(do not|may not|cannot|must not|shall not|will not)\b", re.I), AtomType.exclusion),
+    # ─── Compliance clauses (Week 6 P6.1) ───
+    # These cite an external standard / code / regulation and live as a
+    # separate atom_type so OrbitBrief can render a "Compliance" tab.
+    # Order matters: compliance patterns fire BEFORE generic constraint
+    # patterns so "must comply with NFPA 72" isn't first matched as a
+    # constraint.
+    #
+    # "comply with X" / "in accordance with X" / "per X" / "X-compliant"
+    # — the X must look like a standard (ALLCAPS acronym, "Section X",
+    # numbered code reference) so a bare "comply with the project
+    # schedule" doesn't get pulled in.
+    (
+        re.compile(
+            r"\b(?:must\s+comply\s+with|shall\s+comply\s+with|complies?\s+with|compliant\s+with|in\s+(?:full\s+)?accordance\s+with|in\s+conformance\s+with|conforms?\s+to|per\s+the\s+requirements\s+of|as\s+required\s+by)\s+"
+            r"(?:[A-Z]{2,8}(?:\s*\d|\s+[A-Z][a-z])|"
+            r"(?:national|international|federal|state)\s+\w+|"
+            r"section\s+\d+|"
+            r"(?:nfpa|ieee|ada|osha|nec|ul|csi|iso|en|tia|eia|fcc|niem|fips|hipaa|gdpr|sox|ccpa|sox|pci|nist|fips)\b)",
+            re.I,
+        ),
+        AtomType.compliance,
+    ),
+    # Trailing-form: "X-compliant" / "X-listed" / "X-rated" / "X-approved"
+    (
+        re.compile(
+            r"\b(?:UL|ETL|FCC|CE|RoHS|ADA|FIPS|NIST|HIPAA|PCI|SOX|GDPR|CCPA|NDAA|TAA)\s*[-–]?\s*(?:listed|certified|compliant|approved|rated|tested)\b",
+            re.I,
+        ),
+        AtomType.compliance,
+    ),
+    # Code-cite shapes: "per NFPA 72", "per NEC 250.122",
+    # "per IEEE 802.3bt", "per Section 27 32 26".
+    (
+        re.compile(
+            r"\b(?:per|under|pursuant\s+to|in\s+accordance\s+with)\s+"
+            r"(?:nfpa|ieee|ada|osha|nec|nfpa\d+|ul\d+|csi|iso|en\s*\d|tia|eia|fcc|fips|hipaa|nist|niem)\b",
+            re.I,
+        ),
+        AtomType.compliance,
+    ),
+    # E-rate / federal-grant compliance (Universal Service Fund, Schools
+    # and Libraries, Section 508, ANSI/TIA, …).
+    (
+        re.compile(
+            r"\b(?:e-?rate(?:\s+eligible|\s+eligibility|\s+compliance|\s+funded)?|usf\s+eligible|section\s+508\s+compliant|secure\s+networks\s+act|davis[-–\s]bacon|buy\s+america(?:n)?\s+act|taa\s+compliant|ndaa\s+compliant)\b",
+            re.I,
+        ),
+        AtomType.compliance,
+    ),
+    # Constraint shapes — modal verbs at the start of a clause.
     (re.compile(r"^\s*(must|shall|required to|is required to|will be required to)\b", re.I), AtomType.constraint),
-    (re.compile(r"^\s*(do not|may not|cannot|must not|shall not)\b", re.I), AtomType.exclusion),
+    (re.compile(r"\b(must\s+(?:comply|conform|support|meet|include)|is\s+required|shall\s+comply)\b", re.I), AtomType.constraint),
+    # Decision shapes — "will be", "is to be", "centralized at",
+    # "decided to", "approved to".  These are the meeting-decision
+    # cues that used to fall through to scope_item.
+    (re.compile(r"\b(centralized\s+at|will\s+be\s+(?:provided|managed|operated|housed|located)\s+(?:by|at))\b", re.I), AtomType.decision),
+    (re.compile(r"\b(decid(?:ed|ing)\s+to|approved\s+to|approved\s+for|is\s+to\s+be)\b", re.I), AtomType.decision),
+    (re.compile(r"\b((?:we|the\s+(?:university|district|college|customer|client|owner))\s+will\s+(?:not\s+)?(?:provide|manage|use|select|host|run|own))\b", re.I), AtomType.decision),
+    # Action item shapes — vendor-or-owner commitments.
+    (re.compile(r"\b(vendor\s+(?:must|shall|will|is\s+required\s+to)\s+(?:describe|provide|submit|deliver|coordinate|confirm|train|certify))\b", re.I), AtomType.action_item),
+    (re.compile(r"\b((?:successful|awarded)\s+(?:offeror|bidder|respondent|firm|contractor)\s+(?:must|shall|will))\b", re.I), AtomType.action_item),
+    (re.compile(r"\b(to\s+(?:identify\s+priorit|provide\s+letter|submit\s+the|register\s+with))\b", re.I), AtomType.action_item),
+    # Assumption shapes.
     (re.compile(r"^\s*(assume(s|d)?|assuming)\b", re.I), AtomType.assumption),
+]
+
+
+# Authority-class overrides.  Atoms whose text matches one of these
+# patterns are flagged as ``customer_current_authored`` so the
+# packetizer's customer_override rule can fire.
+#
+# Three pattern families:
+#  1. PRODUCTION_GAPS / Week 5 — Q&A answer markers ("A12.", "A47.").
+#     These appear in pre-proposal-conference transcripts where the
+#     customer's blue-text answer is the authoritative source.
+#  2. Week 6 P6.3 — explicit customer/owner attribution ("Owner-furnished",
+#     "Owner Preferred:", "Customer Notes:", "Owner shall provide").
+#     These show up in addenda, customer overlays, and owner-side
+#     mark-ups.
+#  3. Week 6 P6.3 — first-person customer voice ("VT will manage",
+#     "the District has selected", "we have decided").  When the
+#     customer is the speaker, the atom is customer-authored.  Tight
+#     enough to avoid catching every "we" pronoun in vendor-authored
+#     text; requires a customer/owner subject + commitment verb.
+_AUTHORITY_OVERRIDES: list[tuple[re.Pattern[str], AuthorityClass]] = [
+    # 1) Q&A answer markers
+    (re.compile(r"^\s*A\s*\d+\.\s"), AuthorityClass.customer_current_authored),
+    (re.compile(r"\bA\s*\d+\.\s"), AuthorityClass.customer_current_authored),
+    # 2) Explicit owner/customer attribution.  Allows possessive
+    # ("Owner's Notes:") and bare-noun-phrase ("Customer Notes:") forms.
+    (
+        re.compile(
+            r"\b(?:owner[-\s]?(?:furnished|preferred|provided|approved|directed)|owner\s+shall|owner\s+will|"
+            r"owner(?:['’]s)?\s+(?:notes?|comments?|requirements?|preferences?|direction)|"
+            r"customer[-\s]?(?:furnished|preferred|provided|approved|directed)|customer\s+(?:shall|will|requires|prefers)|"
+            r"customer(?:['’]s)?\s+(?:notes?|comments?|requirements?|preferences?|direction|response))\b",
+            re.I,
+        ),
+        AuthorityClass.customer_current_authored,
+    ),
+    # 3) Customer-side first-person commitment / decision
+    (
+        re.compile(
+            r"\b(?:the\s+(?:university|district|college|school|agency|customer|client|owner|board|department|hospital|authority|county|city)\s+"
+            r"(?:will|has|have|shall|does|does\s+not|do|do\s+not|requires|prefers|selected|approved|decided|provided|manages))\b",
+            re.I,
+        ),
+        AuthorityClass.customer_current_authored,
+    ),
+    # 4) Addendum / customer-response markup ("RESPONSE:", "CUSTOMER:",
+    #    "ANSWER:" headers used in column-style RFP responses).
+    (
+        re.compile(
+            r"^\s*(?:RESPONSE|ANSWER|CUSTOMER\s+RESPONSE|OWNER\s+RESPONSE|DISTRICT\s+RESPONSE|UNIVERSITY\s+RESPONSE)\s*:",
+            re.I,
+        ),
+        AuthorityClass.customer_current_authored,
+    ),
 ]
 
 # Tight column-header regex: only fires on unambiguously-pricing words.
@@ -783,6 +1426,34 @@ _PRICING_COLUMN_HINTS = re.compile(
 _CURRENCY_PATTERN = re.compile(r"(?:\$|£|€|usd|gbp|eur)\s*\d", re.I)
 
 
+# Splits a coalesced "Q4. ...? A4. ..." chunk into (question_part,
+# answer_part).  When the chunk has an A-marker we want to classify
+# atom_type from the *answer* body — that's the substantive customer
+# content; the question is a contractual-scope template line.
+_QA_ANSWER_SPLIT = re.compile(r"\bA\s*\d+\.\s")
+
+
+def _split_question_and_answer(text: str) -> tuple[str, str]:
+    """Return ``(question_part, answer_part)``.
+
+    If no A-marker is found, ``answer_part`` is empty and the original
+    text is returned in ``question_part``.  When the marker IS present
+    the question is everything up to (and including) the marker, and
+    the answer is everything after.
+    """
+    if not text:
+        return "", ""
+    match = _QA_ANSWER_SPLIT.search(text)
+    if not match:
+        return text, ""
+    return text[: match.start()].strip(), text[match.end() :].strip()
+
+
+_PROMOTABLE_ATOMS_FROM_QA: frozenset[AtomType] = frozenset(
+    {AtomType.scope_item, AtomType.open_question}
+)
+
+
 def _classify_text_block(
     *,
     text: str,
@@ -806,10 +1477,39 @@ def _classify_text_block(
             section_auth = auth
             break
 
+    # Week 5: when the chunk is a coalesced Q+A pair (Q4. ... A4. ...),
+    # the *answer* body carries the customer's substantive position, so
+    # classify atom_type from the answer body and only fall back to the
+    # full text if the answer body doesn't yield a definite signal.  This
+    # is what lets "A43. The lighting plan is attached." classify as a
+    # decision rather than the open_question its leading "Q43." would
+    # have implied.
+    _question_part, answer_part = _split_question_and_answer(text)
+    classify_text = answer_part if answer_part and len(answer_part) >= 10 else text
+
     text_atom: AtomType | None = None
     for pattern, atom_type in _TEXT_OVERRIDES:
-        if pattern.search(text):
+        if pattern.search(classify_text):
             text_atom = atom_type
+            break
+    # If we tried the answer body and got nothing, retry against the full
+    # text so the original Q-marker-only / "?-suffix" signals can still
+    # fire (e.g. a pure question with no useful answer body).
+    if text_atom is None and classify_text is not text:
+        for pattern, atom_type in _TEXT_OVERRIDES:
+            if pattern.search(text):
+                text_atom = atom_type
+                break
+
+    # Authority override (Week 5).  Q&A answer markers ("A12.") signal
+    # customer-authored content.  When an atom carries an answer
+    # *and* its content reads as an instruction, promote the atom_type
+    # to customer_instruction so the packetizer's customer_override
+    # rule can fire.
+    text_authority: AuthorityClass | None = None
+    for pattern, authority in _AUTHORITY_OVERRIDES:
+        if pattern.search(text):
+            text_authority = authority
             break
 
     if kind == "note":
@@ -821,12 +1521,35 @@ def _classify_text_block(
 
     if text_atom is not None:
         # Text override wins over section default for definite signals.
-        authority = section_auth or AuthorityClass.contractual_scope
+        authority = text_authority or section_auth or AuthorityClass.contractual_scope
+        # When the atom is customer-authored AND it reads like a scope
+        # statement / open question (default), promote it to
+        # customer_instruction so the packetizer's customer_override
+        # rule can fire.  Decisions / action_items / exclusions /
+        # constraints surface as themselves — those are STRONGER signals
+        # than customer_instruction and the packetizer wants them
+        # un-merged for meeting_decision / action_item / scope_exclusion
+        # families.
+        if (
+            text_authority == AuthorityClass.customer_current_authored
+            and text_atom in _PROMOTABLE_ATOMS_FROM_QA
+        ):
+            return AtomType.customer_instruction, authority
         return text_atom, authority
 
     if section_atom is not None:
-        return section_atom, section_auth or AuthorityClass.contractual_scope
+        authority = text_authority or section_auth or AuthorityClass.contractual_scope
+        if (
+            text_authority == AuthorityClass.customer_current_authored
+            and section_atom in _PROMOTABLE_ATOMS_FROM_QA
+        ):
+            return AtomType.customer_instruction, authority
+        return section_atom, authority
 
+    # Default: a customer-authored answer is a customer_instruction;
+    # everything else is a scope_item.
+    if text_authority == AuthorityClass.customer_current_authored:
+        return AtomType.customer_instruction, text_authority
     return AtomType.scope_item, AuthorityClass.contractual_scope
 
 

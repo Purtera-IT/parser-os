@@ -133,7 +133,14 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
             except Exception:
                 continue
 
-    snippet_parts = [f"{str(key).replace('_', ' ').title()}={str(value).strip()}" for key, value in row_values.items()]
+    # Sort columns alphabetically so the snippet text is deterministic across
+    # runs.  Parser-side dict insertion order has been observed to drift (e.g.
+    # openpyxl backed by C accelerators), which silently broke output_signature
+    # reproducibility — see manifest.compute_output_signature.
+    snippet_parts = [
+        f"{str(key).replace('_', ' ').title()}={str(value).strip()}"
+        for key, value in sorted(row_values.items())
+    ]
     extracted_snippet = " | ".join(part for part in snippet_parts if part and not part.endswith("="))
     if not extracted_snippet:
         return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")

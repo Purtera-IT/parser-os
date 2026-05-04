@@ -10,6 +10,66 @@ from app.core.schemas import AtomType, AuthorityClass, EdgeType, EntityRecord, E
 from app.domain import get_active_domain_pack
 from app.semantic.linker import propose_semantic_link_candidates
 
+# Cap the number of cross-artifact reinforcement targets per source atom.  Without
+# this, an N-artifact project with M atoms each yields O(N*M) edges per source;
+# OrbitBrief downstream then has to filter noise.  The cap is per source atom
+# per target type, picked deterministically by sorted target id.
+MAX_CROSS_ARTIFACT_TARGETS_PER_SOURCE = 8
+
+# Stable taxonomy for edge_family — every edge produced by build_edges gets one
+# of these so OrbitBrief can filter "show me only the contradictions" or "show
+# me only the strong supports" without re-deriving categories from reasons.
+EDGE_FAMILY_VALUE_SUPPORT = "value_support"
+EDGE_FAMILY_CONSTRAINT_ALIGN = "constraint_alignment"
+EDGE_FAMILY_QUANTITY_CONTRADICTION = "quantity_contradiction"
+EDGE_FAMILY_PART_NUMBER_QUANTITY_CONFLICT = "part_number_quantity_conflict"
+EDGE_FAMILY_EXCLUSION_APPLIES = "exclusion_application"
+EDGE_FAMILY_CONSTRAINT_REQUIRES = "constraint_requirement"
+EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH = "device_aggregate_mismatch"
+EDGE_FAMILY_MATERIAL_AGGREGATE_MISMATCH = "material_aggregate_mismatch"
+EDGE_FAMILY_CROSS_ARTIFACT_REINFORCEMENT = "cross_artifact_co_mention"
+EDGE_FAMILY_SEMANTIC_LINK = "semantic_link"
+
+# An entity_key that matches more atoms than this threshold is treated as
+# too generic to use as a join point (e.g. ``site:campus`` would otherwise
+# pair every atom with every other atom).  We still allow these keys to
+# participate when *any other* shared key qualifies the pair.  See
+# PRODUCTION_GAPS.md P2.2 — without this cap Downey produced 642k edges
+# in 38 minutes by joining everything to ``site:campus``.
+#
+# Threshold: ``max(20, sqrt(N))``.  For VT_CAM (71 atoms) → 20-atom cap.
+# For Downey (4,892 atoms) → 70-atom cap.  Sub-linear growth keeps
+# candidate_pairs bounded at O(N · sqrt(N) / 2) instead of O(N²).
+NOISY_ENTITY_KEY_BUCKET_FLOOR = 20
+
+# Also bound the total number of candidate pairs we will examine.  For
+# corpora large enough that even sqrt-bucket keys produce too many
+# pairs, this cap prevents blow-up.  Pairs are generated in a stable
+# order so deterministic output is preserved up to the cap.
+MAX_CANDIDATE_PAIRS = 250_000
+
+# Part-number entities are the strongest signal for quantity contradictions.
+# When two atoms share the same ``part_number:*`` key but report different
+# ``Qty: N`` values (or different ``quantity:*`` entity keys), that's a
+# real-world cost-proposal mismatch (cf. Natomas CW9166I-B 500 vs 136).
+_PART_NUMBER_PREFIX = "part_number:"
+_QUANTITY_PREFIX = "quantity:"
+
+
+def _is_unknown_entity_key(key: str) -> bool:
+    """Return True for sentinel '*:unknown' keys we never want to anchor on."""
+    return key.endswith(":unknown") or key == "device:unknown" or key == "site:unknown"
+
+
+def _meaningful_shared_keys(a: EvidenceAtom, b: EvidenceAtom) -> set[str]:
+    """Shared entity keys excluding 'unknown' sentinels.
+
+    Cross-artifact reinforcement on '*:unknown' is noise — every artifact that
+    failed to classify a device/site would otherwise pair with every other.
+    """
+    shared = set(a.entity_keys).intersection(set(b.entity_keys))
+    return {k for k in shared if not _is_unknown_entity_key(k)}
+
 
 def _quantity_value(atom: EvidenceAtom) -> float | None:
     value = atom.value.get("quantity") if isinstance(atom.value, dict) else None
@@ -198,6 +258,7 @@ def _build_edge(
     confidence: float,
     *,
     metadata: dict[str, Any] | None = None,
+    edge_family: str | None = None,
 ) -> EvidenceEdge:
     """Build an :class:`EvidenceEdge` and stamp cross-artifact provenance.
 
@@ -206,6 +267,10 @@ def _build_edge(
     ``to_artifact_id`` are also added so OrbitBrief can render a
     "this PDF says X but this email says Y" badge directly from the
     edge alone.
+
+    ``edge_family`` (when provided) lands in ``metadata['edge_family']`` so
+    downstream consumers can filter the graph by family without re-parsing
+    the human-readable reason string.
     """
     meta = dict(metadata or {})
     meta.setdefault("from_artifact_id", from_atom.artifact_id)
@@ -214,6 +279,8 @@ def _build_edge(
         meta.setdefault("cross_artifact", True)
     else:
         meta.setdefault("cross_artifact", False)
+    if edge_family and "edge_family" not in meta:
+        meta["edge_family"] = edge_family
     return EvidenceEdge(
         id=_edge_id(project_id, edge_type, from_atom.id, to_atom.id, reason),
         project_id=project_id,
@@ -246,76 +313,175 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     ordered = sorted(atoms, key=lambda a: a.id)
     atom_by_id = {atom.id: atom for atom in ordered}
 
-    for i in range(len(ordered)):
-        for j in range(i + 1, len(ordered)):
-            a = ordered[i]
-            b = ordered[j]
-            shared = _shared_keys(a, b)
-            if not shared:
+    # ─── Inverted index: entity_key → list of atom indices ───
+    # Replaces the O(n²) double-loop with O(sum of bucket²) pair generation.
+    # See PRODUCTION_GAPS.md P2.2.  Without this, Downey's 4,892 atoms produced
+    # ~12M atom pairs and a 38-minute graph_build.
+    key_to_indices: dict[str, list[int]] = {}
+    for idx, atom in enumerate(ordered):
+        for k in atom.entity_keys:
+            if _is_unknown_entity_key(k):
                 continue
+            key_to_indices.setdefault(k, []).append(idx)
 
-            # supports: same entity keys + same atom_type + same normalized value/quantity.
-            quantity_a = _quantity_value(a)
-            quantity_b = _quantity_value(b)
-            if a.atom_type == b.atom_type:
-                same_value = normalize_text(str(a.value)) == normalize_text(str(b.value))
-                same_quantity = quantity_a is not None and quantity_b is not None and quantity_a == quantity_b
-                if same_value or same_quantity:
-                    push(
-                        _build_edge(
-                            project_id,
-                            EdgeType.supports,
-                            a,
-                            b,
-                            "Atoms support each other with matching entity, type, and value",
-                            0.88,
-                        )
-                    )
-            if (
-                a.atom_type.value == "constraint"
-                and b.atom_type.value == "constraint"
-                and _site_keys(a).intersection(_site_keys(b))
-            ):
+    # Treat keys that match too many atoms as "noisy" — they'd otherwise pair
+    # every atom with every other.  Common culprits: ``site:campus``,
+    # ``device:storage``, broad typed-alias hits.  Atoms with only noisy keys
+    # in common are skipped; pairs that share at least one informative key
+    # are still processed even if they also share noisy keys.
+    #
+    # Threshold scales sub-linearly with corpus size so that candidate_pairs
+    # grows as O(N · sqrt(N)), not O(N²).
+    import math
+    noisy_threshold = max(
+        NOISY_ENTITY_KEY_BUCKET_FLOOR,
+        int(math.sqrt(max(len(ordered), 1))),
+    )
+    informative_keys = {
+        k for k, indices in key_to_indices.items()
+        if 2 <= len(indices) <= noisy_threshold
+    }
+    # Part-number / quantity / address keys are always informative regardless
+    # of bucket size — they're the highest-precision signals for contradictions.
+    for k in list(key_to_indices.keys()):
+        if k.startswith(_PART_NUMBER_PREFIX) or k.startswith(_QUANTITY_PREFIX) or k.startswith("address:"):
+            informative_keys.add(k)
+
+    # Generate candidate pairs from informative keys only.  Each pair is
+    # processed once (by sorted (i, j) tuple) regardless of how many keys
+    # it shares.  Process keys in ascending bucket size so the pairs we
+    # cap-out have the biggest noisy buckets, not the precise ones.
+    candidate_pairs: set[tuple[int, int]] = set()
+    keys_by_bucket_size = sorted(
+        informative_keys, key=lambda k: (len(key_to_indices.get(k, [])), k)
+    )
+    for k in keys_by_bucket_size:
+        indices = key_to_indices.get(k) or []
+        if len(indices) < 2:
+            continue
+        for ii in range(len(indices)):
+            if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+                break
+            i = indices[ii]
+            for jj in range(ii + 1, len(indices)):
+                if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+                    break
+                j = indices[jj]
+                if i < j:
+                    candidate_pairs.add((i, j))
+                else:
+                    candidate_pairs.add((j, i))
+        if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+            break
+
+    for i, j in sorted(candidate_pairs):
+        a = ordered[i]
+        b = ordered[j]
+        shared = _shared_keys(a, b)
+        if not shared:
+            continue
+
+        # supports: same entity keys + same atom_type + same normalized value/quantity.
+        quantity_a = _quantity_value(a)
+        quantity_b = _quantity_value(b)
+        if a.atom_type == b.atom_type:
+            same_value = normalize_text(str(a.value)) == normalize_text(str(b.value))
+            same_quantity = quantity_a is not None and quantity_b is not None and quantity_a == quantity_b
+            if same_value or same_quantity:
                 push(
                     _build_edge(
                         project_id,
                         EdgeType.supports,
                         a,
                         b,
-                        "Constraint atoms align on same site context",
-                        0.84,
+                        "Atoms support each other with matching entity, type, and value",
+                        0.88,
+                        edge_family=EDGE_FAMILY_VALUE_SUPPORT,
                     )
                 )
+        if (
+            a.atom_type.value == "constraint"
+            and b.atom_type.value == "constraint"
+            and _site_keys(a).intersection(_site_keys(b))
+        ):
+            push(
+                _build_edge(
+                    project_id,
+                    EdgeType.supports,
+                    a,
+                    b,
+                    "Constraint atoms align on same site context",
+                    0.84,
+                    edge_family=EDGE_FAMILY_CONSTRAINT_ALIGN,
+                )
+            )
 
-            # contradicts: same comparable scope + quantity differs (not mere co-site line items).
-            if a.atom_type.value == "quantity" and b.atom_type.value == "quantity":
-                if quantity_a is None or quantity_b is None or quantity_a == quantity_b:
-                    continue
+        # contradicts: same comparable scope + quantity differs (not mere co-site line items).
+        if a.atom_type.value == "quantity" and b.atom_type.value == "quantity":
+            if quantity_a is None or quantity_b is None or quantity_a == quantity_b:
+                pass  # skip block below; fall through to other rules
+            else:
                 sites_a = _site_keys(a)
                 sites_b = _site_keys(b)
+                ok = True
                 if sites_a and sites_b and sites_a != sites_b:
-                    continue
+                    ok = False
                 if (
-                    a.authority_class == AuthorityClass.approved_site_roster
+                    ok
+                    and a.authority_class == AuthorityClass.approved_site_roster
                     and b.authority_class == AuthorityClass.approved_site_roster
                 ):
                     ida, idb = _canonical_material_key(a), _canonical_material_key(b)
                     if ida is None or idb is None or ida != idb:
-                        continue
-                if not _quantity_pair_comparable_scope(a, b):
-                    continue
+                        ok = False
+                if ok and not _quantity_pair_comparable_scope(a, b):
+                    ok = False
+                if ok:
+                    push(
+                        _build_edge(
+                            project_id,
+                            EdgeType.contradicts,
+                            a,
+                            b,
+                            f"Quantity mismatch {quantity_a:g} vs {quantity_b:g} for shared entity context",
+                            0.9,
+                            edge_family=EDGE_FAMILY_QUANTITY_CONTRADICTION,
+                        )
+                    )
+
+        # ─── P0.5: part_number-driven quantity conflict ───
+        # When two atoms share a ``part_number:*`` entity but their
+        # ``quantity:*`` entity keys differ, that's a cost-proposal vs
+        # equipment-list mismatch (e.g. Natomas CW9166I-B 500 vs 136).
+        # This rule fires regardless of atom_type so it catches scope_item
+        # atoms that carry "Qty: N" patterns extracted by entity_extraction.
+        shared_parts = {k for k in shared if k.startswith(_PART_NUMBER_PREFIX)}
+        if shared_parts:
+            qty_keys_a = {k for k in a.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+            qty_keys_b = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+            if qty_keys_a and qty_keys_b and qty_keys_a != qty_keys_b:
+                # Different quantities for the same part number — true conflict.
+                qa_display = sorted(k.split(":", 1)[1] for k in qty_keys_a)
+                qb_display = sorted(k.split(":", 1)[1] for k in qty_keys_b)
+                part_display = sorted(k.split(":", 1)[1] for k in shared_parts)
                 push(
                     _build_edge(
                         project_id,
                         EdgeType.contradicts,
                         a,
                         b,
-                        f"Quantity mismatch {quantity_a:g} vs {quantity_b:g} for shared entity context",
-                        0.9,
+                        (
+                            f"Quantity contradiction for part {','.join(part_display)}: "
+                            f"{','.join(qa_display)} vs {','.join(qb_display)}"
+                        ),
+                        0.92,
+                        edge_family=EDGE_FAMILY_PART_NUMBER_QUANTITY_CONFLICT,
                     )
                 )
 
     # excludes: exclusion atom mentions entity key in another atom.
+    # Uses the entity-key index so we only iterate atoms that actually
+    # share an entity_key with the exclusion (was O(exclusions × atoms)).
     exclusions = [a for a in ordered if a.atom_type.value == "exclusion"]
     exclusions.extend(
         [
@@ -327,11 +493,20 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     )
     exclusions = sorted({atom.id: atom for atom in exclusions}.values(), key=lambda atom: atom.id)
     for ex in exclusions:
-        ex_keys = set(ex.entity_keys)
-        for target in ordered:
+        ex_keys = {k for k in ex.entity_keys if not _is_unknown_entity_key(k)}
+        if not ex_keys:
+            continue
+        target_idx_set: set[int] = set()
+        for k in ex_keys:
+            for idx in key_to_indices.get(k, []):
+                target_idx_set.add(idx)
+        for idx in sorted(target_idx_set):
+            target = ordered[idx]
             if target.id == ex.id:
                 continue
-            if ex_keys.intersection(set(target.entity_keys)):
+            shared_keys = ex_keys.intersection(set(target.entity_keys))
+            meaningful = {k for k in shared_keys if not _is_unknown_entity_key(k)}
+            if meaningful:
                 push(
                     _build_edge(
                         project_id,
@@ -340,10 +515,12 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         target,
                         "Exclusion atom applies to target entity context",
                         0.9,
+                        edge_family=EDGE_FAMILY_EXCLUSION_APPLIES,
                     )
                 )
 
     # requires: constraint shares site with scope/quantity atoms.
+    # Same index-driven optimization.
     constraints = [a for a in ordered if a.atom_type.value == "constraint"]
     constraints.extend(
         [
@@ -358,10 +535,17 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         sites = _site_keys(constraint)
         if not sites:
             continue
-        for target in ordered:
+        target_idx_set = set()
+        for site_key in sites:
+            for idx in key_to_indices.get(site_key, []):
+                target_idx_set.add(idx)
+        for idx in sorted(target_idx_set):
+            target = ordered[idx]
             if target.id == constraint.id or target.atom_type.value not in {"scope_item", "quantity"}:
                 continue
-            if sites.intersection(_site_keys(target)):
+            shared_sites = sites.intersection(_site_keys(target))
+            meaningful_sites = {k for k in shared_sites if not _is_unknown_entity_key(k)}
+            if meaningful_sites:
                 push(
                     _build_edge(
                         project_id,
@@ -370,6 +554,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         target,
                         "Constraint requires adherence for same site context",
                         0.86,
+                        edge_family=EDGE_FAMILY_CONSTRAINT_REQUIRES,
                     )
                 )
 
@@ -406,7 +591,17 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             f"does not match vendor quantity {int(vendor_total) if vendor_total.is_integer() else vendor_total:g} "
             f"for {device_key}"
         )
-        push(_build_edge(project_id, EdgeType.contradicts, from_atom, to_atom, reason, 0.95))
+        push(
+            _build_edge(
+                project_id,
+                EdgeType.contradicts,
+                from_atom,
+                to_atom,
+                reason,
+                0.95,
+                edge_family=EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH,
+            )
+        )
 
     # Material / line-item identity: governing approved_site_roster vs vendor_quote (normalized_item).
     # Roster aggregate row (when present) defines scope quantity; vendor is summed per identity; never reversed.
@@ -468,6 +663,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 reason,
                 0.96,
                 metadata=meta,
+                edge_family=EDGE_FAMILY_MATERIAL_AGGREGATE_MISMATCH,
             )
         )
 
@@ -488,23 +684,47 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     seeds_by_type: dict[AtomType, list[EvidenceAtom]] = {}
     for atom in ordered:
         seeds_by_type.setdefault(atom.atom_type, []).append(atom)
+    # Pre-compute target-id sets per atom_type so we can intersect against
+    # the entity-key index for O(shared_keys × bucket_size) lookups instead
+    # of O(sources × targets).
+    target_ids_by_type: dict[AtomType, set[str]] = {
+        atype: {atom.id for atom in atoms_of_type}
+        for atype, atoms_of_type in seeds_by_type.items()
+    }
     for source_type, target_types in cross_artifact_pairs:
         sources = seeds_by_type.get(source_type) or []
-        targets: list[EvidenceAtom] = []
+        target_id_pool: set[str] = set()
         for tt in target_types:
-            targets.extend(seeds_by_type.get(tt) or [])
+            target_id_pool |= target_ids_by_type.get(tt, set())
+        if not target_id_pool:
+            continue
         for source in sources:
-            src_keys = set(source.entity_keys)
+            src_keys = {k for k in source.entity_keys if not _is_unknown_entity_key(k)}
             if not src_keys:
                 continue
-            for target in targets:
-                if source.id == target.id:
+            # Use the entity-key index to find candidate targets — only atoms
+            # that actually share at least one informative key with the
+            # source make it into ``scored``.
+            candidate_idxs: set[int] = set()
+            for k in src_keys:
+                for idx in key_to_indices.get(k, []):
+                    candidate_idxs.add(idx)
+            scored: list[tuple[int, str, EvidenceAtom, set[str]]] = []
+            for idx in candidate_idxs:
+                target = ordered[idx]
+                if target.id == source.id:
+                    continue
+                if target.id not in target_id_pool:
                     continue
                 if source.artifact_id == target.artifact_id:
                     continue
-                shared = src_keys.intersection(set(target.entity_keys))
+                tgt_keys = {k for k in target.entity_keys if not _is_unknown_entity_key(k)}
+                shared = src_keys.intersection(tgt_keys)
                 if not shared:
                     continue
+                scored.append((len(shared), target.id, target, shared))
+            scored.sort(key=lambda row: (-row[0], row[1]))
+            for _, _, target, shared in scored[:MAX_CROSS_ARTIFACT_TARGETS_PER_SOURCE]:
                 shared_label = ", ".join(sorted(shared)[:4])
                 push(
                     _build_edge(
@@ -518,7 +738,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                             "shared_entity_keys": sorted(shared),
                             "source_atom_type": source.atom_type.value,
                             "target_atom_type": target.atom_type.value,
-                            "edge_family": "cross_artifact_co_mention",
+                            "edge_family": EDGE_FAMILY_CROSS_ARTIFACT_REINFORCEMENT,
                         },
                     )
                 )
@@ -546,6 +766,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 to_atom=to_atom,
                 reason=reason,
                 confidence=min(0.99, max(0.5, candidate.similarity_score)),
+                edge_family=EDGE_FAMILY_SEMANTIC_LINK,
             )
         )
 

@@ -1,0 +1,43 @@
+{
+  "case_id": "STRESS_ACS_USC_PIEDMONT",
+  "service_line": "access_control",
+  "recommended_domain_pack": "access_control_pack",
+  "bundle_summary": "Two contrasting access-control artifacts: USC's CSI MasterFormat narrative master spec (no quantities, parameterized [Indicate Site]) and Piedmont's tightly-scoped Genetec Synergis BOM (City Hall + Fire + PD, 38 doors, AVS won at $248,782 + $52,126 maint).",
+  "stress_test_attributes": [
+    "master_spec_vs_project_specific_rfp",
+    "lenel_onguard_vs_genetec_synergis_different_eacs",
+    "csi_masterformat_27_32_26_28_05_00_through_28_23_00",
+    "bid_tabulation_post_award_in_piedmont_pdf",
+    "avs_proposal_narrative_50_plus_agreement_statements",
+    "streamvault_40t_to_48t_vendor_substitution_accepted",
+    "cjis_high_encryption_design_driver_piedmont_police",
+    "38_door_with_stable_ids_c1_c18_p1_p19",
+    "holding_area_no_pir_exception_4_readers",
+    "talk_a_phone_etp_emergency_phone_family_usc",
+    "mercury_genetec_compound_vendor_naming",
+    "two_buildings_city_hall_fire_and_police_dept_piedmont"
+  ],
+  "expected_artifacts": [
+    {"filename": "usc_access_control_master_spec.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 120, "expected_min_routing_confidence": 0.95},
+    {"filename": "piedmont_genetec_rfp.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 50, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 2,
+  "expected_min_distinct_sites": 4,
+  "expected_min_unique_vendors_referenced": 14,
+  "expected_min_atom_count": 250,
+  "expected_min_packet_count": 50,
+  "expected_min_constraint_atoms": 30,
+  "expected_min_compliance_atoms": 25,
+  "expected_min_template_unsupported_receipts": 20,
+  "expected_min_substitution_packets": 1,
+  "expected_vendor_overlap_edges_via_genetec": 1,
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item",
+    "site_access"
+  ]
+}

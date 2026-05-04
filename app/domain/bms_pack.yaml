@@ -1,0 +1,265 @@
+pack_id: bms
+name: Building Management / BAS Pack
+version: "1.0.0"
+service_lines:
+  - bms
+  - bas
+  - building_automation
+  - hvac_controls
+  - lighting_controls
+entity_types:
+  - name: device
+    aliases:
+      - controller
+      - dde
+      - jace
+      - vrf
+      - vav
+      - rtu
+      - ahu
+      - thermostat
+      - sensor
+      - actuator
+    examples: ["JACE 8000", "VAV", "Thermostat"]
+  - name: site
+    aliases:
+      - site
+      - building
+      - floor
+      - zone
+      - mech room
+      - rooftop
+    examples: ["Bldg A", "Roof"]
+device_aliases:
+  controller:
+    - controller
+    - field controller
+    - supervisor
+    - jace
+    - jace 8000
+    - jace ax
+    - jace n4
+    - tridium jace
+    - dde
+    - ddc
+    - direct digital control
+    - bacnet controller
+    - lon controller
+    - modbus controller
+  thermostat:
+    - thermostat
+    - tstat
+    - smart thermostat
+    - zone thermostat
+    - vav thermostat
+  sensor:
+    - sensor
+    - temp sensor
+    - temperature sensor
+    - humidity sensor
+    - co2 sensor
+    - voc sensor
+    - occupancy sensor
+    - daylight sensor
+    - pressure sensor
+    - airflow sensor
+    - duct temp sensor
+    - water temp sensor
+  actuator:
+    - actuator
+    - damper actuator
+    - valve actuator
+    - vav actuator
+    - electric actuator
+    - pneumatic actuator
+  vav:
+    - vav
+    - vav box
+    - vav terminal
+    - vav-1
+    - vav-2
+  ahu:
+    - ahu
+    - air handler
+    - air handling unit
+    - mau
+    - makeup air unit
+  rtu:
+    - rtu
+    - rooftop unit
+    - rooftop ac
+    - packaged unit
+  vrf:
+    - vrf
+    - vrv
+    - variable refrigerant flow
+    - daikin vrv
+    - mitsubishi vrf
+  pump:
+    - pump
+    - vfd pump
+    - chilled water pump
+    - hot water pump
+    - condenser pump
+  vfd:
+    - vfd
+    - variable frequency drive
+    - variable speed drive
+    - vsd
+  meter:
+    - meter
+    - btu meter
+    - power meter
+    - water meter
+    - submeter
+    - energy meter
+  lighting_controller:
+    - lighting controller
+    - relay panel
+    - lighting relay
+    - dimmer
+    - 0-10v dimmer
+    - dali driver
+    - dali controller
+    - lutron processor
+    - lutron quantum
+    - lutron athena
+  occ_sensor:
+    - occupancy sensor
+    - vacancy sensor
+    - daylight sensor
+    - photocell
+  cabling:
+    - 18/2
+    - 18/4
+    - 22/4
+    - 22/6
+    - bms cable
+    - control cable
+    - thermostat wire
+    - lon cable
+site_alias_patterns:
+  - "rtu\\s*\\d+"
+  - "ahu\\s*\\d+"
+  - "vav\\s*[a-z0-9]+"
+  - "zone\\s*\\d+"
+action_aliases:
+  point_to_point:
+    - point to point
+    - p2p
+    - p2p test
+    - point check
+    - control test
+  commissioning:
+    - cx
+    - commissioning
+    - functional test
+    - sequence of operations
+    - soo verification
+  programming:
+    - graphics programming
+    - schedule programming
+    - alarm programming
+    - trend programming
+constraint_patterns:
+  protocols:
+    - bacnet
+    - bacnet ip
+    - bacnet ms-tp
+    - lonworks
+    - lon
+    - modbus
+    - modbus tcp
+    - modbus rtu
+    - mqtt
+    - knx
+    - dali
+    - 0-10v
+  sequence:
+    - soo
+    - sequence of operations
+    - new soo
+    - revised soo
+  air_balance:
+    - air balance
+    - tab
+    - testing adjusting balancing
+exclusion_patterns:
+  - by mech contractor
+  - by mc
+  - by hvac contractor
+  - by ec
+  - by gc
+  - by ts (test specialist)
+  - by tab
+  - by others
+  - existing controller reuse
+  - existing thermostat reuse
+  - existing wiring reuse
+  - power to controller by ec
+  - 120v power by ec
+  - control wiring by mc
+  - control valves by mc
+  - dampers by mc
+  - actuators by mc
+  - vfds by ec
+  - tab by others
+  - cx by others
+  - graphics by owner
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add point
+  - please add zone
+  - please reprogram schedule
+  - approved to proceed
+  - go ahead
+  - we want bacnet
+  - we want lon
+quantity_units:
+  count:
+    - points
+    - zones
+    - controllers
+    - vavs
+    - rtus
+    - ahus
+    - units
+    - ea
+artifact_role_patterns:
+  approved_site_roster:
+    - point_list
+    - point list
+    - control_schedule
+    - device_schedule
+  vendor_quote:
+    - tridium quote
+    - automated logic quote
+    - johnson controls quote
+    - distech quote
+    - schneider quote
+    - alc quote
+risk_defaults:
+  controller_unit_exposure: 1800
+  vav_unit_exposure: 1100
+  failed_dispatch_exposure: 600
+  unpriced_scope_default: 6500
+  missing_cx_exposure: 5000
+  missing_soo_exposure: 4000
+packet_family_hints:
+  vendor_mismatch:
+    - point count
+    - controller model mismatch
+    - missing graphics
+  scope_exclusion:
+    - control wiring by mc
+    - control valves by mc
+    - tab by others
+    - cx by others
+  missing_info:
+    - sequence of operations
+    - graphics
+    - commissioning
+    - tab

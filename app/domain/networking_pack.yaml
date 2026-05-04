@@ -1,0 +1,321 @@
+pack_id: networking
+name: Networking / LAN-WAN Pack
+version: "1.0.0"
+service_lines:
+  - networking
+  - lan
+  - wan
+  - sd_wan
+  - data_center
+entity_types:
+  - name: device
+    aliases:
+      - switch
+      - router
+      - firewall
+      - load balancer
+      - controller
+      - gateway
+      - sd-wan
+      - circuit
+    examples: ["Cisco 9300", "Palo Alto", "Meraki MX"]
+  - name: room
+    aliases:
+      - mdf
+      - idf
+      - server room
+      - data closet
+      - core
+      - distribution
+      - mpoe
+      - meet me room
+    examples: ["MDF", "IDF-3"]
+device_aliases:
+  switch:
+    - switch
+    - switches
+    - access switch
+    - distribution switch
+    - core switch
+    - tor switch
+    - top of rack switch
+    - leaf switch
+    - spine switch
+    - layer 2 switch
+    - layer 3 switch
+    - poe switch
+    - poe+ switch
+    - poe++ switch
+    - mgig switch
+    - multi-gig switch
+    - 1g switch
+    - 10g switch
+    - 25g switch
+    - 40g switch
+    - 100g switch
+    - cisco 9300
+    - cisco 9200
+    - cisco catalyst
+    - juniper switch
+    - arista switch
+    - meraki ms
+  router:
+    - router
+    - edge router
+    - core router
+    - branch router
+    - sd-wan
+    - sdwan
+    - sd-wan appliance
+    - meraki mx
+    - velocloud
+    - silver peak
+    - viptela
+    - cisco isr
+    - cisco asr
+    - juniper srx router
+  firewall:
+    - firewall
+    - fw
+    - ngfw
+    - palo alto
+    - palo alto firewall
+    - fortigate
+    - fortinet firewall
+    - check point
+    - checkpoint firewall
+    - sonicwall
+    - asa
+    - cisco asa
+    - cisco firepower
+    - meraki mx firewall
+  load_balancer:
+    - load balancer
+    - lb
+    - f5
+    - big-ip
+    - bigip
+    - citrix adc
+    - netscaler
+  wan_circuit:
+    - circuit
+    - mpls circuit
+    - dia circuit
+    - dia
+    - broadband
+    - cable circuit
+    - fiber circuit
+    - coax circuit
+    - lte backup
+    - 5g backup
+    - cellular backup
+    - leased line
+  optic:
+    - sfp
+    - sfp+
+    - sfp28
+    - qsfp
+    - qsfp+
+    - qsfp28
+    - qsfp-dd
+    - 10g sfp
+    - 25g sfp
+    - 40g qsfp
+    - 100g qsfp
+    - lr optic
+    - sr optic
+    - lc-lc patch cord
+    - mtp patch cord
+  rack:
+    - rack
+    - cabinet
+    - 42u rack
+    - 48u rack
+    - 24u rack
+    - server rack
+    - network cabinet
+  pdu:
+    - pdu
+    - rack pdu
+    - basic pdu
+    - metered pdu
+    - switched pdu
+    - 0u pdu
+  ups:
+    - ups
+    - rack ups
+    - 1500va ups
+    - 3000va ups
+  cable:
+    - cat6 patch
+    - cat6a patch
+    - lc-lc fiber
+    - mtp fiber
+    - copper cross connect
+    - fiber cross connect
+  license:
+    - smartnet
+    - dna license
+    - dna advantage
+    - dna essentials
+    - meraki license
+    - dna
+    - palo alto support
+    - fortigate support
+    - aiops license
+site_alias_patterns:
+  - "mdf"
+  - "idf\\s*\\d*"
+  - "mpoe"
+  - "data\\s*hall"
+  - "core\\s*room"
+  - "branch\\s*#?\\d+"
+action_aliases:
+  install_rack:
+    - install rack
+    - rack and stack
+    - rack-and-stack
+    - cabinet install
+  cabling:
+    - patch
+    - patch into
+    - run cross-connect
+    - terminate fiber
+    - terminate copper
+  config:
+    - configure switch
+    - configure firewall
+    - load config
+    - port config
+    - vlan config
+    - bgp config
+    - ospf config
+    - sd-wan zero touch
+    - ztp
+  cutover:
+    - cutover
+    - cut over
+    - migrate circuit
+    - migrate vlan
+    - failover test
+constraint_patterns:
+  shutdown:
+    - production hours
+    - non-disruptive
+    - shutdown window
+    - maintenance window
+    - blackout window
+    - cutover window
+    - change window
+  power:
+    - dedicated 20a
+    - 208v
+    - 240v
+    - dedicated circuit
+    - twist lock
+    - l5-30
+    - l6-30
+  cooling:
+    - cooling capacity
+    - hot aisle
+    - cold aisle
+    - kw per rack
+  carrier:
+    - carrier dependency
+    - circuit lead time
+    - circuit cutover
+    - mpls cutover
+    - port turn up
+    - lec coordination
+exclusion_patterns:
+  - by ec
+  - by electrical contractor
+  - by carrier
+  - by isp
+  - by gc
+  - by structured cabling vendor
+  - by others
+  - existing rack reuse
+  - existing switch reuse
+  - existing firewall reuse
+  - existing fiber reuse
+  - existing cabling reuse
+  - cabling by others
+  - cross-connect by others
+  - cross connect by others
+  - power to rack by ec
+  - dedicated circuit by ec
+  - circuit ordering by client
+  - circuit by client
+  - smartnet by others
+  - license by others
+  - support contract by others
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add switch
+  - please add firewall
+  - please cutover after hours
+  - please standardize on
+  - approved to proceed
+  - go ahead
+  - we want stack
+  - we want hsrp
+  - we want vrrp
+  - we want sd-wan
+quantity_units:
+  count:
+    - switches
+    - routers
+    - firewalls
+    - circuits
+    - ports
+    - racks
+    - units
+    - ea
+  rack_units:
+    - u
+    - ru
+    - rack units
+artifact_role_patterns:
+  approved_site_roster:
+    - rack_layout
+    - rack layout
+    - port_list
+    - port list
+    - cable_schedule
+    - circuit_inventory
+  vendor_quote:
+    - cisco quote
+    - juniper quote
+    - palo alto quote
+    - fortinet quote
+    - aruba quote
+    - meraki quote
+    - sd-wan quote
+risk_defaults:
+  switch_unit_exposure: 800
+  firewall_unit_exposure: 4500
+  circuit_unit_exposure: 2500
+  failed_dispatch_exposure: 700
+  unpriced_scope_default: 7000
+  missing_smartnet_exposure: 1500
+  missing_circuit_exposure: 5500
+packet_family_hints:
+  vendor_mismatch:
+    - switch model mismatch
+    - firewall model mismatch
+    - missing optics
+    - missing patch cords
+    - missing rack
+  scope_exclusion:
+    - cabling by others
+    - power to rack by ec
+    - circuit by client
+  missing_info:
+    - smartnet
+    - sd-wan license
+    - cutover window
+    - circuit lead time

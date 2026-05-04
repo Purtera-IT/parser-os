@@ -1,0 +1,283 @@
+pack_id: fire_safety
+name: Fire Alarm / Life Safety Pack
+version: "1.0.0"
+service_lines:
+  - fire_alarm
+  - life_safety
+  - mass_notification
+entity_types:
+  - name: device
+    aliases:
+      - smoke detector
+      - heat detector
+      - pull station
+      - horn
+      - strobe
+      - speaker
+      - panel
+      - facp
+      - sub-panel
+      - duct detector
+      - beam detector
+      - aspirating
+    examples: ["FACP", "Smoke Detector", "Horn/Strobe"]
+  - name: site
+    aliases:
+      - building
+      - floor
+      - level
+      - zone
+      - area
+      - device circuit
+      - notification circuit
+    examples: ["Building A", "Zone 3"]
+device_aliases:
+  fire_panel:
+    - facp
+    - fire alarm control panel
+    - fire alarm panel
+    - fire panel
+    - fire main panel
+    - networked panel
+    - notifier panel
+    - simplex panel
+    - edwards panel
+    - silent knight panel
+    - mircom panel
+    - autocall panel
+    - kidde panel
+    - gamewell panel
+  sub_panel:
+    - sub panel
+    - sub-panel
+    - intelligent expansion panel
+    - addressable expansion
+    - notification appliance circuit panel
+  smoke_detector:
+    - smoke detector
+    - smoke
+    - photoelectric
+    - photoelectric detector
+    - ionization detector
+    - addressable smoke
+    - intelligent smoke
+    - duct detector
+    - duct smoke detector
+  heat_detector:
+    - heat detector
+    - heat sensor
+    - rate of rise
+    - ror
+    - fixed temp detector
+  beam_detector:
+    - beam detector
+    - projected beam
+    - end-to-end beam
+  aspirating:
+    - aspirating detector
+    - vesda
+    - early warning detector
+    - air sampling detector
+  pull_station:
+    - pull station
+    - manual pull station
+    - manual pull
+    - fire pull
+    - dual action pull
+  horn_strobe:
+    - horn strobe
+    - horn/strobe
+    - hs
+    - notification appliance
+    - na
+    - chime strobe
+    - speaker strobe
+    - voice strobe
+  speaker:
+    - speaker
+    - notification speaker
+    - voice notification speaker
+    - 70v speaker
+  control_module:
+    - control module
+    - relay module
+    - hvac shutdown module
+    - elevator recall module
+    - door release module
+  monitor_module:
+    - monitor module
+    - addressable monitor
+    - waterflow monitor module
+    - tamper monitor module
+  power_supply:
+    - nac power supply
+    - nac booster
+    - nac extender
+    - nac panel
+  battery:
+    - battery
+    - sealed lead acid battery
+    - sla battery
+    - 12v battery
+    - 24v battery
+    - secondary power
+  dialer:
+    - dialer
+    - communicator
+    - cellular communicator
+    - ip communicator
+    - dual path communicator
+    - alarmnet
+    - aes radio
+  emt:
+    - emt
+    - 1/2 emt
+    - 3/4 emt
+    - rigid conduit
+    - fire alarm conduit
+  cable:
+    - fplp
+    - fplr
+    - 14/2 fplp
+    - 18/2 fplp
+    - red cable
+    - fire alarm cable
+site_alias_patterns:
+  - "zone\\s*\\d+"
+  - "loop\\s*\\d+"
+  - "circuit\\s*\\d+"
+  - "floor\\s*\\d+"
+  - "panel\\s*\\d+"
+action_aliases:
+  acceptance_test:
+    - acceptance test
+    - functional test
+    - pre-test
+    - pretest
+    - inspection test
+    - 100% functional test
+    - sensitivity test
+  programming:
+    - panel programming
+    - point programming
+    - device addressing
+    - download program
+  ahj:
+    - ahj coordination
+    - ahj inspection
+    - fire marshal coordination
+    - fire marshal inspection
+constraint_patterns:
+  ahj:
+    - ahj approval
+    - ahj jurisdiction
+    - permit required
+    - fire marshal permit
+    - permit by us
+    - permit by others
+  code:
+    - nfpa 72
+    - nfpa 70
+    - nfpa 13
+    - nfpa 25
+    - ibc 907
+    - ifc 907
+    - ada compliant
+    - ada strobes
+    - audibility
+    - intelligibility
+    - voice intelligibility
+    - stics
+  install:
+    - high reach
+    - lift required
+    - boom lift
+    - scissor lift
+    - aerial lift
+    - shutdown after hours
+    - night work
+    - hot work permit
+exclusion_patterns:
+  - by gc
+  - by ec
+  - by sprinkler vendor
+  - by mech contractor
+  - by hvac contractor
+  - by elevator contractor
+  - by others
+  - existing devices reuse
+  - existing wiring reuse
+  - existing panel reuse
+  - permit by others
+  - permit by gc
+  - smoke seals by others
+  - fire stopping by others
+  - fire stopping by gc
+  - patching by others
+  - paint by others
+  - patch and paint by others
+  - power to panel by ec
+  - 120v to panel by ec
+  - duct detector mounting by mech
+  - access panels by gc
+  - core drilling by gc
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add device
+  - please add zone
+  - please coordinate with ahj
+  - approved to proceed
+  - go ahead
+  - we want voice notification
+  - we want mass notification
+quantity_units:
+  count:
+    - devices
+    - zones
+    - circuits
+    - panels
+    - units
+    - ea
+artifact_role_patterns:
+  approved_site_roster:
+    - device_schedule
+    - device schedule
+    - point_list
+    - point list
+    - zone_list
+    - zone list
+  vendor_quote:
+    - notifier quote
+    - simplex quote
+    - kidde quote
+    - silent knight quote
+    - mircom quote
+  test_results:
+    - acceptance test
+    - record of completion
+    - functional test report
+    - certificate of approval
+risk_defaults:
+  fire_panel_unit_exposure: 14000
+  notification_appliance_unit_exposure: 280
+  smoke_detector_unit_exposure: 110
+  failed_dispatch_exposure: 600
+  unpriced_scope_default: 7500
+  missing_permit_exposure: 5000
+  missing_acceptance_test_exposure: 4500
+packet_family_hints:
+  vendor_mismatch:
+    - device count
+    - panel model mismatch
+  scope_exclusion:
+    - permit by others
+    - power to panel by ec
+    - access panels by gc
+  missing_info:
+    - ahj approval
+    - voice intelligibility
+    - acceptance test schedule
+    - secondary power

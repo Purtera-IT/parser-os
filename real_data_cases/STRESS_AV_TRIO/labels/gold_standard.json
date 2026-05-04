@@ -1,0 +1,47 @@
+{
+  "case_id": "STRESS_AV_TRIO",
+  "service_line": "av",
+  "recommended_domain_pack": "av_pack",
+  "bundle_summary": "3 AV RFPs spanning conference-services contract (ICMA, 4-year, 4-cities, 5-6K attendees) → boardroom remodel with Bosch DICENTIS BOD (Hayward, 38-line BOD) → multi-agency joint conference room with federal funding (AMBAG/MBARD).",
+  "stress_test_attributes": [
+    "customer_authored_BOD_with_38_line_items_hayward",
+    "narrative_only_no_quantities_ambag",
+    "service_only_contract_icma",
+    "bosch_dicentis_proprietary_product_family_16_skus",
+    "federal_funding_compliance_dbe_caltrans_fhwa_ambag",
+    "deadline_extension_via_strikethrough_ambag",
+    "multi_city_4_year_scope_icma",
+    "quantity_contradiction_5_directors_vs_7_voting_licenses_hayward",
+    "consulting_agreement_template_appended_hayward_attachment_d",
+    "empty_rate_card_pages_icma_pages_7_8_ambag_attachment_a"
+  ],
+  "expected_artifacts": [
+    {"filename": "icma_av_2025_2028_rfp.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 10, "expected_min_routing_confidence": 0.95},
+    {"filename": "hayward_boardroom_av_rfp.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 12, "expected_min_routing_confidence": 0.95},
+    {"filename": "ambag_mbard_av_addendum1.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 50, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 4,
+  "expected_min_distinct_sites": 5,
+  "expected_min_unique_vendors_referenced": 14,
+  "expected_min_atom_count": 250,
+  "expected_min_packet_count": 45,
+  "expected_min_constraint_atoms": 25,
+  "expected_min_compliance_atoms": 15,
+  "expected_min_unsupported_receipts": 10,
+  "expected_quantity_conflict_edges_within_artifact": 1,
+  "expected_quantity_conflict_edges_cross_customer": 0,
+  "per_artifact_gold_files": [
+    "gold_standard_icma.md",
+    "gold_standard_hayward.md",
+    "gold_standard_ambag.md"
+  ],
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "site_access",
+    "missing_info",
+    "meeting_decision",
+    "action_item"
+  ]
+}

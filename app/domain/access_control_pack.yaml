@@ -1,0 +1,281 @@
+pack_id: access_control
+name: Physical Access Control / PACS Pack
+version: "1.0.0"
+service_lines:
+  - access_control
+  - pacs
+  - door_security
+entity_types:
+  - name: device
+    aliases:
+      - reader
+      - controller
+      - panel
+      - strike
+      - lock
+      - rex
+      - request to exit
+      - door contact
+      - door position switch
+    examples: ["HID Reader", "Mercury Panel", "Mag Lock"]
+  - name: site
+    aliases:
+      - site
+      - building
+      - bldg
+      - floor
+      - door
+      - opening
+    examples: ["Bldg A", "Door 101"]
+  - name: door
+    aliases:
+      - door
+      - opening
+      - gate
+      - turnstile
+      - mantrap
+      - vestibule
+    examples: ["Door 101", "Main Lobby Mantrap"]
+device_aliases:
+  card_reader:
+    - reader
+    - card reader
+    - prox reader
+    - badge reader
+    - access reader
+    - hid reader
+    - hid signo
+    - hid iclass
+    - mobile reader
+    - mobile credential reader
+    - bluetooth reader
+    - mifare reader
+    - desfire reader
+    - osdp reader
+    - multi-format reader
+    - keypad reader
+    - keypad
+    - pin pad
+    - pinpad
+    - biometric reader
+    - fingerprint reader
+    - face reader
+    - facial reader
+    - palm reader
+  controller:
+    - access controller
+    - door controller
+    - access control panel
+    - acu
+    - intelligent controller
+    - mercury controller
+    - lenel controller
+    - software house controller
+    - ccure controller
+    - genetec synergis
+    - amag controller
+    - brivo controller
+  electric_strike:
+    - electric strike
+    - es
+    - 12vdc strike
+    - 24vdc strike
+    - electrified strike
+  mag_lock:
+    - mag lock
+    - maglock
+    - magnetic lock
+    - electromagnetic lock
+    - shear lock
+    - 600lb maglock
+    - 1200lb maglock
+  electrified_lockset:
+    - electrified mortise
+    - electrified cylindrical
+    - electrified lockset
+    - electrified panic bar
+    - exit device
+    - panic bar
+    - crash bar
+    - prox lock
+    - wireless lock
+    - aperio lock
+  rex_button:
+    - rex
+    - request to exit
+    - rex button
+    - rex sensor
+    - pir rex
+    - touch sensor rex
+    - push to exit
+    - exit button
+    - emergency exit
+  door_contact:
+    - door contact
+    - door position switch
+    - dps
+    - magnetic contact
+    - balanced contact
+    - high security contact
+  power_supply:
+    - power supply
+    - access power supply
+    - 12vdc power
+    - 24vdc power
+    - life safety relay
+    - lsr
+    - fai
+    - fire alarm interface
+  cable:
+    - 22/4
+    - 22/6
+    - 18/4
+    - 16/2
+    - access control cable
+    - composite cable
+    - osdp cable
+  enclosure:
+    - access control enclosure
+    - panel enclosure
+    - mercury enclosure
+    - powerbox
+  credential:
+    - credential
+    - card
+    - badge
+    - fob
+    - key fob
+    - mobile credential
+    - apple wallet credential
+    - google wallet credential
+    - hid mobile id
+site_alias_patterns:
+  - "door\\s*\\d+"
+  - "opening\\s*\\d+"
+  - "bldg\\s*[a-z]"
+  - "main[-_ ]lobby"
+action_aliases:
+  install_door:
+    - install door
+    - prep door
+    - prep opening
+    - certify opening
+  cabling:
+    - pull access cable
+    - run access cable
+    - terminate strike
+    - terminate reader
+  programming:
+    - program reader
+    - enroll reader
+    - assign door
+    - door schedule
+    - schedule access
+constraint_patterns:
+  fire_code:
+    - fire code
+    - life safety
+    - life-safety
+    - egress
+    - free egress
+    - delayed egress
+    - nfpa 80
+    - nfpa 101
+    - hardware listing
+    - ul listing
+  compliance:
+    - hipaa zone
+    - cjis
+    - ferpa
+    - nist 800-53
+    - tsa
+  access:
+    - escort required
+    - badge required
+    - mdf access
+    - secure room
+    - vault
+    - data hall
+exclusion_patterns:
+  - by door hardware vendor
+  - by dh vendor
+  - by gc
+  - by ec
+  - by general contractor
+  - by electrical contractor
+  - by locksmith
+  - by others
+  - existing reader reuse
+  - existing controller reuse
+  - existing strike reuse
+  - existing wiring reuse
+  - reader hardware by others
+  - lockset by others
+  - power supply by others
+  - rex by others
+  - cabling by others
+  - dps by others
+  - door prep by others
+  - software license by others
+  - subscription by others
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add door
+  - please remove door
+  - please integrate with vms
+  - please integrate with intercom
+  - approved to proceed
+  - go ahead
+  - we want osdp
+  - we want mobile credentials
+  - we want apple wallet
+quantity_units:
+  count:
+    - readers
+    - doors
+    - openings
+    - controllers
+    - panels
+    - units
+    - ea
+artifact_role_patterns:
+  approved_site_roster:
+    - door_schedule
+    - door schedule
+    - opening_schedule
+    - reader_schedule
+    - hardware_schedule
+  vendor_quote:
+    - access control quote
+    - lenel quote
+    - ccure quote
+    - genetec quote
+    - amag quote
+    - brivo quote
+    - openpath quote
+risk_defaults:
+  reader_unit_exposure: 350
+  controller_unit_exposure: 1500
+  strike_unit_exposure: 250
+  maglock_unit_exposure: 280
+  failed_dispatch_exposure: 450
+  unpriced_scope_default: 5500
+  missing_door_prep_exposure: 600
+  missing_life_safety_relay_exposure: 1500
+packet_family_hints:
+  vendor_mismatch:
+    - reader count
+    - controller count
+    - door count mismatch
+  scope_exclusion:
+    - door prep by others
+    - power supply by others
+    - lockset by others
+  missing_info:
+    - life safety
+    - osdp
+    - mobile credential
+    - integration

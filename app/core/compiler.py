@@ -13,7 +13,9 @@ from app.core.cache import (
 )
 from app.core.candidate_adjudicator import adjudicate_candidates
 from app.core.candidates import summarize_candidate_outcomes
+from app.core.entity_extraction import enrich_atoms as enrich_entity_keys
 from app.core.entity_resolution import extract_entity_records, resolve_aliases
+from app.core.quality_metrics import compute_quality
 from app.core.graph_builder import build_edges
 from app.core.ids import stable_id
 from app.core.manifest import (
@@ -37,12 +39,64 @@ from app.core.source_replay import attach_receipts_to_atoms, summarize_receipts
 from app.core.telemetry import CompileTelemetry
 from app.core.validators import validate_compile_result
 from app.domain import load_domain_pack, set_active_domain_pack
+from app.domain.pack_router import auto_route_pack
 from app.domain.schemas import DomainPack
 from app.learning.calibration import apply_calibration
 from app.parsers.parser_router import choose_parser
 
+# Atoms below this confidence are forced to needs_review with a stable flag.
+# Anything below the floor is too uncertain to govern a packet without a human
+# look — keep them in the result for transparency, but never let them ride into
+# active packets unchallenged.
+LOW_CONFIDENCE_FLOOR = 0.50
 
 _DERIVED_DIR_SUFFIXES = (".derived",)
+
+# Directory names that should never be walked for input artifacts.
+# These are project metadata / outputs from previous compiles, not
+# scope content.  See PRODUCTION_GAPS.md P1.6.
+_NON_ARTIFACT_DIRS = frozenset(
+    {
+        "labels",          # gold standards / human-curated review labels
+        ".orbitbrief",     # OrbitBrief envelope outputs from prior compiles
+        ".cache",          # generic cache dir
+        ".git",            # vcs metadata
+        ".github",
+        ".vscode",
+        ".idea",
+        "node_modules",
+        "__pycache__",
+    }
+)
+
+# File names (case-insensitive) that should never be parsed as artifacts.
+# These are project metadata or known output sentinels.
+_NON_ARTIFACT_FILES = frozenset(
+    {
+        "source_notes.md",       # case-level provenance notes
+        "readme.md",             # project README
+        "license",
+        "license.md",
+        "license.txt",
+        ".gitignore",
+        ".gitattributes",
+        "thumbs.db",
+        ".ds_store",
+        "project.yaml",          # parser-os project config (read separately)
+        "project.yml",
+        ".parserignore",         # ignore-pattern list
+    }
+)
+
+# File-name patterns (case-insensitive substring) that mark gold/review
+# files which must never be parsed as scope content.
+_NON_ARTIFACT_PATTERNS = (
+    "gold_standard",
+    ".gold.",
+    "_gold.",
+    "_review.",
+    ".review.",
+)
 
 
 def _materialize_derived_files(
@@ -96,15 +150,101 @@ def _is_derived_path(path: Path, project_dir: Path) -> bool:
     )
 
 
+def _is_excluded_artifact(path: Path, project_dir: Path) -> bool:
+    """Return True when ``path`` should never be parsed as an artifact.
+
+    Excludes project metadata (`labels/`, `SOURCE_NOTES.md`,
+    `project.yaml`), VCS / IDE dirs, and gold-standard files that
+    accompany the corpus but aren't scope content.  See PRODUCTION_GAPS
+    P1.6.
+    """
+    try:
+        rel = path.relative_to(project_dir)
+    except ValueError:
+        return False
+    parts = rel.parts
+    # Any ancestor directory in the no-walk list?
+    for part in parts[:-1]:
+        if part.lower() in _NON_ARTIFACT_DIRS:
+            return True
+    name_lower = path.name.lower()
+    if name_lower in _NON_ARTIFACT_FILES:
+        return True
+    for pattern in _NON_ARTIFACT_PATTERNS:
+        if pattern in name_lower:
+            return True
+    return False
+
+
+def _read_parserignore(project_dir: Path) -> list[str]:
+    """Read ``<project>/.parserignore`` glob patterns if present.
+
+    Returns lowercased glob patterns; ``#`` comments and blank lines
+    are skipped.  Honors ``project.yaml``'s ``parserignore_extra`` too
+    so operators can keep ignore rules in one config file.
+    """
+    patterns: list[str] = []
+    ignore_path = project_dir / ".parserignore"
+    if ignore_path.is_file():
+        try:
+            for line in ignore_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                patterns.append(stripped.lower())
+        except Exception:  # pragma: no cover — never fail compile on ignore read
+            pass
+    # project.yaml extras — silently merged so a missing /.parserignore
+    # doesn't matter.
+    try:
+        from app.domain.project_config import load_project_config
+
+        cfg = load_project_config(project_dir)
+        if cfg is not None and cfg.parserignore_extra:
+            patterns.extend(p.strip().lower() for p in cfg.parserignore_extra if p and p.strip())
+    except Exception:  # pragma: no cover — config load errors shouldn't kill compile
+        pass
+    return patterns
+
+
+def _matches_ignore_pattern(rel_path: str, patterns: list[str]) -> bool:
+    if not patterns:
+        return False
+    from fnmatch import fnmatch
+
+    rel_lower = rel_path.replace("\\", "/").lower()
+    for pattern in patterns:
+        if fnmatch(rel_lower, pattern) or fnmatch("/" + rel_lower, pattern):
+            return True
+    return False
+
+
 def _iter_artifacts(project_dir: Path) -> list[Path]:
-    return sorted(
-        [
-            p
-            for p in project_dir.rglob("*")
-            if p.is_file() and not _is_derived_path(p, project_dir)
-        ],
-        key=lambda p: str(p).lower(),
-    )
+    ignore_patterns = _read_parserignore(project_dir)
+    results: list[Path] = []
+    # Prefer a dedicated `artifacts/` subdir if one exists — this is the
+    # canonical "this is real scope content" convention used across the
+    # STRESS_* corpus.  When present, walk only that subtree.
+    artifacts_dir = project_dir / "artifacts"
+    if artifacts_dir.is_dir():
+        walk_root = artifacts_dir
+    else:
+        walk_root = project_dir
+    for path in walk_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if _is_derived_path(path, project_dir):
+            continue
+        if _is_excluded_artifact(path, project_dir):
+            continue
+        try:
+            rel = str(path.relative_to(project_dir))
+        except ValueError:
+            rel = path.name
+        if _matches_ignore_pattern(rel, ignore_patterns):
+            continue
+        results.append(path)
+    return sorted(results, key=lambda p: str(p).lower())
 
 
 def compile_project(
@@ -123,10 +263,25 @@ def compile_project(
         raise FileNotFoundError(f"Project path does not exist: {project_dir}")
 
     resolved_project_id = project_id or project_dir.name
-    resolved_domain_pack = domain_pack if isinstance(domain_pack, DomainPack) else load_domain_pack(domain_pack)
+    if isinstance(domain_pack, DomainPack):
+        # Pre-loaded pack from caller wins outright (e.g. tests)
+        resolved_domain_pack = domain_pack
+        pack_routing_decision = None
+    else:
+        # Pack auto-routing: explicit `--domain-pack` overrides; otherwise
+        # we look at project.yaml → SOURCE_NOTES.md → content scoring.
+        # See PRODUCTION_GAPS.md P0.1.
+        resolved_domain_pack, pack_routing_decision = auto_route_pack(
+            project_dir, explicit=domain_pack
+        )
     set_active_domain_pack(resolved_domain_pack)
     telemetry = CompileTelemetry(project_id=resolved_project_id)
     warnings: list[str] = []
+    if pack_routing_decision is not None:
+        warnings.append(
+            f"INFO: domain pack '{resolved_domain_pack.pack_id}' selected via "
+            f"{pack_routing_decision.source} ({pack_routing_decision.rationale})"
+        )
     if resolved_domain_pack.reference_ontology_path:
         warnings.append(
             "WARNING: Domain pack uses reference-schema subset adapter (TODO: strict DomainPack mapper); "
@@ -298,6 +453,43 @@ def compile_project(
             warnings.extend(replay_warnings)
         telemetry.end_stage(stage, output_count=len(atoms), warnings=replay_warnings)
 
+    # Hardening: enforce a confidence floor so atoms whose extractor was very
+    # uncertain can't quietly govern packets.  We intentionally don't drop the
+    # atoms — OrbitBrief still benefits from seeing them — we just refuse to
+    # trust them without a human in the loop.
+    floor_warnings: list[str] = []
+    with telemetry.stage("confidence_floor", input_count=len(atoms)) as stage:
+        floored = 0
+        from app.core.schemas import ReviewStatus  # local import keeps top of file tidy
+        for atom in atoms:
+            if atom.confidence < LOW_CONFIDENCE_FLOOR:
+                if atom.review_status != ReviewStatus.needs_review:
+                    atom.review_status = ReviewStatus.needs_review
+                if "low_confidence_floor" not in atom.review_flags:
+                    atom.review_flags = sorted(set(atom.review_flags + ["low_confidence_floor"]))
+                floored += 1
+        if floored:
+            floor_warnings.append(
+                f"WARNING: {floored} atoms below confidence floor {LOW_CONFIDENCE_FLOOR:.2f} forced to needs_review"
+            )
+            warnings.extend(floor_warnings)
+        telemetry.end_stage(stage, output_count=floored, warnings=floor_warnings)
+
+    enrich_warnings: list[str] = []
+    with telemetry.stage("enrich_entities", input_count=len(atoms)) as stage:
+        # Universal entity extraction — populates atom.entity_keys for any
+        # atom whose parser hardcoded an empty list.  Without this, the
+        # downstream graph_builder anchors land on `device:unknown` and
+        # quantity_conflict edges never form.  See PRODUCTION_GAPS.md P0.2.
+        atoms_enriched, keys_added = enrich_entity_keys(atoms, resolved_domain_pack)
+        if atoms_enriched:
+            enrich_warnings.append(
+                f"INFO: enriched {atoms_enriched} atoms with {keys_added} entity keys "
+                f"(parser-supplied entity_keys preserved)"
+            )
+        telemetry.end_stage(stage, output_count=atoms_enriched, warnings=enrich_warnings)
+    warnings.extend(enrich_warnings)
+
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
@@ -367,6 +559,13 @@ def compile_project(
                 warning = f"WARNING: Failed to apply calibrator {calibrator_path}: {exc}"
                 result.warnings = sorted(set(result.warnings + [warning]))
                 telemetry.end_stage(stage, output_count=len(result.packets), warnings=[warning], errors=[])
+    # Finalize the manifest (including output_signature) BEFORE quality gates so
+    # the validator doesn't fire a spurious "missing output_signature" warning
+    # on every compile.  output_signature is content-addressed over the result
+    # pre-validation; validation messages are excluded from the signature so a
+    # warning later doesn't recursively change the signature.
+    output_signature = compute_output_signature(result)
+    result.manifest = finalize_manifest(manifest, output_signature)
     with telemetry.stage("quality_gates", input_count=len(result.packets)) as stage:
         validation_messages = validate_compile_result(result, source_files_available=True)
         hard_errors = [m for m in validation_messages if m.startswith("ERROR:")]
@@ -385,8 +584,6 @@ def compile_project(
             )
         hard_errors = [m for m in hard_errors if "receipt" not in m.lower()]
     result.warnings = sorted(set(result.warnings + validation_warnings))
-    output_signature = compute_output_signature(result)
-    result.manifest = finalize_manifest(manifest, output_signature)
 
     if persistence_hook is not None:
         with telemetry.stage("persistence", input_count=1) as stage:
@@ -409,4 +606,58 @@ def compile_project(
         raise ValueError("Compile validation failed:\n" + "\n".join(hard_errors))
     if hard_errors and allow_errors:
         result.warnings = sorted(set(result.warnings + hard_errors))
+
+    # PRODUCTION_GAPS P3.4 / P3.5: compute quality metrics + fail-loud
+    # warnings.  Metrics are deterministic over the finalized result so
+    # they're safe to surface in the JSON output and as telemetry.
+    routing_source = "unknown"
+    routing_confidence_value = 0.0
+    if pack_routing_decision is not None:
+        routing_source = pack_routing_decision.source
+        routing_confidence_value = pack_routing_decision.confidence
+    result.quality = compute_quality(
+        result,
+        pack_routing_source=routing_source,
+        pack_routing_confidence=routing_confidence_value,
+    )
+
+    # Fail-loud: a parser that successfully routed a file but produced
+    # zero atoms is a regression signal (XLSX header detection bug,
+    # PDF table extraction failure, etc.).  We surface a clear ERROR-
+    # adjacent warning so operators see it without diffing JSON.
+    if result.quality.parsers_with_zero_atoms:
+        names = ", ".join(result.quality.parsers_with_zero_atoms[:5])
+        suffix = (
+            f" (and {len(result.quality.parsers_with_zero_atoms) - 5} more)"
+            if len(result.quality.parsers_with_zero_atoms) > 5 else ""
+        )
+        result.warnings = sorted(
+            set(
+                result.warnings
+                + [f"WARNING: parser produced 0 atoms for: {names}{suffix}"]
+            )
+        )
+    if result.quality.entity_resolution_rate < 0.30 and result.quality.atom_count >= 20:
+        result.warnings = sorted(
+            set(
+                result.warnings
+                + [
+                    f"WARNING: low entity_resolution_rate "
+                    f"({result.quality.entity_resolution_rate:.2f}); "
+                    "atoms aren't getting entity_keys — review pack vocabulary"
+                ]
+            )
+        )
+    if result.quality.packet_specificity < 0.50 and result.quality.packet_count >= 5:
+        result.warnings = sorted(
+            set(
+                result.warnings
+                + [
+                    f"WARNING: low packet_specificity "
+                    f"({result.quality.packet_specificity:.2f}); "
+                    "many packets anchor on `*:unknown` — review entity extraction"
+                ]
+            )
+        )
+
     return result

@@ -7,10 +7,29 @@ from app.core.normalizers import normalize_text
 from app.core.schemas import AnchorSignature, AtomType, EvidenceAtom, PacketFamily
 
 
+# Cap topic-slug length so anchor_keys derived from a long Q&A
+# transcript or vendor line don't end up as 800-char monstrosities in
+# the OrbitBrief envelope.  We keep enough leading words to remain
+# human-readable + a short hash suffix to keep distinct topics
+# distinct.  See PRODUCTION_GAPS Week 6 P6.5.
+_MAX_TOPIC_SLUG_LEN = 80
+
+
 def _topic_slug(text: str) -> str:
     normalized = normalize_text(text)
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
-    return slug or "unknown"
+    if not slug:
+        return "unknown"
+    if len(slug) <= _MAX_TOPIC_SLUG_LEN:
+        return slug
+    # Truncate at the last underscore before the cap so we never split
+    # mid-word; append a 6-hex suffix derived from the *full* slug so
+    # two distinct long inputs don't collide on their shared prefix.
+    truncate_at = slug.rfind("_", 0, _MAX_TOPIC_SLUG_LEN - 7)
+    if truncate_at < 30:
+        truncate_at = _MAX_TOPIC_SLUG_LEN - 7
+    suffix = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:6]
+    return f"{slug[:truncate_at].rstrip('_')}_{suffix}"
 
 
 def _best_site_key(atoms: list[EvidenceAtom], prioritize_exclusion_text: bool = False) -> str:

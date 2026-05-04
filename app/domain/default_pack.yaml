@@ -1,45 +1,667 @@
 pack_id: default_pack
 name: Default Cross-domain Pack
-version: "1.0.0"
+version: "2.0.0"
 service_lines:
   - default
 entity_types:
   - name: site
-    aliases: [site, location, campus, building]
-    examples: ["Main Campus", "West Wing"]
+    aliases:
+      - site
+      - location
+      - campus
+      - building
+      - bldg
+      - facility
+      - venue
+      - store
+      - branch
+      - school
+      - office
+      - plant
+      - clinic
+      - hospital
+      - data center
+      - dc
+      - warehouse
+      - distribution center
+    examples: ["Main Campus", "West Wing", "Site 101", "DC1"]
+  - name: floor
+    aliases:
+      - floor
+      - level
+      - story
+      - storey
+      - fl
+      - lvl
+      - mezzanine
+      - basement
+      - rooftop
+      - roof
+      - penthouse
+      - ground floor
+    examples: ["Floor 1", "Level 2", "Mezzanine", "Rooftop"]
+  - name: room
+    aliases:
+      - room
+      - rm
+      - suite
+      - office
+      - lab
+      - classroom
+      - mdf
+      - idf
+      - tr
+      - telecom room
+      - electrical room
+      - server room
+      - mechanical room
+      - mech room
+      - utility room
+      - closet
+      - data closet
+      - communications closet
+    examples: ["MDF", "IDF-1", "Suite 200", "Server Room A"]
   - name: device
-    aliases: [device, equipment, asset]
-    examples: ["IP Camera", "Access Point"]
+    aliases:
+      - device
+      - equipment
+      - asset
+      - unit
+      - hardware
+      - endpoint
+      - end point
+    examples: ["IP Camera", "Access Point", "Switch", "Reader"]
+  - name: vendor
+    aliases:
+      - vendor
+      - subcontractor
+      - sub
+      - contractor
+      - oem
+      - manufacturer
+      - reseller
+      - integrator
+      - msp
+      - third party
+      - third-party
+      - by others
+    examples: ["Acme Cabling Co", "ABC Electric"]
+  - name: customer
+    aliases:
+      - customer
+      - client
+      - owner
+      - end user
+      - end-user
+      - tenant
+      - district
+      - school district
+      - chain
+    examples: ["West Region District"]
 device_aliases:
-  ip_camera: ["IP Camera", "IP Cameras", "camera", "cameras", "cam", "CCTV", "security camera", "ip cam", "ip cams"]
-  access_point: ["AP", "APs", "access point", "wireless access point"]
-  switch: ["switch", "PoE switch"]
+  ip_camera:
+    - IP Camera
+    - IP Cameras
+    - camera
+    - cameras
+    - cam
+    - cams
+    - CCTV
+    - cctv camera
+    - security camera
+    - surveillance camera
+    - ip cam
+    - ip cams
+    - dome camera
+    - bullet camera
+    - ptz
+    - ptz camera
+    - fixed camera
+    - varifocal camera
+    - thermal camera
+    - panoramic camera
+    - 360 camera
+    - fisheye camera
+  access_point:
+    - AP
+    - APs
+    - access point
+    - access points
+    - wireless access point
+    - wap
+    - wifi ap
+    - wi-fi ap
+    - wifi access point
+    - indoor ap
+    - outdoor ap
+  switch:
+    - switch
+    - switches
+    - PoE switch
+    - poe switch
+    - poe+ switch
+    - poe++ switch
+    - core switch
+    - access switch
+    - distribution switch
+    - top of rack switch
+    - tor switch
+    - managed switch
+    - layer 2 switch
+    - layer 3 switch
+  router:
+    - router
+    - edge router
+    - core router
+    - sd-wan
+    - sdwan
+    - sd-wan appliance
+  firewall:
+    - firewall
+    - fw
+    - ngfw
+    - next-gen firewall
+    - utm
+    - utm appliance
+  card_reader:
+    - reader
+    - card reader
+    - prox reader
+    - badge reader
+    - access reader
+    - hid reader
+    - mobile reader
+    - multi-format reader
+  controller:
+    - controller
+    - access controller
+    - door controller
+    - access control panel
+    - panel
+  electric_strike:
+    - electric strike
+    - strike
+    - mag lock
+    - maglock
+    - magnetic lock
+    - electric lock
+  motion_sensor:
+    - motion sensor
+    - motion detector
+    - pir
+    - pir sensor
+    - dual tech sensor
+  smoke_detector:
+    - smoke detector
+    - smoke sensor
+    - photoelectric detector
+    - ionization detector
+    - heat detector
+  pull_station:
+    - pull station
+    - manual pull station
+    - fire pull
+  horn_strobe:
+    - horn strobe
+    - horn/strobe
+    - notification appliance
+    - chime strobe
+    - speaker strobe
+  fire_panel:
+    - fire panel
+    - facp
+    - fire alarm control panel
+    - fire alarm panel
+  speaker:
+    - speaker
+    - ceiling speaker
+    - pendant speaker
+    - in-ceiling speaker
+    - paging speaker
+    - horn speaker
+    - sound mask speaker
+  microphone:
+    - microphone
+    - mic
+    - paging mic
+    - ceiling mic
+    - lavalier mic
+    - boundary mic
+  display:
+    - display
+    - tv
+    - monitor
+    - lcd
+    - led display
+    - video wall
+    - touchscreen
+    - touch panel
+    - signage
+    - digital signage
+  projector:
+    - projector
+    - laser projector
+  videoconferencing_codec:
+    - codec
+    - vc codec
+    - room kit
+    - mtr kit
+    - zoom room kit
+    - teams room kit
+    - vc bar
+    - video bar
+    - codec plus
+    - codec pro
+  ups:
+    - ups
+    - battery backup
+    - rack ups
+  rack:
+    - rack
+    - cabinet
+    - server rack
+    - 42u rack
+    - 48u rack
+    - 24u rack
+  workstation:
+    - workstation
+    - pc
+    - desktop
+    - laptop
+    - notebook
+    - thin client
+    - chromebook
+  server:
+    - server
+    - rack server
+    - blade server
+    - 1u server
+    - 2u server
+    - hyperconverged
+    - hci
 site_alias_patterns:
   - "west[-_ ]wing"
-  - "bldg a west"
-  - "main campus north"
+  - "east[-_ ]wing"
+  - "north[-_ ]wing"
+  - "south[-_ ]wing"
+  - "main[-_ ]campus"
+  - "main[-_ ]building"
+  - "bldg [a-z]"
+  - "building [a-z]"
+  - "site\\s*\\d+"
+  - "store\\s*#?\\d+"
+  - "branch\\s*#?\\d+"
+  - "school\\s*\\d+"
+  - "dc\\s*\\d+"
+  - "data\\s*center\\s*\\d+"
 action_aliases:
-  provide_access: ["provide access", "grant access", "arrange access"]
+  provide_access:
+    - provide access
+    - grant access
+    - arrange access
+    - coordinate access
+    - escort to
+    - allow access
+  provide_lift:
+    - provide lift
+    - rent lift
+    - lift will be provided
+    - lift access provided
+    - boom lift available
+  confirm:
+    - please confirm
+    - confirm with
+    - need confirmation
+    - awaiting confirmation
+    - tbd
+    - tbc
+  procure:
+    - order
+    - purchase
+    - procure
+    - rfq
+    - issue po
+  schedule:
+    - schedule
+    - reschedule
+    - mobilize
+    - kick off
+    - start onsite
+    - go live
+  decommission:
+    - remove
+    - decommission
+    - retire
+    - dispose
 constraint_patterns:
-  access: ["escort required", "badge required", "after hours", "loading dock", "weekdays"]
+  access:
+    - escort required
+    - escort needed
+    - escort only
+    - badge required
+    - badge access
+    - background check
+    - background check required
+    - drug screening
+    - after hours
+    - after-hours
+    - night work
+    - weekends
+    - weekend work
+    - weekdays
+    - business hours
+    - work window
+    - access window
+    - maintenance window
+    - downtime window
+    - blackout window
+    - loading dock
+    - lift required
+    - boom lift
+    - scissor lift
+    - high reach
+    - aerial lift
+    - elevated work platform
+    - ceiling access
+    - overhead access
+    - mdf access
+    - idf access
+    - secure facility
+    - secure room
+    - clean room
+    - clean room protocol
+    - hipaa training
+    - osha required
+  safety:
+    - hot work permit
+    - hot-work permit
+    - permit required
+    - work permit
+    - lock out tag out
+    - loto
+    - confined space
+    - fall protection
+    - harness required
+    - hard hat required
+    - ppe required
+    - osha 10
+    - osha 30
+  environmental:
+    - asbestos
+    - lead paint
+    - hazmat
+    - chemical exposure
+  schedule:
+    - critical path
+    - phased install
+    - phased rollout
+    - shutdown window
+    - non-disruptive
+    - production hours
+    - patient care hours
+    - student hours
+    - retail hours
+  compliance:
+    - prevailing wage
+    - davis-bacon
+    - union labor
+    - union shop
+    - bonded
+    - certified payroll
+    - mbe
+    - wbe
+    - dbe
+    - small business set aside
+    - cmmc
+    - nist 800-171
+    - hipaa
+    - pci
+    - ferpa
+    - cjis
+    - sox
 exclusion_patterns:
-  - "out of scope"
-  - "remove from scope"
-  - "do not include"
+  - out of scope
+  - outside scope
+  - not in scope
+  - remove from scope
+  - do not include
+  - excluded
+  - exclude from
+  - by others
+  - by gc
+  - by general contractor
+  - by owner
+  - by ec
+  - by electrical contractor
+  - by tenant
+  - by landlord
+  - nic
+  - n.i.c
+  - not included
+  - not provided
+  - not furnished
+  - not in our scope
+  - not part of this proposal
+  - not part of base bid
+  - alternate
+  - alt #
+  - allowance
+  - allowance only
+  - tbd
+  - to be determined
+  - future scope
+  - future phase
+  - phase 2
+  - phase ii
+  - phase three
+  - if requested
+  - upon request
+  - placeholder
+  - assumed not required
+  - demo only
+  - existing to remain
+  - etr
+  - reuse existing
+  - relocate existing
+  - retro to be priced separately
+  - separately quoted
+  - per change order
+  - change order required
 customer_instruction_patterns:
-  - "please remove"
-  - "please add"
-  - "go ahead"
+  - please remove
+  - please add
+  - please include
+  - please provide
+  - please install
+  - please coordinate
+  - please confirm
+  - please update
+  - please replace
+  - please relocate
+  - go ahead
+  - approved to proceed
+  - proceed with
+  - we approve
+  - we agree
+  - we want
+  - we need
+  - kindly add
+  - kindly remove
+  - hold off
+  - put on hold
+  - cancel
+  - cancel scope
+  - revise scope
+  - reduce scope
+  - increase scope
+  - lock in pricing
+  - lock pricing
+  - move forward
 quantity_units:
-  count: ["ea", "each", "units", "count"]
+  count:
+    - ea
+    - each
+    - units
+    - count
+    - qty
+    - pcs
+    - pieces
+    - pack
+    - pair
+    - sets
+  length:
+    - lf
+    - lin ft
+    - linear feet
+    - linear foot
+    - ft
+    - feet
+    - yds
+    - yards
+    - m
+    - meter
+    - meters
+  area:
+    - sf
+    - sq ft
+    - square feet
+    - square foot
+  weight:
+    - lb
+    - lbs
+    - pound
+    - pounds
+    - kg
+  time:
+    - hr
+    - hrs
+    - hour
+    - hours
+    - day
+    - days
+    - week
+    - weeks
+  rate:
+    - per drop
+    - per device
+    - per port
+    - per camera
+    - per ap
+    - per door
 artifact_role_patterns:
-  quote: ["quote", "vendor", "pricing"]
+  approved_site_roster:
+    - site_list
+    - site roster
+    - drop_schedule
+    - drop schedule
+    - cable_schedule
+    - cable schedule
+    - device_schedule
+    - device schedule
+    - room_schedule
+    - room schedule
+    - floor_plan_extract
+    - addendum_schedule
+    - bom
+    - bill_of_material
+    - bill of material
+    - bill of materials
+  current_addendum:
+    - addendum
+    - clarification
+    - bulletin
+    - revision
+    - rfi_response
+    - scope_clarification
+  formal_rfp:
+    - rfp
+    - bid
+    - solicitation
+    - specification
+    - specs
+    - scope
+    - itb
+  formal_sow:
+    - sow
+    - statement_of_work
+    - scope_of_work
+    - work_order
+  vendor_quote:
+    - quote
+    - quotation
+    - vendor
+    - vendor_quote
+    - po
+    - purchase_order
+    - pricing
+    - material_quote
+    - estimate
+  customer_current_authored:
+    - customer_email
+    - scope_email
+    - clarification_email
+    - access_email
+    - approval_email
+    - rfi
+  meeting_note:
+    - kickoff
+    - meeting
+    - transcript
+    - notes
+    - walkthrough
+    - site_walk
+    - design_review
+    - turnover
+  test_results:
+    - fluke
+    - dsx
+    - linkiq
+    - certification
+    - test_result
+    - test results
+    - wiremap
+    - closeout
 risk_defaults:
   ip_camera_unit_exposure: 300
   access_point_unit_exposure: 250
   switch_unit_exposure: 500
+  reader_unit_exposure: 350
+  controller_unit_exposure: 1500
+  fire_panel_unit_exposure: 12000
+  display_unit_exposure: 1500
+  vc_codec_unit_exposure: 8000
+  cable_drop_unit_exposure: 220
   failed_dispatch_exposure: 400
   unpriced_scope_default: 5000
+  missing_certification_exposure: 2500
+  scope_pollution_default: 1500
 packet_family_hints:
-  quantity_conflict: ["quantity mismatch", "does not match"]
-  scope_exclusion: ["exclude", "out of scope", "remove from scope"]
+  quantity_conflict:
+    - quantity mismatch
+    - does not match
+    - vs vendor
+    - bid quantity
+    - delta of
+  scope_exclusion:
+    - exclude
+    - out of scope
+    - remove from scope
+    - by others
+    - nic
+  vendor_mismatch:
+    - vendor quote quantity
+    - vendor quote does not
+    - vendor exceeds
+    - vendor short by
+  site_access:
+    - escort
+    - badge
+    - lift
+    - after hours
+    - work window
+  missing_info:
+    - confirm
+    - tbd
+    - clarification
+    - allowance
+    - if requested

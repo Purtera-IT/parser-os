@@ -1,12 +1,40 @@
 pack_id: security_camera
-name: Security Camera Pack
-version: "1.0.0"
+name: Security Camera / Video Surveillance Pack
+version: "2.0.0"
 service_lines:
   - security_camera
+  - video_surveillance
+  - vms
 entity_types:
   - name: device
-    aliases: [camera, cctv, recorder]
-    examples: ["IP Camera", "NVR"]
+    aliases:
+      - camera
+      - cctv
+      - recorder
+      - encoder
+      - decoder
+      - monitor
+      - vms
+      - workstation
+    examples: ["IP Camera", "NVR", "VMS Server"]
+  - name: site
+    aliases:
+      - site
+      - building
+      - bldg
+      - campus
+      - store
+      - branch
+    examples: ["Main Campus", "Store 14"]
+  - name: room
+    aliases:
+      - mdf
+      - idf
+      - dispatch
+      - control room
+      - server room
+      - guard shack
+    examples: ["MDF", "Dispatch Room"]
 device_aliases:
   ip_camera:
     - IP Camera
@@ -14,37 +42,261 @@ device_aliases:
     - camera
     - cameras
     - cam
+    - cams
     - CCTV
+    - cctv camera
     - security camera
+    - surveillance camera
+    - dome camera
+    - mini dome
+    - bullet camera
+    - bullet cam
+    - ptz
+    - ptz camera
+    - fixed camera
+    - varifocal camera
+    - thermal camera
+    - thermal cam
+    - panoramic camera
+    - 360 camera
+    - fisheye camera
+    - multi-sensor camera
+    - multisensor camera
+    - lpr camera
+    - license plate camera
+    - covert camera
+    - corner mount camera
+    - pinhole camera
+    - body camera
+    - bodycam
   nvr:
     - NVR
     - recorder
     - video recorder
+    - network video recorder
+    - hybrid recorder
+    - dvr
+    - digital video recorder
+    - xvr
+  vms_server:
+    - VMS
+    - vms server
+    - video management server
+    - vms host
+    - milestone server
+    - genetec server
+    - avigilon server
+    - exacqvision server
+    - hanwha wave server
+  vms_client:
+    - vms client
+    - operator workstation
+    - dispatch workstation
+    - guard workstation
+    - viewing workstation
+    - decoder
+    - video wall decoder
+  monitor:
+    - monitor
+    - operator monitor
+    - video wall monitor
+    - cctv monitor
+  storage:
+    - storage
+    - storage array
+    - jbod
+    - san
+    - storage server
+    - archive server
+  switch:
+    - poe switch
+    - camera switch
+    - poe+ switch
+    - poe++ switch
+  power_supply:
+    - midspan
+    - poe injector
+    - midspan injector
+    - power supply
+    - 24vac power
+    - dc power supply
+  ups:
+    - UPS
+    - ups unit
+    - ups units
+    - uninterruptible power supply
+    - uninterruptable power supply
+    - battery backup
+    - rack ups
+    - rackmount ups
+    - backup ups
+    - online ups
+    - line interactive ups
+  housing:
+    - camera housing
+    - environmental housing
+    - dome housing
+    - heater
+    - blower
+    - sun shield
+  mount:
+    - wall mount
+    - corner mount
+    - pole mount
+    - ceiling mount
+    - pendant mount
+    - parapet mount
+    - junction box
+    - jbox
+    - electrical box
+  license:
+    - vms license
+    - camera license
+    - recording license
+    - analytics license
+    - per-camera license
+    - lpr license
+    - face license
+    - access integration license
 site_alias_patterns:
-  - "west[-_ ]wing"
+  - "store\\s*#?\\d+"
+  - "branch\\s*#?\\d+"
+  - "main[-_ ]campus"
+  - "guard\\s*shack"
+  - "loading\\s*dock"
+  - "dispatch\\s*room"
 action_aliases:
   provide_lift_access:
     - provide lift access
+    - boom lift available
+    - scissor lift available
+    - lift will be on site
+  align_camera:
+    - align camera
+    - aim camera
+    - point camera
+    - re-aim
+    - re-aim camera
+    - field of view confirmation
+    - fov confirmation
+  cabling:
+    - pull cable
+    - run cable
+    - terminate jack
+    - install jack
+    - install drop
+    - terminate camera
 constraint_patterns:
   access:
     - escort required
-    - after hours
     - badge required
-    - loading dock
+    - after hours
+    - night work
+    - retail hours
+    - patient care hours
+    - student hours
+    - mdf access
+    - idf access
+    - rooftop access
+    - parapet access
+    - exterior work
+    - exterior camera
+    - exterior install
+    - hazmat
+    - confined space
+  height:
+    - ceiling height
+    - high ceiling
+    - parapet
+    - rooftop install
+    - elevated mount
+    - lift required
+  retention:
+    - 30 day retention
+    - 60 day retention
+    - 90 day retention
+    - retention period
+    - days of retention
+  privacy:
+    - privacy mask
+    - privacy zone
+    - blurred zone
+    - hipaa zone
+    - audio off
 exclusion_patterns:
   - out of scope
-  - remove from scope
-  - do not include
+  - not in scope
+  - by others
+  - by gc
+  - nic
+  - not included
+  - allowance
+  - alternate
+  - tbd
+  - existing camera reuse
+  - existing cabling reuse
+  - power by others
+  - mounting hardware by others
+  - lift by others
+  - storage by others
+  - vms license by others
+  - integration by others
 customer_instruction_patterns:
   - please remove
-  - please include
+  - please add
+  - please relocate
+  - please replace
+  - please integrate with
+  - please integrate to
+  - approved to proceed
+  - go ahead
 quantity_units:
-  count: [ea, each, cameras]
+  count:
+    - ea
+    - each
+    - cameras
+    - cams
+    - units
+  storage:
+    - tb
+    - terabyte
+    - terabytes
+    - days retention
 artifact_role_patterns:
-  quote: ["camera quote", "camera pricing"]
+  approved_site_roster:
+    - camera_count
+    - camera count
+    - camera_schedule
+    - bom_cameras
+  vendor_quote:
+    - camera quote
+    - camera pricing
+    - vms quote
+    - vms pricing
+    - genetec
+    - milestone
+    - avigilon
+    - hanwha
+    - axis
 risk_defaults:
-  ip_camera_unit_exposure: 300
-  failed_dispatch_exposure: 400
-  unpriced_scope_default: 5000
+  ip_camera_unit_exposure: 350
+  failed_dispatch_exposure: 450
+  unpriced_scope_default: 5500
+  missing_storage_exposure: 4000
+  missing_vms_license_exposure: 1200
 packet_family_hints:
-  vendor_mismatch: ["vendor quote quantity"]
+  vendor_mismatch:
+    - vendor quote quantity
+    - vendor exceeds count
+  quantity_conflict:
+    - camera count mismatch
+    - delta of
+  scope_exclusion:
+    - lift by others
+    - power by others
+    - vms by others
+  missing_info:
+    - retention
+    - integration
+    - lpr
+    - analytics license

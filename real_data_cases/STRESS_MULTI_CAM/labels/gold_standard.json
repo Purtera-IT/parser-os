@@ -1,0 +1,43 @@
+{
+  "case_id": "STRESS_MULTI_CAM",
+  "service_line": "security_camera",
+  "recommended_domain_pack": "security_camera_pack",
+  "bundle_summary": "3 simultaneously-active public-safety/security camera RFPs from Milwaukee (DNC 2020 pole cameras + ALPR), Chicago Housing Authority (5,288 + 1,674 + 800 cameras across 216+ sites, 3-year), and Santa Monica (video analytics platform overlay on existing Genetec VMS, 100-400 investigative + 50-200 real-time licenses). Genetec is the shared vendor across all three.",
+  "stress_test_attributes": [
+    "same_vendor_genetec_across_3_customers",
+    "massive_scope_variance_50_vs_7762_vs_0_new_cameras",
+    "three_procurement_portals_bonfire_supplier_opengov",
+    "three_funding_sources_doj_bja_hud_ca_state_grant",
+    "dnc_event_date_pressure_milwaukee",
+    "object_classification_ontology_santa_monica_only",
+    "occupied_senior_housing_safety_chha_only",
+    "different_vms_integration_depths_install_replace_overlay",
+    "confidential_2020_watermark_milwaukee",
+    "video_format_list_20_extensions_santa_monica"
+  ],
+  "expected_artifacts": [
+    {"filename": "milwaukee_pole_cam_RFP17341.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 20, "expected_min_routing_confidence": 0.95},
+    {"filename": "chicago_housing_camera_RFP3276.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 80, "expected_min_routing_confidence": 0.95},
+    {"filename": "santa_monica_video_analytics_RFP.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 30, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 3,
+  "expected_min_distinct_sites": 240,
+  "expected_min_unique_vendors_referenced": 8,
+  "expected_min_atom_count": 350,
+  "expected_min_packet_count": 54,
+  "expected_min_constraint_atoms": 30,
+  "expected_min_compliance_atoms": 25,
+  "expected_min_unsupported_receipts": 5,
+  "expected_quantity_conflict_edges_within_artifact": 0,
+  "expected_quantity_conflict_edges_cross_customer": 0,
+  "expected_vendor_overlap_edges_via_genetec": 3,
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item",
+    "site_access"
+  ]
+}

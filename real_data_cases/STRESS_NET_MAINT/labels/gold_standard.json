@@ -1,0 +1,48 @@
+{
+  "case_id": "STRESS_NET_MAINT",
+  "service_lines_intersect": ["security_camera", "access_control", "networking"],
+  "recommended_domain_packs": ["security_camera_pack", "access_control_pack", "networking_pack"],
+  "bundle_summary": "3 networking + maintenance artifacts: Mobile (1,523-camera maintenance with 80+ site Exhibit A roster), OCTA ($480,454 multi-vendor security systems repair with Lenel + Milestone → Genetec transition + 4-tier SLA), MS ITS Managed VPN (standalone XLSX with technical specs + cost + scoring sheets, 105-pt scale).",
+  "stress_test_attributes": [
+    "different_parser_routing_per_artifact_pdf_pdf_xlsx",
+    "lenel_milestone_to_genetec_transition_octa",
+    "1523_camera_aggregate_with_80_plus_sites_mobile",
+    "standalone_xlsx_attachment_ms_its",
+    "4_tier_sla_business_impact_octa",
+    "multi_vendor_existing_inventory_with_versions_octa",
+    "mobile_red_yellow_green_white_sla_color_codes",
+    "russia_ukraine_sanctions_certification_octa",
+    "ms_its_70_30_non_cost_to_cost_split",
+    "mobile_surveillance_unit_camera_trailer_deployable_asset"
+  ],
+  "expected_artifacts": [
+    {"filename": "mobile_camera_maint_RFP5954.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 10, "expected_min_routing_confidence": 0.95},
+    {"filename": "octa_security_systems_repair_RFP_4-2293.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 30, "expected_min_routing_confidence": 0.95},
+    {"filename": "ms_its_managed_vpn_RFP4080_attachA.xlsx", "artifact_type": "xlsx", "expected_parser": "orbitbrief_xlsx", "sheet_count": 3, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 3,
+  "expected_min_distinct_sites": 90,
+  "expected_min_unique_vendors_referenced": 15,
+  "expected_min_atom_count": 380,
+  "expected_min_packet_count": 50,
+  "expected_min_constraint_atoms": 40,
+  "expected_min_compliance_atoms": 20,
+  "expected_pdf_artifacts": 2,
+  "expected_xlsx_artifacts": 1,
+  "expected_min_template_unsupported_atoms": 8,
+  "expected_quantity_conflict_edges": 0,
+  "per_artifact_gold_files": [
+    "gold_standard_mobile.md",
+    "gold_standard_octa.md",
+    "gold_standard_ms_its.md"
+  ],
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item",
+    "site_access"
+  ]
+}

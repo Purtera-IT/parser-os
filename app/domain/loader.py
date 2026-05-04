@@ -20,7 +20,22 @@ def _candidate_pack_path(pack_id_or_path: str | Path) -> Path:
     pack_id = str(pack_id_or_path).strip()
     if not pack_id:
         return DOMAIN_DIR / "default_pack.yaml"
-    return DOMAIN_DIR / f"{pack_id}.yaml"
+    # Two naming conventions live in app/domain/: bare ``<id>.yaml`` (e.g.
+    # copper_cabling.yaml) and ``<id>_pack.yaml`` (e.g. security_camera_pack.yaml,
+    # access_control_pack.yaml).  Try both so callers can pass the short id
+    # either way without caring about disk layout.
+    bare = DOMAIN_DIR / f"{pack_id}.yaml"
+    if bare.exists():
+        return bare
+    suffixed = DOMAIN_DIR / f"{pack_id}_pack.yaml"
+    if suffixed.exists():
+        return suffixed
+    # If the id itself ends with _pack, also try stripping it.
+    if pack_id.endswith("_pack"):
+        stripped = DOMAIN_DIR / f"{pack_id[:-5]}.yaml"
+        if stripped.exists():
+            return stripped
+    return bare  # falls through to default_pack handling in load_domain_pack
 
 
 def _parse_domain_file(target: Path) -> dict[str, Any]:

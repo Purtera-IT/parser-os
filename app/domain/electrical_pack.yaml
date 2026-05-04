@@ -1,0 +1,262 @@
+pack_id: electrical
+name: Electrical / Branch-Circuit Pack
+version: "1.0.0"
+service_lines:
+  - electrical
+  - electrical_contractor
+  - branch_circuit
+entity_types:
+  - name: device
+    aliases:
+      - receptacle
+      - outlet
+      - circuit
+      - breaker
+      - panel
+      - panelboard
+      - subpanel
+      - transformer
+      - disconnect
+      - switch
+    examples: ["20A duplex", "120V outlet"]
+  - name: site
+    aliases:
+      - site
+      - building
+      - floor
+      - electrical room
+      - mechanical room
+      - rooftop
+    examples: ["Bldg A", "Mech Room"]
+device_aliases:
+  receptacle:
+    - receptacle
+    - outlet
+    - duplex
+    - duplex outlet
+    - duplex receptacle
+    - quad outlet
+    - quad receptacle
+    - simplex outlet
+    - 15a outlet
+    - 20a outlet
+    - 20a receptacle
+    - 30a outlet
+    - 50a outlet
+    - 120v outlet
+    - 208v outlet
+    - 240v outlet
+    - 277v outlet
+    - 480v outlet
+    - twist lock
+    - twist-lock
+    - l5-15
+    - l5-20
+    - l5-30
+    - l6-15
+    - l6-20
+    - l6-30
+    - l14-30
+    - l21-20
+    - usb outlet
+    - usb-c outlet
+    - poke through
+    - poke-thru
+    - floor box
+    - floor monument
+    - service fitting
+  circuit:
+    - circuit
+    - branch circuit
+    - dedicated circuit
+    - dedicated 20a
+    - dedicated 30a
+    - new home run
+    - home run
+    - homerun
+    - 20a circuit
+    - 15a circuit
+    - 30a circuit
+  breaker:
+    - breaker
+    - circuit breaker
+    - 20a breaker
+    - 30a breaker
+    - 50a breaker
+    - gfci breaker
+    - afci breaker
+    - molded case breaker
+    - mccb
+  panel:
+    - panel
+    - panelboard
+    - subpanel
+    - sub panel
+    - load center
+    - distribution panel
+  transformer:
+    - transformer
+    - dry type transformer
+    - step down transformer
+    - step up transformer
+    - 120/208 transformer
+  disconnect:
+    - disconnect
+    - safety switch
+    - fused disconnect
+    - non-fused disconnect
+  conduit:
+    - conduit
+    - 1/2 emt
+    - 3/4 emt
+    - 1 emt
+    - rigid
+    - rigid conduit
+    - imc
+    - flex
+    - mc cable
+    - bx cable
+    - liquidtight
+  wire:
+    - 12 awg
+    - 10 awg
+    - thhn
+    - thwn
+    - mc cable
+    - mc-12
+    - bx
+    - copper wire
+    - aluminum wire
+  ground:
+    - ground
+    - grounding
+    - bonding
+    - ground rod
+    - ground bar
+    - tgb
+    - tmgb
+site_alias_patterns:
+  - "panel\\s*[a-z0-9]+"
+  - "lp\\s*\\d+"
+  - "subpanel\\s*[a-z0-9]+"
+  - "mech\\s*room"
+  - "electrical\\s*room"
+action_aliases:
+  install_circuit:
+    - install circuit
+    - run new circuit
+    - extend circuit
+    - install dedicated 20a
+    - install dedicated 30a
+  trim_out:
+    - trim out
+    - trim-out
+    - terminate device
+    - install device
+    - install plate
+constraint_patterns:
+  code:
+    - nec
+    - nec compliance
+    - 2017 nec
+    - 2020 nec
+    - 2023 nec
+    - article 800
+    - article 645
+    - tia-942
+    - bicsi
+  permit:
+    - electrical permit
+    - permit by us
+    - permit by gc
+    - permit by ec
+  inspection:
+    - rough-in inspection
+    - rough in inspection
+    - final inspection
+    - ahj inspection
+  shutdown:
+    - shutdown window
+    - panel shutdown
+    - non-disruptive
+    - blackout window
+    - hot work permit
+exclusion_patterns:
+  - by gc
+  - by mech contractor
+  - by hvac contractor
+  - by structured cabling vendor
+  - by others
+  - existing receptacle reuse
+  - existing circuit reuse
+  - existing panel reuse
+  - permit by gc
+  - permit by others
+  - patching by others
+  - patch and paint by others
+  - core drilling by gc
+  - x-ray scanning by gc
+  - access panels by gc
+  - housekeeping pad by mech
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add circuit
+  - please add receptacle
+  - please add quad
+  - please dedicate circuit
+  - we need 20a
+  - we need 30a
+  - we need 208v
+  - we need 240v
+  - we need 277v
+  - approved to proceed
+  - go ahead
+quantity_units:
+  count:
+    - receptacles
+    - outlets
+    - circuits
+    - breakers
+    - units
+    - ea
+  length:
+    - lf
+    - linear feet
+    - ft
+artifact_role_patterns:
+  approved_site_roster:
+    - power_schedule
+    - power schedule
+    - panel_schedule
+    - panel schedule
+    - load_calc
+    - load calc
+  vendor_quote:
+    - electrical quote
+    - ec quote
+    - electrical pricing
+risk_defaults:
+  receptacle_unit_exposure: 250
+  dedicated_circuit_unit_exposure: 1200
+  panel_unit_exposure: 6000
+  failed_dispatch_exposure: 500
+  unpriced_scope_default: 6000
+  missing_permit_exposure: 4500
+  missing_dedicated_circuit_exposure: 1200
+packet_family_hints:
+  vendor_mismatch:
+    - circuit count
+    - receptacle count
+    - missing dedicated circuit
+  scope_exclusion:
+    - permit by gc
+    - core drilling by gc
+    - patching by others
+  missing_info:
+    - permit
+    - load calc
+    - shutdown window
+    - inspection

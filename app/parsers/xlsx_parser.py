@@ -784,7 +784,23 @@ class XlsxParser(BaseParser):
             return []
         model = _detect_header(rows)
         if model.header_idx < 0:
-            return []
+            # PRODUCTION_GAPS P0.4: when the canonical-header detector can't
+            # find a cabling/networking-style schedule (plate_id, site,
+            # quantity columns), fall back to a generic row-as-atom emitter.
+            # Real-world XLSX attachments — Q&A logs, fee schedules, vendor
+            # response matrices, RFP cost tables — almost never use the
+            # canonical column names this parser was originally tuned for.
+            # The generic emitter still produces structured atoms so the
+            # downstream entity_extraction stage can pull
+            # device/vendor/quantity/site keys out of the row text.
+            return self._emit_generic_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+            )
         data_start = model.header_idx + (2 if model.header_mode == "pair" else 1)
         atoms: list[EvidenceAtom] = []
         label_indices = _label_column_indices(model.header_map)
@@ -852,6 +868,262 @@ class XlsxParser(BaseParser):
                     )
                 )
         return atoms
+
+    def _emit_generic_rows(
+        self,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+    ) -> list[EvidenceAtom]:
+        """Generic fallback: emit one atom per non-empty row.
+
+        Used when ``_detect_header`` can't find a canonical
+        cabling/networking schedule.  Treats the first non-empty row
+        with mostly text cells as the column-header row (so cell
+        values get keyed by column name); falls back to ``col_N``
+        labels otherwise.
+
+        Each row becomes a ``scope_item`` atom with ``raw_text`` set
+        to ``"col_a: value | col_b: value | ..."`` so the
+        ``entity_extraction`` stage can pull entity keys out of the
+        text just like for any other atom.
+
+        See PRODUCTION_GAPS.md P0.4.
+        """
+        atoms: list[EvidenceAtom] = []
+
+        # Step 1: pick a header row.  We scan the first 10 non-empty rows
+        # and take the one with the most non-numeric, short string cells.
+        # If no row qualifies we use ``col_N`` labels.
+        header_idx = -1
+        header_score = -1
+        for idx, row in enumerate(rows[:10]):
+            if _is_blank_row(row):
+                continue
+            non_empty = [c for c in row if str(c or "").strip()]
+            if not non_empty:
+                continue
+            string_cells = sum(
+                1 for c in non_empty
+                if isinstance(c, str) and len(c) <= 60 and not c.strip().isdigit()
+            )
+            score = string_cells - max(0, len(non_empty) - string_cells)
+            if score >= 2 and score > header_score:
+                header_score = score
+                header_idx = idx
+
+        if header_idx >= 0:
+            header_row = rows[header_idx]
+            columns = [
+                (str(c).strip() if c is not None else "") or f"col_{i + 1}"
+                for i, c in enumerate(header_row)
+            ]
+            data_start = header_idx + 1
+        else:
+            # No detectable header — use col_1, col_2, ... and start
+            # from row 0 so we don't lose any rows.
+            width = max((len(r) for r in rows), default=0)
+            columns = [f"col_{i + 1}" for i in range(width)]
+            data_start = 0
+
+        # Step 2: emit one atom per non-empty data row.
+        for row_idx in range(data_start, len(rows)):
+            row = rows[row_idx] or []
+            if _is_blank_row(row):
+                continue
+            # Render the row as "col: value | col: value" — same shape
+            # the canonical line-item emitter uses, so OrbitBrief and
+            # entity_extraction get a familiar structure.
+            parts: list[str] = []
+            cell_columns: dict[str, str] = {}
+            for col_idx, col_name in enumerate(columns):
+                if col_idx >= len(row):
+                    break
+                value = row[col_idx]
+                if value is None:
+                    continue
+                value_str = str(value).strip()
+                if not value_str:
+                    continue
+                parts.append(f"{col_name}: {value_str}")
+                cell_columns[col_name] = get_column_letter(col_idx + 1)
+            raw_text = " | ".join(parts).strip()
+            if not raw_text:
+                continue
+            # Skip the header row itself so it doesn't reappear as data.
+            if row_idx == header_idx:
+                continue
+
+            source_ref = self._build_source_ref(
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                row_number=row_idx + 1,
+                columns=cell_columns,
+            )
+            atom_id = stable_id(
+                "atm",
+                artifact_id,
+                sheet_name,
+                str(row_idx + 1),
+                normalize_text(raw_text)[:120],
+            )
+            value: dict[str, Any] = {
+                "kind": "table_row",
+                "sheet": sheet_name,
+                "row": row_idx + 1,
+                "cells": {
+                    col: (str(row[i]).strip() if i < len(row) and row[i] is not None else "")
+                    for i, col in enumerate(columns)
+                    if i < len(row) and str(row[i] or "").strip()
+                },
+            }
+            atoms.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.scope_item,
+                    raw_text=raw_text,
+                    normalized_text=normalize_text(raw_text),
+                    value=value,
+                    entity_keys=[],  # populated by core.entity_extraction
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.84,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+
+            # Week 6 P6.7: when this row is a Q&A pair (the columns
+            # include both a question-column and a response-column),
+            # also emit a *separate* atom for the question and the
+            # response.  Keeps the row-level atom for context but lets
+            # the packetizer surface the Q as ``open_question`` and the
+            # A as ``customer_instruction`` independently — that's what
+            # closes the XLSX_RARE atom_count gap (486 Q&A rows in
+            # CalSAWS were producing 486 atoms instead of ~1500).
+            for sub_atom in self._emit_qa_row_subatoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                columns=columns,
+                row=row,
+                row_idx=row_idx,
+                cell_columns=cell_columns,
+            ):
+                atoms.append(sub_atom)
+        return atoms
+
+    # Names that mark a column as the *question* side of a Q&A row.
+    _XLSX_QUESTION_COL_HINTS = (
+        "question",
+        "concern",
+        "inquiry",
+        "issue",
+        "comment",
+        "ask",
+    )
+    # Names that mark a column as the *response/answer* side.
+    _XLSX_RESPONSE_COL_HINTS = (
+        "response",
+        "answer",
+        "reply",
+        "resolution",
+        "clarification",
+    )
+
+    def _emit_qa_row_subatoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        columns: list[str],
+        row: list[Any],
+        row_idx: int,
+        cell_columns: dict[str, str],
+    ) -> list[EvidenceAtom]:
+        """If this row has Q/A columns, emit one atom per side."""
+        q_col_idx = a_col_idx = None
+        for i, col in enumerate(columns):
+            col_lower = col.lower()
+            if q_col_idx is None and any(h in col_lower for h in self._XLSX_QUESTION_COL_HINTS):
+                q_col_idx = i
+            if a_col_idx is None and any(h in col_lower for h in self._XLSX_RESPONSE_COL_HINTS):
+                a_col_idx = i
+        # Need both sides to be a real Q&A row.
+        if q_col_idx is None or a_col_idx is None or q_col_idx == a_col_idx:
+            return []
+
+        out: list[EvidenceAtom] = []
+        for kind, col_idx, atom_type, authority in (
+            ("question", q_col_idx, AtomType.open_question, AuthorityClass.contractual_scope),
+            ("answer", a_col_idx, AtomType.customer_instruction, AuthorityClass.customer_current_authored),
+        ):
+            if col_idx >= len(row):
+                continue
+            value = row[col_idx]
+            if value is None:
+                continue
+            value_str = str(value).strip()
+            if len(value_str) < 10:
+                continue
+            col_name = columns[col_idx]
+            sub_text = f"{col_name}: {value_str}"
+            sub_source_ref = self._build_source_ref(
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                row_number=row_idx + 1,
+                columns={col_name: cell_columns.get(col_name, "")},
+            )
+            sub_atom_id = stable_id(
+                "atm",
+                artifact_id,
+                sheet_name,
+                str(row_idx + 1),
+                kind,
+                normalize_text(value_str)[:120],
+            )
+            out.append(
+                EvidenceAtom(
+                    id=sub_atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=sub_text,
+                    normalized_text=normalize_text(sub_text),
+                    value={
+                        "kind": "qa_subatom",
+                        "qa_side": kind,
+                        "sheet": sheet_name,
+                        "row": row_idx + 1,
+                        "column": col_name,
+                    },
+                    entity_keys=[],
+                    source_refs=[sub_source_ref],
+                    receipts=[],
+                    authority_class=authority,
+                    confidence=0.85,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
 
     def _extract_row_values(self, row: list[Any], header_map: dict[str, int]) -> dict[str, str]:
         extracted: dict[str, str] = {}

@@ -1,0 +1,44 @@
+{
+  "case_id": "STRESS_COVERAGE_GAPS",
+  "service_line_intended": "meta",
+  "recommended_domain_pack": null,
+  "bundle_summary": "Meta-case documenting service lines where public pre-SOW data is thin or unavailable. Per SOURCE_NOTES.md, four service lines need synthetic artifacts: fire_safety, das, electrical, itad.",
+  "compile_status": "no_artifacts_found_intentional",
+  "is_meta_case": true,
+  "stress_test_attributes": [
+    "meta_case_no_artifacts_intentional",
+    "documents_4_service_line_gaps",
+    "ground_truth_for_gap_detector_output",
+    "recommends_scripts_synthesize_gap_artifacts_py_for_each_gap"
+  ],
+  "expected_artifacts": [],
+  "documented_gap_service_lines": [
+    {
+      "service_line": "fire_safety",
+      "reason": "vendor manuals plentiful, real device schedules hide behind login portals",
+      "synthesis_recommendation": "Generate XLSX with 200+ devices across 4-floor hospital model: smoke/heat detectors, pull stations, horns/strobes, speakers, sprinkler flow/tamper switches, kitchen suppression. NFPA 72-style addressable layout."
+    },
+    {
+      "service_line": "das",
+      "reason": "almost no public real customer artifacts (mostly vendor whitepapers)",
+      "synthesis_recommendation": "Generate 4-story building DAS RFP narrative referencing NFPA 1225 + UL 2524 + IFC §510. Public-safety frequencies, BDA, donor antenna, indoor antennas. 95% coverage at -95 dBm DAQ 3.0+."
+    },
+    {
+      "service_line": "electrical",
+      "reason": "embedded inside larger MEP packages, not standalone pre-SOW packets",
+      "synthesis_recommendation": "Generate panel schedule XLSX with mid-sheet totals and merged-cell breaker rows. 84-circuit panel (3-phase 4-wire) with sub-totals per phase."
+    },
+    {
+      "service_line": "itad",
+      "reason": "partial coverage in STRESS_ITAD_PAIR (empty artifacts)",
+      "synthesis_recommendation": "Generate asset-list XLSX with OEM/serial/condition columns. 50-500 mixed assets across categories with realistic data classifications."
+    }
+  ],
+  "expected_parser_behavior": {
+    "must_not_crash": true,
+    "must_read_source_notes_md": true,
+    "must_emit_minimal_envelope": true,
+    "must_emit_meta_status": true
+  },
+  "remediation_recommended_per_gap": "scripts/synthesize_gap_artifacts.py --service-line {fire_safety|das|electrical|itad}"
+}

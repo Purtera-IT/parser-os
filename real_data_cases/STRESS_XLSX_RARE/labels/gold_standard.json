@@ -1,0 +1,36 @@
+{
+  "case_id": "STRESS_XLSX_RARE",
+  "service_line": "default",
+  "recommended_domain_pack": "default_pack",
+  "bundle_summary": "2 standalone XLSX attachments: CalSAWS Q&A log (484 vendor questions + customer responses for RFP #01-2022 M&O) and NJEDA Fee Schedule template (tiered AUM-based pricing for Investment & Cash Management Consultant, RFP #2022-RFP-IPM-051).",
+  "stress_test_attributes": [
+    "standalone_xlsx_no_pdf_context",
+    "calsaws_484_qa_rows_densest_atoms_in_corpus",
+    "calsaws_charset_issue_microsoft_private_use_character",
+    "njeda_tiered_breakpoint_pricing_6_tiers_2_asset_classes",
+    "njeda_no_alteration_of_template_strict_rule",
+    "njeda_optional_minimum_monthly_fee_conditional",
+    "calsaws_section_references_to_parent_rfp_not_in_corpus",
+    "calsaws_font_revision_via_qa_response",
+    "all_cost_cells_blank_vendor_fillable",
+    "no_service_line_classification_default_pack_route"
+  ],
+  "expected_artifacts": [
+    {"filename": "calsaws_qa_log.xlsx", "artifact_type": "xlsx", "expected_parser": "orbitbrief_xlsx", "sheet_count": 1, "row_count": 486, "col_count": 8, "expected_min_routing_confidence": 0.95},
+    {"filename": "njeda_fee_schedule.xlsx", "artifact_type": "xlsx", "expected_parser": "orbitbrief_xlsx", "sheet_count": 1, "row_count": 30, "col_count": 10, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 2,
+  "expected_min_atom_count": 1100,
+  "expected_min_packet_count": 25,
+  "expected_min_template_unsupported_atoms": 30,
+  "expected_pdf_artifacts": 0,
+  "expected_xlsx_artifacts": 2,
+  "expected_min_q_a_pairs": 484,
+  "expected_min_breakpoint_atoms": 8,
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "missing_info",
+    "meeting_decision"
+  ]
+}

@@ -36,6 +36,12 @@ class AtomType(str, Enum):
     decision = "decision"
     action_item = "action_item"
     meeting_commitment = "meeting_commitment"
+    # Compliance clauses ("shall comply with NFPA 72", "in accordance
+    # with IEEE 802.3bt", "per code", "complies with ADA").  Distinct
+    # from constraint atoms in that they cite an external standard /
+    # regulation rather than a project-internal rule.  Maps to the
+    # ``compliance_clause`` packet family.
+    compliance = "compliance"
 
 
 class AuthorityClass(str, Enum):
@@ -86,6 +92,11 @@ class PacketFamily(str, Enum):
     vendor_mismatch = "vendor_mismatch"
     meeting_decision = "meeting_decision"
     action_item = "action_item"
+    # Compliance clauses citing external standards / codes (NFPA, IEEE,
+    # ADA, OSHA, building code, e-rate eligibility, …).  Surfaced
+    # separately from generic constraints so OrbitBrief can render a
+    # "Compliance" tab independent of project-internal rules.
+    compliance_clause = "compliance_clause"
 
 
 class ParserCapability(BaseModel):
@@ -512,6 +523,49 @@ class ParsedClaim(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
+class CompileQuality(BaseModel):
+    """Per-compile quality metrics (PRODUCTION_GAPS P3.4).
+
+    These let production telemetry detect regressions without re-deriving
+    them from the atoms/edges/packets blobs every time.  A downstream
+    monitor can alert on, e.g., ``entity_resolution_rate < 0.50`` or
+    ``packet_specificity < 0.85`` over a sliding window of compiles.
+    """
+
+    atom_count: int = 0
+    packet_count: int = 0
+    edge_count: int = 0
+    entity_count: int = 0
+    quantity_conflict_edge_count: int = 0
+    cross_artifact_edge_count: int = 0
+
+    # Fraction of atoms with at least one non-empty entity_key.
+    entity_resolution_rate: float = 0.0
+    # Fraction of packets that anchor on a real entity (not `*:unknown`).
+    packet_specificity: float = 0.0
+    # Fraction of artifacts the parser router routed with confidence
+    # ≥ 0.50 (vs. fallback "no parser matched").
+    parser_routing_confidence_avg: float = 0.0
+    # Fraction of artifacts where the chosen parser produced ≥ 1 atom.
+    parser_atom_yield_rate: float = 0.0
+    # Total atoms / total artifact pages (proxy for extraction density).
+    atoms_per_artifact: float = 0.0
+
+    # Pack routing telemetry — useful for "did we pick a real pack or
+    # fall back to default_pack" alerts.
+    pack_id: str = "unknown"
+    pack_routing_source: str = "unknown"
+    pack_routing_confidence: float = 0.0
+
+    # Stage-wise wall time (ms).  Mirrors trace_summary but typed.
+    stage_durations_ms: dict[str, float] = Field(default_factory=dict)
+
+    # Fail-loud signals (PRODUCTION_GAPS P3.5).  Any non-empty value
+    # here is an actionable regression that an operator should review.
+    parsers_with_zero_atoms: list[str] = Field(default_factory=list)
+    parsers_with_low_confidence: list[str] = Field(default_factory=list)
+
+
 class CompileResult(BaseModel):
     project_id: str
     schema_version: str = SCHEMA_VERSION
@@ -525,6 +579,7 @@ class CompileResult(BaseModel):
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None
+    quality: CompileQuality | None = None  # PRODUCTION_GAPS P3.4
     # Compatibility fields used by current MVP pipeline/tests.
     project_dir: str | None = None
     ranked_atoms: list[AuthorityRankedAtom] = Field(default_factory=list)

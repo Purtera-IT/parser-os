@@ -1,0 +1,43 @@
+{
+  "case_id": "STRESS_PAGING_TRIO",
+  "service_line": "paging",
+  "recommended_domain_pack": "paging_pack",
+  "bundle_summary": "2 mass notification / paging RFPs (Manchester missing per fetch failure). UMaine: pre-decision higher-ed RFP, 7 universities, 28,997 students, 4,220 FTE, 18,664 active users. SJCD: post-decision board memo with full 4-vendor tabulation; Rave Mobile Safety wins at $527,143 (7-yr) over BlackBerry, Regroup, Alertus.",
+  "stress_test_attributes": [
+    "pre_decision_vs_post_decision_artifacts",
+    "per_fte_pricing_18_664_active_users_umaine",
+    "4_vendor_pricing_tabulation_in_sjcd",
+    "lowest_price_did_not_win_in_sjcd_regroup_lowest_at_398k",
+    "maine_foaa_trade_secret_marking_rule",
+    "section_1_2_1_2_enumerated_10_prohibited_terms",
+    "multi_institutional_shared_services_umaine",
+    "asterisks_on_pricing_with_caveat_blackberry_alertus",
+    "tiered_pricing_optional_in_umaine_table_1_2",
+    "no_bafo_rule_umaine"
+  ],
+  "expected_artifacts": [
+    {"filename": "umaine_mass_notification_RFP_24-18.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 68, "expected_min_routing_confidence": 0.95},
+    {"filename": "sanjac_mass_comm_PR5.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 11, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 2,
+  "expected_min_distinct_sites": 8,
+  "expected_min_unique_vendors_referenced": 4,
+  "expected_min_atom_count": 200,
+  "expected_min_packet_count": 30,
+  "expected_min_constraint_atoms": 20,
+  "expected_min_compliance_atoms": 12,
+  "expected_pricing_comparison_packets": 1,
+  "expected_min_unsupported_receipts": 5,
+  "missing_artifacts_documented": [
+    "manchester_paging_rfp_unavailable_at_fetch_time"
+  ],
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item",
+    "site_access"
+  ]
+}

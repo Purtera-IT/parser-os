@@ -1,0 +1,75 @@
+{
+  "case_id": "STRESS_NATOMAS_WIRELESS",
+  "service_line": "wireless",
+  "recommended_domain_pack": "wireless_pack",
+  "bundle_summary": "Natomas Unified School District RFP 25-107, Wireless Equipment, E-rate Year 28 (FY 2025). 19 schools, Cisco CW9166I-B Catalyst 9166I AP basis-of-design, with critical quantity contradiction between page 5 (qty 500) and page 18 cost proposal (qty 136).",
+  "stress_test_attributes": [
+    "critical_quantity_contradiction_500_vs_136_for_18_skus",
+    "blank_cost_proposal_table_pages_18_19",
+    "19_schools_with_full_addresses_in_flat_table",
+    "secure_networks_act_compliance_huawei_zte_prohibited",
+    "e_rate_year_28_fy_2025_funding_july_1_start",
+    "cisco_dna_license_sku_sprawl_9_variants",
+    "fcc_red_light_status_disqualifies",
+    "any_other_greater_sacramento_area_catchall_site",
+    "or_equivalent_substitution_clause",
+    "lcp_lowest_corresponding_price_47_cfr_54_511_b"
+  ],
+  "expected_artifacts": [
+    {"filename": "NatomasYR28RFP25_107WirelessEquipment.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 25, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_entity_keys_must_include": [
+    "customer:natomas_unified_school_district",
+    "site:district_office",
+    "site:american_lakes_school",
+    "site:bannon_creek_school",
+    "site:discovery_high",
+    "site:h_allen_hight_elementary",
+    "site:heredia_arriaga_school",
+    "site:heron_school",
+    "site:inderkum_high",
+    "site:jefferson_school",
+    "site:larry_g_meeks_academy",
+    "site:leroy_green_academy",
+    "site:natomas_high",
+    "site:natomas_middle",
+    "site:np3_charter_high",
+    "site:np3_charter_elementary",
+    "site:np3_charter_middle",
+    "site:natomas_park_elementary",
+    "site:paso_verde_school",
+    "site:two_rivers_elementary",
+    "site:witter_ranch_elementary",
+    "device:catalyst_9166i_ap",
+    "vendor:cisco_or_equivalent",
+    "requirement:erate_eligibility_marking",
+    "requirement:secure_networks_act_compliance"
+  ],
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item",
+    "site_access"
+  ],
+  "expected_min_distinct_sites": 19,
+  "expected_min_atom_count": 110,
+  "expected_min_packet_count": 22,
+  "expected_min_quantity_conflict_edges": 17,
+  "expected_min_customer_override_packets": 17,
+  "expected_min_compliance_atoms": 15,
+  "expected_min_unsupported_receipts": 5,
+  "expected_min_distinct_vendors_referenced": 1,
+  "expected_exclusion_patterns_fired": [
+    "Secure Networks Act",
+    "Red Light Status",
+    "received after due date"
+  ],
+  "expected_constraint_patterns_fired": [
+    "five (5) consecutive fiscal years",
+    "10 years",
+    "$1,000,000 per occurrence"
+  ]
+}

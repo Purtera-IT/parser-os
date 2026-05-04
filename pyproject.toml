@@ -24,7 +24,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0",
+  # pytest 9.x triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409) on Windows /
+  # CPython 3.12.3 in the demo dev environment.  Cap until pytest 9 is
+  # confirmed stable on Windows or CI moves to Linux containers.
+  "pytest>=8.0,<9",
   "httpx>=0.28",
 ]
 

@@ -24,3 +24,6 @@ compiled_artifacts/
 # compile, so don't track them.
 *.derived/
 .orbitbrief/
+
+# Claude Code worktree configuration (per-checkout, not source).
+.claude/

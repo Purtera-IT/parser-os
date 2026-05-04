@@ -1,0 +1,42 @@
+{
+  "case_id": "STRESS_BMS_SPECS",
+  "service_line": "bms",
+  "recommended_domain_pack": "bms_pack",
+  "bundle_summary": "2 BMS construction standards from major US universities (Macquarie missing per fetch failure). Wayne State: WSU-specific BAS standard rev 1.0 (Sep 2024), Vykon JACE 9000 + Niagara 4/5, NAC/SNC/PEC/AUC hierarchy. UH: 80+ page master spec, JACE 3E/6E/7 via Tridium Richmond VA shipping, Niagara 4 only, B-OWS/NAC/EAC/UC hierarchy.",
+  "stress_test_attributes": [
+    "master_specs_vs_project_rfps_no_quantities",
+    "csi_masterformat_division_25_integrated_automation",
+    "tridium_niagara_4_jace_ecosystem_dominant",
+    "different_controller_naming_nac_snc_pec_auc_vs_b_ows_nac_eac_uc",
+    "wsu_installer_vs_integrator_role_separation",
+    "tridium_richmond_va_shipping_geographic_constraint",
+    "niagara_open_nic_specifications_4_strings",
+    "uh_system_accuracy_table_14_constraints_with_si_imperial",
+    "no_mercury_thermostats_uh",
+    "48hr_training_distributed_across_1yr_warranty_uh",
+    "owner_full_licensing_admin_password_at_first_training_uh"
+  ],
+  "expected_artifacts": [
+    {"filename": "wayne_state_bas_construction_standards_2025.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 50, "expected_min_routing_confidence": 0.95},
+    {"filename": "uh_division_25_master_spec.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 85, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_customers": 2,
+  "expected_min_unique_vendors_referenced": 3,
+  "expected_min_atom_count": 250,
+  "expected_min_packet_count": 40,
+  "expected_min_constraint_atoms": 50,
+  "expected_min_compliance_atoms": 30,
+  "expected_min_template_unsupported_receipts": 6,
+  "expected_min_csi_section_atoms": 25,
+  "expected_no_quantity_conflict_edges": true,
+  "missing_artifacts_documented": [
+    "macquarie_bas_spec_unavailable_at_fetch_time"
+  ],
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "meeting_decision",
+    "action_item"
+  ]
+}

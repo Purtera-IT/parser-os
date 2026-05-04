@@ -1,0 +1,243 @@
+pack_id: das
+name: DAS / In-Building Wireless / ERCES Pack
+version: "1.0.0"
+service_lines:
+  - das
+  - distributed_antenna_system
+  - in_building_wireless
+  - public_safety_das
+  - erces
+  - bda
+entity_types:
+  - name: device
+    aliases:
+      - bda
+      - dasu
+      - donor antenna
+      - antenna
+      - remote unit
+      - master unit
+      - signal source
+    examples: ["BDA", "Class A BDA", "Donor Antenna"]
+  - name: site
+    aliases:
+      - building
+      - floor
+      - vertical
+      - basement
+      - tunnel
+      - parking garage
+    examples: ["Bldg A", "Garage P2"]
+device_aliases:
+  bda:
+    - bda
+    - bidirectional amplifier
+    - public safety bda
+    - class a bda
+    - class b bda
+    - signal booster
+  donor_antenna:
+    - donor antenna
+    - donor
+    - yagi
+    - log periodic
+    - panel donor antenna
+    - rooftop donor antenna
+  remote_antenna:
+    - dasu
+    - das antenna
+    - remote antenna
+    - omni antenna
+    - directional antenna
+    - in-building antenna
+  master_unit:
+    - master unit
+    - mu
+    - poi
+    - point of interface
+    - signal source unit
+  remote_unit:
+    - remote unit
+    - rru
+    - sru
+    - dru
+    - distributed remote unit
+  splitter:
+    - splitter
+    - tap
+    - 3db tap
+    - 6db tap
+    - 10db tap
+    - 12db tap
+    - 16db tap
+    - 20db tap
+  combiner:
+    - combiner
+    - poi combiner
+    - hybrid combiner
+  cable:
+    - 1/2 coax
+    - 7/8 coax
+    - 1-1/4 coax
+    - 1 1/4 coax
+    - lmr-400
+    - lmr-600
+    - lmr400
+    - lmr600
+    - super flexible coax
+    - low pim coax
+  battery:
+    - 24 hour battery
+    - 12 hour battery
+    - sealed battery
+    - secondary power
+  enclosure:
+    - nema 4
+    - nema 4x
+    - nema 12
+    - das enclosure
+    - bda enclosure
+  power_supply:
+    - das power supply
+    - 110vac power
+    - 220vac power
+    - dedicated 20a circuit
+    - dedicated circuit
+site_alias_patterns:
+  - "garage\\s*p?\\d+"
+  - "basement"
+  - "tunnel"
+  - "vertical\\s*\\d+"
+  - "stairwell\\s*[a-z0-9]+"
+action_aliases:
+  rf_design:
+    - rf design
+    - ibwave model
+    - ibwave design
+    - heat map
+    - rf simulation
+    - rf survey
+    - benchmark survey
+    - cw test
+  ahj_coordination:
+    - ahj approval
+    - fire marshal approval
+    - public safety coordination
+    - frequency coordination
+    - fcc coordination
+  testing:
+    - dax test
+    - daq test
+    - rssi test
+    - bench test
+    - acceptance test
+    - grid test
+    - 95% coverage
+    - 99% coverage
+constraint_patterns:
+  code:
+    - nfpa 1221
+    - nfpa 72
+    - nfpa 1225
+    - ifc 510
+    - ibc public safety
+    - 95% coverage
+    - 99% coverage
+    - daq 3.4
+  carrier:
+    - att
+    - verizon
+    - tmobile
+    - sprint
+    - firstnet
+    - public safety bands
+    - 700mhz
+    - 800mhz
+    - 1900mhz
+    - awss band
+    - 2.5ghz
+exclusion_patterns:
+  - by gc
+  - by ec
+  - by carrier
+  - by carrier rep
+  - by others
+  - existing das reuse
+  - existing antennas reuse
+  - existing cabling reuse
+  - power by ec
+  - dedicated circuit by ec
+  - permit by gc
+  - permit by others
+  - core drilling by gc
+  - patching by gc
+  - x-ray scanning by gc
+  - mounting hardware by gc
+  - benchmark survey by carrier
+  - donor coordination by carrier
+  - frequency coordination by ahj
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add zone
+  - please add carrier
+  - please add band
+  - approved to proceed
+  - go ahead
+  - we want public safety
+  - we want carrier das
+  - we want firstnet
+quantity_units:
+  count:
+    - antennas
+    - bdas
+    - splitters
+    - combiners
+    - units
+    - ea
+  length:
+    - lf
+    - ft
+    - feet
+artifact_role_patterns:
+  approved_site_roster:
+    - das_design
+    - das design
+    - antenna_schedule
+    - antenna schedule
+    - rf_design_doc
+    - heatmap
+    - heat map
+  vendor_quote:
+    - das quote
+    - solid quote
+    - jma quote
+    - corning quote
+    - commscope quote
+    - bird quote
+risk_defaults:
+  bda_unit_exposure: 18000
+  remote_antenna_unit_exposure: 350
+  failed_dispatch_exposure: 800
+  unpriced_scope_default: 9000
+  missing_permit_exposure: 6000
+  missing_acceptance_test_exposure: 5500
+  missing_carrier_approval_exposure: 12000
+packet_family_hints:
+  vendor_mismatch:
+    - antenna count mismatch
+    - bda model mismatch
+    - missing splitters
+  scope_exclusion:
+    - power by ec
+    - permit by gc
+    - benchmark survey by carrier
+    - donor coordination by carrier
+  missing_info:
+    - rf design
+    - benchmark survey
+    - ahj approval
+    - acceptance test schedule
+    - secondary power

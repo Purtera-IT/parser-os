@@ -1,0 +1,105 @@
+{
+  "case_id": "STRESS_VT_CAM",
+  "service_line": "security_camera",
+  "recommended_domain_pack": "security_camera",
+  "bundle_summary": "Virginia Tech RFP #0016531 Addendum #2 — Q&A from pre-proposal conference (March 16, 2011), 67 numbered Q/A pairs, 6 pages of clarifications + 10 pages of appended floor and lighting plans for the Perry Street Parking Structure.",
+  "stress_test_attributes": [
+    "single_artifact_no_BOM",
+    "color_coded_customer_answers_blue",
+    "addendum_supersedes_original_rfp_not_present",
+    "references_absent_documents",
+    "embedded_scanned_floor_plans_pages_7_to_16",
+    "phased_scope_250_to_2500_cameras_range_not_quantity",
+    "67_qa_pairs_dense",
+    "multiple_integration_touchpoints_access_fire_intrusion_gis",
+    "old_2011_dated_document"
+  ],
+  "expected_artifacts": [
+    {
+      "filename": "RFP_0016531_Addendum2.pdf",
+      "artifact_type": "pdf",
+      "expected_parser": "orbitbrief_pdf",
+      "page_count": 16,
+      "expected_min_routing_confidence": 0.9
+    }
+  ],
+  "expected_entity_keys_must_include": [
+    "site:virginia_tech",
+    "site:perry_street_parking_deck",
+    "site:andrews_information_systems_bldg",
+    "device:ip_camera",
+    "device:ups",
+    "vendor:t2_systems",
+    "vendor:thyssenkrupp",
+    "vendor:esri"
+  ],
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "site_access",
+    "missing_info",
+    "meeting_decision",
+    "action_item"
+  ],
+  "expected_packet_anchors_must_include": [
+    "site:perry_street_parking_deck",
+    "device:ip_camera",
+    "missing_info:integration_legacy_camera_makes_models",
+    "missing_info:integration_access_control_alarms",
+    "missing_info:integration_video_analytics_vendor",
+    "scope:facial_recognition",
+    "scope:audio_recording"
+  ],
+  "expected_authority_class_distribution": {
+    "customer_current_authored": ">=50",
+    "formal_rfp": ">=0",
+    "meeting_note": ">=0",
+    "vendor_quote": "==0",
+    "deleted_text": "==0"
+  },
+  "expected_exclusion_patterns_fired": [
+    "no plans for",
+    "not at this time",
+    "not currently",
+    "would not be needed"
+  ],
+  "expected_constraint_patterns_fired": [
+    "five nines",
+    "99.999",
+    "30 day retention",
+    "Surveillance Oversight Committee approval",
+    "conduit requirement",
+    "air conditioned"
+  ],
+  "expected_ontology_gap_candidates": [
+    {"kind": "device", "phrase": "license plate camera"},
+    {"kind": "device", "phrase": "facial recognition"},
+    {"kind": "constraint", "phrase": "Surveillance Oversight Committee"},
+    {"kind": "constraint", "phrase": "litigation hold"},
+    {"kind": "constraint", "phrase": "five nines"},
+    {"kind": "site", "phrase": "Andrews Information Systems Building"},
+    {"kind": "site", "phrase": "Perry Street Parking Deck"},
+    {"kind": "vendor", "phrase": "T2 Systems"},
+    {"kind": "vendor", "phrase": "ThyssenKrupp"},
+    {"kind": "exclusion", "phrase": "would not be needed"}
+  ],
+  "expected_min_atom_count": 60,
+  "expected_min_packet_count": 12,
+  "expected_min_needs_review_packets": 8,
+  "expected_max_active_packets": 5,
+  "expected_min_cross_artifact_edges": 0,
+  "expected_min_unsupported_receipts": 5,
+  "expected_quantities_referenced_not_extracted": [
+    {"label": "current camera count (Q13)", "value": 250, "type": "range_low"},
+    {"label": "future camera count (Q13)", "value": 2500, "type": "range_high"},
+    {"label": "uptime SLA", "value": 0.99999, "type": "ratio"}
+  ],
+  "known_failure_modes": [
+    "If the original RFP is added to the bundle, the addendum should govern via customer_current_authored. Without it, contradictions are implied not actual.",
+    "Floor plans on pages 7-16 are scanned CAD; text extraction yields column labels and dimensions only — atoms emitted from these pages should be confidence-floored or skipped entirely.",
+    "Phased build-out 250→2500 is a plan, not a quantity claim — must not generate quantity_conflict edges against a roster of 91 cameras in another artifact.",
+    "Integration descriptions (access control, fire alarm, GIS) are vendor-capability questions, not scope_inclusion."
+  ],
+  "downstream_orbitbrief_consumer_test": "Render the envelope and check that the markdown file lists each Q/A as a separate block with stable anchor IDs (sec_*) and that the customer_current_authored badges appear on every blue-answer block."
+}

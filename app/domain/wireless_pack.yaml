@@ -1,43 +1,250 @@
 pack_id: wireless
-name: Wireless Infrastructure Pack
-version: "1.0.0"
+name: Wireless Infrastructure / Wi-Fi Pack
+version: "2.0.0"
 service_lines:
   - wireless
+  - wifi
+  - wlan
 entity_types:
   - name: device
-    aliases: [ap, access point, switch]
-    examples: ["AP", "PoE switch"]
+    aliases:
+      - ap
+      - access point
+      - switch
+      - controller
+      - antenna
+      - radio
+    examples: ["AP", "PoE switch", "WLC"]
+  - name: site
+    aliases:
+      - site
+      - building
+      - floor
+      - level
+      - campus
+      - school
+      - hospital
+      - warehouse
+    examples: ["Main Campus", "Floor 3"]
+  - name: room
+    aliases:
+      - mdf
+      - idf
+      - tr
+      - telecom room
+      - server room
+      - data closet
+    examples: ["MDF", "IDF-1"]
 device_aliases:
   access_point:
     - AP
     - APs
     - access point
+    - access points
     - wireless access point
+    - wap
+    - wifi ap
+    - wi-fi ap
+    - wifi access point
+    - indoor ap
+    - outdoor ap
+    - wifi 6 ap
+    - wifi 6e ap
+    - wifi 7 ap
+    - 802.11ax ap
+    - 802.11be ap
+    - hardened ap
+    - mesh ap
+    - high density ap
+    - hd ap
+  controller:
+    - wlc
+    - wireless lan controller
+    - mobility controller
+    - cloud controller
+    - controller
+    - airwave
+    - aruba central
+    - cisco wlc
+    - meraki dashboard
+    - mist cloud
+    - ruckus smartzone
   switch:
     - switch
-    - PoE switch
+    - poe switch
+    - poe+ switch
+    - poe++ switch
+    - mgig switch
+    - multi-gig switch
+    - 2.5g switch
+    - 5g switch
+    - 10g switch
+    - access switch
+    - distribution switch
+  antenna:
+    - antenna
+    - omni antenna
+    - directional antenna
+    - patch antenna
+    - sector antenna
+    - external antenna
+    - sma antenna
+  cabling:
+    - cat6
+    - cat6a
+    - lc fiber
+    - sc fiber
+    - om4 fiber
+    - om3 fiber
+    - patch cord
+  power_supply:
+    - poe injector
+    - midspan
+    - midspan injector
+    - 60w injector
+    - 90w injector
+  mount:
+    - t-bar mount
+    - tbar mount
+    - ceiling mount
+    - drop ceiling mount
+    - hard ceiling mount
+    - wall mount
+    - pole mount
+  license:
+    - ap license
+    - controller license
+    - cloud license
+    - subscription
+    - support contract
+    - smartnet
 site_alias_patterns:
-  - "main campus"
+  - "main[-_ ]campus"
+  - "school\\s*\\d+"
+  - "store\\s*#?\\d+"
+  - "warehouse\\s*#?\\d+"
+  - "floor\\s*\\d+"
 action_aliases:
-  install_access_point: ["install ap", "install access point"]
+  install_access_point:
+    - install ap
+    - install access point
+    - mount ap
+    - hang ap
+  align_radio:
+    - align radio
+    - antenna alignment
+    - point antenna
+    - tune radio
+  survey:
+    - wireless survey
+    - wifi survey
+    - heatmap
+    - predictive survey
+    - active survey
+    - aphunting
+  cabling:
+    - pull cable to ap
+    - terminate ap drop
+    - patch ap
 constraint_patterns:
   access:
     - ceiling access
+    - hard ceiling
+    - drop ceiling
     - lift required
+    - boom lift
+    - scissor lift
     - after hours
+    - night work
+    - production hours
+    - student hours
+    - patient care hours
+  density:
+    - high density
+    - high-density
+    - hd deployment
+    - per room ap
+    - one ap per room
+    - per classroom ap
+  rf:
+    - rf interference
+    - co-channel interference
+    - dfs channel
+    - dfs avoidance
+    - 5ghz only
+    - 2.4ghz disabled
+    - 6ghz coverage
+  power:
+    - poe budget
+    - 30w poe
+    - 60w poe
+    - 90w poe
+    - poe++ required
 exclusion_patterns:
   - out of scope
+  - not in scope
+  - by others
+  - by gc
+  - nic
+  - not included
+  - tbd
+  - allowance
+  - alternate
+  - reuse existing ap
+  - reuse existing controller
+  - reuse existing cabling
+  - cabling by others
+  - cable by others
+  - mounting hardware by others
+  - power by others
+  - controller license by others
+  - subscription by others
+  - survey by others
+  - existing wlc
 customer_instruction_patterns:
-  - please add
-  - please remove
+  - please add ap
+  - please remove ap
+  - please relocate ap
+  - approved to proceed
+  - go ahead
+  - we want wifi 6e
+  - we want wifi 7
 quantity_units:
-  count: [aps, units, each]
+  count:
+    - aps
+    - units
+    - each
+    - ea
 artifact_role_patterns:
-  quote: ["wireless quote"]
+  vendor_quote:
+    - wireless quote
+    - cisco quote
+    - aruba quote
+    - meraki quote
+    - mist quote
+    - ruckus quote
+  meeting_note:
+    - design review
+    - wireless design review
+    - kickoff
 risk_defaults:
   access_point_unit_exposure: 250
   switch_unit_exposure: 500
   failed_dispatch_exposure: 400
   unpriced_scope_default: 5000
+  missing_survey_exposure: 6000
 packet_family_hints:
-  quantity_conflict: ["ap quantity mismatch"]
+  quantity_conflict:
+    - ap quantity mismatch
+    - delta of
+  vendor_mismatch:
+    - vendor quote ap count
+    - missing controller license
+  scope_exclusion:
+    - cable by others
+    - power by others
+    - controller by others
+  missing_info:
+    - survey
+    - license
+    - controller

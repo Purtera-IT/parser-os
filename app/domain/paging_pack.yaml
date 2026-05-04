@@ -1,0 +1,232 @@
+pack_id: paging
+name: Paging / Mass Notification / Sound Masking Pack
+version: "1.0.0"
+service_lines:
+  - paging
+  - mass_notification
+  - sound_masking
+  - intercom
+  - background_music
+entity_types:
+  - name: device
+    aliases:
+      - speaker
+      - amplifier
+      - source
+      - microphone
+      - paging mic
+      - intercom
+      - controller
+      - sound masking
+    examples: ["Ceiling Speaker", "70V Amp", "Paging Mic"]
+  - name: zone
+    aliases:
+      - zone
+      - paging zone
+      - bgm zone
+      - intercom zone
+      - notification zone
+    examples: ["Zone 1", "Lobby Zone"]
+device_aliases:
+  ceiling_speaker:
+    - speaker
+    - speakers
+    - ceiling speaker
+    - 8 inch speaker
+    - 6 inch speaker
+    - in-ceiling speaker
+    - drop ceiling speaker
+    - tile bridge
+    - back can
+    - back-can
+    - tile rail
+    - tile rails
+  pendant_speaker:
+    - pendant speaker
+    - pendant
+    - hanging speaker
+  horn_speaker:
+    - horn
+    - horn speaker
+    - paging horn
+    - exterior horn
+    - weatherproof horn
+  surface_speaker:
+    - surface speaker
+    - cube speaker
+    - wall mount speaker
+  column_speaker:
+    - column speaker
+    - column array
+  amplifier:
+    - amplifier
+    - amp
+    - 70v amp
+    - 70 volt amp
+    - 100v amp
+    - 8 ohm amp
+    - 60w amp
+    - 120w amp
+    - 240w amp
+    - 600w amp
+    - rack amp
+    - distributed audio amp
+    - mixer amp
+    - mixer-amplifier
+  paging_mic:
+    - paging mic
+    - paging microphone
+    - desktop mic
+    - chime mic
+    - announcement mic
+    - dynamic mic
+  intercom:
+    - intercom
+    - door station
+    - door intercom
+    - call station
+    - aiphone
+    - viking intercom
+    - 2n intercom
+    - voip intercom
+    - sip intercom
+    - axis intercom
+  controller:
+    - controller
+    - paging controller
+    - bgm controller
+    - matrix mixer
+    - q-sys
+    - qsys
+    - tesira
+    - biamp
+    - bose controlspace
+    - atlas iep
+    - bogen multicom
+    - valcom paging
+    - inovonics paging
+  sound_masking_emitter:
+    - sound masking
+    - sound masking emitter
+    - direct field emitter
+    - indirect field emitter
+    - cambridge sound masking
+    - lencore
+    - logison
+    - speech privacy
+  cabling:
+    - 16/2 plenum
+    - 18/2 plenum
+    - 14/2 plenum
+    - speaker wire
+    - audio cable
+    - cl3p
+    - cl2p
+site_alias_patterns:
+  - "zone\\s*\\d+"
+  - "lobby"
+  - "warehouse"
+  - "loading\\s*dock"
+  - "gymnasium"
+  - "cafeteria"
+action_aliases:
+  spl_test:
+    - spl test
+    - sound pressure test
+    - audibility test
+    - intelligibility test
+    - stics test
+  programming:
+    - zone programming
+    - schedule programming
+    - announcement programming
+    - chime programming
+constraint_patterns:
+  code:
+    - nfpa 72
+    - voice intelligibility
+    - stics
+    - osha noise
+    - 110db
+    - 90db ambient
+    - audibility 15db over ambient
+  zoning:
+    - zone-by-zone
+    - global page
+    - all-call
+    - emergency override
+    - priority paging
+exclusion_patterns:
+  - by gc
+  - by ec
+  - by ceiling vendor
+  - by others
+  - existing speakers reuse
+  - existing wiring reuse
+  - existing amp reuse
+  - cabling by others
+  - tile bridge by gc
+  - tile rails by gc
+  - patching by others
+  - paint by others
+  - power to amp by ec
+  - dedicated circuit by ec
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add zone
+  - please add paging mic
+  - please add chime
+  - we want overhead paging
+  - we want bgm
+  - we want sound masking
+  - approved to proceed
+  - go ahead
+quantity_units:
+  count:
+    - speakers
+    - amps
+    - zones
+    - mics
+    - emitters
+    - units
+    - ea
+  length:
+    - lf
+    - ft
+artifact_role_patterns:
+  approved_site_roster:
+    - speaker_layout
+    - speaker layout
+    - zone_schedule
+    - zone schedule
+    - device_schedule
+  vendor_quote:
+    - paging quote
+    - bogen quote
+    - valcom quote
+    - atlas quote
+    - bose quote
+    - biamp quote
+    - cambridge quote
+risk_defaults:
+  ceiling_speaker_unit_exposure: 110
+  amplifier_unit_exposure: 750
+  intercom_unit_exposure: 450
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 4500
+  missing_intelligibility_test_exposure: 2500
+packet_family_hints:
+  vendor_mismatch:
+    - speaker count mismatch
+    - amp wattage mismatch
+  scope_exclusion:
+    - tile bridge by gc
+    - power to amp by ec
+    - cabling by others
+  missing_info:
+    - intelligibility test
+    - zone programming
+    - emergency override

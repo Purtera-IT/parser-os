@@ -3,7 +3,73 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
+from app.core.normalizers import normalize_text
 from app.core.schemas import AtomType, EdgeType, EvidenceAtom, EvidenceEdge
+
+
+def _active_pack_pattern_lists() -> tuple[list[str], list[str]]:
+    """Return ``(exclusion_patterns, constraint_patterns)`` from the active pack.
+
+    Mirrors what ``graph_builder.build_edges`` uses to decide whether a
+    ``customer_instruction`` atom counts as an exclusion- or constraint-bearing
+    endpoint.  Defensive: if no active pack is set (e.g. in a unit test that
+    constructs edges directly), returns empty lists, which keeps the validator
+    in its original strict mode (atom_type must literally be exclusion /
+    constraint).
+    """
+    try:
+        from app.domain import get_active_domain_pack
+    except Exception:
+        return [], []
+    try:
+        pack = get_active_domain_pack()
+    except Exception:
+        return [], []
+    excl = [normalize_text(p) for p in (getattr(pack, "exclusion_patterns", None) or [])]
+    cons: list[str] = []
+    for patterns in (getattr(pack, "constraint_patterns", None) or {}).values():
+        for pattern in patterns or []:
+            cons.append(normalize_text(pattern))
+    return excl, cons
+
+
+def _atom_matches_any(atom: EvidenceAtom | None, patterns: list[str]) -> bool:
+    if atom is None or not patterns:
+        return False
+    text = normalize_text(atom.raw_text)
+    return any(p and p in text for p in patterns)
+
+
+def _is_exclusion_endpoint(
+    atom: EvidenceAtom | None, exclusion_patterns: list[str]
+) -> bool:
+    """Mirror ``graph_builder``'s exclusion membership rule.
+
+    Either the atom is literally an ``exclusion`` atom, or it is a
+    ``customer_instruction`` whose text matches one of the active pack's
+    exclusion patterns (e.g. an ``A1.`` answer from a customer-current PDF
+    that says "we will not be needing X").
+    """
+    if atom is None:
+        return False
+    if atom.atom_type == AtomType.exclusion:
+        return True
+    if atom.atom_type == AtomType.customer_instruction:
+        return _atom_matches_any(atom, exclusion_patterns)
+    return False
+
+
+def _is_constraint_endpoint(
+    atom: EvidenceAtom | None, constraint_patterns: list[str]
+) -> bool:
+    """Mirror ``graph_builder``'s constraint membership rule."""
+    if atom is None:
+        return False
+    if atom.atom_type == AtomType.constraint:
+        return True
+    if atom.atom_type == AtomType.customer_instruction:
+        return _atom_matches_any(atom, constraint_patterns)
+    return False
 
 
 def check_graph_invariants(atoms: list[EvidenceAtom], edges: list[EvidenceEdge]) -> list[str]:
@@ -11,6 +77,7 @@ def check_graph_invariants(atoms: list[EvidenceAtom], edges: list[EvidenceEdge])
     atom_by_id = {atom.id: atom for atom in atoms}
 
     aggregate_conflict_by_device: dict[str, int] = defaultdict(int)
+    exclusion_patterns, constraint_patterns = _active_pack_pattern_lists()
 
     for edge in edges:
         if edge.from_atom_id not in atom_by_id:
@@ -28,8 +95,8 @@ def check_graph_invariants(atoms: list[EvidenceAtom], edges: list[EvidenceEdge])
             from_atom = atom_by_id.get(edge.from_atom_id)
             to_atom = atom_by_id.get(edge.to_atom_id)
             if not (
-                (from_atom and from_atom.atom_type == AtomType.exclusion)
-                or (to_atom and to_atom.atom_type == AtomType.exclusion)
+                _is_exclusion_endpoint(from_atom, exclusion_patterns)
+                or _is_exclusion_endpoint(to_atom, exclusion_patterns)
             ):
                 errors.append(f"ERROR: Edge {edge.id} excludes edge must involve exclusion atom")
 
@@ -37,8 +104,8 @@ def check_graph_invariants(atoms: list[EvidenceAtom], edges: list[EvidenceEdge])
             from_atom = atom_by_id.get(edge.from_atom_id)
             to_atom = atom_by_id.get(edge.to_atom_id)
             if not (
-                (from_atom and from_atom.atom_type == AtomType.constraint)
-                or (to_atom and to_atom.atom_type == AtomType.constraint)
+                _is_constraint_endpoint(from_atom, constraint_patterns)
+                or _is_constraint_endpoint(to_atom, constraint_patterns)
             ):
                 errors.append(f"ERROR: Edge {edge.id} requires edge must involve constraint atom")
 

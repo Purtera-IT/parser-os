@@ -1,0 +1,36 @@
+{
+  "case_id": "STRESS_ITAD_PAIR",
+  "service_line_intended": "itad",
+  "recommended_domain_pack": "itad_pack",
+  "bundle_summary": "Documented coverage gap. Two ITAD RFPs (Natrona County WY + Michigan EGLE) were targeted but both downloads returned 403/404 at fetch time. The artifacts/ directory is empty; SOURCE_NOTES.md documents the intent.",
+  "compile_status": "no_artifacts_found",
+  "is_documented_gap": true,
+  "stress_test_attributes": [
+    "empty_artifacts_directory_case_metadata_only",
+    "service_line_declared_but_no_artifacts",
+    "documented_coverage_gap_per_source_notes",
+    "parser_must_handle_empty_case_gracefully",
+    "ground_for_synthesis_recommendation_via_scripts_synthesize_gap_artifacts_py"
+  ],
+  "expected_artifacts": [],
+  "expected_parser_behavior": {
+    "must_not_crash": true,
+    "must_read_source_notes_md": true,
+    "must_emit_minimal_envelope": true,
+    "must_emit_compile_status": "no_artifacts_found",
+    "must_emit_coverage_gap": "itad"
+  },
+  "intended_artifacts_documented": [
+    {"name": "Natrona County WY ITAD RFP", "fetch_status": "403_or_404_at_fetch_time"},
+    {"name": "Michigan EGLE ITAD RFP", "fetch_status": "403_or_404_at_fetch_time"}
+  ],
+  "remediation_recommended": "scripts/synthesize_gap_artifacts.py --service-line itad",
+  "expected_packet_families_if_artifacts_were_present": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item"
+  ]
+}

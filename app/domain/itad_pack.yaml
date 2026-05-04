@@ -1,42 +1,258 @@
 pack_id: itad
-name: IT Asset Disposition Pack
-version: "1.0.0"
+name: IT Asset Disposition / Decommission Pack
+version: "2.0.0"
 service_lines:
   - itad
+  - decommission
+  - asset_disposal
+  - data_destruction
 entity_types:
   - name: device
-    aliases: [laptop, notebook, server]
-    examples: ["laptop", "rack server"]
+    aliases:
+      - laptop
+      - notebook
+      - desktop
+      - server
+      - storage
+      - switch
+      - router
+      - ups
+      - phone
+    examples: ["laptop", "rack server", "ups"]
+  - name: site
+    aliases:
+      - data center
+      - server room
+      - branch
+      - depot
+      - warehouse
+      - office
+    examples: ["DC1", "Office HQ"]
 device_aliases:
   laptop:
     - laptop
     - laptops
     - notebook
+    - notebooks
+    - chromebook
+    - chromebooks
+    - macbook
+    - macbooks
+  desktop:
+    - desktop
+    - desktops
+    - workstation
+    - workstations
+    - tower
+    - sff
+    - small form factor
+    - all in one
+    - aio
+  thin_client:
+    - thin client
+    - thin clients
+    - zero client
+  tablet:
+    - tablet
+    - tablets
+    - ipad
+    - ipads
+  monitor:
+    - monitor
+    - monitors
+    - display
+    - displays
   server:
     - server
+    - servers
     - rack server
+    - blade server
+    - 1u server
+    - 2u server
+    - hyperconverged
+    - hci node
+  storage:
+    - storage
+    - san
+    - nas
+    - storage array
+    - jbod
+    - tape library
+  switch:
+    - switch
+    - switches
+    - network switch
+  router:
+    - router
+    - routers
+  firewall:
+    - firewall
+    - utm
+    - fortigate
+    - palo alto
+  ups:
+    - ups
+    - battery backup
+    - rack ups
+  phone:
+    - phone
+    - desk phone
+    - voip phone
+    - cisco phone
+    - polycom phone
+  printer:
+    - printer
+    - mfp
+    - multifunction printer
+    - copier
+  drive:
+    - hard drive
+    - hdd
+    - ssd
+    - solid state drive
+    - nvme
+    - m.2
+    - tape
+    - backup tape
+    - lto tape
 site_alias_patterns:
-  - "data center"
+  - "data center\\s*\\d*"
+  - "dc\\s*\\d+"
+  - "branch\\s*#?\\d+"
+  - "depot\\s*\\d+"
 action_aliases:
-  chain_of_custody: ["maintain chain of custody"]
+  chain_of_custody:
+    - maintain chain of custody
+    - chain of custody
+    - cocs
+    - serial scan
+    - asset scan
+    - barcode scan
+  data_destruction:
+    - data destruction
+    - wipe
+    - sanitize
+    - degauss
+    - shred
+    - physical destruction
+    - nist 800-88
+    - dod 5220
+  pickup:
+    - pickup
+    - pick up
+    - schedule pickup
+    - logistics pickup
+    - palletize
+    - skid up
+  audit:
+    - audit
+    - asset audit
+    - reconcile
+    - reconcile inventory
 constraint_patterns:
   compliance:
     - chain of custody
     - data destruction
     - certificate of destruction
+    - cod
+    - r2v3
+    - e-stewards
+    - estewards
+    - nist 800-88
+    - dod 5220
+    - hipaa
+    - ferpa
+    - cjis
+    - pci
+    - sox
+    - cmmc
+    - itad certified
+    - certified destruction
   access:
     - loading dock
+    - dock access
+    - badge access
+    - escort required
+    - after hours
+    - secure facility
+  packaging:
+    - palletize
+    - skid wrap
+    - shrink wrap
+    - serialized box
+    - lockable cage
+    - lock box
 exclusion_patterns:
   - not in scope
+  - out of scope
+  - by others
+  - by client
+  - by tenant
+  - nic
+  - allowance
+  - tbd
+  - keep on prem
+  - keep onsite
+  - retain in place
+  - return to leasing
+  - return to lease
+  - return to lessor
+  - donate offline
+  - alternate
 customer_instruction_patterns:
   - proceed
+  - go ahead
+  - please pickup
+  - please pick up
+  - please wipe
+  - please destroy
+  - please palletize
+  - please dispose
+  - we approve
 quantity_units:
-  count: [units, assets]
+  count:
+    - units
+    - assets
+    - each
+    - ea
+    - pallets
+    - skids
+    - cages
 artifact_role_patterns:
-  compliance: ["certificate", "destruction"]
+  approved_site_roster:
+    - asset_inventory
+    - asset inventory
+    - inventory list
+    - serial list
+    - barcode list
+  vendor_quote:
+    - itad quote
+    - destruction quote
+    - logistics quote
+    - pickup quote
+  test_results:
+    - certificate of destruction
+    - destruction certificate
+    - cod
+    - cocs
+    - chain of custody report
 risk_defaults:
   missing_chain_of_custody_exposure: 10000
-  failed_dispatch_exposure: 400
+  missing_certificate_of_destruction_exposure: 7500
+  failed_pickup_exposure: 1500
   unpriced_scope_default: 5000
+  data_breach_default_exposure: 50000
 packet_family_hints:
-  site_access: ["chain of custody", "compliance"]
+  site_access:
+    - chain of custody
+    - dock access
+    - escort
+  scope_exclusion:
+    - retain in place
+    - return to leasing
+    - keep on prem
+  missing_info:
+    - certificate of destruction
+    - serial reconciliation
+    - r2v3
+    - nist 800-88

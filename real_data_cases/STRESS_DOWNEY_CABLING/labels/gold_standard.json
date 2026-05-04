@@ -1,0 +1,43 @@
+{
+  "case_id": "STRESS_DOWNEY_CABLING",
+  "service_line": "copper_cabling",
+  "recommended_domain_pack": "copper_cabling_pack",
+  "bundle_summary": "Downey Unified School District Bid 23/24-20: CAT6 cabling for IP phone project across 19 schools (14 elementary, 2 middle, 3 high; one in Bellflower). Customer-authored BOM (Superior Essex 66-240-5A + Leviton 61110-RV6 Green) + 21-RFI Addendum #1 with revised DIV 01 + revised plans. After-school work hours (3pm-11:30pm). $4M general aggregate + $6M umbrella excess insurance.",
+  "stress_test_attributes": [
+    "csi_masterformat_division_00_01_50_plus_sections",
+    "brand_specific_bom_with_color_green",
+    "project_manual_with_embedded_blank_forms",
+    "addendum_supersedes_original_div_01_rev_1_stamped",
+    "21_numbered_rfi_qa_pairs_in_addendum_1",
+    "19_sites_with_full_addresses",
+    "pace_education_center_in_bellflower_not_downey",
+    "existing_cat3_remains_operational_not_demoed",
+    "after_school_work_hours_3pm_1130pm_mon_fri",
+    "no_drawings_in_main_text_n_a",
+    "iran_contracting_act_certification_california_specific",
+    "sussman_2_story_building_excluded_per_addendum"
+  ],
+  "expected_artifacts": [
+    {"filename": "Bid-23_24-20-Various-Site-CAT6-Cabling-for-IP-Phone-Project.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 100, "expected_min_routing_confidence": 0.95},
+    {"filename": "Addendum-1-Various-Sites-Cabling-1.pdf", "artifact_type": "pdf", "expected_parser": "orbitbrief_pdf", "page_count": 50, "expected_min_routing_confidence": 0.95}
+  ],
+  "expected_min_distinct_sites": 19,
+  "expected_min_unique_vendors_referenced": 2,
+  "expected_min_atom_count": 280,
+  "expected_min_packet_count": 43,
+  "expected_min_constraint_atoms": 30,
+  "expected_min_compliance_atoms": 15,
+  "expected_min_csi_section_atoms": 50,
+  "expected_addendum_override_packets": 11,
+  "expected_min_unsupported_receipts": 8,
+  "expected_no_quantity_conflict_edges_cross_artifact": true,
+  "expected_packet_families": [
+    "customer_override",
+    "scope_inclusion",
+    "scope_exclusion",
+    "missing_info",
+    "meeting_decision",
+    "action_item",
+    "site_access"
+  ]
+}

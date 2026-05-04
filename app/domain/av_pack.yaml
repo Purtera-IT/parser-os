@@ -1,0 +1,297 @@
+pack_id: av
+name: Audio Visual / UCC Pack
+version: "1.0.0"
+service_lines:
+  - av
+  - audio_visual
+  - ucc
+  - unified_communications
+  - conferencing
+entity_types:
+  - name: device
+    aliases:
+      - codec
+      - display
+      - tv
+      - projector
+      - microphone
+      - camera
+      - speaker
+      - amplifier
+      - dsp
+      - touch panel
+      - controller
+    examples: ["Cisco Codec", "Samsung Display", "Shure MXA"]
+  - name: room
+    aliases:
+      - conference room
+      - boardroom
+      - huddle room
+      - training room
+      - classroom
+      - lecture hall
+      - auditorium
+      - divisible room
+    examples: ["Boardroom A", "Training Room 2"]
+device_aliases:
+  display:
+    - display
+    - displays
+    - tv
+    - led display
+    - lcd display
+    - oled display
+    - 75 inch display
+    - 86 inch display
+    - 98 inch display
+    - 4k display
+    - signage display
+    - digital signage
+    - video wall
+    - dvled
+    - led wall
+  projector:
+    - projector
+    - projectors
+    - laser projector
+    - 4k projector
+    - short throw
+    - ultra short throw
+    - ust projector
+  vc_codec:
+    - codec
+    - vc codec
+    - video bar
+    - room kit
+    - room kit plus
+    - room kit pro
+    - room bar
+    - codec plus
+    - codec pro
+    - cisco codec
+    - poly codec
+    - poly studio
+    - logitech rally
+    - logitech rally bar
+    - logitech meetup
+    - mtr appliance
+    - microsoft teams room
+    - teams room
+    - zoom room
+    - zoom appliance
+    - neat board
+    - neat bar
+  ptz_camera:
+    - ptz
+    - ptz camera
+    - conference camera
+    - tracking camera
+    - speaker tracking camera
+    - eptz
+    - usb ptz
+  microphone:
+    - microphone
+    - mic
+    - ceiling mic
+    - ceiling array
+    - mxa
+    - mxa910
+    - mxa902
+    - tabletop mic
+    - boundary mic
+    - lavalier
+    - lapel mic
+    - handheld mic
+    - wireless mic
+    - shure mic
+    - sennheiser mic
+    - audio technica mic
+  speaker:
+    - speaker
+    - ceiling speaker
+    - in-ceiling speaker
+    - pendant speaker
+    - column speaker
+    - line array
+    - subwoofer
+    - sub
+    - powered speaker
+    - passive speaker
+    - 70v speaker
+    - 70 volt speaker
+  amplifier:
+    - amplifier
+    - amp
+    - power amplifier
+    - 70v amplifier
+    - distributed audio amp
+  dsp:
+    - dsp
+    - audio dsp
+    - tesira
+    - q-sys
+    - qsys
+    - biamp
+    - shure intellimix
+  control_processor:
+    - controller
+    - control processor
+    - crestron processor
+    - amx processor
+    - extron processor
+  touch_panel:
+    - touch panel
+    - touchscreen
+    - touch10
+    - room navigator
+    - logi tap
+    - poly tc8
+    - crestron touch panel
+  switcher:
+    - switcher
+    - matrix switcher
+    - presentation switcher
+    - hdmi matrix
+    - sdvoe
+    - networked av
+    - av over ip
+    - dante
+    - aes67
+    - ndi
+  cabling:
+    - hdmi
+    - hdmi cable
+    - usb-c cable
+    - dp cable
+    - displayport cable
+    - hdbaset
+    - cat6 av
+    - cat6a av
+  mount:
+    - tv mount
+    - display mount
+    - projector mount
+    - lift bracket
+    - articulating mount
+  license:
+    - mtr license
+    - teams room license
+    - zoom room license
+    - webex license
+    - polyzoom license
+    - service contract
+site_alias_patterns:
+  - "boardroom\\s*[a-z0-9]*"
+  - "huddle\\s*\\d*"
+  - "training\\s*room\\s*\\d*"
+  - "conference\\s*room\\s*\\d*"
+  - "classroom\\s*\\d*"
+  - "auditorium"
+action_aliases:
+  install_display:
+    - mount display
+    - hang display
+    - install display
+  cabling:
+    - pull hdmi
+    - pull hdbaset
+    - pull cat6 to display
+    - terminate display drop
+  programming:
+    - program touch panel
+    - load room template
+    - configure mtr
+    - configure zoom room
+constraint_patterns:
+  acoustics:
+    - acoustic treatment
+    - rt60
+    - reverb concern
+    - hard surface ceiling
+    - glass walls
+    - room acoustics
+  power:
+    - dedicated 20a
+    - dedicated 120v
+    - 240v required
+    - quad outlet
+    - duplex outlet
+  lighting:
+    - dimmable lighting
+    - daylight harvesting
+    - shade integration
+    - lutron integration
+exclusion_patterns:
+  - by gc
+  - by ec
+  - by furniture vendor
+  - by millwork vendor
+  - existing display reuse
+  - existing codec reuse
+  - existing cabling reuse
+  - cabling by others
+  - mounting hardware by others
+  - power by others
+  - dedicated circuits by others
+  - mtr license by others
+  - subscription by others
+  - acoustic treatment by others
+  - millwork by others
+  - furniture by others
+  - tbd
+  - allowance
+  - alternate
+  - nic
+customer_instruction_patterns:
+  - please add display
+  - please add room
+  - please standardize
+  - we want mtr
+  - we want zoom
+  - we want webex
+  - approved to proceed
+  - go ahead
+quantity_units:
+  count:
+    - rooms
+    - displays
+    - codecs
+    - mics
+    - speakers
+    - units
+    - ea
+artifact_role_patterns:
+  approved_site_roster:
+    - room_schedule
+    - room schedule
+    - av_room_list
+    - room program
+  vendor_quote:
+    - av quote
+    - cisco quote
+    - poly quote
+    - logitech quote
+    - crestron quote
+    - extron quote
+risk_defaults:
+  display_unit_exposure: 1800
+  vc_codec_unit_exposure: 9000
+  speaker_unit_exposure: 250
+  mic_unit_exposure: 600
+  failed_dispatch_exposure: 500
+  unpriced_scope_default: 6000
+  missing_dedicated_circuit_exposure: 800
+  missing_mtr_license_exposure: 1500
+packet_family_hints:
+  vendor_mismatch:
+    - display count mismatch
+    - codec model mismatch
+  scope_exclusion:
+    - acoustic treatment by others
+    - millwork by others
+    - power by others
+  missing_info:
+    - mtr license
+    - dedicated circuit
+    - acoustic
+    - control programming

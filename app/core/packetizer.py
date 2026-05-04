@@ -697,6 +697,12 @@ def _build_packet(
         flags.add("deleted_text_present")
     if any("semantic_candidate_linker" in edge.reason.lower() for edge in related_edges):
         flags.add("semantic_candidate_linker")
+    # Anchor sanity: when a packet falls back to a "*:unknown" sentinel anchor,
+    # the entity layer didn't have enough evidence to ground it.  Flag it so
+    # human review surfaces these and we never quietly mark them active —
+    # they'll always require eyes.
+    if anchor_signature.canonical_key.endswith(":unknown") or ":unknown|" in anchor_signature.canonical_key:
+        flags.add("unknown_anchor")
 
     effective_status = status
     if not governing_ids and status in {PacketStatus.active, PacketStatus.needs_review}:
@@ -710,6 +716,10 @@ def _build_packet(
     elif governing_atoms and any(atom.review_status.value == "needs_review" for atom in governing_atoms):
         if effective_status == PacketStatus.active:
             effective_status = PacketStatus.needs_review
+    # Unknown anchors must never be active — there's no entity to dispatch
+    # against.  Always force needs_review so OrbitBrief and humans see the gap.
+    if "unknown_anchor" in flags and effective_status == PacketStatus.active:
+        effective_status = PacketStatus.needs_review
 
     packet = EvidencePacket(
         id=stable_id("pkt", project_id, family.value, anchor_signature.hash, atom_ids_for_stable),
@@ -1092,6 +1102,44 @@ def build_packets(
             status=status,
             reason="Action item extracted from transcript.",
             owner=owner or "unknown",
+        )
+        packets.append(packet)
+
+    # 6.5) compliance_clause (PRODUCTION_GAPS Week 6 P6.1).
+    #
+    # Atoms tagged ``AtomType.compliance`` cite an external standard or
+    # regulation ("shall comply with NFPA 72", "ADA-compliant",
+    # "in accordance with IEEE 802.3bt", "per code", "e-rate eligible").
+    # OrbitBrief renders these as their own tab — they're load-bearing
+    # for sign-off and risk surfacing — so we packetize them ahead of
+    # the generic missing_info / scope_inclusion buckets to keep them
+    # un-merged.
+    compliance_atoms = [a for a in atoms if a.atom_type == AtomType.compliance]
+    for atom in compliance_atoms:
+        if atom.id in consumed_by_conflict_or_exclusion:
+            continue
+        # A compliance clause may have a target (a device / site /
+        # spec_section it constrains).  Pull in atoms that share an
+        # entity_key so the packet carries the application context.
+        targets = [
+            other
+            for other in atoms
+            if other.id != atom.id
+            and other.atom_type
+            in {AtomType.scope_item, AtomType.constraint, AtomType.quantity, AtomType.customer_instruction}
+            and set(other.entity_keys).intersection(set(atom.entity_keys))
+        ]
+        # Keep packet size bounded — too many incidental matches dilute
+        # the signal (cf. ``site:campus``-class noisy keys).
+        targets = targets[:6]
+        related = [e for e in edges if atom.id in {e.from_atom_id, e.to_atom_id}]
+        packet = _build_packet(
+            project_id=project_id,
+            family=PacketFamily.compliance_clause,
+            atoms=[atom] + targets,
+            related_edges=related,
+            status=PacketStatus.active,
+            reason="Compliance clause cites external standard / code requirement.",
         )
         packets.append(packet)
 
