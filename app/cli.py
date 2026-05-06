@@ -620,6 +620,68 @@ def matrix(
     typer.echo(json.dumps(summary, indent=2))
 
 
+@app.command("report")
+def report(
+    project_dir: Path = typer.Argument(..., help="Project directory to compile."),
+    out_dir: Path = typer.Option(
+        ...,
+        "--out-dir",
+        help="Where to write the production report bundle.  Will be created.",
+    ),
+    domain_pack: str | None = typer.Option(
+        None,
+        "--domain-pack",
+        help="Pin a domain pack (otherwise auto-routed).",
+    ),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="Disable incremental artifact cache reuse.",
+    ),
+    skip_orbitbrief: bool = typer.Option(
+        False,
+        "--skip-orbitbrief",
+        help="Skip the OrbitBrief envelope and the per-compile review folder.",
+    ),
+    no_zip: bool = typer.Option(
+        False,
+        "--no-zip",
+        help="Skip writing the <out_dir>.zip bundle.",
+    ),
+    abstain_threshold: float = typer.Option(0.70, "--abstain-threshold"),
+    allow_errors: bool = typer.Option(False, "--allow-errors"),
+    allow_unverified_receipts: bool = typer.Option(
+        False, "--allow-unverified-receipts"
+    ),
+) -> None:
+    """Generate a single production hand-off report for a project.
+
+    Runs ``compile`` end-to-end, auto-detects ``labels/gold_standard.json``
+    and runs ``compare`` against it, builds the OrbitBrief envelope, writes
+    the per-compile review folder, then renders a 1-page executive
+    ``REPORT.md`` summarizing what was produced and what needs review.
+    Optionally bundles everything into a ZIP.
+
+    Hand the resulting directory (or ZIP) to a tester / reviewer — they
+    can read ``REPORT.md`` top-down without having to know the internal
+    data shapes.
+    """
+    from app.core.production_report import build_production_report
+
+    summary = build_production_report(
+        project_dir=project_dir,
+        out_dir=out_dir,
+        domain_pack=domain_pack,
+        no_cache=no_cache,
+        skip_orbitbrief=skip_orbitbrief,
+        zip_bundle=not no_zip,
+        abstain_threshold=abstain_threshold,
+        allow_errors=allow_errors,
+        allow_unverified_receipts=allow_unverified_receipts,
+    )
+    typer.echo(json.dumps(summary, indent=2))
+
+
 @app.command()
 def health() -> None:
     """Simple CLI health check."""

@@ -102,6 +102,12 @@ The full architecture overview lives in [app/README.md](app/README.md).
 # Compile a single project
 parser-os compile <project_dir> --out result.json [--review-out reviews/]
 
+# Build a production hand-off bundle (compile + compare + executive report + ZIP)
+parser-os report <project_dir> --out-dir handoff/
+# → handoff/REPORT.md (1-page executive summary, plain English)
+# → handoff/result.json + compare.json + coverage.json + envelope/ + reviews/
+# → handoff.zip (everything bundled for hand-off to a tester / reviewer)
+
 # Compile many projects in one shot
 parser-os batch-compile --cases-dir real_data_cases --out-dir batch_out/
 
