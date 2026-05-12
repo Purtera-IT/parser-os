@@ -319,9 +319,18 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     # ~12M atom pairs and a 38-minute graph_build.
     key_to_indices: dict[str, list[int]] = {}
     for idx, atom in enumerate(ordered):
+        # Dedupe entity_keys per atom — duplicates (e.g. an atom whose
+        # alias matcher registered ``device:ip_camera`` twice) would
+        # otherwise insert the same idx into the bucket multiple times,
+        # which downstream produces self-pair (i==j) candidates and
+        # ultimately a ``supports`` self-loop edge that fails graph
+        # invariants. Dedupe here, not in the atom — keys may come from
+        # multiple legitimate sources upstream.
+        seen_keys: set[str] = set()
         for k in atom.entity_keys:
-            if _is_unknown_entity_key(k):
+            if _is_unknown_entity_key(k) or k in seen_keys:
                 continue
+            seen_keys.add(k)
             key_to_indices.setdefault(k, []).append(idx)
 
     # Treat keys that match too many atoms as "noisy" — they'd otherwise pair
@@ -367,6 +376,13 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
                     break
                 j = indices[jj]
+                if i == j:
+                    # Defensive: self-pairs would build a self-loop edge
+                    # of type ``supports`` that the graph invariants
+                    # validator rejects. The dedupe above should make
+                    # this unreachable, but we belt-and-suspender it
+                    # because graph invariants are a hard CI gate.
+                    continue
                 if i < j:
                     candidate_pairs.add((i, j))
                 else:
