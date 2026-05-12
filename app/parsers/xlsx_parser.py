@@ -306,6 +306,59 @@ def _is_blank_row(row: list[Any]) -> bool:
     return all(str(c or "").strip() == "" for c in row)
 
 
+# Sheet names that signal "this tab is human instructions, not data".
+# Compared after lowercasing + stripping; substring match so workbooks
+# titled e.g. ``Instructions (Read First)`` still hit. Universal across
+# all xlsx workbooks; not domain-specific.
+_INSTRUCTIONAL_SHEET_NAME_TOKENS: frozenset[str] = frozenset({
+    "instruction",
+    "instructions",
+    "readme",
+    "read me",
+    "read_me",
+    "cover",
+    "cover sheet",
+    "coversheet",
+    "about",
+    "overview",
+    "guide",
+    "how to",
+    "how-to",
+    "table of contents",
+    "toc",
+    "legend",
+    "key",
+    "intro",
+    "introduction",
+    "title page",
+})
+
+
+def _looks_instructional_sheet(sheet_name: str) -> bool:
+    """True when the sheet name signals a non-data instructional tab."""
+    name = (sheet_name or "").strip().lower()
+    if not name:
+        return False
+    return any(token in name for token in _INSTRUCTIONAL_SHEET_NAME_TOKENS)
+
+
+def _has_tabular_shape(rows: list[list[Any]]) -> bool:
+    """Cheap structural check: does the sheet *look* like a real table?
+
+    True when there are at least 2 non-blank rows AND the widest row has
+    >= 2 non-empty cells. False for pure prose tabs (one row of
+    instructions, blank rows, single-column dumps).
+    """
+    non_blank = [r for r in rows if not _is_blank_row(r)]
+    if len(non_blank) < 2:
+        return False
+    widest = max(
+        (sum(1 for c in r if str(c or "").strip()) for r in non_blank),
+        default=0,
+    )
+    return widest >= 2
+
+
 def _label_text_for_row(row: list[Any], label_col_indices: list[int]) -> str:
     parts: list[str] = []
     for idx in label_col_indices:
@@ -893,6 +946,16 @@ class XlsxParser(BaseParser):
 
         See PRODUCTION_GAPS.md P0.4.
         """
+        # Universal false-positive guard: workbook tabs whose only purpose
+        # is to instruct the human filling in the form (e.g. "Instructions",
+        # "Read Me", "Cover", "About") are not data. They reach this code
+        # path because their prose can't satisfy the canonical header
+        # detector. If the sheet name signals an instructional intent and
+        # the body has no detectable schedule structure, emit zero atoms
+        # rather than fabricating ``scope_item`` atoms from cover text.
+        if _looks_instructional_sheet(sheet_name) and not _has_tabular_shape(rows):
+            return []
+
         atoms: list[EvidenceAtom] = []
 
         # Step 1: pick a header row.  We scan the first 10 non-empty rows

@@ -279,7 +279,25 @@ artifact_role_patterns:
     - hanwha
     - axis
 risk_defaults:
+  # Per-canonical-device unit exposures (USD per unit). Required by the
+  # domain-pack certification check
+  # (``check_04_risk_defaults_for_key_devices``): every entry under
+  # ``device_aliases`` must have a matching ``<device>_unit_exposure``
+  # default. Values are conservative business-risk ballparks for
+  # missing-line-item financial exposure; refine per project.
   ip_camera_unit_exposure: 350
+  nvr_unit_exposure: 1500
+  vms_server_unit_exposure: 4000
+  vms_client_unit_exposure: 1200
+  monitor_unit_exposure: 400
+  storage_unit_exposure: 800
+  switch_unit_exposure: 1000
+  power_supply_unit_exposure: 250
+  ups_unit_exposure: 600
+  housing_unit_exposure: 150
+  mount_unit_exposure: 80
+  license_unit_exposure: 200
+  # Aggregate / scenario-level defaults (not per-device-alias).
   failed_dispatch_exposure: 450
   unpriced_scope_default: 5500
   missing_storage_exposure: 4000

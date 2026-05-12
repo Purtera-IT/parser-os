@@ -54,7 +54,9 @@ def test_compile_case_cli_domain_pack_overrides_manifest(tmp_path: Path) -> None
     (cdir / "artifacts" / "note.txt").write_text("noop", encoding="utf-8")
     summary = compile_case(tmp_path, case_id, domain_pack="default_pack")
     assert summary["domain_pack_id"] == "default_pack"
-    assert summary["domain_pack_version"] == "1.0.0"
+    # Tracks app/domain/default_pack.yaml `version:` (currently 2.0.0).
+    # Bump this assertion in lockstep with intentional pack-version bumps.
+    assert summary["domain_pack_version"] == "2.0.0"
 
 
 def test_compile_case_no_manifest_uses_default_pack(tmp_path: Path) -> None:

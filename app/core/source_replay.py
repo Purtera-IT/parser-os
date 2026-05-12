@@ -53,6 +53,18 @@ def _receipt(
 
 
 def _atom_match_candidates(atom: EvidenceAtom) -> list[str]:
+    """Phrase-level candidates the snippet must contain to count as a hit.
+
+    A candidate is "evidence-grade" only if it is *substantive enough*
+    that finding it inside the snippet is meaningful on its own. Single
+    short tokens like ``customer``, ``vendor``, ``owner`` (which leak
+    out of ``atom.value['owner']`` / role tags) cause false-positive
+    line-range matches: any speaker line that happens to contain the
+    word "Customer" would falsely verify an atom whose actual text was
+    deleted from the file. We require either whitespace (i.e. a real
+    phrase) or length >= 12 (i.e. a long-enough single token like a
+    site/part identifier) to qualify.
+    """
     candidates = [normalize_text(atom.raw_text), normalize_text(atom.normalized_text)]
     for key in atom.entity_keys:
         _, _, tail = key.partition(":")
@@ -61,7 +73,14 @@ def _atom_match_candidates(atom: EvidenceAtom) -> list[str]:
     for value in atom.value.values():
         if isinstance(value, (str, int, float)):
             candidates.append(normalize_text(str(value)))
-    return sorted({c for c in candidates if c})
+    return sorted({
+        c for c in candidates
+        if c and (
+            " " in c                       # multi-word phrases are always evidence
+            or any(ch.isdigit() for ch in c)  # part numbers, quantities, measurements
+            or len(c) >= 12                # long unique tokens (UUIDs, hashes, slugs)
+        )
+    })
 
 
 def _important_terms(atom: EvidenceAtom) -> list[str]:
