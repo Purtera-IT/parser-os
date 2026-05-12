@@ -1,0 +1,2473 @@
+{
+  "ontology_id": "endpoint_imac_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for endpoint rollout and IMAC evidence, including laptops, desktops, tablets, workspace kits, docks, monitors, peripherals, image and software deployment, profile migration, asset tagging, user signoff, and support tasks while separating IMAC service grammar from ITAD disposition.",
+  "identity_clusters": {
+    "endpoint_business_laptop": {
+      "canonical_key": "endpoint_business_laptop",
+      "display_name": "Endpoint Business Laptop",
+      "item_kind": "endpoint_device",
+      "material_family": "endpoint_compute",
+      "comparison_group": "endpoint_device_each",
+      "synonyms": [
+        "endpoint business laptop",
+        "endpoint_business_laptop",
+        "endpoint business laptop sku",
+        "endpoint business laptop replacement",
+        "endpoint business laptop refresh",
+        "endpoint business laptop bom line",
+        "laptop",
+        "notebook",
+        "business laptop",
+        "mobile workstation",
+        "refresh laptop",
+        "corporate laptop"
+      ],
+      "required_any_tokens": [
+        [
+          "business",
+          "laptop"
+        ],
+        [
+          "laptop"
+        ],
+        [
+          "notebook"
+        ],
+        [
+          "mobile",
+          "workstation"
+        ]
+      ],
+      "negative_tokens": [
+        "data destruction",
+        "certificate of destruction",
+        "recycling",
+        "resale",
+        "wipe attestation",
+        "pos terminal",
+        "pin pad",
+        "security camera",
+        "wireless ap",
+        "network switch",
+        "fiber",
+        "consumer laptop resale",
+        "scrap laptop"
+      ]
+    },
+    "endpoint_business_desktop": {
+      "canonical_key": "endpoint_business_desktop",
+      "display_name": "Endpoint Business Desktop",
+      "item_kind": "endpoint_device",
+      "material_family": "endpoint_compute",
+      "comparison_group": "endpoint_device_each",
+      "synonyms": [
+        "endpoint business desktop",
+        "endpoint_business_desktop",
+        "endpoint business desktop sku",
+        "endpoint business desktop replacement",
+        "endpoint business desktop refresh",
+        "endpoint business desktop bom line",
+        "desktop",
+        "tower",
+        "mini pc",
+        "business desktop",
+        "workstation",
+        "refresh desktop"
+      ],
+      "required_any_tokens": [
+        [
+          "business",
+          "desktop"
+        ],
+        [
+          "desktop"
+        ],
+        [
+          "mini",
+          "pc"
+        ],
+        [
+          "workstation",
+          "desktop"
+        ]
+      ],
+      "negative_tokens": [
+        "data destruction",
+        "certificate of destruction",
+        "recycling",
+        "resale",
+        "wipe attestation",
+        "pos terminal",
+        "pin pad",
+        "security camera",
+        "wireless ap",
+        "network switch",
+        "fiber",
+        "server",
+        "pos register",
+        "thin client"
+      ]
+    },
+    "endpoint_thin_client": {
+      "canonical_key": "endpoint_thin_client",
+      "display_name": "Endpoint Thin Client",
+      "item_kind": "endpoint_device",
+      "material_family": "endpoint_compute",
+      "comparison_group": "endpoint_device_each",
+      "synonyms": [
+        "endpoint thin client",
+        "endpoint_thin_client",
+        "endpoint thin client sku",
+        "endpoint thin client replacement",
+        "endpoint thin client refresh",
+        "endpoint thin client bom line",
+        "thin client",
+        "zero client",
+        "VDI terminal",
+        "virtual desktop endpoint",
+        "small client",
+        "kiosk thin client"
+      ],
+      "required_any_tokens": [
+        [
+          "thin",
+          "client"
+        ],
+        [
+          "zero",
+          "client"
+        ],
+        [
+          "vdi",
+          "terminal"
+        ],
+        [
+          "virtual",
+          "desktop",
+          "endpoint"
+        ]
+      ],
+      "negative_tokens": [
+        "data destruction",
+        "certificate of destruction",
+        "recycling",
+        "resale",
+        "wipe attestation",
+        "pos terminal",
+        "pin pad",
+        "security camera",
+        "wireless ap",
+        "network switch",
+        "fiber",
+        "customer client",
+        "legal client"
+      ]
+    },
+    "endpoint_mobile_tablet": {
+      "canonical_key": "endpoint_mobile_tablet",
+      "display_name": "Endpoint Mobile Tablet",
+      "item_kind": "endpoint_device",
+      "material_family": "endpoint_mobile",
+      "comparison_group": "endpoint_device_each",
+      "synonyms": [
+        "endpoint mobile tablet",
+        "endpoint_mobile_tablet",
+        "endpoint mobile tablet sku",
+        "endpoint mobile tablet replacement",
+        "endpoint mobile tablet refresh",
+        "endpoint mobile tablet bom line",
+        "tablet",
+        "ipad-style tablet",
+        "android-style tablet",
+        "mobile endpoint",
+        "field tablet",
+        "slate device"
+      ],
+      "required_any_tokens": [
+        [
+          "tablet"
+        ],
+        [
+          "mobile",
+          "endpoint"
+        ],
+        [
+          "field",
+          "tablet"
+        ],
+        [
+          "slate",
+          "device"
+        ]
+      ],
+      "negative_tokens": [
+        "data destruction",
+        "certificate of destruction",
+        "recycling",
+        "resale",
+        "wipe attestation",
+        "pos terminal",
+        "pin pad",
+        "security camera",
+        "wireless ap",
+        "network switch",
+        "fiber",
+        "payment tablet",
+        "consumer phone"
+      ]
+    },
+    "endpoint_image_build": {
+      "canonical_key": "endpoint_image_build",
+      "display_name": "Endpoint Image Build",
+      "item_kind": "service_task",
+      "material_family": "endpoint_software",
+      "comparison_group": "endpoint_image_task",
+      "synonyms": [
+        "endpoint image build",
+        "endpoint_image_build",
+        "endpoint image build sku",
+        "endpoint image build replacement",
+        "endpoint image build refresh",
+        "endpoint image build bom line",
+        "image build",
+        "gold image",
+        "master image",
+        "standard image",
+        "build image",
+        "base image"
+      ],
+      "required_any_tokens": [
+        [
+          "image",
+          "build"
+        ],
+        [
+          "gold",
+          "image"
+        ],
+        [
+          "master",
+          "image"
+        ],
+        [
+          "standard",
+          "image"
+        ]
+      ],
+      "negative_tokens": [
+        "camera image",
+        "disk image for itad evidence only",
+        "docker image"
+      ]
+    },
+    "endpoint_os_reimage_task": {
+      "canonical_key": "endpoint_os_reimage_task",
+      "display_name": "Endpoint OS Reimage Task",
+      "item_kind": "service_task",
+      "material_family": "endpoint_software",
+      "comparison_group": "endpoint_image_task",
+      "synonyms": [
+        "endpoint os reimage task",
+        "endpoint_os_reimage_task",
+        "endpoint os reimage task sku",
+        "endpoint os reimage task replacement",
+        "endpoint os reimage task refresh",
+        "endpoint os reimage task bom line",
+        "reimage",
+        "OS reload",
+        "reload laptop",
+        "wipe and reload",
+        "fresh image",
+        "rebuild workstation"
+      ],
+      "required_any_tokens": [
+        [
+          "reimage"
+        ],
+        [
+          "os",
+          "reload"
+        ],
+        [
+          "wipe",
+          "and",
+          "reload"
+        ],
+        [
+          "rebuild",
+          "workstation"
+        ]
+      ],
+      "negative_tokens": [
+        "itad wipe",
+        "data destruction wipe",
+        "camera image",
+        "pos application reload"
+      ]
+    },
+    "endpoint_asset_tag_label": {
+      "canonical_key": "endpoint_asset_tag_label",
+      "display_name": "Endpoint Asset Tag Label",
+      "item_kind": "label",
+      "material_family": "endpoint_inventory",
+      "comparison_group": "endpoint_label_each",
+      "synonyms": [
+        "endpoint asset tag label",
+        "endpoint_asset_tag_label",
+        "endpoint asset tag label sku",
+        "endpoint asset tag label replacement",
+        "endpoint asset tag label refresh",
+        "endpoint asset tag label bom line",
+        "asset tag",
+        "asset label",
+        "barcode tag",
+        "inventory label",
+        "tagging",
+        "endpoint tag"
+      ],
+      "required_any_tokens": [
+        [
+          "asset",
+          "tag"
+        ],
+        [
+          "asset",
+          "label"
+        ],
+        [
+          "barcode",
+          "tag"
+        ],
+        [
+          "endpoint",
+          "tag"
+        ]
+      ],
+      "negative_tokens": [
+        "pos asset tag",
+        "ap asset tag",
+        "shipping label",
+        "itad serial capture"
+      ]
+    },
+    "endpoint_docking_station": {
+      "canonical_key": "endpoint_docking_station",
+      "display_name": "Endpoint Docking Station",
+      "item_kind": "peripheral",
+      "material_family": "endpoint_peripheral",
+      "comparison_group": "endpoint_dock_each",
+      "synonyms": [
+        "endpoint docking station",
+        "endpoint_docking_station",
+        "endpoint docking station sku",
+        "endpoint docking station replacement",
+        "endpoint docking station refresh",
+        "endpoint docking station bom line",
+        "dock",
+        "docking station",
+        "usb-c dock",
+        "port replicator",
+        "laptop dock",
+        "dock station"
+      ],
+      "required_any_tokens": [
+        [
+          "docking",
+          "station"
+        ],
+        [
+          "usb-c",
+          "dock"
+        ],
+        [
+          "port",
+          "replicator"
+        ],
+        [
+          "laptop",
+          "dock"
+        ]
+      ],
+      "negative_tokens": [
+        "loading dock",
+        "dock door",
+        "pos dock",
+        "phone dock"
+      ]
+    },
+    "endpoint_single_monitor": {
+      "canonical_key": "endpoint_single_monitor",
+      "display_name": "Endpoint Single Monitor",
+      "item_kind": "peripheral",
+      "material_family": "endpoint_display",
+      "comparison_group": "endpoint_monitor_each",
+      "synonyms": [
+        "endpoint single monitor",
+        "endpoint_single_monitor",
+        "endpoint single monitor sku",
+        "endpoint single monitor replacement",
+        "endpoint single monitor refresh",
+        "endpoint single monitor bom line",
+        "monitor",
+        "display",
+        "LCD monitor",
+        "LED monitor",
+        "screen",
+        "single display"
+      ],
+      "required_any_tokens": [
+        [
+          "monitor"
+        ],
+        [
+          "display"
+        ],
+        [
+          "lcd",
+          "monitor"
+        ],
+        [
+          "single",
+          "display"
+        ]
+      ],
+      "negative_tokens": [
+        "alarm monitoring",
+        "video monitor wall",
+        "camera monitor",
+        "medical monitor"
+      ]
+    },
+    "endpoint_dual_monitor_bundle": {
+      "canonical_key": "endpoint_dual_monitor_bundle",
+      "display_name": "Endpoint Dual Monitor Bundle",
+      "item_kind": "peripheral_bundle",
+      "material_family": "endpoint_display",
+      "comparison_group": "endpoint_monitor_bundle_each",
+      "synonyms": [
+        "endpoint dual monitor bundle",
+        "endpoint_dual_monitor_bundle",
+        "endpoint dual monitor bundle sku",
+        "endpoint dual monitor bundle replacement",
+        "endpoint dual monitor bundle refresh",
+        "endpoint dual monitor bundle bom line",
+        "dual monitor",
+        "two monitors",
+        "2x displays",
+        "dual display bundle",
+        "monitor pair",
+        "dual screen"
+      ],
+      "required_any_tokens": [
+        [
+          "dual",
+          "monitor"
+        ],
+        [
+          "two",
+          "monitors"
+        ],
+        [
+          "dual",
+          "display"
+        ],
+        [
+          "monitor",
+          "pair"
+        ]
+      ],
+      "negative_tokens": [
+        "video wall",
+        "NVR monitor",
+        "pair programming"
+      ]
+    },
+    "endpoint_keyboard_mouse_kit": {
+      "canonical_key": "endpoint_keyboard_mouse_kit",
+      "display_name": "Endpoint Keyboard Mouse Kit",
+      "item_kind": "peripheral_bundle",
+      "material_family": "endpoint_peripheral",
+      "comparison_group": "endpoint_input_kit_each",
+      "synonyms": [
+        "endpoint keyboard mouse kit",
+        "endpoint_keyboard_mouse_kit",
+        "endpoint keyboard mouse kit sku",
+        "endpoint keyboard mouse kit replacement",
+        "endpoint keyboard mouse kit refresh",
+        "endpoint keyboard mouse kit bom line",
+        "keyboard mouse",
+        "kbd mouse kit",
+        "keyboard and mouse",
+        "wireless keyboard mouse",
+        "KM kit",
+        "input kit"
+      ],
+      "required_any_tokens": [
+        [
+          "keyboard",
+          "mouse"
+        ],
+        [
+          "keyboard",
+          "and",
+          "mouse"
+        ],
+        [
+          "kbd",
+          "mouse"
+        ],
+        [
+          "input",
+          "kit"
+        ]
+      ],
+      "negative_tokens": [
+        "KVM switch",
+        "POS keyboard",
+        "scanner gun"
+      ]
+    },
+    "endpoint_headset_peripheral": {
+      "canonical_key": "endpoint_headset_peripheral",
+      "display_name": "Endpoint Headset Peripheral",
+      "item_kind": "peripheral",
+      "material_family": "endpoint_peripheral",
+      "comparison_group": "endpoint_headset_each",
+      "synonyms": [
+        "endpoint headset peripheral",
+        "endpoint_headset_peripheral",
+        "endpoint headset peripheral sku",
+        "endpoint headset peripheral replacement",
+        "endpoint headset peripheral refresh",
+        "endpoint headset peripheral bom line",
+        "headset",
+        "usb headset",
+        "call center headset",
+        "audio headset",
+        "teams headset generic",
+        "softphone headset"
+      ],
+      "required_any_tokens": [
+        [
+          "headset"
+        ],
+        [
+          "usb",
+          "headset"
+        ],
+        [
+          "call",
+          "center",
+          "headset"
+        ],
+        [
+          "softphone",
+          "headset"
+        ]
+      ],
+      "negative_tokens": [
+        "VR headset",
+        "consumer headphones",
+        "security intercom"
+      ]
+    },
+    "endpoint_webcam_peripheral": {
+      "canonical_key": "endpoint_webcam_peripheral",
+      "display_name": "Endpoint Webcam Peripheral",
+      "item_kind": "peripheral",
+      "material_family": "endpoint_peripheral",
+      "comparison_group": "endpoint_webcam_each",
+      "synonyms": [
+        "endpoint webcam peripheral",
+        "endpoint_webcam_peripheral",
+        "endpoint webcam peripheral sku",
+        "endpoint webcam peripheral replacement",
+        "endpoint webcam peripheral refresh",
+        "endpoint webcam peripheral bom line",
+        "webcam",
+        "USB camera",
+        "desktop camera",
+        "video call camera",
+        "endpoint camera",
+        "collaboration camera"
+      ],
+      "required_any_tokens": [
+        [
+          "webcam"
+        ],
+        [
+          "usb",
+          "camera"
+        ],
+        [
+          "desktop",
+          "camera"
+        ],
+        [
+          "video",
+          "call",
+          "camera"
+        ]
+      ],
+      "negative_tokens": [
+        "security camera",
+        "barcode scanner camera",
+        "phone camera",
+        "CCTV"
+      ]
+    },
+    "endpoint_workspace_install_task": {
+      "canonical_key": "endpoint_workspace_install_task",
+      "display_name": "Endpoint Workspace Install Task",
+      "item_kind": "service_task",
+      "material_family": "endpoint_imac",
+      "comparison_group": "endpoint_imac_task",
+      "synonyms": [
+        "endpoint workspace install task",
+        "endpoint_workspace_install_task",
+        "endpoint workspace install task sku",
+        "endpoint workspace install task replacement",
+        "endpoint workspace install task refresh",
+        "endpoint workspace install task bom line",
+        "desk install",
+        "workspace setup",
+        "seat install",
+        "user desk setup",
+        "workstation install",
+        "deploy at desk"
+      ],
+      "required_any_tokens": [
+        [
+          "workspace",
+          "setup"
+        ],
+        [
+          "desk",
+          "install"
+        ],
+        [
+          "seat",
+          "install"
+        ],
+        [
+          "workstation",
+          "install"
+        ]
+      ],
+      "negative_tokens": [
+        "rack and stack",
+        "pos lane install",
+        "camera install"
+      ]
+    },
+    "endpoint_move_add_change_task": {
+      "canonical_key": "endpoint_move_add_change_task",
+      "display_name": "Endpoint Move/Add/Change Task",
+      "item_kind": "service_task",
+      "material_family": "endpoint_imac",
+      "comparison_group": "endpoint_imac_task",
+      "synonyms": [
+        "endpoint move/add/change task",
+        "endpoint move add change task",
+        "endpoint_move_add_change_task",
+        "endpoint move/add/change task sku",
+        "endpoint move/add/change task replacement",
+        "endpoint move/add/change task refresh",
+        "endpoint move/add/change task bom line",
+        "IMAC",
+        "install move add change",
+        "MACD",
+        "move/add/change",
+        "desk move",
+        "user move"
+      ],
+      "required_any_tokens": [
+        [
+          "imac"
+        ],
+        [
+          "install",
+          "move",
+          "add",
+          "change"
+        ],
+        [
+          "macd"
+        ],
+        [
+          "move/add/change"
+        ]
+      ],
+      "negative_tokens": [
+        "Apple iMac hardware",
+        "ITAD",
+        "mac address",
+        "macbook"
+      ]
+    },
+    "endpoint_desk_cable_management": {
+      "canonical_key": "endpoint_desk_cable_management",
+      "display_name": "Endpoint Desk Cable Management",
+      "item_kind": "service_task",
+      "material_family": "endpoint_imac",
+      "comparison_group": "endpoint_imac_task",
+      "synonyms": [
+        "endpoint desk cable management",
+        "endpoint_desk_cable_management",
+        "endpoint desk cable management sku",
+        "endpoint desk cable management replacement",
+        "endpoint desk cable management refresh",
+        "endpoint desk cable management bom line",
+        "cable management",
+        "desk cable dress",
+        "wire management",
+        "under desk routing",
+        "velcro cables",
+        "tidy desk cables"
+      ],
+      "required_any_tokens": [
+        [
+          "desk",
+          "cable",
+          "management"
+        ],
+        [
+          "cable",
+          "management"
+        ],
+        [
+          "desk",
+          "cable",
+          "dress"
+        ],
+        [
+          "wire",
+          "management"
+        ]
+      ],
+      "negative_tokens": [
+        "datacenter cable dress",
+        "fiber cable management",
+        "pos lane cabling"
+      ]
+    },
+    "endpoint_profile_migration": {
+      "canonical_key": "endpoint_profile_migration",
+      "display_name": "Endpoint Profile Migration",
+      "item_kind": "service_task",
+      "material_family": "endpoint_software",
+      "comparison_group": "endpoint_migration_task",
+      "synonyms": [
+        "endpoint profile migration",
+        "endpoint_profile_migration",
+        "endpoint profile migration sku",
+        "endpoint profile migration replacement",
+        "endpoint profile migration refresh",
+        "endpoint profile migration bom line",
+        "profile migration",
+        "user profile",
+        "profile transfer",
+        "account migration",
+        "user state migration",
+        "settings migration"
+      ],
+      "required_any_tokens": [
+        [
+          "profile",
+          "migration"
+        ],
+        [
+          "user",
+          "profile"
+        ],
+        [
+          "profile",
+          "transfer"
+        ],
+        [
+          "user",
+          "state",
+          "migration"
+        ]
+      ],
+      "negative_tokens": [
+        "network migration",
+        "pos migration",
+        "data destruction"
+      ]
+    },
+    "endpoint_user_data_transfer": {
+      "canonical_key": "endpoint_user_data_transfer",
+      "display_name": "Endpoint User Data Transfer",
+      "item_kind": "service_task",
+      "material_family": "endpoint_data",
+      "comparison_group": "endpoint_migration_task",
+      "synonyms": [
+        "endpoint user data transfer",
+        "endpoint_user_data_transfer",
+        "endpoint user data transfer sku",
+        "endpoint user data transfer replacement",
+        "endpoint user data transfer refresh",
+        "endpoint user data transfer bom line",
+        "data transfer",
+        "user data move",
+        "files transfer",
+        "local data copy",
+        "desktop data migration",
+        "backup restore user"
+      ],
+      "required_any_tokens": [
+        [
+          "user",
+          "data",
+          "transfer"
+        ],
+        [
+          "data",
+          "transfer"
+        ],
+        [
+          "files",
+          "transfer"
+        ],
+        [
+          "local",
+          "data",
+          "copy"
+        ]
+      ],
+      "negative_tokens": [
+        "data destruction",
+        "server migration",
+        "payment transaction"
+      ]
+    },
+    "endpoint_mdm_enrollment": {
+      "canonical_key": "endpoint_mdm_enrollment",
+      "display_name": "Endpoint MDM Enrollment",
+      "item_kind": "configuration",
+      "material_family": "endpoint_management",
+      "comparison_group": "endpoint_config_task",
+      "synonyms": [
+        "endpoint mdm enrollment",
+        "endpoint_mdm_enrollment",
+        "endpoint mdm enrollment sku",
+        "endpoint mdm enrollment replacement",
+        "endpoint mdm enrollment refresh",
+        "endpoint mdm enrollment bom line",
+        "MDM enrollment",
+        "device enrollment",
+        "autopilot-style enrollment",
+        "management enrollment",
+        "UEM enrollment",
+        "join management"
+      ],
+      "required_any_tokens": [
+        [
+          "mdm",
+          "enrollment"
+        ],
+        [
+          "device",
+          "enrollment"
+        ],
+        [
+          "uem",
+          "enrollment"
+        ],
+        [
+          "management",
+          "enrollment"
+        ]
+      ],
+      "negative_tokens": [
+        "badge enrollment",
+        "camera enrollment",
+        "pos enrollment"
+      ]
+    },
+    "endpoint_security_agent_install": {
+      "canonical_key": "endpoint_security_agent_install",
+      "display_name": "Endpoint Security Agent Install",
+      "item_kind": "software_package",
+      "material_family": "endpoint_security",
+      "comparison_group": "endpoint_software_install",
+      "synonyms": [
+        "endpoint security agent install",
+        "endpoint_security_agent_install",
+        "endpoint security agent install sku",
+        "endpoint security agent install replacement",
+        "endpoint security agent install refresh",
+        "endpoint security agent install bom line",
+        "security agent",
+        "edr agent",
+        "endpoint protection",
+        "antivirus install",
+        "agent deployment",
+        "malware protection"
+      ],
+      "required_any_tokens": [
+        [
+          "security",
+          "agent"
+        ],
+        [
+          "edr",
+          "agent"
+        ],
+        [
+          "endpoint",
+          "protection"
+        ],
+        [
+          "antivirus",
+          "install"
+        ]
+      ],
+      "negative_tokens": [
+        "alarm sensor",
+        "network firewall",
+        "security camera"
+      ]
+    },
+    "endpoint_vpn_client_install": {
+      "canonical_key": "endpoint_vpn_client_install",
+      "display_name": "Endpoint VPN Client Install",
+      "item_kind": "software_package",
+      "material_family": "endpoint_networking",
+      "comparison_group": "endpoint_software_install",
+      "synonyms": [
+        "endpoint vpn client install",
+        "endpoint_vpn_client_install",
+        "endpoint vpn client install sku",
+        "endpoint vpn client install replacement",
+        "endpoint vpn client install refresh",
+        "endpoint vpn client install bom line",
+        "VPN client",
+        "remote access client",
+        "vpn install",
+        "secure client",
+        "tunnel client",
+        "endpoint vpn"
+      ],
+      "required_any_tokens": [
+        [
+          "vpn",
+          "client"
+        ],
+        [
+          "remote",
+          "access",
+          "client"
+        ],
+        [
+          "vpn",
+          "install"
+        ],
+        [
+          "tunnel",
+          "client"
+        ]
+      ],
+      "negative_tokens": [
+        "site-to-site vpn router",
+        "customer client"
+      ]
+    },
+    "endpoint_printer_mapping": {
+      "canonical_key": "endpoint_printer_mapping",
+      "display_name": "Endpoint Printer Mapping",
+      "item_kind": "configuration",
+      "material_family": "endpoint_configuration",
+      "comparison_group": "endpoint_config_task",
+      "synonyms": [
+        "endpoint printer mapping",
+        "endpoint_printer_mapping",
+        "endpoint printer mapping sku",
+        "endpoint printer mapping replacement",
+        "endpoint printer mapping refresh",
+        "endpoint printer mapping bom line",
+        "printer mapping",
+        "map printer",
+        "print queue",
+        "network printer install",
+        "default printer",
+        "printer share"
+      ],
+      "required_any_tokens": [
+        [
+          "printer",
+          "mapping"
+        ],
+        [
+          "map",
+          "printer"
+        ],
+        [
+          "print",
+          "queue"
+        ],
+        [
+          "network",
+          "printer",
+          "install"
+        ]
+      ],
+      "negative_tokens": [
+        "receipt printer POS",
+        "label printer warehouse",
+        "camera print"
+      ]
+    },
+    "endpoint_application_package_install": {
+      "canonical_key": "endpoint_application_package_install",
+      "display_name": "Endpoint Application Package Install",
+      "item_kind": "software_package",
+      "material_family": "endpoint_software",
+      "comparison_group": "endpoint_software_install",
+      "synonyms": [
+        "endpoint application package install",
+        "endpoint_application_package_install",
+        "endpoint application package install sku",
+        "endpoint application package install replacement",
+        "endpoint application package install refresh",
+        "endpoint application package install bom line",
+        "app install",
+        "application package",
+        "software package",
+        "line of business app",
+        "LOB app",
+        "package deployment"
+      ],
+      "required_any_tokens": [
+        [
+          "application",
+          "package"
+        ],
+        [
+          "app",
+          "install"
+        ],
+        [
+          "software",
+          "package"
+        ],
+        [
+          "lob",
+          "app"
+        ]
+      ],
+      "negative_tokens": [
+        "payment application POS",
+        "firmware upgrade network"
+      ]
+    },
+    "endpoint_loaner_device": {
+      "canonical_key": "endpoint_loaner_device",
+      "display_name": "Endpoint Loaner Device",
+      "item_kind": "endpoint_device",
+      "material_family": "endpoint_compute",
+      "comparison_group": "endpoint_device_each",
+      "synonyms": [
+        "endpoint loaner device",
+        "endpoint_loaner_device",
+        "endpoint loaner device sku",
+        "endpoint loaner device replacement",
+        "endpoint loaner device refresh",
+        "endpoint loaner device bom line",
+        "loaner laptop",
+        "loaner device",
+        "temporary device",
+        "spare endpoint",
+        "hot spare laptop",
+        "loaner pool"
+      ],
+      "required_any_tokens": [
+        [
+          "loaner",
+          "device"
+        ],
+        [
+          "loaner",
+          "laptop"
+        ],
+        [
+          "temporary",
+          "device"
+        ],
+        [
+          "spare",
+          "endpoint"
+        ]
+      ],
+      "negative_tokens": [
+        "spare switch",
+        "loaner car",
+        "resale asset"
+      ]
+    },
+    "endpoint_breakfix_swap": {
+      "canonical_key": "endpoint_breakfix_swap",
+      "display_name": "Endpoint Break-Fix Swap",
+      "item_kind": "service_task",
+      "material_family": "endpoint_support",
+      "comparison_group": "endpoint_breakfix_task",
+      "synonyms": [
+        "endpoint break-fix swap",
+        "endpoint break fix swap",
+        "endpoint_breakfix_swap",
+        "endpoint breakfix swap",
+        "endpoint break-fix swap sku",
+        "endpoint break-fix swap replacement",
+        "endpoint break-fix swap refresh",
+        "endpoint break-fix swap bom line",
+        "break fix",
+        "break/fix",
+        "swap laptop",
+        "replace desktop",
+        "hardware swap endpoint",
+        "field swap"
+      ],
+      "required_any_tokens": [
+        [
+          "break",
+          "fix"
+        ],
+        [
+          "break/fix"
+        ],
+        [
+          "swap",
+          "laptop"
+        ],
+        [
+          "hardware",
+          "swap",
+          "endpoint"
+        ]
+      ],
+      "negative_tokens": [
+        "RMA network",
+        "pos rma swap",
+        "camera replacement"
+      ]
+    },
+    "endpoint_rma_return": {
+      "canonical_key": "endpoint_rma_return",
+      "display_name": "Endpoint RMA Return",
+      "item_kind": "service_task",
+      "material_family": "endpoint_support",
+      "comparison_group": "endpoint_rma_each",
+      "synonyms": [
+        "endpoint rma return",
+        "endpoint_rma_return",
+        "endpoint rma return sku",
+        "endpoint rma return replacement",
+        "endpoint rma return refresh",
+        "endpoint rma return bom line",
+        "endpoint RMA",
+        "laptop RMA",
+        "return defective",
+        "warranty return",
+        "ship back unit",
+        "RMA return"
+      ],
+      "required_any_tokens": [
+        [
+          "endpoint",
+          "rma"
+        ],
+        [
+          "laptop",
+          "rma"
+        ],
+        [
+          "return",
+          "defective"
+        ],
+        [
+          "warranty",
+          "return"
+        ]
+      ],
+      "negative_tokens": [
+        "network rma",
+        "ap rma",
+        "itad pickup"
+      ]
+    },
+    "endpoint_deployment_kit": {
+      "canonical_key": "endpoint_deployment_kit",
+      "display_name": "Endpoint Deployment Kit",
+      "item_kind": "deployment_kit",
+      "material_family": "endpoint_accessory",
+      "comparison_group": "endpoint_kit_each",
+      "synonyms": [
+        "endpoint deployment kit",
+        "endpoint_deployment_kit",
+        "endpoint deployment kit sku",
+        "endpoint deployment kit replacement",
+        "endpoint deployment kit refresh",
+        "endpoint deployment kit bom line",
+        "deployment kit",
+        "workspace kit",
+        "new hire kit",
+        "ship kit",
+        "accessory kit",
+        "desk kit"
+      ],
+      "required_any_tokens": [
+        [
+          "deployment",
+          "kit"
+        ],
+        [
+          "workspace",
+          "kit"
+        ],
+        [
+          "new",
+          "hire",
+          "kit"
+        ],
+        [
+          "ship",
+          "kit"
+        ]
+      ],
+      "negative_tokens": [
+        "sensor kit",
+        "security kit",
+        "pos kit",
+        "fiber cleaning kit"
+      ]
+    },
+    "endpoint_kensington_lock": {
+      "canonical_key": "endpoint_kensington_lock",
+      "display_name": "Endpoint Kensington Lock",
+      "item_kind": "peripheral",
+      "material_family": "endpoint_security",
+      "comparison_group": "endpoint_lock_each",
+      "synonyms": [
+        "endpoint kensington lock",
+        "endpoint_kensington_lock",
+        "endpoint kensington lock sku",
+        "endpoint kensington lock replacement",
+        "endpoint kensington lock refresh",
+        "endpoint kensington lock bom line",
+        "Kensington lock",
+        "laptop lock",
+        "cable lock",
+        "security cable lock",
+        "notebook lock",
+        "device lock"
+      ],
+      "required_any_tokens": [
+        [
+          "kensington",
+          "lock"
+        ],
+        [
+          "laptop",
+          "lock"
+        ],
+        [
+          "cable",
+          "lock"
+        ],
+        [
+          "security",
+          "cable",
+          "lock"
+        ]
+      ],
+      "negative_tokens": [
+        "mag lock",
+        "cash drawer lock",
+        "door lock",
+        "software lock"
+      ]
+    },
+    "endpoint_power_adapter": {
+      "canonical_key": "endpoint_power_adapter",
+      "display_name": "Endpoint Power Adapter",
+      "item_kind": "power_component",
+      "material_family": "endpoint_power",
+      "comparison_group": "endpoint_power_adapter_each",
+      "synonyms": [
+        "endpoint power adapter",
+        "endpoint_power_adapter",
+        "endpoint power adapter sku",
+        "endpoint power adapter replacement",
+        "endpoint power adapter refresh",
+        "endpoint power adapter bom line",
+        "power adapter",
+        "laptop charger",
+        "AC adapter",
+        "USB-C charger",
+        "power brick",
+        "desktop power supply"
+      ],
+      "required_any_tokens": [
+        [
+          "power",
+          "adapter"
+        ],
+        [
+          "laptop",
+          "charger"
+        ],
+        [
+          "ac",
+          "adapter"
+        ],
+        [
+          "usb-c",
+          "charger"
+        ]
+      ],
+      "negative_tokens": [
+        "network power supply",
+        "camera PSU",
+        "PDU",
+        "PoE injector"
+      ]
+    },
+    "endpoint_docking_firmware_update": {
+      "canonical_key": "endpoint_docking_firmware_update",
+      "display_name": "Endpoint Docking Firmware Update",
+      "item_kind": "service_task",
+      "material_family": "endpoint_software",
+      "comparison_group": "endpoint_service_task",
+      "synonyms": [
+        "endpoint docking firmware update",
+        "endpoint_docking_firmware_update",
+        "endpoint docking firmware update sku",
+        "endpoint docking firmware update replacement",
+        "endpoint docking firmware update refresh",
+        "endpoint docking firmware update bom line",
+        "dock firmware",
+        "docking firmware update",
+        "dock update",
+        "port replicator firmware",
+        "dock driver update"
+      ],
+      "required_any_tokens": [
+        [
+          "dock",
+          "firmware"
+        ],
+        [
+          "docking",
+          "firmware",
+          "update"
+        ],
+        [
+          "dock",
+          "update"
+        ],
+        [
+          "port",
+          "replicator",
+          "firmware"
+        ]
+      ],
+      "negative_tokens": [
+        "network firmware",
+        "ap firmware",
+        "camera firmware"
+      ]
+    },
+    "endpoint_floor_walk_support": {
+      "canonical_key": "endpoint_floor_walk_support",
+      "display_name": "Endpoint Floor Walk Support",
+      "item_kind": "service_task",
+      "material_family": "endpoint_support",
+      "comparison_group": "endpoint_support_task",
+      "synonyms": [
+        "endpoint floor walk support",
+        "endpoint_floor_walk_support",
+        "endpoint floor walk support sku",
+        "endpoint floor walk support replacement",
+        "endpoint floor walk support refresh",
+        "endpoint floor walk support bom line",
+        "floor walk",
+        "hypercare",
+        "day 1 support",
+        "floor support",
+        "walkaround support",
+        "onsite support"
+      ],
+      "required_any_tokens": [
+        [
+          "floor",
+          "walk"
+        ],
+        [
+          "hypercare"
+        ],
+        [
+          "day",
+          "1",
+          "support"
+        ],
+        [
+          "floor",
+          "support"
+        ]
+      ],
+      "negative_tokens": [
+        "sales floor survey",
+        "camera walk test",
+        "security patrol"
+      ]
+    },
+    "endpoint_white_glove_setup": {
+      "canonical_key": "endpoint_white_glove_setup",
+      "display_name": "Endpoint White-Glove Setup",
+      "item_kind": "service_task",
+      "material_family": "endpoint_imac",
+      "comparison_group": "endpoint_imac_task",
+      "synonyms": [
+        "endpoint white-glove setup",
+        "endpoint white glove setup",
+        "endpoint_white_glove_setup",
+        "endpoint white-glove setup sku",
+        "endpoint white-glove setup replacement",
+        "endpoint white-glove setup refresh",
+        "endpoint white-glove setup bom line",
+        "white glove",
+        "VIP setup",
+        "executive setup",
+        "personalized setup",
+        "hands-on setup",
+        "premium deployment"
+      ],
+      "required_any_tokens": [
+        [
+          "white",
+          "glove"
+        ],
+        [
+          "vip",
+          "setup"
+        ],
+        [
+          "executive",
+          "setup"
+        ],
+        [
+          "personalized",
+          "setup"
+        ]
+      ],
+      "negative_tokens": [
+        "white glove delivery only",
+        "cleaning gloves",
+        "customer care"
+      ]
+    },
+    "endpoint_remote_user_ship_kit": {
+      "canonical_key": "endpoint_remote_user_ship_kit",
+      "display_name": "Endpoint Remote User Ship Kit",
+      "item_kind": "deployment_kit",
+      "material_family": "endpoint_logistics",
+      "comparison_group": "endpoint_kit_each",
+      "synonyms": [
+        "endpoint remote user ship kit",
+        "endpoint_remote_user_ship_kit",
+        "endpoint remote user ship kit sku",
+        "endpoint remote user ship kit replacement",
+        "endpoint remote user ship kit refresh",
+        "endpoint remote user ship kit bom line",
+        "remote ship kit",
+        "ship-to-home kit",
+        "WFH kit",
+        "remote user kit",
+        "home office kit",
+        "direct ship endpoint"
+      ],
+      "required_any_tokens": [
+        [
+          "remote",
+          "ship",
+          "kit"
+        ],
+        [
+          "ship-to-home",
+          "kit"
+        ],
+        [
+          "wfh",
+          "kit"
+        ],
+        [
+          "remote",
+          "user",
+          "kit"
+        ]
+      ],
+      "negative_tokens": [
+        "pos ship kit",
+        "ITAD return kit",
+        "fiber kit"
+      ]
+    },
+    "endpoint_onsite_handoff_signoff": {
+      "canonical_key": "endpoint_onsite_handoff_signoff",
+      "display_name": "Endpoint Onsite Handoff Signoff",
+      "item_kind": "signoff",
+      "material_family": "endpoint_acceptance",
+      "comparison_group": "endpoint_signoff_each",
+      "synonyms": [
+        "endpoint onsite handoff signoff",
+        "endpoint_onsite_handoff_signoff",
+        "endpoint onsite handoff signoff sku",
+        "endpoint onsite handoff signoff replacement",
+        "endpoint onsite handoff signoff refresh",
+        "endpoint onsite handoff signoff bom line",
+        "user signoff",
+        "onsite handoff",
+        "acceptance signoff",
+        "device handoff",
+        "sign-off sheet",
+        "user acceptance"
+      ],
+      "required_any_tokens": [
+        [
+          "user",
+          "signoff"
+        ],
+        [
+          "onsite",
+          "handoff"
+        ],
+        [
+          "acceptance",
+          "signoff"
+        ],
+        [
+          "device",
+          "handoff"
+        ]
+      ],
+      "negative_tokens": [
+        "carrier handoff",
+        "payment handoff",
+        "fiber handoff"
+      ]
+    },
+    "endpoint_workspace_inventory_audit": {
+      "canonical_key": "endpoint_workspace_inventory_audit",
+      "display_name": "Endpoint Workspace Inventory Audit",
+      "item_kind": "inventory_record",
+      "material_family": "endpoint_inventory",
+      "comparison_group": "endpoint_inventory_record",
+      "synonyms": [
+        "endpoint workspace inventory audit",
+        "endpoint_workspace_inventory_audit",
+        "endpoint workspace inventory audit sku",
+        "endpoint workspace inventory audit replacement",
+        "endpoint workspace inventory audit refresh",
+        "endpoint workspace inventory audit bom line",
+        "workspace audit",
+        "desk audit",
+        "endpoint inventory audit",
+        "seat inventory",
+        "walkthrough inventory",
+        "asset audit"
+      ],
+      "required_any_tokens": [
+        [
+          "workspace",
+          "audit"
+        ],
+        [
+          "desk",
+          "audit"
+        ],
+        [
+          "endpoint",
+          "inventory",
+          "audit"
+        ],
+        [
+          "seat",
+          "inventory"
+        ]
+      ],
+      "negative_tokens": [
+        "ITAD inventory",
+        "camera inventory",
+        "AP inventory"
+      ]
+    },
+    "endpoint_conference_room_pc": {
+      "canonical_key": "endpoint_conference_room_pc",
+      "display_name": "Endpoint Conference Room PC",
+      "item_kind": "endpoint_device",
+      "material_family": "endpoint_compute",
+      "comparison_group": "endpoint_device_each",
+      "synonyms": [
+        "endpoint conference room pc",
+        "endpoint_conference_room_pc",
+        "endpoint conference room pc sku",
+        "endpoint conference room pc replacement",
+        "endpoint conference room pc refresh",
+        "endpoint conference room pc bom line",
+        "conference room PC",
+        "room computer",
+        "meeting room endpoint",
+        "collaboration PC",
+        "room mini pc",
+        "Teams room pc generic"
+      ],
+      "required_any_tokens": [
+        [
+          "conference",
+          "room",
+          "pc"
+        ],
+        [
+          "room",
+          "computer"
+        ],
+        [
+          "meeting",
+          "room",
+          "endpoint"
+        ],
+        [
+          "collaboration",
+          "pc"
+        ]
+      ],
+      "negative_tokens": [
+        "conference camera",
+        "AV system",
+        "security camera"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "endpoint_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "endpoint_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "endpoint_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "endpoint_survey_export": {
+      "filename_contains": [
+        "survey",
+        "walkthrough",
+        "walk-thru",
+        "site audit",
+        "heatmap",
+        "as-built",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "survey_export",
+      "typical_atom_types": [
+        "field_observation",
+        "location_note",
+        "constraint",
+        "existing_condition"
+      ],
+      "beats": [
+        "vendor_quote"
+      ],
+      "cannot_govern": [
+        "approved_quantity_without_scope"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "endpoint_field_test_result": {
+      "filename_contains": [
+        "test",
+        "cert",
+        "validation",
+        "acceptance",
+        "results",
+        "post install",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv",
+        ".txt"
+      ],
+      "authority_class": "field_test_result",
+      "typical_atom_types": [
+        "test_measurement",
+        "pass_fail",
+        "port_or_device_id",
+        "technician_note"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "commercial_price"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "endpoint_cutover_plan": {
+      "filename_contains": [
+        "cutover",
+        "migration plan",
+        "runbook",
+        "go-live",
+        "change window",
+        "freeze window",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".docx",
+        ".pdf",
+        ".csv"
+      ],
+      "authority_class": "cutover_plan",
+      "typical_atom_types": [
+        "task_sequence",
+        "rollback",
+        "owner",
+        "maintenance_window"
+      ],
+      "beats": [
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "material_quantity"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "endpoint_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "endpoint_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "endpoint",
+        "imac",
+        "laptop",
+        "desktop",
+        "workspace",
+        "user"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial number",
+      "s/n",
+      "sn",
+      "service tag"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "barcode",
+      "inventory tag",
+      "asset id",
+      "tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "migration window",
+      "change window",
+      "freeze window"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "user_name": [
+      "user",
+      "assigned user",
+      "employee",
+      "recipient",
+      "end user",
+      "owner"
+    ],
+    "device_name": [
+      "device name",
+      "hostname",
+      "computer name",
+      "endpoint name",
+      "asset name"
+    ],
+    "image_version": [
+      "image",
+      "image version",
+      "build",
+      "gold image",
+      "os version"
+    ],
+    "workspace": [
+      "desk",
+      "seat",
+      "cube",
+      "office",
+      "workspace",
+      "station"
+    ],
+    "peripheral_bundle": [
+      "bundle",
+      "kit",
+      "dock",
+      "monitor bundle",
+      "workspace kit"
+    ],
+    "shipping_tracking": [
+      "tracking",
+      "ship date",
+      "carrier",
+      "waybill",
+      "return label"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "endpoint_asset": {
+      "examples": [
+        "LT-1045",
+        "desktop 7",
+        "tablet 12",
+        "conference room pc"
+      ],
+      "identity_bearing": true
+    },
+    "user_assignment": {
+      "examples": [
+        "Jane Doe",
+        "new hire",
+        "VIP user",
+        "remote user"
+      ],
+      "identity_bearing": true
+    },
+    "workspace": {
+      "examples": [
+        "desk 4B",
+        "cube 210",
+        "conference room 3",
+        "home office"
+      ],
+      "identity_bearing": true
+    },
+    "software_package": {
+      "examples": [
+        "VPN client",
+        "EDR agent",
+        "LOB app",
+        "printer queue"
+      ],
+      "identity_bearing": true
+    },
+    "imac_action": {
+      "examples": [
+        "install",
+        "move",
+        "add",
+        "change",
+        "break-fix swap"
+      ],
+      "identity_bearing": false
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "Endpoint devices, peripherals, software packages, IMAC tasks, and logistics kits are separate comparison groups; do not compare a monitor count to a laptop count.",
+    "IMAC means install/move/add/change when paired with workspace, user, move, add, change, or deployment context; Apple iMac hardware must resolve as endpoint_business_desktop or endpoint_conference_room_pc only when hardware context exists.",
+    "ITAD, data destruction, certificate of destruction, resale, recycling, and wipe attestations are negative context and must split into itad_disposition_ontology.",
+    "Endpoint image/reimage tasks are software deployment evidence; ITAD wiping is disposition evidence even if both use the word wipe.",
+    "A deployment kit can contain laptop, dock, monitor, keyboard, mouse, power adapter, and ship materials; packetize when quantity conflicts matter.",
+    "User signoff and floor-walk support are acceptance/support tasks, not device inventory.",
+    "Serial number and asset tag merge the same endpoint only when the model and site/user assignment do not conflict.",
+    "TBD user, approx seat count, assumed desk, pending customer, per GC, and verify in field preserve uncertainty and cannot govern final inventory alone.",
+    "Cross-domain confusion - AP: endpoint application package may abbreviate app/AP in notes; wireless AP wins only with Wi-Fi/WLAN context.",
+    "Cross-domain confusion - switch: KVM or dock switching is endpoint peripheral context; network switch belongs to network_modernization and light switch is rejected.",
+    "Cross-domain confusion - panel: monitor panels are display components only; patch/electrical/security/POS panels belong elsewhere.",
+    "Cross-domain confusion - gateway: endpoint VPN/client gateway references configuration only; IoT, payment, and WAN gateways split.",
+    "Cross-domain confusion - sensor: endpoint telemetry sensor or laptop sensor wording is not a security sensor unless alarm/access context exists.",
+    "Cross-domain confusion - rack: desk equipment is endpoint scope; datacenter racks and network rack kits split unless a conference-room rack is explicitly scoped as endpoint accessory.",
+    "Cross-domain confusion - controller: domain controller or device management controller is not wireless WLC, door controller, or POS lane controller.",
+    "Cross-domain confusion - camera: endpoint_webcam_peripheral wins for USB/webcam/collaboration context; surveillance cameras belong to edge_iot_security.",
+    "Cross-domain confusion - drop: software drop/deployment package is not structured cabling; require cable/run/jack tokens for cabling identities.",
+    "Cross-domain confusion - lock: endpoint_kensington_lock wins for laptop/device lock; mag locks and cash drawer locks are negatives."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "Endpoint IMAC BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "Deploy 120 laptops with docks, dual monitors, keyboard/mouse kits",
+      "identity": "endpoint_business_laptop",
+      "quantity": 120,
+      "notes": "Bundle should emit dock, monitor bundle, and input kit atoms separately."
+    },
+    {
+      "raw": "IMAC move/add/change for 32 users on floor 5",
+      "identity": "endpoint_move_add_change_task",
+      "quantity": 32,
+      "notes": "Service task count by user/seat, not hardware count."
+    },
+    {
+      "raw": "Reimage old workstation then migrate user profile",
+      "identity": "endpoint_os_reimage_task",
+      "quantity": 1,
+      "notes": "ITAD wipe would be separate if disposition context appears."
+    },
+    {
+      "raw": "USB-C docking station refresh for remote users",
+      "identity": "endpoint_docking_station",
+      "quantity": null,
+      "notes": "Quantity absent; do not infer from users without roster."
+    },
+    {
+      "raw": "Floor walk support day 1 after cutover",
+      "identity": "endpoint_floor_walk_support",
+      "quantity": null,
+      "notes": "Support task."
+    },
+    {
+      "raw": "Ship WFH kit with laptop charger and headset",
+      "identity": "endpoint_remote_user_ship_kit",
+      "quantity": 1,
+      "notes": "Logistics kit can be packetized if accessories itemized."
+    },
+    {
+      "raw": "Endpoint protection agent install included in image",
+      "identity": "endpoint_security_agent_install",
+      "quantity": null,
+      "notes": "Software package install."
+    },
+    {
+      "raw": "User acceptance sign-off sheet pending customer",
+      "identity": "endpoint_onsite_handoff_signoff",
+      "quantity": null,
+      "notes": "Acceptance artifact with uncertainty."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "IMAC is both a service grammar and a product-like desktop term.",
+      "why_it_breaks_resolution": "Emails may say iMac, IMAC, MACD, or move/add/change with inconsistent casing.",
+      "symptoms_in_artifacts": "Apple desktop hardware merges with IMAC service tasks or MAC addresses.",
+      "mitigation": "parser",
+      "example_phrases": [
+        "IMAC services",
+        "install move add change",
+        "Apple iMac",
+        "MACD request",
+        "mac address",
+        "move/add/change",
+        "desktop iMac"
+      ]
+    },
+    {
+      "weak_point": "Endpoint wiping overlaps with ITAD data destruction.",
+      "why_it_breaks_resolution": "Reimage workflows and compliant sanitization both use wipe/reload language.",
+      "symptoms_in_artifacts": "Disposition certificates appear in endpoint deployment packets.",
+      "mitigation": "ontology",
+      "example_phrases": [
+        "wipe and reload",
+        "data wipe certificate",
+        "fresh image",
+        "NIST wipe",
+        "certificate of destruction",
+        "reimage laptop",
+        "ITAD pickup"
+      ]
+    },
+    {
+      "weak_point": "Bundles obscure individual peripheral quantities.",
+      "why_it_breaks_resolution": "Workspace kits can include multiple monitors, docks, keyboard/mouse kits, and cables.",
+      "symptoms_in_artifacts": "Kit quantity conflicts with itemized accessory count.",
+      "mitigation": "packetizer",
+      "example_phrases": [
+        "new hire kit",
+        "dual monitor bundle",
+        "workspace kit",
+        "ship kit",
+        "dock included",
+        "keyboard/mouse combo",
+        "accessory bundle"
+      ]
+    },
+    {
+      "weak_point": "User, seat, device, and peripheral counts are comparable only in narrow contexts.",
+      "why_it_breaks_resolution": "One user may receive several devices or one device may be shared by a room.",
+      "symptoms_in_artifacts": "User roster count is used as laptop count without approval.",
+      "mitigation": "entity_resolver",
+      "example_phrases": [
+        "120 users",
+        "118 laptops",
+        "two shared PCs",
+        "conference room PC",
+        "seat count approx",
+        "pending new hires",
+        "loaner pool"
+      ]
+    },
+    {
+      "weak_point": "Remote shipping artifacts blur logistics and installation.",
+      "why_it_breaks_resolution": "Direct-ship kits may not equal completed deployment or user acceptance.",
+      "symptoms_in_artifacts": "Tracking rows are treated as installed endpoints.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "direct ship",
+        "tracking number",
+        "return label",
+        "ship-to-home",
+        "remote user kit",
+        "delivery exception",
+        "user signoff pending"
+      ]
+    }
+  ]
+}

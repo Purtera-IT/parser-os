@@ -1,0 +1,1984 @@
+{
+  "ontology_id": "itad_disposition_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for IT asset disposition evidence covering chain of custody, serialized capture, data destruction certificates and wipe attestations, shredding/degaussing/sanitization, logistics, recycling, resale/remarketing, exceptions, and compliance closeout while separating endpoint deployment and ITAD meanings.",
+  "identity_clusters": {
+    "itad_chain_of_custody_form": {
+      "canonical_key": "itad_chain_of_custody_form",
+      "display_name": "ITAD Chain of Custody Form",
+      "item_kind": "compliance_artifact",
+      "material_family": "custody",
+      "comparison_group": "itad_custody_artifact_each",
+      "synonyms": [
+        "itad chain of custody form",
+        "itad_chain_of_custody_form",
+        "itad chain of custody form sku",
+        "itad chain of custody form replacement",
+        "itad chain of custody form refresh",
+        "itad chain of custody form bom line",
+        "chain of custody",
+        "COC",
+        "custody form",
+        "custody log",
+        "handoff form",
+        "asset transfer custody"
+      ],
+      "required_any_tokens": [
+        [
+          "chain",
+          "of",
+          "custody"
+        ],
+        [
+          "coc"
+        ],
+        [
+          "custody",
+          "form"
+        ],
+        [
+          "custody",
+          "log"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint deployment",
+        "reimage",
+        "fresh image",
+        "pos install",
+        "camera install",
+        "wireless ap",
+        "network refresh net-new",
+        "fiber install",
+        "certificate of conformance",
+        "carrier handoff"
+      ]
+    },
+    "itad_data_destruction_certificate": {
+      "canonical_key": "itad_data_destruction_certificate",
+      "display_name": "ITAD Data Destruction Certificate",
+      "item_kind": "certificate",
+      "material_family": "data_destruction",
+      "comparison_group": "itad_certificate_each",
+      "synonyms": [
+        "itad data destruction certificate",
+        "itad_data_destruction_certificate",
+        "itad data destruction certificate sku",
+        "itad data destruction certificate replacement",
+        "itad data destruction certificate refresh",
+        "itad data destruction certificate bom line",
+        "certificate of destruction",
+        "COD",
+        "data destruction cert",
+        "destruction certificate",
+        "sanitization certificate",
+        "certificate of data destruction"
+      ],
+      "required_any_tokens": [
+        [
+          "certificate",
+          "of",
+          "destruction"
+        ],
+        [
+          "data",
+          "destruction",
+          "cert"
+        ],
+        [
+          "destruction",
+          "certificate"
+        ],
+        [
+          "cod"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint deployment",
+        "reimage",
+        "fresh image",
+        "pos install",
+        "camera install",
+        "wireless ap",
+        "network refresh net-new",
+        "fiber install",
+        "cash on delivery",
+        "change of duty",
+        "fiber cert"
+      ]
+    },
+    "itad_wipe_attestation": {
+      "canonical_key": "itad_wipe_attestation",
+      "display_name": "ITAD Wipe Attestation",
+      "item_kind": "compliance_artifact",
+      "material_family": "data_destruction",
+      "comparison_group": "itad_attestation_each",
+      "synonyms": [
+        "itad wipe attestation",
+        "itad_wipe_attestation",
+        "itad wipe attestation sku",
+        "itad wipe attestation replacement",
+        "itad wipe attestation refresh",
+        "itad wipe attestation bom line",
+        "wipe attestation",
+        "sanitization attestation",
+        "data wipe proof",
+        "wipe report",
+        "erasure attestation",
+        "software wipe evidence"
+      ],
+      "required_any_tokens": [
+        [
+          "wipe",
+          "attestation"
+        ],
+        [
+          "sanitization",
+          "attestation"
+        ],
+        [
+          "data",
+          "wipe",
+          "proof"
+        ],
+        [
+          "wipe",
+          "report"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint reimage",
+        "fresh image",
+        "user data transfer",
+        "screen wipe"
+      ]
+    },
+    "itad_serialized_asset_capture": {
+      "canonical_key": "itad_serialized_asset_capture",
+      "display_name": "ITAD Serialized Asset Capture",
+      "item_kind": "inventory_record",
+      "material_family": "asset_capture",
+      "comparison_group": "itad_asset_record_each",
+      "synonyms": [
+        "itad serialized asset capture",
+        "itad_serialized_asset_capture",
+        "itad serialized asset capture sku",
+        "itad serialized asset capture replacement",
+        "itad serialized asset capture refresh",
+        "itad serialized asset capture bom line",
+        "serialized capture",
+        "serial capture",
+        "asset capture",
+        "asset scan",
+        "barcode scan",
+        "device intake scan"
+      ],
+      "required_any_tokens": [
+        [
+          "serialized",
+          "asset",
+          "capture"
+        ],
+        [
+          "serial",
+          "capture"
+        ],
+        [
+          "asset",
+          "scan"
+        ],
+        [
+          "device",
+          "intake",
+          "scan"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint asset tag deploy",
+        "pos scan",
+        "barcode scanner hardware"
+      ]
+    },
+    "itad_asset_pickup_logistics": {
+      "canonical_key": "itad_asset_pickup_logistics",
+      "display_name": "ITAD Asset Pickup Logistics",
+      "item_kind": "logistics_task",
+      "material_family": "logistics",
+      "comparison_group": "itad_logistics_task_each",
+      "synonyms": [
+        "itad asset pickup logistics",
+        "itad_asset_pickup_logistics",
+        "itad asset pickup logistics sku",
+        "itad asset pickup logistics replacement",
+        "itad asset pickup logistics refresh",
+        "itad asset pickup logistics bom line",
+        "pickup",
+        "asset pickup",
+        "ITAD pickup",
+        "scheduled pickup",
+        "truck pickup",
+        "dock pickup"
+      ],
+      "required_any_tokens": [
+        [
+          "itad",
+          "pickup"
+        ],
+        [
+          "asset",
+          "pickup"
+        ],
+        [
+          "scheduled",
+          "pickup"
+        ],
+        [
+          "truck",
+          "pickup"
+        ]
+      ],
+      "negative_tokens": [
+        "store pickup order",
+        "curbside pickup POS",
+        "pickup configuration"
+      ]
+    },
+    "itad_secure_transport_seal": {
+      "canonical_key": "itad_secure_transport_seal",
+      "display_name": "ITAD Secure Transport Seal",
+      "item_kind": "security_control",
+      "material_family": "logistics",
+      "comparison_group": "itad_transport_seal_each",
+      "synonyms": [
+        "itad secure transport seal",
+        "itad_secure_transport_seal",
+        "itad secure transport seal sku",
+        "itad secure transport seal replacement",
+        "itad secure transport seal refresh",
+        "itad secure transport seal bom line",
+        "tamper seal",
+        "security seal",
+        "truck seal",
+        "seal number",
+        "tamper evident seal",
+        "chain seal"
+      ],
+      "required_any_tokens": [
+        [
+          "tamper",
+          "seal"
+        ],
+        [
+          "security",
+          "seal"
+        ],
+        [
+          "truck",
+          "seal"
+        ],
+        [
+          "seal",
+          "number"
+        ]
+      ],
+      "negative_tokens": [
+        "door seal repair",
+        "weather seal",
+        "software seal"
+      ]
+    },
+    "itad_palletized_asset_load": {
+      "canonical_key": "itad_palletized_asset_load",
+      "display_name": "ITAD Palletized Asset Load",
+      "item_kind": "logistics_unit",
+      "material_family": "logistics",
+      "comparison_group": "itad_pallet_each",
+      "synonyms": [
+        "itad palletized asset load",
+        "itad_palletized_asset_load",
+        "itad palletized asset load sku",
+        "itad palletized asset load replacement",
+        "itad palletized asset load refresh",
+        "itad palletized asset load bom line",
+        "pallet",
+        "palletized assets",
+        "gaylord",
+        "shrink wrapped pallet",
+        "asset pallet",
+        "pallet count"
+      ],
+      "required_any_tokens": [
+        [
+          "palletized",
+          "assets"
+        ],
+        [
+          "pallet"
+        ],
+        [
+          "gaylord"
+        ],
+        [
+          "shrink",
+          "wrapped",
+          "pallet"
+        ]
+      ],
+      "negative_tokens": [
+        "network pallet delivery",
+        "retail pallet",
+        "storage pallet"
+      ]
+    },
+    "itad_hard_drive_shredding": {
+      "canonical_key": "itad_hard_drive_shredding",
+      "display_name": "ITAD Hard Drive Shredding",
+      "item_kind": "service_task",
+      "material_family": "physical_destruction",
+      "comparison_group": "itad_drive_destruction_each",
+      "synonyms": [
+        "itad hard drive shredding",
+        "itad_hard_drive_shredding",
+        "itad hard drive shredding sku",
+        "itad hard drive shredding replacement",
+        "itad hard drive shredding refresh",
+        "itad hard drive shredding bom line",
+        "drive shredding",
+        "HDD shred",
+        "hard drive destruction",
+        "physical shred",
+        "crush drive",
+        "shred service"
+      ],
+      "required_any_tokens": [
+        [
+          "drive",
+          "shredding"
+        ],
+        [
+          "hdd",
+          "shred"
+        ],
+        [
+          "hard",
+          "drive",
+          "destruction"
+        ],
+        [
+          "physical",
+          "shred"
+        ]
+      ],
+      "negative_tokens": [
+        "paper shredding",
+        "food shredder",
+        "endpoint hard drive install"
+      ]
+    },
+    "itad_ssd_sanitization": {
+      "canonical_key": "itad_ssd_sanitization",
+      "display_name": "ITAD SSD Sanitization",
+      "item_kind": "service_task",
+      "material_family": "data_destruction",
+      "comparison_group": "itad_drive_destruction_each",
+      "synonyms": [
+        "itad ssd sanitization",
+        "itad_ssd_sanitization",
+        "itad ssd sanitization sku",
+        "itad ssd sanitization replacement",
+        "itad ssd sanitization refresh",
+        "itad ssd sanitization bom line",
+        "SSD wipe",
+        "SSD sanitization",
+        "solid state sanitize",
+        "NVMe wipe",
+        "secure erase SSD",
+        "flash sanitization"
+      ],
+      "required_any_tokens": [
+        [
+          "ssd",
+          "sanitization"
+        ],
+        [
+          "ssd",
+          "wipe"
+        ],
+        [
+          "nvme",
+          "wipe"
+        ],
+        [
+          "secure",
+          "erase",
+          "ssd"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint reimage",
+        "disk formatting for deployment",
+        "camera sd card"
+      ]
+    },
+    "itad_degaussing_task": {
+      "canonical_key": "itad_degaussing_task",
+      "display_name": "ITAD Degaussing Task",
+      "item_kind": "service_task",
+      "material_family": "physical_destruction",
+      "comparison_group": "itad_drive_destruction_each",
+      "synonyms": [
+        "itad degaussing task",
+        "itad_degaussing_task",
+        "itad degaussing task sku",
+        "itad degaussing task replacement",
+        "itad degaussing task refresh",
+        "itad degaussing task bom line",
+        "degauss",
+        "degaussing",
+        "magnetic erasure",
+        "degausser",
+        "tape degauss",
+        "mag media destruction"
+      ],
+      "required_any_tokens": [
+        [
+          "degauss"
+        ],
+        [
+          "degaussing"
+        ],
+        [
+          "magnetic",
+          "erasure"
+        ],
+        [
+          "tape",
+          "degauss"
+        ]
+      ],
+      "negative_tokens": [
+        "monitor degauss old CRT",
+        "mag lock",
+        "magnetic door"
+      ]
+    },
+    "itad_resale_grade_assessment": {
+      "canonical_key": "itad_resale_grade_assessment",
+      "display_name": "ITAD Resale Grade Assessment",
+      "item_kind": "service_task",
+      "material_family": "remarketing",
+      "comparison_group": "itad_grade_record_each",
+      "synonyms": [
+        "itad resale grade assessment",
+        "itad_resale_grade_assessment",
+        "itad resale grade assessment sku",
+        "itad resale grade assessment replacement",
+        "itad resale grade assessment refresh",
+        "itad resale grade assessment bom line",
+        "resale grade",
+        "cosmetic grade",
+        "A grade",
+        "B grade",
+        "remarketing grade",
+        "condition assessment"
+      ],
+      "required_any_tokens": [
+        [
+          "resale",
+          "grade"
+        ],
+        [
+          "cosmetic",
+          "grade"
+        ],
+        [
+          "remarketing",
+          "grade"
+        ],
+        [
+          "condition",
+          "assessment"
+        ]
+      ],
+      "negative_tokens": [
+        "school grade",
+        "service grade cable",
+        "quality grade materials"
+      ]
+    },
+    "itad_remarketing_report": {
+      "canonical_key": "itad_remarketing_report",
+      "display_name": "ITAD Remarketing Report",
+      "item_kind": "report",
+      "material_family": "remarketing",
+      "comparison_group": "itad_report_each",
+      "synonyms": [
+        "itad remarketing report",
+        "itad_remarketing_report",
+        "itad remarketing report sku",
+        "itad remarketing report replacement",
+        "itad remarketing report refresh",
+        "itad remarketing report bom line",
+        "remarketing report",
+        "resale report",
+        "value recovery",
+        "settlement report",
+        "revenue share report",
+        "resale proceeds"
+      ],
+      "required_any_tokens": [
+        [
+          "remarketing",
+          "report"
+        ],
+        [
+          "resale",
+          "report"
+        ],
+        [
+          "value",
+          "recovery"
+        ],
+        [
+          "settlement",
+          "report"
+        ]
+      ],
+      "negative_tokens": [
+        "sales report POS",
+        "marketing report",
+        "project settlement"
+      ]
+    },
+    "itad_recycling_certificate": {
+      "canonical_key": "itad_recycling_certificate",
+      "display_name": "ITAD Recycling Certificate",
+      "item_kind": "certificate",
+      "material_family": "recycling",
+      "comparison_group": "itad_certificate_each",
+      "synonyms": [
+        "itad recycling certificate",
+        "itad_recycling_certificate",
+        "itad recycling certificate sku",
+        "itad recycling certificate replacement",
+        "itad recycling certificate refresh",
+        "itad recycling certificate bom line",
+        "recycling cert",
+        "recycle certificate",
+        "responsible recycling",
+        "e-waste certificate",
+        "recycler cert",
+        "recycle attestation"
+      ],
+      "required_any_tokens": [
+        [
+          "recycling",
+          "cert"
+        ],
+        [
+          "recycle",
+          "certificate"
+        ],
+        [
+          "e-waste",
+          "certificate"
+        ],
+        [
+          "responsible",
+          "recycling"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber cert",
+        "payment certificate",
+        "warranty certificate"
+      ]
+    },
+    "itad_ewaste_manifest": {
+      "canonical_key": "itad_ewaste_manifest",
+      "display_name": "ITAD E-Waste Manifest",
+      "item_kind": "compliance_artifact",
+      "material_family": "recycling",
+      "comparison_group": "itad_manifest_each",
+      "synonyms": [
+        "itad e-waste manifest",
+        "itad e waste manifest",
+        "itad_ewaste_manifest",
+        "itad ewaste manifest",
+        "itad e-waste manifest sku",
+        "itad e-waste manifest replacement",
+        "itad e-waste manifest refresh",
+        "itad e-waste manifest bom line",
+        "e-waste manifest",
+        "waste manifest",
+        "recycling manifest",
+        "shipment manifest",
+        "material manifest",
+        "ewaste load sheet"
+      ],
+      "required_any_tokens": [
+        [
+          "e-waste",
+          "manifest"
+        ],
+        [
+          "waste",
+          "manifest"
+        ],
+        [
+          "recycling",
+          "manifest"
+        ],
+        [
+          "shipment",
+          "manifest"
+        ]
+      ],
+      "negative_tokens": [
+        "shipping manifest for new gear",
+        "software manifest",
+        "deployment manifest"
+      ]
+    },
+    "itad_hazardous_material_handling": {
+      "canonical_key": "itad_hazardous_material_handling",
+      "display_name": "ITAD Hazardous Material Handling",
+      "item_kind": "service_task",
+      "material_family": "hazmat",
+      "comparison_group": "itad_hazmat_task",
+      "synonyms": [
+        "itad hazardous material handling",
+        "itad_hazardous_material_handling",
+        "itad hazardous material handling sku",
+        "itad hazardous material handling replacement",
+        "itad hazardous material handling refresh",
+        "itad hazardous material handling bom line",
+        "hazmat",
+        "battery handling",
+        "CRT handling",
+        "hazardous material",
+        "mercury lamp",
+        "lithium battery handling"
+      ],
+      "required_any_tokens": [
+        [
+          "hazmat"
+        ],
+        [
+          "battery",
+          "handling"
+        ],
+        [
+          "crt",
+          "handling"
+        ],
+        [
+          "hazardous",
+          "material"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint battery replacement",
+        "UPS install",
+        "facilities hazmat unrelated"
+      ]
+    },
+    "itad_custody_photo_evidence": {
+      "canonical_key": "itad_custody_photo_evidence",
+      "display_name": "ITAD Custody Photo Evidence",
+      "item_kind": "compliance_artifact",
+      "material_family": "custody",
+      "comparison_group": "itad_photo_evidence_each",
+      "synonyms": [
+        "itad custody photo evidence",
+        "itad_custody_photo_evidence",
+        "itad custody photo evidence sku",
+        "itad custody photo evidence replacement",
+        "itad custody photo evidence refresh",
+        "itad custody photo evidence bom line",
+        "photo evidence",
+        "pickup photos",
+        "pallet photos",
+        "seal photo",
+        "asset photos",
+        "chain photos"
+      ],
+      "required_any_tokens": [
+        [
+          "photo",
+          "evidence"
+        ],
+        [
+          "pickup",
+          "photos"
+        ],
+        [
+          "pallet",
+          "photos"
+        ],
+        [
+          "seal",
+          "photo"
+        ]
+      ],
+      "negative_tokens": [
+        "site survey photos",
+        "camera images",
+        "marketing photos"
+      ]
+    },
+    "itad_client_release_authorization": {
+      "canonical_key": "itad_client_release_authorization",
+      "display_name": "ITAD Client Release Authorization",
+      "item_kind": "compliance_artifact",
+      "material_family": "authorization",
+      "comparison_group": "itad_authorization_each",
+      "synonyms": [
+        "itad client release authorization",
+        "itad_client_release_authorization",
+        "itad client release authorization sku",
+        "itad client release authorization replacement",
+        "itad client release authorization refresh",
+        "itad client release authorization bom line",
+        "release authorization",
+        "client release",
+        "asset release",
+        "authorization to dispose",
+        "disposal approval",
+        "customer release"
+      ],
+      "required_any_tokens": [
+        [
+          "release",
+          "authorization"
+        ],
+        [
+          "client",
+          "release"
+        ],
+        [
+          "asset",
+          "release"
+        ],
+        [
+          "authorization",
+          "to",
+          "dispose"
+        ]
+      ],
+      "negative_tokens": [
+        "software release",
+        "door release button",
+        "press release"
+      ]
+    },
+    "itad_audit_exception_record": {
+      "canonical_key": "itad_audit_exception_record",
+      "display_name": "ITAD Audit Exception Record",
+      "item_kind": "exception_record",
+      "material_family": "audit",
+      "comparison_group": "itad_exception_each",
+      "synonyms": [
+        "itad audit exception record",
+        "itad_audit_exception_record",
+        "itad audit exception record sku",
+        "itad audit exception record replacement",
+        "itad audit exception record refresh",
+        "itad audit exception record bom line",
+        "audit exception",
+        "exception record",
+        "variance",
+        "custody exception",
+        "missing asset exception",
+        "exception log"
+      ],
+      "required_any_tokens": [
+        [
+          "audit",
+          "exception"
+        ],
+        [
+          "exception",
+          "record"
+        ],
+        [
+          "custody",
+          "exception"
+        ],
+        [
+          "missing",
+          "asset",
+          "exception"
+        ]
+      ],
+      "negative_tokens": [
+        "software exception",
+        "network ACL exception",
+        "building code exception"
+      ]
+    },
+    "itad_missing_serial_exception": {
+      "canonical_key": "itad_missing_serial_exception",
+      "display_name": "ITAD Missing Serial Exception",
+      "item_kind": "exception_record",
+      "material_family": "audit",
+      "comparison_group": "itad_exception_each",
+      "synonyms": [
+        "itad missing serial exception",
+        "itad_missing_serial_exception",
+        "itad missing serial exception sku",
+        "itad missing serial exception replacement",
+        "itad missing serial exception refresh",
+        "itad missing serial exception bom line",
+        "missing serial",
+        "no serial",
+        "serial unreadable",
+        "serial exception",
+        "unknown serial",
+        "damaged tag"
+      ],
+      "required_any_tokens": [
+        [
+          "missing",
+          "serial"
+        ],
+        [
+          "no",
+          "serial"
+        ],
+        [
+          "serial",
+          "unreadable"
+        ],
+        [
+          "serial",
+          "exception"
+        ]
+      ],
+      "negative_tokens": [
+        "new asset tag missing",
+        "shipping serial pending",
+        "endpoint serial capture"
+      ]
+    },
+    "itad_quarantine_hold_area": {
+      "canonical_key": "itad_quarantine_hold_area",
+      "display_name": "ITAD Quarantine Hold Area",
+      "item_kind": "storage_area",
+      "material_family": "custody",
+      "comparison_group": "itad_storage_area_each",
+      "synonyms": [
+        "itad quarantine hold area",
+        "itad_quarantine_hold_area",
+        "itad quarantine hold area sku",
+        "itad quarantine hold area replacement",
+        "itad quarantine hold area refresh",
+        "itad quarantine hold area bom line",
+        "quarantine",
+        "hold area",
+        "secure cage",
+        "exception hold",
+        "quarantine shelf",
+        "custody hold"
+      ],
+      "required_any_tokens": [
+        [
+          "quarantine"
+        ],
+        [
+          "hold",
+          "area"
+        ],
+        [
+          "secure",
+          "cage"
+        ],
+        [
+          "exception",
+          "hold"
+        ]
+      ],
+      "negative_tokens": [
+        "medical quarantine",
+        "security cage datacenter",
+        "retail holding area"
+      ]
+    },
+    "itad_tamper_evident_bag": {
+      "canonical_key": "itad_tamper_evident_bag",
+      "display_name": "ITAD Tamper-Evident Bag",
+      "item_kind": "container",
+      "material_family": "custody",
+      "comparison_group": "itad_container_each",
+      "synonyms": [
+        "itad tamper-evident bag",
+        "itad tamper evident bag",
+        "itad_tamper_evident_bag",
+        "itad tamper-evident bag sku",
+        "itad tamper-evident bag replacement",
+        "itad tamper-evident bag refresh",
+        "itad tamper-evident bag bom line",
+        "tamper bag",
+        "evidence bag",
+        "tamper-evident bag",
+        "sealed bag",
+        "drive bag",
+        "custody bag"
+      ],
+      "required_any_tokens": [
+        [
+          "tamper",
+          "bag"
+        ],
+        [
+          "evidence",
+          "bag"
+        ],
+        [
+          "tamper-evident",
+          "bag"
+        ],
+        [
+          "sealed",
+          "bag"
+        ]
+      ],
+      "negative_tokens": [
+        "shopping bag",
+        "laptop bag",
+        "tool bag"
+      ]
+    },
+    "itad_lifecycle_disposition_report": {
+      "canonical_key": "itad_lifecycle_disposition_report",
+      "display_name": "ITAD Lifecycle Disposition Report",
+      "item_kind": "report",
+      "material_family": "disposition",
+      "comparison_group": "itad_report_each",
+      "synonyms": [
+        "itad lifecycle disposition report",
+        "itad_lifecycle_disposition_report",
+        "itad lifecycle disposition report sku",
+        "itad lifecycle disposition report replacement",
+        "itad lifecycle disposition report refresh",
+        "itad lifecycle disposition report bom line",
+        "disposition report",
+        "lifecycle report",
+        "asset disposition report",
+        "final disposition",
+        "closeout report",
+        "ITAD report"
+      ],
+      "required_any_tokens": [
+        [
+          "disposition",
+          "report"
+        ],
+        [
+          "lifecycle",
+          "report"
+        ],
+        [
+          "asset",
+          "disposition",
+          "report"
+        ],
+        [
+          "final",
+          "disposition"
+        ]
+      ],
+      "negative_tokens": [
+        "project closeout general",
+        "endpoint inventory report",
+        "sales report"
+      ]
+    },
+    "itad_bill_of_lading": {
+      "canonical_key": "itad_bill_of_lading",
+      "display_name": "ITAD Bill of Lading",
+      "item_kind": "logistics_artifact",
+      "material_family": "logistics",
+      "comparison_group": "itad_logistics_artifact_each",
+      "synonyms": [
+        "itad bill of lading",
+        "itad_bill_of_lading",
+        "itad bill of lading sku",
+        "itad bill of lading replacement",
+        "itad bill of lading refresh",
+        "itad bill of lading bom line",
+        "BOL",
+        "bill of lading",
+        "freight bill",
+        "carrier BOL",
+        "pickup BOL",
+        "shipping BOL"
+      ],
+      "required_any_tokens": [
+        [
+          "bill",
+          "of",
+          "lading"
+        ],
+        [
+          "bol"
+        ],
+        [
+          "carrier",
+          "bol"
+        ],
+        [
+          "shipping",
+          "bol"
+        ]
+      ],
+      "negative_tokens": [
+        "bill of materials",
+        "invoice bill",
+        "lading unrelated"
+      ]
+    },
+    "itad_recycling_weight_ticket": {
+      "canonical_key": "itad_recycling_weight_ticket",
+      "display_name": "ITAD Recycling Weight Ticket",
+      "item_kind": "compliance_artifact",
+      "material_family": "recycling",
+      "comparison_group": "itad_weight_ticket_each",
+      "synonyms": [
+        "itad recycling weight ticket",
+        "itad_recycling_weight_ticket",
+        "itad recycling weight ticket sku",
+        "itad recycling weight ticket replacement",
+        "itad recycling weight ticket refresh",
+        "itad recycling weight ticket bom line",
+        "weight ticket",
+        "scale ticket",
+        "recycling weight",
+        "gross weight",
+        "net weight",
+        "material weight"
+      ],
+      "required_any_tokens": [
+        [
+          "weight",
+          "ticket"
+        ],
+        [
+          "scale",
+          "ticket"
+        ],
+        [
+          "recycling",
+          "weight"
+        ],
+        [
+          "net",
+          "weight"
+        ]
+      ],
+      "negative_tokens": [
+        "retail scale ticket",
+        "body weight",
+        "ticketing system"
+      ]
+    },
+    "itad_donation_transfer_record": {
+      "canonical_key": "itad_donation_transfer_record",
+      "display_name": "ITAD Donation Transfer Record",
+      "item_kind": "compliance_artifact",
+      "material_family": "disposition",
+      "comparison_group": "itad_transfer_record_each",
+      "synonyms": [
+        "itad donation transfer record",
+        "itad_donation_transfer_record",
+        "itad donation transfer record sku",
+        "itad donation transfer record replacement",
+        "itad donation transfer record refresh",
+        "itad donation transfer record bom line",
+        "donation record",
+        "donation transfer",
+        "charitable donation",
+        "donated assets",
+        "recipient transfer",
+        "nonprofit transfer"
+      ],
+      "required_any_tokens": [
+        [
+          "donation",
+          "record"
+        ],
+        [
+          "donation",
+          "transfer"
+        ],
+        [
+          "charitable",
+          "donation"
+        ],
+        [
+          "donated",
+          "assets"
+        ]
+      ],
+      "negative_tokens": [
+        "sales transfer",
+        "user transfer",
+        "data transfer"
+      ]
+    },
+    "itad_destruction_witness_signoff": {
+      "canonical_key": "itad_destruction_witness_signoff",
+      "display_name": "ITAD Destruction Witness Signoff",
+      "item_kind": "signoff",
+      "material_family": "data_destruction",
+      "comparison_group": "itad_signoff_each",
+      "synonyms": [
+        "itad destruction witness signoff",
+        "itad_destruction_witness_signoff",
+        "itad destruction witness signoff sku",
+        "itad destruction witness signoff replacement",
+        "itad destruction witness signoff refresh",
+        "itad destruction witness signoff bom line",
+        "witness signoff",
+        "destruction witness",
+        "witnessed destruction",
+        "sign-off destruction",
+        "customer witness",
+        "onsite witness"
+      ],
+      "required_any_tokens": [
+        [
+          "witness",
+          "signoff"
+        ],
+        [
+          "destruction",
+          "witness"
+        ],
+        [
+          "witnessed",
+          "destruction"
+        ],
+        [
+          "customer",
+          "witness"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint user signoff",
+        "court witness",
+        "security guard signoff"
+      ]
+    },
+    "itad_lease_return_report": {
+      "canonical_key": "itad_lease_return_report",
+      "display_name": "ITAD Lease Return Report",
+      "item_kind": "report",
+      "material_family": "lease_return",
+      "comparison_group": "itad_report_each",
+      "synonyms": [
+        "itad lease return report",
+        "itad_lease_return_report",
+        "itad lease return report sku",
+        "itad lease return report replacement",
+        "itad lease return report refresh",
+        "itad lease return report bom line",
+        "lease return",
+        "lessor return",
+        "lease schedule",
+        "return to lessor",
+        "leased asset report",
+        "lease closeout"
+      ],
+      "required_any_tokens": [
+        [
+          "lease",
+          "return"
+        ],
+        [
+          "lessor",
+          "return"
+        ],
+        [
+          "return",
+          "to",
+          "lessor"
+        ],
+        [
+          "leased",
+          "asset",
+          "report"
+        ]
+      ],
+      "negative_tokens": [
+        "dhcp lease",
+        "building lease",
+        "software license renewal"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "itad_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "itad",
+        "disposition",
+        "destruction",
+        "custody",
+        "recycling",
+        "resale"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "itad_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "itad",
+        "disposition",
+        "destruction",
+        "custody",
+        "recycling",
+        "resale"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "itad_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "itad",
+        "disposition",
+        "destruction",
+        "custody",
+        "recycling",
+        "resale"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "itad_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "itad",
+        "disposition",
+        "destruction",
+        "custody",
+        "recycling",
+        "resale"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "itad_certificate": {
+      "filename_contains": [
+        "certificate",
+        "certification",
+        "attestation",
+        "compliance",
+        "cod",
+        "coc",
+        "itad",
+        "disposition",
+        "destruction",
+        "custody",
+        "recycling",
+        "resale"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "certificate",
+      "typical_atom_types": [
+        "certificate_id",
+        "pass_fail",
+        "approver",
+        "evidence_date"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "future_scope"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "itad_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "itad",
+        "disposition",
+        "destruction",
+        "custody",
+        "recycling",
+        "resale"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial #",
+      "s/n",
+      "sn",
+      "device serial",
+      "asset serial"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "asset id",
+      "tag #",
+      "barcode",
+      "inventory tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "migration window",
+      "change window",
+      "freeze window"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "custody_id": [
+      "custody id",
+      "coc id",
+      "chain id",
+      "handoff id",
+      "transfer id"
+    ],
+    "destruction_method": [
+      "method",
+      "wipe method",
+      "destruction method",
+      "sanitize method",
+      "shred",
+      "degauss"
+    ],
+    "certificate_id": [
+      "certificate id",
+      "cert id",
+      "cod #",
+      "attestation id",
+      "report id"
+    ],
+    "asset_serial": [
+      "serial",
+      "serial number",
+      "s/n",
+      "sn",
+      "drive serial",
+      "device serial"
+    ],
+    "disposition": [
+      "disposition",
+      "final disposition",
+      "resale",
+      "recycle",
+      "destroyed",
+      "donated"
+    ],
+    "grade": [
+      "grade",
+      "resale grade",
+      "condition",
+      "cosmetic grade",
+      "functional grade"
+    ],
+    "weight": [
+      "weight",
+      "gross weight",
+      "net weight",
+      "lbs",
+      "kg",
+      "scale weight"
+    ],
+    "seal_number": [
+      "seal",
+      "seal #",
+      "seal number",
+      "tamper seal",
+      "truck seal"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "disposed_asset": {
+      "examples": [
+        "laptop SN123",
+        "drive ABC",
+        "monitor asset 77",
+        "server pallet"
+      ],
+      "identity_bearing": true
+    },
+    "custody_event": {
+      "examples": [
+        "pickup",
+        "handoff",
+        "sealed truck",
+        "warehouse intake"
+      ],
+      "identity_bearing": true
+    },
+    "destruction_method": {
+      "examples": [
+        "software wipe",
+        "shred",
+        "degauss",
+        "crush",
+        "secure erase"
+      ],
+      "identity_bearing": true
+    },
+    "certificate": {
+      "examples": [
+        "COD-2026-05",
+        "wipe attestation",
+        "recycling cert"
+      ],
+      "identity_bearing": true
+    },
+    "disposition_channel": {
+      "examples": [
+        "resale",
+        "recycling",
+        "donation",
+        "lease return",
+        "destroy"
+      ],
+      "identity_bearing": true
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "ITAD disposition identities must not merge with endpoint deployment, reimage, break-fix, or refresh scope unless an artifact explicitly hands assets into disposition.",
+    "Certificate of destruction, wipe attestation, recycling certificate, and chain of custody are separate compliance artifacts even when issued for the same asset.",
+    "Serialize disposed assets by serial number, asset tag, custody ID, certificate ID, and pickup event; do not rely on model alone.",
+    "Data wipe, secure erase, shredding, and degaussing are different destruction/sanitization methods and must remain distinct for compliance evidence.",
+    "Pallet, box, bag, weight ticket, and asset count are separate comparison groups and cannot be quantity-compared directly.",
+    "Resale grade and remarketing reports describe disposition outcome; they do not prove data destruction unless linked to wipe/destruction certificate evidence.",
+    "Release authorization and witness signoff govern authorization/acceptance, not asset count.",
+    "TBD serials, missing serial, unreadable tag, assumed pallet count, verify in field, and pending customer release create exception records rather than clean merges.",
+    "Cross-domain confusion - AP: accounts payable approval and asset pickup can look like AP; ITAD owns asset pickup only with disposal/custody context.",
+    "Cross-domain confusion - switch: disposed network switches are disposed assets here, but network_modernization owns active refresh/installation switch identities.",
+    "Cross-domain confusion - panel: monitor panel or electrical panel in scrap is disposed asset only with ITAD/custody context; fiber/security/POS panels split otherwise.",
+    "Cross-domain confusion - gateway: disposed gateways can be captured as assets, but IoT/payment/WAN gateway configuration belongs to other ontologies.",
+    "Cross-domain confusion - sensor: recycled sensors are disposed assets only under custody/disposition artifacts; operational sensors belong to edge_iot_security.",
+    "Cross-domain confusion - rack: rack disposal belongs here only with decommission/custody/recycling context; datacenter_field owns active rack tasks.",
+    "Cross-domain confusion - controller: disposed controllers are asset records only in ITAD context; door/WLAN/POS/domain controller meanings split.",
+    "Cross-domain confusion - camera: camera disposal belongs here only under ITAD custody; operational surveillance camera install belongs to edge_iot_security.",
+    "Cross-domain confusion - drop: drop-off or pickup logistics is ITAD logistics only with asset disposal context; cabling drops and software drops are negatives.",
+    "Cross-domain confusion - wipe: endpoint reimage/reload is deployment; NIST-style sanitization, COD, or wipe attestation is ITAD."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "ITAD disposition BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "Provide certificate of destruction for 342 serialized drives",
+      "identity": "itad_data_destruction_certificate",
+      "quantity": 1,
+      "notes": "Certificate is one artifact; drive destruction emits per-drive if serialized."
+    },
+    {
+      "raw": "Chain of custody form signed at pickup dock",
+      "identity": "itad_chain_of_custody_form",
+      "quantity": 1,
+      "notes": "Custody artifact."
+    },
+    {
+      "raw": "SSD secure erase with wipe attestation",
+      "identity": "itad_ssd_sanitization",
+      "quantity": null,
+      "notes": "Destruction method; quantity depends on serialized drive list."
+    },
+    {
+      "raw": "Pallet 4 sealed with tamper seal 88721",
+      "identity": "itad_secure_transport_seal",
+      "quantity": 1,
+      "notes": "Transport security control."
+    },
+    {
+      "raw": "Missing serial exception for damaged laptop tag",
+      "identity": "itad_missing_serial_exception",
+      "quantity": 1,
+      "notes": "Exception record, not clean asset capture."
+    },
+    {
+      "raw": "Remarketing report shows B-grade resale value recovery",
+      "identity": "itad_remarketing_report",
+      "quantity": 1,
+      "notes": "Disposition outcome, not destruction proof."
+    },
+    {
+      "raw": "Recycle manifest with net weight 1,420 lbs",
+      "identity": "itad_ewaste_manifest",
+      "quantity": 1,
+      "notes": "Weight ticket may emit separately."
+    },
+    {
+      "raw": "Lease return report pending lessor approval",
+      "identity": "itad_lease_return_report",
+      "quantity": 1,
+      "notes": "Disposition report with pending approval."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "Wipe means endpoint reimage in deployment but sanitization in disposition.",
+      "why_it_breaks_resolution": "Both workflows use wipe, reload, erase, and image language.",
+      "symptoms_in_artifacts": "Endpoint reimage tasks appear as compliant data destruction.",
+      "mitigation": "ontology",
+      "example_phrases": [
+        "wipe and reload",
+        "secure erase",
+        "wipe attestation",
+        "fresh image",
+        "NIST wipe",
+        "OS reload",
+        "data destruction cert"
+      ]
+    },
+    {
+      "weak_point": "Asset count, drive count, pallet count, and certificate count are compared directly.",
+      "why_it_breaks_resolution": "ITAD artifacts count different units at different custody layers.",
+      "symptoms_in_artifacts": "One COD conflicts with hundreds of serialized drives or multiple pallets.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "342 drives",
+        "1 certificate",
+        "4 pallets",
+        "net weight",
+        "asset count",
+        "drive count",
+        "palletized load"
+      ]
+    },
+    {
+      "weak_point": "COD and COC abbreviations collide with cash-on-delivery and certificates of conformance.",
+      "why_it_breaks_resolution": "Acronyms appear in finance, logistics, and compliance artifacts.",
+      "symptoms_in_artifacts": "Accounting or shipment rows emit data destruction certificates.",
+      "mitigation": "parser",
+      "example_phrases": [
+        "COD issued",
+        "cash on delivery",
+        "COC signed",
+        "certificate of conformance",
+        "chain of custody",
+        "destruction certificate"
+      ]
+    },
+    {
+      "weak_point": "Missing serials are silently merged by model or asset type.",
+      "why_it_breaks_resolution": "Compliance requires exception handling when serialized identity is absent.",
+      "symptoms_in_artifacts": "Unknown serial records collapse into one asset or overwrite valid serials.",
+      "mitigation": "entity_resolver",
+      "example_phrases": [
+        "missing serial",
+        "serial unreadable",
+        "damaged tag",
+        "no S/N",
+        "unknown asset",
+        "exception log",
+        "verify in field"
+      ]
+    },
+    {
+      "weak_point": "Remarketing and recycling outcomes are mistaken for proof of data destruction.",
+      "why_it_breaks_resolution": "Disposition closeout packages include multiple reports with different evidentiary authority.",
+      "symptoms_in_artifacts": "Resale report is used to close wipe compliance.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "remarketing report",
+        "value recovery",
+        "recycling certificate",
+        "COD missing",
+        "resale grade",
+        "settlement report",
+        "wipe proof attached"
+      ]
+    }
+  ]
+}

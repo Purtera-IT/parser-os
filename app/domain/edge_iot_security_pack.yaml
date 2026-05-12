@@ -1,0 +1,52 @@
+pack_id: edge_iot_security
+name: Edge IoT and Physical Security Pack
+version: "1.0.0"
+service_lines:
+  - edge_iot
+  - physical_security
+reference_ontology_path: ontology/edge_iot_security_ontology.yaml
+entity_types:
+  - name: device
+    aliases: [camera, nvr, reader, sensor]
+    examples: ["IP camera", "door controller"]
+device_aliases:
+  ip_camera:
+    - IP camera
+    - CCTV
+    - security camera
+    - surveillance camera
+  nvr:
+    - NVR
+    - VMS
+    - recorder
+  door_reader:
+    - card reader
+    - badge reader
+    - access reader
+site_alias_patterns:
+  - "secure area"
+  - "badge access"
+action_aliases:
+  camera_mount: ["mount camera", "camera install"]
+constraint_patterns:
+  access:
+    - escort required
+    - after hours
+exclusion_patterns:
+  - out of scope
+customer_instruction_patterns:
+  - please relocate
+  - add coverage
+quantity_units:
+  count: [ea, cameras, channels]
+artifact_role_patterns:
+  quote: ["security quote", "cctv bom"]
+risk_defaults:
+  ip_camera_unit_exposure: 300
+  nvr_unit_exposure: 2500
+  door_reader_unit_exposure: 200
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  vendor_mismatch: ["camera quantity"]
+  site_access: ["badge", "escort"]

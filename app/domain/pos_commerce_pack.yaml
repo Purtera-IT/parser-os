@@ -1,0 +1,51 @@
+pack_id: pos_commerce
+name: POS and Commerce Rollout Pack
+version: "1.0.0"
+service_lines:
+  - pos
+  - commerce
+reference_ontology_path: ontology/pos_commerce_ontology.yaml
+entity_types:
+  - name: device
+    aliases: [terminal, pin pad, drawer, scanner]
+    examples: ["POS terminal", "PIN pad"]
+device_aliases:
+  pos_register:
+    - POS terminal
+    - register
+    - checkout terminal
+    - lane terminal
+  pos_pin_pad:
+    - PIN pad
+    - pinpad
+    - payment device
+    - PED
+  cash_drawer:
+    - cash drawer
+    - till drawer
+site_alias_patterns:
+  - "front end"
+  - "checkout lane"
+action_aliases:
+  cutover: ["cutover", "go-live", "freeze"]
+constraint_patterns:
+  access:
+    - after hours
+    - store close
+exclusion_patterns:
+  - out of scope
+customer_instruction_patterns:
+  - pilot store
+  - wave rollout
+quantity_units:
+  count: [lanes, stores, each]
+artifact_role_patterns:
+  quote: ["POS quote", "payment hardware"]
+risk_defaults:
+  pos_register_unit_exposure: 4500
+  pos_pin_pad_unit_exposure: 800
+  cash_drawer_unit_exposure: 350
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  quantity_conflict: ["lane count", "terminal mismatch"]

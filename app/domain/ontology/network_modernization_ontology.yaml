@@ -1,0 +1,2311 @@
+{
+  "ontology_id": "network_modernization_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for network modernization artifacts covering routers, L2/L3 switches, stacking, optics, feature licenses and subscriptions, console/OOB rollout, network configuration changes, RMA replacements, and cutover evidence while explicitly excluding wireless AP, POS, camera, and endpoint meanings.",
+  "identity_clusters": {
+    "network_branch_router": {
+      "canonical_key": "network_branch_router",
+      "display_name": "Network Branch Router",
+      "item_kind": "network_device",
+      "material_family": "network_routing",
+      "comparison_group": "network_router_each",
+      "synonyms": [
+        "network branch router",
+        "network_branch_router",
+        "network branch router sku",
+        "network branch router replacement",
+        "network branch router refresh",
+        "network branch router bom line",
+        "branch router",
+        "edge router",
+        "site router",
+        "wan router",
+        "router appliance",
+        "routing device"
+      ],
+      "required_any_tokens": [
+        [
+          "branch",
+          "router"
+        ],
+        [
+          "site",
+          "router"
+        ],
+        [
+          "wan",
+          "router"
+        ],
+        [
+          "edge",
+          "router"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "wireless router consumer",
+        "home router"
+      ]
+    },
+    "network_wan_edge_router": {
+      "canonical_key": "network_wan_edge_router",
+      "display_name": "Network WAN Edge Router",
+      "item_kind": "network_device",
+      "material_family": "network_routing",
+      "comparison_group": "network_router_each",
+      "synonyms": [
+        "network wan edge router",
+        "network_wan_edge_router",
+        "network wan edge router sku",
+        "network wan edge router replacement",
+        "network wan edge router refresh",
+        "network wan edge router bom line",
+        "WAN edge",
+        "sd-wan edge generic",
+        "edge appliance",
+        "internet edge router",
+        "wan appliance"
+      ],
+      "required_any_tokens": [
+        [
+          "wan",
+          "edge"
+        ],
+        [
+          "sd-wan",
+          "edge"
+        ],
+        [
+          "internet",
+          "edge",
+          "router"
+        ],
+        [
+          "wan",
+          "appliance"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "edge iot gateway",
+        "security camera edge"
+      ]
+    },
+    "network_layer2_access_switch": {
+      "canonical_key": "network_layer2_access_switch",
+      "display_name": "Network Layer 2 Access Switch",
+      "item_kind": "network_device",
+      "material_family": "network_switching",
+      "comparison_group": "network_switch_each",
+      "synonyms": [
+        "network layer 2 access switch",
+        "network_layer2_access_switch",
+        "network layer2 access switch",
+        "network layer 2 access switch sku",
+        "network layer 2 access switch replacement",
+        "network layer 2 access switch refresh",
+        "network layer 2 access switch bom line",
+        "L2 switch",
+        "access switch",
+        "network switch",
+        "ethernet switch",
+        "switch 24-port",
+        "48 port switch"
+      ],
+      "required_any_tokens": [
+        [
+          "l2",
+          "switch"
+        ],
+        [
+          "access",
+          "switch"
+        ],
+        [
+          "network",
+          "switch"
+        ],
+        [
+          "ethernet",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "pos switch",
+        "kvm switch"
+      ]
+    },
+    "network_layer3_core_switch": {
+      "canonical_key": "network_layer3_core_switch",
+      "display_name": "Network Layer 3 Core Switch",
+      "item_kind": "network_device",
+      "material_family": "network_switching",
+      "comparison_group": "network_switch_each",
+      "synonyms": [
+        "network layer 3 core switch",
+        "network_layer3_core_switch",
+        "network layer3 core switch",
+        "network layer 3 core switch sku",
+        "network layer 3 core switch replacement",
+        "network layer 3 core switch refresh",
+        "network layer 3 core switch bom line",
+        "L3 switch",
+        "core switch",
+        "routing switch",
+        "layer 3 switch",
+        "campus core",
+        "collapsed core"
+      ],
+      "required_any_tokens": [
+        [
+          "l3",
+          "switch"
+        ],
+        [
+          "core",
+          "switch"
+        ],
+        [
+          "layer",
+          "3",
+          "switch"
+        ],
+        [
+          "routing",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "pos switch",
+        "door switch"
+      ]
+    },
+    "network_distribution_switch": {
+      "canonical_key": "network_distribution_switch",
+      "display_name": "Network Distribution Switch",
+      "item_kind": "network_device",
+      "material_family": "network_switching",
+      "comparison_group": "network_switch_each",
+      "synonyms": [
+        "network distribution switch",
+        "network_distribution_switch",
+        "network distribution switch sku",
+        "network distribution switch replacement",
+        "network distribution switch refresh",
+        "network distribution switch bom line",
+        "distribution switch",
+        "dist switch",
+        "aggregation switch",
+        "agg switch",
+        "intermediate distribution frame switch"
+      ],
+      "required_any_tokens": [
+        [
+          "distribution",
+          "switch"
+        ],
+        [
+          "dist",
+          "switch"
+        ],
+        [
+          "aggregation",
+          "switch"
+        ],
+        [
+          "agg",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "retail distribution center",
+        "power distribution unit"
+      ]
+    },
+    "network_switch_stack_member": {
+      "canonical_key": "network_switch_stack_member",
+      "display_name": "Network Switch Stack Member",
+      "item_kind": "network_device",
+      "material_family": "network_switching",
+      "comparison_group": "network_stack_member_each",
+      "synonyms": [
+        "network switch stack member",
+        "network_switch_stack_member",
+        "network switch stack member sku",
+        "network switch stack member replacement",
+        "network switch stack member refresh",
+        "network switch stack member bom line",
+        "stack member",
+        "switch stack",
+        "stackable switch",
+        "stack unit",
+        "member switch",
+        "stack id"
+      ],
+      "required_any_tokens": [
+        [
+          "switch",
+          "stack"
+        ],
+        [
+          "stack",
+          "member"
+        ],
+        [
+          "stackable",
+          "switch"
+        ],
+        [
+          "member",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "software stack",
+        "product stack",
+        "pallet stack"
+      ]
+    },
+    "network_stacking_cable": {
+      "canonical_key": "network_stacking_cable",
+      "display_name": "Network Stacking Cable",
+      "item_kind": "cable",
+      "material_family": "network_accessory",
+      "comparison_group": "network_stack_cable_each",
+      "synonyms": [
+        "network stacking cable",
+        "network_stacking_cable",
+        "network stacking cable sku",
+        "network stacking cable replacement",
+        "network stacking cable refresh",
+        "network stacking cable bom line",
+        "stack cable",
+        "stacking cable",
+        "switch stack cable",
+        "stackwise-style cable",
+        "stack jumper",
+        "backplane cable"
+      ],
+      "required_any_tokens": [
+        [
+          "stack",
+          "cable"
+        ],
+        [
+          "stacking",
+          "cable"
+        ],
+        [
+          "switch",
+          "stack",
+          "cable"
+        ],
+        [
+          "stack",
+          "jumper"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "fiber patch cord",
+        "power cord",
+        "retail stack"
+      ]
+    },
+    "network_switch_power_supply": {
+      "canonical_key": "network_switch_power_supply",
+      "display_name": "Network Switch Power Supply",
+      "item_kind": "power_component",
+      "material_family": "network_accessory",
+      "comparison_group": "network_power_supply_each",
+      "synonyms": [
+        "network switch power supply",
+        "network_switch_power_supply",
+        "network switch power supply sku",
+        "network switch power supply replacement",
+        "network switch power supply refresh",
+        "network switch power supply bom line",
+        "switch PSU",
+        "power supply module",
+        "redundant PSU",
+        "AC power supply switch",
+        "hot-swap PSU"
+      ],
+      "required_any_tokens": [
+        [
+          "switch",
+          "psu"
+        ],
+        [
+          "power",
+          "supply",
+          "module"
+        ],
+        [
+          "redundant",
+          "psu"
+        ],
+        [
+          "hot-swap",
+          "psu"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "wlan",
+        "ssid",
+        "rssi",
+        "camera",
+        "door controller",
+        "pos lane",
+        "pin pad",
+        "cash drawer",
+        "light switch",
+        "electrical switch",
+        "recycling",
+        "data destruction",
+        "endpoint power adapter",
+        "camera power supply",
+        "pdu"
+      ]
+    },
+    "network_transceiver_optic": {
+      "canonical_key": "network_transceiver_optic",
+      "display_name": "Network Transceiver Optic",
+      "item_kind": "optic",
+      "material_family": "network_accessory",
+      "comparison_group": "network_optic_each",
+      "synonyms": [
+        "network transceiver optic",
+        "network_transceiver_optic",
+        "network transceiver optic sku",
+        "network transceiver optic replacement",
+        "network transceiver optic refresh",
+        "network transceiver optic bom line",
+        "SFP",
+        "SFP+",
+        "QSFP",
+        "transceiver",
+        "network optic",
+        "uplink optic",
+        "pluggable optic"
+      ],
+      "required_any_tokens": [
+        [
+          "sfp"
+        ],
+        [
+          "sfp+"
+        ],
+        [
+          "qsfp"
+        ],
+        [
+          "network",
+          "optic"
+        ],
+        [
+          "uplink",
+          "optic"
+        ]
+      ],
+      "negative_tokens": [
+        "camera lens",
+        "fiber cable only",
+        "wireless radio",
+        "payment terminal"
+      ]
+    },
+    "network_feature_license": {
+      "canonical_key": "network_feature_license",
+      "display_name": "Network Feature License",
+      "item_kind": "license_sku",
+      "material_family": "network_licensing",
+      "comparison_group": "network_license_each",
+      "synonyms": [
+        "network feature license",
+        "network_feature_license",
+        "network feature license sku",
+        "network feature license replacement",
+        "network feature license refresh",
+        "network feature license bom line",
+        "feature license",
+        "routing feature entitlement",
+        "switch license",
+        "per-device license",
+        "network feature key"
+      ],
+      "required_any_tokens": [
+        [
+          "feature",
+          "license"
+        ],
+        [
+          "routing",
+          "feature",
+          "entitlement"
+        ],
+        [
+          "switch",
+          "license"
+        ],
+        [
+          "network",
+          "feature",
+          "key"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap license",
+        "endpoint software license",
+        "payment license",
+        "driver license"
+      ]
+    },
+    "network_subscription_entitlement": {
+      "canonical_key": "network_subscription_entitlement",
+      "display_name": "Network Subscription Entitlement",
+      "item_kind": "license_sku",
+      "material_family": "network_licensing",
+      "comparison_group": "network_subscription_each",
+      "synonyms": [
+        "network subscription entitlement",
+        "network_subscription_entitlement",
+        "network subscription entitlement sku",
+        "network subscription entitlement replacement",
+        "network subscription entitlement refresh",
+        "network subscription entitlement bom line",
+        "subscription entitlement",
+        "term subscription",
+        "network subscription",
+        "support entitlement",
+        "cloud network entitlement"
+      ],
+      "required_any_tokens": [
+        [
+          "subscription",
+          "entitlement"
+        ],
+        [
+          "term",
+          "subscription",
+          "network"
+        ],
+        [
+          "network",
+          "subscription"
+        ],
+        [
+          "support",
+          "entitlement"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless cloud wlan",
+        "pos payment gateway",
+        "magazine subscription"
+      ]
+    },
+    "network_routing_protocol_config": {
+      "canonical_key": "network_routing_protocol_config",
+      "display_name": "Network Routing Protocol Configuration",
+      "item_kind": "configuration",
+      "material_family": "network_configuration",
+      "comparison_group": "network_config_task",
+      "synonyms": [
+        "network routing protocol configuration",
+        "network_routing_protocol_config",
+        "network routing protocol config",
+        "network routing protocol configuration sku",
+        "network routing protocol configuration replacement",
+        "network routing protocol configuration refresh",
+        "network routing protocol configuration bom line",
+        "routing protocol",
+        "OSPF",
+        "BGP",
+        "EIGRP-style",
+        "static route",
+        "route redistribution"
+      ],
+      "required_any_tokens": [
+        [
+          "routing",
+          "protocol"
+        ],
+        [
+          "ospf"
+        ],
+        [
+          "bgp"
+        ],
+        [
+          "static",
+          "route"
+        ],
+        [
+          "route",
+          "redistribution"
+        ]
+      ],
+      "negative_tokens": [
+        "shipping route",
+        "delivery route",
+        "workflow routing",
+        "wireless roaming"
+      ]
+    },
+    "network_vlan_configuration": {
+      "canonical_key": "network_vlan_configuration",
+      "display_name": "Network VLAN Configuration",
+      "item_kind": "configuration",
+      "material_family": "network_configuration",
+      "comparison_group": "network_config_task",
+      "synonyms": [
+        "network vlan configuration",
+        "network_vlan_configuration",
+        "network vlan configuration sku",
+        "network vlan configuration replacement",
+        "network vlan configuration refresh",
+        "network vlan configuration bom line",
+        "VLAN",
+        "vlan config",
+        "segmentation",
+        "tagged vlan",
+        "access vlan",
+        "trunk vlan"
+      ],
+      "required_any_tokens": [
+        [
+          "vlan"
+        ],
+        [
+          "vlan",
+          "config"
+        ],
+        [
+          "tagged",
+          "vlan"
+        ],
+        [
+          "access",
+          "vlan"
+        ]
+      ],
+      "negative_tokens": [
+        "store aisle",
+        "wireless ssid only",
+        "payment terminal id"
+      ]
+    },
+    "network_port_channel_lag": {
+      "canonical_key": "network_port_channel_lag",
+      "display_name": "Network Port Channel LAG",
+      "item_kind": "configuration",
+      "material_family": "network_configuration",
+      "comparison_group": "network_config_task",
+      "synonyms": [
+        "network port channel lag",
+        "network_port_channel_lag",
+        "network port channel lag sku",
+        "network port channel lag replacement",
+        "network port channel lag refresh",
+        "network port channel lag bom line",
+        "port-channel",
+        "LAG",
+        "link aggregation",
+        "etherchannel-style",
+        "bonded links",
+        "aggregate link"
+      ],
+      "required_any_tokens": [
+        [
+          "port-channel"
+        ],
+        [
+          "lag"
+        ],
+        [
+          "link",
+          "aggregation"
+        ],
+        [
+          "bonded",
+          "links"
+        ]
+      ],
+      "negative_tokens": [
+        "audio channel",
+        "sales channel",
+        "fiber strand pair only"
+      ]
+    },
+    "network_switchport_migration": {
+      "canonical_key": "network_switchport_migration",
+      "display_name": "Network Switchport Migration",
+      "item_kind": "service_task",
+      "material_family": "network_field_labor",
+      "comparison_group": "network_service_task_each",
+      "synonyms": [
+        "network switchport migration",
+        "network_switchport_migration",
+        "network switchport migration sku",
+        "network switchport migration replacement",
+        "network switchport migration refresh",
+        "network switchport migration bom line",
+        "port migration",
+        "move switchports",
+        "patch migration",
+        "port cutover",
+        "renumber ports",
+        "repatch ports"
+      ],
+      "required_any_tokens": [
+        [
+          "port",
+          "migration"
+        ],
+        [
+          "move",
+          "switchports"
+        ],
+        [
+          "port",
+          "cutover"
+        ],
+        [
+          "repatch",
+          "ports"
+        ]
+      ],
+      "negative_tokens": [
+        "pos lane migration",
+        "endpoint migration",
+        "software migration only"
+      ]
+    },
+    "network_console_cable": {
+      "canonical_key": "network_console_cable",
+      "display_name": "Network Console Cable",
+      "item_kind": "cable",
+      "material_family": "network_accessory",
+      "comparison_group": "network_console_cable_each",
+      "synonyms": [
+        "network console cable",
+        "network_console_cable",
+        "network console cable sku",
+        "network console cable replacement",
+        "network console cable refresh",
+        "network console cable bom line",
+        "console cable",
+        "rollover cable",
+        "serial console",
+        "USB console",
+        "management cable",
+        "RJ45 console"
+      ],
+      "required_any_tokens": [
+        [
+          "console",
+          "cable"
+        ],
+        [
+          "serial",
+          "console"
+        ],
+        [
+          "usb",
+          "console"
+        ],
+        [
+          "rj45",
+          "console"
+        ]
+      ],
+      "negative_tokens": [
+        "game console",
+        "pos console",
+        "help desk console"
+      ]
+    },
+    "network_out_of_band_management": {
+      "canonical_key": "network_out_of_band_management",
+      "display_name": "Network Out-of-Band Management",
+      "item_kind": "configuration",
+      "material_family": "network_management",
+      "comparison_group": "network_oob_each",
+      "synonyms": [
+        "network out-of-band management",
+        "network out of band management",
+        "network_out_of_band_management",
+        "network out-of-band management sku",
+        "network out-of-band management replacement",
+        "network out-of-band management refresh",
+        "network out-of-band management bom line",
+        "OOB",
+        "out-of-band",
+        "mgmt network",
+        "management port",
+        "console server",
+        "remote management"
+      ],
+      "required_any_tokens": [
+        [
+          "out-of-band"
+        ],
+        [
+          "oob"
+        ],
+        [
+          "management",
+          "port",
+          "network"
+        ],
+        [
+          "console",
+          "server"
+        ]
+      ],
+      "negative_tokens": [
+        "audio band",
+        "wireless band",
+        "pos manager",
+        "endpoint remote support"
+      ]
+    },
+    "network_firewall_appliance": {
+      "canonical_key": "network_firewall_appliance",
+      "display_name": "Network Firewall Appliance",
+      "item_kind": "network_device",
+      "material_family": "network_security",
+      "comparison_group": "network_firewall_each",
+      "synonyms": [
+        "network firewall appliance",
+        "network_firewall_appliance",
+        "network firewall appliance sku",
+        "network firewall appliance replacement",
+        "network firewall appliance refresh",
+        "network firewall appliance bom line",
+        "firewall",
+        "security appliance",
+        "edge firewall",
+        "NG firewall generic",
+        "perimeter firewall",
+        "traffic filter appliance"
+      ],
+      "required_any_tokens": [
+        [
+          "firewall"
+        ],
+        [
+          "security",
+          "appliance"
+        ],
+        [
+          "edge",
+          "firewall"
+        ],
+        [
+          "perimeter",
+          "firewall"
+        ]
+      ],
+      "negative_tokens": [
+        "fire wall construction",
+        "endpoint firewall software",
+        "camera firewall rule only"
+      ]
+    },
+    "network_rma_replacement_device": {
+      "canonical_key": "network_rma_replacement_device",
+      "display_name": "Network RMA Replacement Device",
+      "item_kind": "service_task",
+      "material_family": "network_hardware",
+      "comparison_group": "network_rma_each",
+      "synonyms": [
+        "network rma replacement device",
+        "network_rma_replacement_device",
+        "network rma replacement device sku",
+        "network rma replacement device replacement",
+        "network rma replacement device refresh",
+        "network rma replacement device bom line",
+        "network RMA",
+        "replace switch",
+        "replace router",
+        "hardware swap",
+        "failed switch",
+        "warranty router"
+      ],
+      "required_any_tokens": [
+        [
+          "network",
+          "rma"
+        ],
+        [
+          "replace",
+          "switch"
+        ],
+        [
+          "replace",
+          "router"
+        ],
+        [
+          "hardware",
+          "swap",
+          "network"
+        ]
+      ],
+      "negative_tokens": [
+        "ap rma",
+        "endpoint rma",
+        "pos rma",
+        "camera rma"
+      ]
+    },
+    "network_firmware_upgrade": {
+      "canonical_key": "network_firmware_upgrade",
+      "display_name": "Network Firmware Upgrade",
+      "item_kind": "service_task",
+      "material_family": "network_software",
+      "comparison_group": "network_service_task_each",
+      "synonyms": [
+        "network firmware upgrade",
+        "network_firmware_upgrade",
+        "network firmware upgrade sku",
+        "network firmware upgrade replacement",
+        "network firmware upgrade refresh",
+        "network firmware upgrade bom line",
+        "code upgrade",
+        "firmware upgrade",
+        "network OS upgrade",
+        "software image upgrade",
+        "switch code",
+        "router code"
+      ],
+      "required_any_tokens": [
+        [
+          "firmware",
+          "upgrade",
+          "network"
+        ],
+        [
+          "code",
+          "upgrade"
+        ],
+        [
+          "network",
+          "os",
+          "upgrade"
+        ],
+        [
+          "switch",
+          "code"
+        ]
+      ],
+      "negative_tokens": [
+        "ap firmware",
+        "endpoint patch",
+        "camera firmware",
+        "pos application"
+      ]
+    },
+    "network_config_backup": {
+      "canonical_key": "network_config_backup",
+      "display_name": "Network Configuration Backup",
+      "item_kind": "service_task",
+      "material_family": "network_management",
+      "comparison_group": "network_config_artifact",
+      "synonyms": [
+        "network configuration backup",
+        "network_config_backup",
+        "network config backup",
+        "network configuration backup sku",
+        "network configuration backup replacement",
+        "network configuration backup refresh",
+        "network configuration backup bom line",
+        "config backup",
+        "backup running config",
+        "startup config backup",
+        "pre-change backup",
+        "device backup"
+      ],
+      "required_any_tokens": [
+        [
+          "config",
+          "backup"
+        ],
+        [
+          "running",
+          "config",
+          "backup"
+        ],
+        [
+          "pre-change",
+          "backup"
+        ],
+        [
+          "device",
+          "backup",
+          "network"
+        ]
+      ],
+      "negative_tokens": [
+        "data backup",
+        "server backup",
+        "pos database backup"
+      ]
+    },
+    "network_cutover_plan": {
+      "canonical_key": "network_cutover_plan",
+      "display_name": "Network Cutover Plan",
+      "item_kind": "service_task",
+      "material_family": "deployment_schedule",
+      "comparison_group": "network_schedule_event",
+      "synonyms": [
+        "network cutover plan",
+        "network_cutover_plan",
+        "network cutover plan sku",
+        "network cutover plan replacement",
+        "network cutover plan refresh",
+        "network cutover plan bom line",
+        "network cutover",
+        "migration runbook",
+        "change window network",
+        "go-live network",
+        "rollback plan"
+      ],
+      "required_any_tokens": [
+        [
+          "network",
+          "cutover"
+        ],
+        [
+          "migration",
+          "runbook"
+        ],
+        [
+          "change",
+          "window",
+          "network"
+        ],
+        [
+          "rollback",
+          "plan"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless cutover",
+        "pos cutover",
+        "endpoint refresh window"
+      ]
+    },
+    "network_ip_address_plan": {
+      "canonical_key": "network_ip_address_plan",
+      "display_name": "Network IP Address Plan",
+      "item_kind": "configuration",
+      "material_family": "network_addressing",
+      "comparison_group": "network_config_artifact",
+      "synonyms": [
+        "network ip address plan",
+        "network_ip_address_plan",
+        "network ip address plan sku",
+        "network ip address plan replacement",
+        "network ip address plan refresh",
+        "network ip address plan bom line",
+        "IP plan",
+        "address plan",
+        "subnet plan",
+        "ipam",
+        "CIDR",
+        "gateway address"
+      ],
+      "required_any_tokens": [
+        [
+          "ip",
+          "plan"
+        ],
+        [
+          "address",
+          "plan"
+        ],
+        [
+          "subnet",
+          "plan"
+        ],
+        [
+          "cidr"
+        ]
+      ],
+      "negative_tokens": [
+        "street address",
+        "shipping address",
+        "email address",
+        "payment gateway"
+      ]
+    },
+    "network_dhcp_scope_update": {
+      "canonical_key": "network_dhcp_scope_update",
+      "display_name": "Network DHCP Scope Update",
+      "item_kind": "configuration",
+      "material_family": "network_addressing",
+      "comparison_group": "network_config_task",
+      "synonyms": [
+        "network dhcp scope update",
+        "network_dhcp_scope_update",
+        "network dhcp scope update sku",
+        "network dhcp scope update replacement",
+        "network dhcp scope update refresh",
+        "network dhcp scope update bom line",
+        "DHCP",
+        "dhcp scope",
+        "ip pool",
+        "lease scope",
+        "dhcp reservation",
+        "option 66"
+      ],
+      "required_any_tokens": [
+        [
+          "dhcp"
+        ],
+        [
+          "dhcp",
+          "scope"
+        ],
+        [
+          "ip",
+          "pool"
+        ],
+        [
+          "dhcp",
+          "reservation"
+        ]
+      ],
+      "negative_tokens": [
+        "lease contract",
+        "equipment lease",
+        "scope of work"
+      ]
+    },
+    "network_dns_record_update": {
+      "canonical_key": "network_dns_record_update",
+      "display_name": "Network DNS Record Update",
+      "item_kind": "configuration",
+      "material_family": "network_addressing",
+      "comparison_group": "network_config_task",
+      "synonyms": [
+        "network dns record update",
+        "network_dns_record_update",
+        "network dns record update sku",
+        "network dns record update replacement",
+        "network dns record update refresh",
+        "network dns record update bom line",
+        "DNS",
+        "dns record",
+        "A record",
+        "CNAME",
+        "hostname record",
+        "name resolution"
+      ],
+      "required_any_tokens": [
+        [
+          "dns"
+        ],
+        [
+          "dns",
+          "record"
+        ],
+        [
+          "a",
+          "record"
+        ],
+        [
+          "cname"
+        ],
+        [
+          "name",
+          "resolution"
+        ]
+      ],
+      "negative_tokens": [
+        "audio record",
+        "payment record",
+        "inventory record"
+      ]
+    },
+    "network_qos_policy": {
+      "canonical_key": "network_qos_policy",
+      "display_name": "Network QoS Policy",
+      "item_kind": "configuration",
+      "material_family": "network_policy",
+      "comparison_group": "network_policy",
+      "synonyms": [
+        "network qos policy",
+        "network_qos_policy",
+        "network qos policy sku",
+        "network qos policy replacement",
+        "network qos policy refresh",
+        "network qos policy bom line",
+        "QoS",
+        "quality of service",
+        "traffic priority",
+        "voice priority",
+        "class-map generic",
+        "policy-map generic"
+      ],
+      "required_any_tokens": [
+        [
+          "qos"
+        ],
+        [
+          "quality",
+          "of",
+          "service"
+        ],
+        [
+          "traffic",
+          "priority"
+        ],
+        [
+          "voice",
+          "priority"
+        ]
+      ],
+      "negative_tokens": [
+        "customer service quality",
+        "store service",
+        "pos queue"
+      ]
+    },
+    "network_snmp_monitoring": {
+      "canonical_key": "network_snmp_monitoring",
+      "display_name": "Network SNMP Monitoring",
+      "item_kind": "configuration",
+      "material_family": "network_management",
+      "comparison_group": "network_monitoring_task",
+      "synonyms": [
+        "network snmp monitoring",
+        "network_snmp_monitoring",
+        "network snmp monitoring sku",
+        "network snmp monitoring replacement",
+        "network snmp monitoring refresh",
+        "network snmp monitoring bom line",
+        "SNMP",
+        "monitoring",
+        "polling",
+        "trap receiver",
+        "syslog snmp",
+        "community string"
+      ],
+      "required_any_tokens": [
+        [
+          "snmp"
+        ],
+        [
+          "trap",
+          "receiver"
+        ],
+        [
+          "community",
+          "string"
+        ],
+        [
+          "network",
+          "monitoring"
+        ]
+      ],
+      "negative_tokens": [
+        "camera monitoring service",
+        "alarm monitoring",
+        "employee monitoring"
+      ]
+    },
+    "network_ntp_configuration": {
+      "canonical_key": "network_ntp_configuration",
+      "display_name": "Network NTP Configuration",
+      "item_kind": "configuration",
+      "material_family": "network_management",
+      "comparison_group": "network_config_task",
+      "synonyms": [
+        "network ntp configuration",
+        "network_ntp_configuration",
+        "network ntp configuration sku",
+        "network ntp configuration replacement",
+        "network ntp configuration refresh",
+        "network ntp configuration bom line",
+        "NTP",
+        "time sync",
+        "ntp server",
+        "clock sync",
+        "time source",
+        "network time"
+      ],
+      "required_any_tokens": [
+        [
+          "ntp"
+        ],
+        [
+          "time",
+          "sync"
+        ],
+        [
+          "ntp",
+          "server"
+        ],
+        [
+          "network",
+          "time"
+        ]
+      ],
+      "negative_tokens": [
+        "time clock pos",
+        "employee time",
+        "installation window"
+      ]
+    },
+    "network_rack_mount_kit": {
+      "canonical_key": "network_rack_mount_kit",
+      "display_name": "Network Rack Mount Kit",
+      "item_kind": "rack_asset",
+      "material_family": "network_accessory",
+      "comparison_group": "network_rack_kit_each",
+      "synonyms": [
+        "network rack mount kit",
+        "network_rack_mount_kit",
+        "network rack mount kit sku",
+        "network rack mount kit replacement",
+        "network rack mount kit refresh",
+        "network rack mount kit bom line",
+        "rack ears",
+        "rack mount kit",
+        "mounting ears",
+        "switch rails",
+        "router rack kit",
+        "network rail kit"
+      ],
+      "required_any_tokens": [
+        [
+          "rack",
+          "mount",
+          "kit"
+        ],
+        [
+          "rack",
+          "ears"
+        ],
+        [
+          "mounting",
+          "ears"
+        ],
+        [
+          "switch",
+          "rails"
+        ]
+      ],
+      "negative_tokens": [
+        "server rack",
+        "clothing rack",
+        "refrigeration rack",
+        "bike rack"
+      ]
+    },
+    "network_maintenance_window": {
+      "canonical_key": "network_maintenance_window",
+      "display_name": "Network Maintenance Window",
+      "item_kind": "service_task",
+      "material_family": "deployment_schedule",
+      "comparison_group": "network_schedule_event",
+      "synonyms": [
+        "network maintenance window",
+        "network_maintenance_window",
+        "network maintenance window sku",
+        "network maintenance window replacement",
+        "network maintenance window refresh",
+        "network maintenance window bom line",
+        "maintenance window",
+        "after hours window",
+        "change window",
+        "freeze window",
+        "blackout",
+        "scheduled outage"
+      ],
+      "required_any_tokens": [
+        [
+          "maintenance",
+          "window"
+        ],
+        [
+          "change",
+          "window",
+          "network"
+        ],
+        [
+          "freeze",
+          "window"
+        ],
+        [
+          "scheduled",
+          "outage"
+        ]
+      ],
+      "negative_tokens": [
+        "retail store window",
+        "browser window",
+        "glass window"
+      ]
+    },
+    "network_circuit_turnup": {
+      "canonical_key": "network_circuit_turnup",
+      "display_name": "Network Circuit Turn-Up",
+      "item_kind": "service_task",
+      "material_family": "wan_service",
+      "comparison_group": "network_circuit_task_each",
+      "synonyms": [
+        "network circuit turn-up",
+        "network circuit turn up",
+        "network_circuit_turnup",
+        "network circuit turnup",
+        "network circuit turn-up sku",
+        "network circuit turn-up replacement",
+        "network circuit turn-up refresh",
+        "network circuit turn-up bom line",
+        "circuit turn-up",
+        "WAN turnup",
+        "ISP handoff",
+        "carrier test",
+        "internet circuit",
+        "circuit activation"
+      ],
+      "required_any_tokens": [
+        [
+          "circuit",
+          "turn-up"
+        ],
+        [
+          "wan",
+          "turnup"
+        ],
+        [
+          "isp",
+          "handoff"
+        ],
+        [
+          "carrier",
+          "test"
+        ]
+      ],
+      "negative_tokens": [
+        "electrical circuit",
+        "payment circuit",
+        "fiber demarc extension material"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "network_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "network_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "network_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "network_survey_export": {
+      "filename_contains": [
+        "survey",
+        "walkthrough",
+        "walk-thru",
+        "site audit",
+        "heatmap",
+        "as-built",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "survey_export",
+      "typical_atom_types": [
+        "field_observation",
+        "location_note",
+        "constraint",
+        "existing_condition"
+      ],
+      "beats": [
+        "vendor_quote"
+      ],
+      "cannot_govern": [
+        "approved_quantity_without_scope"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "network_field_test_result": {
+      "filename_contains": [
+        "test",
+        "cert",
+        "validation",
+        "acceptance",
+        "results",
+        "post install",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv",
+        ".txt"
+      ],
+      "authority_class": "field_test_result",
+      "typical_atom_types": [
+        "test_measurement",
+        "pass_fail",
+        "port_or_device_id",
+        "technician_note"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "commercial_price"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "network_cutover_plan": {
+      "filename_contains": [
+        "cutover",
+        "migration plan",
+        "runbook",
+        "go-live",
+        "change window",
+        "freeze window",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".docx",
+        ".pdf",
+        ".csv"
+      ],
+      "authority_class": "cutover_plan",
+      "typical_atom_types": [
+        "task_sequence",
+        "rollback",
+        "owner",
+        "maintenance_window"
+      ],
+      "beats": [
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "material_quantity"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "network_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "network_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "network",
+        "router",
+        "switch",
+        "wan",
+        "lan"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial #",
+      "s/n",
+      "sn",
+      "device serial",
+      "asset serial"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "asset id",
+      "tag #",
+      "barcode",
+      "inventory tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "migration window",
+      "change window",
+      "freeze window"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "hostname": [
+      "hostname",
+      "device name",
+      "switch name",
+      "router name",
+      "node name"
+    ],
+    "management_ip": [
+      "management ip",
+      "mgmt ip",
+      "oob ip",
+      "loopback",
+      "ip address"
+    ],
+    "port_id": [
+      "port",
+      "interface",
+      "intf",
+      "switchport",
+      "uplink port",
+      "gi/te"
+    ],
+    "vlan_id": [
+      "vlan",
+      "vlan id",
+      "network segment",
+      "tag",
+      "subnet vlan"
+    ],
+    "license_term": [
+      "term",
+      "license term",
+      "subscription term",
+      "entitlement length",
+      "renewal"
+    ],
+    "stack_id": [
+      "stack id",
+      "member id",
+      "stack member",
+      "switch number"
+    ],
+    "firmware_version": [
+      "firmware",
+      "software version",
+      "code version",
+      "network os",
+      "image"
+    ],
+    "circuit_id": [
+      "circuit id",
+      "provider id",
+      "isp id",
+      "carrier circuit",
+      "service id"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "network_device": {
+      "examples": [
+        "SW-01",
+        "RTR-Branch",
+        "core switch",
+        "WAN edge"
+      ],
+      "identity_bearing": true
+    },
+    "interface": {
+      "examples": [
+        "Gi1/0/24",
+        "Te1/1/1",
+        "WAN0",
+        "port-channel10"
+      ],
+      "identity_bearing": true
+    },
+    "network_segment": {
+      "examples": [
+        "VLAN 20",
+        "10.20.0.0/24",
+        "guest segment",
+        "voice vlan"
+      ],
+      "identity_bearing": true
+    },
+    "license_entitlement": {
+      "examples": [
+        "3-year feature subscription",
+        "per-device support",
+        "routing license"
+      ],
+      "identity_bearing": true
+    },
+    "change_control": {
+      "examples": [
+        "rollback plan",
+        "maintenance window",
+        "freeze window",
+        "CAB approval"
+      ],
+      "identity_bearing": false
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "This ontology owns routers, switches, network feature licenses, configuration tasks, and cutover evidence; wireless APs, POS lanes, cameras, and endpoints split out.",
+    "Switch quantities compare only with network_switch_each or network_stack_member_each as appropriate; stack cables, optics, licenses, and rack kits are separate groups.",
+    "Do not merge a switch port count with switch device count; port, VLAN, and interface references are configuration atoms.",
+    "Generic feature-license and subscription-entitlement wording must remain vendor-neutral and not infer proprietary product families without explicit source text.",
+    "Console, OOB, IP plan, DHCP, DNS, QoS, and NTP lines are configuration/service tasks unless a BOM line explicitly prices hardware.",
+    "RMA language replaces or swaps an existing device and should not increment net-new inventory unless the authority artifact says add.",
+    "Maintenance windows, freeze windows, and rollback plans are schedule/control artifacts, not material quantities.",
+    "TBD IPs, assumed ports, verify in field, and pending carrier handoff preserve uncertainty until approved design or as-built inventory resolves them.",
+    "Cross-domain confusion - AP: access point belongs to wireless; in network docs AP may appear as powered endpoint but network owns only switch/router/port evidence.",
+    "Cross-domain confusion - switch: network_layer2_access_switch or network_layer3_core_switch wins for Ethernet, VLAN, uplink, stack, or port context; light/POS/KVM switches are negatives.",
+    "Cross-domain confusion - panel: patch panel belongs to structured cabling or fiber, not network modernization unless clearly part of a switch rack kit note.",
+    "Cross-domain confusion - gateway: payment_gateway_config belongs to POS, IoT gateway belongs to edge_iot_security, WAN gateway address remains network_ip_address_plan unless a physical gateway device is quoted.",
+    "Cross-domain confusion - sensor: SNMP monitoring can observe sensors but edge_iot_security owns physical sensors.",
+    "Cross-domain confusion - rack: network_rack_mount_kit is accessory; datacenter_field owns rack cabinets, U positions, and rack elevations.",
+    "Cross-domain confusion - controller: wireless WLC, door controller, and POS lane controller are not network routers or switches.",
+    "Cross-domain confusion - camera: PoE camera switchport evidence does not create camera identity; camera hardware belongs to edge_iot_security.",
+    "Cross-domain confusion - drop: port migration or software drop is not a copper/fiber cabling drop; require cabling tokens for cabling identities.",
+    "Cross-domain confusion - license: network_feature_license and network_subscription_entitlement require switch/router/network feature context, not AP management or endpoint security."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "Network modernization BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "48-port L2 access switch refresh, stackable, qty 6",
+      "identity": "network_layer2_access_switch",
+      "quantity": 6,
+      "notes": "Switch device count; ports are not device count."
+    },
+    {
+      "raw": "Add 6 stack cables for access closet",
+      "identity": "network_stacking_cable",
+      "quantity": 6,
+      "notes": "Accessory comparison group."
+    },
+    {
+      "raw": "3-year feature license for branch routers",
+      "identity": "network_feature_license",
+      "quantity": 1,
+      "notes": "License evidence, not router hardware."
+    },
+    {
+      "raw": "Migrate VLAN 30 to new access switch during change window",
+      "identity": "network_vlan_configuration",
+      "quantity": null,
+      "notes": "Configuration task."
+    },
+    {
+      "raw": "Replace failed core switch under RMA",
+      "identity": "network_rma_replacement_device",
+      "quantity": 1,
+      "notes": "Replacement service; does not imply net-new add."
+    },
+    {
+      "raw": "Backup running configs before code upgrade",
+      "identity": "network_config_backup",
+      "quantity": null,
+      "notes": "Pre-change service artifact."
+    },
+    {
+      "raw": "ISP handoff and circuit turn-up scheduled after hours",
+      "identity": "network_circuit_turnup",
+      "quantity": 1,
+      "notes": "WAN service task separate from fiber demarc material."
+    },
+    {
+      "raw": "DHCP scope reservations pending customer IPAM approval",
+      "identity": "network_dhcp_scope_update",
+      "quantity": null,
+      "notes": "Uncertain configuration scope."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "The word switch collides with light switches, POS switches, KVM switches, and lane switches.",
+      "why_it_breaks_resolution": "Quotes may contain mixed low-voltage, facilities, and commerce rows.",
+      "symptoms_in_artifacts": "Network switch counts inflate from electrical or POS rows.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "48-port switch",
+        "light switch by GC",
+        "POS lane switch",
+        "KVM switch",
+        "switch stack",
+        "switch power supply",
+        "toggle switch"
+      ]
+    },
+    {
+      "weak_point": "Port count is confused with device count.",
+      "why_it_breaks_resolution": "A 48-port switch can be represented with 48 ports but only one chassis.",
+      "symptoms_in_artifacts": "Quantities are multiplied by 24/48 or by uplink counts.",
+      "mitigation": "packetizer",
+      "example_phrases": [
+        "48 port switch qty 2",
+        "ports 1-24 migrate",
+        "uplink ports",
+        "PoE port count",
+        "port-channel 10",
+        "port map attached"
+      ]
+    },
+    {
+      "weak_point": "Licensing rows are vendor-neutral but look like hardware rows.",
+      "why_it_breaks_resolution": "Subscription entitlements may use SKU and quantity fields like material.",
+      "symptoms_in_artifacts": "License count conflicts with switch count.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "feature license",
+        "subscription entitlement",
+        "support term",
+        "per-device license",
+        "3-year term",
+        "renewal SKU"
+      ]
+    },
+    {
+      "weak_point": "Cutover artifacts contain rollback and dependency tasks, not hardware quantities.",
+      "why_it_breaks_resolution": "Runbooks list every action step and can be mistaken for material scope.",
+      "symptoms_in_artifacts": "Task row counts contradict SOW device counts.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "change window",
+        "rollback plan",
+        "pre-check",
+        "post-check",
+        "freeze window",
+        "CAB approved",
+        "go-live sequence"
+      ]
+    },
+    {
+      "weak_point": "RMA and refresh wording can imply either replacement or net-new install.",
+      "why_it_breaks_resolution": "Commercial quotes sometimes list replacement hardware while SOW describes swap labor.",
+      "symptoms_in_artifacts": "Inventory shows existing and replacement devices as duplicates.",
+      "mitigation": "entity_resolver",
+      "example_phrases": [
+        "replace failed switch",
+        "refresh router",
+        "warranty swap",
+        "advance replacement",
+        "net new closet",
+        "like-for-like",
+        "RMA return"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2535 @@
+{
+  "ontology_id": "wireless_infrastructure_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for Wi-Fi surveys, wireless access point rollout, WLAN configuration, RF validation, antenna and mounting scope, and PoE-to-AP evidence in Purtera-style multi-site deployment artifacts.",
+  "identity_clusters": {
+    "wireless_access_point": {
+      "canonical_key": "wireless_access_point",
+      "display_name": "Wireless Access Point",
+      "item_kind": "device",
+      "material_family": "wireless_infrastructure",
+      "comparison_group": "wireless_ap_each",
+      "synonyms": [
+        "wireless access point",
+        "wireless_access_point",
+        "wireless access point sku",
+        "wireless access point replacement",
+        "wireless access point refresh",
+        "wireless access point bom line",
+        "AP",
+        "WAP",
+        "wi-fi ap",
+        "wifi ap",
+        "802.11ax ap",
+        "wi-fi 6 access point",
+        "ceiling AP",
+        "access pts",
+        "access-point"
+      ],
+      "required_any_tokens": [
+        [
+          "wireless",
+          "access",
+          "point"
+        ],
+        [
+          "wifi",
+          "ap"
+        ],
+        [
+          "wi-fi",
+          "ap"
+        ],
+        [
+          "wlan",
+          "ap"
+        ],
+        [
+          "802.11",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "accounts payable",
+        "a/p invoice",
+        "fiber",
+        "lc",
+        "sc",
+        "om3",
+        "om4",
+        "cash drawer",
+        "pin pad",
+        "door controller",
+        "security camera",
+        "desktop",
+        "laptop",
+        "recycling",
+        "rack unit",
+        "ap clerk",
+        "app server",
+        "appliance"
+      ]
+    },
+    "wireless_ceiling_ap_mount": {
+      "canonical_key": "wireless_ceiling_ap_mount",
+      "display_name": "Wireless Ceiling AP Mount",
+      "item_kind": "mounting_hardware",
+      "material_family": "wireless_mounting",
+      "comparison_group": "wireless_mount_each",
+      "synonyms": [
+        "wireless ceiling ap mount",
+        "wireless_ceiling_ap_mount",
+        "wireless ceiling ap mount sku",
+        "wireless ceiling ap mount replacement",
+        "wireless ceiling ap mount refresh",
+        "wireless ceiling ap mount bom line",
+        "AP mount",
+        "ceiling mount kit",
+        "t-rail mount",
+        "ceiling grid mount",
+        "drop ceiling AP bracket",
+        "tile bridge",
+        "rail clip"
+      ],
+      "required_any_tokens": [
+        [
+          "ap",
+          "mount"
+        ],
+        [
+          "ceiling",
+          "mount",
+          "ap"
+        ],
+        [
+          "t-rail",
+          "mount"
+        ],
+        [
+          "ceiling",
+          "grid",
+          "mount"
+        ]
+      ],
+      "negative_tokens": [
+        "camera mount",
+        "monitor mount",
+        "pin pad stand",
+        "rack mount",
+        "fiber tray"
+      ]
+    },
+    "wireless_wall_ap_mount": {
+      "canonical_key": "wireless_wall_ap_mount",
+      "display_name": "Wireless Wall AP Mount",
+      "item_kind": "mounting_hardware",
+      "material_family": "wireless_mounting",
+      "comparison_group": "wireless_mount_each",
+      "synonyms": [
+        "wireless wall ap mount",
+        "wireless_wall_ap_mount",
+        "wireless wall ap mount sku",
+        "wireless wall ap mount replacement",
+        "wireless wall ap mount refresh",
+        "wireless wall ap mount bom line",
+        "wall mount AP bracket",
+        "wall plate AP",
+        "surface mount access point",
+        "AP wall bracket",
+        "wall-mount kit"
+      ],
+      "required_any_tokens": [
+        [
+          "wall",
+          "ap",
+          "mount"
+        ],
+        [
+          "wall",
+          "access",
+          "point",
+          "mount"
+        ],
+        [
+          "surface",
+          "mount",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "wall plate data jack",
+        "camera wall mount",
+        "pin pad wall mount",
+        "light switch"
+      ]
+    },
+    "wireless_outdoor_ap_enclosure": {
+      "canonical_key": "wireless_outdoor_ap_enclosure",
+      "display_name": "Wireless Outdoor AP Enclosure",
+      "item_kind": "enclosure",
+      "material_family": "wireless_mounting",
+      "comparison_group": "wireless_enclosure_each",
+      "synonyms": [
+        "wireless outdoor ap enclosure",
+        "wireless_outdoor_ap_enclosure",
+        "wireless outdoor ap enclosure sku",
+        "wireless outdoor ap enclosure replacement",
+        "wireless outdoor ap enclosure refresh",
+        "wireless outdoor ap enclosure bom line",
+        "outdoor AP box",
+        "weatherproof access point enclosure",
+        "NEMA AP enclosure",
+        "external AP housing",
+        "outdoor wifi housing"
+      ],
+      "required_any_tokens": [
+        [
+          "outdoor",
+          "ap"
+        ],
+        [
+          "weatherproof",
+          "access",
+          "point"
+        ],
+        [
+          "nema",
+          "ap",
+          "enclosure"
+        ]
+      ],
+      "negative_tokens": [
+        "outdoor camera enclosure",
+        "electrical panel",
+        "fiber handhole",
+        "security sensor"
+      ]
+    },
+    "wireless_directional_panel_antenna": {
+      "canonical_key": "wireless_directional_panel_antenna",
+      "display_name": "Wireless Directional Panel Antenna",
+      "item_kind": "antenna",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_antenna_each",
+      "synonyms": [
+        "wireless directional panel antenna",
+        "wireless_directional_panel_antenna",
+        "wireless directional panel antenna sku",
+        "wireless directional panel antenna replacement",
+        "wireless directional panel antenna refresh",
+        "wireless directional panel antenna bom line",
+        "panel antenna",
+        "directional antenna",
+        "patch antenna",
+        "sector antenna",
+        "wall antenna",
+        "beam antenna"
+      ],
+      "required_any_tokens": [
+        [
+          "directional",
+          "antenna"
+        ],
+        [
+          "panel",
+          "antenna"
+        ],
+        [
+          "sector",
+          "antenna"
+        ],
+        [
+          "patch",
+          "antenna",
+          "wifi"
+        ]
+      ],
+      "negative_tokens": [
+        "patch panel",
+        "electrical panel",
+        "pin pad panel",
+        "solar panel",
+        "fiber adapter panel"
+      ]
+    },
+    "wireless_omnidirectional_antenna": {
+      "canonical_key": "wireless_omnidirectional_antenna",
+      "display_name": "Wireless Omnidirectional Antenna",
+      "item_kind": "antenna",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_antenna_each",
+      "synonyms": [
+        "wireless omnidirectional antenna",
+        "wireless_omnidirectional_antenna",
+        "wireless omnidirectional antenna sku",
+        "wireless omnidirectional antenna replacement",
+        "wireless omnidirectional antenna refresh",
+        "wireless omnidirectional antenna bom line",
+        "omni antenna",
+        "rubber duck antenna",
+        "dipole antenna",
+        "ceiling omni",
+        "360 antenna",
+        "wifi antenna"
+      ],
+      "required_any_tokens": [
+        [
+          "omni",
+          "antenna"
+        ],
+        [
+          "omnidirectional",
+          "antenna"
+        ],
+        [
+          "dipole",
+          "antenna"
+        ]
+      ],
+      "negative_tokens": [
+        "cellular antenna only",
+        "tv antenna",
+        "rfid antenna",
+        "panel antenna"
+      ]
+    },
+    "wireless_wlan_controller": {
+      "canonical_key": "wireless_wlan_controller",
+      "display_name": "Wireless WLAN Controller",
+      "item_kind": "controller",
+      "material_family": "wireless_control_plane",
+      "comparison_group": "wireless_controller_each",
+      "synonyms": [
+        "wireless wlan controller",
+        "wireless_wlan_controller",
+        "wireless wlan controller sku",
+        "wireless wlan controller replacement",
+        "wireless wlan controller refresh",
+        "wireless wlan controller bom line",
+        "WLC",
+        "wireless controller",
+        "wifi controller",
+        "wlan appliance",
+        "controller appliance",
+        "controller VM"
+      ],
+      "required_any_tokens": [
+        [
+          "wlan",
+          "controller"
+        ],
+        [
+          "wireless",
+          "controller"
+        ],
+        [
+          "wifi",
+          "controller"
+        ],
+        [
+          "wlc"
+        ]
+      ],
+      "negative_tokens": [
+        "door controller",
+        "pos lane controller",
+        "hvac controller",
+        "domain controller",
+        "game controller"
+      ]
+    },
+    "wireless_cloud_wlan_subscription": {
+      "canonical_key": "wireless_cloud_wlan_subscription",
+      "display_name": "Wireless Cloud WLAN Subscription",
+      "item_kind": "license_sku",
+      "material_family": "wireless_licensing",
+      "comparison_group": "wireless_license_each",
+      "synonyms": [
+        "wireless cloud wlan subscription",
+        "wireless_cloud_wlan_subscription",
+        "wireless cloud wlan subscription sku",
+        "wireless cloud wlan subscription replacement",
+        "wireless cloud wlan subscription refresh",
+        "wireless cloud wlan subscription bom line",
+        "cloud wifi license",
+        "wlan subscription",
+        "AP license",
+        "cloud-managed wireless entitlement",
+        "wireless management license"
+      ],
+      "required_any_tokens": [
+        [
+          "wlan",
+          "subscription"
+        ],
+        [
+          "ap",
+          "license"
+        ],
+        [
+          "cloud",
+          "wireless",
+          "license"
+        ],
+        [
+          "wifi",
+          "management",
+          "license"
+        ]
+      ],
+      "negative_tokens": [
+        "software drop",
+        "payment gateway",
+        "endpoint antivirus",
+        "network switch license without ap"
+      ]
+    },
+    "wireless_ssid_configuration": {
+      "canonical_key": "wireless_ssid_configuration",
+      "display_name": "Wireless SSID Configuration",
+      "item_kind": "configuration",
+      "material_family": "wireless_configuration",
+      "comparison_group": "wireless_config_task",
+      "synonyms": [
+        "wireless ssid configuration",
+        "wireless_ssid_configuration",
+        "wireless ssid configuration sku",
+        "wireless ssid configuration replacement",
+        "wireless ssid configuration refresh",
+        "wireless ssid configuration bom line",
+        "SSID",
+        "ssid setup",
+        "wireless network name",
+        "corp wifi",
+        "guest ssid",
+        "hidden ssid",
+        "wlan profile"
+      ],
+      "required_any_tokens": [
+        [
+          "ssid"
+        ],
+        [
+          "wireless",
+          "network",
+          "name"
+        ],
+        [
+          "wlan",
+          "profile"
+        ],
+        [
+          "guest",
+          "ssid"
+        ]
+      ],
+      "negative_tokens": [
+        "social security",
+        "payment terminal id",
+        "store id",
+        "serial id"
+      ]
+    },
+    "wireless_rf_site_survey": {
+      "canonical_key": "wireless_rf_site_survey",
+      "display_name": "Wireless RF Site Survey",
+      "item_kind": "survey_artifact",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_survey_task",
+      "synonyms": [
+        "wireless rf site survey",
+        "wireless_rf_site_survey",
+        "wireless rf site survey sku",
+        "wireless rf site survey replacement",
+        "wireless rf site survey refresh",
+        "wireless rf site survey bom line",
+        "wifi survey",
+        "RF survey",
+        "wireless walkthrough",
+        "active survey",
+        "passive survey",
+        "site walk wifi",
+        "ekahau-style survey"
+      ],
+      "required_any_tokens": [
+        [
+          "rf",
+          "survey"
+        ],
+        [
+          "wifi",
+          "survey"
+        ],
+        [
+          "wireless",
+          "site",
+          "survey"
+        ],
+        [
+          "active",
+          "survey",
+          "wifi"
+        ]
+      ],
+      "negative_tokens": [
+        "customer satisfaction survey",
+        "site roster",
+        "security survey only",
+        "endpoint survey"
+      ]
+    },
+    "wireless_predictive_heatmap": {
+      "canonical_key": "wireless_predictive_heatmap",
+      "display_name": "Wireless Predictive Heatmap",
+      "item_kind": "survey_artifact",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_design_artifact",
+      "synonyms": [
+        "wireless predictive heatmap",
+        "wireless_predictive_heatmap",
+        "wireless predictive heatmap sku",
+        "wireless predictive heatmap replacement",
+        "wireless predictive heatmap refresh",
+        "wireless predictive heatmap bom line",
+        "predictive model",
+        "wifi heat map",
+        "heatmap",
+        "coverage map",
+        "RF design map",
+        "pre-deploy heatmap"
+      ],
+      "required_any_tokens": [
+        [
+          "predictive",
+          "heatmap"
+        ],
+        [
+          "wifi",
+          "heatmap"
+        ],
+        [
+          "wireless",
+          "coverage",
+          "map"
+        ],
+        [
+          "rf",
+          "design",
+          "map"
+        ]
+      ],
+      "negative_tokens": [
+        "thermal heatmap",
+        "people counter map",
+        "store sales heat map",
+        "camera heatmap"
+      ]
+    },
+    "wireless_post_install_validation_survey": {
+      "canonical_key": "wireless_post_install_validation_survey",
+      "display_name": "Wireless Post-Install Validation Survey",
+      "item_kind": "field_test_result",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_survey_task",
+      "synonyms": [
+        "wireless post-install validation survey",
+        "wireless post install validation survey",
+        "wireless_post_install_validation_survey",
+        "wireless post-install validation survey sku",
+        "wireless post-install validation survey replacement",
+        "wireless post-install validation survey refresh",
+        "wireless post-install validation survey bom line",
+        "validation survey",
+        "post install survey",
+        "as-built wifi survey",
+        "walk test",
+        "acceptance survey",
+        "post validation"
+      ],
+      "required_any_tokens": [
+        [
+          "post",
+          "install",
+          "survey"
+        ],
+        [
+          "validation",
+          "survey",
+          "wifi"
+        ],
+        [
+          "as-built",
+          "wifi",
+          "survey"
+        ]
+      ],
+      "negative_tokens": [
+        "cable cert only",
+        "otdr",
+        "payment certification",
+        "data wipe certificate"
+      ]
+    },
+    "wireless_rssi_measurement": {
+      "canonical_key": "wireless_rssi_measurement",
+      "display_name": "Wireless RSSI Measurement",
+      "item_kind": "measurement",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_rf_measurement",
+      "synonyms": [
+        "wireless rssi measurement",
+        "wireless_rssi_measurement",
+        "wireless rssi measurement sku",
+        "wireless rssi measurement replacement",
+        "wireless rssi measurement refresh",
+        "wireless rssi measurement bom line",
+        "RSSI",
+        "signal strength",
+        "received signal",
+        "dbm signal",
+        "signal level",
+        "coverage dBm"
+      ],
+      "required_any_tokens": [
+        [
+          "rssi"
+        ],
+        [
+          "signal",
+          "strength"
+        ],
+        [
+          "dbm",
+          "signal"
+        ],
+        [
+          "received",
+          "signal"
+        ]
+      ],
+      "negative_tokens": [
+        "cellular rssi only",
+        "ble beacon rssi only",
+        "fiber loss db",
+        "noise db"
+      ]
+    },
+    "wireless_snr_measurement": {
+      "canonical_key": "wireless_snr_measurement",
+      "display_name": "Wireless SNR Measurement",
+      "item_kind": "measurement",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_rf_measurement",
+      "synonyms": [
+        "wireless snr measurement",
+        "wireless_snr_measurement",
+        "wireless snr measurement sku",
+        "wireless snr measurement replacement",
+        "wireless snr measurement refresh",
+        "wireless snr measurement bom line",
+        "SNR",
+        "signal to noise",
+        "signal/noise",
+        "noise floor",
+        "dB SNR",
+        "wireless noise"
+      ],
+      "required_any_tokens": [
+        [
+          "snr"
+        ],
+        [
+          "signal",
+          "to",
+          "noise"
+        ],
+        [
+          "noise",
+          "floor",
+          "wifi"
+        ]
+      ],
+      "negative_tokens": [
+        "audio snr",
+        "camera audio",
+        "fiber loss",
+        "ups noise"
+      ]
+    },
+    "wireless_channel_plan": {
+      "canonical_key": "wireless_channel_plan",
+      "display_name": "Wireless Channel Plan",
+      "item_kind": "configuration",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_config_task",
+      "synonyms": [
+        "wireless channel plan",
+        "wireless_channel_plan",
+        "wireless channel plan sku",
+        "wireless channel plan replacement",
+        "wireless channel plan refresh",
+        "wireless channel plan bom line",
+        "channel plan",
+        "rf channel",
+        "channel assignment",
+        "2.4ghz channel",
+        "5ghz channel",
+        "6ghz channel",
+        "auto rf"
+      ],
+      "required_any_tokens": [
+        [
+          "channel",
+          "plan"
+        ],
+        [
+          "rf",
+          "channel"
+        ],
+        [
+          "channel",
+          "assignment",
+          "wifi"
+        ],
+        [
+          "5ghz",
+          "channel"
+        ]
+      ],
+      "negative_tokens": [
+        "tv channel",
+        "payment channel",
+        "slack channel",
+        "sales channel"
+      ]
+    },
+    "wireless_poe_injector_for_ap": {
+      "canonical_key": "wireless_poe_injector_for_ap",
+      "display_name": "Wireless PoE Injector for AP",
+      "item_kind": "power_component",
+      "material_family": "wireless_power",
+      "comparison_group": "wireless_power_each",
+      "synonyms": [
+        "wireless poe injector for ap",
+        "wireless_poe_injector_for_ap",
+        "wireless poe injector for ap sku",
+        "wireless poe injector for ap replacement",
+        "wireless poe injector for ap refresh",
+        "wireless poe injector for ap bom line",
+        "PoE injector",
+        "power injector",
+        "midspan injector",
+        "AP injector",
+        "single port injector",
+        "poe brick"
+      ],
+      "required_any_tokens": [
+        [
+          "poe",
+          "injector"
+        ],
+        [
+          "power",
+          "injector",
+          "ap"
+        ],
+        [
+          "midspan",
+          "injector"
+        ]
+      ],
+      "negative_tokens": [
+        "printer power brick",
+        "pos power injector",
+        "camera poe injector",
+        "network switch"
+      ]
+    },
+    "wireless_poe_budget_for_ap": {
+      "canonical_key": "wireless_poe_budget_for_ap",
+      "display_name": "Wireless PoE Budget for AP",
+      "item_kind": "configuration",
+      "material_family": "wireless_power",
+      "comparison_group": "wireless_power_budget",
+      "synonyms": [
+        "wireless poe budget for ap",
+        "wireless_poe_budget_for_ap",
+        "wireless poe budget for ap sku",
+        "wireless poe budget for ap replacement",
+        "wireless poe budget for ap refresh",
+        "wireless poe budget for ap bom line",
+        "poe budget",
+        "power budget",
+        "AP power draw",
+        "802.3af",
+        "802.3at",
+        "802.3bt",
+        "inline power"
+      ],
+      "required_any_tokens": [
+        [
+          "poe",
+          "budget"
+        ],
+        [
+          "ap",
+          "power",
+          "draw"
+        ],
+        [
+          "inline",
+          "power",
+          "ap"
+        ],
+        [
+          "802.3at",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "camera poe budget",
+        "pdu power budget",
+        "ups load",
+        "cash drawer power"
+      ]
+    },
+    "wireless_ap_patch_cord": {
+      "canonical_key": "wireless_ap_patch_cord",
+      "display_name": "Wireless AP Patch Cord",
+      "item_kind": "cable",
+      "material_family": "copper_patch",
+      "comparison_group": "wireless_patch_cord_each",
+      "synonyms": [
+        "wireless ap patch cord",
+        "wireless_ap_patch_cord",
+        "wireless ap patch cord sku",
+        "wireless ap patch cord replacement",
+        "wireless ap patch cord refresh",
+        "wireless ap patch cord bom line",
+        "AP patch cable",
+        "patch cord for AP",
+        "cat6 patch to AP",
+        "short AP patch",
+        "ethernet jumper for AP"
+      ],
+      "required_any_tokens": [
+        [
+          "ap",
+          "patch",
+          "cord"
+        ],
+        [
+          "patch",
+          "cable",
+          "ap"
+        ],
+        [
+          "cat6",
+          "patch",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber patch cord",
+        "lc patch",
+        "sc patch",
+        "monitor cable",
+        "power cord"
+      ]
+    },
+    "wireless_ap_data_drop": {
+      "canonical_key": "wireless_ap_data_drop",
+      "display_name": "Wireless AP Data Drop",
+      "item_kind": "cable_drop",
+      "material_family": "structured_cabling_copper",
+      "comparison_group": "wireless_copper_drop_each",
+      "synonyms": [
+        "wireless ap data drop",
+        "wireless_ap_data_drop",
+        "wireless ap data drop sku",
+        "wireless ap data drop replacement",
+        "wireless ap data drop refresh",
+        "wireless ap data drop bom line",
+        "AP drop",
+        "wifi drop",
+        "ceiling data drop",
+        "cat6 to AP",
+        "home run for AP",
+        "wireless data jack"
+      ],
+      "required_any_tokens": [
+        [
+          "ap",
+          "drop"
+        ],
+        [
+          "wifi",
+          "drop"
+        ],
+        [
+          "data",
+          "drop",
+          "ap"
+        ],
+        [
+          "cat6",
+          "to",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "software drop",
+        "fiber drop",
+        "retail drop ship",
+        "drop safe",
+        "drop ceiling only"
+      ]
+    },
+    "wireless_plenum_ap_cable": {
+      "canonical_key": "wireless_plenum_ap_cable",
+      "display_name": "Wireless Plenum AP Cable",
+      "item_kind": "cable",
+      "material_family": "structured_cabling_copper",
+      "comparison_group": "wireless_cable_run_each",
+      "synonyms": [
+        "wireless plenum ap cable",
+        "wireless_plenum_ap_cable",
+        "wireless plenum ap cable sku",
+        "wireless plenum ap cable replacement",
+        "wireless plenum ap cable refresh",
+        "wireless plenum ap cable bom line",
+        "plenum cat6 for AP",
+        "CMP cable AP",
+        "plenum run to AP",
+        "ceiling plenum cable",
+        "AP home run plenum"
+      ],
+      "required_any_tokens": [
+        [
+          "plenum",
+          "ap",
+          "cable"
+        ],
+        [
+          "cmp",
+          "cable",
+          "ap"
+        ],
+        [
+          "plenum",
+          "run",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber riser",
+        "power whip",
+        "extension cord",
+        "speaker wire"
+      ]
+    },
+    "wireless_ap_labeling_task": {
+      "canonical_key": "wireless_ap_labeling_task",
+      "display_name": "Wireless AP Labeling Task",
+      "item_kind": "service_task",
+      "material_family": "field_labor",
+      "comparison_group": "wireless_service_task_each",
+      "synonyms": [
+        "wireless ap labeling task",
+        "wireless_ap_labeling_task",
+        "wireless ap labeling task sku",
+        "wireless ap labeling task replacement",
+        "wireless ap labeling task refresh",
+        "wireless ap labeling task bom line",
+        "label AP",
+        "ap labels",
+        "device labeling",
+        "ceiling label",
+        "asset label AP",
+        "port label AP"
+      ],
+      "required_any_tokens": [
+        [
+          "label",
+          "ap"
+        ],
+        [
+          "ap",
+          "labeling"
+        ],
+        [
+          "asset",
+          "label",
+          "ap"
+        ],
+        [
+          "port",
+          "label",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint asset tag",
+        "cable label only",
+        "fiber labels",
+        "shipping label"
+      ]
+    },
+    "wireless_ap_asset_inventory": {
+      "canonical_key": "wireless_ap_asset_inventory",
+      "display_name": "Wireless AP Asset Inventory",
+      "item_kind": "inventory_record",
+      "material_family": "wireless_inventory",
+      "comparison_group": "wireless_inventory_record",
+      "synonyms": [
+        "wireless ap asset inventory",
+        "wireless_ap_asset_inventory",
+        "wireless ap asset inventory sku",
+        "wireless ap asset inventory replacement",
+        "wireless ap asset inventory refresh",
+        "wireless ap asset inventory bom line",
+        "AP inventory",
+        "wireless asset list",
+        "AP serial capture",
+        "access point asset",
+        "installed AP list",
+        "AP as-built"
+      ],
+      "required_any_tokens": [
+        [
+          "ap",
+          "inventory"
+        ],
+        [
+          "ap",
+          "serial"
+        ],
+        [
+          "wireless",
+          "asset",
+          "list"
+        ],
+        [
+          "installed",
+          "ap",
+          "list"
+        ]
+      ],
+      "negative_tokens": [
+        "accounts payable inventory",
+        "endpoint inventory",
+        "pos inventory",
+        "camera inventory"
+      ]
+    },
+    "wireless_roaming_test": {
+      "canonical_key": "wireless_roaming_test",
+      "display_name": "Wireless Roaming Test",
+      "item_kind": "field_test_result",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_test_task",
+      "synonyms": [
+        "wireless roaming test",
+        "wireless_roaming_test",
+        "wireless roaming test sku",
+        "wireless roaming test replacement",
+        "wireless roaming test refresh",
+        "wireless roaming test bom line",
+        "roam test",
+        "client roaming",
+        "roaming validation",
+        "sticky client test",
+        "handoff test",
+        "wireless walk test"
+      ],
+      "required_any_tokens": [
+        [
+          "roaming",
+          "test"
+        ],
+        [
+          "client",
+          "roaming"
+        ],
+        [
+          "handoff",
+          "test",
+          "wifi"
+        ],
+        [
+          "roam",
+          "validation"
+        ]
+      ],
+      "negative_tokens": [
+        "cellular roaming",
+        "domain migration",
+        "endpoint handoff",
+        "payment handoff"
+      ]
+    },
+    "wireless_captive_portal_config": {
+      "canonical_key": "wireless_captive_portal_config",
+      "display_name": "Wireless Captive Portal Configuration",
+      "item_kind": "configuration",
+      "material_family": "wireless_configuration",
+      "comparison_group": "wireless_config_task",
+      "synonyms": [
+        "wireless captive portal configuration",
+        "wireless_captive_portal_config",
+        "wireless captive portal config",
+        "wireless captive portal configuration sku",
+        "wireless captive portal configuration replacement",
+        "wireless captive portal configuration refresh",
+        "wireless captive portal configuration bom line",
+        "captive portal",
+        "splash page",
+        "guest login page",
+        "terms page",
+        "wifi portal",
+        "web auth"
+      ],
+      "required_any_tokens": [
+        [
+          "captive",
+          "portal"
+        ],
+        [
+          "guest",
+          "login",
+          "wifi"
+        ],
+        [
+          "splash",
+          "page",
+          "wifi"
+        ],
+        [
+          "web",
+          "auth",
+          "wlan"
+        ]
+      ],
+      "negative_tokens": [
+        "payment portal",
+        "customer portal",
+        "hr portal",
+        "web application"
+      ]
+    },
+    "wireless_guest_wifi_policy": {
+      "canonical_key": "wireless_guest_wifi_policy",
+      "display_name": "Wireless Guest Wi-Fi Policy",
+      "item_kind": "policy",
+      "material_family": "wireless_configuration",
+      "comparison_group": "wireless_policy",
+      "synonyms": [
+        "wireless guest wi-fi policy",
+        "wireless guest wi fi policy",
+        "wireless_guest_wifi_policy",
+        "wireless guest wifi policy",
+        "wireless guest wi-fi policy sku",
+        "wireless guest wi-fi policy replacement",
+        "wireless guest wi-fi policy refresh",
+        "wireless guest wi-fi policy bom line",
+        "guest wifi",
+        "guest WLAN",
+        "visitor wifi",
+        "guest isolation",
+        "guest policy",
+        "internet only ssid"
+      ],
+      "required_any_tokens": [
+        [
+          "guest",
+          "wifi"
+        ],
+        [
+          "guest",
+          "wlan"
+        ],
+        [
+          "visitor",
+          "wifi"
+        ],
+        [
+          "guest",
+          "policy",
+          "wireless"
+        ]
+      ],
+      "negative_tokens": [
+        "guest badge",
+        "store guest",
+        "customer wifi survey",
+        "visitor log"
+      ]
+    },
+    "wireless_radius_8021x_integration": {
+      "canonical_key": "wireless_radius_8021x_integration",
+      "display_name": "Wireless RADIUS 802.1X Integration",
+      "item_kind": "configuration",
+      "material_family": "wireless_authentication",
+      "comparison_group": "wireless_auth_task",
+      "synonyms": [
+        "wireless radius 802.1x integration",
+        "wireless_radius_8021x_integration",
+        "wireless radius 8021x integration",
+        "wireless radius 802.1x integration sku",
+        "wireless radius 802.1x integration replacement",
+        "wireless radius 802.1x integration refresh",
+        "wireless radius 802.1x integration bom line",
+        "802.1x",
+        "radius",
+        "enterprise auth",
+        "eap",
+        "certificate auth wifi",
+        "wpa enterprise"
+      ],
+      "required_any_tokens": [
+        [
+          "802.1x"
+        ],
+        [
+          "radius",
+          "wifi"
+        ],
+        [
+          "enterprise",
+          "auth",
+          "wireless"
+        ],
+        [
+          "wpa",
+          "enterprise"
+        ]
+      ],
+      "negative_tokens": [
+        "radius as geometry",
+        "remote authentication for vpn only",
+        "payment auth",
+        "door access credential"
+      ]
+    },
+    "wireless_cutover_window": {
+      "canonical_key": "wireless_cutover_window",
+      "display_name": "Wireless Cutover Window",
+      "item_kind": "service_task",
+      "material_family": "deployment_schedule",
+      "comparison_group": "wireless_schedule_event",
+      "synonyms": [
+        "wireless cutover window",
+        "wireless_cutover_window",
+        "wireless cutover window sku",
+        "wireless cutover window replacement",
+        "wireless cutover window refresh",
+        "wireless cutover window bom line",
+        "wifi cutover",
+        "wlan migration window",
+        "wireless go-live",
+        "change window wifi",
+        "after hours wireless"
+      ],
+      "required_any_tokens": [
+        [
+          "wireless",
+          "cutover"
+        ],
+        [
+          "wifi",
+          "go-live"
+        ],
+        [
+          "wlan",
+          "migration",
+          "window"
+        ],
+        [
+          "change",
+          "window",
+          "wifi"
+        ]
+      ],
+      "negative_tokens": [
+        "pos cutover",
+        "wan cutover",
+        "endpoint refresh window",
+        "store close only"
+      ]
+    },
+    "wireless_spectrum_analysis_task": {
+      "canonical_key": "wireless_spectrum_analysis_task",
+      "display_name": "Wireless Spectrum Analysis Task",
+      "item_kind": "service_task",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_test_task",
+      "synonyms": [
+        "wireless spectrum analysis task",
+        "wireless_spectrum_analysis_task",
+        "wireless spectrum analysis task sku",
+        "wireless spectrum analysis task replacement",
+        "wireless spectrum analysis task refresh",
+        "wireless spectrum analysis task bom line",
+        "spectrum analysis",
+        "RF scan",
+        "interference scan",
+        "spectrum analyzer",
+        "air quality scan",
+        "non-wifi interference"
+      ],
+      "required_any_tokens": [
+        [
+          "spectrum",
+          "analysis"
+        ],
+        [
+          "rf",
+          "scan"
+        ],
+        [
+          "interference",
+          "scan"
+        ],
+        [
+          "spectrum",
+          "analyzer"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber scan",
+        "barcode scan",
+        "vulnerability scan",
+        "camera scan"
+      ]
+    },
+    "wireless_rf_interference_source": {
+      "canonical_key": "wireless_rf_interference_source",
+      "display_name": "Wireless RF Interference Source",
+      "item_kind": "measurement",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_issue_each",
+      "synonyms": [
+        "wireless rf interference source",
+        "wireless_rf_interference_source",
+        "wireless rf interference source sku",
+        "wireless rf interference source replacement",
+        "wireless rf interference source refresh",
+        "wireless rf interference source bom line",
+        "interference",
+        "microwave interference",
+        "co-channel interference",
+        "bluetooth interference",
+        "noise source",
+        "rogue signal"
+      ],
+      "required_any_tokens": [
+        [
+          "rf",
+          "interference"
+        ],
+        [
+          "co-channel",
+          "interference"
+        ],
+        [
+          "noise",
+          "source",
+          "wifi"
+        ],
+        [
+          "rogue",
+          "signal"
+        ]
+      ],
+      "negative_tokens": [
+        "electrical noise only",
+        "audio noise",
+        "mechanical vibration",
+        "customer complaint"
+      ]
+    },
+    "wireless_high_density_area": {
+      "canonical_key": "wireless_high_density_area",
+      "display_name": "Wireless High-Density Area",
+      "item_kind": "design_zone",
+      "material_family": "wireless_rf",
+      "comparison_group": "wireless_design_zone",
+      "synonyms": [
+        "wireless high-density area",
+        "wireless high density area",
+        "wireless_high_density_area",
+        "wireless high-density area sku",
+        "wireless high-density area replacement",
+        "wireless high-density area refresh",
+        "wireless high-density area bom line",
+        "high density wifi",
+        "HD WLAN",
+        "auditorium coverage",
+        "cafeteria wifi",
+        "conference room density",
+        "client capacity area"
+      ],
+      "required_any_tokens": [
+        [
+          "high",
+          "density",
+          "wifi"
+        ],
+        [
+          "client",
+          "capacity",
+          "area"
+        ],
+        [
+          "hd",
+          "wlan"
+        ],
+        [
+          "conference",
+          "room",
+          "density"
+        ]
+      ],
+      "negative_tokens": [
+        "dense fiber bundle",
+        "storage density",
+        "retail traffic count",
+        "crowd camera"
+      ]
+    },
+    "wireless_mesh_backhaul_link": {
+      "canonical_key": "wireless_mesh_backhaul_link",
+      "display_name": "Wireless Mesh Backhaul Link",
+      "item_kind": "configuration",
+      "material_family": "wireless_backhaul",
+      "comparison_group": "wireless_mesh_link_each",
+      "synonyms": [
+        "wireless mesh backhaul link",
+        "wireless_mesh_backhaul_link",
+        "wireless mesh backhaul link sku",
+        "wireless mesh backhaul link replacement",
+        "wireless mesh backhaul link refresh",
+        "wireless mesh backhaul link bom line",
+        "mesh AP",
+        "wireless mesh",
+        "mesh backhaul",
+        "wireless uplink",
+        "root AP",
+        "mesh repeater"
+      ],
+      "required_any_tokens": [
+        [
+          "mesh",
+          "backhaul"
+        ],
+        [
+          "wireless",
+          "mesh"
+        ],
+        [
+          "mesh",
+          "ap"
+        ],
+        [
+          "wireless",
+          "uplink"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber backhaul",
+        "wan link",
+        "bluetooth mesh sensor",
+        "service provider circuit"
+      ]
+    },
+    "wireless_ap_staging_task": {
+      "canonical_key": "wireless_ap_staging_task",
+      "display_name": "Wireless AP Staging Task",
+      "item_kind": "service_task",
+      "material_family": "field_labor",
+      "comparison_group": "wireless_service_task_each",
+      "synonyms": [
+        "wireless ap staging task",
+        "wireless_ap_staging_task",
+        "wireless ap staging task sku",
+        "wireless ap staging task replacement",
+        "wireless ap staging task refresh",
+        "wireless ap staging task bom line",
+        "stage AP",
+        "preconfigure AP",
+        "bench stage wireless",
+        "claim AP",
+        "adopt AP",
+        "AP onboarding"
+      ],
+      "required_any_tokens": [
+        [
+          "stage",
+          "ap"
+        ],
+        [
+          "preconfigure",
+          "ap"
+        ],
+        [
+          "ap",
+          "onboarding"
+        ],
+        [
+          "claim",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint imaging",
+        "pos staging",
+        "camera enrollment",
+        "shipping stage"
+      ]
+    },
+    "wireless_ap_firmware_upgrade": {
+      "canonical_key": "wireless_ap_firmware_upgrade",
+      "display_name": "Wireless AP Firmware Upgrade",
+      "item_kind": "service_task",
+      "material_family": "wireless_software",
+      "comparison_group": "wireless_service_task_each",
+      "synonyms": [
+        "wireless ap firmware upgrade",
+        "wireless_ap_firmware_upgrade",
+        "wireless ap firmware upgrade sku",
+        "wireless ap firmware upgrade replacement",
+        "wireless ap firmware upgrade refresh",
+        "wireless ap firmware upgrade bom line",
+        "AP firmware",
+        "wireless code upgrade",
+        "wlan upgrade",
+        "software update AP",
+        "firmware patch",
+        "AP version"
+      ],
+      "required_any_tokens": [
+        [
+          "ap",
+          "firmware"
+        ],
+        [
+          "wireless",
+          "code",
+          "upgrade"
+        ],
+        [
+          "wlan",
+          "upgrade"
+        ],
+        [
+          "software",
+          "update",
+          "ap"
+        ]
+      ],
+      "negative_tokens": [
+        "network switch firmware",
+        "endpoint patch",
+        "camera firmware",
+        "pos application update"
+      ]
+    },
+    "wireless_ap_rma_replacement": {
+      "canonical_key": "wireless_ap_rma_replacement",
+      "display_name": "Wireless AP RMA Replacement",
+      "item_kind": "service_task",
+      "material_family": "wireless_hardware",
+      "comparison_group": "wireless_rma_each",
+      "synonyms": [
+        "wireless ap rma replacement",
+        "wireless_ap_rma_replacement",
+        "wireless ap rma replacement sku",
+        "wireless ap rma replacement replacement",
+        "wireless ap rma replacement refresh",
+        "wireless ap rma replacement bom line",
+        "AP RMA",
+        "replace AP",
+        "swap AP",
+        "failed access point",
+        "defective AP",
+        "warranty replacement AP"
+      ],
+      "required_any_tokens": [
+        [
+          "ap",
+          "rma"
+        ],
+        [
+          "replace",
+          "ap"
+        ],
+        [
+          "swap",
+          "ap"
+        ],
+        [
+          "failed",
+          "access",
+          "point"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint rma",
+        "pos rma",
+        "camera rma",
+        "accounts payable"
+      ]
+    },
+    "wireless_ceiling_lift_access": {
+      "canonical_key": "wireless_ceiling_lift_access",
+      "display_name": "Wireless Ceiling Lift Access",
+      "item_kind": "access_constraint",
+      "material_family": "field_access",
+      "comparison_group": "wireless_access_constraint",
+      "synonyms": [
+        "wireless ceiling lift access",
+        "wireless_ceiling_lift_access",
+        "wireless ceiling lift access sku",
+        "wireless ceiling lift access replacement",
+        "wireless ceiling lift access refresh",
+        "wireless ceiling lift access bom line",
+        "lift needed",
+        "scissor lift",
+        "boom lift",
+        "high ceiling",
+        "ceiling grid access",
+        "ladder access AP"
+      ],
+      "required_any_tokens": [
+        [
+          "lift",
+          "ap"
+        ],
+        [
+          "ceiling",
+          "grid",
+          "access"
+        ],
+        [
+          "high",
+          "ceiling",
+          "ap"
+        ],
+        [
+          "scissor",
+          "lift",
+          "wireless"
+        ]
+      ],
+      "negative_tokens": [
+        "delivery lift gate",
+        "elevator",
+        "forklift warehouse",
+        "pos stand height"
+      ]
+    },
+    "wireless_rogue_ap_detection": {
+      "canonical_key": "wireless_rogue_ap_detection",
+      "display_name": "Wireless Rogue AP Detection",
+      "item_kind": "service_task",
+      "material_family": "wireless_security",
+      "comparison_group": "wireless_test_task",
+      "synonyms": [
+        "wireless rogue ap detection",
+        "wireless_rogue_ap_detection",
+        "wireless rogue ap detection sku",
+        "wireless rogue ap detection replacement",
+        "wireless rogue ap detection refresh",
+        "wireless rogue ap detection bom line",
+        "rogue AP",
+        "unauthorized AP",
+        "evil twin",
+        "air monitor",
+        "wids",
+        "wireless intrusion detection"
+      ],
+      "required_any_tokens": [
+        [
+          "rogue",
+          "ap"
+        ],
+        [
+          "unauthorized",
+          "ap"
+        ],
+        [
+          "wireless",
+          "intrusion",
+          "detection"
+        ],
+        [
+          "evil",
+          "twin"
+        ]
+      ],
+      "negative_tokens": [
+        "accounts payable fraud",
+        "security camera detection",
+        "endpoint antivirus",
+        "intrusion alarm panel"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "wireless_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "wireless_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "wireless_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "wireless_survey_export": {
+      "filename_contains": [
+        "survey",
+        "walkthrough",
+        "walk-thru",
+        "site audit",
+        "heatmap",
+        "as-built",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "survey_export",
+      "typical_atom_types": [
+        "field_observation",
+        "location_note",
+        "constraint",
+        "existing_condition"
+      ],
+      "beats": [
+        "vendor_quote"
+      ],
+      "cannot_govern": [
+        "approved_quantity_without_scope"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "wireless_field_test_result": {
+      "filename_contains": [
+        "test",
+        "cert",
+        "validation",
+        "acceptance",
+        "results",
+        "post install",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv",
+        ".txt"
+      ],
+      "authority_class": "field_test_result",
+      "typical_atom_types": [
+        "test_measurement",
+        "pass_fail",
+        "port_or_device_id",
+        "technician_note"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "commercial_price"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "wireless_cutover_plan": {
+      "filename_contains": [
+        "cutover",
+        "migration plan",
+        "runbook",
+        "go-live",
+        "change window",
+        "freeze window",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".docx",
+        ".pdf",
+        ".csv"
+      ],
+      "authority_class": "cutover_plan",
+      "typical_atom_types": [
+        "task_sequence",
+        "rollback",
+        "owner",
+        "maintenance_window"
+      ],
+      "beats": [
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "material_quantity"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "wireless_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "wireless_certificate": {
+      "filename_contains": [
+        "certificate",
+        "certification",
+        "attestation",
+        "compliance",
+        "cod",
+        "coc",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "certificate",
+      "typical_atom_types": [
+        "certificate_id",
+        "pass_fail",
+        "approver",
+        "evidence_date"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "future_scope"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "wireless_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "wireless",
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "ap"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial #",
+      "s/n",
+      "sn",
+      "device serial",
+      "asset serial"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "asset id",
+      "tag #",
+      "barcode",
+      "inventory tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "migration window",
+      "change window",
+      "freeze window"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "ap_name": [
+      "ap name",
+      "ap hostname",
+      "wap name",
+      "device name",
+      "ap label"
+    ],
+    "mac_address": [
+      "mac",
+      "mac address",
+      "base mac",
+      "radio mac",
+      "bssid"
+    ],
+    "ssid": [
+      "ssid",
+      "wlan",
+      "network name",
+      "wireless lan",
+      "wifi name"
+    ],
+    "rssi": [
+      "rssi",
+      "signal",
+      "signal strength",
+      "dbm",
+      "coverage dbm"
+    ],
+    "snr": [
+      "snr",
+      "noise",
+      "signal to noise",
+      "noise floor"
+    ],
+    "channel": [
+      "channel",
+      "rf channel",
+      "2.4 channel",
+      "5g channel",
+      "6g channel"
+    ],
+    "mounting_location": [
+      "mount location",
+      "ceiling grid",
+      "t-rail",
+      "wall",
+      "tile",
+      "mount type"
+    ],
+    "poe_source": [
+      "poe source",
+      "switch port",
+      "injector",
+      "power source",
+      "inline power"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "wireless_device": {
+      "examples": [
+        "AP-101",
+        "WAP sales floor",
+        "outdoor AP",
+        "mesh AP"
+      ],
+      "identity_bearing": true
+    },
+    "radio_band": {
+      "examples": [
+        "2.4 GHz",
+        "5 GHz",
+        "6 GHz",
+        "dual band",
+        "tri band"
+      ],
+      "identity_bearing": false
+    },
+    "rf_metric": {
+      "examples": [
+        "RSSI -67 dBm",
+        "SNR 24 dB",
+        "noise floor -92 dBm"
+      ],
+      "identity_bearing": false
+    },
+    "ssid_or_wlan": {
+      "examples": [
+        "CorpWiFi",
+        "Guest",
+        "IoT-WLAN",
+        "store-wlan"
+      ],
+      "identity_bearing": true
+    },
+    "mount_surface": {
+      "examples": [
+        "ceiling grid",
+        "open ceiling",
+        "wall",
+        "outdoor pole",
+        "t-rail"
+      ],
+      "identity_bearing": false
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "Compare quantities only within identical comparison_group values; AP devices, mounts, drops, licenses, surveys, and cutover windows are not interchangeable.",
+    "Resolve AP as wireless_access_point only when wireless, Wi-Fi, WLAN, radio, SSID, or PoE-to-AP context is present; otherwise treat AP as ambiguous.",
+    "Treat survey artifacts as scope evidence but not as installed material unless an authority artifact says the survey count is the approved count.",
+    "Keep RSSI, SNR, noise floor, and channel plan as measurements/configuration; never merge them into device inventory.",
+    "When a BOM line says AP plus mount plus license bundle, packetize into separate comparable identities if quantities can govern independently.",
+    "Ceiling grid, lift, escort, after hours, and badge terms are access constraints, not installed items.",
+    "TBD, approx, assumed, per GC, verify in field, and pending customer downgrade confidence and require field verification before merge.",
+    "AP serial number, MAC address, and hostname can resolve the same device only when site/location also matches or an approved inventory maps them.",
+    "Cross-domain confusion - AP: wireless_access_point wins only in Wi-Fi/WLAN/SSID/RSSI/PoE-to-AP context; accounts payable or application server context must be rejected.",
+    "Cross-domain confusion - switch: wireless docs may mention a PoE switch as a power source, but network modernization owns network_layer2_access_switch unless the line is explicitly AP power budget only.",
+    "Cross-domain confusion - panel: wireless_directional_panel_antenna wins for RF/antenna/sector wording; patch panel, electrical panel, and POS panel are negative context.",
+    "Cross-domain confusion - gateway: wireless captive portal or internet gateway text is configuration unless the artifact is network or POS gateway scope.",
+    "Cross-domain confusion - sensor: wireless spectrum or RF sensor language is measurement only; edge_iot_security owns security sensors and BLE/IoT hubs.",
+    "Cross-domain confusion - rack: wireless rack wording normally points to controller placement; datacenter_field owns rack U, rack elevation, and PDU.",
+    "Cross-domain confusion - controller: wireless_wlan_controller wins for WLC/WLAN/radio context; door controller, POS lane controller, and domain controller must split.",
+    "Cross-domain confusion - camera: camera coverage, camera mount, or NVR language belongs to edge_iot_security even when PoE is present.",
+    "Cross-domain confusion - drop: wireless_ap_data_drop wins only when AP/Wi-Fi/ceiling location is present; software drop and POS cash drop are negative tokens.",
+    "Cross-domain confusion - license: wireless_cloud_wlan_subscription is AP/WLAN management only; endpoint security, network feature, and payment software licenses remain separate."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "Wireless infrastructure BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "Qty 42 WAPs w/ cloud mgmt license, ceiling grid mount included",
+      "identity": "wireless_access_point",
+      "quantity": 42,
+      "notes": "Bundle should also emit license and mount atoms when separate quantities are needed."
+    },
+    {
+      "raw": "Add 1 AP drop in ceiling near aisle 4, verify in field",
+      "identity": "wireless_ap_data_drop",
+      "quantity": 1,
+      "notes": "Uncertainty marker reduces confidence but identity is AP data drop."
+    },
+    {
+      "raw": "RSSI target -67 dBm throughout sales floor",
+      "identity": "wireless_rssi_measurement",
+      "quantity": null,
+      "notes": "Measurement target, not a device quantity."
+    },
+    {
+      "raw": "Guest SSID splash page with terms acceptance",
+      "identity": "wireless_captive_portal_config",
+      "quantity": null,
+      "notes": "Configuration identity; no material count."
+    },
+    {
+      "raw": "Outdoor weatherproof AP enclosure for patio",
+      "identity": "wireless_outdoor_ap_enclosure",
+      "quantity": 1,
+      "notes": "Do not merge with outdoor camera enclosure."
+    },
+    {
+      "raw": "AP RMA swap - failed unit in MDF hallway",
+      "identity": "wireless_ap_rma_replacement",
+      "quantity": 1,
+      "notes": "Service task replacing a wireless AP."
+    },
+    {
+      "raw": "Predictive WiFi heat map for new floor plan",
+      "identity": "wireless_predictive_heatmap",
+      "quantity": null,
+      "notes": "Design artifact, not installed hardware."
+    },
+    {
+      "raw": "Use scissor lift for high ceiling AP install after hours",
+      "identity": "wireless_ceiling_lift_access",
+      "quantity": null,
+      "notes": "Access constraint; schedule separately from AP count."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "AP is overloaded across finance, application, and wireless language.",
+      "why_it_breaks_resolution": "Short BOM and email lines often omit Wi-Fi context, so AP can incorrectly merge into wireless material.",
+      "symptoms_in_artifacts": "Rows like 'AP approval pending' or 'AP server refresh' appear near network terms.",
+      "mitigation": "ontology",
+      "example_phrases": [
+        "AP qty 12",
+        "AP invoice approval",
+        "AP server refresh",
+        "WAP install",
+        "wireless AP ceiling",
+        "AP clerk reviewed quote",
+        "cloud AP license",
+        "AP pending customer"
+      ]
+    },
+    {
+      "weak_point": "Survey counts are treated as approved installation counts.",
+      "why_it_breaks_resolution": "Predictive heatmaps and walkthroughs often show candidate APs that change after SOW approval.",
+      "symptoms_in_artifacts": "Heatmap count exceeds BOM count or survey says alternate locations.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "predictive shows 28 APs",
+        "SOW includes 24 WAPs",
+        "survey candidate AP",
+        "as-built TBD",
+        "verify AP count in field",
+        "per GC ceiling changed"
+      ]
+    },
+    {
+      "weak_point": "PoE source and AP device are merged.",
+      "why_it_breaks_resolution": "AP install lines mention PoE switch ports, injectors, and power budgets that are not AP device quantities.",
+      "symptoms_in_artifacts": "Quantities double-count one AP plus one injector or port.",
+      "mitigation": "packetizer",
+      "example_phrases": [
+        "AP with PoE injector",
+        "PoE port for WAP",
+        "inline power to ceiling AP",
+        "802.3at budget",
+        "switch port powers AP",
+        "midspan required"
+      ]
+    },
+    {
+      "weak_point": "Panel antenna is confused with patch panel or electrical panel.",
+      "why_it_breaks_resolution": "The token panel appears in RF design, copper cabling, electrical, and POS documents.",
+      "symptoms_in_artifacts": "Antenna count conflicts with structured cabling panel counts.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "directional panel antenna",
+        "24-port patch panel",
+        "electrical panel access",
+        "sector antenna panel",
+        "POS pin pad panel",
+        "fiber adapter panel"
+      ]
+    },
+    {
+      "weak_point": "Mounting constraints become material lines.",
+      "why_it_breaks_resolution": "Ceiling grid, lift, badge, and escort notes are operational constraints, not installed inventory.",
+      "symptoms_in_artifacts": "Lift or escort appears in quantity columns or as BOM rows.",
+      "mitigation": "parser",
+      "example_phrases": [
+        "lift needed for AP",
+        "escort required",
+        "after-hours only",
+        "ceiling grid access",
+        "noise ordinance after 9pm",
+        "badge at security desk"
+      ]
+    }
+  ]
+}

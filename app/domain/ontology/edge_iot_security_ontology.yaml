@@ -1,0 +1,2553 @@
+{
+  "ontology_id": "edge_iot_security_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for commercial edge IoT and physical security evidence, including CCTV/IP cameras, NVR/VMS systems, access-control readers and controllers, door hardware, alarm sensors, environmental sensors, IoT gateways, validation tasks, and compliance artifacts with consumer and AV camera wording separated.",
+  "identity_clusters": {
+    "edge_ip_security_camera": {
+      "canonical_key": "edge_ip_security_camera",
+      "display_name": "Edge IP Security Camera",
+      "item_kind": "security_device",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_camera_each",
+      "synonyms": [
+        "edge ip security camera",
+        "edge_ip_security_camera",
+        "edge ip security camera sku",
+        "edge ip security camera replacement",
+        "edge ip security camera refresh",
+        "edge ip security camera bom line",
+        "IP camera",
+        "network camera",
+        "surveillance camera",
+        "CCTV IP cam",
+        "security cam",
+        "PoE camera",
+        "commercial camera"
+      ],
+      "required_any_tokens": [
+        [
+          "ip",
+          "camera"
+        ],
+        [
+          "network",
+          "camera"
+        ],
+        [
+          "security",
+          "camera"
+        ],
+        [
+          "poe",
+          "camera"
+        ],
+        [
+          "surveillance",
+          "camera"
+        ]
+      ],
+      "negative_tokens": [
+        "consumer webcam",
+        "conference camera",
+        "barcode scanner",
+        "phone camera",
+        "wireless ap",
+        "pos terminal",
+        "laptop",
+        "desktop",
+        "fiber",
+        "accounts payable",
+        "home security kit",
+        "conference room camera",
+        "document camera"
+      ]
+    },
+    "edge_analog_cctv_camera": {
+      "canonical_key": "edge_analog_cctv_camera",
+      "display_name": "Edge Analog CCTV Camera",
+      "item_kind": "security_device",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_camera_each",
+      "synonyms": [
+        "edge analog cctv camera",
+        "edge_analog_cctv_camera",
+        "edge analog cctv camera sku",
+        "edge analog cctv camera replacement",
+        "edge analog cctv camera refresh",
+        "edge analog cctv camera bom line",
+        "analog camera",
+        "CCTV analog",
+        "coax camera",
+        "BNC camera",
+        "legacy camera",
+        "analog dome"
+      ],
+      "required_any_tokens": [
+        [
+          "analog",
+          "camera"
+        ],
+        [
+          "cctv",
+          "analog"
+        ],
+        [
+          "coax",
+          "camera"
+        ],
+        [
+          "bnc",
+          "camera"
+        ]
+      ],
+      "negative_tokens": [
+        "consumer webcam",
+        "conference camera",
+        "barcode scanner",
+        "phone camera",
+        "wireless ap",
+        "pos terminal",
+        "laptop",
+        "desktop",
+        "fiber",
+        "accounts payable",
+        "home security kit",
+        "ip camera"
+      ]
+    },
+    "edge_ptz_camera": {
+      "canonical_key": "edge_ptz_camera",
+      "display_name": "Edge PTZ Camera",
+      "item_kind": "security_device",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_camera_each",
+      "synonyms": [
+        "edge ptz camera",
+        "edge_ptz_camera",
+        "edge ptz camera sku",
+        "edge ptz camera replacement",
+        "edge ptz camera refresh",
+        "edge ptz camera bom line",
+        "PTZ",
+        "pan tilt zoom",
+        "ptz dome",
+        "motorized camera",
+        "speed dome",
+        "tour camera"
+      ],
+      "required_any_tokens": [
+        [
+          "ptz"
+        ],
+        [
+          "pan",
+          "tilt",
+          "zoom"
+        ],
+        [
+          "ptz",
+          "camera"
+        ],
+        [
+          "speed",
+          "dome"
+        ]
+      ],
+      "negative_tokens": [
+        "consumer webcam",
+        "conference camera",
+        "barcode scanner",
+        "phone camera",
+        "wireless ap",
+        "pos terminal",
+        "laptop",
+        "desktop",
+        "fiber",
+        "accounts payable",
+        "home security kit",
+        "video conference ptz"
+      ]
+    },
+    "edge_fisheye_camera": {
+      "canonical_key": "edge_fisheye_camera",
+      "display_name": "Edge Fisheye Camera",
+      "item_kind": "security_device",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_camera_each",
+      "synonyms": [
+        "edge fisheye camera",
+        "edge_fisheye_camera",
+        "edge fisheye camera sku",
+        "edge fisheye camera replacement",
+        "edge fisheye camera refresh",
+        "edge fisheye camera bom line",
+        "fisheye",
+        "360 camera",
+        "panoramic camera",
+        "multi-sensor fisheye",
+        "wide view camera",
+        "overview camera"
+      ],
+      "required_any_tokens": [
+        [
+          "fisheye",
+          "camera"
+        ],
+        [
+          "360",
+          "camera"
+        ],
+        [
+          "panoramic",
+          "camera"
+        ],
+        [
+          "wide",
+          "view",
+          "camera"
+        ]
+      ],
+      "negative_tokens": [
+        "consumer webcam",
+        "conference camera",
+        "barcode scanner",
+        "phone camera",
+        "wireless ap",
+        "pos terminal",
+        "laptop",
+        "desktop",
+        "fiber",
+        "accounts payable",
+        "home security kit",
+        "360 conference camera",
+        "phone panoramic"
+      ]
+    },
+    "edge_camera_mount_bracket": {
+      "canonical_key": "edge_camera_mount_bracket",
+      "display_name": "Edge Camera Mount Bracket",
+      "item_kind": "mounting_hardware",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_camera_mount_each",
+      "synonyms": [
+        "edge camera mount bracket",
+        "edge_camera_mount_bracket",
+        "edge camera mount bracket sku",
+        "edge camera mount bracket replacement",
+        "edge camera mount bracket refresh",
+        "edge camera mount bracket bom line",
+        "camera mount",
+        "pendant mount",
+        "wall bracket camera",
+        "junction box mount",
+        "corner mount",
+        "pole mount"
+      ],
+      "required_any_tokens": [
+        [
+          "camera",
+          "mount"
+        ],
+        [
+          "pendant",
+          "mount"
+        ],
+        [
+          "wall",
+          "bracket",
+          "camera"
+        ],
+        [
+          "corner",
+          "mount",
+          "camera"
+        ]
+      ],
+      "negative_tokens": [
+        "ap mount",
+        "monitor mount",
+        "pin pad stand",
+        "rack mount"
+      ]
+    },
+    "edge_camera_poe_drop": {
+      "canonical_key": "edge_camera_poe_drop",
+      "display_name": "Edge Camera PoE Drop",
+      "item_kind": "cable_drop",
+      "material_family": "structured_cabling_copper",
+      "comparison_group": "edge_camera_drop_each",
+      "synonyms": [
+        "edge camera poe drop",
+        "edge_camera_poe_drop",
+        "edge camera poe drop sku",
+        "edge camera poe drop replacement",
+        "edge camera poe drop refresh",
+        "edge camera poe drop bom line",
+        "camera drop",
+        "PoE drop camera",
+        "cat6 to camera",
+        "security camera data drop",
+        "camera home run",
+        "CCTV network drop"
+      ],
+      "required_any_tokens": [
+        [
+          "camera",
+          "drop"
+        ],
+        [
+          "poe",
+          "drop",
+          "camera"
+        ],
+        [
+          "cat6",
+          "to",
+          "camera"
+        ],
+        [
+          "security",
+          "camera",
+          "data",
+          "drop"
+        ]
+      ],
+      "negative_tokens": [
+        "ap drop",
+        "software drop",
+        "fiber drop",
+        "cash drop"
+      ]
+    },
+    "edge_nvr_appliance": {
+      "canonical_key": "edge_nvr_appliance",
+      "display_name": "Edge NVR Appliance",
+      "item_kind": "recording_system",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_recorder_each",
+      "synonyms": [
+        "edge nvr appliance",
+        "edge_nvr_appliance",
+        "edge nvr appliance sku",
+        "edge nvr appliance replacement",
+        "edge nvr appliance refresh",
+        "edge nvr appliance bom line",
+        "NVR",
+        "network video recorder",
+        "video recorder",
+        "surveillance recorder",
+        "camera recorder",
+        "recording appliance"
+      ],
+      "required_any_tokens": [
+        [
+          "nvr"
+        ],
+        [
+          "network",
+          "video",
+          "recorder"
+        ],
+        [
+          "video",
+          "recorder"
+        ],
+        [
+          "recording",
+          "appliance"
+        ]
+      ],
+      "negative_tokens": [
+        "DVR for consumer tv",
+        "webinar recording",
+        "audio recorder",
+        "data backup server"
+      ]
+    },
+    "edge_vms_server": {
+      "canonical_key": "edge_vms_server",
+      "display_name": "Edge VMS Server",
+      "item_kind": "recording_system",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_vms_each",
+      "synonyms": [
+        "edge vms server",
+        "edge_vms_server",
+        "edge vms server sku",
+        "edge vms server replacement",
+        "edge vms server refresh",
+        "edge vms server bom line",
+        "VMS",
+        "video management server",
+        "video management system",
+        "camera server",
+        "surveillance server",
+        "VMS appliance"
+      ],
+      "required_any_tokens": [
+        [
+          "vms"
+        ],
+        [
+          "video",
+          "management",
+          "server"
+        ],
+        [
+          "video",
+          "management",
+          "system"
+        ],
+        [
+          "camera",
+          "server"
+        ]
+      ],
+      "negative_tokens": [
+        "virtual machine server generic",
+        "voicemail system",
+        "endpoint management server"
+      ]
+    },
+    "edge_video_storage_array": {
+      "canonical_key": "edge_video_storage_array",
+      "display_name": "Edge Video Storage Array",
+      "item_kind": "storage",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_storage_each",
+      "synonyms": [
+        "edge video storage array",
+        "edge_video_storage_array",
+        "edge video storage array sku",
+        "edge video storage array replacement",
+        "edge video storage array refresh",
+        "edge video storage array bom line",
+        "video storage",
+        "surveillance storage",
+        "NVR storage",
+        "retention storage",
+        "camera archive",
+        "raid storage for video"
+      ],
+      "required_any_tokens": [
+        [
+          "video",
+          "storage"
+        ],
+        [
+          "surveillance",
+          "storage"
+        ],
+        [
+          "nvr",
+          "storage"
+        ],
+        [
+          "camera",
+          "archive"
+        ]
+      ],
+      "negative_tokens": [
+        "general SAN",
+        "endpoint storage",
+        "cash drawer",
+        "data destruction storage"
+      ]
+    },
+    "edge_access_control_reader": {
+      "canonical_key": "edge_access_control_reader",
+      "display_name": "Edge Access Control Reader",
+      "item_kind": "access_control_device",
+      "material_family": "access_control",
+      "comparison_group": "edge_reader_each",
+      "synonyms": [
+        "edge access control reader",
+        "edge_access_control_reader",
+        "edge access control reader sku",
+        "edge access control reader replacement",
+        "edge access control reader refresh",
+        "edge access control reader bom line",
+        "card reader",
+        "badge reader",
+        "access reader",
+        "prox reader",
+        "credential reader",
+        "door reader"
+      ],
+      "required_any_tokens": [
+        [
+          "card",
+          "reader"
+        ],
+        [
+          "badge",
+          "reader"
+        ],
+        [
+          "access",
+          "reader"
+        ],
+        [
+          "door",
+          "reader"
+        ]
+      ],
+      "negative_tokens": [
+        "barcode reader",
+        "micr reader",
+        "book reader",
+        "payment card reader"
+      ]
+    },
+    "edge_mobile_credential_reader": {
+      "canonical_key": "edge_mobile_credential_reader",
+      "display_name": "Edge Mobile Credential Reader",
+      "item_kind": "access_control_device",
+      "material_family": "access_control",
+      "comparison_group": "edge_reader_each",
+      "synonyms": [
+        "edge mobile credential reader",
+        "edge_mobile_credential_reader",
+        "edge mobile credential reader sku",
+        "edge mobile credential reader replacement",
+        "edge mobile credential reader refresh",
+        "edge mobile credential reader bom line",
+        "mobile credential reader",
+        "BLE reader",
+        "NFC access reader",
+        "phone credential",
+        "smart credential reader",
+        "wallet credential"
+      ],
+      "required_any_tokens": [
+        [
+          "mobile",
+          "credential",
+          "reader"
+        ],
+        [
+          "ble",
+          "reader"
+        ],
+        [
+          "nfc",
+          "access",
+          "reader"
+        ],
+        [
+          "phone",
+          "credential"
+        ]
+      ],
+      "negative_tokens": [
+        "payment NFC reader",
+        "barcode scanner",
+        "ble sensor hub"
+      ]
+    },
+    "edge_door_controller": {
+      "canonical_key": "edge_door_controller",
+      "display_name": "Edge Door Controller",
+      "item_kind": "controller",
+      "material_family": "access_control",
+      "comparison_group": "edge_door_controller_each",
+      "synonyms": [
+        "edge door controller",
+        "edge_door_controller",
+        "edge door controller sku",
+        "edge door controller replacement",
+        "edge door controller refresh",
+        "edge door controller bom line",
+        "door controller",
+        "access controller",
+        "two-door controller",
+        "door board",
+        "access control panel",
+        "controller board"
+      ],
+      "required_any_tokens": [
+        [
+          "door",
+          "controller"
+        ],
+        [
+          "access",
+          "controller"
+        ],
+        [
+          "two-door",
+          "controller"
+        ],
+        [
+          "controller",
+          "board",
+          "door"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless controller",
+        "pos lane controller",
+        "domain controller",
+        "hvac controller"
+      ]
+    },
+    "edge_rex_motion_sensor": {
+      "canonical_key": "edge_rex_motion_sensor",
+      "display_name": "Edge REX Motion Sensor",
+      "item_kind": "sensor",
+      "material_family": "access_control",
+      "comparison_group": "edge_sensor_each",
+      "synonyms": [
+        "edge rex motion sensor",
+        "edge_rex_motion_sensor",
+        "edge rex motion sensor sku",
+        "edge rex motion sensor replacement",
+        "edge rex motion sensor refresh",
+        "edge rex motion sensor bom line",
+        "REX",
+        "request to exit sensor",
+        "exit motion",
+        "rex PIR",
+        "door egress sensor",
+        "motion rex"
+      ],
+      "required_any_tokens": [
+        [
+          "rex"
+        ],
+        [
+          "request",
+          "to",
+          "exit",
+          "sensor"
+        ],
+        [
+          "exit",
+          "motion"
+        ],
+        [
+          "rex",
+          "pir"
+        ]
+      ],
+      "negative_tokens": [
+        "store exit sign",
+        "mouse motion",
+        "camera analytics motion"
+      ]
+    },
+    "edge_door_contact_sensor": {
+      "canonical_key": "edge_door_contact_sensor",
+      "display_name": "Edge Door Contact Sensor",
+      "item_kind": "sensor",
+      "material_family": "access_control",
+      "comparison_group": "edge_sensor_each",
+      "synonyms": [
+        "edge door contact sensor",
+        "edge_door_contact_sensor",
+        "edge door contact sensor sku",
+        "edge door contact sensor replacement",
+        "edge door contact sensor refresh",
+        "edge door contact sensor bom line",
+        "door contact",
+        "contact sensor",
+        "mag contact",
+        "reed switch",
+        "door status switch",
+        "position contact"
+      ],
+      "required_any_tokens": [
+        [
+          "door",
+          "contact"
+        ],
+        [
+          "contact",
+          "sensor"
+        ],
+        [
+          "mag",
+          "contact"
+        ],
+        [
+          "reed",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "light switch",
+        "network switch",
+        "customer contact",
+        "support contact"
+      ]
+    },
+    "edge_mag_lock": {
+      "canonical_key": "edge_mag_lock",
+      "display_name": "Edge Magnetic Lock",
+      "item_kind": "lock_hardware",
+      "material_family": "access_control",
+      "comparison_group": "edge_lock_each",
+      "synonyms": [
+        "edge magnetic lock",
+        "edge_mag_lock",
+        "edge mag lock",
+        "edge magnetic lock sku",
+        "edge magnetic lock replacement",
+        "edge magnetic lock refresh",
+        "edge magnetic lock bom line",
+        "mag lock",
+        "magnetic lock",
+        "electromagnetic lock",
+        "door magnet",
+        "600lb maglock",
+        "access lock"
+      ],
+      "required_any_tokens": [
+        [
+          "mag",
+          "lock"
+        ],
+        [
+          "magnetic",
+          "lock"
+        ],
+        [
+          "electromagnetic",
+          "lock"
+        ],
+        [
+          "door",
+          "magnet"
+        ]
+      ],
+      "negative_tokens": [
+        "laptop lock",
+        "file lock",
+        "software lock",
+        "cash drawer lock"
+      ]
+    },
+    "edge_electric_strike": {
+      "canonical_key": "edge_electric_strike",
+      "display_name": "Edge Electric Strike",
+      "item_kind": "lock_hardware",
+      "material_family": "access_control",
+      "comparison_group": "edge_lock_each",
+      "synonyms": [
+        "edge electric strike",
+        "edge_electric_strike",
+        "edge electric strike sku",
+        "edge electric strike replacement",
+        "edge electric strike refresh",
+        "edge electric strike bom line",
+        "electric strike",
+        "door strike",
+        "fail secure strike",
+        "fail safe strike",
+        "strike lock",
+        "electrified strike"
+      ],
+      "required_any_tokens": [
+        [
+          "electric",
+          "strike"
+        ],
+        [
+          "door",
+          "strike"
+        ],
+        [
+          "electrified",
+          "strike"
+        ],
+        [
+          "fail",
+          "secure",
+          "strike"
+        ]
+      ],
+      "negative_tokens": [
+        "labor strike",
+        "keyboard strike",
+        "payment strike"
+      ]
+    },
+    "edge_request_to_exit_button": {
+      "canonical_key": "edge_request_to_exit_button",
+      "display_name": "Edge Request-to-Exit Button",
+      "item_kind": "access_control_device",
+      "material_family": "access_control",
+      "comparison_group": "edge_egress_button_each",
+      "synonyms": [
+        "edge request-to-exit button",
+        "edge request to exit button",
+        "edge_request_to_exit_button",
+        "edge request-to-exit button sku",
+        "edge request-to-exit button replacement",
+        "edge request-to-exit button refresh",
+        "edge request-to-exit button bom line",
+        "REX button",
+        "exit button",
+        "push to exit",
+        "request to exit button",
+        "egress button",
+        "door release button"
+      ],
+      "required_any_tokens": [
+        [
+          "rex",
+          "button"
+        ],
+        [
+          "exit",
+          "button"
+        ],
+        [
+          "push",
+          "to",
+          "exit"
+        ],
+        [
+          "request",
+          "to",
+          "exit",
+          "button"
+        ]
+      ],
+      "negative_tokens": [
+        "pos button",
+        "panic button",
+        "software button"
+      ]
+    },
+    "edge_intercom_door_station": {
+      "canonical_key": "edge_intercom_door_station",
+      "display_name": "Edge Intercom Door Station",
+      "item_kind": "access_control_device",
+      "material_family": "intercom",
+      "comparison_group": "edge_intercom_each",
+      "synonyms": [
+        "edge intercom door station",
+        "edge_intercom_door_station",
+        "edge intercom door station sku",
+        "edge intercom door station replacement",
+        "edge intercom door station refresh",
+        "edge intercom door station bom line",
+        "intercom",
+        "door station",
+        "video intercom",
+        "call station",
+        "entry station",
+        "door phone"
+      ],
+      "required_any_tokens": [
+        [
+          "intercom"
+        ],
+        [
+          "door",
+          "station"
+        ],
+        [
+          "video",
+          "intercom"
+        ],
+        [
+          "entry",
+          "station"
+        ]
+      ],
+      "negative_tokens": [
+        "conference phone",
+        "call center station",
+        "workstation"
+      ]
+    },
+    "edge_intrusion_panel": {
+      "canonical_key": "edge_intrusion_panel",
+      "display_name": "Edge Intrusion Panel",
+      "item_kind": "controller",
+      "material_family": "intrusion_alarm",
+      "comparison_group": "edge_alarm_panel_each",
+      "synonyms": [
+        "edge intrusion panel",
+        "edge_intrusion_panel",
+        "edge intrusion panel sku",
+        "edge intrusion panel replacement",
+        "edge intrusion panel refresh",
+        "edge intrusion panel bom line",
+        "alarm panel",
+        "intrusion panel",
+        "burg panel",
+        "security panel",
+        "alarm control panel",
+        "zone panel"
+      ],
+      "required_any_tokens": [
+        [
+          "alarm",
+          "panel"
+        ],
+        [
+          "intrusion",
+          "panel"
+        ],
+        [
+          "security",
+          "panel"
+        ],
+        [
+          "alarm",
+          "control",
+          "panel"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber patch panel",
+        "electrical panel",
+        "antenna panel",
+        "pos pin pad panel"
+      ]
+    },
+    "edge_glass_break_sensor": {
+      "canonical_key": "edge_glass_break_sensor",
+      "display_name": "Edge Glass Break Sensor",
+      "item_kind": "sensor",
+      "material_family": "intrusion_alarm",
+      "comparison_group": "edge_sensor_each",
+      "synonyms": [
+        "edge glass break sensor",
+        "edge_glass_break_sensor",
+        "edge glass break sensor sku",
+        "edge glass break sensor replacement",
+        "edge glass break sensor refresh",
+        "edge glass break sensor bom line",
+        "glassbreak",
+        "glass break",
+        "audio glass sensor",
+        "break sensor",
+        "window break detector",
+        "GB sensor"
+      ],
+      "required_any_tokens": [
+        [
+          "glass",
+          "break"
+        ],
+        [
+          "glassbreak"
+        ],
+        [
+          "window",
+          "break",
+          "detector"
+        ],
+        [
+          "audio",
+          "glass",
+          "sensor"
+        ]
+      ],
+      "negative_tokens": [
+        "broken glass repair",
+        "audio microphone",
+        "camera lens"
+      ]
+    },
+    "edge_motion_detector_sensor": {
+      "canonical_key": "edge_motion_detector_sensor",
+      "display_name": "Edge Motion Detector Sensor",
+      "item_kind": "sensor",
+      "material_family": "intrusion_alarm",
+      "comparison_group": "edge_sensor_each",
+      "synonyms": [
+        "edge motion detector sensor",
+        "edge_motion_detector_sensor",
+        "edge motion detector sensor sku",
+        "edge motion detector sensor replacement",
+        "edge motion detector sensor refresh",
+        "edge motion detector sensor bom line",
+        "motion detector",
+        "PIR",
+        "motion sensor",
+        "occupancy sensor security",
+        "infrared sensor",
+        "alarm motion"
+      ],
+      "required_any_tokens": [
+        [
+          "motion",
+          "detector"
+        ],
+        [
+          "pir"
+        ],
+        [
+          "motion",
+          "sensor"
+        ],
+        [
+          "alarm",
+          "motion"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless roaming motion",
+        "mouse movement",
+        "camera motion analytics"
+      ]
+    },
+    "edge_panic_button": {
+      "canonical_key": "edge_panic_button",
+      "display_name": "Edge Panic Button",
+      "item_kind": "security_device",
+      "material_family": "duress_alarm",
+      "comparison_group": "edge_panic_button_each",
+      "synonyms": [
+        "edge panic button",
+        "edge_panic_button",
+        "edge panic button sku",
+        "edge panic button replacement",
+        "edge panic button refresh",
+        "edge panic button bom line",
+        "panic button",
+        "duress button",
+        "hold-up button",
+        "silent alarm",
+        "emergency button",
+        "alarm button"
+      ],
+      "required_any_tokens": [
+        [
+          "panic",
+          "button"
+        ],
+        [
+          "duress",
+          "button"
+        ],
+        [
+          "silent",
+          "alarm"
+        ],
+        [
+          "hold-up",
+          "button"
+        ]
+      ],
+      "negative_tokens": [
+        "request to exit button",
+        "software button",
+        "pos button"
+      ]
+    },
+    "edge_environmental_temp_sensor": {
+      "canonical_key": "edge_environmental_temp_sensor",
+      "display_name": "Edge Environmental Temperature Sensor",
+      "item_kind": "sensor",
+      "material_family": "environmental_iot",
+      "comparison_group": "edge_sensor_each",
+      "synonyms": [
+        "edge environmental temperature sensor",
+        "edge_environmental_temp_sensor",
+        "edge environmental temp sensor",
+        "edge environmental temperature sensor sku",
+        "edge environmental temperature sensor replacement",
+        "edge environmental temperature sensor refresh",
+        "edge environmental temperature sensor bom line",
+        "temp sensor",
+        "temperature sensor",
+        "environmental sensor",
+        "cold chain sensor",
+        "ambient temp",
+        "thermistor sensor"
+      ],
+      "required_any_tokens": [
+        [
+          "temperature",
+          "sensor"
+        ],
+        [
+          "temp",
+          "sensor"
+        ],
+        [
+          "environmental",
+          "sensor"
+        ],
+        [
+          "ambient",
+          "temp"
+        ]
+      ],
+      "negative_tokens": [
+        "thermostat consumer",
+        "weather forecast",
+        "laptop temperature"
+      ]
+    },
+    "edge_leak_detection_sensor": {
+      "canonical_key": "edge_leak_detection_sensor",
+      "display_name": "Edge Leak Detection Sensor",
+      "item_kind": "sensor",
+      "material_family": "environmental_iot",
+      "comparison_group": "edge_sensor_each",
+      "synonyms": [
+        "edge leak detection sensor",
+        "edge_leak_detection_sensor",
+        "edge leak detection sensor sku",
+        "edge leak detection sensor replacement",
+        "edge leak detection sensor refresh",
+        "edge leak detection sensor bom line",
+        "leak sensor",
+        "water sensor",
+        "water rope",
+        "flood sensor",
+        "water detection cable",
+        "liquid leak detector"
+      ],
+      "required_any_tokens": [
+        [
+          "leak",
+          "sensor"
+        ],
+        [
+          "water",
+          "sensor"
+        ],
+        [
+          "flood",
+          "sensor"
+        ],
+        [
+          "water",
+          "detection",
+          "cable"
+        ]
+      ],
+      "negative_tokens": [
+        "data leak",
+        "memory leak",
+        "pipe repair"
+      ]
+    },
+    "edge_iot_gateway_device": {
+      "canonical_key": "edge_iot_gateway_device",
+      "display_name": "Edge IoT Gateway Device",
+      "item_kind": "gateway",
+      "material_family": "iot_edge",
+      "comparison_group": "edge_gateway_each",
+      "synonyms": [
+        "edge iot gateway device",
+        "edge_iot_gateway_device",
+        "edge iot gateway device sku",
+        "edge iot gateway device replacement",
+        "edge iot gateway device refresh",
+        "edge iot gateway device bom line",
+        "IoT gateway",
+        "edge gateway",
+        "sensor gateway",
+        "protocol gateway",
+        "gateway appliance",
+        "field gateway"
+      ],
+      "required_any_tokens": [
+        [
+          "iot",
+          "gateway"
+        ],
+        [
+          "edge",
+          "gateway"
+        ],
+        [
+          "sensor",
+          "gateway"
+        ],
+        [
+          "protocol",
+          "gateway"
+        ]
+      ],
+      "negative_tokens": [
+        "payment gateway",
+        "default gateway",
+        "wireless captive portal",
+        "wan router"
+      ]
+    },
+    "edge_industrial_edge_gateway": {
+      "canonical_key": "edge_industrial_edge_gateway",
+      "display_name": "Edge Industrial Edge Gateway",
+      "item_kind": "gateway",
+      "material_family": "iot_edge",
+      "comparison_group": "edge_gateway_each",
+      "synonyms": [
+        "edge industrial edge gateway",
+        "edge_industrial_edge_gateway",
+        "edge industrial edge gateway sku",
+        "edge industrial edge gateway replacement",
+        "edge industrial edge gateway refresh",
+        "edge industrial edge gateway bom line",
+        "industrial gateway",
+        "rugged edge gateway",
+        "DIN rail gateway",
+        "modbus gateway",
+        "opc gateway",
+        "plant floor gateway"
+      ],
+      "required_any_tokens": [
+        [
+          "industrial",
+          "gateway"
+        ],
+        [
+          "rugged",
+          "edge",
+          "gateway"
+        ],
+        [
+          "din",
+          "rail",
+          "gateway"
+        ],
+        [
+          "modbus",
+          "gateway"
+        ]
+      ],
+      "negative_tokens": [
+        "payment gateway",
+        "home gateway",
+        "network default gateway"
+      ]
+    },
+    "edge_zigbee_ble_sensor_hub": {
+      "canonical_key": "edge_zigbee_ble_sensor_hub",
+      "display_name": "Edge Zigbee/BLE Sensor Hub",
+      "item_kind": "gateway",
+      "material_family": "iot_edge",
+      "comparison_group": "edge_gateway_each",
+      "synonyms": [
+        "edge zigbee/ble sensor hub",
+        "edge zigbee ble sensor hub",
+        "edge_zigbee_ble_sensor_hub",
+        "edge zigbee/ble sensor hub sku",
+        "edge zigbee/ble sensor hub replacement",
+        "edge zigbee/ble sensor hub refresh",
+        "edge zigbee/ble sensor hub bom line",
+        "zigbee hub",
+        "BLE hub",
+        "sensor hub",
+        "wireless sensor bridge",
+        "beacon hub",
+        "IoT bridge"
+      ],
+      "required_any_tokens": [
+        [
+          "zigbee",
+          "hub"
+        ],
+        [
+          "ble",
+          "hub"
+        ],
+        [
+          "sensor",
+          "hub"
+        ],
+        [
+          "wireless",
+          "sensor",
+          "bridge"
+        ]
+      ],
+      "negative_tokens": [
+        "wifi AP",
+        "usb hub",
+        "pos hub",
+        "home automation consumer"
+      ]
+    },
+    "edge_lpr_camera": {
+      "canonical_key": "edge_lpr_camera",
+      "display_name": "Edge License Plate Recognition Camera",
+      "item_kind": "security_device",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_camera_each",
+      "synonyms": [
+        "edge license plate recognition camera",
+        "edge_lpr_camera",
+        "edge lpr camera",
+        "edge license plate recognition camera sku",
+        "edge license plate recognition camera replacement",
+        "edge license plate recognition camera refresh",
+        "edge license plate recognition camera bom line",
+        "LPR camera",
+        "license plate camera",
+        "ANPR camera",
+        "plate reader",
+        "vehicle camera",
+        "parking lot LPR"
+      ],
+      "required_any_tokens": [
+        [
+          "lpr",
+          "camera"
+        ],
+        [
+          "license",
+          "plate",
+          "camera"
+        ],
+        [
+          "anpr",
+          "camera"
+        ],
+        [
+          "plate",
+          "reader"
+        ]
+      ],
+      "negative_tokens": [
+        "driver license scanner",
+        "payment card reader",
+        "barcode scanner"
+      ]
+    },
+    "edge_camera_view_validation": {
+      "canonical_key": "edge_camera_view_validation",
+      "display_name": "Edge Camera View Validation",
+      "item_kind": "field_test_result",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_validation_task",
+      "synonyms": [
+        "edge camera view validation",
+        "edge_camera_view_validation",
+        "edge camera view validation sku",
+        "edge camera view validation replacement",
+        "edge camera view validation refresh",
+        "edge camera view validation bom line",
+        "view validation",
+        "camera aim",
+        "field of view check",
+        "FOV validation",
+        "camera alignment",
+        "view verification"
+      ],
+      "required_any_tokens": [
+        [
+          "camera",
+          "view",
+          "validation"
+        ],
+        [
+          "field",
+          "of",
+          "view",
+          "check"
+        ],
+        [
+          "fov",
+          "validation"
+        ],
+        [
+          "camera",
+          "aim"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless survey",
+        "conference camera setup",
+        "visual inspection only"
+      ]
+    },
+    "edge_video_retention_policy": {
+      "canonical_key": "edge_video_retention_policy",
+      "display_name": "Edge Video Retention Policy",
+      "item_kind": "policy",
+      "material_family": "video_surveillance",
+      "comparison_group": "edge_policy",
+      "synonyms": [
+        "edge video retention policy",
+        "edge_video_retention_policy",
+        "edge video retention policy sku",
+        "edge video retention policy replacement",
+        "edge video retention policy refresh",
+        "edge video retention policy bom line",
+        "retention",
+        "video retention",
+        "days of storage",
+        "archive policy",
+        "retention policy",
+        "camera retention"
+      ],
+      "required_any_tokens": [
+        [
+          "video",
+          "retention"
+        ],
+        [
+          "days",
+          "of",
+          "storage"
+        ],
+        [
+          "archive",
+          "policy"
+        ],
+        [
+          "camera",
+          "retention"
+        ]
+      ],
+      "negative_tokens": [
+        "records retention generic",
+        "data backup retention",
+        "email retention"
+      ]
+    },
+    "edge_access_badge_programming": {
+      "canonical_key": "edge_access_badge_programming",
+      "display_name": "Edge Access Badge Programming",
+      "item_kind": "service_task",
+      "material_family": "access_control",
+      "comparison_group": "edge_access_service_task",
+      "synonyms": [
+        "edge access badge programming",
+        "edge_access_badge_programming",
+        "edge access badge programming sku",
+        "edge access badge programming replacement",
+        "edge access badge programming refresh",
+        "edge access badge programming bom line",
+        "badge programming",
+        "credential enrollment",
+        "card enrollment",
+        "access levels",
+        "badge activation",
+        "user access setup"
+      ],
+      "required_any_tokens": [
+        [
+          "badge",
+          "programming"
+        ],
+        [
+          "credential",
+          "enrollment"
+        ],
+        [
+          "card",
+          "enrollment"
+        ],
+        [
+          "access",
+          "levels"
+        ]
+      ],
+      "negative_tokens": [
+        "datacenter badge access",
+        "event badge printing",
+        "employee ID badge only"
+      ]
+    },
+    "edge_security_headend_rack": {
+      "canonical_key": "edge_security_headend_rack",
+      "display_name": "Edge Security Headend Rack",
+      "item_kind": "rack_asset",
+      "material_family": "security_headend",
+      "comparison_group": "edge_headend_rack_each",
+      "synonyms": [
+        "edge security headend rack",
+        "edge_security_headend_rack",
+        "edge security headend rack sku",
+        "edge security headend rack replacement",
+        "edge security headend rack refresh",
+        "edge security headend rack bom line",
+        "security headend",
+        "headend rack",
+        "camera rack",
+        "NVR rack",
+        "security equipment rack",
+        "surveillance headend"
+      ],
+      "required_any_tokens": [
+        [
+          "security",
+          "headend"
+        ],
+        [
+          "headend",
+          "rack"
+        ],
+        [
+          "camera",
+          "rack"
+        ],
+        [
+          "nvr",
+          "rack"
+        ]
+      ],
+      "negative_tokens": [
+        "network rack generic",
+        "refrigeration rack",
+        "clothing rack",
+        "datacenter rack"
+      ]
+    },
+    "edge_security_poe_switch": {
+      "canonical_key": "edge_security_poe_switch",
+      "display_name": "Edge Security PoE Switch",
+      "item_kind": "network_device",
+      "material_family": "security_network",
+      "comparison_group": "edge_security_switch_each",
+      "synonyms": [
+        "edge security poe switch",
+        "edge_security_poe_switch",
+        "edge security poe switch sku",
+        "edge security poe switch replacement",
+        "edge security poe switch refresh",
+        "edge security poe switch bom line",
+        "camera PoE switch",
+        "security PoE switch",
+        "access control PoE switch",
+        "surveillance switch",
+        "NVR switch"
+      ],
+      "required_any_tokens": [
+        [
+          "camera",
+          "poe",
+          "switch"
+        ],
+        [
+          "security",
+          "poe",
+          "switch"
+        ],
+        [
+          "surveillance",
+          "switch"
+        ],
+        [
+          "access",
+          "control",
+          "poe",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "network access switch generic",
+        "light switch",
+        "pos switch"
+      ]
+    },
+    "edge_sensor_battery_pack": {
+      "canonical_key": "edge_sensor_battery_pack",
+      "display_name": "Edge Sensor Battery Pack",
+      "item_kind": "power_component",
+      "material_family": "security_power",
+      "comparison_group": "edge_battery_each",
+      "synonyms": [
+        "edge sensor battery pack",
+        "edge_sensor_battery_pack",
+        "edge sensor battery pack sku",
+        "edge sensor battery pack replacement",
+        "edge sensor battery pack refresh",
+        "edge sensor battery pack bom line",
+        "sensor battery",
+        "battery pack sensor",
+        "wireless sensor battery",
+        "lithium pack",
+        "door contact battery"
+      ],
+      "required_any_tokens": [
+        [
+          "sensor",
+          "battery"
+        ],
+        [
+          "battery",
+          "pack",
+          "sensor"
+        ],
+        [
+          "wireless",
+          "sensor",
+          "battery"
+        ],
+        [
+          "door",
+          "contact",
+          "battery"
+        ]
+      ],
+      "negative_tokens": [
+        "UPS battery",
+        "laptop battery",
+        "car battery"
+      ]
+    },
+    "edge_low_voltage_power_supply": {
+      "canonical_key": "edge_low_voltage_power_supply",
+      "display_name": "Edge Low-Voltage Power Supply",
+      "item_kind": "power_component",
+      "material_family": "security_power",
+      "comparison_group": "edge_power_supply_each",
+      "synonyms": [
+        "edge low-voltage power supply",
+        "edge low voltage power supply",
+        "edge_low_voltage_power_supply",
+        "edge low-voltage power supply sku",
+        "edge low-voltage power supply replacement",
+        "edge low-voltage power supply refresh",
+        "edge low-voltage power supply bom line",
+        "low voltage power supply",
+        "12vdc supply",
+        "24vdc supply",
+        "camera PSU",
+        "access control PSU",
+        "plug-in transformer"
+      ],
+      "required_any_tokens": [
+        [
+          "low",
+          "voltage",
+          "power",
+          "supply"
+        ],
+        [
+          "12vdc",
+          "supply"
+        ],
+        [
+          "24vdc",
+          "supply"
+        ],
+        [
+          "access",
+          "control",
+          "psu"
+        ]
+      ],
+      "negative_tokens": [
+        "network switch PSU",
+        "endpoint power adapter",
+        "PDU"
+      ]
+    },
+    "edge_alarm_monitoring_certificate": {
+      "canonical_key": "edge_alarm_monitoring_certificate",
+      "display_name": "Edge Alarm Monitoring Certificate",
+      "item_kind": "certificate",
+      "material_family": "security_compliance",
+      "comparison_group": "edge_certificate_each",
+      "synonyms": [
+        "edge alarm monitoring certificate",
+        "edge_alarm_monitoring_certificate",
+        "edge alarm monitoring certificate sku",
+        "edge alarm monitoring certificate replacement",
+        "edge alarm monitoring certificate refresh",
+        "edge alarm monitoring certificate bom line",
+        "monitoring cert",
+        "alarm certificate",
+        "central station certificate",
+        "UL-style certificate",
+        "monitoring agreement",
+        "alarm monitoring"
+      ],
+      "required_any_tokens": [
+        [
+          "alarm",
+          "certificate"
+        ],
+        [
+          "monitoring",
+          "cert"
+        ],
+        [
+          "central",
+          "station",
+          "certificate"
+        ],
+        [
+          "alarm",
+          "monitoring"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless certificate",
+        "fiber cert",
+        "data destruction certificate",
+        "payment certificate"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "edge_iot_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "edge_iot_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "edge_iot_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "edge_iot_survey_export": {
+      "filename_contains": [
+        "survey",
+        "walkthrough",
+        "walk-thru",
+        "site audit",
+        "heatmap",
+        "as-built",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "survey_export",
+      "typical_atom_types": [
+        "field_observation",
+        "location_note",
+        "constraint",
+        "existing_condition"
+      ],
+      "beats": [
+        "vendor_quote"
+      ],
+      "cannot_govern": [
+        "approved_quantity_without_scope"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "edge_iot_field_test_result": {
+      "filename_contains": [
+        "test",
+        "cert",
+        "validation",
+        "acceptance",
+        "results",
+        "post install",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv",
+        ".txt"
+      ],
+      "authority_class": "field_test_result",
+      "typical_atom_types": [
+        "test_measurement",
+        "pass_fail",
+        "port_or_device_id",
+        "technician_note"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "commercial_price"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "edge_iot_cutover_plan": {
+      "filename_contains": [
+        "cutover",
+        "migration plan",
+        "runbook",
+        "go-live",
+        "change window",
+        "freeze window",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".docx",
+        ".pdf",
+        ".csv"
+      ],
+      "authority_class": "cutover_plan",
+      "typical_atom_types": [
+        "task_sequence",
+        "rollback",
+        "owner",
+        "maintenance_window"
+      ],
+      "beats": [
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "material_quantity"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "edge_iot_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "edge_iot_certificate": {
+      "filename_contains": [
+        "certificate",
+        "certification",
+        "attestation",
+        "compliance",
+        "cod",
+        "coc",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "certificate",
+      "typical_atom_types": [
+        "certificate_id",
+        "pass_fail",
+        "approver",
+        "evidence_date"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "future_scope"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "edge_iot_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "security",
+        "camera",
+        "nvr",
+        "vms",
+        "access control",
+        "iot"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial #",
+      "s/n",
+      "sn",
+      "device serial",
+      "asset serial"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "asset id",
+      "tag #",
+      "barcode",
+      "inventory tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "migration window",
+      "change window",
+      "freeze window"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "device_name": [
+      "device name",
+      "camera name",
+      "reader name",
+      "panel name",
+      "sensor name"
+    ],
+    "door_id": [
+      "door id",
+      "door",
+      "opening",
+      "access point",
+      "portal",
+      "entry"
+    ],
+    "camera_id": [
+      "camera id",
+      "cam id",
+      "camera #",
+      "view id",
+      "channel"
+    ],
+    "ip_address": [
+      "ip",
+      "ip address",
+      "camera ip",
+      "controller ip",
+      "gateway ip"
+    ],
+    "mac_address": [
+      "mac",
+      "mac address",
+      "device mac",
+      "nic mac"
+    ],
+    "credential_format": [
+      "credential format",
+      "card format",
+      "facility code",
+      "badge format",
+      "mobile credential"
+    ],
+    "retention_days": [
+      "retention",
+      "days",
+      "storage days",
+      "archive days",
+      "video retention"
+    ],
+    "alarm_zone": [
+      "zone",
+      "alarm zone",
+      "input",
+      "sensor zone",
+      "partition"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "security_device": {
+      "examples": [
+        "Cam-FrontDoor",
+        "NVR-01",
+        "door controller 2",
+        "reader A"
+      ],
+      "identity_bearing": true
+    },
+    "door_or_opening": {
+      "examples": [
+        "front entry",
+        "employee door",
+        "receiving door",
+        "IT closet door"
+      ],
+      "identity_bearing": true
+    },
+    "camera_view": {
+      "examples": [
+        "cashwrap view",
+        "parking lot north",
+        "dock door",
+        "360 sales floor"
+      ],
+      "identity_bearing": true
+    },
+    "alarm_zone": {
+      "examples": [
+        "zone 7",
+        "partition A",
+        "glass break lobby",
+        "PIR stockroom"
+      ],
+      "identity_bearing": true
+    },
+    "credential": {
+      "examples": [
+        "badge ID 12345",
+        "mobile credential",
+        "prox card",
+        "NFC access"
+      ],
+      "identity_bearing": true
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "Security camera, access control, intrusion alarm, and IoT gateway identities compare only within their own comparison groups even when all use PoE or IP addressing.",
+    "Consumer smart-home, webcam, conference AV, and phone camera wording is negative context unless a commercial security artifact governs the scope.",
+    "A door reader, door controller, REX device, lock, and door contact are separate identities even when one opening contains all of them.",
+    "Camera counts must not be inferred from VMS channels, retention days, or NVR storage capacity without explicit inventory evidence.",
+    "Access badge programming is a service task and not an access-card hardware count unless material tokens say cards or credentials are shipped.",
+    "Security PoE switches are edge-specific only when camera/access-control context is present; generic switch refresh belongs to network_modernization.",
+    "Motion analytics on a camera and PIR motion detector sensor are separate; resolve by camera/video versus alarm/PIR context.",
+    "TBD camera views, assumed door hardware, verify in field, per GC, and pending customer approval keep location and quantity uncertainty.",
+    "Cross-domain confusion - AP: access point can mean door/opening in security; wireless_access_point wins only with Wi-Fi/WLAN/SSID context.",
+    "Cross-domain confusion - switch: edge_security_poe_switch wins only for camera/access-control PoE context; generic Ethernet switch belongs to network_modernization and light switch is rejected.",
+    "Cross-domain confusion - panel: edge_intrusion_panel or access control panel wins for alarm/zone/door context; fiber/electrical/antenna/POS panels split.",
+    "Cross-domain confusion - gateway: edge_iot_gateway_device wins for sensor/protocol/industrial edge context; payment gateway and default gateway are negatives.",
+    "Cross-domain confusion - sensor: edge physical sensors win for alarm, door, environmental, leak, or PIR context; wireless RF metrics and endpoint telemetry split.",
+    "Cross-domain confusion - rack: edge_security_headend_rack wins for NVR/VMS/camera headend context; datacenter_field owns rack U, PDU, and cage.",
+    "Cross-domain confusion - controller: edge_door_controller wins for door/access context; WLC, POS lane controller, and domain controller are negatives.",
+    "Cross-domain confusion - camera: edge_ip_security_camera wins for surveillance/CCTV/NVR/VMS context; conference camera, barcode scanner camera, and mobile phone camera are negatives.",
+    "Cross-domain confusion - reader: edge_access_control_reader is door/badge context; MICR and barcode readers belong to POS commerce.",
+    "Cross-domain confusion - lock: magnetic/electric door locks belong here; laptop locks belong to endpoint_imac and cash drawer locks belong to POS or facilities."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "Edge IoT security BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "Install 18 PoE IP security cameras with NVR recording",
+      "identity": "edge_ip_security_camera",
+      "quantity": 18,
+      "notes": "NVR is separate recorder identity when itemized."
+    },
+    {
+      "raw": "Two-door access controller with badge readers at employee entrance",
+      "identity": "edge_door_controller",
+      "quantity": 1,
+      "notes": "Reader quantities should emit separately."
+    },
+    {
+      "raw": "Door contact and REX PIR for receiving door",
+      "identity": "edge_door_contact_sensor",
+      "quantity": 1,
+      "notes": "Also emits REX sensor if parsed as separate atom."
+    },
+    {
+      "raw": "Video retention 45 days per customer policy",
+      "identity": "edge_video_retention_policy",
+      "quantity": null,
+      "notes": "Policy target, not storage quantity by itself."
+    },
+    {
+      "raw": "LPR camera for parking lot gate",
+      "identity": "edge_lpr_camera",
+      "quantity": 1,
+      "notes": "Do not merge with driver license scanner."
+    },
+    {
+      "raw": "Alarm monitoring certificate required after cutover",
+      "identity": "edge_alarm_monitoring_certificate",
+      "quantity": 1,
+      "notes": "Compliance artifact."
+    },
+    {
+      "raw": "Industrial Modbus edge gateway in pump room",
+      "identity": "edge_industrial_edge_gateway",
+      "quantity": 1,
+      "notes": "IoT protocol gateway, not payment gateway."
+    },
+    {
+      "raw": "Camera view validation after store close",
+      "identity": "edge_camera_view_validation",
+      "quantity": null,
+      "notes": "Field acceptance task."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "Camera is a broad token spanning surveillance, conference AV, phones, barcode scanners, and computer webcams.",
+      "why_it_breaks_resolution": "Mixed endpoint, POS, and security artifacts often mention camera-enabled devices.",
+      "symptoms_in_artifacts": "Security camera counts inflate from webcam or scanner rows.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "IP security camera",
+        "conference camera",
+        "barcode scanner camera",
+        "phone camera",
+        "CCTV dome",
+        "webcam",
+        "camera analytics"
+      ]
+    },
+    {
+      "weak_point": "One door opening contains several distinct billable identities.",
+      "why_it_breaks_resolution": "Reader, controller, lock, REX, contact, and button share the same door location.",
+      "symptoms_in_artifacts": "Door count is compared to reader or sensor count.",
+      "mitigation": "packetizer",
+      "example_phrases": [
+        "front door reader",
+        "two-door controller",
+        "mag lock",
+        "door contact",
+        "REX button",
+        "electric strike",
+        "request to exit sensor"
+      ]
+    },
+    {
+      "weak_point": "Gateway means IoT gateway, payment gateway, network default gateway, or web portal.",
+      "why_it_breaks_resolution": "IP devices and payment systems co-occur in retail rollouts.",
+      "symptoms_in_artifacts": "IoT gateway line merges with POS payment configuration.",
+      "mitigation": "ontology",
+      "example_phrases": [
+        "IoT gateway",
+        "payment gateway",
+        "default gateway",
+        "sensor gateway",
+        "protocol gateway",
+        "captive portal gateway"
+      ]
+    },
+    {
+      "weak_point": "PoE switch rows may be owned by security or network modernization.",
+      "why_it_breaks_resolution": "Security deployments often include small PoE switches, while network projects replace enterprise access switches.",
+      "symptoms_in_artifacts": "Switch count conflicts across edge and network files.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "camera PoE switch",
+        "network access switch",
+        "surveillance switch",
+        "48-port switch",
+        "NVR switch",
+        "access control PoE"
+      ]
+    },
+    {
+      "weak_point": "Commercial security language is mixed with consumer smart-home wording.",
+      "why_it_breaks_resolution": "Emails use casual names for sensors and hubs that resemble consumer devices.",
+      "symptoms_in_artifacts": "Consumer SKU or DIY kit appears in enterprise security scope.",
+      "mitigation": "policy",
+      "example_phrases": [
+        "smart hub",
+        "commercial reader",
+        "home security kit",
+        "pro install",
+        "sensor bridge",
+        "consumer camera",
+        "field gateway"
+      ]
+    }
+  ]
+}

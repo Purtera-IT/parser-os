@@ -1,0 +1,2559 @@
+{
+  "ontology_id": "pos_commerce_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for POS and commerce rollout evidence covering registers, lanes, payment devices, PIN pads, scanners, printers, cash drawers, payment configuration, key injection, store cutovers, compatibility certificates, and store-ops acceptance while disambiguating network, security, and endpoint terminology.",
+  "identity_clusters": {
+    "pos_terminal_register": {
+      "canonical_key": "pos_terminal_register",
+      "display_name": "POS Terminal Register",
+      "item_kind": "pos_device",
+      "material_family": "pos_register",
+      "comparison_group": "pos_register_each",
+      "synonyms": [
+        "pos terminal register",
+        "pos_terminal_register",
+        "pos terminal register sku",
+        "pos terminal register replacement",
+        "pos terminal register refresh",
+        "pos terminal register bom line",
+        "POS terminal",
+        "register",
+        "till",
+        "checkout terminal",
+        "cash register",
+        "lane terminal",
+        "POS workstation"
+      ],
+      "required_any_tokens": [
+        [
+          "pos",
+          "terminal"
+        ],
+        [
+          "cash",
+          "register"
+        ],
+        [
+          "checkout",
+          "terminal"
+        ],
+        [
+          "lane",
+          "terminal"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "network switch generic",
+        "light switch",
+        "security camera",
+        "door controller",
+        "endpoint laptop",
+        "fiber",
+        "data destruction",
+        "rack unit",
+        "airport terminal",
+        "serial terminal",
+        "network terminal"
+      ]
+    },
+    "pos_pin_pad": {
+      "canonical_key": "pos_pin_pad",
+      "display_name": "POS PIN Pad",
+      "item_kind": "payment_device",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_payment_device_each",
+      "synonyms": [
+        "pos pin pad",
+        "pos_pin_pad",
+        "pos pin pad sku",
+        "pos pin pad replacement",
+        "pos pin pad refresh",
+        "pos pin pad bom line",
+        "PIN pad",
+        "pinpad",
+        "payment pin pad",
+        "debit pad",
+        "PED",
+        "payment entry device",
+        "card pad"
+      ],
+      "required_any_tokens": [
+        [
+          "pin",
+          "pad"
+        ],
+        [
+          "pinpad"
+        ],
+        [
+          "payment",
+          "pin",
+          "pad"
+        ],
+        [
+          "ped"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless ap",
+        "network switch generic",
+        "light switch",
+        "security camera",
+        "door controller",
+        "endpoint laptop",
+        "fiber",
+        "data destruction",
+        "rack unit",
+        "telecom pin",
+        "door keypad",
+        "touch panel"
+      ]
+    },
+    "pos_payment_terminal_stand": {
+      "canonical_key": "pos_payment_terminal_stand",
+      "display_name": "POS Payment Terminal Stand",
+      "item_kind": "store_fixture",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_mount_each",
+      "synonyms": [
+        "pos payment terminal stand",
+        "pos_payment_terminal_stand",
+        "pos payment terminal stand sku",
+        "pos payment terminal stand replacement",
+        "pos payment terminal stand refresh",
+        "pos payment terminal stand bom line",
+        "payment stand",
+        "pin pad stand",
+        "terminal stand",
+        "swivel stand",
+        "payment mount",
+        "PED stand"
+      ],
+      "required_any_tokens": [
+        [
+          "pin",
+          "pad",
+          "stand"
+        ],
+        [
+          "payment",
+          "stand"
+        ],
+        [
+          "terminal",
+          "stand"
+        ],
+        [
+          "ped",
+          "stand"
+        ]
+      ],
+      "negative_tokens": [
+        "monitor stand",
+        "AP mount",
+        "camera mount",
+        "retail display stand"
+      ]
+    },
+    "pos_barcode_scanner_1d2d": {
+      "canonical_key": "pos_barcode_scanner_1d2d",
+      "display_name": "POS 1D/2D Barcode Scanner",
+      "item_kind": "peripheral",
+      "material_family": "pos_scanning",
+      "comparison_group": "pos_scanner_each",
+      "synonyms": [
+        "pos 1d/2d barcode scanner",
+        "pos 1d 2d barcode scanner",
+        "pos_barcode_scanner_1d2d",
+        "pos barcode scanner 1d2d",
+        "pos 1d/2d barcode scanner sku",
+        "pos 1d/2d barcode scanner replacement",
+        "pos 1d/2d barcode scanner refresh",
+        "pos 1d/2d barcode scanner bom line",
+        "barcode scanner",
+        "1D scanner",
+        "2D scanner",
+        "imager",
+        "hand scanner",
+        "barcode reader",
+        "scan gun"
+      ],
+      "required_any_tokens": [
+        [
+          "barcode",
+          "scanner"
+        ],
+        [
+          "1d",
+          "scanner"
+        ],
+        [
+          "2d",
+          "scanner"
+        ],
+        [
+          "barcode",
+          "reader"
+        ],
+        [
+          "scan",
+          "gun"
+        ]
+      ],
+      "negative_tokens": [
+        "security camera",
+        "ITAD asset scan",
+        "document scanner"
+      ]
+    },
+    "pos_handheld_scanner": {
+      "canonical_key": "pos_handheld_scanner",
+      "display_name": "POS Handheld Scanner",
+      "item_kind": "peripheral",
+      "material_family": "pos_scanning",
+      "comparison_group": "pos_scanner_each",
+      "synonyms": [
+        "pos handheld scanner",
+        "pos_handheld_scanner",
+        "pos handheld scanner sku",
+        "pos handheld scanner replacement",
+        "pos handheld scanner refresh",
+        "pos handheld scanner bom line",
+        "handheld scanner",
+        "wireless scanner",
+        "cordless scanner",
+        "handheld imager",
+        "mobile scanner",
+        "scan gun handheld"
+      ],
+      "required_any_tokens": [
+        [
+          "handheld",
+          "scanner"
+        ],
+        [
+          "wireless",
+          "scanner"
+        ],
+        [
+          "cordless",
+          "scanner"
+        ],
+        [
+          "handheld",
+          "imager"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless AP",
+        "mobile phone camera",
+        "ITAD scanner app"
+      ]
+    },
+    "pos_receipt_printer": {
+      "canonical_key": "pos_receipt_printer",
+      "display_name": "POS Receipt Printer",
+      "item_kind": "peripheral",
+      "material_family": "pos_printing",
+      "comparison_group": "pos_printer_each",
+      "synonyms": [
+        "pos receipt printer",
+        "pos_receipt_printer",
+        "pos receipt printer sku",
+        "pos receipt printer replacement",
+        "pos receipt printer refresh",
+        "pos receipt printer bom line",
+        "receipt printer",
+        "thermal printer",
+        "POS printer",
+        "lane printer",
+        "cashwrap printer",
+        "80mm printer"
+      ],
+      "required_any_tokens": [
+        [
+          "receipt",
+          "printer"
+        ],
+        [
+          "thermal",
+          "printer"
+        ],
+        [
+          "pos",
+          "printer"
+        ],
+        [
+          "lane",
+          "printer"
+        ]
+      ],
+      "negative_tokens": [
+        "office printer",
+        "label printer endpoint",
+        "kitchen printer"
+      ]
+    },
+    "pos_kitchen_printer": {
+      "canonical_key": "pos_kitchen_printer",
+      "display_name": "POS Kitchen Printer",
+      "item_kind": "peripheral",
+      "material_family": "pos_printing",
+      "comparison_group": "pos_printer_each",
+      "synonyms": [
+        "pos kitchen printer",
+        "pos_kitchen_printer",
+        "pos kitchen printer sku",
+        "pos kitchen printer replacement",
+        "pos kitchen printer refresh",
+        "pos kitchen printer bom line",
+        "kitchen printer",
+        "KDS printer",
+        "order printer",
+        "expo printer",
+        "back-of-house printer",
+        "BOH printer"
+      ],
+      "required_any_tokens": [
+        [
+          "kitchen",
+          "printer"
+        ],
+        [
+          "order",
+          "printer"
+        ],
+        [
+          "boh",
+          "printer"
+        ],
+        [
+          "expo",
+          "printer"
+        ]
+      ],
+      "negative_tokens": [
+        "office printer",
+        "receipt printer",
+        "3d printer"
+      ]
+    },
+    "pos_cash_drawer": {
+      "canonical_key": "pos_cash_drawer",
+      "display_name": "POS Cash Drawer",
+      "item_kind": "peripheral",
+      "material_family": "cash_handling",
+      "comparison_group": "pos_cash_drawer_each",
+      "synonyms": [
+        "pos cash drawer",
+        "pos_cash_drawer",
+        "pos cash drawer sku",
+        "pos cash drawer replacement",
+        "pos cash drawer refresh",
+        "pos cash drawer bom line",
+        "cash drawer",
+        "till drawer",
+        "money drawer",
+        "cash box",
+        "register drawer",
+        "drawer kick"
+      ],
+      "required_any_tokens": [
+        [
+          "cash",
+          "drawer"
+        ],
+        [
+          "till",
+          "drawer"
+        ],
+        [
+          "money",
+          "drawer"
+        ],
+        [
+          "register",
+          "drawer"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber drawer",
+        "desk drawer",
+        "NVR storage drawer"
+      ]
+    },
+    "pos_micr_check_reader": {
+      "canonical_key": "pos_micr_check_reader",
+      "display_name": "POS MICR Check Reader",
+      "item_kind": "peripheral",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_reader_each",
+      "synonyms": [
+        "pos micr check reader",
+        "pos_micr_check_reader",
+        "pos micr check reader sku",
+        "pos micr check reader replacement",
+        "pos micr check reader refresh",
+        "pos micr check reader bom line",
+        "MICR",
+        "check reader",
+        "MICR reader",
+        "check scanner",
+        "mag ink reader",
+        "check imager"
+      ],
+      "required_any_tokens": [
+        [
+          "micr"
+        ],
+        [
+          "check",
+          "reader"
+        ],
+        [
+          "micr",
+          "reader"
+        ],
+        [
+          "check",
+          "scanner"
+        ]
+      ],
+      "negative_tokens": [
+        "access card reader",
+        "barcode reader",
+        "document scanner"
+      ]
+    },
+    "pos_customer_display": {
+      "canonical_key": "pos_customer_display",
+      "display_name": "POS Customer Display",
+      "item_kind": "peripheral",
+      "material_family": "pos_display",
+      "comparison_group": "pos_display_each",
+      "synonyms": [
+        "pos customer display",
+        "pos_customer_display",
+        "pos customer display sku",
+        "pos customer display replacement",
+        "pos customer display refresh",
+        "pos customer display bom line",
+        "customer display",
+        "pole display",
+        "line display",
+        "CFD",
+        "customer facing display",
+        "price display"
+      ],
+      "required_any_tokens": [
+        [
+          "customer",
+          "display"
+        ],
+        [
+          "pole",
+          "display"
+        ],
+        [
+          "customer",
+          "facing",
+          "display"
+        ],
+        [
+          "line",
+          "display"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint monitor",
+        "digital signage",
+        "security monitor"
+      ]
+    },
+    "pos_signature_capture_pad": {
+      "canonical_key": "pos_signature_capture_pad",
+      "display_name": "POS Signature Capture Pad",
+      "item_kind": "payment_device",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_payment_device_each",
+      "synonyms": [
+        "pos signature capture pad",
+        "pos_signature_capture_pad",
+        "pos signature capture pad sku",
+        "pos signature capture pad replacement",
+        "pos signature capture pad refresh",
+        "pos signature capture pad bom line",
+        "signature pad",
+        "signature capture",
+        "sig cap",
+        "electronic signature pad",
+        "payment signature device"
+      ],
+      "required_any_tokens": [
+        [
+          "signature",
+          "pad"
+        ],
+        [
+          "signature",
+          "capture"
+        ],
+        [
+          "sig",
+          "cap"
+        ],
+        [
+          "electronic",
+          "signature",
+          "pad"
+        ]
+      ],
+      "negative_tokens": [
+        "legal signature block",
+        "touchpad laptop",
+        "drawing tablet"
+      ]
+    },
+    "pos_lane_controller": {
+      "canonical_key": "pos_lane_controller",
+      "display_name": "POS Lane Controller",
+      "item_kind": "pos_device",
+      "material_family": "pos_register",
+      "comparison_group": "pos_controller_each",
+      "synonyms": [
+        "pos lane controller",
+        "pos_lane_controller",
+        "pos lane controller sku",
+        "pos lane controller replacement",
+        "pos lane controller refresh",
+        "pos lane controller bom line",
+        "lane controller",
+        "checkout controller",
+        "register controller",
+        "POS controller",
+        "lane PC",
+        "front end controller"
+      ],
+      "required_any_tokens": [
+        [
+          "lane",
+          "controller"
+        ],
+        [
+          "checkout",
+          "controller"
+        ],
+        [
+          "register",
+          "controller"
+        ],
+        [
+          "pos",
+          "controller"
+        ]
+      ],
+      "negative_tokens": [
+        "door controller",
+        "wireless controller",
+        "domain controller",
+        "game controller"
+      ]
+    },
+    "pos_back_office_server": {
+      "canonical_key": "pos_back_office_server",
+      "display_name": "POS Back Office Server",
+      "item_kind": "pos_device",
+      "material_family": "commerce_server",
+      "comparison_group": "pos_server_each",
+      "synonyms": [
+        "pos back office server",
+        "pos_back_office_server",
+        "pos back office server sku",
+        "pos back office server replacement",
+        "pos back office server refresh",
+        "pos back office server bom line",
+        "back office server",
+        "store server",
+        "BOS",
+        "POS server",
+        "store controller server",
+        "commerce server"
+      ],
+      "required_any_tokens": [
+        [
+          "back",
+          "office",
+          "server"
+        ],
+        [
+          "store",
+          "server"
+        ],
+        [
+          "pos",
+          "server"
+        ],
+        [
+          "commerce",
+          "server"
+        ]
+      ],
+      "negative_tokens": [
+        "domain controller",
+        "video server",
+        "general file server"
+      ]
+    },
+    "pos_lane_network_switch": {
+      "canonical_key": "pos_lane_network_switch",
+      "display_name": "POS Lane Network Switch",
+      "item_kind": "network_device",
+      "material_family": "pos_network",
+      "comparison_group": "pos_lane_switch_each",
+      "synonyms": [
+        "pos lane network switch",
+        "pos_lane_network_switch",
+        "pos lane network switch sku",
+        "pos lane network switch replacement",
+        "pos lane network switch refresh",
+        "pos lane network switch bom line",
+        "lane switch",
+        "POS switch",
+        "cashwrap switch",
+        "register switch",
+        "small switch for lanes",
+        "commerce switch"
+      ],
+      "required_any_tokens": [
+        [
+          "lane",
+          "switch"
+        ],
+        [
+          "pos",
+          "switch"
+        ],
+        [
+          "cashwrap",
+          "switch"
+        ],
+        [
+          "register",
+          "switch"
+        ]
+      ],
+      "negative_tokens": [
+        "network access switch generic",
+        "light switch",
+        "KVM switch"
+      ]
+    },
+    "pos_lane_cabling_kit": {
+      "canonical_key": "pos_lane_cabling_kit",
+      "display_name": "POS Lane Cabling Kit",
+      "item_kind": "deployment_kit",
+      "material_family": "pos_cabling",
+      "comparison_group": "pos_kit_each",
+      "synonyms": [
+        "pos lane cabling kit",
+        "pos_lane_cabling_kit",
+        "pos lane cabling kit sku",
+        "pos lane cabling kit replacement",
+        "pos lane cabling kit refresh",
+        "pos lane cabling kit bom line",
+        "lane cabling kit",
+        "register cable kit",
+        "POS cable kit",
+        "cashwrap cable bundle",
+        "terminal cables",
+        "pin pad cable kit"
+      ],
+      "required_any_tokens": [
+        [
+          "lane",
+          "cabling",
+          "kit"
+        ],
+        [
+          "register",
+          "cable",
+          "kit"
+        ],
+        [
+          "pos",
+          "cable",
+          "kit"
+        ],
+        [
+          "pin",
+          "pad",
+          "cable",
+          "kit"
+        ]
+      ],
+      "negative_tokens": [
+        "structured cabling drop",
+        "fiber kit",
+        "endpoint cable kit"
+      ]
+    },
+    "pos_payment_application_install": {
+      "canonical_key": "pos_payment_application_install",
+      "display_name": "POS Payment Application Install",
+      "item_kind": "software_package",
+      "material_family": "pos_software",
+      "comparison_group": "pos_software_install",
+      "synonyms": [
+        "pos payment application install",
+        "pos_payment_application_install",
+        "pos payment application install sku",
+        "pos payment application install replacement",
+        "pos payment application install refresh",
+        "pos payment application install bom line",
+        "payment app install",
+        "payment software",
+        "POS app install",
+        "payment client",
+        "lane software",
+        "commerce application"
+      ],
+      "required_any_tokens": [
+        [
+          "payment",
+          "application",
+          "install"
+        ],
+        [
+          "payment",
+          "software"
+        ],
+        [
+          "pos",
+          "app",
+          "install"
+        ],
+        [
+          "payment",
+          "client"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint LOB app",
+        "network feature license",
+        "mobile app"
+      ]
+    },
+    "pos_emv_contactless_config": {
+      "canonical_key": "pos_emv_contactless_config",
+      "display_name": "POS EMV Contactless Configuration",
+      "item_kind": "configuration",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_payment_config_task",
+      "synonyms": [
+        "pos emv contactless configuration",
+        "pos_emv_contactless_config",
+        "pos emv contactless config",
+        "pos emv contactless configuration sku",
+        "pos emv contactless configuration replacement",
+        "pos emv contactless configuration refresh",
+        "pos emv contactless configuration bom line",
+        "EMV",
+        "contactless",
+        "tap to pay",
+        "chip card",
+        "NFC payment",
+        "payment config"
+      ],
+      "required_any_tokens": [
+        [
+          "emv"
+        ],
+        [
+          "contactless"
+        ],
+        [
+          "tap",
+          "to",
+          "pay"
+        ],
+        [
+          "nfc",
+          "payment"
+        ]
+      ],
+      "negative_tokens": [
+        "NFC access reader",
+        "mobile credential",
+        "contactless badge"
+      ]
+    },
+    "pos_pci_p2pe_key_injection": {
+      "canonical_key": "pos_pci_p2pe_key_injection",
+      "display_name": "POS PCI P2PE Key Injection",
+      "item_kind": "compliance_task",
+      "material_family": "payment_security",
+      "comparison_group": "pos_key_injection_task",
+      "synonyms": [
+        "pos pci p2pe key injection",
+        "pos_pci_p2pe_key_injection",
+        "pos pci p2pe key injection sku",
+        "pos pci p2pe key injection replacement",
+        "pos pci p2pe key injection refresh",
+        "pos pci p2pe key injection bom line",
+        "key injection",
+        "P2PE",
+        "DUKPT",
+        "payment keys",
+        "PCI keys",
+        "injection cert",
+        "key load"
+      ],
+      "required_any_tokens": [
+        [
+          "key",
+          "injection"
+        ],
+        [
+          "p2pe"
+        ],
+        [
+          "dukpt"
+        ],
+        [
+          "payment",
+          "keys"
+        ]
+      ],
+      "negative_tokens": [
+        "keyboard key",
+        "door key",
+        "ssh key network"
+      ]
+    },
+    "pos_payment_gateway_config": {
+      "canonical_key": "pos_payment_gateway_config",
+      "display_name": "POS Payment Gateway Configuration",
+      "item_kind": "configuration",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_payment_config_task",
+      "synonyms": [
+        "pos payment gateway configuration",
+        "pos_payment_gateway_config",
+        "pos payment gateway config",
+        "pos payment gateway configuration sku",
+        "pos payment gateway configuration replacement",
+        "pos payment gateway configuration refresh",
+        "pos payment gateway configuration bom line",
+        "payment gateway",
+        "processor config",
+        "merchant gateway",
+        "gateway setup",
+        "acquirer config",
+        "transaction host"
+      ],
+      "required_any_tokens": [
+        [
+          "payment",
+          "gateway"
+        ],
+        [
+          "processor",
+          "config"
+        ],
+        [
+          "merchant",
+          "gateway"
+        ],
+        [
+          "gateway",
+          "setup",
+          "payment"
+        ]
+      ],
+      "negative_tokens": [
+        "iot gateway",
+        "default gateway",
+        "wireless gateway",
+        "wan router"
+      ]
+    },
+    "pos_store_cutover_window": {
+      "canonical_key": "pos_store_cutover_window",
+      "display_name": "POS Store Cutover Window",
+      "item_kind": "service_task",
+      "material_family": "deployment_schedule",
+      "comparison_group": "pos_schedule_event",
+      "synonyms": [
+        "pos store cutover window",
+        "pos_store_cutover_window",
+        "pos store cutover window sku",
+        "pos store cutover window replacement",
+        "pos store cutover window refresh",
+        "pos store cutover window bom line",
+        "store cutover",
+        "POS cutover",
+        "lane cutover",
+        "go-live store",
+        "store closed window",
+        "overnight cutover"
+      ],
+      "required_any_tokens": [
+        [
+          "store",
+          "cutover"
+        ],
+        [
+          "pos",
+          "cutover"
+        ],
+        [
+          "lane",
+          "cutover"
+        ],
+        [
+          "go-live",
+          "store"
+        ]
+      ],
+      "negative_tokens": [
+        "network cutover",
+        "wireless cutover",
+        "endpoint refresh"
+      ]
+    },
+    "pos_staging_task": {
+      "canonical_key": "pos_staging_task",
+      "display_name": "POS Staging Task",
+      "item_kind": "service_task",
+      "material_family": "pos_deployment",
+      "comparison_group": "pos_service_task_each",
+      "synonyms": [
+        "pos staging task",
+        "pos_staging_task",
+        "pos staging task sku",
+        "pos staging task replacement",
+        "pos staging task refresh",
+        "pos staging task bom line",
+        "POS staging",
+        "stage lane",
+        "pre-stage terminal",
+        "bench stage register",
+        "configure pin pad",
+        "staged kit"
+      ],
+      "required_any_tokens": [
+        [
+          "pos",
+          "staging"
+        ],
+        [
+          "stage",
+          "lane"
+        ],
+        [
+          "pre-stage",
+          "terminal"
+        ],
+        [
+          "bench",
+          "stage",
+          "register"
+        ]
+      ],
+      "negative_tokens": [
+        "AP staging",
+        "endpoint imaging",
+        "camera enrollment"
+      ]
+    },
+    "pos_lane_open_close_testing": {
+      "canonical_key": "pos_lane_open_close_testing",
+      "display_name": "POS Lane Open/Close Testing",
+      "item_kind": "field_test_result",
+      "material_family": "pos_acceptance",
+      "comparison_group": "pos_test_task",
+      "synonyms": [
+        "pos lane open/close testing",
+        "pos lane open close testing",
+        "pos_lane_open_close_testing",
+        "pos lane open/close testing sku",
+        "pos lane open/close testing replacement",
+        "pos lane open/close testing refresh",
+        "pos lane open/close testing bom line",
+        "lane testing",
+        "open close test",
+        "transaction test",
+        "sale/refund test",
+        "tender test",
+        "lane acceptance"
+      ],
+      "required_any_tokens": [
+        [
+          "lane",
+          "testing"
+        ],
+        [
+          "open",
+          "close",
+          "test"
+        ],
+        [
+          "transaction",
+          "test"
+        ],
+        [
+          "tender",
+          "test"
+        ]
+      ],
+      "negative_tokens": [
+        "network test",
+        "camera view test",
+        "fiber test"
+      ]
+    },
+    "pos_cashwrap_mount": {
+      "canonical_key": "pos_cashwrap_mount",
+      "display_name": "POS Cashwrap Mount",
+      "item_kind": "store_fixture",
+      "material_family": "pos_fixture",
+      "comparison_group": "pos_mount_each",
+      "synonyms": [
+        "pos cashwrap mount",
+        "pos_cashwrap_mount",
+        "pos cashwrap mount sku",
+        "pos cashwrap mount replacement",
+        "pos cashwrap mount refresh",
+        "pos cashwrap mount bom line",
+        "cashwrap mount",
+        "counter mount",
+        "register mount",
+        "checkout mount",
+        "surface mount terminal",
+        "cash wrap bracket"
+      ],
+      "required_any_tokens": [
+        [
+          "cashwrap",
+          "mount"
+        ],
+        [
+          "counter",
+          "mount"
+        ],
+        [
+          "register",
+          "mount"
+        ],
+        [
+          "checkout",
+          "mount"
+        ]
+      ],
+      "negative_tokens": [
+        "AP ceiling mount",
+        "camera wall mount",
+        "monitor mount"
+      ]
+    },
+    "pos_scale_integration": {
+      "canonical_key": "pos_scale_integration",
+      "display_name": "POS Scale Integration",
+      "item_kind": "peripheral",
+      "material_family": "pos_weighing",
+      "comparison_group": "pos_scale_each",
+      "synonyms": [
+        "pos scale integration",
+        "pos_scale_integration",
+        "pos scale integration sku",
+        "pos scale integration replacement",
+        "pos scale integration refresh",
+        "pos scale integration bom line",
+        "scale",
+        "scanner scale",
+        "weigh scale",
+        "integrated scale",
+        "scale interface",
+        "produce scale"
+      ],
+      "required_any_tokens": [
+        [
+          "scanner",
+          "scale"
+        ],
+        [
+          "weigh",
+          "scale"
+        ],
+        [
+          "integrated",
+          "scale"
+        ],
+        [
+          "produce",
+          "scale"
+        ]
+      ],
+      "negative_tokens": [
+        "weight ticket ITAD",
+        "rack scale",
+        "scale of work"
+      ]
+    },
+    "pos_price_checker_kiosk": {
+      "canonical_key": "pos_price_checker_kiosk",
+      "display_name": "POS Price Checker Kiosk",
+      "item_kind": "pos_device",
+      "material_family": "self_service",
+      "comparison_group": "pos_kiosk_each",
+      "synonyms": [
+        "pos price checker kiosk",
+        "pos_price_checker_kiosk",
+        "pos price checker kiosk sku",
+        "pos price checker kiosk replacement",
+        "pos price checker kiosk refresh",
+        "pos price checker kiosk bom line",
+        "price checker",
+        "price check kiosk",
+        "customer price scanner",
+        "aisle scanner",
+        "price lookup",
+        "scan kiosk"
+      ],
+      "required_any_tokens": [
+        [
+          "price",
+          "checker"
+        ],
+        [
+          "price",
+          "check",
+          "kiosk"
+        ],
+        [
+          "customer",
+          "price",
+          "scanner"
+        ],
+        [
+          "price",
+          "lookup"
+        ]
+      ],
+      "negative_tokens": [
+        "security kiosk",
+        "endpoint kiosk",
+        "web kiosk"
+      ]
+    },
+    "pos_self_checkout_terminal": {
+      "canonical_key": "pos_self_checkout_terminal",
+      "display_name": "POS Self-Checkout Terminal",
+      "item_kind": "pos_device",
+      "material_family": "self_service",
+      "comparison_group": "pos_register_each",
+      "synonyms": [
+        "pos self-checkout terminal",
+        "pos self checkout terminal",
+        "pos_self_checkout_terminal",
+        "pos self-checkout terminal sku",
+        "pos self-checkout terminal replacement",
+        "pos self-checkout terminal refresh",
+        "pos self-checkout terminal bom line",
+        "self checkout",
+        "SCO",
+        "self-checkout terminal",
+        "self service checkout",
+        "SCO lane",
+        "self checkout register"
+      ],
+      "required_any_tokens": [
+        [
+          "self",
+          "checkout"
+        ],
+        [
+          "sco"
+        ],
+        [
+          "self-checkout",
+          "terminal"
+        ],
+        [
+          "self",
+          "service",
+          "checkout"
+        ]
+      ],
+      "negative_tokens": [
+        "self service password",
+        "airport self checkin"
+      ]
+    },
+    "pos_kiosk_payment_device": {
+      "canonical_key": "pos_kiosk_payment_device",
+      "display_name": "POS Kiosk Payment Device",
+      "item_kind": "payment_device",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_payment_device_each",
+      "synonyms": [
+        "pos kiosk payment device",
+        "pos_kiosk_payment_device",
+        "pos kiosk payment device sku",
+        "pos kiosk payment device replacement",
+        "pos kiosk payment device refresh",
+        "pos kiosk payment device bom line",
+        "kiosk payment",
+        "unattended payment",
+        "kiosk card reader",
+        "self service pin pad",
+        "UPT",
+        "unattended terminal"
+      ],
+      "required_any_tokens": [
+        [
+          "kiosk",
+          "payment"
+        ],
+        [
+          "unattended",
+          "payment"
+        ],
+        [
+          "kiosk",
+          "card",
+          "reader"
+        ],
+        [
+          "unattended",
+          "terminal"
+        ]
+      ],
+      "negative_tokens": [
+        "access reader",
+        "parking access reader",
+        "consumer tablet"
+      ]
+    },
+    "pos_gift_card_reader": {
+      "canonical_key": "pos_gift_card_reader",
+      "display_name": "POS Gift Card Reader",
+      "item_kind": "peripheral",
+      "material_family": "payment_acceptance",
+      "comparison_group": "pos_reader_each",
+      "synonyms": [
+        "pos gift card reader",
+        "pos_gift_card_reader",
+        "pos gift card reader sku",
+        "pos gift card reader replacement",
+        "pos gift card reader refresh",
+        "pos gift card reader bom line",
+        "gift card reader",
+        "mag stripe reader",
+        "MSR",
+        "swipe reader",
+        "loyalty card reader",
+        "stored value reader"
+      ],
+      "required_any_tokens": [
+        [
+          "gift",
+          "card",
+          "reader"
+        ],
+        [
+          "mag",
+          "stripe",
+          "reader"
+        ],
+        [
+          "msr"
+        ],
+        [
+          "swipe",
+          "reader"
+        ]
+      ],
+      "negative_tokens": [
+        "access card reader",
+        "credit card payment terminal if PIN pad",
+        "barcode scanner"
+      ]
+    },
+    "pos_receipt_paper_supply": {
+      "canonical_key": "pos_receipt_paper_supply",
+      "display_name": "POS Receipt Paper Supply",
+      "item_kind": "consumable",
+      "material_family": "pos_consumable",
+      "comparison_group": "pos_consumable_pack",
+      "synonyms": [
+        "pos receipt paper supply",
+        "pos_receipt_paper_supply",
+        "pos receipt paper supply sku",
+        "pos receipt paper supply replacement",
+        "pos receipt paper supply refresh",
+        "pos receipt paper supply bom line",
+        "receipt paper",
+        "thermal paper",
+        "paper rolls",
+        "80mm rolls",
+        "printer paper",
+        "receipt rolls"
+      ],
+      "required_any_tokens": [
+        [
+          "receipt",
+          "paper"
+        ],
+        [
+          "thermal",
+          "paper"
+        ],
+        [
+          "paper",
+          "rolls"
+        ],
+        [
+          "receipt",
+          "rolls"
+        ]
+      ],
+      "negative_tokens": [
+        "office paper",
+        "label stock",
+        "packing paper"
+      ]
+    },
+    "pos_asset_tagging": {
+      "canonical_key": "pos_asset_tagging",
+      "display_name": "POS Asset Tagging",
+      "item_kind": "service_task",
+      "material_family": "pos_inventory",
+      "comparison_group": "pos_service_task_each",
+      "synonyms": [
+        "pos asset tagging",
+        "pos_asset_tagging",
+        "pos asset tagging sku",
+        "pos asset tagging replacement",
+        "pos asset tagging refresh",
+        "pos asset tagging bom line",
+        "POS asset tag",
+        "lane asset tag",
+        "register tag",
+        "tag terminal",
+        "asset label POS",
+        "inventory label lane"
+      ],
+      "required_any_tokens": [
+        [
+          "pos",
+          "asset",
+          "tag"
+        ],
+        [
+          "lane",
+          "asset",
+          "tag"
+        ],
+        [
+          "register",
+          "tag"
+        ],
+        [
+          "tag",
+          "terminal"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint asset tag",
+        "AP asset tag",
+        "ITAD serial capture"
+      ]
+    },
+    "pos_compatibility_certification": {
+      "canonical_key": "pos_compatibility_certification",
+      "display_name": "POS Compatibility Certification",
+      "item_kind": "certificate",
+      "material_family": "pos_compliance",
+      "comparison_group": "pos_certificate_each",
+      "synonyms": [
+        "pos compatibility certification",
+        "pos_compatibility_certification",
+        "pos compatibility certification sku",
+        "pos compatibility certification replacement",
+        "pos compatibility certification refresh",
+        "pos compatibility certification bom line",
+        "compatibility cert",
+        "certified configuration",
+        "payment compatibility",
+        "cert matrix",
+        "approved device list",
+        "certification letter"
+      ],
+      "required_any_tokens": [
+        [
+          "compatibility",
+          "cert"
+        ],
+        [
+          "certified",
+          "configuration"
+        ],
+        [
+          "payment",
+          "compatibility"
+        ],
+        [
+          "cert",
+          "matrix"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber cert",
+        "data destruction cert",
+        "training certificate"
+      ]
+    },
+    "pos_store_manager_signoff": {
+      "canonical_key": "pos_store_manager_signoff",
+      "display_name": "POS Store Manager Signoff",
+      "item_kind": "signoff",
+      "material_family": "pos_acceptance",
+      "comparison_group": "pos_signoff_each",
+      "synonyms": [
+        "pos store manager signoff",
+        "pos_store_manager_signoff",
+        "pos store manager signoff sku",
+        "pos store manager signoff replacement",
+        "pos store manager signoff refresh",
+        "pos store manager signoff bom line",
+        "manager signoff",
+        "store sign-off",
+        "acceptance signoff",
+        "manager approval",
+        "store acceptance",
+        "go-live approval"
+      ],
+      "required_any_tokens": [
+        [
+          "manager",
+          "signoff"
+        ],
+        [
+          "store",
+          "sign-off"
+        ],
+        [
+          "acceptance",
+          "signoff"
+        ],
+        [
+          "store",
+          "acceptance"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint user signoff",
+        "destruction witness signoff"
+      ]
+    },
+    "pos_pin_pad_injection_certificate": {
+      "canonical_key": "pos_pin_pad_injection_certificate",
+      "display_name": "POS PIN Pad Injection Certificate",
+      "item_kind": "certificate",
+      "material_family": "payment_security",
+      "comparison_group": "pos_certificate_each",
+      "synonyms": [
+        "pos pin pad injection certificate",
+        "pos_pin_pad_injection_certificate",
+        "pos pin pad injection certificate sku",
+        "pos pin pad injection certificate replacement",
+        "pos pin pad injection certificate refresh",
+        "pos pin pad injection certificate bom line",
+        "injection certificate",
+        "key injection cert",
+        "PED injection cert",
+        "PIN pad cert",
+        "P2PE cert",
+        "key load cert"
+      ],
+      "required_any_tokens": [
+        [
+          "injection",
+          "certificate"
+        ],
+        [
+          "key",
+          "injection",
+          "cert"
+        ],
+        [
+          "ped",
+          "injection",
+          "cert"
+        ],
+        [
+          "pin",
+          "pad",
+          "cert"
+        ]
+      ],
+      "negative_tokens": [
+        "fiber certification",
+        "data destruction certificate",
+        "badge certificate"
+      ]
+    },
+    "pos_rma_swap": {
+      "canonical_key": "pos_rma_swap",
+      "display_name": "POS RMA Swap",
+      "item_kind": "service_task",
+      "material_family": "pos_support",
+      "comparison_group": "pos_rma_each",
+      "synonyms": [
+        "pos rma swap",
+        "pos_rma_swap",
+        "pos rma swap sku",
+        "pos rma swap replacement",
+        "pos rma swap refresh",
+        "pos rma swap bom line",
+        "POS RMA",
+        "pin pad RMA",
+        "terminal swap",
+        "register replacement",
+        "payment device swap",
+        "warranty exchange"
+      ],
+      "required_any_tokens": [
+        [
+          "pos",
+          "rma"
+        ],
+        [
+          "pin",
+          "pad",
+          "rma"
+        ],
+        [
+          "terminal",
+          "swap"
+        ],
+        [
+          "payment",
+          "device",
+          "swap"
+        ]
+      ],
+      "negative_tokens": [
+        "AP RMA",
+        "network RMA",
+        "endpoint RMA",
+        "camera RMA"
+      ]
+    },
+    "pos_offline_mode_test": {
+      "canonical_key": "pos_offline_mode_test",
+      "display_name": "POS Offline Mode Test",
+      "item_kind": "field_test_result",
+      "material_family": "pos_acceptance",
+      "comparison_group": "pos_test_task",
+      "synonyms": [
+        "pos offline mode test",
+        "pos_offline_mode_test",
+        "pos offline mode test sku",
+        "pos offline mode test replacement",
+        "pos offline mode test refresh",
+        "pos offline mode test bom line",
+        "offline mode",
+        "offline transaction test",
+        "store and forward",
+        "SAF test",
+        "offline tender",
+        "network down test"
+      ],
+      "required_any_tokens": [
+        [
+          "offline",
+          "mode"
+        ],
+        [
+          "offline",
+          "transaction",
+          "test"
+        ],
+        [
+          "store",
+          "and",
+          "forward"
+        ],
+        [
+          "saf",
+          "test"
+        ]
+      ],
+      "negative_tokens": [
+        "offline laptop",
+        "offline backup",
+        "network outage generic"
+      ]
+    },
+    "pos_scanner_scale_combo": {
+      "canonical_key": "pos_scanner_scale_combo",
+      "display_name": "POS Scanner-Scale Combo",
+      "item_kind": "peripheral",
+      "material_family": "pos_weighing",
+      "comparison_group": "pos_scanner_scale_each",
+      "synonyms": [
+        "pos scanner-scale combo",
+        "pos scanner scale combo",
+        "pos_scanner_scale_combo",
+        "pos scanner-scale combo sku",
+        "pos scanner-scale combo replacement",
+        "pos scanner-scale combo refresh",
+        "pos scanner-scale combo bom line",
+        "scanner scale combo",
+        "bioptic scanner scale",
+        "scale scanner",
+        "integrated scanner scale",
+        "checkout scanner scale"
+      ],
+      "required_any_tokens": [
+        [
+          "scanner",
+          "scale",
+          "combo"
+        ],
+        [
+          "bioptic",
+          "scanner",
+          "scale"
+        ],
+        [
+          "scale",
+          "scanner"
+        ],
+        [
+          "integrated",
+          "scanner",
+          "scale"
+        ]
+      ],
+      "negative_tokens": [
+        "barcode scanner only",
+        "ITAD scale ticket",
+        "weigh scale only"
+      ]
+    },
+    "pos_ecommerce_order_terminal": {
+      "canonical_key": "pos_ecommerce_order_terminal",
+      "display_name": "POS E-Commerce Order Terminal",
+      "item_kind": "pos_device",
+      "material_family": "omnichannel_commerce",
+      "comparison_group": "pos_terminal_each",
+      "synonyms": [
+        "pos e-commerce order terminal",
+        "pos e commerce order terminal",
+        "pos_ecommerce_order_terminal",
+        "pos ecommerce order terminal",
+        "pos e-commerce order terminal sku",
+        "pos e-commerce order terminal replacement",
+        "pos e-commerce order terminal refresh",
+        "pos e-commerce order terminal bom line",
+        "ecom order terminal",
+        "BOPIS terminal",
+        "online order station",
+        "pickup order terminal",
+        "commerce order station",
+        "order pickup device"
+      ],
+      "required_any_tokens": [
+        [
+          "ecom",
+          "order",
+          "terminal"
+        ],
+        [
+          "bopis",
+          "terminal"
+        ],
+        [
+          "online",
+          "order",
+          "station"
+        ],
+        [
+          "pickup",
+          "order",
+          "terminal"
+        ]
+      ],
+      "negative_tokens": [
+        "endpoint workstation",
+        "shipping terminal",
+        "airport terminal"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "pos_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "pos_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "pos_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "pos_survey_export": {
+      "filename_contains": [
+        "survey",
+        "walkthrough",
+        "walk-thru",
+        "site audit",
+        "heatmap",
+        "as-built",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "survey_export",
+      "typical_atom_types": [
+        "field_observation",
+        "location_note",
+        "constraint",
+        "existing_condition"
+      ],
+      "beats": [
+        "vendor_quote"
+      ],
+      "cannot_govern": [
+        "approved_quantity_without_scope"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "pos_field_test_result": {
+      "filename_contains": [
+        "test",
+        "cert",
+        "validation",
+        "acceptance",
+        "results",
+        "post install",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv",
+        ".txt"
+      ],
+      "authority_class": "field_test_result",
+      "typical_atom_types": [
+        "test_measurement",
+        "pass_fail",
+        "port_or_device_id",
+        "technician_note"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "commercial_price"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "pos_cutover_plan": {
+      "filename_contains": [
+        "cutover",
+        "migration plan",
+        "runbook",
+        "go-live",
+        "change window",
+        "freeze window",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".docx",
+        ".pdf",
+        ".csv"
+      ],
+      "authority_class": "cutover_plan",
+      "typical_atom_types": [
+        "task_sequence",
+        "rollback",
+        "owner",
+        "maintenance_window"
+      ],
+      "beats": [
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "material_quantity"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "pos_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "pos_certificate": {
+      "filename_contains": [
+        "certificate",
+        "certification",
+        "attestation",
+        "compliance",
+        "cod",
+        "coc",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "certificate",
+      "typical_atom_types": [
+        "certificate_id",
+        "pass_fail",
+        "approver",
+        "evidence_date"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "future_scope"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "pos_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "pos",
+        "commerce",
+        "payment",
+        "lane",
+        "store",
+        "register"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial #",
+      "s/n",
+      "sn",
+      "device serial",
+      "asset serial"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "asset id",
+      "tag #",
+      "barcode",
+      "inventory tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "overnight",
+      "store closed",
+      "blackout"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "store_number": [
+      "store #",
+      "store number",
+      "store id",
+      "location id",
+      "retail id"
+    ],
+    "lane_id": [
+      "lane",
+      "lane id",
+      "register #",
+      "checkout",
+      "terminal id",
+      "station"
+    ],
+    "device_id": [
+      "device id",
+      "terminal id",
+      "pin pad id",
+      "serial",
+      "asset id"
+    ],
+    "payment_processor": [
+      "processor",
+      "acquirer",
+      "merchant",
+      "payment host",
+      "gateway"
+    ],
+    "certification_status": [
+      "cert status",
+      "certified",
+      "compatibility",
+      "approved",
+      "matrix"
+    ],
+    "transaction_test": [
+      "test sale",
+      "refund test",
+      "void test",
+      "offline test",
+      "tender test"
+    ],
+    "injection_status": [
+      "key injected",
+      "injection cert",
+      "key load",
+      "dukpt",
+      "p2pe"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "store": {
+      "examples": [
+        "store 104",
+        "retail 27",
+        "restaurant 8",
+        "branch kiosk"
+      ],
+      "identity_bearing": true
+    },
+    "lane": {
+      "examples": [
+        "lane 1",
+        "register 4",
+        "self checkout 2",
+        "cashwrap A"
+      ],
+      "identity_bearing": true
+    },
+    "payment_device": {
+      "examples": [
+        "PIN pad SN123",
+        "PED 7",
+        "kiosk card reader"
+      ],
+      "identity_bearing": true
+    },
+    "payment_configuration": {
+      "examples": [
+        "EMV",
+        "P2PE",
+        "processor config",
+        "gateway setup"
+      ],
+      "identity_bearing": true
+    },
+    "store_ops_window": {
+      "examples": [
+        "store closed",
+        "after hours",
+        "overnight cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "POS terminals, payment devices, peripherals, lane network devices, software configuration, certificates, and cutover windows are separate comparison groups.",
+    "PIN pad, PED, payment terminal, and signature pad require payment or lane context; door keypads and endpoint touchpads are negatives.",
+    "A lane, terminal/register, scanner, cash drawer, receipt printer, and PIN pad can co-locate at one checkout but must not merge.",
+    "Store closed, after hours, blackout, cutover, and freeze windows are schedule constraints rather than installed items.",
+    "Payment gateway and processor configuration are software/configuration atoms, not IoT gateways or network default gateways.",
+    "Key injection and P2PE/PCI evidence require certificate or payment-security authority; do not infer from generic key or certificate words.",
+    "POS lane switch belongs here only when lane/cashwrap/register context is present; generic switch refresh belongs to network_modernization.",
+    "TBD lane count, approx store count, assumed cable kit, pending processor, verify in field, and as-built preserve uncertainty.",
+    "Cross-domain confusion - AP: AP rarely belongs in POS except approval/accounts payable; wireless access point wins only with WLAN/Wi-Fi context.",
+    "Cross-domain confusion - switch: pos_lane_network_switch wins for lane/cashwrap/register context; network access switch and light switch split.",
+    "Cross-domain confusion - panel: pos_pin_pad or payment terminal panel wording is not patch/electrical/fiber panel; require payment device context.",
+    "Cross-domain confusion - gateway: pos_payment_gateway_config wins for payment processor, merchant, transaction host, and acquirer wording; IoT/default gateways are negatives.",
+    "Cross-domain confusion - sensor: scanner-scale and barcode scanner are POS peripherals; physical sensors belong to edge_iot_security.",
+    "Cross-domain confusion - rack: cashwrap fixtures and terminal stands are POS scope; datacenter/network racks split.",
+    "Cross-domain confusion - controller: pos_lane_controller wins for checkout/register/lane context; door controller, WLC, and domain controller split.",
+    "Cross-domain confusion - camera: barcode scanner imager is not a security camera unless CCTV/NVR context exists.",
+    "Cross-domain confusion - reader: MICR, gift card, mag stripe, and payment readers are POS; badge/access readers belong to edge_iot_security.",
+    "Cross-domain confusion - terminal: POS terminal wins in store/lane/checkout/payment context; serial terminal and airport terminal are negatives."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "POS commerce BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "Install 6 POS terminals, 6 PIN pads, 6 cash drawers at lanes 1-6",
+      "identity": "pos_terminal_register",
+      "quantity": 6,
+      "notes": "Bundle should emit PIN pad and cash drawer separately."
+    },
+    {
+      "raw": "P2PE key injection cert required for each PED",
+      "identity": "pos_pci_p2pe_key_injection",
+      "quantity": null,
+      "notes": "Payment security task tied to devices."
+    },
+    {
+      "raw": "Lane open/close and refund transaction testing after store closes",
+      "identity": "pos_lane_open_close_testing",
+      "quantity": null,
+      "notes": "Field acceptance task."
+    },
+    {
+      "raw": "Payment gateway setup pending processor credentials",
+      "identity": "pos_payment_gateway_config",
+      "quantity": null,
+      "notes": "Configuration atom with uncertainty."
+    },
+    {
+      "raw": "Bioptic scanner scale at grocery lanes",
+      "identity": "pos_scanner_scale_combo",
+      "quantity": null,
+      "notes": "Combo peripheral, not separate scanner unless itemized."
+    },
+    {
+      "raw": "Receipt paper rolls for thermal lane printers",
+      "identity": "pos_receipt_paper_supply",
+      "quantity": null,
+      "notes": "Consumable pack; quantity may be roll count."
+    },
+    {
+      "raw": "Store manager signoff after go-live",
+      "identity": "pos_store_manager_signoff",
+      "quantity": 1,
+      "notes": "Acceptance signoff."
+    },
+    {
+      "raw": "Pin pad RMA swap for lane 4",
+      "identity": "pos_rma_swap",
+      "quantity": 1,
+      "notes": "Replacement service for payment device."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "Lane, register, terminal, and payment device are often used interchangeably by store teams.",
+      "why_it_breaks_resolution": "One checkout lane may contain multiple physical devices with different quantities and certificates.",
+      "symptoms_in_artifacts": "Terminal count conflicts with PIN pad, cash drawer, and scanner counts.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "lane 4 terminal",
+        "register replacement",
+        "PIN pad at lane",
+        "checkout device",
+        "cash drawer per lane",
+        "PED serial",
+        "terminal stand"
+      ]
+    },
+    {
+      "weak_point": "Gateway means payment processor service, not network or IoT gateway.",
+      "why_it_breaks_resolution": "Retail cutovers include network dependencies and payment gateway setup in the same runbook.",
+      "symptoms_in_artifacts": "Payment config merges with WAN gateway address or IoT gateway.",
+      "mitigation": "ontology",
+      "example_phrases": [
+        "payment gateway",
+        "default gateway",
+        "merchant gateway",
+        "IoT gateway",
+        "processor host",
+        "gateway IP",
+        "acquirer config"
+      ]
+    },
+    {
+      "weak_point": "Payment certificates, key injection, and compatibility matrices have distinct authority.",
+      "why_it_breaks_resolution": "All may be called certs but govern different risks.",
+      "symptoms_in_artifacts": "Compatibility certificate is treated as key injection proof.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "key injection cert",
+        "compatibility matrix",
+        "certified config",
+        "P2PE cert",
+        "approved device list",
+        "processor certification",
+        "PCI evidence"
+      ]
+    },
+    {
+      "weak_point": "Store ops constraints look like deployment scope.",
+      "why_it_breaks_resolution": "Store closed, freeze windows, escort, and blackout dates appear in SOW rows.",
+      "symptoms_in_artifacts": "Cutover windows are counted as visits or materials.",
+      "mitigation": "parser",
+      "example_phrases": [
+        "store closed",
+        "after hours only",
+        "freeze window",
+        "holiday blackout",
+        "cash office escort",
+        "overnight cutover",
+        "manager approval"
+      ]
+    },
+    {
+      "weak_point": "Scanner terms collide with cameras and ITAD asset scanning.",
+      "why_it_breaks_resolution": "Barcode imagers contain camera-like hardware and scan language appears in inventory workflows.",
+      "symptoms_in_artifacts": "Security cameras or ITAD scans become POS scanner counts.",
+      "mitigation": "entity_resolver",
+      "example_phrases": [
+        "2D imager",
+        "barcode scanner",
+        "camera scanner",
+        "asset scan",
+        "CCTV camera",
+        "MICR reader",
+        "scan gun"
+      ]
+    }
+  ]
+}

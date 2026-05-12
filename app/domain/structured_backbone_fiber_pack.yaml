@@ -1,0 +1,56 @@
+pack_id: structured_backbone_fiber
+name: Structured Backbone Fiber Pack
+version: "1.0.0"
+service_lines:
+  - structured_backbone
+  - fiber
+reference_ontology_path: ontology/structured_backbone_fiber_ontology.yaml
+entity_types:
+  - name: site
+    aliases: [site, location, mdf, idf, demarc]
+    examples: ["MDF-01", "Main telecom room"]
+  - name: device
+    aliases: [fiber, patch panel, trunk, lc]
+    examples: ["OM4 trunk", "LC panel"]
+device_aliases:
+  fiber_trunk:
+    - fiber trunk
+    - backbone trunk
+    - OS2 trunk
+    - OM4 trunk
+    - strand assembly
+  fiber_patch_panel:
+    - fiber patch panel
+    - fiber panel
+    - LIU
+    - fiber enclosure
+site_alias_patterns:
+  - "telecom room"
+  - "mdf"
+  - "main distribution"
+action_aliases:
+  fusion_splice: ["fusion splice", "splice loss"]
+  otdr_test: ["otdr", "insertion loss", "loss budget"]
+constraint_patterns:
+  access:
+    - escort required
+    - lift required
+    - after hours
+exclusion_patterns:
+  - out of scope
+  - not included
+customer_instruction_patterns:
+  - please add
+  - please confirm
+quantity_units:
+  count: [ea, strands, links, each]
+artifact_role_patterns:
+  quote: ["fiber quote", "cabling bom"]
+  test_export: ["otdr", "loss test", "test results"]
+risk_defaults:
+  fiber_trunk_unit_exposure: 1200
+  fiber_patch_panel_unit_exposure: 900
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  quantity_conflict: ["strand count", "fiber count mismatch"]

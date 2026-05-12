@@ -1,0 +1,51 @@
+pack_id: endpoint_imac
+name: Endpoint Rollout and IMAC Pack
+version: "1.0.0"
+service_lines:
+  - endpoint
+  - imac
+reference_ontology_path: ontology/endpoint_imac_ontology.yaml
+entity_types:
+  - name: device
+    aliases: [laptop, desktop, dock, monitor]
+    examples: ["business laptop", "dual monitor kit"]
+device_aliases:
+  laptop:
+    - laptop
+    - notebook
+    - mobile workstation
+  desktop:
+    - desktop
+    - tower
+    - mini pc
+  docking_station:
+    - dock
+    - docking station
+    - port replicator
+site_alias_patterns:
+  - "helpdesk"
+  - "deployment lab"
+action_aliases:
+  image_deploy: ["image", "reimage", "autopilot"]
+  asset_tag: ["asset tag", "tag device"]
+constraint_patterns:
+  access:
+    - user availability
+    - desk visit window
+exclusion_patterns:
+  - not in imac scope
+customer_instruction_patterns:
+  - please schedule
+  - user refused
+quantity_units:
+  count: [units, seats, each]
+artifact_role_patterns:
+  quote: ["endpoint quote", "hardware refresh"]
+risk_defaults:
+  laptop_unit_exposure: 1500
+  desktop_unit_exposure: 1200
+  docking_station_unit_exposure: 180
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  quantity_conflict: ["device count mismatch"]

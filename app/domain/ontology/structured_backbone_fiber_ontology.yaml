@@ -1,0 +1,2797 @@
+{
+  "ontology_id": "structured_backbone_fiber_ontology",
+  "version": "1.0.0-generated",
+  "description": "Identity ontology for fiber backbone and structured fiber cabling evidence, including OS/OM media types, LC/SC/MPO connectivity, fiber panels, demarc extensions, OTDR and insertion-loss test artifacts, and loss-budget resolution distinct from copper low-voltage cabling.",
+  "identity_clusters": {
+    "fiber_singlemode_os2_trunk": {
+      "canonical_key": "fiber_singlemode_os2_trunk",
+      "display_name": "Fiber Singlemode OS2 Trunk",
+      "item_kind": "cable",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_trunk_assembly_each",
+      "synonyms": [
+        "fiber singlemode os2 trunk",
+        "fiber_singlemode_os2_trunk",
+        "fiber singlemode os2 trunk sku",
+        "fiber singlemode os2 trunk replacement",
+        "fiber singlemode os2 trunk refresh",
+        "fiber singlemode os2 trunk bom line",
+        "OS2 trunk",
+        "single mode trunk",
+        "singlemode fiber",
+        "SMF OS2",
+        "9/125 trunk",
+        "yellow fiber backbone",
+        "single-mode"
+      ],
+      "required_any_tokens": [
+        [
+          "os2",
+          "trunk"
+        ],
+        [
+          "singlemode",
+          "fiber",
+          "trunk"
+        ],
+        [
+          "single",
+          "mode",
+          "fiber"
+        ],
+        [
+          "9/125",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "om3",
+        "om4",
+        "multimode"
+      ]
+    },
+    "fiber_singlemode_os1_trunk": {
+      "canonical_key": "fiber_singlemode_os1_trunk",
+      "display_name": "Fiber Singlemode OS1 Trunk",
+      "item_kind": "cable",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_trunk_assembly_each",
+      "synonyms": [
+        "fiber singlemode os1 trunk",
+        "fiber_singlemode_os1_trunk",
+        "fiber singlemode os1 trunk sku",
+        "fiber singlemode os1 trunk replacement",
+        "fiber singlemode os1 trunk refresh",
+        "fiber singlemode os1 trunk bom line",
+        "OS1 trunk",
+        "indoor singlemode",
+        "OS1 backbone",
+        "singlemode riser",
+        "9 micron OS1"
+      ],
+      "required_any_tokens": [
+        [
+          "os1",
+          "trunk"
+        ],
+        [
+          "os1",
+          "fiber"
+        ],
+        [
+          "singlemode",
+          "os1"
+        ],
+        [
+          "single",
+          "mode",
+          "riser"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "os2",
+        "om3",
+        "om4",
+        "multimode"
+      ]
+    },
+    "fiber_multimode_om3_trunk": {
+      "canonical_key": "fiber_multimode_om3_trunk",
+      "display_name": "Fiber Multimode OM3 Trunk",
+      "item_kind": "cable",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_trunk_assembly_each",
+      "synonyms": [
+        "fiber multimode om3 trunk",
+        "fiber_multimode_om3_trunk",
+        "fiber multimode om3 trunk sku",
+        "fiber multimode om3 trunk replacement",
+        "fiber multimode om3 trunk refresh",
+        "fiber multimode om3 trunk bom line",
+        "OM3 trunk",
+        "aqua fiber",
+        "multimode 10g",
+        "MMF OM3",
+        "50 micron om3",
+        "laser optimized om3"
+      ],
+      "required_any_tokens": [
+        [
+          "om3",
+          "trunk"
+        ],
+        [
+          "om3",
+          "fiber"
+        ],
+        [
+          "multimode",
+          "om3"
+        ],
+        [
+          "aqua",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "os2",
+        "os1",
+        "singlemode"
+      ]
+    },
+    "fiber_multimode_om4_trunk": {
+      "canonical_key": "fiber_multimode_om4_trunk",
+      "display_name": "Fiber Multimode OM4 Trunk",
+      "item_kind": "cable",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_trunk_assembly_each",
+      "synonyms": [
+        "fiber multimode om4 trunk",
+        "fiber_multimode_om4_trunk",
+        "fiber multimode om4 trunk sku",
+        "fiber multimode om4 trunk replacement",
+        "fiber multimode om4 trunk refresh",
+        "fiber multimode om4 trunk bom line",
+        "OM4 trunk",
+        "erika violet fiber",
+        "multimode om4",
+        "MMF OM4",
+        "50 micron om4",
+        "aqua/violet fiber"
+      ],
+      "required_any_tokens": [
+        [
+          "om4",
+          "trunk"
+        ],
+        [
+          "om4",
+          "fiber"
+        ],
+        [
+          "multimode",
+          "om4"
+        ],
+        [
+          "violet",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "os2",
+        "os1",
+        "singlemode"
+      ]
+    },
+    "fiber_lc_duplex_connector": {
+      "canonical_key": "fiber_lc_duplex_connector",
+      "display_name": "Fiber LC Duplex Connector",
+      "item_kind": "connector",
+      "material_family": "fiber_connectivity",
+      "comparison_group": "fiber_connector_each",
+      "synonyms": [
+        "fiber lc duplex connector",
+        "fiber_lc_duplex_connector",
+        "fiber lc duplex connector sku",
+        "fiber lc duplex connector replacement",
+        "fiber lc duplex connector refresh",
+        "fiber lc duplex connector bom line",
+        "LC duplex",
+        "LC connector",
+        "little connector",
+        "duplex LC",
+        "LC end",
+        "LC UPC"
+      ],
+      "required_any_tokens": [
+        [
+          "lc",
+          "duplex"
+        ],
+        [
+          "lc",
+          "connector"
+        ],
+        [
+          "duplex",
+          "lc"
+        ],
+        [
+          "lc",
+          "upc"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "sc connector",
+        "mpo",
+        "light controller"
+      ]
+    },
+    "fiber_sc_duplex_connector": {
+      "canonical_key": "fiber_sc_duplex_connector",
+      "display_name": "Fiber SC Duplex Connector",
+      "item_kind": "connector",
+      "material_family": "fiber_connectivity",
+      "comparison_group": "fiber_connector_each",
+      "synonyms": [
+        "fiber sc duplex connector",
+        "fiber_sc_duplex_connector",
+        "fiber sc duplex connector sku",
+        "fiber sc duplex connector replacement",
+        "fiber sc duplex connector refresh",
+        "fiber sc duplex connector bom line",
+        "SC duplex",
+        "SC connector",
+        "subscriber connector",
+        "duplex SC",
+        "SC UPC",
+        "square connector"
+      ],
+      "required_any_tokens": [
+        [
+          "sc",
+          "duplex"
+        ],
+        [
+          "sc",
+          "connector"
+        ],
+        [
+          "duplex",
+          "sc"
+        ],
+        [
+          "sc",
+          "upc"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "lc connector",
+        "mpo",
+        "security camera",
+        "shopping cart"
+      ]
+    },
+    "fiber_mpo_mtp_connector": {
+      "canonical_key": "fiber_mpo_mtp_connector",
+      "display_name": "Fiber MPO/MTP Connector",
+      "item_kind": "connector",
+      "material_family": "fiber_connectivity",
+      "comparison_group": "fiber_connector_each",
+      "synonyms": [
+        "fiber mpo/mtp connector",
+        "fiber mpo mtp connector",
+        "fiber_mpo_mtp_connector",
+        "fiber mpo/mtp connector sku",
+        "fiber mpo/mtp connector replacement",
+        "fiber mpo/mtp connector refresh",
+        "fiber mpo/mtp connector bom line",
+        "MPO",
+        "MTP",
+        "multi-fiber push-on",
+        "12 fiber MPO",
+        "24 fiber MTP",
+        "mpo cassette"
+      ],
+      "required_any_tokens": [
+        [
+          "mpo"
+        ],
+        [
+          "mtp"
+        ],
+        [
+          "multi-fiber",
+          "push-on"
+        ],
+        [
+          "12",
+          "fiber",
+          "mpo"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "lc",
+        "sc",
+        "pos terminal"
+      ]
+    },
+    "fiber_patch_panel": {
+      "canonical_key": "fiber_patch_panel",
+      "display_name": "Fiber Patch Panel",
+      "item_kind": "termination",
+      "material_family": "fiber_termination",
+      "comparison_group": "fiber_panel_each",
+      "synonyms": [
+        "fiber patch panel",
+        "fiber_patch_panel",
+        "fiber patch panel sku",
+        "fiber patch panel replacement",
+        "fiber patch panel refresh",
+        "fiber patch panel bom line",
+        "fiber panel",
+        "fiber patch pnl",
+        "fiber termination panel",
+        "fiber LIU",
+        "optical distribution panel",
+        "ODF"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "patch",
+          "panel"
+        ],
+        [
+          "fiber",
+          "termination",
+          "panel"
+        ],
+        [
+          "odf"
+        ],
+        [
+          "optical",
+          "distribution",
+          "panel"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "copper patch panel",
+        "antenna panel",
+        "pos panel"
+      ]
+    },
+    "fiber_adapter_panel": {
+      "canonical_key": "fiber_adapter_panel",
+      "display_name": "Fiber Adapter Panel",
+      "item_kind": "termination",
+      "material_family": "fiber_termination",
+      "comparison_group": "fiber_adapter_panel_each",
+      "synonyms": [
+        "fiber adapter panel",
+        "fiber_adapter_panel",
+        "fiber adapter panel sku",
+        "fiber adapter panel replacement",
+        "fiber adapter panel refresh",
+        "fiber adapter panel bom line",
+        "adapter plate",
+        "coupler panel",
+        "LC adapter panel",
+        "SC adapter plate",
+        "bulkhead adapter",
+        "fiber adapter"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "adapter",
+          "panel"
+        ],
+        [
+          "adapter",
+          "plate",
+          "fiber"
+        ],
+        [
+          "lc",
+          "adapter",
+          "panel"
+        ],
+        [
+          "sc",
+          "adapter",
+          "plate"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "wifi panel antenna",
+        "electrical faceplate",
+        "pin pad panel"
+      ]
+    },
+    "fiber_enclosure_shelf": {
+      "canonical_key": "fiber_enclosure_shelf",
+      "display_name": "Fiber Enclosure Shelf",
+      "item_kind": "termination",
+      "material_family": "fiber_termination",
+      "comparison_group": "fiber_enclosure_each",
+      "synonyms": [
+        "fiber enclosure shelf",
+        "fiber_enclosure_shelf",
+        "fiber enclosure shelf sku",
+        "fiber enclosure shelf replacement",
+        "fiber enclosure shelf refresh",
+        "fiber enclosure shelf bom line",
+        "fiber shelf",
+        "LIU shelf",
+        "rack mount fiber enclosure",
+        "fiber housing",
+        "patch enclosure",
+        "fiber drawer"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "shelf"
+        ],
+        [
+          "rack",
+          "mount",
+          "fiber",
+          "enclosure"
+        ],
+        [
+          "liu",
+          "shelf"
+        ],
+        [
+          "fiber",
+          "drawer"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "server shelf",
+        "retail shelf"
+      ]
+    },
+    "fiber_splice_tray": {
+      "canonical_key": "fiber_splice_tray",
+      "display_name": "Fiber Splice Tray",
+      "item_kind": "termination",
+      "material_family": "fiber_splicing",
+      "comparison_group": "fiber_splice_tray_each",
+      "synonyms": [
+        "fiber splice tray",
+        "fiber_splice_tray",
+        "fiber splice tray sku",
+        "fiber splice tray replacement",
+        "fiber splice tray refresh",
+        "fiber splice tray bom line",
+        "splice tray",
+        "fiber tray",
+        "splice cassette",
+        "fusion tray",
+        "fiber splice holder",
+        "splice organizer"
+      ],
+      "required_any_tokens": [
+        [
+          "splice",
+          "tray"
+        ],
+        [
+          "fiber",
+          "splice",
+          "tray"
+        ],
+        [
+          "splice",
+          "cassette"
+        ],
+        [
+          "fusion",
+          "tray"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "ladder tray",
+        "cable tray",
+        "food tray",
+        "cash tray"
+      ]
+    },
+    "fiber_pigtail": {
+      "canonical_key": "fiber_pigtail",
+      "display_name": "Fiber Pigtail",
+      "item_kind": "cable",
+      "material_family": "fiber_connectivity",
+      "comparison_group": "fiber_pigtail_each",
+      "synonyms": [
+        "fiber pigtail",
+        "fiber_pigtail",
+        "fiber pigtail sku",
+        "fiber pigtail replacement",
+        "fiber pigtail refresh",
+        "fiber pigtail bom line",
+        "LC pigtail",
+        "SC pigtail",
+        "splice pigtail",
+        "900um pigtail",
+        "pigtail lead"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "pigtail"
+        ],
+        [
+          "lc",
+          "pigtail"
+        ],
+        [
+          "sc",
+          "pigtail"
+        ],
+        [
+          "splice",
+          "pigtail"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "power pigtail",
+        "electrical pigtail",
+        "camera lead"
+      ]
+    },
+    "fiber_lc_lc_patch_cord": {
+      "canonical_key": "fiber_lc_lc_patch_cord",
+      "display_name": "Fiber LC-LC Patch Cord",
+      "item_kind": "cable",
+      "material_family": "fiber_patch",
+      "comparison_group": "fiber_patch_cord_each",
+      "synonyms": [
+        "fiber lc-lc patch cord",
+        "fiber lc lc patch cord",
+        "fiber_lc_lc_patch_cord",
+        "fiber lc-lc patch cord sku",
+        "fiber lc-lc patch cord replacement",
+        "fiber lc-lc patch cord refresh",
+        "fiber lc-lc patch cord bom line",
+        "LC LC patch",
+        "LC to LC fiber jumper",
+        "duplex LC cord",
+        "LC-LC MM jumper",
+        "LC-LC SM jumper"
+      ],
+      "required_any_tokens": [
+        [
+          "lc",
+          "lc",
+          "patch"
+        ],
+        [
+          "lc",
+          "to",
+          "lc",
+          "fiber"
+        ],
+        [
+          "duplex",
+          "lc",
+          "cord"
+        ],
+        [
+          "lc-lc",
+          "jumper"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "cat6 patch",
+        "ap patch cord",
+        "c13 power cord"
+      ]
+    },
+    "fiber_lc_sc_patch_cord": {
+      "canonical_key": "fiber_lc_sc_patch_cord",
+      "display_name": "Fiber LC-SC Patch Cord",
+      "item_kind": "cable",
+      "material_family": "fiber_patch",
+      "comparison_group": "fiber_patch_cord_each",
+      "synonyms": [
+        "fiber lc-sc patch cord",
+        "fiber lc sc patch cord",
+        "fiber_lc_sc_patch_cord",
+        "fiber lc-sc patch cord sku",
+        "fiber lc-sc patch cord replacement",
+        "fiber lc-sc patch cord refresh",
+        "fiber lc-sc patch cord bom line",
+        "LC SC patch",
+        "LC to SC jumper",
+        "LC-SC fiber",
+        "hybrid fiber patch",
+        "LC/SC cord"
+      ],
+      "required_any_tokens": [
+        [
+          "lc",
+          "sc",
+          "patch"
+        ],
+        [
+          "lc",
+          "to",
+          "sc"
+        ],
+        [
+          "hybrid",
+          "fiber",
+          "patch"
+        ],
+        [
+          "lc/sc",
+          "cord"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "cat6 patch",
+        "usb cable",
+        "pos cable"
+      ]
+    },
+    "fiber_armored_fiber_cable": {
+      "canonical_key": "fiber_armored_fiber_cable",
+      "display_name": "Fiber Armored Cable",
+      "item_kind": "cable",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_cable_run_each",
+      "synonyms": [
+        "fiber armored cable",
+        "fiber_armored_fiber_cable",
+        "fiber armored fiber cable",
+        "fiber armored cable sku",
+        "fiber armored cable replacement",
+        "fiber armored cable refresh",
+        "fiber armored cable bom line",
+        "armored fiber",
+        "interlocking armored fiber",
+        "steel armored fiber",
+        "ruggedized fiber",
+        "armored backbone"
+      ],
+      "required_any_tokens": [
+        [
+          "armored",
+          "fiber"
+        ],
+        [
+          "ruggedized",
+          "fiber"
+        ],
+        [
+          "steel",
+          "armored",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "armored power",
+        "security armor",
+        "cash drawer cable"
+      ]
+    },
+    "fiber_indoor_outdoor_cable": {
+      "canonical_key": "fiber_indoor_outdoor_cable",
+      "display_name": "Fiber Indoor/Outdoor Cable",
+      "item_kind": "cable",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_cable_run_each",
+      "synonyms": [
+        "fiber indoor/outdoor cable",
+        "fiber indoor outdoor cable",
+        "fiber_indoor_outdoor_cable",
+        "fiber indoor/outdoor cable sku",
+        "fiber indoor/outdoor cable replacement",
+        "fiber indoor/outdoor cable refresh",
+        "fiber indoor/outdoor cable bom line",
+        "I/O fiber",
+        "indoor outdoor fiber",
+        "indoor/outdoor cable",
+        "water-blocked fiber",
+        "outside plant indoor rated"
+      ],
+      "required_any_tokens": [
+        [
+          "indoor",
+          "outdoor",
+          "fiber"
+        ],
+        [
+          "indoor/outdoor",
+          "fiber"
+        ],
+        [
+          "water-blocked",
+          "fiber"
+        ],
+        [
+          "i/o",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "outdoor ap",
+        "outdoor camera",
+        "outdoor electrical"
+      ]
+    },
+    "fiber_strand_pair": {
+      "canonical_key": "fiber_strand_pair",
+      "display_name": "Fiber Strand Pair",
+      "item_kind": "fiber_strand",
+      "material_family": "fiber_capacity",
+      "comparison_group": "fiber_strand_pair_each",
+      "synonyms": [
+        "fiber strand pair",
+        "fiber_strand_pair",
+        "fiber strand pair sku",
+        "fiber strand pair replacement",
+        "fiber strand pair refresh",
+        "fiber strand pair bom line",
+        "strand pair",
+        "fiber pair",
+        "2 strands",
+        "strand count pair",
+        "tx/rx pair",
+        "duplex pair"
+      ],
+      "required_any_tokens": [
+        [
+          "strand",
+          "pair"
+        ],
+        [
+          "fiber",
+          "pair"
+        ],
+        [
+          "2",
+          "strands"
+        ],
+        [
+          "tx",
+          "rx",
+          "pair"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "copper pair",
+        "twisted pair copper",
+        "shoe pair"
+      ]
+    },
+    "fiber_backbone_run": {
+      "canonical_key": "fiber_backbone_run",
+      "display_name": "Fiber Backbone Run",
+      "item_kind": "cable_run",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_cable_run_each",
+      "synonyms": [
+        "fiber backbone run",
+        "fiber_backbone_run",
+        "fiber backbone run sku",
+        "fiber backbone run replacement",
+        "fiber backbone run refresh",
+        "fiber backbone run bom line",
+        "fiber backbone",
+        "backbone run",
+        "riser fiber run",
+        "MDF to IDF fiber",
+        "vertical fiber",
+        "backbone link"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "backbone"
+        ],
+        [
+          "backbone",
+          "run"
+        ],
+        [
+          "mdf",
+          "idf",
+          "fiber"
+        ],
+        [
+          "riser",
+          "fiber",
+          "run"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "copper backbone",
+        "wan circuit",
+        "wireless backhaul"
+      ]
+    },
+    "fiber_riser_pathway": {
+      "canonical_key": "fiber_riser_pathway",
+      "display_name": "Fiber Riser Pathway",
+      "item_kind": "pathway",
+      "material_family": "fiber_pathway",
+      "comparison_group": "fiber_pathway_each",
+      "synonyms": [
+        "fiber riser pathway",
+        "fiber_riser_pathway",
+        "fiber riser pathway sku",
+        "fiber riser pathway replacement",
+        "fiber riser pathway refresh",
+        "fiber riser pathway bom line",
+        "riser path",
+        "riser sleeve",
+        "floor penetration",
+        "vertical pathway",
+        "riser conduit",
+        "core sleeve"
+      ],
+      "required_any_tokens": [
+        [
+          "riser",
+          "path"
+        ],
+        [
+          "riser",
+          "sleeve"
+        ],
+        [
+          "vertical",
+          "pathway"
+        ],
+        [
+          "floor",
+          "penetration"
+        ]
+      ],
+      "negative_tokens": [
+        "copper riser only",
+        "building elevator",
+        "retail riser stand",
+        "server riser card"
+      ]
+    },
+    "fiber_innerduct_conduit": {
+      "canonical_key": "fiber_innerduct_conduit",
+      "display_name": "Fiber Innerduct Conduit",
+      "item_kind": "pathway",
+      "material_family": "fiber_pathway",
+      "comparison_group": "fiber_pathway_each",
+      "synonyms": [
+        "fiber innerduct conduit",
+        "fiber_innerduct_conduit",
+        "fiber innerduct conduit sku",
+        "fiber innerduct conduit replacement",
+        "fiber innerduct conduit refresh",
+        "fiber innerduct conduit bom line",
+        "innerduct",
+        "microduct",
+        "duct bank",
+        "flex duct fiber",
+        "fiber conduit",
+        "orange duct"
+      ],
+      "required_any_tokens": [
+        [
+          "innerduct"
+        ],
+        [
+          "microduct"
+        ],
+        [
+          "fiber",
+          "conduit"
+        ],
+        [
+          "duct",
+          "bank",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "hvac duct",
+        "air duct",
+        "electrical conduit only",
+        "cash tube"
+      ]
+    },
+    "fiber_pull_box": {
+      "canonical_key": "fiber_pull_box",
+      "display_name": "Fiber Pull Box",
+      "item_kind": "pathway",
+      "material_family": "fiber_pathway",
+      "comparison_group": "fiber_pathway_each",
+      "synonyms": [
+        "fiber pull box",
+        "fiber_pull_box",
+        "fiber pull box sku",
+        "fiber pull box replacement",
+        "fiber pull box refresh",
+        "fiber pull box bom line",
+        "pull box",
+        "junction box fiber",
+        "splice box",
+        "handhole",
+        "vault",
+        "fiber pull point"
+      ],
+      "required_any_tokens": [
+        [
+          "pull",
+          "box",
+          "fiber"
+        ],
+        [
+          "fiber",
+          "pull",
+          "box"
+        ],
+        [
+          "junction",
+          "box",
+          "fiber"
+        ],
+        [
+          "handhole",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "electrical pull box only",
+        "cash box",
+        "retail box",
+        "software pull request"
+      ]
+    },
+    "fiber_otdr_test": {
+      "canonical_key": "fiber_otdr_test",
+      "display_name": "Fiber OTDR Test",
+      "item_kind": "field_test_result",
+      "material_family": "fiber_testing",
+      "comparison_group": "fiber_test_each",
+      "synonyms": [
+        "fiber otdr test",
+        "fiber_otdr_test",
+        "fiber otdr test sku",
+        "fiber otdr test replacement",
+        "fiber otdr test refresh",
+        "fiber otdr test bom line",
+        "OTDR",
+        "otdr trace",
+        "optical time domain",
+        "trace test",
+        "fiber trace",
+        "reflectometer"
+      ],
+      "required_any_tokens": [
+        [
+          "otdr"
+        ],
+        [
+          "otdr",
+          "trace"
+        ],
+        [
+          "optical",
+          "time",
+          "domain"
+        ],
+        [
+          "fiber",
+          "trace"
+        ]
+      ],
+      "negative_tokens": [
+        "speed test",
+        "wifi survey",
+        "camera test",
+        "endpoint test"
+      ]
+    },
+    "fiber_insertion_loss_test": {
+      "canonical_key": "fiber_insertion_loss_test",
+      "display_name": "Fiber Insertion Loss Test",
+      "item_kind": "field_test_result",
+      "material_family": "fiber_testing",
+      "comparison_group": "fiber_test_each",
+      "synonyms": [
+        "fiber insertion loss test",
+        "fiber_insertion_loss_test",
+        "fiber insertion loss test sku",
+        "fiber insertion loss test replacement",
+        "fiber insertion loss test refresh",
+        "fiber insertion loss test bom line",
+        "loss test",
+        "insertion loss",
+        "OLTS",
+        "light source meter",
+        "power meter test",
+        "db loss"
+      ],
+      "required_any_tokens": [
+        [
+          "insertion",
+          "loss"
+        ],
+        [
+          "olts"
+        ],
+        [
+          "power",
+          "meter",
+          "test"
+        ],
+        [
+          "db",
+          "loss",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "wireless noise db",
+        "audio db",
+        "financial loss",
+        "packet loss"
+      ]
+    },
+    "fiber_loss_budget": {
+      "canonical_key": "fiber_loss_budget",
+      "display_name": "Fiber Loss Budget",
+      "item_kind": "design_artifact",
+      "material_family": "fiber_testing",
+      "comparison_group": "fiber_design_artifact",
+      "synonyms": [
+        "fiber loss budget",
+        "fiber_loss_budget",
+        "fiber loss budget sku",
+        "fiber loss budget replacement",
+        "fiber loss budget refresh",
+        "fiber loss budget bom line",
+        "loss budget",
+        "optical budget",
+        "link budget",
+        "attenuation budget",
+        "dB budget",
+        "fiber budget"
+      ],
+      "required_any_tokens": [
+        [
+          "loss",
+          "budget"
+        ],
+        [
+          "optical",
+          "budget"
+        ],
+        [
+          "link",
+          "budget",
+          "fiber"
+        ],
+        [
+          "attenuation",
+          "budget"
+        ]
+      ],
+      "negative_tokens": [
+        "project budget",
+        "poe budget",
+        "rf link budget",
+        "money budget"
+      ]
+    },
+    "fiber_certification_report": {
+      "canonical_key": "fiber_certification_report",
+      "display_name": "Fiber Certification Report",
+      "item_kind": "certificate",
+      "material_family": "fiber_testing",
+      "comparison_group": "fiber_certificate_each",
+      "synonyms": [
+        "fiber certification report",
+        "fiber_certification_report",
+        "fiber certification report sku",
+        "fiber certification report replacement",
+        "fiber certification report refresh",
+        "fiber certification report bom line",
+        "fiber cert",
+        "certification report",
+        "test report fiber",
+        "fiber acceptance cert",
+        "pass/fail cert",
+        "as-built test results"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "cert"
+        ],
+        [
+          "certification",
+          "report",
+          "fiber"
+        ],
+        [
+          "test",
+          "report",
+          "fiber"
+        ],
+        [
+          "fiber",
+          "acceptance"
+        ]
+      ],
+      "negative_tokens": [
+        "data destruction certificate",
+        "payment cert",
+        "warranty certificate"
+      ]
+    },
+    "fiber_fusion_splice_task": {
+      "canonical_key": "fiber_fusion_splice_task",
+      "display_name": "Fiber Fusion Splice Task",
+      "item_kind": "service_task",
+      "material_family": "fiber_splicing",
+      "comparison_group": "fiber_splice_task_each",
+      "synonyms": [
+        "fiber fusion splice task",
+        "fiber_fusion_splice_task",
+        "fiber fusion splice task sku",
+        "fiber fusion splice task replacement",
+        "fiber fusion splice task refresh",
+        "fiber fusion splice task bom line",
+        "fusion splice",
+        "splice fiber",
+        "fusion splicing",
+        "splicer task",
+        "splice enclosure work",
+        "splice labor"
+      ],
+      "required_any_tokens": [
+        [
+          "fusion",
+          "splice"
+        ],
+        [
+          "splice",
+          "fiber"
+        ],
+        [
+          "fusion",
+          "splicing"
+        ],
+        [
+          "splice",
+          "labor"
+        ]
+      ],
+      "negative_tokens": [
+        "mechanical splice",
+        "wire nut",
+        "software merge",
+        "video splice"
+      ]
+    },
+    "fiber_mechanical_splice_task": {
+      "canonical_key": "fiber_mechanical_splice_task",
+      "display_name": "Fiber Mechanical Splice Task",
+      "item_kind": "service_task",
+      "material_family": "fiber_splicing",
+      "comparison_group": "fiber_splice_task_each",
+      "synonyms": [
+        "fiber mechanical splice task",
+        "fiber_mechanical_splice_task",
+        "fiber mechanical splice task sku",
+        "fiber mechanical splice task replacement",
+        "fiber mechanical splice task refresh",
+        "fiber mechanical splice task bom line",
+        "mechanical splice",
+        "quick splice",
+        "field splice connector",
+        "no-polish connector",
+        "mechanical connectorization"
+      ],
+      "required_any_tokens": [
+        [
+          "mechanical",
+          "splice"
+        ],
+        [
+          "quick",
+          "splice"
+        ],
+        [
+          "field",
+          "splice",
+          "connector"
+        ],
+        [
+          "no-polish",
+          "connector"
+        ]
+      ],
+      "negative_tokens": [
+        "fusion splice",
+        "electrical splice",
+        "software splice"
+      ]
+    },
+    "fiber_labeling_task": {
+      "canonical_key": "fiber_labeling_task",
+      "display_name": "Fiber Labeling Task",
+      "item_kind": "service_task",
+      "material_family": "fiber_administration",
+      "comparison_group": "fiber_service_task_each",
+      "synonyms": [
+        "fiber labeling task",
+        "fiber_labeling_task",
+        "fiber labeling task sku",
+        "fiber labeling task replacement",
+        "fiber labeling task refresh",
+        "fiber labeling task bom line",
+        "fiber labels",
+        "label strands",
+        "label fiber panel",
+        "port labeling fiber",
+        "as-built labels",
+        "cable ID fiber"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "labels"
+        ],
+        [
+          "label",
+          "strands"
+        ],
+        [
+          "label",
+          "fiber",
+          "panel"
+        ],
+        [
+          "cable",
+          "id",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "shipping label",
+        "endpoint asset tag",
+        "ap label",
+        "price label"
+      ]
+    },
+    "fiber_demarc_extension": {
+      "canonical_key": "fiber_demarc_extension",
+      "display_name": "Fiber Demarc Extension",
+      "item_kind": "service_task",
+      "material_family": "carrier_handoff",
+      "comparison_group": "fiber_handoff_each",
+      "synonyms": [
+        "fiber demarc extension",
+        "fiber_demarc_extension",
+        "fiber demarc extension sku",
+        "fiber demarc extension replacement",
+        "fiber demarc extension refresh",
+        "fiber demarc extension bom line",
+        "demarc extension",
+        "fiber demarc",
+        "carrier extension",
+        "telco fiber handoff",
+        "handoff extension",
+        "last foot fiber"
+      ],
+      "required_any_tokens": [
+        [
+          "demarc",
+          "extension"
+        ],
+        [
+          "fiber",
+          "demarc"
+        ],
+        [
+          "carrier",
+          "extension",
+          "fiber"
+        ],
+        [
+          "telco",
+          "fiber",
+          "handoff"
+        ]
+      ],
+      "negative_tokens": [
+        "copper demarc only",
+        "wan router",
+        "payment gateway",
+        "endpoint handoff"
+      ]
+    },
+    "fiber_mdf_idf_link": {
+      "canonical_key": "fiber_mdf_idf_link",
+      "display_name": "Fiber MDF-IDF Link",
+      "item_kind": "cable_run",
+      "material_family": "fiber_backbone",
+      "comparison_group": "fiber_link_each",
+      "synonyms": [
+        "fiber mdf-idf link",
+        "fiber mdf idf link",
+        "fiber_mdf_idf_link",
+        "fiber mdf-idf link sku",
+        "fiber mdf-idf link replacement",
+        "fiber mdf-idf link refresh",
+        "fiber mdf-idf link bom line",
+        "MDF IDF fiber",
+        "MDF-to-IDF",
+        "closet backbone",
+        "idf uplink fiber",
+        "fiber closet link",
+        "intercloset fiber"
+      ],
+      "required_any_tokens": [
+        [
+          "mdf",
+          "idf",
+          "fiber"
+        ],
+        [
+          "mdf-to-idf"
+        ],
+        [
+          "closet",
+          "backbone",
+          "fiber"
+        ],
+        [
+          "idf",
+          "uplink",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "copper uplink",
+        "wireless mesh",
+        "wan circuit"
+      ]
+    },
+    "fiber_slack_loop": {
+      "canonical_key": "fiber_slack_loop",
+      "display_name": "Fiber Slack Loop",
+      "item_kind": "installation_feature",
+      "material_family": "fiber_installation",
+      "comparison_group": "fiber_slack_loop_each",
+      "synonyms": [
+        "fiber slack loop",
+        "fiber_slack_loop",
+        "fiber slack loop sku",
+        "fiber slack loop replacement",
+        "fiber slack loop refresh",
+        "fiber slack loop bom line",
+        "slack loop",
+        "service loop fiber",
+        "fiber slack",
+        "coil slack",
+        "maintenance loop",
+        "extra slack"
+      ],
+      "required_any_tokens": [
+        [
+          "slack",
+          "loop"
+        ],
+        [
+          "service",
+          "loop",
+          "fiber"
+        ],
+        [
+          "fiber",
+          "slack"
+        ],
+        [
+          "maintenance",
+          "loop",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "slack channel",
+        "software loop",
+        "power cord coil"
+      ]
+    },
+    "fiber_service_provider_handoff": {
+      "canonical_key": "fiber_service_provider_handoff",
+      "display_name": "Fiber Service Provider Handoff",
+      "item_kind": "handoff",
+      "material_family": "carrier_handoff",
+      "comparison_group": "fiber_handoff_each",
+      "synonyms": [
+        "fiber service provider handoff",
+        "fiber_service_provider_handoff",
+        "fiber service provider handoff sku",
+        "fiber service provider handoff replacement",
+        "fiber service provider handoff refresh",
+        "fiber service provider handoff bom line",
+        "SP handoff",
+        "carrier handoff",
+        "provider NID fiber",
+        "telco handoff",
+        "carrier cross connect",
+        "handoff port"
+      ],
+      "required_any_tokens": [
+        [
+          "service",
+          "provider",
+          "handoff"
+        ],
+        [
+          "carrier",
+          "handoff"
+        ],
+        [
+          "telco",
+          "handoff"
+        ],
+        [
+          "handoff",
+          "port",
+          "fiber"
+        ]
+      ],
+      "negative_tokens": [
+        "pos handoff",
+        "user handoff",
+        "endpoint handoff",
+        "payment handoff"
+      ]
+    },
+    "fiber_media_converter": {
+      "canonical_key": "fiber_media_converter",
+      "display_name": "Fiber Media Converter",
+      "item_kind": "device",
+      "material_family": "fiber_active_device",
+      "comparison_group": "fiber_active_device_each",
+      "synonyms": [
+        "fiber media converter",
+        "fiber_media_converter",
+        "fiber media converter sku",
+        "fiber media converter replacement",
+        "fiber media converter refresh",
+        "fiber media converter bom line",
+        "media converter",
+        "fiber ethernet converter",
+        "copper fiber converter",
+        "fiber transceiver box",
+        "media convertor"
+      ],
+      "required_any_tokens": [
+        [
+          "media",
+          "converter"
+        ],
+        [
+          "fiber",
+          "ethernet",
+          "converter"
+        ],
+        [
+          "copper",
+          "fiber",
+          "converter"
+        ],
+        [
+          "media",
+          "convertor"
+        ]
+      ],
+      "negative_tokens": [
+        "video converter",
+        "currency converter",
+        "software converter",
+        "pos converter"
+      ]
+    },
+    "fiber_sfp_optic_singlemode": {
+      "canonical_key": "fiber_sfp_optic_singlemode",
+      "display_name": "Fiber SFP Optic Singlemode",
+      "item_kind": "optic",
+      "material_family": "fiber_transceiver",
+      "comparison_group": "fiber_optic_each",
+      "synonyms": [
+        "fiber sfp optic singlemode",
+        "fiber_sfp_optic_singlemode",
+        "fiber sfp optic singlemode sku",
+        "fiber sfp optic singlemode replacement",
+        "fiber sfp optic singlemode refresh",
+        "fiber sfp optic singlemode bom line",
+        "SM SFP",
+        "singlemode optic",
+        "SFP-LX generic",
+        "long reach optic",
+        "1310nm optic",
+        "single mode transceiver"
+      ],
+      "required_any_tokens": [
+        [
+          "singlemode",
+          "optic"
+        ],
+        [
+          "sm",
+          "sfp"
+        ],
+        [
+          "1310nm",
+          "optic"
+        ],
+        [
+          "single",
+          "mode",
+          "transceiver"
+        ]
+      ],
+      "negative_tokens": [
+        "multimode optic",
+        "copper sfp",
+        "wireless radio",
+        "camera lens"
+      ]
+    },
+    "fiber_sfp_optic_multimode": {
+      "canonical_key": "fiber_sfp_optic_multimode",
+      "display_name": "Fiber SFP Optic Multimode",
+      "item_kind": "optic",
+      "material_family": "fiber_transceiver",
+      "comparison_group": "fiber_optic_each",
+      "synonyms": [
+        "fiber sfp optic multimode",
+        "fiber_sfp_optic_multimode",
+        "fiber sfp optic multimode sku",
+        "fiber sfp optic multimode replacement",
+        "fiber sfp optic multimode refresh",
+        "fiber sfp optic multimode bom line",
+        "MM SFP",
+        "multimode optic",
+        "SFP-SX generic",
+        "850nm optic",
+        "short reach optic",
+        "multimode transceiver"
+      ],
+      "required_any_tokens": [
+        [
+          "multimode",
+          "optic"
+        ],
+        [
+          "mm",
+          "sfp"
+        ],
+        [
+          "850nm",
+          "optic"
+        ],
+        [
+          "multimode",
+          "transceiver"
+        ]
+      ],
+      "negative_tokens": [
+        "singlemode optic",
+        "copper sfp",
+        "wireless radio",
+        "camera lens"
+      ]
+    },
+    "fiber_mpo_breakout_harness": {
+      "canonical_key": "fiber_mpo_breakout_harness",
+      "display_name": "Fiber MPO Breakout Harness",
+      "item_kind": "cable",
+      "material_family": "fiber_harness",
+      "comparison_group": "fiber_harness_each",
+      "synonyms": [
+        "fiber mpo breakout harness",
+        "fiber_mpo_breakout_harness",
+        "fiber mpo breakout harness sku",
+        "fiber mpo breakout harness replacement",
+        "fiber mpo breakout harness refresh",
+        "fiber mpo breakout harness bom line",
+        "MPO breakout",
+        "fanout harness",
+        "hydra cable",
+        "MPO to LC harness",
+        "cassette breakout",
+        "12-fiber fanout"
+      ],
+      "required_any_tokens": [
+        [
+          "mpo",
+          "breakout"
+        ],
+        [
+          "fanout",
+          "harness"
+        ],
+        [
+          "hydra",
+          "cable"
+        ],
+        [
+          "mpo",
+          "to",
+          "lc"
+        ]
+      ],
+      "negative_tokens": [
+        "cat6",
+        "cat5e",
+        "copper",
+        "rj45",
+        "ethernet jack",
+        "speaker wire",
+        "coax",
+        "electrical panel",
+        "wireless ap",
+        "cash drawer",
+        "laptop",
+        "accounts payable",
+        "server cable harness",
+        "automotive harness",
+        "pos harness"
+      ]
+    },
+    "fiber_cleaning_kit": {
+      "canonical_key": "fiber_cleaning_kit",
+      "display_name": "Fiber Cleaning Kit",
+      "item_kind": "tooling",
+      "material_family": "fiber_maintenance",
+      "comparison_group": "fiber_tooling_each",
+      "synonyms": [
+        "fiber cleaning kit",
+        "fiber_cleaning_kit",
+        "fiber cleaning kit sku",
+        "fiber cleaning kit replacement",
+        "fiber cleaning kit refresh",
+        "fiber cleaning kit bom line",
+        "fiber cleaner",
+        "one-click cleaner",
+        "LC cleaner",
+        "SC cleaner",
+        "cleaning cassette",
+        "lint-free wipes"
+      ],
+      "required_any_tokens": [
+        [
+          "fiber",
+          "cleaning"
+        ],
+        [
+          "one-click",
+          "cleaner"
+        ],
+        [
+          "lc",
+          "cleaner"
+        ],
+        [
+          "lint-free",
+          "wipes"
+        ]
+      ],
+      "negative_tokens": [
+        "janitorial cleaning",
+        "screen cleaner",
+        "camera lens cleaner",
+        "data wipe"
+      ]
+    }
+  },
+  "artifact_taxonomy": {
+    "fiber_vendor_quote": {
+      "filename_contains": [
+        "quote",
+        "bom",
+        "bill of materials",
+        "material quote",
+        "pricing",
+        "sku",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "vendor_quote",
+      "typical_atom_types": [
+        "line_item",
+        "quantity",
+        "unit_price",
+        "manufacturer_part"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "final_scope",
+        "site_access_rules"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "fiber_formal_sow": {
+      "filename_contains": [
+        "sow",
+        "statement of work",
+        "scope",
+        "deployment scope",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".docx",
+        ".pdf"
+      ],
+      "authority_class": "formal_sow",
+      "typical_atom_types": [
+        "scope_task",
+        "exclusion",
+        "assumption",
+        "deliverable"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "serial_inventory"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "fiber_approved_site_roster": {
+      "filename_contains": [
+        "site list",
+        "site roster",
+        "approved sites",
+        "locations",
+        "store list",
+        "branch list",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "approved_site_roster",
+      "typical_atom_types": [
+        "site_id",
+        "address",
+        "go_live_wave",
+        "site_contact"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "technical_design"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "fiber_survey_export": {
+      "filename_contains": [
+        "survey",
+        "walkthrough",
+        "walk-thru",
+        "site audit",
+        "heatmap",
+        "as-built",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".pdf"
+      ],
+      "authority_class": "survey_export",
+      "typical_atom_types": [
+        "field_observation",
+        "location_note",
+        "constraint",
+        "existing_condition"
+      ],
+      "beats": [
+        "vendor_quote"
+      ],
+      "cannot_govern": [
+        "approved_quantity_without_scope"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "fiber_field_test_result": {
+      "filename_contains": [
+        "test",
+        "cert",
+        "validation",
+        "acceptance",
+        "results",
+        "post install",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv",
+        ".txt"
+      ],
+      "authority_class": "field_test_result",
+      "typical_atom_types": [
+        "test_measurement",
+        "pass_fail",
+        "port_or_device_id",
+        "technician_note"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "commercial_price"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "fiber_cutover_plan": {
+      "filename_contains": [
+        "cutover",
+        "migration plan",
+        "runbook",
+        "go-live",
+        "change window",
+        "freeze window",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".docx",
+        ".pdf",
+        ".csv"
+      ],
+      "authority_class": "cutover_plan",
+      "typical_atom_types": [
+        "task_sequence",
+        "rollback",
+        "owner",
+        "maintenance_window"
+      ],
+      "beats": [
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "material_quantity"
+      ],
+      "requires_review_for_scope_change": true
+    },
+    "fiber_asset_inventory": {
+      "filename_contains": [
+        "inventory",
+        "asset",
+        "serial",
+        "installed",
+        "as-built",
+        "asset tag",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".xlsx",
+        ".csv",
+        ".json"
+      ],
+      "authority_class": "asset_inventory",
+      "typical_atom_types": [
+        "serial_number",
+        "asset_tag",
+        "installed_location",
+        "model"
+      ],
+      "beats": [
+        "vendor_quote",
+        "meeting_note"
+      ],
+      "cannot_govern": [
+        "pricing"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "fiber_certificate": {
+      "filename_contains": [
+        "certificate",
+        "certification",
+        "attestation",
+        "compliance",
+        "cod",
+        "coc",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".pdf",
+        ".xlsx",
+        ".csv"
+      ],
+      "authority_class": "certificate",
+      "typical_atom_types": [
+        "certificate_id",
+        "pass_fail",
+        "approver",
+        "evidence_date"
+      ],
+      "beats": [
+        "meeting_note",
+        "email_thread"
+      ],
+      "cannot_govern": [
+        "future_scope"
+      ],
+      "requires_review_for_scope_change": false
+    },
+    "fiber_meeting_note": {
+      "filename_contains": [
+        "meeting",
+        "notes",
+        "minutes",
+        "email recap",
+        "transcript",
+        "decision log",
+        "fiber",
+        "optical",
+        "otdr",
+        "lc",
+        "sc",
+        "mpo"
+      ],
+      "extensions": [
+        ".docx",
+        ".txt",
+        ".md",
+        ".eml",
+        ".msg",
+        ".pdf"
+      ],
+      "authority_class": "meeting_note",
+      "typical_atom_types": [
+        "decision",
+        "open_issue",
+        "assumption",
+        "owner"
+      ],
+      "beats": [],
+      "cannot_govern": [
+        "approved_quantity",
+        "commercial_terms"
+      ],
+      "requires_review_for_scope_change": true
+    }
+  },
+  "header_aliases": {
+    "site_id": [
+      "site id",
+      "siteid",
+      "location id",
+      "loc id",
+      "store #",
+      "store number",
+      "branch id",
+      "facility code"
+    ],
+    "site_name": [
+      "site name",
+      "location name",
+      "store name",
+      "branch name",
+      "facility",
+      "campus"
+    ],
+    "address": [
+      "address",
+      "street address",
+      "ship to",
+      "install address",
+      "service address"
+    ],
+    "item_description": [
+      "description",
+      "item description",
+      "line item",
+      "product description",
+      "scope item",
+      "task description"
+    ],
+    "sku": [
+      "sku",
+      "part #",
+      "part number",
+      "mfr part",
+      "manufacturer part",
+      "mpn",
+      "catalog no",
+      "model sku"
+    ],
+    "manufacturer": [
+      "manufacturer",
+      "mfr",
+      "make",
+      "brand",
+      "oem"
+    ],
+    "model": [
+      "model",
+      "model #",
+      "device model",
+      "product model"
+    ],
+    "quantity": [
+      "qty",
+      "quantity",
+      "count",
+      "ea",
+      "each",
+      "units",
+      "number required"
+    ],
+    "unit_price": [
+      "unit price",
+      "price each",
+      "ea price",
+      "unit cost",
+      "rate"
+    ],
+    "extended_price": [
+      "extended price",
+      "ext price",
+      "line total",
+      "subtotal",
+      "extended cost"
+    ],
+    "serial_number": [
+      "serial",
+      "serial #",
+      "s/n",
+      "sn",
+      "device serial",
+      "asset serial"
+    ],
+    "asset_tag": [
+      "asset tag",
+      "asset id",
+      "tag #",
+      "barcode",
+      "inventory tag"
+    ],
+    "location": [
+      "location",
+      "room",
+      "area",
+      "zone",
+      "floor",
+      "rack",
+      "closet",
+      "workstation"
+    ],
+    "install_window": [
+      "install window",
+      "service window",
+      "visit window",
+      "dispatch window",
+      "after hours"
+    ],
+    "cutover_window": [
+      "cutover",
+      "go-live",
+      "migration window",
+      "change window",
+      "freeze window"
+    ],
+    "technician_notes": [
+      "tech notes",
+      "fe notes",
+      "installer notes",
+      "field notes",
+      "smart hands notes"
+    ],
+    "status": [
+      "status",
+      "state",
+      "phase",
+      "disposition",
+      "complete?",
+      "installed?"
+    ],
+    "assumption": [
+      "assumption",
+      "assumed",
+      "tbd",
+      "approx",
+      "pending customer",
+      "verify in field",
+      "per gc"
+    ],
+    "strand_count": [
+      "strand count",
+      "strands",
+      "# strands",
+      "fiber count",
+      "12f",
+      "24f",
+      "pairs"
+    ],
+    "fiber_type": [
+      "fiber type",
+      "os2",
+      "os1",
+      "om3",
+      "om4",
+      "singlemode",
+      "multimode",
+      "smf",
+      "mmf"
+    ],
+    "connector_type": [
+      "connector",
+      "end type",
+      "lc",
+      "sc",
+      "mpo",
+      "mtp",
+      "upc",
+      "apc"
+    ],
+    "a_end": [
+      "a-end",
+      "from",
+      "source",
+      "origin",
+      "mdf",
+      "near end"
+    ],
+    "z_end": [
+      "z-end",
+      "to",
+      "destination",
+      "idf",
+      "far end"
+    ],
+    "test_result": [
+      "test result",
+      "pass/fail",
+      "loss",
+      "db",
+      "otdr",
+      "olts"
+    ],
+    "pathway": [
+      "pathway",
+      "riser",
+      "innerduct",
+      "conduit",
+      "sleeve",
+      "tray"
+    ],
+    "link_id": [
+      "link id",
+      "circuit id",
+      "fiber id",
+      "cable id",
+      "strand id"
+    ]
+  },
+  "entity_types": {
+    "site": {
+      "examples": [
+        "store 104",
+        "branch nyc-02",
+        "dc cage a",
+        "campus building b"
+      ],
+      "identity_bearing": true
+    },
+    "room_or_area": {
+      "examples": [
+        "mdf",
+        "idf",
+        "sales floor",
+        "cashwrap",
+        "workroom",
+        "server room"
+      ],
+      "identity_bearing": true
+    },
+    "line_item": {
+      "examples": [
+        "BOM line",
+        "material quote row",
+        "SKU",
+        "mfr part",
+        "replacement unit",
+        "refresh bundle"
+      ],
+      "identity_bearing": true
+    },
+    "field_work_context": {
+      "examples": [
+        "tech",
+        "FE",
+        "field engineer",
+        "installer",
+        "smart hands",
+        "remote hands",
+        "dispatch",
+        "WO",
+        "work order",
+        "visit",
+        "maintenance window"
+      ],
+      "identity_bearing": false
+    },
+    "access_constraint_context": {
+      "examples": [
+        "escort",
+        "badge",
+        "after hours",
+        "noise ordinance",
+        "lift",
+        "ceiling grid",
+        "store closed",
+        "cutover",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "uncertainty_marker": {
+      "examples": [
+        "TBD",
+        "approx",
+        "assumed",
+        "per GC",
+        "verify in field",
+        "as-built",
+        "pending customer",
+        "field verify"
+      ],
+      "identity_bearing": false
+    },
+    "person_or_role": {
+      "examples": [
+        "PM",
+        "site contact",
+        "GC",
+        "FE",
+        "installer",
+        "customer approver"
+      ],
+      "identity_bearing": false
+    },
+    "date_or_window": {
+      "examples": [
+        "after hours",
+        "maintenance window",
+        "store closed",
+        "blackout date",
+        "freeze window"
+      ],
+      "identity_bearing": false
+    },
+    "document_authority": {
+      "examples": [
+        "approved_site_roster",
+        "vendor_quote",
+        "formal_sow",
+        "field_test_result",
+        "certificate"
+      ],
+      "identity_bearing": false
+    },
+    "fiber_link": {
+      "examples": [
+        "MDF-IDF-A",
+        "12-strand OS2 to IDF2",
+        "carrier handoff pair"
+      ],
+      "identity_bearing": true
+    },
+    "connector": {
+      "examples": [
+        "LC duplex",
+        "SC UPC",
+        "MPO 12-fiber",
+        "MTP female"
+      ],
+      "identity_bearing": true
+    },
+    "strand": {
+      "examples": [
+        "strand 1/2",
+        "pair 7",
+        "blue/orange pair",
+        "TX/RX pair"
+      ],
+      "identity_bearing": true
+    },
+    "test_measurement": {
+      "examples": [
+        "0.42 dB",
+        "OTDR trace pass",
+        "loss budget 2.8 dB"
+      ],
+      "identity_bearing": false
+    },
+    "pathway_segment": {
+      "examples": [
+        "riser sleeve",
+        "innerduct",
+        "ladder tray",
+        "pull box"
+      ],
+      "identity_bearing": true
+    }
+  },
+  "relationship_types": {
+    "supports": "Evidence atom reinforces the same identity, quantity, location, or scope claim.",
+    "contradicts": "Evidence atom asserts an incompatible identity, quantity, location, or state for the same comparable group.",
+    "excludes": "Evidence atom explicitly removes an item or task from scope.",
+    "requires": "Evidence atom states a dependency that must exist for the item or task to be valid.",
+    "located_in": "Evidence atom places an identity at a site, room, rack, lane, door, or work area.",
+    "quoted_from": "Evidence atom is derived from a commercial quote or BOM line.",
+    "derived_from": "Evidence atom is parsed or normalized from an upstream artifact, transcript, or survey.",
+    "replaces": "Evidence atom states that one item supersedes, refreshes, swaps, or RMA-replaces another item.",
+    "tested_by": "Evidence atom is validated by a field test, certificate, or acceptance artifact."
+  },
+  "normalization_principles": [
+    "Fiber identities must not quantity-compare with copper drops, Cat6 runs, RJ45 terminations, or wireless AP drops.",
+    "OS1, OS2, OM3, and OM4 are separate material identities even when the strand count and connector type are identical.",
+    "Connector, adapter panel, patch cord, backbone run, strand pair, optic, and certification report quantities are separate comparison groups.",
+    "A fiber pair is a capacity entity; it is not equal to a cable assembly, connector count, or patch panel port count.",
+    "LC, SC, MPO, and MTP tokens require fiber context unless a known non-fiber expansion is present.",
+    "OTDR traces and insertion-loss results govern acceptance evidence, not material quantity unless paired with a tested-link inventory.",
+    "Demarc extension and service-provider handoff are scope tasks/handoffs; do not merge them with carrier circuit inventory.",
+    "TBD strand count, assumed path, verify in field, per GC, and as-built pending must preserve uncertainty and should not overwrite approved BOM counts.",
+    "Cross-domain confusion - AP: APC connector polish is fiber context and must not resolve to wireless AP; wireless AP is rejected by LC/SC/OS/OM context.",
+    "Cross-domain confusion - switch: fiber optics may install into network switches, but network_modernization owns the switch device; this ontology owns the optic and fiber link.",
+    "Cross-domain confusion - panel: fiber_patch_panel wins for fiber/LC/SC/MPO/ODF wording; electrical, antenna, and POS panels are negatives.",
+    "Cross-domain confusion - gateway: media_converter can bridge copper/fiber but does not become IoT gateway, payment gateway, or WAN gateway.",
+    "Cross-domain confusion - sensor: fiber monitoring sensor language is not a security sensor unless camera/access/alarm context exists.",
+    "Cross-domain confusion - rack: rack-mount fiber shelf is a fiber termination; datacenter_field owns rack cabinet, U position, and PDU conflicts.",
+    "Cross-domain confusion - controller: fiber has no controller identity; WLC, door controller, and POS lane controller are other ontologies.",
+    "Cross-domain confusion - camera: LC/SC patch cords for cameras still remain fiber material; camera bodies belong to edge_iot_security.",
+    "Cross-domain confusion - drop: fiber drop must include fiber/strand/LC/SC/OS/OM; software drop and copper data drop must split.",
+    "Cross-domain confusion - cable tray: ladder tray and basket tray are datacenter/pathway assets unless specifically scoped as fiber pathway segment."
+  ],
+  "common_failure_modes": [
+    {
+      "failure": "Structured backbone fiber BOM quantities are compared against service-task counts such as visits or windows.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Acronyms like AP, SOW, WO, COD, GC, and FE are interpreted without artifact context.",
+      "fix_layer": "parser"
+    },
+    {
+      "failure": "Vendor quote beats approved site roster for site count, creating phantom locations.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Email recap changes scope but lacks approval or formal change order.",
+      "fix_layer": "authority"
+    },
+    {
+      "failure": "Line descriptions mix material, labor, and contingency in one row.",
+      "fix_layer": "packetizer"
+    },
+    {
+      "failure": "TBD, approx, assumed, per GC, or verify in field is treated as confirmed identity.",
+      "fix_layer": "entity_resolver"
+    },
+    {
+      "failure": "Serial or asset-tag inventory is merged with non-serialized accessories.",
+      "fix_layer": "identity"
+    },
+    {
+      "failure": "Cutover or freeze-window notes are interpreted as item quantities.",
+      "fix_layer": "parser"
+    }
+  ],
+  "example_mappings": [
+    {
+      "raw": "Install 12-strand OS2 SMF backbone MDF to IDF with LC terminations",
+      "identity": "fiber_singlemode_os2_trunk",
+      "quantity": 1,
+      "notes": "Also emits LC connector/termination atoms if itemized."
+    },
+    {
+      "raw": "Qty 24 LC duplex adapters for fiber panel",
+      "identity": "fiber_lc_duplex_connector",
+      "quantity": 24,
+      "notes": "Connector/adapter comparison group, not patch panel count."
+    },
+    {
+      "raw": "OTDR traces required for each strand pair",
+      "identity": "fiber_otdr_test",
+      "quantity": null,
+      "notes": "Test artifact tied to strand pairs."
+    },
+    {
+      "raw": "OM4 aqua MPO-to-LC breakout harness for TOR",
+      "identity": "fiber_mpo_breakout_harness",
+      "quantity": 1,
+      "notes": "Fiber harness; network switch remains external."
+    },
+    {
+      "raw": "Demarc extension from carrier handoff to MDF shelf",
+      "identity": "fiber_demarc_extension",
+      "quantity": 1,
+      "notes": "Handoff scope task, not carrier service order."
+    },
+    {
+      "raw": "Loss budget pending customer pathway confirmation",
+      "identity": "fiber_loss_budget",
+      "quantity": null,
+      "notes": "Design artifact with uncertainty markers."
+    },
+    {
+      "raw": "Provide one-click LC cleaners for final turn-up",
+      "identity": "fiber_cleaning_kit",
+      "quantity": 1,
+      "notes": "Tooling/maintenance item."
+    },
+    {
+      "raw": "MDF-IDF pair 7 failed insertion loss at 1.9 dB",
+      "identity": "fiber_insertion_loss_test",
+      "quantity": null,
+      "notes": "Test result, not material identity."
+    }
+  ],
+  "vertical_weak_points": [
+    {
+      "weak_point": "Fiber and copper structured cabling share terms like backbone, drop, panel, and certification.",
+      "why_it_breaks_resolution": "Low-voltage artifacts often mix Cat6 and fiber on adjacent rows with similar room endpoints.",
+      "symptoms_in_artifacts": "Patch panel counts conflict, or RJ45 jacks are merged with LC ports.",
+      "mitigation": "identity",
+      "example_phrases": [
+        "24-port patch panel",
+        "fiber patch panel LC",
+        "cat6 drop",
+        "fiber drop to IDF",
+        "cable certs",
+        "OTDR cert",
+        "RJ45 termination",
+        "LC termination"
+      ]
+    },
+    {
+      "weak_point": "Strand count is confused with cable assembly quantity.",
+      "why_it_breaks_resolution": "One 12-strand trunk may produce 12 strand records, 6 pairs, and one cable run.",
+      "symptoms_in_artifacts": "Quantities multiply or divide during merge.",
+      "mitigation": "packetizer",
+      "example_phrases": [
+        "12-strand OS2",
+        "6 fiber pairs",
+        "one trunk",
+        "strand 1/2",
+        "24F backbone",
+        "pair 7 failed",
+        "two LC ends"
+      ]
+    },
+    {
+      "weak_point": "Connector abbreviations collide with non-fiber tokens.",
+      "why_it_breaks_resolution": "SC, LC, APC, and UPC can appear in stores, finance, or product identifiers.",
+      "symptoms_in_artifacts": "Non-fiber lines incorrectly emit connector identities.",
+      "mitigation": "parser",
+      "example_phrases": [
+        "SC connector",
+        "LC duplex",
+        "APC polish",
+        "UPC code",
+        "SC store",
+        "LC approval",
+        "MPO cassette"
+      ]
+    },
+    {
+      "weak_point": "Testing artifacts are treated as scope additions.",
+      "why_it_breaks_resolution": "OTDR and insertion-loss rows can have one result per strand, while the SOW prices per link.",
+      "symptoms_in_artifacts": "Test result counts contradict BOM quantities.",
+      "mitigation": "authority",
+      "example_phrases": [
+        "OTDR each strand",
+        "OLTS pass",
+        "loss report",
+        "certification included",
+        "test 12 strands",
+        "trace uploaded",
+        "pass/fail sheet"
+      ]
+    },
+    {
+      "weak_point": "Carrier handoff scope blurs with enterprise fiber extension.",
+      "why_it_breaks_resolution": "Demarc, handoff, NID, and circuit terms may refer to provider obligations or Purtera extension work.",
+      "symptoms_in_artifacts": "SOW excludes carrier work but BOM includes demarc extension materials.",
+      "mitigation": "policy",
+      "example_phrases": [
+        "carrier handoff",
+        "provider NID",
+        "demarc extension",
+        "telco to MDF",
+        "cross-connect by others",
+        "last foot fiber",
+        "customer to order circuit"
+      ]
+    }
+  ]
+}

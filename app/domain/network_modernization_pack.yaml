@@ -1,0 +1,49 @@
+pack_id: network_modernization
+name: Network Infrastructure Modernization Pack
+version: "1.0.0"
+service_lines:
+  - network_modernization
+reference_ontology_path: ontology/network_modernization_ontology.yaml
+entity_types:
+  - name: device
+    aliases: [switch, router, stack]
+    examples: ["L2 access switch", "branch router"]
+device_aliases:
+  branch_router:
+    - router
+    - branch router
+    - WAN router
+    - edge router
+  l2_switch:
+    - switch
+    - access switch
+    - PoE switch
+    - stack switch
+site_alias_patterns:
+  - "network closet"
+  - "idf"
+action_aliases:
+  stack_switch: ["switch stack", "stacking"]
+  console_rollout: ["console cable", "oob"]
+constraint_patterns:
+  access:
+    - maintenance window
+    - change control
+exclusion_patterns:
+  - out of scope
+  - not in network refresh
+customer_instruction_patterns:
+  - please upgrade
+  - hold cutover
+quantity_units:
+  count: [ea, each, units]
+artifact_role_patterns:
+  quote: ["network quote", "hardware bom"]
+  license: ["dna", "subscription", "smart license"]
+risk_defaults:
+  branch_router_unit_exposure: 4000
+  l2_switch_unit_exposure: 3500
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  quantity_conflict: ["switch count", "router mismatch"]

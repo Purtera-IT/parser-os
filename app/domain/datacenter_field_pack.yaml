@@ -1,0 +1,50 @@
+pack_id: datacenter_field
+name: Datacenter Field Services Pack
+version: "1.0.0"
+service_lines:
+  - datacenter
+  - remote_hands
+reference_ontology_path: ontology/datacenter_field_ontology.yaml
+entity_types:
+  - name: device
+    aliases: [rack, pdu, cable tray]
+    examples: ["42U cabinet", "rack PDU"]
+device_aliases:
+  server_rack:
+    - server rack
+    - rack cabinet
+    - four-post rack
+  rack_pdu:
+    - rack PDU
+    - metered PDU
+    - power strip pdu
+  tor_switch:
+    - top of rack switch
+    - ToR switch
+    - rack switch
+site_alias_patterns:
+  - "data hall"
+  - "cage"
+action_aliases:
+  rack_stack: ["rack and stack", "mount in rack"]
+  remote_hands: ["smart hands", "remote hands"]
+constraint_patterns:
+  access:
+    - badge escort
+    - approved vendor list
+exclusion_patterns:
+  - out of scope
+customer_instruction_patterns:
+  - maintenance window
+quantity_units:
+  count: [u, ru, ea]
+artifact_role_patterns:
+  quote: ["datacenter quote", "rack bom"]
+risk_defaults:
+  server_rack_unit_exposure: 8000
+  rack_pdu_unit_exposure: 1200
+  tor_switch_unit_exposure: 6000
+  failed_dispatch_exposure: 400
+  unpriced_scope_default: 5000
+packet_family_hints:
+  site_access: ["escort", "badge"]
