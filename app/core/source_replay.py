@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,6 +14,21 @@ from openpyxl.utils.cell import column_index_from_string
 from app.core.normalizers import normalize_text
 from app.core.segments import ArtifactSegment
 from app.core.schemas import EvidenceAtom, EvidenceReceipt, SourceRef
+
+
+def _replay_norm(text: str) -> str:
+    """Normalize text for replay matching.
+
+    Strips Unicode combining marks (so "café" matches "cafe", and
+    "M\xa0Smith" matches "M Smith") then defers to the canonical
+    ``normalize_text``. The PR8 spec calls this out specifically: a
+    lot of "failed" replay receipts in the corpus were just NFKD
+    drift between parser-extracted text and the spreadsheet/PDF
+    re-read.
+    """
+    text = unicodedata.normalize("NFKD", text or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return normalize_text(text)
 
 VERIFIER_VERSION = "source_replay_v2"
 _STOP_WORDS = {
@@ -96,20 +112,74 @@ def _important_terms(atom: EvidenceAtom) -> list[str]:
 
 
 def _snippet_matches_atom(atom: EvidenceAtom, snippet: str) -> bool:
-    snippet_norm = normalize_text(snippet)
+    snippet_norm = _replay_norm(snippet)
     if not snippet_norm:
         return False
-    if atom.normalized_text and normalize_text(atom.normalized_text) in snippet_norm:
+    if atom.normalized_text and _replay_norm(atom.normalized_text) in snippet_norm:
         return True
-    candidates = _atom_match_candidates(atom)
-    if any(candidate in snippet_norm for candidate in candidates):
+    candidates = [_replay_norm(c) for c in _atom_match_candidates(atom)]
+    if any(c and c in snippet_norm for c in candidates):
         return True
-    terms = _important_terms(atom)
+    terms = [_replay_norm(t) for t in _important_terms(atom)]
+    terms = [t for t in terms if t]
     if not terms:
         return False
     matched = sum(1 for term in terms if term in snippet_norm)
     required = 1 if len(terms) <= 2 else 2
     return matched >= required
+
+
+def _spreadsheet_full_row_text(
+    path: Path, sheet: str | None, row_number: int
+) -> str:
+    """Return ``"v1 | v2 | v3 ..."`` for every non-empty cell in
+    ``row_number`` (1-based). Used as a fallback when the cited
+    columns alone don't satisfy ``_snippet_matches_atom``: the row
+    might have been authored with the relevant fact in a column the
+    parser didn't cite (e.g. the parser cited Severity, but the
+    important text is in the Mitigation column on the same row).
+    """
+    suffix = path.suffix.lower()
+    parts: list[str] = []
+    if suffix == ".xlsx":
+        try:
+            wb = load_workbook(path, read_only=True, data_only=True)
+        except Exception:
+            return ""
+        ws = (
+            wb[sheet]
+            if isinstance(sheet, str) and sheet in wb.sheetnames
+            else wb.active
+        )
+        max_row = ws.max_row or 0
+        if row_number > max_row:
+            return ""
+        for cell in ws[row_number]:
+            if cell.value is None:
+                continue
+            text = str(cell.value).strip()
+            if text:
+                parts.append(text)
+    else:
+        delimiter = "," if suffix == ".csv" else None
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore", newline="") as fh:
+                if delimiter is None:
+                    rows = [
+                        re.split(r"[,\t|]", line.rstrip("\n"))
+                        for line in fh.readlines()
+                    ]
+                else:
+                    rows = list(csv.reader(fh))
+        except Exception:
+            return ""
+        if row_number > len(rows):
+            return ""
+        for cell in rows[row_number - 1]:
+            text = str(cell or "").strip()
+            if text:
+                parts.append(text)
+    return " | ".join(parts)
 
 
 def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
@@ -165,6 +235,23 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
         return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")
     if _snippet_matches_atom(atom, extracted_snippet):
         return _receipt(atom, source_ref, "verified", "Spreadsheet row and cited cells verified", extracted_snippet)
+
+    # PR8 — full-row fallback. The row exists but the cited cells
+    # alone don't carry the atom's text. This commonly happens when
+    # the parser cited only one column (e.g. Severity) but the atom
+    # text was authored from a different column on the same row
+    # (e.g. Mitigation). Read the full row and try once more before
+    # giving up — true mismatches still fail.
+    full_row = _spreadsheet_full_row_text(path, sheet if isinstance(sheet, str) else None, row_number)
+    if full_row and _snippet_matches_atom(atom, full_row):
+        return _receipt(
+            atom,
+            source_ref,
+            "verified",
+            "Spreadsheet row verified via full-row fallback",
+            full_row,
+        )
+
     return _receipt(
         atom,
         source_ref,
