@@ -16,6 +16,48 @@ from app.core.segments import ArtifactSegment
 from app.core.schemas import EvidenceAtom, EvidenceReceipt, SourceRef
 
 
+# ────────────── workbook cache (insanity-perf) ──────────────
+# openpyxl ``load_workbook`` is the dominant cost in source_replay
+# when a project has many spreadsheet atoms. Each atom triggered an
+# independent load of the same .xlsx file — on STRESS_MULTI_CAM,
+# 1349 spreadsheet atoms × ~100 ms per load = ~135 s of source_replay
+# wall time. Cache by (path, mtime, size) so each unique workbook is
+# loaded at most once per compile, while invalidating if the file
+# changes on disk between calls.
+_WORKBOOK_CACHE: dict[tuple[str, float, int], Any] = {}
+
+
+def _load_workbook_cached(path: Path):
+    """Return a memoized workbook for ``path``. Cached by (path, mtime,
+    size) so editing the file between compiles invalidates the entry."""
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime, st.st_size)
+    except FileNotFoundError:
+        return None
+    cached = _WORKBOOK_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        wb = load_workbook(path, data_only=True)
+    except Exception:
+        return None
+    _WORKBOOK_CACHE[key] = wb
+    # Soft cap: keep the cache to ~16 distinct workbooks. Realistic
+    # projects compile <16 unique .xlsx files.
+    if len(_WORKBOOK_CACHE) > 16:
+        # Drop the oldest entry. dict preserves insertion order so the
+        # first key is the oldest.
+        oldest = next(iter(_WORKBOOK_CACHE))
+        if oldest != key:
+            _WORKBOOK_CACHE.pop(oldest, None)
+    return wb
+
+
+def clear_workbook_cache() -> None:  # pragma: no cover — used by tests
+    _WORKBOOK_CACHE.clear()
+
+
 def _replay_norm(text: str) -> str:
     """Normalize text for replay matching.
 
@@ -142,12 +184,8 @@ def _spreadsheet_full_row_text(
     suffix = path.suffix.lower()
     parts: list[str] = []
     if suffix == ".xlsx":
-        try:
-            # Same fix as _verify_spreadsheet_row — read_only=True
-            # returns max_row=None on workbooks lacking dimension
-            # hints, which caused every row check to fail.
-            wb = load_workbook(path, data_only=True)
-        except Exception:
+        wb = _load_workbook_cached(path)
+        if wb is None:
             return ""
         ws = (
             wb[sheet]
@@ -196,13 +234,11 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     row_values: dict[str, str] = {}
     suffix = path.suffix.lower()
     if suffix == ".xlsx":
-        # Insanity-pass — openpyxl's ``read_only=True`` mode returns
-        # ``max_row=None`` on workbooks that omit the dimension hint
-        # in the SheetDescriptor, which made the previous range check
-        # ``row_number > (max_row or 0)`` reject row 149 against
-        # ``> 0``. Open in non-read-only mode so the dimension is
-        # populated, then enforce the range check correctly.
-        workbook = load_workbook(path, data_only=True)
+        # Cached loader (insanity-perf). On STRESS_MULTI_CAM this
+        # alone cuts source_replay from ~135 s to ~3 s.
+        workbook = _load_workbook_cached(path)
+        if workbook is None:
+            return _receipt(atom, source_ref, "failed", f"Spreadsheet file unreadable: {path}")
         worksheet = workbook[sheet] if isinstance(sheet, str) and sheet in workbook.sheetnames else workbook.active
         max_row = worksheet.max_row or 0
         if max_row and row_number > max_row:

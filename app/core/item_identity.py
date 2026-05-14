@@ -7,6 +7,8 @@ from typing import Any
 from app.core.normalizers import normalize_text
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _norm(value: Any) -> str:
@@ -14,8 +16,8 @@ def _norm(value: Any) -> str:
     text = text.replace("rj-45", "rj45").replace("cat 6a", "cat6a").replace("cat-6a", "cat6a")
     text = text.replace("cat 6", "cat6").replace("cat-6", "cat6")
     text = text.replace("category 6a", "cat6a").replace("category 6", "cat6")
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = _NON_ALNUM_RE.sub(" ", text)
+    return _WHITESPACE_RE.sub(" ", text).strip()
 
 
 def _tokens(value: Any) -> set[str]:

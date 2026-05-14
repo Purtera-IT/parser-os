@@ -554,17 +554,18 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     cfg = Cfg()
     pipeline = build_pipeline()
 
-    pages: list[dict[str, Any]] = []
     document_title: str | None = None
     document_metadata: list[str] = []
     seen_metadata: set[str] = set()
 
     # P2.1: pre-scan the PDF for per-page text length so we can fast-path
     # low-text pages (scanned drawings, image-only floor plans) without
-    # running the heavyweight layout-detection pipeline on them.  These
-    # pages contribute 0 atoms either way — we pay 5-10s/page for nothing
-    # otherwise.  See PRODUCTION_GAPS.md P2.1.
+    # running the heavyweight layout-detection pipeline on them.
+    # Insanity-perf: ALSO collect the actual page text so a text-rich
+    # page can be parsed via a lightweight prose splitter without ever
+    # touching the layout pipeline (which costs 5–10 s/page).
     page_text_lengths: list[int] = []
+    page_texts: list[str] = []
     with fitz.open(str(pdf_path)) as doc:
         page_count = len(doc)
         for page_idx in range(page_count):
@@ -572,31 +573,47 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 page_text = doc[page_idx].get_text("text") or ""
             except Exception:  # pragma: no cover — bad page shouldn't kill compile
                 page_text = ""
+            page_texts.append(page_text)
             page_text_lengths.append(len(page_text.strip()))
 
-    # Threshold: a page with <80 characters of extractable text after
-    # stripping is almost certainly a scanned drawing or blank.  Real
-    # Q&A / scope text exceeds this on every page we've measured.
+    # Page bucketing thresholds:
+    #   < LOW_TEXT_PAGE_THRESHOLD       → marker page only (scanned)
+    #   >= TEXT_RICH_PAGE_THRESHOLD     → text-only fast path
+    #   else                             → heavyweight layout pipeline
     LOW_TEXT_PAGE_THRESHOLD = 80
+    TEXT_RICH_PAGE_THRESHOLD = 1200
 
-    for page_index in range(page_count):
-        if page_text_lengths[page_index] < LOW_TEXT_PAGE_THRESHOLD:
-            # Fast path: skip the heavyweight pipeline; emit a marker
-            # page so the structured doc still records the page exists
-            # (with metadata noting why it was skipped).
-            pages.append(
-                {
-                    "page": page_index,
-                    "title": None,
-                    "metadata": [
-                        f"[low-text page (≤{LOW_TEXT_PAGE_THRESHOLD} chars) "
-                        f"— likely scanned image; layout pipeline skipped for perf]"
-                    ],
-                    "outline": [],
-                    "sections": [],
-                }
-            )
-            continue
+    def _build_low_text_page(page_index: int) -> dict[str, Any]:
+        return {
+            "page": page_index,
+            "title": None,
+            "metadata": [
+                f"[low-text page (≤{LOW_TEXT_PAGE_THRESHOLD} chars) "
+                "— likely scanned image; layout pipeline skipped for perf]"
+            ],
+            "outline": [],
+            "sections": [],
+        }
+
+    def _build_text_rich_page(page_index: int) -> dict[str, Any]:
+        sections = _text_rich_sections(page_texts[page_index])
+        _stamp_section_and_block_ids(sections, page_index)
+        return {
+            "page": page_index,
+            "title": None,
+            "metadata": [
+                "[text-rich page — heavyweight layout pipeline skipped; "
+                "prose extracted via lightweight text splitter]"
+            ],
+            "outline": [
+                {"level": s.get("level", 2), "heading": s.get("heading"),
+                 "block_count": len(s.get("blocks") or [])}
+                for s in sections
+            ],
+            "sections": sections,
+        }
+
+    def _build_heavyweight_page(page_index: int) -> dict[str, Any]:
         state = pipeline.run(str(pdf_path), page_index=page_index, cfg=cfg)
         result = state.result
         assert result is not None, "overlay pipeline produced no result"
@@ -610,12 +627,38 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         }
         struct = extract_structured(payload, pdf_path=pdf_path)
         page_doc = (struct.get("document") or {})
-        page_title = page_doc.get("title")
-        page_meta = list(page_doc.get("metadata") or [])
+        sections = list(struct.get("sections") or [])
+        _stamp_section_and_block_ids(sections, page_index)
+        return {
+            "page": page_index,
+            "title": page_doc.get("title"),
+            "metadata": list(page_doc.get("metadata") or []),
+            "outline": list(struct.get("outline") or []),
+            "sections": sections,
+        }
 
+    def _build_one_page(page_index: int) -> dict[str, Any]:
+        if page_text_lengths[page_index] < LOW_TEXT_PAGE_THRESHOLD:
+            return _build_low_text_page(page_index)
+        if page_text_lengths[page_index] >= TEXT_RICH_PAGE_THRESHOLD:
+            return _build_text_rich_page(page_index)
+        return _build_heavyweight_page(page_index)
+
+    # NOTE: PyMuPDF is NOT thread-safe — running the page loop on a
+    # ThreadPoolExecutor crashes with SIGSEGV inside libmupdf. The
+    # text-rich fast path (above) is the dominant speedup; pages
+    # that still hit the heavyweight pipeline run serially. A future
+    # optimization could spawn a process per page (multiprocessing
+    # with each worker opening its own fitz doc), at the cost of
+    # ~2 s per-fork startup on macOS.
+    pages: list[dict[str, Any]] = [_build_one_page(i) for i in range(page_count)]
+
+    # Aggregate document title + metadata across pages (in order).
+    for p in pages:
+        page_title = p.get("title")
         if not document_title and page_title:
             document_title = page_title
-        for entry in page_meta:
+        for entry in p.get("metadata") or []:
             if not entry:
                 continue
             key = normalize_text(entry)
@@ -623,19 +666,6 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 continue
             seen_metadata.add(key)
             document_metadata.append(entry)
-
-        sections = list(struct.get("sections") or [])
-        _stamp_section_and_block_ids(sections, page_index)
-
-        pages.append(
-            {
-                "page": page_index,
-                "title": page_title,
-                "metadata": page_meta,
-                "outline": list(struct.get("outline") or []),
-                "sections": sections,
-            }
-        )
 
     return {
         "schema_version": STRUCTURED_SCHEMA_VERSION,
@@ -1784,6 +1814,109 @@ def _md_cell(value: Any) -> str:
 
 
 # ──────────────────────── internals ──────────────────────────────────────
+
+
+_BULLET_LINE_RE = re.compile(r"^\s*([-*•·\u2022]|\d+[.)])\s+(.+?)\s*$")
+_HEADING_LINE_RE = re.compile(
+    r"^\s*((?:[A-Z0-9][A-Z0-9 &/\-,()]{2,80})|(?:#{1,6}\s+.{2,80}))\s*$"
+)
+
+
+def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
+    """Lightweight prose splitter for text-rich PDF pages.
+
+    The heavyweight layout pipeline costs 5–10 s/page; on a
+    text-rich page (≥ 1200 chars of clean text — NOC playbook,
+    scope brief, terms-and-conditions) the layout boxes don't
+    actually buy us anything beyond paragraph + bullet ordering.
+    This function produces a structured ``sections`` list that
+    matches the same shape ``extract_structured`` would, so the
+    downstream atom emitter doesn't need to know which path
+    produced the page.
+
+    Heuristics:
+      * blank line → end of paragraph
+      * leading bullet glyph or "1." style → bullet item
+      * an all-caps line (or markdown ``#``-prefixed) → heading;
+        starts a new section, prior content flushed
+      * otherwise → paragraph line, accumulated then joined.
+    """
+    if not page_text or not page_text.strip():
+        return []
+
+    lines = page_text.splitlines()
+    sections: list[dict[str, Any]] = []
+    current_heading: str | None = None
+    current_blocks: list[dict[str, Any]] = []
+    paragraph_lines: list[str] = []
+    bullet_buffer: list[str] = []
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if not paragraph_lines:
+            return
+        text = " ".join(x.strip() for x in paragraph_lines if x.strip()).strip()
+        if text:
+            current_blocks.append({"kind": "paragraph", "text": text})
+        paragraph_lines = []
+
+    def flush_bullets() -> None:
+        nonlocal bullet_buffer
+        if not bullet_buffer:
+            return
+        items = [{"text": x} for x in bullet_buffer if x.strip()]
+        if items:
+            current_blocks.append({"kind": "bullet_list", "items": items})
+        bullet_buffer = []
+
+    def flush_section() -> None:
+        nonlocal current_heading, current_blocks
+        flush_paragraph()
+        flush_bullets()
+        if current_blocks or current_heading:
+            sections.append(
+                {
+                    "heading": current_heading or "",
+                    "level": 2,
+                    "blocks": current_blocks,
+                    "subsections": [],
+                }
+            )
+        current_heading = None
+        current_blocks = []
+
+    for raw in lines:
+        line = raw.rstrip()
+        if not line.strip():
+            flush_paragraph()
+            flush_bullets()
+            continue
+
+        bullet_m = _BULLET_LINE_RE.match(line)
+        if bullet_m:
+            flush_paragraph()
+            bullet_buffer.append(bullet_m.group(2).strip())
+            continue
+
+        # heading guess (all caps or markdown-style #)
+        stripped = line.strip()
+        if (
+            len(stripped) <= 80
+            and (stripped.startswith("#") or (stripped.isupper() and len(stripped) >= 3))
+        ):
+            flush_section()
+            current_heading = stripped.lstrip("# ").strip()
+            continue
+
+        # Paragraph continuation. Flush any pending bullets first so a
+        # paragraph doesn't get glued onto a bullet list.
+        flush_bullets()
+        paragraph_lines.append(line)
+
+    flush_section()
+    # Drop empty sections that may have been created by trailing
+    # whitespace.
+    return [s for s in sections if s.get("blocks") or s.get("heading")]
 
 
 def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int) -> None:

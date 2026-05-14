@@ -7,17 +7,24 @@ from typing import Any
 from app.domain import get_active_domain_pack
 
 
+# Insanity-perf: normalize_text is called ~50M times during a single
+# compile. Precompile the patterns here so each call is a single C-side
+# regex match rather than a recompile lookup through the global cache.
+_WHITESPACE_RE = re.compile(r"\s+")
+_NON_ENTITY_CHAR_RE = re.compile(r"[^a-z0-9 ._-]")
+
+
 def normalize_text(value: str) -> str:
     if value is None:
         return ""
     value = value.strip().lower()
-    value = re.sub(r"\s+", " ", value)
+    value = _WHITESPACE_RE.sub(" ", value)
     return value
 
 
 def normalize_entity(value: str) -> str:
     value = normalize_text(value)
-    value = re.sub(r"[^a-z0-9 ._-]", "", value)
+    value = _NON_ENTITY_CHAR_RE.sub("", value)
     return value
 
 
