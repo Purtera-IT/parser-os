@@ -464,6 +464,21 @@ class OrbitBriefPdfParser(BaseParser):
                 parser_version=self.parser_version,
             )
         )
+        # PR7 — checkbox states, NOC/SOC workflow steps, and review
+        # markers for low-text visual pages. These are extracted from
+        # raw PDF text in a single fitz pass; opening fitz here avoids
+        # adding a second pipeline dependency.
+        try:
+            atoms.extend(
+                _scan_pdf_for_extras(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    path=path,
+                    parser_version=self.parser_version,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
         # Surface the derived artifacts in the parser output so the
         # compiler-level cache captures them and replays them on every
         # cache hit.  This guarantees ``<stem>.derived/structured.json``
@@ -1796,6 +1811,270 @@ def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int
             visit(section.get("subsections", []) or [])
 
     visit(sections)
+
+
+# ─────────────────── PR7: checkbox / workflow / visual-page atoms ────
+
+
+_CHECKBOX_RE = re.compile(
+    r"(?P<mark>☒|☑|✓|✔|\[x\]|\[X\]|\(x\)|\(X\)|☐|□|\[\s\]|\(\s\))"
+    r"\s*(?P<label>[^|;\n]+)"
+)
+_WORKFLOW_STEP_RE = re.compile(
+    r"\b(detect|triage|contain|escalate|recover|remediate|notify|"
+    r"dispatch|close|improve)\b",
+    re.I,
+)
+_LOW_TEXT_VISUAL_THRESHOLD = 80
+
+
+def _checkbox_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Extract checked / unchecked checkbox state from page text.
+
+    Checked boxes (☒, ☑, ✓, ✔, [x], (X)) emit a ``scope_item`` atom
+    with ``value.checked=true``. Unchecked boxes (☐, □, [ ], ( ))
+    emit an ``exclusion`` atom with ``value.checked=false`` and the
+    review flag ``unchecked_checkbox_not_scope`` so the calibrator
+    flags it for human review — unchecked is *evidence of exclusion*,
+    not silent absence.
+    """
+    atoms: list[EvidenceAtom] = []
+    for idx, m in enumerate(_CHECKBOX_RE.finditer(text)):
+        mark = m.group("mark")
+        label = m.group("label").strip(" :-\t")
+        if not label:
+            continue
+        checked = mark in {"☒", "☑", "✓", "✔", "[x]", "[X]", "(x)", "(X)"}
+        source_ref = SourceRef(
+            id=stable_id("src", artifact_id, "pdf", page_number, "checkbox", idx),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.pdf,
+            filename=filename,
+            locator={"page": page_number, "checkbox_index": idx},
+            extraction_method="pdf_checkbox_state_v1",
+            parser_version=parser_version,
+        )
+        atoms.append(
+            EvidenceAtom(
+                id=stable_id(
+                    "atm",
+                    project_id,
+                    artifact_id,
+                    "checkbox",
+                    page_number,
+                    idx,
+                    checked,
+                    label,
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.scope_item if checked else AtomType.exclusion,
+                raw_text=f"{'Selected' if checked else 'Not selected'} checkbox: {label}",
+                normalized_text=normalize_text(label),
+                value={
+                    "kind": "checkbox",
+                    "label": label,
+                    "checked": checked,
+                    "page": page_number,
+                },
+                entity_keys=[],
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.90 if checked else 0.72,
+                review_status=ReviewStatus.auto_accepted
+                if checked
+                else ReviewStatus.needs_review,
+                review_flags=[] if checked else ["unchecked_checkbox_not_scope"],
+                parser_version=parser_version,
+            )
+        )
+    return atoms
+
+
+def _workflow_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Emit one ``action_item`` atom per workflow step on a page that
+    contains 3+ workflow verbs (detect / triage / contain / escalate /
+    recover / remediate / notify / dispatch / close / improve).
+
+    Page text is split on common arrow / pipe glyphs (→ -> › > / |)
+    so ``Detect → Triage → Contain → Recover`` becomes 4 atoms."""
+    if len(_WORKFLOW_STEP_RE.findall(text)) < 3:
+        return []
+    chunks = re.split(r"\s*(?:→|->|›|>|/|\|)\s*", text)
+    atoms: list[EvidenceAtom] = []
+    for idx, chunk in enumerate(chunks):
+        chunk = chunk.strip()
+        if not chunk or not _WORKFLOW_STEP_RE.search(chunk):
+            continue
+        source_ref = SourceRef(
+            id=stable_id("src", artifact_id, "pdf", page_number, "workflow", idx),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.pdf,
+            filename=filename,
+            locator={"page": page_number, "workflow_step_index": idx},
+            extraction_method="pdf_workflow_step_v1",
+            parser_version=parser_version,
+        )
+        atoms.append(
+            EvidenceAtom(
+                id=stable_id(
+                    "atm",
+                    project_id,
+                    artifact_id,
+                    "workflow",
+                    page_number,
+                    idx,
+                    chunk,
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.action_item,
+                raw_text=chunk,
+                normalized_text=normalize_text(chunk),
+                value={
+                    "kind": "workflow_step",
+                    "step_index": idx,
+                    "page": page_number,
+                },
+                entity_keys=[],
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.86,
+                review_status=ReviewStatus.auto_accepted,
+                review_flags=[],
+                parser_version=parser_version,
+            )
+        )
+    return atoms
+
+
+def _visual_review_atom(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    parser_version: str,
+    reason: str,
+) -> EvidenceAtom:
+    """Mark a low-text page as carrying visual evidence the structured
+    pipeline could not extract (rack diagrams, floor plans, OCR-only
+    pages). Surfaces as ``open_question`` with
+    ``review_flags=['visual_evidence_not_fully_extracted']`` so the
+    review UI surfaces the page instead of letting it disappear."""
+    source_ref = SourceRef(
+        id=stable_id("src", artifact_id, "pdf", page_number, "visual_review"),
+        artifact_id=artifact_id,
+        artifact_type=ArtifactType.pdf,
+        filename=filename,
+        locator={"page": page_number},
+        extraction_method="pdf_visual_page_marker_v1",
+        parser_version=parser_version,
+    )
+    return EvidenceAtom(
+        id=stable_id(
+            "atm", project_id, artifact_id, "visual_review", page_number, reason
+        ),
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.open_question,
+        raw_text=(
+            f"PDF page {page_number} appears to contain visual / table / "
+            "diagram evidence that was not fully extracted."
+        ),
+        normalized_text="visual evidence requires review",
+        value={
+            "kind": "visual_page_marker",
+            "page": page_number,
+            "reason": reason,
+        },
+        entity_keys=[],
+        source_refs=[source_ref],
+        receipts=[],
+        authority_class=AuthorityClass.machine_extractor,
+        confidence=0.60,
+        review_status=ReviewStatus.needs_review,
+        review_flags=["visual_evidence_not_fully_extracted"],
+        parser_version=parser_version,
+    )
+
+
+def _scan_pdf_for_extras(
+    *,
+    project_id: str,
+    artifact_id: str,
+    path: Path,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Single fitz pass — emit checkbox / workflow / visual atoms.
+
+    Errors are swallowed by the caller so a malformed PDF can't kill
+    the structured pipeline; this whole pass is best-effort enrichment.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover
+        return []
+
+    out: list[EvidenceAtom] = []
+    with fitz.open(str(path)) as doc:
+        for page_idx in range(len(doc)):
+            try:
+                page_text = doc[page_idx].get_text("text") or ""
+            except Exception:
+                page_text = ""
+            stripped = page_text.strip()
+            if len(stripped) < _LOW_TEXT_VISUAL_THRESHOLD:
+                out.append(
+                    _visual_review_atom(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        page_number=page_idx + 1,
+                        parser_version=parser_version,
+                        reason=f"low_text_page_{len(stripped)}_chars",
+                    )
+                )
+                continue
+            out.extend(
+                _checkbox_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
+            )
+            out.extend(
+                _workflow_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
+            )
+    return out
 
 
 __all__ = [
