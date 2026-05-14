@@ -75,6 +75,17 @@ _QTY_RE = re.compile(
     r"buildings?|users?|endpoints?)\b",
     re.I,
 )
+
+# PR4 (post-v3 review) — risk-table detection. Markdown table rows
+# inside a "Risk Register" / "RAID" section, OR rows whose first
+# column matches a RISK-id pattern, are RISK atoms regardless of
+# whether they happen to contain a number that the QTY_RE would
+# match. Without this, rows like
+# ``| R-09-08 | camera counts are politically visible | Medium | …``
+# get mis-typed as ``quantity`` (the "08" matches QTY_RE if "items"
+# appears nearby).
+_RISK_SECTION_RE = re.compile(r"\b(risk register|raid|risks?|issues?)\b", re.I)
+_RISK_ROW_ID_RE = re.compile(r"^\s*\|\s*(?:RISK|R)-?\d{1,4}", re.I)
 _MONEY_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d{2})?")
 
 
@@ -179,7 +190,11 @@ class MarkdownParser(BaseParser):
         block: MarkdownBlock,
         block_index: int,
     ) -> list[EvidenceAtom]:
-        atom_types = _classify_block(block.text, block.section_path)
+        atom_types = _classify_block(
+            block.text,
+            block.section_path,
+            block_kind=block.block_kind,
+        )
         if not atom_types:
             atom_types = [AtomType.scope_item]
 
@@ -217,6 +232,21 @@ class MarkdownParser(BaseParser):
             if atom_type is AtomType.quantity and qty_match:
                 value["quantity"] = parse_quantity(qty_match.group("qty"))
                 value["unit"] = qty_match.group("unit").lower()
+
+            # PR4 — risk-row payload. When a markdown table row gets
+            # typed as risk, parse the | … | … | cells so downstream
+            # consumers can read severity / impact / mitigation
+            # without re-tokenizing.
+            if atom_type is AtomType.risk and block.block_kind == "table_row":
+                cells = [c.strip() for c in block.text.strip("|").split("|")]
+                value["table_cells"] = cells
+                if cells:
+                    value["risk_id"] = cells[0]
+                if len(cells) >= 3:
+                    value["risk_summary"] = cells[1]
+                    value["severity"] = cells[2]
+                if len(cells) >= 4:
+                    value["impact_or_probability"] = cells[3]
 
             out.append(
                 EvidenceAtom(
@@ -324,9 +354,38 @@ def _iter_markdown_blocks(text: str):
 # ────────────────────────────── classifiers ────────────────────────────
 
 
-def _classify_block(text: str, section_path: tuple[str, ...]) -> list[AtomType]:
+def _looks_like_markdown_risk_row(
+    text: str, section_blob: str, block_kind: str
+) -> bool:
+    """PR4 (post-v3 review) — true when this block is a markdown
+    table row from a Risk Register / RAID section."""
+    if block_kind != "table_row":
+        return False
+    if _RISK_SECTION_RE.search(section_blob):
+        return True
+    if _RISK_ROW_ID_RE.search(text):
+        return True
+    cells = [c.strip() for c in text.strip("|").split("|")]
+    blob = " ".join(cells[:5]).lower()
+    return bool(
+        "severity" in blob
+        and ("impact" in blob or "probability" in blob or "risk" in blob)
+    )
+
+
+def _classify_block(
+    text: str,
+    section_path: tuple[str, ...],
+    *,
+    block_kind: str = "",
+) -> list[AtomType]:
     section_blob = " / ".join(section_path).lower()
     blob = f"{section_blob} {text}".lower()
+
+    # PR4 — risk rows always classify as risk and never as quantity,
+    # even if a column happens to contain "5 items" / "Medium 3".
+    if _looks_like_markdown_risk_row(text, section_blob, block_kind):
+        return [AtomType.risk]
 
     types: list[AtomType] = []
     if _EXCLUSION_RE.search(blob):

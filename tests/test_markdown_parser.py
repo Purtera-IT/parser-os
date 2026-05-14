@@ -63,6 +63,44 @@ def test_markdown_extension_match(tmp_path: Path):
     assert m.parser_name == "markdown"
 
 
+def test_markdown_risk_table_row_classifies_as_risk(tmp_path: Path):
+    """PR4 (post-v3) — a markdown table row inside a Risk Register
+    section is a ``risk`` atom, not a ``quantity`` atom, even when
+    the row has cells like Medium/Medium that QTY_RE could otherwise
+    match against ``items`` nearby."""
+    p = tmp_path / "STRESS_MULTI_CAM_managed_services_package.md"
+    p.write_text(
+        """## Risk Register
+
+| Risk ID | Risk | Severity | Impact | Status | Owner | Mitigation |
+|---------|------|----------|--------|--------|-------|------------|
+| R-09-08 | camera counts are politically visible | Medium | Medium | Open | Facilities | mitigate with written clarification, field validation, or change control |
+""",
+        encoding="utf-8",
+    )
+
+    artifact_id = stable_id("art", str(p))
+    out = MarkdownParser().parse_artifact(
+        project_id="TEST",
+        artifact_id=artifact_id,
+        path=p,
+    )
+
+    risk_atoms = [a for a in out.atoms if a.atom_type == AtomType.risk]
+    assert risk_atoms, [a.atom_type.value for a in out.atoms]
+    # The header row also classifies as risk — find the actual data row.
+    real_risks = [a for a in risk_atoms if "R-09-08" in (a.value.get("risk_id") or "")]
+    assert real_risks, [a.value.get("risk_id") for a in risk_atoms]
+    risk = real_risks[0]
+    assert risk.value.get("severity") in {"Medium", "medium"}
+    # No quantity atom should have been emitted for the same row.
+    same_row_qty = [
+        a for a in out.atoms
+        if a.atom_type == AtomType.quantity and "R-09-08" in (a.raw_text or "")
+    ]
+    assert same_row_qty == []
+
+
 def test_markdown_parser_registered_by_default():
     """The default parser registry must include the Markdown parser."""
     from app.parsers.registry import get_registered_parsers

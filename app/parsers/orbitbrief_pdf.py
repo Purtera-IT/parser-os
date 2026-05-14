@@ -1977,6 +1977,420 @@ _WORKFLOW_STEP_RE = re.compile(
 _LOW_TEXT_VISUAL_THRESHOLD = 80
 
 
+# ───────────────── PR5 (post-v3) — PDF v2 supplements ─────────────────
+
+
+_PDF_HEADER_LABELS_RE = re.compile(
+    r"\bCUSTOMER\b.*\bSERVICE\s+LINE\b.*\bTARGET\s+GO[-\s]?LIVE\b",
+    re.I,
+)
+_DATE_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
+
+
+def _pdf_header_field_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """5A — extract CUSTOMER / SERVICE LINE / TARGET GO-LIVE header
+    fields from a PDF page that has them on three consecutive lines."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    out: list[EvidenceAtom] = []
+
+    for i, line in enumerate(lines[:25]):
+        if not _PDF_HEADER_LABELS_RE.search(line):
+            continue
+
+        customer = lines[i + 1] if i + 1 < len(lines) else ""
+        service_line = ""
+        target_go_live = ""
+
+        if i + 2 < len(lines):
+            candidate = lines[i + 2]
+            date_match = _DATE_RE.search(candidate)
+            if date_match:
+                target_go_live = date_match.group(0)
+                service_line = candidate[: date_match.start()].strip()
+            else:
+                service_line = candidate
+                if i + 3 < len(lines):
+                    date_match2 = _DATE_RE.search(lines[i + 3])
+                    if date_match2:
+                        target_go_live = date_match2.group(0)
+
+        fields = [
+            ("customer", customer, AtomType.project_metadata, "customer"),
+            ("service_line", service_line, AtomType.scope_item, "service_line"),
+            ("target_go_live", target_go_live, AtomType.constraint, "target_go_live"),
+        ]
+        for field, value, atom_type, kind in fields:
+            if not value:
+                continue
+            source_ref = SourceRef(
+                id=stable_id("src", artifact_id, "pdf", page_number, "header", field),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.pdf,
+                filename=filename,
+                locator={"page": page_number, "header_field": field},
+                extraction_method="pdf_header_kv_v1",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm", project_id, artifact_id, "pdf_header",
+                        page_number, field, value,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=f"{field.replace('_', ' ').title()}: {value}",
+                    normalized_text=normalize_text(value),
+                    value={
+                        "kind": kind,
+                        "field": field,
+                        "value": value,
+                        "page": page_number,
+                    },
+                    entity_keys=[],
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=0.92,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=parser_version,
+                )
+            )
+        break
+    return out
+
+
+# 5B — Form grid (multi-line / multi-column "x Foo" tables).
+_FORM_GROUP_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
+    "monitoring tool intake": {
+        "known_options": frozenset(
+            {
+                "LogicMonitor",
+                "Microsoft Sentinel",
+                "ServiceNow Event Mgmt",
+                "Aruba Central",
+                "Meraki Dashboard",
+                "Genetec Security Center",
+                "PRTG",
+                "Datadog",
+            }
+        )
+    },
+}
+
+
+def _split_form_grid_line(line: str) -> list[tuple[str, bool]]:
+    cells = [c.strip() for c in re.split(r"\s{2,}", line.strip()) if c.strip()]
+    out: list[tuple[str, bool]] = []
+    for cell in cells:
+        selected = bool(re.match(r"^[xX]\s+", cell))
+        label = re.sub(r"^[xX]\s+", "", cell).strip()
+        if label:
+            out.append((label, selected))
+    return out
+
+
+def _form_grid_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """5B — when a line names a known form-group heading (e.g.
+    "Monitoring Tool Intake"), scan the next ~12 lines for option
+    labels. Emit one ``form_option_state`` atom per known option,
+    with ``selected=True`` if the cell starts with literal ``x ``,
+    else ``selected=False``."""
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    out: list[EvidenceAtom] = []
+    for i, line in enumerate(lines):
+        group_name = normalize_text(line)
+        group_config = _FORM_GROUP_HEADINGS.get(group_name)
+        if group_config is None:
+            continue
+        known_options = group_config["known_options"]
+        option_index = 0
+        for j in range(i + 1, min(i + 12, len(lines))):
+            candidate = lines[j].strip()
+            if not candidate:
+                break
+            for label, selected in _split_form_grid_line(candidate):
+                if label not in known_options:
+                    continue
+                source_ref = SourceRef(
+                    id=stable_id(
+                        "src", artifact_id, "pdf", page_number, "form_grid",
+                        group_name, option_index,
+                    ),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.pdf,
+                    filename=filename,
+                    locator={
+                        "page": page_number,
+                        "group": group_name,
+                        "line_index": j,
+                        "option_index": option_index,
+                    },
+                    extraction_method="pdf_form_grid_v1",
+                    parser_version=parser_version,
+                )
+                out.append(
+                    EvidenceAtom(
+                        id=stable_id(
+                            "atm", project_id, artifact_id, "form_grid",
+                            page_number, group_name, option_index,
+                            selected, label,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.form_option_state,
+                        raw_text=(
+                            f"{'Selected' if selected else 'Not selected'} "
+                            f"{group_name}: {label}"
+                        ),
+                        normalized_text=normalize_text(label),
+                        value={
+                            "kind": "form_option_state",
+                            "group": group_name,
+                            "label": label,
+                            "selected": selected,
+                            "page": page_number,
+                        },
+                        entity_keys=[],
+                        source_refs=[source_ref],
+                        receipts=[],
+                        authority_class=AuthorityClass.customer_current_authored,
+                        confidence=0.90 if selected else 0.70,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[]
+                        if selected
+                        else ["form_option_unselected", "do_not_certify_as_exclusion"],
+                        parser_version=parser_version,
+                    )
+                )
+                option_index += 1
+        break
+    return out
+
+
+# 5C — fix the "blocked by vendor" / "by vendor" false-positive.
+_EXPLICIT_BY_OTHERS_RE = re.compile(
+    r"\b("
+    r"by\s+(?:others|gc)\b|"
+    r"n\.?i\.?c\.?|"
+    r"provided\s+by\s+(?:others|owner|customer)|"
+    r"performed\s+by\s+(?:others|owner|customer)|"
+    r"furnished\s+by\s+(?:others|owner|customer)|"
+    r"owner[-\s]?provided|customer[-\s]?provided"
+    r")\b",
+    re.I,
+)
+
+
+# 5D — field checklist row.
+_FIELD_CHECKLIST_ROW_RE = re.compile(
+    r"^\s*(?P<num>\d{1,2})\s{2,}"
+    r"(?P<item>.+?)\s{2,}"
+    r"(?P<status>OPEN|N/A|NA|PASS|FAIL|BLOCKED|CLOSED|PENDING)\s{2,}"
+    r"(?P<area>[A-Za-z0-9 /_-]{2,60})\s{2,}"
+    r"(?P<note>.+?)\s*$",
+    re.I,
+)
+
+
+def _field_checklist_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """5D — emit one atom per field-checklist row when a page
+    contains the literal phrase 'field checklist'."""
+    if "field checklist" not in normalize_text(text):
+        return []
+    out: list[EvidenceAtom] = []
+    for line_idx, line in enumerate(text.splitlines()):
+        m = _FIELD_CHECKLIST_ROW_RE.match(line)
+        if not m:
+            continue
+        item_no = m.group("num")
+        item = m.group("item").strip()
+        status = m.group("status").strip()
+        area = m.group("area").strip()
+        note = m.group("note").strip()
+        atom_type = (
+            AtomType.constraint
+            if status.upper() in {"OPEN", "BLOCKED", "PENDING"}
+            else AtomType.scope_item
+        )
+        source_ref = SourceRef(
+            id=stable_id("src", artifact_id, "pdf", page_number, "field_check", item_no),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.pdf,
+            filename=filename,
+            locator={
+                "page": page_number,
+                "line_index": line_idx,
+                "field_check_item": item_no,
+            },
+            extraction_method="pdf_field_checklist_row_v1",
+            parser_version=parser_version,
+        )
+        out.append(
+            EvidenceAtom(
+                id=stable_id(
+                    "atm", project_id, artifact_id, "field_checklist",
+                    page_number, item_no, item, status,
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=atom_type,
+                raw_text=f"Field checklist {item_no}: {item} | {status} | {area} | {note}",
+                normalized_text=normalize_text(item),
+                value={
+                    "kind": "field_checklist_row",
+                    "item_no": item_no,
+                    "item": item,
+                    "status": status,
+                    "area": area,
+                    "note": note,
+                    "page": page_number,
+                },
+                entity_keys=[],
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.86,
+                review_status=ReviewStatus.auto_accepted,
+                review_flags=[],
+                parser_version=parser_version,
+            )
+        )
+    return out
+
+
+# 5E — horizontal workflow (Detect | Triage | Contain | Escalate | Recover | Improve).
+_WORKFLOW_ORDER = ["Detect", "Triage", "Contain", "Escalate", "Recover", "Improve"]
+
+
+def _horizontal_workflow_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    out: list[EvidenceAtom] = []
+    heading_idx = None
+    for i, line in enumerate(lines):
+        if all(step.lower() in line.lower() for step in _WORKFLOW_ORDER):
+            heading_idx = i
+            break
+    if heading_idx is None:
+        return out
+    # PR5 — descriptions can be:
+    #   (a) one line per step (already array-aligned), OR
+    #   (b) ONE line with all step descriptions separated by ≥2 spaces.
+    # Try (b) first when the very next line splits into N pieces.
+    raw_descs: list[str] = []
+    if heading_idx + 1 < len(lines):
+        candidate = lines[heading_idx + 1]
+        cells = [c.strip() for c in re.split(r"\s{2,}", candidate.strip()) if c.strip()]
+        if len(cells) == len(_WORKFLOW_ORDER):
+            raw_descs = cells
+    if not raw_descs:
+        raw_descs = lines[heading_idx + 1 : heading_idx + 1 + len(_WORKFLOW_ORDER)]
+    for idx, step in enumerate(_WORKFLOW_ORDER):
+        desc = raw_descs[idx] if idx < len(raw_descs) else ""
+        source_ref = SourceRef(
+            id=stable_id(
+                "src", artifact_id, "pdf", page_number, "workflow_horizontal", idx,
+            ),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.pdf,
+            filename=filename,
+            locator={
+                "page": page_number,
+                "workflow_step_index": idx,
+                "layout": "horizontal",
+            },
+            extraction_method="pdf_horizontal_workflow_v1",
+            parser_version=parser_version,
+        )
+        out.append(
+            EvidenceAtom(
+                id=stable_id(
+                    "atm", project_id, artifact_id, "workflow_horizontal",
+                    page_number, idx, step, desc,
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.action_item,
+                raw_text=f"Workflow step {idx + 1} {step}: {desc}".strip(),
+                normalized_text=normalize_text(f"{step} {desc}"),
+                value={
+                    "kind": "workflow_step",
+                    "step_index": idx,
+                    "step_name": step,
+                    "description": desc,
+                    "page": page_number,
+                    "layout": "horizontal",
+                },
+                entity_keys=[],
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.82,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["layout_derived_workflow"],
+                parser_version=parser_version,
+            )
+        )
+    return out
+
+
+# 5C support — aggregate paragraph that lists all monitoring tool
+# names but lost the per-option state. Detect + suppress so the
+# brain doesn't see the ambiguous string.
+_MONITORING_TOOL_NAMES = frozenset(
+    {
+        "logicmonitor",
+        "microsoft sentinel",
+        "servicenow event mgmt",
+        "aruba central",
+        "meraki dashboard",
+        "genetec security center",
+        "prtg",
+        "datadog",
+    }
+)
+
+
+def _looks_like_form_option_aggregate(text: str) -> bool:
+    low = normalize_text(text)
+    hits = sum(1 for name in _MONITORING_TOOL_NAMES if name in low)
+    return hits >= 4 and "selected" not in low and "not selected" not in low
+
+
 _SINGLE_LINE_X_RE = re.compile(
     r"^\s*([xX])\s+(?P<label>[A-Z][A-Za-z][A-Za-z0-9 \-/&._']{1,80}?)\s*$"
 )
@@ -2442,8 +2856,10 @@ def _scan_pdf_for_extras(
                         parser_version=parser_version,
                     )
                 )
+            # PR5 (post-v3) — header KV / form grid / field checklist /
+            # horizontal workflow.
             out.extend(
-                _workflow_atoms_from_text(
+                _pdf_header_field_atoms_from_text(
                     project_id=project_id,
                     artifact_id=artifact_id,
                     filename=path.name,
@@ -2452,6 +2868,50 @@ def _scan_pdf_for_extras(
                     parser_version=parser_version,
                 )
             )
+            out.extend(
+                _form_grid_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
+            )
+            out.extend(
+                _field_checklist_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
+            )
+            # Prefer the horizontal six-step workflow if the page has
+            # one; fall back to the original verb-density workflow
+            # extractor.
+            horizontal = _horizontal_workflow_atoms_from_text(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                page_number=page_idx + 1,
+                text=page_text,
+                parser_version=parser_version,
+            )
+            if horizontal:
+                out.extend(horizontal)
+            else:
+                out.extend(
+                    _workflow_atoms_from_text(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        page_number=page_idx + 1,
+                        text=page_text,
+                        parser_version=parser_version,
+                    )
+                )
     return out
 
 
