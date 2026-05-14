@@ -40,7 +40,14 @@ _SITE_NEGATIVE_RE = re.compile(
     r"genetec|axis|hanwha|milestone|lenel|hid|mercury|"
     r"apc|ups|server|switch|router|firewall|camera|reader|license|lic|sku|"
     r"servicenow|pagerduty|logicmonitor|sentinel|cisa|nist|pci|hipaa|nfpa|"
-    r"vulnerability|incident|playbook|runbook|workflow|sla|contract|renewal"
+    r"vulnerability|incident|playbook|runbook|workflow|sla|contract|renewal|"
+    # Vendor product names that contain a positive site word
+    # ("center", "campus", …) and would otherwise survive on the
+    # positive token alone. Keeps "security center", "command center",
+    # etc. from being miscategorized as physical sites.
+    r"security center|command center|operations center|"
+    r"synergis|streamvault|omnicast|palo alto networks|"
+    r"axis communications|cisco systems"
     r")\b",
     re.I,
 )
