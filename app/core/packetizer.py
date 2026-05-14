@@ -13,6 +13,54 @@ from app.core.anchors import _best_site_key, make_anchor_signature
 from app.core.ids import stable_id
 from app.core.normalizers import normalize_text
 from app.core.packet_certificates import build_packet_certificate
+
+# PR9 — packet certification gates. See docstrings on each helper.
+_EXPLICIT_EXCLUSION_RE = re.compile(
+    r"\b(excluded|exclude|not included|not in scope|out of scope|by others|nic)\b",
+    re.I,
+)
+
+
+def _valid_quantity_conflict_group(
+    group: list["EvidenceAtom"],
+    related_edges: list["EvidenceEdge"],
+) -> bool:
+    """A quantity_conflict packet must be backed by:
+
+    * at least 2 quantity atoms,
+    * at least one ``contradicts`` edge between them,
+    * AND multi-source provenance — either two artifacts or two
+      authority classes — so we never certify a single source
+      arguing with itself.
+    """
+    qty_atoms = [a for a in group if a.atom_type == AtomType.quantity]
+    if len(qty_atoms) < 2:
+        return False
+    if not any(e.edge_type.value == "contradicts" for e in related_edges):
+        return False
+    artifacts = {a.artifact_id for a in qty_atoms}
+    authorities = {a.authority_class for a in qty_atoms}
+    if len(artifacts) < 2 and len(authorities) < 2:
+        return False
+    return True
+
+
+def _valid_scope_exclusion_group(group: list["EvidenceAtom"]) -> bool:
+    """A scope_exclusion packet must include explicit exclusion
+    evidence — either an exclusion atom, an inclusion_status field
+    set to an excluded variant, OR an explicit exclusion phrase in
+    raw_text. Pure quantity evidence alone never certifies a
+    scope_exclusion packet."""
+    for atom in group:
+        if atom.atom_type == AtomType.exclusion:
+            return True
+        value = atom.value if isinstance(atom.value, dict) else {}
+        status = str(value.get("inclusion_status") or "").lower()
+        if status in {"excluded", "not_included", "out_of_scope", "by_others", "nic"}:
+            return True
+        if _EXPLICIT_EXCLUSION_RE.search(atom.raw_text or ""):
+            return True
+    return False
 from app.core.risk import packet_pm_sort_key, score_packet_risk
 from app.core.schemas import (
     AtomType,
@@ -872,6 +920,12 @@ def build_packets(
             continue
         qty_a = a.value.get("quantity")
         qty_b = b.value.get("quantity")
+        # PR9 gate — refuse to certify a quantity_conflict that lacks
+        # 2+ quantity atoms, a contradicts edge, AND multi-source
+        # provenance (2 artifacts or 2 authority classes). Stops a
+        # single source from being staged as arguing with itself.
+        if not _valid_quantity_conflict_group([a, b], [edge]):
+            continue
         reason = edge.reason if edge.reason else f"Quantity conflict between {qty_a} and {qty_b}."
         packet = _build_packet(
             project_id=project_id,
@@ -990,6 +1044,13 @@ def build_packets(
         has_transcript_exclusion = any(
             atom.authority_class == AuthorityClass.meeting_note for atom in ex_atoms
         )
+        # PR9 gate — refuse to certify a scope_exclusion packet
+        # without explicit exclusion evidence. ``ex_atoms`` are
+        # already exclusion-typed so this passes the gate naturally;
+        # the gate catches edge cases where a non-exclusion atom was
+        # smuggled into the group via edge traversal.
+        if not _valid_scope_exclusion_group(all_atoms):
+            continue
         status = (
             PacketStatus.needs_review
             if conflict_targets or has_transcript_exclusion

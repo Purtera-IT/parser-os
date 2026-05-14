@@ -245,6 +245,85 @@ def _quantity_pair_comparable_scope(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     return bool(fp_a) and fp_a == fp_b
 
 
+# PR9 — bid-phase / scope-dimension comparability. A "Base" quote line
+# and an "Add Alternate" quote line for the same site can legitimately
+# differ in count without being a contradiction. Same for Bid Phase 1
+# vs Bid Phase 2, or Owner-Allowance line vs Vendor line. Use this
+# alongside _quantity_pair_comparable_scope.
+
+_ALTERNATE_SCOPE_RE = re.compile(
+    r"\b(add\s*alt|add\s*alternate|alternate|option|owner\s*allowance)\b",
+    re.I,
+)
+_BASE_SCOPE_RE = re.compile(r"\b(base|base\s*bid)\b", re.I)
+
+
+def _scope_dimension(atom: EvidenceAtom) -> str:
+    """Return ``base`` / ``alternate`` / a normalized phase label /
+    ``unspecified`` describing which bid scope this atom belongs to.
+
+    Looks at value-dict hints first (bid_phase, alternate, add_alt,
+    section, scope_bucket, quote_section), then falls back to a
+    regex over the atom's raw_text + value string.
+    """
+    value = atom.value if isinstance(atom.value, dict) else {}
+    for key in (
+        "bid_phase",
+        "alternate",
+        "add_alt",
+        "section",
+        "scope_bucket",
+        "quote_section",
+    ):
+        v = value.get(key)
+        if v:
+            return normalize_text(str(v))
+
+    blob = normalize_text(atom.raw_text or "") + " " + normalize_text(str(value))
+    if _ALTERNATE_SCOPE_RE.search(blob):
+        return "alternate"
+    if _BASE_SCOPE_RE.search(blob):
+        return "base"
+    return "unspecified"
+
+
+def _scope_dimensions_compatible(a: EvidenceAtom, b: EvidenceAtom) -> bool:
+    """True when two atoms either share a scope dimension or at least
+    one is unspecified — used by the part-number quantity conflict
+    path (which doesn't otherwise check bid-phase)."""
+    a_scope = _scope_dimension(a)
+    b_scope = _scope_dimension(b)
+    if a_scope == "unspecified" or b_scope == "unspecified":
+        return True
+    return a_scope == b_scope
+
+
+def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
+    """True only when two quantity atoms can validly contradict.
+
+    Rejects:
+    * non-quantity atoms,
+    * atoms with explicit but conflicting scope dimensions
+      (e.g. one is the Base bid, the other is an Add Alternate),
+    * atoms whose entity_keys are both populated but disjoint (no
+      shared site / device / part_number / etc).
+    """
+    if a.atom_type.value != "quantity" or b.atom_type.value != "quantity":
+        return False
+
+    a_scope = _scope_dimension(a)
+    b_scope = _scope_dimension(b)
+    if a_scope != "unspecified" and b_scope != "unspecified" and a_scope != b_scope:
+        return False
+
+    a_entities = set(a.entity_keys or [])
+    b_entities = set(b.entity_keys or [])
+    if a_entities and b_entities and not (a_entities & b_entities):
+        return False
+
+    return True
+
+
 def _edge_id(project_id: str, edge_type: EdgeType, from_id: str, to_id: str, reason: str) -> str:
     return stable_id("edge", project_id, edge_type.value, from_id, to_id, reason)
 
@@ -452,6 +531,10 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         ok = False
                 if ok and not _quantity_pair_comparable_scope(a, b):
                     ok = False
+                # PR9 gate — bid-phase / scope-dimension comparability.
+                # Refuses Base vs Add-Alt or disjoint-entity contradictions.
+                if ok and not _quantity_atoms_are_comparable(a, b):
+                    ok = False
                 if ok:
                     push(
                         _build_edge(
@@ -476,24 +559,28 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             qty_keys_a = {k for k in a.entity_keys if k.startswith(_QUANTITY_PREFIX)}
             qty_keys_b = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
             if qty_keys_a and qty_keys_b and qty_keys_a != qty_keys_b:
-                # Different quantities for the same part number — true conflict.
-                qa_display = sorted(k.split(":", 1)[1] for k in qty_keys_a)
-                qb_display = sorted(k.split(":", 1)[1] for k in qty_keys_b)
-                part_display = sorted(k.split(":", 1)[1] for k in shared_parts)
-                push(
-                    _build_edge(
-                        project_id,
-                        EdgeType.contradicts,
-                        a,
-                        b,
-                        (
-                            f"Quantity contradiction for part {','.join(part_display)}: "
-                            f"{','.join(qa_display)} vs {','.join(qb_display)}"
-                        ),
-                        0.92,
-                        edge_family=EDGE_FAMILY_PART_NUMBER_QUANTITY_CONFLICT,
+                # PR9 gate — refuse Base vs Add-Alt cost-proposal lines
+                # for the same part number; those legitimately differ.
+                if not _scope_dimensions_compatible(a, b):
+                    pass
+                else:
+                    qa_display = sorted(k.split(":", 1)[1] for k in qty_keys_a)
+                    qb_display = sorted(k.split(":", 1)[1] for k in qty_keys_b)
+                    part_display = sorted(k.split(":", 1)[1] for k in shared_parts)
+                    push(
+                        _build_edge(
+                            project_id,
+                            EdgeType.contradicts,
+                            a,
+                            b,
+                            (
+                                f"Quantity contradiction for part {','.join(part_display)}: "
+                                f"{','.join(qa_display)} vs {','.join(qb_display)}"
+                            ),
+                            0.92,
+                            edge_family=EDGE_FAMILY_PART_NUMBER_QUANTITY_CONFLICT,
+                        )
                     )
-                )
 
     # excludes: exclusion atom mentions entity key in another atom.
     # Uses the entity-key index so we only iterate atoms that actually
