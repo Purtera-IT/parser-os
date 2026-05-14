@@ -33,14 +33,24 @@ def test_checked_checkboxes_become_scope_items():
     assert all(a.review_status == ReviewStatus.auto_accepted for a in atoms)
 
 
-def test_unchecked_checkboxes_become_exclusions_with_review_flag():
+def test_unchecked_checkboxes_become_form_option_state_not_exclusion():
+    """Revised PR7 semantics: unchecked boxes are AMBIGUOUS (could
+    mean 'not applicable', 'blank option', 'not answered', or
+    actually 'not selected') so they emit a neutral
+    ``form_option_state`` atom with a ``do_not_certify_as_exclusion``
+    review flag. The packetizer is responsible for combining them
+    with explicit exclusion language elsewhere if appropriate.
+    """
     text = "☐ 8x5 service desk\n[ ] Optional after-hours\n( ) Microsoft Sentinel"
     atoms = _checkbox_atoms_from_text(page_number=4, text=text, **_kw())
     assert len(atoms) == 3
-    assert all(a.atom_type == AtomType.exclusion for a in atoms)
+    assert all(a.atom_type == AtomType.form_option_state for a in atoms)
     assert all(a.value["checked"] is False for a in atoms)
     assert all(
-        "unchecked_checkbox_not_scope" in a.review_flags for a in atoms
+        "do_not_certify_as_exclusion" in a.review_flags for a in atoms
+    )
+    assert all(
+        "unchecked_checkbox_ambiguous" in a.review_flags for a in atoms
     )
     assert all(a.review_status == ReviewStatus.needs_review for a in atoms)
 

@@ -47,6 +47,14 @@ class AtomType(str, Enum):
     support_entitlement = "support_entitlement"
     site_roster = "site_roster"
     lifecycle_status = "lifecycle_status"
+    # PR7 (revised) — form-option state. Used for unchecked PDF
+    # checkboxes / radio buttons. An unchecked checkbox is NOT
+    # automatically an exclusion (it can mean "not selected", "not
+    # applicable", "blank option", or "not answered"). The
+    # packetizer never certifies a scope_exclusion from
+    # form_option_state alone — explicit exclusion language elsewhere
+    # is required.
+    form_option_state = "form_option_state"
     # Compliance clauses ("shall comply with NFPA 72", "in accordance
     # with IEEE 802.3bt", "per code", "complies with ADA").  Distinct
     # from constraint atoms in that they cite an external standard /

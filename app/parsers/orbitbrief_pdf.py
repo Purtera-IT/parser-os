@@ -1862,6 +1862,15 @@ def _checkbox_atoms_from_text(
             extraction_method="pdf_checkbox_state_v1",
             parser_version=parser_version,
         )
+        # Revised checkbox semantics (post-PR7 review). Checked
+        # boxes are evidence the option WAS selected → scope_item.
+        # Unchecked boxes are AMBIGUOUS — they can mean "not selected",
+        # "not applicable", "blank option", or "not answered". So
+        # unchecked emits ``form_option_state`` (a neutral marker) and
+        # is left for the packetizer to combine with explicit
+        # exclusion language elsewhere if appropriate. Never auto-
+        # certify an unchecked box as a contractual exclusion.
+        atom_type = AtomType.scope_item if checked else AtomType.form_option_state
         atoms.append(
             EvidenceAtom(
                 id=stable_id(
@@ -1876,7 +1885,7 @@ def _checkbox_atoms_from_text(
                 ),
                 project_id=project_id,
                 artifact_id=artifact_id,
-                atom_type=AtomType.scope_item if checked else AtomType.exclusion,
+                atom_type=atom_type,
                 raw_text=f"{'Selected' if checked else 'Not selected'} checkbox: {label}",
                 normalized_text=normalize_text(label),
                 value={
@@ -1889,11 +1898,16 @@ def _checkbox_atoms_from_text(
                 source_refs=[source_ref],
                 receipts=[],
                 authority_class=AuthorityClass.customer_current_authored,
-                confidence=0.90 if checked else 0.72,
+                confidence=0.90 if checked else 0.55,
                 review_status=ReviewStatus.auto_accepted
                 if checked
                 else ReviewStatus.needs_review,
-                review_flags=[] if checked else ["unchecked_checkbox_not_scope"],
+                review_flags=[]
+                if checked
+                else [
+                    "unchecked_checkbox_ambiguous",
+                    "do_not_certify_as_exclusion",
+                ],
                 parser_version=parser_version,
             )
         )

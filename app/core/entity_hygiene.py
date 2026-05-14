@@ -68,8 +68,35 @@ def filter_entity_keys_for_atom(atom: Any, keys: Iterable[str]) -> list[str]:
     physical-place token, AND is not dominated by negative
     product/framework tokens with no positive tokens.
     """
+    kept, _dropped = _filter_with_audit(atom, keys, blob=_atom_text_blob(atom))
+    return kept
+
+
+def filter_entity_keys_with_audit(
+    atom: Any, keys: Iterable[str]
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Same as :func:`filter_entity_keys_for_atom` but also returns
+    one audit record per dropped candidate so the compiler can write
+    them to ``hygiene_audit.jsonl``. Each record carries:
+
+      {
+        "atom_id": str,
+        "dropped_site_candidate": str,
+        "reason": "negative_term_match" | "no_positive_evidence",
+        "negative_terms": [str, ...],
+        "positive_terms": [str, ...],
+        "source_atom_id": str,
+      }
+    """
+    return _filter_with_audit(atom, keys, blob=_atom_text_blob(atom))
+
+
+def _filter_with_audit(
+    atom: Any, keys: Iterable[str], *, blob: str
+) -> tuple[list[str], list[dict[str, Any]]]:
     kept: list[str] = []
-    blob = _atom_text_blob(atom)
+    dropped: list[dict[str, Any]] = []
+    atom_id = getattr(atom, "id", None)
 
     for key in keys:
         if not isinstance(key, str):
@@ -79,34 +106,52 @@ def filter_entity_keys_for_atom(atom: Any, keys: Iterable[str]) -> list[str]:
             continue
 
         candidate = key.replace("site:", "").replace("_", " ")
-
-        # Drop when the candidate name itself is clearly built from
-        # product / SaaS / framework words and lacks any positive
-        # site-vocabulary anchor. This is the dominant rule —
-        # ``site:belden_cat6_cmp`` is bogus regardless of whether
-        # the surrounding atom text happens to mention an MDF/IDF.
         cand_neg = bool(_SITE_NEGATIVE_RE.search(candidate))
         cand_pos = bool(_SITE_POSITIVE_RE.search(candidate))
+
         if cand_neg and not cand_pos:
+            dropped.append(
+                {
+                    "atom_id": atom_id,
+                    "dropped_site_candidate": key,
+                    "reason": "candidate_name_negative_match",
+                    "negative_terms": _matched(_SITE_NEGATIVE_RE, candidate),
+                    "positive_terms": [],
+                    "source_atom_id": atom_id,
+                }
+            )
             continue
 
-        # Drop when the full evidence blob is negative-dominated and
-        # carries no positive anchor anywhere — the parser-side
-        # extractor probably pulled the wrong span as a "site".
         test_blob = f"{candidate} {blob}"
         if _SITE_NEGATIVE_RE.search(test_blob) and not _SITE_POSITIVE_RE.search(
             test_blob
         ):
+            dropped.append(
+                {
+                    "atom_id": atom_id,
+                    "dropped_site_candidate": key,
+                    "reason": "evidence_blob_negative_dominated",
+                    "negative_terms": _matched(_SITE_NEGATIVE_RE, test_blob),
+                    "positive_terms": [],
+                    "source_atom_id": atom_id,
+                }
+            )
             continue
 
-        # Otherwise keep. We deliberately accept site keys with no
-        # explicit positive vocabulary match (e.g. ``site:west_wing``,
-        # ``site:annex_b``) because real proper-noun site names rarely
-        # contain the literal words "school" / "building" — they ARE
-        # the site name.
         kept.append(key)
 
-    return sorted(set(kept))
+    return sorted(set(kept)), dropped
 
 
-__all__ = ["filter_entity_keys_for_atom"]
+def _matched(pattern: re.Pattern[str], text: str) -> list[str]:
+    seen: list[str] = []
+    for m in pattern.finditer(text):
+        v = m.group(0).strip()
+        if v and v not in seen:
+            seen.append(v)
+        if len(seen) >= 6:
+            break
+    return seen
+
+
+__all__ = ["filter_entity_keys_for_atom", "filter_entity_keys_with_audit"]

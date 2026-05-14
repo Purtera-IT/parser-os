@@ -50,8 +50,16 @@ def _valid_scope_exclusion_group(group: list["EvidenceAtom"]) -> bool:
     evidence — either an exclusion atom, an inclusion_status field
     set to an excluded variant, OR an explicit exclusion phrase in
     raw_text. Pure quantity evidence alone never certifies a
-    scope_exclusion packet."""
+    scope_exclusion packet.
+
+    Atoms with the ``do_not_certify_as_exclusion`` review flag
+    (e.g. unchecked PDF checkboxes) are deliberately ignored — those
+    are ambiguous and need corroboration before they can support a
+    scope_exclusion certification.
+    """
     for atom in group:
+        if "do_not_certify_as_exclusion" in (atom.review_flags or []):
+            continue
         if atom.atom_type == AtomType.exclusion:
             return True
         value = atom.value if isinstance(atom.value, dict) else {}
