@@ -41,6 +41,23 @@ parser_version = "xlsx_parser_v2_1"
 STRUCTURED_SCHEMA_XLSX = "orbitbrief.xlsx.structured.v1"
 STRUCTURED_SCHEMA_CSV = "orbitbrief.csv.structured.v1"
 
+# Cell-fact patterns (PR2). When a generic row's individual cell text
+# matches one of these patterns we ALSO emit a sub-atom typed as
+# ``exclusion`` or ``risk``, anchored to the parent row by
+# ``value.parent_row_atom_id``. This stops "EOL", "not included",
+# "single point of failure", … from being buried inside generic
+# row text where the packetizer can't find them.
+_EXCLUSION_CELL_RE = re.compile(
+    r"\b(exclud(?:e|ed|es|ing)|not covered|not included|unsupported|"
+    r"no sla|outside coverage|unless noted)\b",
+    re.I,
+)
+_RISK_CELL_RE = re.compile(
+    r"\b(eol|end of life|unsupported|critical|high risk|"
+    r"single point of failure|mismatch|missing)\b",
+    re.I,
+)
+
 # Canonical column role -> normalized header tokens (lowercase, punctuation-stripped variants).
 HEADER_ALIASES: dict[str, set[str]] = {
     "project": {"project", "job", "job number", "project number"},
@@ -922,6 +939,226 @@ class XlsxParser(BaseParser):
                 )
         return atoms
 
+    @staticmethod
+    def _canonicalize_header(value: str) -> str:
+        """Map a raw column header into a stable canonical key.
+
+        Used by :meth:`_generic_row_profile` to bucket a row into one
+        of the structured AtomTypes (risk / asset_record / …) without
+        requiring the upstream workbook to use a specific column name.
+        """
+        raw = normalize_text(str(value or "")).replace("-", " ").replace("_", " ")
+        raw = re.sub(r"\s+", " ", raw).strip()
+
+        aliases: dict[str, set[str]] = {
+            "site_id": {"site id", "site code", "campus id", "location id"},
+            "site_name": {"site", "site name", "campus", "location", "building"},
+            "address": {
+                "address",
+                "street address",
+                "service address",
+                "site address",
+            },
+            "access_notes": {"access notes", "access window", "site access"},
+
+            "risk_id": {"risk id", "raid id", "issue id"},
+            "severity": {"severity", "priority", "risk rating"},
+            "impact": {"impact", "business impact"},
+            "likelihood": {"likelihood", "probability"},
+            "mitigation": {"mitigation", "mitigation plan", "response plan"},
+            "owner": {"owner", "assigned owner", "risk owner"},
+            "status": {"status", "raid status"},
+
+            "asset_id": {"asset id", "asset tag", "tag"},
+            "serial": {"serial", "serial number", "s n", "sn"},
+            "model": {"model", "model number", "part number"},
+            "ip_address": {"ip", "ip address", "management ip", "mgmt ip"},
+            "mac_address": {"mac", "mac address"},
+            "lifecycle": {"lifecycle", "eol", "end of life", "refresh status"},
+
+            "support_level": {"support level", "support tier", "coverage"},
+            "contract_id": {
+                "contract",
+                "contract id",
+                "support contract",
+                "contract number",
+            },
+            "renewal_date": {
+                "renewal",
+                "renewal date",
+                "expiration",
+                "expiry",
+                "expires",
+            },
+            "support_notes": {
+                "support notes",
+                "coverage notes",
+                "entitlement notes",
+            },
+
+            "wan_provider": {
+                "wan provider",
+                "carrier",
+                "isp",
+                "circuit provider",
+            },
+            "circuit_id": {"circuit id", "circuit", "service id"},
+        }
+
+        for canon, names in aliases.items():
+            if raw in names:
+                return canon
+        return raw.replace(" ", "_")
+
+    @staticmethod
+    def _generic_row_profile(
+        canon_cells: dict[str, str],
+        sheet_name: str,
+    ) -> tuple[AtomType, str, AuthorityClass, float]:
+        """Inspect canonicalized cells + sheet name and pick the best
+        structured AtomType / value.kind / authority class / confidence
+        for this row. Defaults to ``scope_item`` / table_row / 0.84
+        which preserves the legacy behavior."""
+        keys = {k for k, v in canon_cells.items() if str(v).strip()}
+        sheet = normalize_text(sheet_name)
+
+        # Order matters — most specific first. Lifecycle is more
+        # specific than the bare asset_record because it requires both
+        # an asset identifier AND a lifecycle/status column.
+        if {"risk_id", "severity"} & keys and (
+            {"mitigation", "impact", "owner", "status", "likelihood"} & keys
+        ):
+            return (
+                AtomType.risk,
+                "risk_register_row",
+                AuthorityClass.customer_current_authored,
+                0.93,
+            )
+        if {"support_level", "renewal_date", "contract_id"} & keys:
+            return (
+                AtomType.support_entitlement,
+                "support_entitlement_row",
+                AuthorityClass.vendor_quote,
+                0.92,
+            )
+        if {"lifecycle", "status"} & keys and (
+            {"asset_id", "model", "serial"} & keys
+        ):
+            return (
+                AtomType.lifecycle_status,
+                "lifecycle_status_row",
+                AuthorityClass.approved_site_roster,
+                0.91,
+            )
+        if {"asset_id", "serial", "ip_address", "mac_address"} & keys:
+            return (
+                AtomType.asset_record,
+                "asset_inventory_row",
+                AuthorityClass.approved_site_roster,
+                0.93,
+            )
+        if {"site_id", "address"} & keys or ("site" in sheet and "address" in keys):
+            return (
+                AtomType.site_roster,
+                "site_roster_row",
+                AuthorityClass.approved_site_roster,
+                0.94,
+            )
+        return (
+            AtomType.scope_item,
+            "table_row",
+            AuthorityClass.contractual_scope,
+            0.84,
+        )
+
+    def _emit_cell_fact_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        row_number: int,
+        row_atom_id: str,
+        cells: dict[str, str],
+        cell_columns: dict[str, str],
+    ) -> list[EvidenceAtom]:
+        """Emit cell-level sub-atoms for buried facts inside a generic row.
+
+        Specifically: if a cell mentions an explicit exclusion phrase
+        ("not included", "excluded", "outside coverage", …) emit an
+        ``exclusion`` atom anchored to that cell. Same for risk
+        signals ("EOL", "single point of failure", "missing", …) →
+        ``risk`` atom. Each sub-atom carries
+        ``value.parent_row_atom_id`` so the packetizer can group them
+        with the parent row.
+        """
+        out: list[EvidenceAtom] = []
+        for field, text in cells.items():
+            text_str = str(text).strip()
+            if not text_str:
+                continue
+            if _EXCLUSION_CELL_RE.search(text_str):
+                atom_type = AtomType.exclusion
+                confidence = 0.90
+            elif _RISK_CELL_RE.search(text_str):
+                atom_type = AtomType.risk
+                confidence = 0.88
+            else:
+                continue
+
+            source_ref = SourceRef(
+                id=stable_id(
+                    "src", artifact_id, sheet_name, row_number, field, "cell_fact"
+                ),
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                locator={
+                    "sheet": sheet_name,
+                    "row": row_number,
+                    "columns": {field: cell_columns.get(field)},
+                    "parent_row_atom_id": row_atom_id,
+                },
+                extraction_method="xlsx_cell_fact_v1",
+                parser_version=self.parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm",
+                        project_id,
+                        artifact_id,
+                        sheet_name,
+                        row_number,
+                        field,
+                        atom_type.value,
+                        text_str,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=f"{field}: {text_str}",
+                    normalized_text=normalize_text(text_str),
+                    value={
+                        "kind": "cell_fact",
+                        "field": field,
+                        "parent_row_atom_id": row_atom_id,
+                        "text": text_str,
+                    },
+                    entity_keys=[],
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=confidence,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
+
     def _emit_generic_rows(
         self,
         project_id: str,
@@ -1035,33 +1272,65 @@ class XlsxParser(BaseParser):
                 str(row_idx + 1),
                 normalize_text(raw_text)[:120],
             )
+            cells_by_original_col = {
+                col: (str(row[i]).strip() if i < len(row) and row[i] is not None else "")
+                for i, col in enumerate(columns)
+                if i < len(row) and str(row[i] or "").strip()
+            }
+            # Profile the row: risk register, asset inventory, support
+            # entitlement, site roster, lifecycle status, or generic
+            # scope item.  Falls back to the legacy
+            # (scope_item, table_row, contractual_scope, 0.84) tuple
+            # when no profile fits.
+            canonical_columns = [self._canonicalize_header(c) for c in columns]
+            canon_cells = {
+                canonical_columns[i]: str(row[i]).strip()
+                for i in range(min(len(row), len(canonical_columns)))
+                if row[i] is not None and str(row[i]).strip()
+            }
+            atom_type, row_kind, authority_class, confidence = (
+                self._generic_row_profile(canon_cells, sheet_name)
+            )
             value: dict[str, Any] = {
-                "kind": "table_row",
+                "kind": row_kind,
                 "sheet": sheet_name,
                 "row": row_idx + 1,
-                "cells": {
-                    col: (str(row[i]).strip() if i < len(row) and row[i] is not None else "")
-                    for i, col in enumerate(columns)
-                    if i < len(row) and str(row[i] or "").strip()
-                },
+                "cells": cells_by_original_col,
+                "canonical_cells": canon_cells,
             }
             atoms.append(
                 EvidenceAtom(
                     id=atom_id,
                     project_id=project_id,
                     artifact_id=artifact_id,
-                    atom_type=AtomType.scope_item,
+                    atom_type=atom_type,
                     raw_text=raw_text,
                     normalized_text=normalize_text(raw_text),
                     value=value,
                     entity_keys=[],  # populated by core.entity_extraction
                     source_refs=[source_ref],
                     receipts=[],
-                    authority_class=AuthorityClass.contractual_scope,
-                    confidence=0.84,
+                    authority_class=authority_class,
+                    confidence=confidence,
                     review_status=ReviewStatus.auto_accepted,
                     review_flags=[],
                     parser_version=self.parser_version,
+                )
+            )
+
+            # Cell-level sub-atoms — emit exclusion / risk atoms for
+            # any cells whose text matches the cell-fact patterns.
+            atoms.extend(
+                self._emit_cell_fact_atoms(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    row_number=row_idx + 1,
+                    row_atom_id=atom_id,
+                    cells=cells_by_original_col,
+                    cell_columns=cell_columns,
                 )
             )
 

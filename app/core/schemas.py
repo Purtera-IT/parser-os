@@ -36,6 +36,17 @@ class AtomType(str, Enum):
     decision = "decision"
     action_item = "action_item"
     meeting_commitment = "meeting_commitment"
+    # Structured-row AtomTypes (PR2). These give the packetizer
+    # something more specific than ``scope_item`` to anchor on so a
+    # risk register row, asset inventory row, support entitlement
+    # row, site roster row, and lifecycle/EOL row each route to
+    # their natural packet family instead of being lumped into a
+    # generic "scope" packet.
+    risk = "risk"
+    asset_record = "asset_record"
+    support_entitlement = "support_entitlement"
+    site_roster = "site_roster"
+    lifecycle_status = "lifecycle_status"
     # Compliance clauses ("shall comply with NFPA 72", "in accordance
     # with IEEE 802.3bt", "per code", "complies with ADA").  Distinct
     # from constraint atoms in that they cite an external standard /
