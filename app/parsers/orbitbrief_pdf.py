@@ -1987,6 +1987,18 @@ _PDF_HEADER_LABELS_RE = re.compile(
 _DATE_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
 
 
+_HEADER_LABEL_LINE_RE = re.compile(
+    r"^\s*(CUSTOMER|SERVICE\s+LINE|TARGET\s+GO[-\s]?LIVE)\s*:?\s*$",
+    re.I,
+)
+_HEADER_LABEL_TO_FIELD = {
+    "customer": "customer",
+    "service line": "service_line",
+    "target go-live": "target_go_live",
+    "target go live": "target_go_live",
+}
+
+
 def _pdf_header_field_atoms_from_text(
     *,
     project_id: str,
@@ -1997,10 +2009,96 @@ def _pdf_header_field_atoms_from_text(
     parser_version: str,
 ) -> list[EvidenceAtom]:
     """5A — extract CUSTOMER / SERVICE LINE / TARGET GO-LIVE header
-    fields from a PDF page that has them on three consecutive lines."""
+    fields from a PDF page. Handles two layouts:
+
+    1. Combined-line: ``CUSTOMER  SERVICE LINE  TARGET GO-LIVE`` on
+       one line followed by 2-3 value lines.
+    2. Separate-line: each label on its own line, followed by 1-3
+       value lines until the next label or 3 lines pass.
+    """
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     out: list[EvidenceAtom] = []
 
+    # Try the separate-line layout first by finding any of the three
+    # label lines.
+    field_values: dict[str, str] = {}
+    i = 0
+    while i < min(len(lines), 80):
+        m = _HEADER_LABEL_LINE_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        label_norm = re.sub(r"\s+", " ", m.group(1).lower()).replace("-", " ")
+        field = _HEADER_LABEL_TO_FIELD.get(label_norm) or _HEADER_LABEL_TO_FIELD.get(
+            label_norm.replace("go live", "go-live")
+        )
+        if not field:
+            i += 1
+            continue
+        # Consume value lines until next label or 3 lines.
+        value_parts: list[str] = []
+        j = i + 1
+        while j < len(lines) and j - i <= 3:
+            if _HEADER_LABEL_LINE_RE.match(lines[j]):
+                break
+            value_parts.append(lines[j])
+            j += 1
+        value = " ".join(value_parts).strip()
+        if field == "target_go_live":
+            date_match = _DATE_RE.search(value)
+            if date_match:
+                value = date_match.group(0)
+        if value:
+            field_values.setdefault(field, value)
+        i = j
+
+    if field_values:
+        for field, value in field_values.items():
+            atom_type = (
+                AtomType.project_metadata if field == "customer"
+                else AtomType.scope_item if field == "service_line"
+                else AtomType.constraint
+            )
+            kind = field
+            source_ref = SourceRef(
+                id=stable_id("src", artifact_id, "pdf", page_number, "header", field),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.pdf,
+                filename=filename,
+                locator={"page": page_number, "header_field": field},
+                extraction_method="pdf_header_kv_v2",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm", project_id, artifact_id, "pdf_header",
+                        page_number, field, value,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=f"{field.replace('_', ' ').title()}: {value}",
+                    normalized_text=normalize_text(value),
+                    value={
+                        "kind": kind,
+                        "field": field,
+                        "value": value,
+                        "page": page_number,
+                    },
+                    entity_keys=[],
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=0.92,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=parser_version,
+                )
+            )
+        return out
+
+    # Combined-line fallback (rare but kept for compatibility).
     for i, line in enumerate(lines[:25]):
         if not _PDF_HEADER_LABELS_RE.search(line):
             continue
