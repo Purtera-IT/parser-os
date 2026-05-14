@@ -55,6 +55,23 @@ class AtomType(str, Enum):
     # form_option_state alone — explicit exclusion language elsewhere
     # is required.
     form_option_state = "form_option_state"
+    # PR2 (post-v3 review) — operational-workbook sheet profiles.
+    # Each value-shape carries the row's structured fields. Mapped
+    # to packet families in the packetizer.
+    project_metadata = "project_metadata"
+    site_survey_row = "site_survey_row"
+    port_vlan_assignment = "port_vlan_assignment"
+    circuit_inventory = "circuit_inventory"
+    alert_route = "alert_route"
+    cutover_validation = "cutover_validation"
+    # PR3 (post-v3 review) — conditional support boundary. e.g.
+    # "8x5 vendor support unless noted". This is a SUPPORT TIER
+    # description, NOT a contractual exclusion. Packetizer must
+    # never use it to govern a scope_exclusion packet.
+    conditional_support_boundary = "conditional_support_boundary"
+    # PR3 — line-item commercial status from BOM Detail "Quote
+    # Status" cells (Pending, Quoted, Awarded, Cancelled, etc.).
+    quote_status = "quote_status"
     # Compliance clauses ("shall comply with NFPA 72", "in accordance
     # with IEEE 802.3bt", "per code", "complies with ADA").  Distinct
     # from constraint atoms in that they cite an external standard /

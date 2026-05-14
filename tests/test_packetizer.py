@@ -100,7 +100,10 @@ def test_packetizer_v0_conflicts_and_governing_rules() -> None:
         atom_type=AtomType.exclusion,
         authority=AuthorityClass.customer_current_authored,
         entity_keys=["site:west_wing", "device:ip_camera"],
-        text="Please remove west wing from scope",
+        # PR3 post-v3 — packetizer now requires explicit exclusion
+        # phrasing in non-support-tier prose. Updated fixture text
+        # uses "excluded" so the assertion still passes.
+        text="West wing is excluded from scope",
     )
     exclusion_quoted = _atom(
         "excl_quoted",
@@ -198,7 +201,8 @@ def test_transcript_packets_and_governance_rules() -> None:
         atom_type=AtomType.exclusion,
         authority=AuthorityClass.meeting_note,
         entity_keys=["site:west_wing", "device:ip_camera"],
-        text="West wing removed from scope for now.",
+        # PR3 post-v3 — explicit phrasing required.
+        text="West wing is excluded from scope for now.",
     )
     transcript_access = _atom(
         "tx_access",

@@ -85,17 +85,36 @@ def test_site_roster_rows_become_site_roster_atoms(tmp_path: Path):
 
 
 def test_lifecycle_rows_become_lifecycle_status_atoms(tmp_path: Path):
+    """Pure lifecycle/EOL rows (no model/manufacturer signal) keep
+    the lifecycle_status type. Rows with both an asset identifier
+    AND a vendor/model now route to asset_record (PR2 post-v3 fix)."""
     out = _emit_csv(
         XlsxParser(),
         tmp_path,
         "lifecycle.csv",
+        "Asset ID,Lifecycle Status,Refresh Target\n"
+        "AST-1,EOL,2026-12-01\n"
+        "AST-2,Current,2028-06-01\n",
+    )
+    atoms = out if isinstance(out, list) else out.atoms
+    lifecycle = [a for a in atoms if a.atom_type == AtomType.lifecycle_status]
+    assert len(lifecycle) >= 2
+
+
+def test_asset_inventory_with_model_routes_to_asset_record(tmp_path: Path):
+    """PR2 post-v3 — when both asset identifier AND model/vendor
+    are present, the row is an asset_record (not lifecycle_status)."""
+    out = _emit_csv(
+        XlsxParser(),
+        tmp_path,
+        "lifecycle_with_assets.csv",
         "Asset ID,Serial,Model,Lifecycle,Status\n"
         "AST-1,SN1,WS-C3850-48,EOL,unsupported\n"
         "AST-2,SN2,WS-C9300,Current,supported\n",
     )
     atoms = out if isinstance(out, list) else out.atoms
-    lifecycle = [a for a in atoms if a.atom_type == AtomType.lifecycle_status]
-    assert len(lifecycle) >= 2
+    records = [a for a in atoms if a.atom_type == AtomType.asset_record]
+    assert len(records) >= 2
 
 
 def test_cell_fact_emits_exclusion_subatom(tmp_path: Path):

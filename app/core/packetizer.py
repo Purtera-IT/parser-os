@@ -45,28 +45,54 @@ def _valid_quantity_conflict_group(
     return True
 
 
+def _atom_can_govern_scope_exclusion(atom: "EvidenceAtom") -> bool:
+    """PR3 (post-v3 review) — only exclusion atoms with an explicit
+    exclusion phrase in non-support-tier prose may govern a
+    scope_exclusion packet. Cells in support_level / coverage /
+    support_entitlement columns with phrases like "8x5 vendor
+    support unless noted" are SUPPORT-TIER prose, not contractual
+    exclusions.
+    """
+    if atom.atom_type is not AtomType.exclusion:
+        return False
+    if "do_not_certify_as_exclusion" in (atom.review_flags or []):
+        return False
+
+    value = atom.value if isinstance(atom.value, dict) else {}
+    field = str(value.get("canonical_field") or value.get("field") or "").lower()
+    if field in {"support_level", "coverage", "support_entitlement", "support_tier"}:
+        return False
+
+    text = f"{atom.raw_text or ''} {atom.normalized_text or ''}".lower()
+    return bool(
+        re.search(
+            r"\b(excluded|exclude|not\s+included|not\s+in\s+scope|"
+            r"out\s+of\s+scope|by\s+others|n\.?i\.?c\.?|"
+            r"outside\s+coverage|not\s+covered)\b",
+            text,
+        )
+    )
+
+
 def _valid_scope_exclusion_group(group: list["EvidenceAtom"]) -> bool:
     """A scope_exclusion packet must include explicit exclusion
-    evidence — either an exclusion atom, an inclusion_status field
-    set to an excluded variant, OR an explicit exclusion phrase in
-    raw_text. Pure quantity evidence alone never certifies a
-    scope_exclusion packet.
+    evidence — at least one atom that passes
+    :func:`_atom_can_govern_scope_exclusion`, OR an
+    ``inclusion_status`` value-dict signal, OR an explicit
+    exclusion phrase in non-support-tier raw_text.
 
-    Atoms with the ``do_not_certify_as_exclusion`` review flag
-    (e.g. unchecked PDF checkboxes) are deliberately ignored — those
-    are ambiguous and need corroboration before they can support a
-    scope_exclusion certification.
+    Pure quantity evidence alone never certifies a scope_exclusion
+    packet. Atoms with the ``do_not_certify_as_exclusion`` review
+    flag (unchecked checkboxes / support-tier prose) are deliberately
+    ignored — those are ambiguous and need corroboration before they
+    can support a scope_exclusion certification.
     """
     for atom in group:
-        if "do_not_certify_as_exclusion" in (atom.review_flags or []):
-            continue
-        if atom.atom_type == AtomType.exclusion:
+        if _atom_can_govern_scope_exclusion(atom):
             return True
         value = atom.value if isinstance(atom.value, dict) else {}
         status = str(value.get("inclusion_status") or "").lower()
         if status in {"excluded", "not_included", "out_of_scope", "by_others", "nic"}:
-            return True
-        if _EXPLICIT_EXCLUSION_RE.search(atom.raw_text or ""):
             return True
     return False
 from app.core.risk import packet_pm_sort_key, score_packet_risk

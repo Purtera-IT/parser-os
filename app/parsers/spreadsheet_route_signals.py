@@ -347,3 +347,119 @@ def resolve_quote_vs_xlsx_tie(path: Path) -> tuple[str | None, list[str]]:
 
     reasons.append("tie_resolve:quote_headers_default")
     return "quote", reasons
+
+
+# ────────────────────────────── PR1: ops-workbook sniffer ─────────────────
+
+
+_OPS_WORKBOOK_SHEETS: frozenset[str] = frozenset(
+    {
+        "readme",
+        "dashboard",
+        "asset inventory",
+        "site survey raw",
+        "port map & vlans",
+        "port map vlans",
+        "circuit inventory",
+        "bom detail",
+        "license support",
+        "noc alert matrix",
+        "risk register",
+        "cutover validation",
+        "source refs",
+    }
+)
+
+_OPS_HEADER_TOKENS: frozenset[str] = frozenset(
+    {
+        "asset id",
+        "site id",
+        "site",
+        "hostname",
+        "vlan id",
+        "patch panel port",
+        "circuit id",
+        "provider",
+        "monitor id",
+        "runbook ref",
+        "risk id",
+        "validation id",
+        "customer signoff",
+        "pass flag",
+        "scope bucket",
+        "quote status",
+    }
+)
+
+
+def _norm_sheet_name(name: str) -> str:
+    return normalize_text(name).replace("_", " ").strip()
+
+
+def sniff_operations_workbook_strength(path: Path) -> tuple[float, list[str]]:
+    """Return (0..1, reasons) for "this xlsx is a multi-sheet operations
+    workbook" — i.e. NOT a pure quote / BOM. A workbook may contain a
+    BOM sheet but ALSO carry asset / site / port / circuit / risk /
+    cutover sheets; we don't want QuoteParser to swallow the whole
+    artifact in that case (PR1 in the post-review fix plan).
+    """
+    if path.suffix.lower() != ".xlsx":
+        return 0.0, ["ops_sniff:not_xlsx"]
+
+    reasons: list[str] = []
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return 0.0, ["ops_sniff:xlsx_load_failed"]
+
+    try:
+        sheet_names = [_norm_sheet_name(ws.title) for ws in wb.worksheets]
+        matched_sheets = [s for s in sheet_names if s in _OPS_WORKBOOK_SHEETS]
+
+        header_hits = 0
+        for ws in wb.worksheets:
+            try:
+                first_rows = list(ws.iter_rows(values_only=True, max_row=3))
+            except Exception:
+                continue
+            header_blob = " ".join(
+                normalize_text(str(c or ""))
+                for row in first_rows
+                for c in row
+                if str(c or "").strip()
+            )
+            for token in _OPS_HEADER_TOKENS:
+                if token in header_blob:
+                    header_hits += 1
+
+        score = 0.0
+        if len(matched_sheets) >= 3:
+            score += 0.45
+            reasons.append(f"ops_sniff:matched_sheets={matched_sheets[:10]}")
+        if {"asset inventory", "bom detail"} <= set(sheet_names):
+            score += 0.20
+            reasons.append("ops_sniff:asset_inventory_plus_bom")
+        if {"risk register", "cutover validation"} & set(sheet_names):
+            score += 0.15
+            reasons.append("ops_sniff:risk_or_cutover_sheet")
+        if {
+            "port map & vlans",
+            "port map vlans",
+            "circuit inventory",
+            "noc alert matrix",
+        } & set(sheet_names):
+            score += 0.15
+            reasons.append("ops_sniff:network_ops_sheet")
+        if header_hits >= 6:
+            score += 0.20
+            reasons.append(f"ops_sniff:header_hits={header_hits}")
+
+        score = min(1.0, score)
+        reasons.append(f"ops_sniff:strength={score:.2f}")
+        return score, reasons
+
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass

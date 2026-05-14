@@ -48,8 +48,14 @@ STRUCTURED_SCHEMA_CSV = "orbitbrief.csv.structured.v1"
 # "single point of failure", … from being buried inside generic
 # row text where the packetizer can't find them.
 _EXCLUSION_CELL_RE = re.compile(
+    # PR3 (post-v3 review) — dropped "unless noted". That phrase is
+    # almost always a SUPPORT-TIER conditional ("8x5 vendor support
+    # unless noted"), not a contractual exclusion. The packetizer
+    # exclusion gate now also checks the canonical_field so a cell
+    # in a support_level / coverage / support_entitlement column
+    # never participates in a scope_exclusion packet.
     r"\b(exclud(?:e|ed|es|ing)|not covered|not included|unsupported|"
-    r"no sla|outside coverage|unless noted)\b",
+    r"no sla|outside coverage)\b",
     re.I,
 )
 _RISK_CELL_RE = re.compile(
@@ -57,6 +63,134 @@ _RISK_CELL_RE = re.compile(
     r"single point of failure|mismatch|missing)\b",
     re.I,
 )
+# PR3 — conditional support boundary phrasing. "8x5 vendor support
+# unless noted" / "no SLA if expired" / "coverage exclusion if expired".
+# These are SUPPORT TIER descriptions, not contractual exclusions.
+_CONDITIONAL_SUPPORT_RE = re.compile(
+    r"\b(unless\s+noted|sla\s+exclusion\s+if\s+expired|"
+    r"no\s+sla\s+if\s+expired|coverage\s+exclusion\s+if\s+expired|"
+    r"unless\s+otherwise\s+noted|where\s+applicable)\b",
+    re.I,
+)
+_SUPPORT_LEVEL_FIELDS: frozenset[str] = frozenset(
+    {
+        "support_level",
+        "coverage",
+        "support_entitlement",
+        "support_tier",
+    }
+)
+
+
+# PR2 (post-v3 review) — per-sheet profile for operational workbooks.
+# Used by ``XlsxParser._emit_operational_sheet_rows`` to dispatch
+# every row of every named sheet to its proper AtomType + value.kind
+# + authority class.
+@dataclass(frozen=True)
+class _OperationalSheetProfile:
+    atom_type: AtomType
+    kind: str
+    authority_class: AuthorityClass
+    confidence: float
+
+
+_OPERATIONAL_SHEET_PROFILES: dict[str, _OperationalSheetProfile] = {
+    "readme": _OperationalSheetProfile(
+        AtomType.project_metadata,
+        "project_metadata_row",
+        AuthorityClass.customer_current_authored,
+        0.90,
+    ),
+    "dashboard": _OperationalSheetProfile(
+        AtomType.project_metadata,
+        "dashboard_metric_row",
+        AuthorityClass.customer_current_authored,
+        0.90,
+    ),
+    "asset inventory": _OperationalSheetProfile(
+        AtomType.asset_record,
+        "asset_inventory_row",
+        AuthorityClass.approved_site_roster,
+        0.94,
+    ),
+    "site survey raw": _OperationalSheetProfile(
+        AtomType.site_survey_row,
+        "site_survey_row",
+        AuthorityClass.customer_current_authored,
+        0.92,
+    ),
+    "port map & vlans": _OperationalSheetProfile(
+        AtomType.port_vlan_assignment,
+        "port_vlan_assignment_row",
+        AuthorityClass.approved_site_roster,
+        0.94,
+    ),
+    "port map vlans": _OperationalSheetProfile(
+        AtomType.port_vlan_assignment,
+        "port_vlan_assignment_row",
+        AuthorityClass.approved_site_roster,
+        0.94,
+    ),
+    "circuit inventory": _OperationalSheetProfile(
+        AtomType.circuit_inventory,
+        "circuit_inventory_row",
+        AuthorityClass.approved_site_roster,
+        0.92,
+    ),
+    "license support": _OperationalSheetProfile(
+        AtomType.support_entitlement,
+        "support_entitlement_row",
+        AuthorityClass.vendor_quote,
+        0.92,
+    ),
+    "noc alert matrix": _OperationalSheetProfile(
+        AtomType.alert_route,
+        "alert_route_row",
+        AuthorityClass.customer_current_authored,
+        0.92,
+    ),
+    "risk register": _OperationalSheetProfile(
+        AtomType.risk,
+        "risk_register_row",
+        AuthorityClass.customer_current_authored,
+        0.93,
+    ),
+    "cutover validation": _OperationalSheetProfile(
+        AtomType.cutover_validation,
+        "cutover_validation_row",
+        AuthorityClass.customer_current_authored,
+        0.93,
+    ),
+    "source refs": _OperationalSheetProfile(
+        AtomType.project_metadata,
+        "source_reference_row",
+        AuthorityClass.machine_extractor,
+        0.75,
+    ),
+}
+
+
+def _norm_op_sheet(sheet_name: str) -> str:
+    return normalize_text(sheet_name).replace("_", " ").strip()
+
+
+def _first_nonblank_header_row(rows: list[list[Any]]) -> int | None:
+    for i, row in enumerate(rows[:20]):
+        nonblank = [str(c).strip() for c in row if str(c or "").strip()]
+        if len(nonblank) >= 2:
+            return i
+    return None
+
+
+def _cell_to_text_op(value: Any) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value).strip()
 
 # Canonical column role -> normalized header tokens (lowercase, punctuation-stripped variants).
 HEADER_ALIASES: dict[str, set[str]] = {
@@ -615,11 +749,28 @@ class XlsxParser(BaseParser):
         if suffix in {".xlsx", ".csv"}:
             from app.parsers.spreadsheet_route_signals import (
                 path_roster_schedule_hint,
+                sniff_operations_workbook_strength,
                 sniff_xlsx_roster_schedule_strength,
             )
 
             confidence = 0.58
             reasons.append(f"spreadsheet_extension:{suffix}")
+
+            # PR1 (post-v3 review) — multi-sheet operations workbook
+            # detection. Wins decisively over QuoteParser when the
+            # workbook has asset / site / port / circuit / risk /
+            # cutover sheets (even if it ALSO has a BOM sheet).
+            if suffix == ".xlsx":
+                ops_score, ops_reasons = sniff_operations_workbook_strength(path)
+                reasons.extend(ops_reasons)
+                if ops_score >= 0.55:
+                    return ParserMatch(
+                        parser_name=self.parser_name,
+                        confidence=0.97,
+                        reasons=reasons + ["xlsx_match:operations_workbook"],
+                        artifact_type=ArtifactType.xlsx,
+                    )
+
             if path_roster_schedule_hint(path):
                 confidence += 0.14
                 reasons.append("xlsx_match:path_roster_schedule_token")
@@ -852,6 +1003,29 @@ class XlsxParser(BaseParser):
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
+
+        # PR2 (post-v3 review) — operational-workbook sheet profiles.
+        # If the sheet name matches one of the well-known ops sheets
+        # (Asset Inventory / Site Survey / Port Map & VLANs / Circuit
+        # Inventory / License Support / NOC Alert Matrix / Risk
+        # Register / Cutover Validation / README / Dashboard /
+        # Source Refs), dispatch every row to its typed AtomType.
+        op_profile = _OPERATIONAL_SHEET_PROFILES.get(_norm_op_sheet(sheet_name))
+        if op_profile is not None:
+            ops_atoms = self._emit_operational_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+                profile=op_profile,
+            )
+            if ops_atoms:
+                return ops_atoms
+            # Fall through to the legacy path if the ops emitter
+            # produced nothing (e.g. blank sheet).
+
         model = _detect_header(rows)
         # RF1 — explicit fast-path for known structured-row CSVs.
         # Files named asset_inventory / site_list / risk_register /
@@ -1030,6 +1204,58 @@ class XlsxParser(BaseParser):
                 "circuit provider",
             },
             "circuit_id": {"circuit id", "circuit", "service id"},
+
+            # PR2 (post-v3 review) — operational-workbook columns.
+            "asset_type": {"asset type", "device type", "type"},
+            "vendor": {"vendor", "manufacturer", "mfr", "make"},
+            "manufacturer": {"manufacturer", "mfr", "make"},
+            "hostname": {"hostname", "host name", "device name"},
+            "mdf": {"mdf", "mdf id", "mdf area", "mdf/area"},
+            "idf": {"idf", "idf id"},
+            "in_service_date": {
+                "in service",
+                "in service date",
+                "in-service date",
+                "deployed",
+                "deployment date",
+            },
+            "refresh_target": {
+                "refresh target",
+                "refresh date",
+                "refresh planned",
+            },
+            "lifecycle_status": {
+                "lifecycle status",
+                "lifecycle state",
+                "refresh status",
+            },
+            # NOC alert matrix
+            "monitor_id": {"monitor id", "alert id"},
+            "runbook_ref": {"runbook ref", "runbook", "playbook ref"},
+            "alert_severity": {"alert severity", "alert level"},
+            # Cutover validation
+            "validation_id": {"validation id", "test id", "check id"},
+            "customer_signoff": {"customer signoff", "customer sign off", "signoff"},
+            "pass_flag": {"pass flag", "pass/fail", "result"},
+            # Port / VLAN
+            "switch_hostname": {"switch hostname", "switch name", "switch"},
+            "port": {"port", "switch port", "interface"},
+            "vlan_id": {"vlan id", "vlan"},
+            "patch_panel_port": {"patch panel port", "panel port", "patch port"},
+            # BOM detail
+            "scope_bucket": {"scope bucket", "bucket", "scope phase"},
+            "category": {"category", "line category"},
+            "sku": {"sku", "part number", "part"},
+            "unit_cost": {"unit cost", "unit price", "cost each"},
+            "extended_cost": {"extended cost", "extended price", "ext cost"},
+            "quote_status": {"quote status", "status quote", "po status"},
+            "procurement_constraint": {
+                "procurement constraint",
+                "procurement note",
+            },
+            "distributor": {"distributor", "supplier", "wholesaler"},
+            "quote_ref": {"quote ref", "quote number", "quote id"},
+            "bom_line": {"bom line", "line number", "line"},
         }
 
         for canon, names in aliases.items():
@@ -1068,7 +1294,25 @@ class XlsxParser(BaseParser):
                 AuthorityClass.vendor_quote,
                 0.92,
             )
-        if {"lifecycle", "status"} & keys and (
+        # PR2 (post-v3 review) — asset_record beats lifecycle_status
+        # when the row has BOTH an asset identifier AND a vendor /
+        # model / manufacturer / site signal. Pure lifecycle/EOL
+        # records without a vendor/model still classify as
+        # lifecycle_status.
+        if (
+            {"asset_id", "serial", "ip_address", "mac_address", "hostname"} & keys
+            and (
+                {"model", "manufacturer", "vendor", "asset_type", "site_name", "site"}
+                & keys
+            )
+        ):
+            return (
+                AtomType.asset_record,
+                "asset_inventory_row",
+                AuthorityClass.approved_site_roster,
+                0.94,
+            )
+        if {"lifecycle", "lifecycle_status", "refresh_target", "status"} & keys and (
             {"asset_id", "model", "serial"} & keys
         ):
             return (
@@ -1097,6 +1341,297 @@ class XlsxParser(BaseParser):
             AuthorityClass.contractual_scope,
             0.84,
         )
+
+    # ───── PR2 (post-v3 review) — operational sheet emitter ─────
+
+    def _entity_keys_from_operational_row(
+        self, cells: dict[str, str]
+    ) -> list[str]:
+        keys: list[str] = []
+        for field in ("site_name", "site", "location"):
+            if cells.get(field):
+                keys.append(normalize_entity_key("site", cells[field]))
+        for field in ("mdf", "idf"):
+            if cells.get(field):
+                keys.append(normalize_entity_key(field, cells[field]))
+        for field in ("asset_id", "hostname", "device_name"):
+            if cells.get(field):
+                keys.append(normalize_entity_key("device", cells[field]))
+        for field in ("vendor", "manufacturer"):
+            if cells.get(field):
+                keys.append(normalize_entity_key("vendor", cells[field]))
+        for field in ("part_number", "sku"):
+            if cells.get(field):
+                keys.append(normalize_entity_key("part_number", cells[field]))
+        return sorted(set(keys))
+
+    def _emit_operational_sheet_rows(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+        profile: _OperationalSheetProfile,
+    ) -> list[EvidenceAtom]:
+        header_idx = _first_nonblank_header_row(rows)
+        if header_idx is None:
+            return []
+
+        headers = [
+            (str(c).strip() if c is not None else "") or f"col_{i + 1}"
+            for i, c in enumerate(rows[header_idx])
+        ]
+        canonical_headers = [self._canonicalize_header(h) for h in headers]
+
+        atoms: list[EvidenceAtom] = []
+
+        for row_idx in range(header_idx + 1, len(rows)):
+            row = rows[row_idx] or []
+            if _is_blank_row(row):
+                continue
+
+            cells: dict[str, str] = {}
+            canonical_cells: dict[str, str] = {}
+            cell_columns: dict[str, str] = {}
+
+            for i, header in enumerate(headers):
+                if i >= len(row):
+                    continue
+                value = row[i]
+                text = _cell_to_text_op(value)
+                if not text:
+                    continue
+                cells[header] = text
+                canonical_cells[canonical_headers[i]] = text
+                cell_columns[header] = get_column_letter(i + 1)
+
+            if not cells:
+                continue
+
+            raw_text = " | ".join(f"{k}: {v}" for k, v in cells.items())
+
+            value: dict[str, Any] = {
+                "kind": profile.kind,
+                "sheet": sheet_name,
+                "row": row_idx + 1,
+                "cells": cells,
+                "canonical_cells": canonical_cells,
+            }
+
+            # PR2 — structured value payload per row kind. The brain
+            # layer can read these without re-parsing.
+            if profile.atom_type is AtomType.asset_record:
+                value["asset"] = {
+                    k: canonical_cells.get(k)
+                    for k in (
+                        "asset_id", "site_id", "site_name",
+                        "asset_type", "vendor", "manufacturer",
+                        "model", "quantity", "mdf", "serial",
+                        "ip_address", "in_service_date",
+                        "refresh_target", "status",
+                    )
+                    if canonical_cells.get(k)
+                }
+            elif profile.atom_type is AtomType.port_vlan_assignment:
+                value["port"] = {
+                    k: canonical_cells.get(k)
+                    for k in (
+                        "site_id", "switch_hostname", "port",
+                        "vlan_id", "patch_panel_port",
+                    )
+                    if canonical_cells.get(k)
+                }
+            elif profile.atom_type is AtomType.circuit_inventory:
+                value["circuit"] = {
+                    k: canonical_cells.get(k)
+                    for k in (
+                        "circuit_id", "wan_provider", "site_id",
+                        "site_name", "lead_time",
+                    )
+                    if canonical_cells.get(k)
+                }
+            elif profile.atom_type is AtomType.alert_route:
+                value["alert"] = {
+                    k: canonical_cells.get(k)
+                    for k in (
+                        "monitor_id", "runbook_ref", "alert_severity",
+                        "owner", "site_id", "site_name",
+                    )
+                    if canonical_cells.get(k)
+                }
+            elif profile.atom_type is AtomType.cutover_validation:
+                value["validation"] = {
+                    k: canonical_cells.get(k)
+                    for k in (
+                        "validation_id", "customer_signoff", "pass_flag",
+                        "owner", "status", "site_id",
+                    )
+                    if canonical_cells.get(k)
+                }
+            elif profile.atom_type is AtomType.support_entitlement:
+                value["entitlement"] = {
+                    k: canonical_cells.get(k)
+                    for k in (
+                        "support_level", "contract_id", "renewal_date",
+                        "support_notes", "vendor",
+                    )
+                    if canonical_cells.get(k)
+                }
+
+            source_ref = self._build_source_ref(
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                row_number=row_idx + 1,
+                columns=cell_columns,
+            )
+            atom_id = stable_id(
+                "atm",
+                project_id,
+                artifact_id,
+                sheet_name,
+                str(row_idx + 1),
+                profile.kind,
+                normalize_text(raw_text)[:160],
+            )
+            atom = EvidenceAtom(
+                id=atom_id,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=profile.atom_type,
+                raw_text=raw_text,
+                normalized_text=normalize_text(raw_text),
+                value=value,
+                entity_keys=self._entity_keys_from_operational_row(canonical_cells),
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=profile.authority_class,
+                confidence=profile.confidence,
+                review_status=ReviewStatus.auto_accepted,
+                review_flags=[],
+                parser_version=self.parser_version,
+            )
+            atoms.append(atom)
+
+            atoms.extend(
+                self._emit_field_aware_cell_fact_atoms(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    row_number=row_idx + 1,
+                    row_atom_id=atom_id,
+                    cells=cells,
+                    canonical_cells=canonical_cells,
+                    cell_columns=cell_columns,
+                )
+            )
+
+        return atoms
+
+    def _emit_field_aware_cell_fact_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        row_number: int,
+        row_atom_id: str,
+        cells: dict[str, str],
+        canonical_cells: dict[str, str],
+        cell_columns: dict[str, str],
+    ) -> list[EvidenceAtom]:
+        """PR3 — field-aware cell-fact emitter. Same as
+        :meth:`_emit_cell_fact_atoms` but knows that cells in
+        support_level / coverage / support_entitlement columns are
+        SUPPORT-TIER prose, not exclusions, and that conditional
+        boundary phrasing ("8x5 vendor support unless noted") gets
+        its own ``conditional_support_boundary`` atom type."""
+        out: list[EvidenceAtom] = []
+        for original_field, text in cells.items():
+            text_str = str(text).strip()
+            if not text_str:
+                continue
+            canonical_field = self._canonicalize_header(original_field)
+
+            if canonical_field in _SUPPORT_LEVEL_FIELDS:
+                # Support-tier prose is not a contractual exclusion;
+                # only emit a conditional boundary atom if the cell
+                # explicitly carries conditional language.
+                if _CONDITIONAL_SUPPORT_RE.search(text_str):
+                    atom_type = AtomType.conditional_support_boundary
+                    confidence = 0.88
+                    flags = ["conditional_support_boundary"]
+                else:
+                    continue
+            elif _CONDITIONAL_SUPPORT_RE.search(text_str):
+                atom_type = AtomType.conditional_support_boundary
+                confidence = 0.88
+                flags = ["conditional_support_boundary"]
+            elif _EXCLUSION_CELL_RE.search(text_str):
+                atom_type = AtomType.exclusion
+                confidence = 0.90
+                flags = []
+            elif _RISK_CELL_RE.search(text_str):
+                atom_type = AtomType.risk
+                confidence = 0.88
+                flags = []
+            else:
+                continue
+
+            source_ref = SourceRef(
+                id=stable_id(
+                    "src", artifact_id, sheet_name, row_number,
+                    original_field, "cell_fact",
+                ),
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                locator={
+                    "sheet": sheet_name,
+                    "row": row_number,
+                    "columns": {original_field: cell_columns.get(original_field)},
+                    "parent_row_atom_id": row_atom_id,
+                },
+                extraction_method="xlsx_cell_fact_v2_field_aware",
+                parser_version=self.parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm", project_id, artifact_id, sheet_name,
+                        row_number, original_field, atom_type.value, text_str,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=f"{original_field}: {text_str}",
+                    normalized_text=normalize_text(text_str),
+                    value={
+                        "kind": "cell_fact",
+                        "field": original_field,
+                        "canonical_field": canonical_field,
+                        "parent_row_atom_id": row_atom_id,
+                        "text": text_str,
+                    },
+                    entity_keys=[],
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=confidence,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=flags,
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
 
     def _emit_cell_fact_atoms(
         self,

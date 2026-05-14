@@ -951,6 +951,24 @@ class QuoteParser(BaseParser):
                 artifact_type=ArtifactType.vendor_quote,
             )
 
+        # PR1 (post-v3 review) — multi-sheet operations workbooks
+        # contain a BOM/quote sheet AS WELL AS asset / site / port /
+        # circuit / risk / cutover / alert sheets. Don't let
+        # QuoteParser swallow the whole artifact in that case.
+        if suffix == ".xlsx":
+            from app.parsers.spreadsheet_route_signals import (
+                sniff_operations_workbook_strength,
+            )
+
+            ops_score, ops_reasons = sniff_operations_workbook_strength(path)
+            if ops_score >= 0.55:
+                return ParserMatch(
+                    parser_name=self.parser_name,
+                    confidence=0.0,
+                    reasons=["ceded_to_xlsx_operations_workbook", *ops_reasons],
+                    artifact_type=ArtifactType.vendor_quote,
+                )
+
         from app.parsers.spreadsheet_route_signals import path_quote_filename_hint
 
         if path_quote_filename_hint(path):

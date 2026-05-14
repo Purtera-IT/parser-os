@@ -137,9 +137,13 @@ def test_scope_exclusion_accepts_exclusion_atom():
     assert _valid_scope_exclusion_group(g) is True
 
 
-def test_scope_exclusion_accepts_explicit_text_in_quantity():
+def test_scope_exclusion_rejects_quantity_with_explicit_text():
+    """PR3 post-v3 — only ``exclusion`` atoms can govern a
+    scope_exclusion packet. A ``quantity`` atom that happens to
+    contain "not in scope" text in its raw_text is NOT enough —
+    we want a real exclusion atom to anchor the packet."""
     a = _qty(text="186 drops not in scope")
-    assert _valid_scope_exclusion_group([a]) is True
+    assert _valid_scope_exclusion_group([a]) is False
 
 
 def test_scope_exclusion_accepts_inclusion_status_field():
