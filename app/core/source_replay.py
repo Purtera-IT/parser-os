@@ -252,6 +252,33 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
             full_row,
         )
 
+    # Insanity-pass — value-dict match. The quote_parser synthesizes
+    # atoms with text like ``"Line item TesiraFORTÉ X 400-SUP Biamp ..."``
+    # whose "Line item" prefix doesn't appear in any cell, so the
+    # cell-based matcher fails even though the row IS the source.
+    # If the atom carries a value-dict with cell-derived fields
+    # (part_number, description, manufacturer, etc.), check that at
+    # least one of those values is present in the full row text.
+    if full_row and isinstance(atom.value, dict):
+        cell_like_keys = (
+            "part_number", "description", "manufacturer", "vendor",
+            "model", "asset_id", "serial", "section", "item",
+            "support_note", "lead_time",
+        )
+        norm_row = _replay_norm(full_row)
+        for key in cell_like_keys:
+            v = atom.value.get(key)
+            if not isinstance(v, str) or len(v.strip()) < 4:
+                continue
+            if _replay_norm(v) in norm_row:
+                return _receipt(
+                    atom,
+                    source_ref,
+                    "verified",
+                    f"Spreadsheet row verified via value-dict field {key!r}",
+                    full_row,
+                )
+
     return _receipt(
         atom,
         source_ref,
