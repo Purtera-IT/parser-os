@@ -1977,6 +1977,11 @@ _WORKFLOW_STEP_RE = re.compile(
 _LOW_TEXT_VISUAL_THRESHOLD = 80
 
 
+_SINGLE_LINE_X_RE = re.compile(
+    r"^\s*([xX])\s+(?P<label>[A-Z][A-Za-z][A-Za-z0-9 \-/&._']{1,80}?)\s*$"
+)
+
+
 def _literal_x_checkbox_atoms_from_line(
     *,
     project_id: str,
@@ -1990,12 +1995,67 @@ def _literal_x_checkbox_atoms_from_line(
     """RF2 — emit one ``form_option_state`` atom per option on a
     line like ``"x LogicMonitor x Microsoft Sentinel ServiceNow x Aruba"``.
 
-    Strategy: split the line on every ``\\b[xX]\\s+`` boundary;
-    candidate options between boundaries that are preceded by a
-    literal ``x`` are CHECKED, the rest are UNCHECKED. We require
-    at least one literal-x marker on the line to avoid emitting
-    false form options on regular prose.
+    Two modes:
+
+    1. SINGLE-LINE: a line that is exactly ``"x SomeLabel"`` is one
+       checked option. (PDFs frequently render each option on its
+       own line.)
+
+    2. MULTI-OPTION: a line with 2+ literal-x markers gets split
+       into per-option atoms; the first label after each marker is
+       CHECKED and any sibling Title-Case clusters between markers
+       are UNCHECKED.
     """
+    # ── single-line "x Label" → one checked option ──
+    m = _SINGLE_LINE_X_RE.match(line)
+    if m:
+        label = m.group("label").strip()
+        source_ref = SourceRef(
+            id=stable_id(
+                "src", artifact_id, "pdf", page_number,
+                "literal_x_checkbox", line_index, 0,
+            ),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.pdf,
+            filename=filename,
+            locator={
+                "page": page_number,
+                "line_index": line_index,
+                "checkbox_index": 0,
+            },
+            extraction_method="pdf_literal_x_checkbox_v1",
+            parser_version=parser_version,
+        )
+        return [
+            EvidenceAtom(
+                id=stable_id(
+                    "atm", project_id, artifact_id, "literal_x_checkbox",
+                    page_number, line_index, 0, True, label,
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.scope_item,
+                raw_text=f"Selected option: {label}",
+                normalized_text=normalize_text(label),
+                value={
+                    "kind": "checkbox",
+                    "label": label,
+                    "checked": True,
+                    "page": page_number,
+                    "extraction": "literal_x_marker",
+                },
+                entity_keys=[],
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.85,
+                review_status=ReviewStatus.auto_accepted,
+                review_flags=[],
+                parser_version=parser_version,
+            )
+        ]
+
+    # ── multi-option same-line ──
     if not _CHECKBOX_LITERAL_LINE_RE.search(line):
         return []
 

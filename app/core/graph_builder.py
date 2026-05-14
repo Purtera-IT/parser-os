@@ -321,38 +321,36 @@ def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     if a_scope != "unspecified" and b_scope != "unspecified" and a_scope != b_scope:
         return False
 
-    # RF7 — same artifact + same sheet + different rows ⇒ different
-    # line items, not contradicting source-of-truth pairs.
+    # RF7 — same artifact + same sheet + different rows + SAME
+    # authority class ⇒ different line items unless they explicitly
+    # share a ``part_number:`` key. This is the narrow rule needed
+    # to kill the COPPER_001 false contradiction (BOM row 33 qty 77
+    # vs row 22 qty 50, same sheet, different parts) without breaking
+    # vendor_mismatch tests where atoms intentionally compare an
+    # approved_site_roster row against a vendor_quote row in the same
+    # workbook.
     a_loc = (a.source_refs[0].locator if a.source_refs else {}) or {}
     b_loc = (b.source_refs[0].locator if b.source_refs else {}) or {}
-    a_artifact = a.artifact_id
-    b_artifact = b.artifact_id
     a_sheet = a_loc.get("sheet")
     b_sheet = b_loc.get("sheet")
     a_row = a_loc.get("row")
     b_row = b_loc.get("row")
     if (
-        a_artifact == b_artifact
+        a.artifact_id == b.artifact_id
+        and a.authority_class == b.authority_class
         and a_sheet
         and a_sheet == b_sheet
         and a_row is not None
         and b_row is not None
         and a_row != b_row
     ):
-        return False
-
-    # RF7 — require a shared ``part_number:`` (or ``device:<specific>``)
-    # key. Two BOM rows for "Cisco" + "switch" share generic device
-    # keys but are different SKUs.
-    a_parts = {k for k in (a.entity_keys or []) if k.startswith("part_number:")}
-    b_parts = {k for k in (b.entity_keys or []) if k.startswith("part_number:")}
-    if a_parts or b_parts:
+        a_parts = {k for k in (a.entity_keys or []) if k.startswith("part_number:")}
+        b_parts = {k for k in (b.entity_keys or []) if k.startswith("part_number:")}
         if not (a_parts & b_parts):
             return False
 
-    # If neither side carries a part_number, fall back to legacy any-
-    # shared-key check so we don't regress contexts where only generic
-    # device keys exist (older parser-os atoms).
+    # Standard any-shared-key check covers the cross-artifact /
+    # vendor-vs-roster case (atoms may only share device:ip_camera).
     a_entities = set(a.entity_keys or [])
     b_entities = set(b.entity_keys or [])
     if a_entities and b_entities and not (a_entities & b_entities):

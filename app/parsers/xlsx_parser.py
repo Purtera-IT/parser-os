@@ -853,6 +853,33 @@ class XlsxParser(BaseParser):
         if not rows:
             return []
         model = _detect_header(rows)
+        # RF1 — explicit fast-path for known structured-row CSVs.
+        # Files named asset_inventory / site_list / risk_register /
+        # license_support_matrix / lifecycle should route to the
+        # typed-row profiler in _emit_generic_rows so they produce
+        # asset_record / site_roster / risk / support_entitlement /
+        # lifecycle_status atoms (PR2). Restricted to .csv to avoid
+        # disturbing existing .xlsx fixtures (e.g. demo_project's
+        # site_list.xlsx that legacy tests expect on the canonical
+        # path).
+        _STRUCTURED_NAMES = (
+            "asset_inventory", "site_list", "risk_register",
+            "license_support", "support_matrix", "lifecycle",
+        )
+        stem = filename.lower().replace("-", "_").replace(" ", "_")
+        if (
+            artifact_type == ArtifactType.csv
+            and any(s in stem for s in _STRUCTURED_NAMES)
+        ):
+            return self._emit_generic_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+            )
+
         if model.header_idx < 0:
             # PRODUCTION_GAPS P0.4: when the canonical-header detector can't
             # find a cabling/networking-style schedule (plate_id, site,
