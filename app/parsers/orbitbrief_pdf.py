@@ -1953,12 +1953,169 @@ _CHECKBOX_RE = re.compile(
     r"(?P<mark>☒|☑|✓|✔|\[x\]|\[X\]|\(x\)|\(X\)|☐|□|\[\s\]|\(\s\))"
     r"\s*(?P<label>[^|;\n]+)"
 )
+# RF2 — literal "x Foo" / "X Foo" line-prefix detection. Many PDFs
+# strip the unicode glyphs on text extraction, leaving sequences like
+# ``x LogicMonitor x Microsoft Sentinel ServiceNow Event Mgmt x Aruba``
+# where "x" prefixes the CHECKED option and unmarked words are the
+# UNCHECKED alternatives. We scan a candidate line for the
+# ``x <Word>`` literal pattern and emit one form_option_state atom
+# per option, with ``checked=True`` for items preceded by literal
+# x/X and ``checked=False`` for the unmarked siblings.
+_LITERAL_X_OPTION_RE = re.compile(
+    r"(?P<mark>\bx\b|\bX\b)\s+(?P<label>[A-Z][A-Za-z][A-Za-z0-9 \-/&._']{1,80}?)"
+    r"(?=(?:\s+\bx\b|\s+\bX\b|\s*$|\s*[|;]|\s*[A-Z][A-Z]))",
+    re.UNICODE,
+)
+# Heuristic: a "checkbox cluster" line has ≥2 capitalized labels and
+# ≥1 literal x prefix.
+_CHECKBOX_LITERAL_LINE_RE = re.compile(r"\bx\s+[A-Z]", re.UNICODE)
 _WORKFLOW_STEP_RE = re.compile(
     r"\b(detect|triage|contain|escalate|recover|remediate|notify|"
     r"dispatch|close|improve)\b",
     re.I,
 )
 _LOW_TEXT_VISUAL_THRESHOLD = 80
+
+
+def _literal_x_checkbox_atoms_from_line(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    line: str,
+    line_index: int,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """RF2 — emit one ``form_option_state`` atom per option on a
+    line like ``"x LogicMonitor x Microsoft Sentinel ServiceNow x Aruba"``.
+
+    Strategy: split the line on every ``\\b[xX]\\s+`` boundary;
+    candidate options between boundaries that are preceded by a
+    literal ``x`` are CHECKED, the rest are UNCHECKED. We require
+    at least one literal-x marker on the line to avoid emitting
+    false form options on regular prose.
+    """
+    if not _CHECKBOX_LITERAL_LINE_RE.search(line):
+        return []
+
+    # Tokenize: split on whitespace, walk tokens, accumulate labels
+    # until the next "x" / "X" sentinel or another capitalized
+    # standalone word.
+    tokens = line.split()
+    if len(tokens) < 4:
+        return []
+
+    def _split_into_labels(words: list[str]) -> list[str]:
+        """A label is 1-3 consecutive Title Case / ALL CAPS words.
+        Lower-case connector words ("of", "and", "the") within a
+        ≤3-word group are kept; everything else starts a new label.
+        """
+        out_labels: list[str] = []
+        cur: list[str] = []
+        for w in words:
+            looks_like_label_word = (
+                w[:1].isupper() if w else False
+            ) or w.isupper()
+            connector = w.lower() in {"of", "and", "the", "for", "to"}
+            if looks_like_label_word and len(cur) >= 3:
+                out_labels.append(" ".join(cur))
+                cur = [w]
+            elif looks_like_label_word:
+                cur.append(w)
+            elif connector and cur:
+                cur.append(w)
+            elif cur:
+                out_labels.append(" ".join(cur))
+                cur = []
+        if cur:
+            out_labels.append(" ".join(cur))
+        return out_labels
+
+    options: list[tuple[str, bool]] = []  # (label, checked)
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
+        is_marker = tok in ("x", "X")
+        if is_marker:
+            # Consume words until the next marker; first label is
+            # checked, any subsequent labels in the same run are
+            # unchecked siblings.
+            i += 1
+            run: list[str] = []
+            while i < n and tokens[i] not in ("x", "X"):
+                run.append(tokens[i])
+                i += 1
+            labels = _split_into_labels(run)
+            for j, label in enumerate(labels):
+                options.append((label, j == 0))
+        else:
+            # Pre-marker run — all unchecked.
+            run = []
+            while i < n and tokens[i] not in ("x", "X"):
+                run.append(tokens[i])
+                i += 1
+            for label in _split_into_labels(run):
+                options.append((label, False))
+
+    out: list[EvidenceAtom] = []
+    for opt_idx, (label, checked) in enumerate(options):
+        atom_type = AtomType.scope_item if checked else AtomType.form_option_state
+        confidence = 0.85 if checked else 0.55
+        review_status = (
+            ReviewStatus.auto_accepted if checked else ReviewStatus.needs_review
+        )
+        review_flags: list[str] = (
+            []
+            if checked
+            else ["unchecked_checkbox_ambiguous", "do_not_certify_as_exclusion"]
+        )
+        source_ref = SourceRef(
+            id=stable_id(
+                "src", artifact_id, "pdf", page_number, "literal_x_checkbox",
+                line_index, opt_idx,
+            ),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.pdf,
+            filename=filename,
+            locator={
+                "page": page_number,
+                "line_index": line_index,
+                "checkbox_index": opt_idx,
+            },
+            extraction_method="pdf_literal_x_checkbox_v1",
+            parser_version=parser_version,
+        )
+        out.append(
+            EvidenceAtom(
+                id=stable_id(
+                    "atm", project_id, artifact_id, "literal_x_checkbox",
+                    page_number, line_index, opt_idx, checked, label,
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=atom_type,
+                raw_text=f"{'Selected' if checked else 'Not selected'} option: {label}",
+                normalized_text=normalize_text(label),
+                value={
+                    "kind": "checkbox",
+                    "label": label,
+                    "checked": checked,
+                    "page": page_number,
+                    "extraction": "literal_x_marker",
+                },
+                entity_keys=[],
+                source_refs=[source_ref],
+                receipts=[],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=confidence,
+                review_status=review_status,
+                review_flags=review_flags,
+                parser_version=parser_version,
+            )
+        )
+    return out
 
 
 def _checkbox_atoms_from_text(
@@ -2211,6 +2368,20 @@ def _scan_pdf_for_extras(
                     parser_version=parser_version,
                 )
             )
+            # RF2 — literal "x Foo x Bar" line scan for PDFs whose
+            # text extraction lost the unicode checkbox glyphs.
+            for line_idx, line in enumerate(page_text.splitlines()):
+                out.extend(
+                    _literal_x_checkbox_atoms_from_line(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        page_number=page_idx + 1,
+                        line=line,
+                        line_index=line_idx,
+                        parser_version=parser_version,
+                    )
+                )
             out.extend(
                 _workflow_atoms_from_text(
                     project_id=project_id,

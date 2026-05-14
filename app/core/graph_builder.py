@@ -301,12 +301,17 @@ def _scope_dimensions_compatible(a: EvidenceAtom, b: EvidenceAtom) -> bool:
 def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     """True only when two quantity atoms can validly contradict.
 
-    Rejects:
+    Rejects (post-RF7 hardening):
     * non-quantity atoms,
     * atoms with explicit but conflicting scope dimensions
-      (e.g. one is the Base bid, the other is an Add Alternate),
-    * atoms whose entity_keys are both populated but disjoint (no
-      shared site / device / part_number / etc).
+      (Base bid vs Add Alternate),
+    * atoms from the SAME spreadsheet artifact + same sheet with
+      DIFFERENT row numbers (RF7 — these are different line items
+      in the same BOM, not the same item across sources),
+    * atoms whose entity_keys are both populated but lack a shared
+      ``part_number:`` key (we no longer accept "share any
+      entity_key" — two rows for different parts at the same site
+      are not comparable).
     """
     if a.atom_type.value != "quantity" or b.atom_type.value != "quantity":
         return False
@@ -316,6 +321,38 @@ def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     if a_scope != "unspecified" and b_scope != "unspecified" and a_scope != b_scope:
         return False
 
+    # RF7 — same artifact + same sheet + different rows ⇒ different
+    # line items, not contradicting source-of-truth pairs.
+    a_loc = (a.source_refs[0].locator if a.source_refs else {}) or {}
+    b_loc = (b.source_refs[0].locator if b.source_refs else {}) or {}
+    a_artifact = a.artifact_id
+    b_artifact = b.artifact_id
+    a_sheet = a_loc.get("sheet")
+    b_sheet = b_loc.get("sheet")
+    a_row = a_loc.get("row")
+    b_row = b_loc.get("row")
+    if (
+        a_artifact == b_artifact
+        and a_sheet
+        and a_sheet == b_sheet
+        and a_row is not None
+        and b_row is not None
+        and a_row != b_row
+    ):
+        return False
+
+    # RF7 — require a shared ``part_number:`` (or ``device:<specific>``)
+    # key. Two BOM rows for "Cisco" + "switch" share generic device
+    # keys but are different SKUs.
+    a_parts = {k for k in (a.entity_keys or []) if k.startswith("part_number:")}
+    b_parts = {k for k in (b.entity_keys or []) if k.startswith("part_number:")}
+    if a_parts or b_parts:
+        if not (a_parts & b_parts):
+            return False
+
+    # If neither side carries a part_number, fall back to legacy any-
+    # shared-key check so we don't regress contexts where only generic
+    # device keys exist (older parser-os atoms).
     a_entities = set(a.entity_keys or [])
     b_entities = set(b.entity_keys or [])
     if a_entities and b_entities and not (a_entities & b_entities):
@@ -689,6 +726,14 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             continue
         from_atom = sorted(approved["atoms"], key=lambda a: a.id)[0]
         to_atom = sorted(vendor["atoms"], key=lambda a: a.id)[0]
+        # RF7 — only emit when the chosen pair are actually
+        # comparable. The aggregate path defaults to the
+        # lexicographically-first atom; if they share no
+        # part_number and live on different rows of the same
+        # workbook, they're different SKUs that happen to share a
+        # generic device:* key.
+        if not _quantity_atoms_are_comparable(from_atom, to_atom):
+            continue
         reason = (
             f"Aggregate scoped quantity {int(approved_total) if approved_total.is_integer() else approved_total:g} "
             f"does not match vendor quantity {int(vendor_total) if vendor_total.is_integer() else vendor_total:g} "

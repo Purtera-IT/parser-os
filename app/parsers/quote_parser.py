@@ -206,16 +206,28 @@ def _merge_header_cells(top: Any, bottom: Any) -> str:
 
 
 def _header_map_from_row(row: list[Any]) -> dict[str, int]:
+    """Map canonical header keys → column index. Each column index is
+    claimed by at most ONE canonical key (RF8 fix). Without this, a
+    column whose header is "Category" would get claimed by both
+    ``material_spec`` and ``section`` because both alias sets contain
+    "category" — producing duplicate locator entries like
+    ``{section: C, material_spec: C}`` in every emitted atom.
+    """
     current_map: dict[str, int] = {}
+    claimed_cols: set[int] = set()
     for col_idx, cell in enumerate(row):
         cell_keys = _header_cell_keys(cell)
         if not cell_keys:
+            continue
+        if col_idx in claimed_cols:
             continue
         for canonical, aliases in HEADER_ALIASES.items():
             if canonical in current_map:
                 continue
             if cell_keys & aliases:
                 current_map[canonical] = col_idx
+                claimed_cols.add(col_idx)
+                break
     return current_map
 
 
@@ -918,6 +930,27 @@ class QuoteParser(BaseParser):
                 reasons=[],
                 artifact_type=ArtifactType.vendor_quote,
             )
+
+        # RF1 — explicitly cede known structured-row CSVs to the
+        # XlsxParser typed-row profiler. asset_inventory.csv,
+        # site_list.csv, risk_register.csv, license_support_matrix.csv
+        # have their own ``asset_record`` / ``site_roster`` / ``risk``
+        # / ``support_entitlement`` AtomTypes (PR2). Letting the quote
+        # parser claim them collapses the rich structured fields into
+        # vendor_line_item + quantity atoms only.
+        _STRUCTURED_FILENAMES = {
+            "asset_inventory", "site_list", "risk_register",
+            "license_support_matrix", "support_matrix", "lifecycle",
+        }
+        stem = path.stem.lower().replace("-", "_")
+        if any(s in stem for s in _STRUCTURED_FILENAMES):
+            return ParserMatch(
+                parser_name=self.parser_name,
+                confidence=0.0,
+                reasons=["ceded_to_xlsx_typed_row_profiler"],
+                artifact_type=ArtifactType.vendor_quote,
+            )
+
         from app.parsers.spreadsheet_route_signals import path_quote_filename_hint
 
         if path_quote_filename_hint(path):
