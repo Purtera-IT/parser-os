@@ -26,6 +26,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.domain.schemas import DomainPack
 
@@ -1176,14 +1177,21 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     total_keys_added = 0
     for atom in atoms:
         if getattr(atom, "entity_keys", None):
+            # Even pre-populated keys go through hygiene so a parser
+            # that mints a fake ``site:belden_cat6`` gets cleaned up.
+            cleaned = filter_entity_keys_for_atom(atom, atom.entity_keys)
+            if cleaned != list(atom.entity_keys):
+                atom.entity_keys = cleaned
             continue
         text = getattr(atom, "raw_text", "") or ""
         value = getattr(atom, "value", None)
         new_keys = extract_keys(text, pack=pack, value=value)
         if new_keys:
-            atom.entity_keys = new_keys
-            atoms_enriched += 1
-            total_keys_added += len(new_keys)
+            new_keys = filter_entity_keys_for_atom(atom, new_keys)
+            if new_keys:
+                atom.entity_keys = new_keys
+                atoms_enriched += 1
+                total_keys_added += len(new_keys)
     return atoms_enriched, total_keys_added
 
 
