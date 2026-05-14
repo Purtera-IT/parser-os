@@ -24,12 +24,14 @@ def _ensure_defaults() -> None:
         return
     from app.parsers.docx_parser import DocxParser
     from app.parsers.email_parser import EmailParser
+    from app.parsers.markdown_parser import MarkdownParser
     from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
     from app.parsers.quote_parser import QuoteParser
     from app.parsers.transcript_parser import TranscriptParser
     from app.parsers.xlsx_parser import XlsxParser
 
     for parser in [
+        MarkdownParser(),
         XlsxParser(),
         QuoteParser(),
         EmailParser(),
