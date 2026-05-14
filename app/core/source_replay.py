@@ -143,7 +143,10 @@ def _spreadsheet_full_row_text(
     parts: list[str] = []
     if suffix == ".xlsx":
         try:
-            wb = load_workbook(path, read_only=True, data_only=True)
+            # Same fix as _verify_spreadsheet_row — read_only=True
+            # returns max_row=None on workbooks lacking dimension
+            # hints, which caused every row check to fail.
+            wb = load_workbook(path, data_only=True)
         except Exception:
             return ""
         ws = (
@@ -152,7 +155,7 @@ def _spreadsheet_full_row_text(
             else wb.active
         )
         max_row = ws.max_row or 0
-        if row_number > max_row:
+        if max_row and row_number > max_row:
             return ""
         for cell in ws[row_number]:
             if cell.value is None:
@@ -193,10 +196,16 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     row_values: dict[str, str] = {}
     suffix = path.suffix.lower()
     if suffix == ".xlsx":
-        workbook = load_workbook(path, read_only=True, data_only=True)
+        # Insanity-pass — openpyxl's ``read_only=True`` mode returns
+        # ``max_row=None`` on workbooks that omit the dimension hint
+        # in the SheetDescriptor, which made the previous range check
+        # ``row_number > (max_row or 0)`` reject row 149 against
+        # ``> 0``. Open in non-read-only mode so the dimension is
+        # populated, then enforce the range check correctly.
+        workbook = load_workbook(path, data_only=True)
         worksheet = workbook[sheet] if isinstance(sheet, str) and sheet in workbook.sheetnames else workbook.active
         max_row = worksheet.max_row or 0
-        if row_number > max_row:
+        if max_row and row_number > max_row:
             return _receipt(atom, source_ref, "failed", f"Spreadsheet row {row_number} out of range")
         for key, col_letter in columns.items():
             try:
