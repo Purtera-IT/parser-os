@@ -1326,7 +1326,13 @@ _TEXT_OVERRIDES: list[tuple[re.Pattern[str], AtomType]] = [
     (re.compile(r"\b(would\s+not\s+be\s+(?:needed|needing|required|requiring)|likely\s+not\s+be\s+needed)\b", re.I), AtomType.exclusion),
     (re.compile(r"\b(no\s+plans?\s+for|not\s+at\s+this\s+time|not\s+currently|is\s+not\s+currently|do\s+not\s+(?:plan|intend|expect)\s+to)\b", re.I), AtomType.exclusion),
     (re.compile(r"\b(not\s+a\s+part\s+of|not\s+included|not\s+in\s+scope|out\s+of\s+scope)\b", re.I), AtomType.exclusion),
-    (re.compile(r"\b(by\s+(?:others|gc|owner|customer|vendor)|n\.?i\.?c\.?|provided\s+by\s+(?:others|owner))\b", re.I), AtomType.exclusion),
+    # Boss-review v9 C002-F3 — dropped bare ``by vendor`` from the
+    # exclusion list. ``blocked by vendor`` in MSP acceptance
+    # checklists is a STATUS field, not a contractual exclusion.
+    # Legitimate "by vendor" exclusions use ``performed by vendor``
+    # / ``furnished by vendor`` which we don't classify as exclusion
+    # either (those are RACI assignments).
+    (re.compile(r"\b(by\s+(?:others|gc|owner|customer)|n\.?i\.?c\.?|provided\s+by\s+(?:others|owner))\b", re.I), AtomType.exclusion),
     (re.compile(r"^\s*(do not|may not|cannot|must not|shall not|will not)\b", re.I), AtomType.exclusion),
     # ─── Compliance clauses (Week 6 P6.1) ───
     # These cite an external standard / code / regulation and live as a
@@ -2893,6 +2899,502 @@ def _visual_review_atom(
     )
 
 
+# =====================================================================
+# Boss-review (post-2-case) PDF v3 — vertical-listed tables, vertical
+# workflow, and group-aware form-option states.
+# =====================================================================
+
+# Each profile is a dict so we can attach optional per-profile guards
+# without touching every existing entry.  Required keys:
+#   header:          tuple[str, ...]   — header tokens, lower
+#   atom_kind:       str               — value.kind tag
+#   atom_type:       str               — AtomType enum value
+#   field_names:     tuple[str, ...]   — value-dict keys for each cell
+#   locator_label:   str               — short tag in source_ref.locator
+# Optional keys (post-v8 boss review hardening):
+#   first_cell_re:   compiled regex    — every row's first cell MUST match
+#                                        or the table parser stops early
+#   row_stop_re:     compiled regex    — when the FIRST cell matches, stop
+#                                        (e.g., page-2 measurement table
+#                                        below field-checklist).
+_PORT_TOKEN_RE = re.compile(r"^(gi|fa|te|xe|et|eth|mgmt)\d+/\d+(/\d+)?$", re.I)
+_RFI_ID_RE = re.compile(r"^rfi-\d{2,4}$", re.I)
+_RB_ID_RE = re.compile(r"^rb-\d{2,4}$", re.I)
+_MEAS_ID_RE = re.compile(r"^m-\d{2,4}$", re.I)
+_FCHK_NUM_RE = re.compile(r"^\d{1,3}$")
+# Anything that looks like the start of a NEW table / section header
+# terminates the previous table early. Boss-review v8 follow-up:
+# applied ONLY at row boundaries (i.e., when the first cell of a new
+# row is being read), never mid-row. We also exclude single nouns like
+# "port" / "patch" / "vlan" that legitimately appear as data cells
+# inside other tables (e.g. "patch field" in the measurement table).
+_NEW_TABLE_HEADER_RE = re.compile(
+    r"^("
+    r"working\s+measurements|nonconforming\s+items?|"
+    r"open\s+rfis?|acceptance\s+exceptions?|"
+    r"required\s+signatures?|signature/date|customer\s+it\s+signature|"
+    r"facilities\s+signature|msp\s+pm\s+signature|field\s+lead\s+signature|"
+    r"layout\s+reference|reference\s+urls?|"
+    r"hand\s+correction|mark[- ]?up|"
+    r"synthetic\s+planning|"
+    r"incident\s+and\s+vulnerability"
+    r")\b",
+    re.I,
+)
+# Workflow-specific stop tokens — applied only by the vertical-workflow
+# extractor when collecting the description for the FINAL step
+# ("Improve"). These are bare single nouns that legitimately appear as
+# data cells inside other tables, so we never use them in
+# _NEW_TABLE_HEADER_RE.
+_WORKFLOW_STOP_RE = re.compile(
+    r"^(runbook|trigger|owner|status|evidence|"
+    r"cyber\s*/\s*logging\s+notes|notes?)\s*$",
+    re.I,
+)
+
+
+_VERTICAL_TABLE_PROFILES: list[dict] = [
+    {
+        "header": ("#", "survey item", "status", "area", "note"),
+        "atom_kind": "field_checklist_row_v2",
+        "atom_type": "scope_item",
+        "field_names": ("item_no", "item", "status", "area", "note"),
+        "locator_label": "field_check",
+        "first_cell_re": _FCHK_NUM_RE,  # F2 — only digits
+    },
+    # Boss-review v9 C002-F3 — Managed Services Acceptance Checklist
+    # ("# / Acceptance Item / Status / Owner / Due"). Status values
+    # like "Customer Pending" / "Exception" / "blocked by vendor"
+    # belong here as ``open_question`` / ``action_item`` atoms, NOT
+    # as scope_exclusion atoms.
+    {
+        "header": ("#", "acceptance item", "status", "owner", "due"),
+        "atom_kind": "managed_services_acceptance_checklist_row",
+        "atom_type": "open_question",
+        "field_names": ("item_no", "item", "status", "owner", "due"),
+        "locator_label": "msp_acceptance_checklist",
+        "first_cell_re": _FCHK_NUM_RE,
+    },
+    {
+        "header": ("rfi", "issue", "owner", "status", "needed by"),
+        "atom_kind": "rfi_row",
+        "atom_type": "open_question",
+        "field_names": ("rfi_id", "issue", "owner", "status", "needed_by"),
+        "locator_label": "rfi",
+        "first_cell_re": _RFI_ID_RE,  # F3 — strictly RFI-### only
+    },
+    {
+        "header": ("ref", "measurement", "value", "field note"),
+        "atom_kind": "working_measurement_row",
+        "atom_type": "quantity",
+        "field_names": ("ref", "measurement", "value", "field_note"),
+        "locator_label": "measurement",
+        "first_cell_re": _MEAS_ID_RE,  # F2 — strictly M-### only
+    },
+    {
+        "header": ("port", "patch", "vlan/use", "note"),
+        "atom_kind": "port_vlan_assignment",
+        "atom_type": "port_vlan_assignment",
+        "field_names": ("port", "patch", "vlan_use", "note"),
+        "locator_label": "port_vlan",
+        "first_cell_re": _PORT_TOKEN_RE,  # F4 — must be Gi/Fa/Te/etc switch port
+    },
+    {
+        "header": ("runbook", "trigger", "owner", "status", "evidence"),
+        "atom_kind": "runbook_row",
+        "atom_type": "action_item",
+        "field_names": ("runbook_id", "trigger", "owner", "status", "evidence"),
+        "locator_label": "runbook",
+        "first_cell_re": _RB_ID_RE,  # only RB-### rows
+    },
+]
+
+
+def _vertical_table_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Detect vertical-listed tables on a PDF page.
+
+    Boss-review F3+F4: the original ``_field_checklist_atoms_from_text``
+    required all 5 cells on one line. PyMuPDF on hand-form/scanned-feel
+    PDFs returns each cell on its OWN line. We detect headers on
+    consecutive lines, then chunk subsequent lines into N-row groups.
+    """
+    out: list[EvidenceAtom] = []
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    norm = [normalize_text(ln).strip() for ln in lines]
+    i = 0
+    while i < len(lines):
+        # Skip empties cheaply.
+        if not norm[i]:
+            i += 1
+            continue
+        for profile in _VERTICAL_TABLE_PROFILES:
+            header_tokens = profile["header"]
+            atom_kind = profile["atom_kind"]
+            atom_type_str = profile["atom_type"]
+            field_names = profile["field_names"]
+            locator_label = profile["locator_label"]
+            first_cell_re = profile.get("first_cell_re")
+            n = len(header_tokens)
+            # Try to align the next n non-empty lines to header_tokens.
+            cand: list[int] = []
+            j = i
+            while j < len(lines) and len(cand) < n:
+                if norm[j]:
+                    cand.append(j)
+                j += 1
+            if len(cand) < n:
+                continue
+            if not all(norm[cand[k]] == header_tokens[k] for k in range(n)):
+                continue
+            # Header matched. Read row groups.
+            row_idx = 0
+            cursor = cand[-1] + 1
+            while cursor < len(lines):
+                row_lines: list[int] = []
+                while cursor < len(lines) and len(row_lines) < n:
+                    if norm[cursor]:
+                        # Boss-review v8 F2/F3/F4/F5 — STOP if the
+                        # FIRST cell of a new row matches a known new-
+                        # table header. We only apply this check at
+                        # row boundaries (len(row_lines)==0) so we
+                        # don't accidentally cut a row mid-way when a
+                        # data cell happens to share a header word.
+                        if len(row_lines) == 0 and _NEW_TABLE_HEADER_RE.match(lines[cursor].strip()):
+                            break
+                        row_lines.append(cursor)
+                    cursor += 1
+                if len(row_lines) < n:
+                    break
+                row_values = [lines[ix].strip() for ix in row_lines]
+                first = row_values[0]
+                # Heuristic + per-profile guard — the first cell must
+                # match the profile's expected pattern (Gi…, RFI-###,
+                # M-###, RB-###, or an integer for field-checklist).
+                if not first or first.isupper() and len(first.split()) > 4:
+                    break
+                if first_cell_re is not None and not first_cell_re.match(first):
+                    # Stop the table; the row that failed the guard is
+                    # likely the start of a different section.
+                    break
+                row_dict = dict(zip(field_names, row_values))
+                # Determine atom type — "OPEN" status → constraint not scope_item.
+                atype = atom_type_str
+                status = row_dict.get("status", "")
+                if atom_kind == "field_checklist_row_v2" and status.upper() in {"OPEN", "BLOCKED", "PENDING", "EXCEPTION", "RFI"}:
+                    atype = "constraint"
+                # Build atom.
+                try:
+                    resolved_atom_type = AtomType(atype)
+                except ValueError:
+                    resolved_atom_type = AtomType.scope_item
+                row_id = row_values[0] or f"row_{row_idx}"
+                source_ref = SourceRef(
+                    id=stable_id("src", artifact_id, "pdf", page_number, locator_label, row_id),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.pdf,
+                    filename=filename,
+                    locator={
+                        "page": page_number,
+                        "vertical_table": locator_label,
+                        "row_index": row_idx,
+                        "row_id": row_id,
+                    },
+                    extraction_method=f"pdf_vertical_table_v1::{atom_kind}",
+                    parser_version=parser_version,
+                )
+                pretty = " | ".join(f"{fn}: {row_values[k]}" for k, fn in enumerate(field_names))
+                out.append(
+                    EvidenceAtom(
+                        id=stable_id(
+                            "atm", project_id, artifact_id, atom_kind,
+                            page_number, row_idx, *row_values,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=resolved_atom_type,
+                        raw_text=pretty,
+                        normalized_text=normalize_text(pretty),
+                        value={
+                            "kind": atom_kind,
+                            "page": page_number,
+                            "row_index": row_idx,
+                            **row_dict,
+                        },
+                        entity_keys=[],
+                        source_refs=[source_ref],
+                        receipts=[],
+                        authority_class=AuthorityClass.customer_current_authored,
+                        confidence=0.86,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=parser_version,
+                    )
+                )
+                row_idx += 1
+            # After processing the table, advance i past it.
+            i = cursor
+            break
+        else:
+            i += 1
+    return out
+
+
+# =====================================================================
+# Boss-review F6 — vertical workflow steps.
+# =====================================================================
+def _vertical_workflow_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Emit one ``action_item`` atom per workflow step when steps are
+    listed vertically (each step name on its own line followed by a
+    short description that may span 1-2 lines).
+
+    Trigger phrase: ``Incident and Vulnerability Response Workflow`` or
+    a sequence where ``Detect`` and ``Triage`` appear on consecutive
+    non-empty lines (a strong vertical signal).
+    """
+    lines = [ln.strip() for ln in text.splitlines()]
+    out: list[EvidenceAtom] = []
+    n = len(lines)
+    # Locate the first occurrence of "Detect" on its own line where
+    # "Triage" appears within the next 3 non-empty lines.
+    for i in range(n):
+        if lines[i].lower() != "detect":
+            continue
+        # Confirm Triage appears within the next ~6 non-empty lines.
+        seen: list[int] = []
+        j = i + 1
+        while j < n and len(seen) < 6:
+            if lines[j]:
+                seen.append(j)
+            j += 1
+        if not any(lines[k].lower() == "triage" for k in seen):
+            continue
+        # Collect step boundaries by scanning forward.
+        steps_lower = ["detect", "triage", "contain", "escalate", "recover", "improve"]
+        anchor_indices: dict[str, int] = {}
+        cursor = i
+        for step in steps_lower:
+            while cursor < n and lines[cursor].lower() != step:
+                cursor += 1
+            if cursor >= n:
+                break
+            anchor_indices[step] = cursor
+            cursor += 1
+        if len(anchor_indices) < 4:
+            return out
+        # For each step, the description is everything between its
+        # anchor and the next anchor (or up to 4 lines).
+        step_keys = [s for s in steps_lower if s in anchor_indices]
+        anchors_ordered = [anchor_indices[s] for s in step_keys]
+        anchors_ordered.append(min(n, anchors_ordered[-1] + 6))
+        for idx, step in enumerate(step_keys):
+            start = anchors_ordered[idx] + 1
+            end = anchors_ordered[idx + 1]
+            desc_lines: list[str] = []
+            for k in range(start, end):
+                ln = lines[k]
+                if not ln:
+                    continue
+                # Boss-review v8 F5 — stop description collection when
+                # the next table header begins (Runbook | Trigger |
+                # Owner | Status | Evidence on noc_soc page 2 was
+                # bleeding into "Improve").
+                if _NEW_TABLE_HEADER_RE.match(ln) or _WORKFLOW_STOP_RE.match(ln):
+                    break
+                desc_lines.append(ln)
+            desc = " ".join(desc_lines).strip()
+            step_name = step.title()
+            source_ref = SourceRef(
+                id=stable_id(
+                    "src", artifact_id, "pdf", page_number, "workflow_vertical", idx,
+                ),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.pdf,
+                filename=filename,
+                locator={
+                    "page": page_number,
+                    "workflow_step_index": idx,
+                    "layout": "vertical",
+                },
+                extraction_method="pdf_vertical_workflow_v1",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm", project_id, artifact_id, "workflow_vertical",
+                        page_number, idx, step_name, desc,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.action_item,
+                    raw_text=f"Workflow step {idx + 1} {step_name}: {desc}".strip(),
+                    normalized_text=normalize_text(f"{step_name} {desc}"),
+                    value={
+                        "kind": "workflow_step",
+                        "step_index": idx,
+                        "step_name": step_name,
+                        "description": desc,
+                        "page": page_number,
+                        "layout": "vertical",
+                    },
+                    entity_keys=[],
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=0.84,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=parser_version,
+                )
+            )
+        return out
+    return out
+
+
+# =====================================================================
+# Boss-review F5 — group-aware unchecked form-option detection.
+# =====================================================================
+_FORM_OPTION_GROUP_HEADERS: tuple[str, ...] = (
+    "connection availability / field checks",
+    "connection availability",
+    "field checks",
+    "site survey - access checklist",
+    "site survey access checklist",
+)
+_FORM_OPTION_END_MARKERS: tuple[str, ...] = (
+    # Boss-review v9 C001-F2/C002-F2 — substring matchers that ALWAYS
+    # indicate a real section break. We removed bare single nouns
+    # like "port" / "table" because they appeared inside legitimate
+    # option labels ("Network port available", "Patch panel
+    # accessible") and were stopping the parser at row 5 of 8.
+    "margin note",
+    "synthetic planning",
+    "field checklist - pathway",
+    "rack elevation",
+    "open rfis",
+    "open rfi",
+    "working measurements",
+    "as-built exception",
+    "required signatures",
+    "page 1",
+    "page 2",
+    "incident workflow",
+)
+
+
+def _group_form_option_atoms_from_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    page_number: int,
+    text: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Emit ``form_option_state`` atoms for a known checkbox group.
+
+    Boss-review F5: the parser already emits checked options from
+    lines starting with ``x`` (via _SINGLE_LINE_X_RE), but unchecked
+    options have no leading sentinel. We anchor on a known group
+    header (e.g., 'Connection Availability / Field Checks') and treat
+    the next contiguous run of single-line items as form options,
+    selecting=true if the line starts with ``x``.
+    """
+    out: list[EvidenceAtom] = []
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        norm = normalize_text(line).strip()
+        if norm not in _FORM_OPTION_GROUP_HEADERS:
+            continue
+        # Collect up to 12 following non-empty lines as candidate options.
+        opts: list[tuple[int, str]] = []
+        j = i + 1
+        while j < n and len(opts) < 12:
+            ln = lines[j].strip()
+            if not ln:
+                j += 1
+                continue
+            normln = normalize_text(ln)
+            if any(end in normln for end in _FORM_OPTION_END_MARKERS):
+                break
+            # Skip pure section labels.
+            if ln.endswith(":") or len(ln.split()) > 12:
+                break
+            opts.append((j, ln))
+            j += 1
+        if not opts:
+            continue
+        for idx, (line_idx, raw) in enumerate(opts):
+            selected = bool(re.match(r"^\s*x\s+\S", raw, re.I))
+            label = re.sub(r"^\s*x\s+", "", raw, flags=re.I).strip()
+            if not label:
+                continue
+            source_ref = SourceRef(
+                id=stable_id(
+                    "src", artifact_id, "pdf", page_number, "form_option_group", idx,
+                ),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.pdf,
+                filename=filename,
+                locator={
+                    "page": page_number,
+                    "line_index": line_idx,
+                    "form_group": norm,
+                    "option_index": idx,
+                },
+                extraction_method="pdf_group_form_option_v1",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm", project_id, artifact_id, "form_option_grouped",
+                        page_number, idx, label, "selected" if selected else "unselected",
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.form_option_state,
+                    raw_text=("Selected option: " if selected else "Unselected option: ") + label,
+                    normalized_text=normalize_text(label),
+                    value={
+                        "kind": "form_option_state",
+                        "group": norm,
+                        "label": label,
+                        "selected": selected,
+                        "page": page_number,
+                    },
+                    entity_keys=[],
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=0.84,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=parser_version,
+                )
+            )
+    return out
+
+
 def _scan_pdf_for_extras(
     *,
     project_id: str,
@@ -2986,9 +3488,34 @@ def _scan_pdf_for_extras(
                     parser_version=parser_version,
                 )
             )
+            # Boss-review F3+F4 — vertical-listed table v2 (each cell
+            # on its own line, common with hand-form PDFs).
+            out.extend(
+                _vertical_table_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
+            )
+            # Boss-review F5 — group-aware form options (selected=true
+            # AND selected=false) under known group headers.
+            out.extend(
+                _group_form_option_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
+            )
             # Prefer the horizontal six-step workflow if the page has
-            # one; fall back to the original verb-density workflow
-            # extractor.
+            # one; otherwise try the vertical workflow (each step name
+            # on its own line); fall back to the original verb-density
+            # workflow extractor.
             horizontal = _horizontal_workflow_atoms_from_text(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -2997,8 +3524,20 @@ def _scan_pdf_for_extras(
                 text=page_text,
                 parser_version=parser_version,
             )
+            vertical_workflow: list[EvidenceAtom] = []
+            if not horizontal:
+                vertical_workflow = _vertical_workflow_atoms_from_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    page_number=page_idx + 1,
+                    text=page_text,
+                    parser_version=parser_version,
+                )
             if horizontal:
                 out.extend(horizontal)
+            elif vertical_workflow:
+                out.extend(vertical_workflow)
             else:
                 out.extend(
                     _workflow_atoms_from_text(

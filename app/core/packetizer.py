@@ -64,6 +64,31 @@ def _atom_can_govern_scope_exclusion(atom: "EvidenceAtom") -> bool:
         return False
 
     text = f"{atom.raw_text or ''} {atom.normalized_text or ''}".lower()
+    # Boss-review v8 F5/F7 — reject reported-speech / negated
+    # exclusion mentions like:
+    #   "do not let the vendor say (later) that was excluded"
+    #   "make sure the vendor cannot claim it was not included"
+    #   "ensure testing is included so they cannot say it was out of scope"
+    # These are customer instructions to PREVENT a future exclusion,
+    # not contractual exclusions themselves.
+    if re.search(
+        r"\b(do\s*not\s+let|cannot\s+say|cannot\s+claim|so\s+(?:they|vendor|integrator)?\s*"
+        r"(?:cannot|can't)|make\s+sure\s+(?:they|vendor|integrator)\s+(?:cannot|can't))\b",
+        text,
+    ):
+        return False
+    if re.search(
+        r"\b(?:say|claim|argue|allege)\b[^.\n]{0,80}\b(?:that\s+was|it\s+was|"
+        r"is\s+excluded|was\s+excluded|out\s+of\s+scope|not\s+included)\b",
+        text,
+    ):
+        return False
+    if re.search(
+        r"\b(must\s+be\s+(?:explicitly\s+)?included|require\s+inclusion|"
+        r"ensure[s]?\s+inclusion|explicitly\s+include[ds]?)\b",
+        text,
+    ):
+        return False
     return bool(
         re.search(
             r"\b(excluded|exclude|not\s+included|not\s+in\s+scope|"
@@ -95,6 +120,40 @@ def _valid_scope_exclusion_group(group: list["EvidenceAtom"]) -> bool:
         if status in {"excluded", "not_included", "out_of_scope", "by_others", "nic"}:
             return True
     return False
+
+
+# Boss-review v9 C001-F4 / C002-F4 — phrases that indicate a row is a
+# STATUS / HOLD / PROCUREMENT-ACK signal, not a contractual scope
+# exclusion. Atoms whose text is dominated by these phrases must NOT
+# be aggregated into a scope_exclusion packet as supporting evidence.
+_PROCUREMENT_STATUS_RE = re.compile(
+    r"\b("
+    r"customer\s+pending|"
+    r"post[- ]?closeout|"
+    r"during\s+hypercare|"
+    r"before\s+go[- ]?live|"
+    r"blocked\s+by\s+vendor|"
+    r"do\s+not\s+order\s+yet|"
+    r"hold(?:\s+for\s+(?:po|approval|funding))?|"
+    r"awaiting\s+(?:po|approval|customer|vendor|funding)|"
+    r"acceptance\s+item|"
+    r"acceptance\s+checklist|"
+    r"runbook\s+(?:trigger|owner|status|evidence)|"
+    r"alert\s+rules?\s+tuned|"
+    r"backup/?config\s+export\s+verified|"
+    r"vendor\s+support\s+entitlement\s+validated"
+    r")\b",
+    re.I,
+)
+
+
+def _atom_is_procurement_status(atom: "EvidenceAtom") -> bool:
+    """True when the atom's text reads like a checklist STATUS field
+    (``Customer Pending``, ``blocked by vendor``, ``post-closeout``,
+    ``do not order yet``) rather than a real contractual exclusion.
+    """
+    text = (atom.raw_text or "") + " " + (atom.normalized_text or "")
+    return bool(_PROCUREMENT_STATUS_RE.search(text))
 from app.core.risk import packet_pm_sort_key, score_packet_risk
 from app.core.schemas import (
     AtomType,
@@ -1074,6 +1133,21 @@ def build_packets(
             and atom_by_id[e.to_atom_id].atom_type in {AtomType.scope_item, AtomType.quantity}
             and e.to_atom_id not in consumed_by_conflict_or_exclusion
         ]
+        # Boss-review v9 C001-F4 / C002-F4 — supporting atoms must
+        # pass the same explicit-exclusion / non-status filter as
+        # governing atoms. Procurement / acceptance / hold STATUS
+        # phrases (``Customer Pending``, ``blocked by vendor``,
+        # ``do not order yet``, ``post-closeout``) must NOT be
+        # aggregated into a scope_exclusion packet.
+        conflict_targets = [
+            a for a in conflict_targets if not _atom_is_procurement_status(a)
+        ]
+        # Also strip status-noise from the governing exclusion list
+        # itself — keeps a packet from being built around a bare
+        # "blocked by vendor" string that survived classification.
+        ex_atoms = [a for a in ex_atoms if not _atom_is_procurement_status(a)]
+        if not ex_atoms:
+            continue
         all_atoms = ex_atoms + conflict_targets
         has_transcript_exclusion = any(
             atom.authority_class == AuthorityClass.meeting_note for atom in ex_atoms

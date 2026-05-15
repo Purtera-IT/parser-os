@@ -298,20 +298,39 @@ def _scope_dimensions_compatible(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     return a_scope == b_scope
 
 
+def _bom_cells(atom: EvidenceAtom) -> dict[str, Any]:
+    """Return the atom's canonical_cells dict (xlsx/csv BOM rows
+    populate this), else an empty dict."""
+    value = atom.value if isinstance(atom.value, dict) else {}
+    cc = value.get("canonical_cells")
+    return cc if isinstance(cc, dict) else {}
+
+
+def _norm_str(v: Any) -> str:
+    if v is None:
+        return ""
+    return normalize_text(str(v))
+
+
 def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     """True only when two quantity atoms can validly contradict.
 
-    Rejects (post-RF7 hardening):
+    Rejects (post-2-case-review F7 hardening, layered on RF7):
+
     * non-quantity atoms,
-    * atoms with explicit but conflicting scope dimensions
-      (Base bid vs Add Alternate),
+    * atoms with conflicting scope dimensions (Base vs Add Alternate),
+    * atoms whose declared ``scope_bucket`` differs (Add Alt 1 vs
+      Owner Allowance vs Base vs Contingency),
+    * atoms whose declared ``category`` differs (Staging vs
+      Cable/Pathway vs Hardware vs Support),
+    * atoms whose declared ``uom`` differs (PAIR vs EA vs LF),
+    * atoms whose declared ``sku`` differs (gxt5_3000lvrt2uxl_a vs
+      gxt5_3000lvrt2uxl_b — different SKU variants of the same base
+      part_number are NOT contradictions),
     * atoms from the SAME spreadsheet artifact + same sheet with
-      DIFFERENT row numbers (RF7 — these are different line items
-      in the same BOM, not the same item across sources),
+      DIFFERENT row numbers (RF7),
     * atoms whose entity_keys are both populated but lack a shared
-      ``part_number:`` key (we no longer accept "share any
-      entity_key" — two rows for different parts at the same site
-      are not comparable).
+      ``part_number:`` key.
     """
     if a.atom_type.value != "quantity" or b.atom_type.value != "quantity":
         return False
@@ -321,14 +340,45 @@ def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
     if a_scope != "unspecified" and b_scope != "unspecified" and a_scope != b_scope:
         return False
 
-    # RF7 — same artifact + same sheet + different rows + SAME
+    # F7 — pull canonical BOM cells from both atoms and reject any
+    # mismatch in scope_bucket / category / uom / sku / model /
+    # asset_type. Empty values on either side are skipped (we don't
+    # penalize cross-source comparisons where one side is a roster
+    # row without these fields).
+    ac = _bom_cells(a)
+    bc = _bom_cells(b)
+    for field in (
+        "scope_bucket", "category", "uom", "unit_of_measure",
+        "sku", "model", "asset_type",
+    ):
+        av = _norm_str(ac.get(field))
+        bv = _norm_str(bc.get(field))
+        if av and bv and av != bv:
+            return False
+
+    # Boss-review v8 F6 — asset_record rows are different equipment
+    # in the same MDF/site. Sharing an entity key like
+    # ``part_number:mdf_010`` is NOT enough; they must share an
+    # explicit model OR asset_type AND a SKU/model identifier. Drop
+    # any cross-asset-record contradiction that doesn't share a
+    # model OR asset_type AND has at least one populated model on
+    # each side.
+    if a.atom_type.value == "asset_record" and b.atom_type.value == "asset_record":
+        a_model = _norm_str(ac.get("model"))
+        b_model = _norm_str(bc.get("model"))
+        a_atype = _norm_str(ac.get("asset_type"))
+        b_atype = _norm_str(bc.get("asset_type"))
+        if (a_model and b_model and a_model != b_model) or (
+            a_atype and b_atype and a_atype != b_atype
+        ):
+            return False
+        # If neither model nor asset_type lines up, refuse.
+        if not ((a_model and a_model == b_model) or (a_atype and a_atype == b_atype)):
+            return False
+
+    # RF7 — same artifact + same sheet + different rows + same
     # authority class ⇒ different line items unless they explicitly
-    # share a ``part_number:`` key. This is the narrow rule needed
-    # to kill the COPPER_001 false contradiction (BOM row 33 qty 77
-    # vs row 22 qty 50, same sheet, different parts) without breaking
-    # vendor_mismatch tests where atoms intentionally compare an
-    # approved_site_roster row against a vendor_quote row in the same
-    # workbook.
+    # share a ``part_number:`` key.
     a_loc = (a.source_refs[0].locator if a.source_refs else {}) or {}
     b_loc = (b.source_refs[0].locator if b.source_refs else {}) or {}
     a_sheet = a_loc.get("sheet")
@@ -349,8 +399,6 @@ def _quantity_atoms_are_comparable(a: EvidenceAtom, b: EvidenceAtom) -> bool:
         if not (a_parts & b_parts):
             return False
 
-    # Standard any-shared-key check covers the cross-artifact /
-    # vendor-vs-roster case (atoms may only share device:ip_camera).
     a_entities = set(a.entity_keys or [])
     b_entities = set(b.entity_keys or [])
     if a_entities and b_entities and not (a_entities & b_entities):
@@ -594,9 +642,42 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             qty_keys_a = {k for k in a.entity_keys if k.startswith(_QUANTITY_PREFIX)}
             qty_keys_b = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
             if qty_keys_a and qty_keys_b and qty_keys_a != qty_keys_b:
+                # Boss-review F7 + v8 F6 — apply the FULL comparability
+                # gate here too. Sharing a normalized part_number key
+                # is not enough: two BOM/asset rows whose
+                # scope_bucket / category / uom / sku / model /
+                # asset_type differ are different items and must not
+                # contradict.
+                ac = _bom_cells(a)
+                bc = _bom_cells(b)
+                cell_mismatch = False
+                for field in (
+                    "scope_bucket", "category", "uom", "unit_of_measure",
+                    "sku", "model", "asset_type",
+                ):
+                    av = _norm_str(ac.get(field))
+                    bv = _norm_str(bc.get(field))
+                    if av and bv and av != bv:
+                        cell_mismatch = True
+                        break
+                if not cell_mismatch and (
+                    a.atom_type.value == "asset_record"
+                    and b.atom_type.value == "asset_record"
+                ):
+                    a_model = _norm_str(ac.get("model"))
+                    b_model = _norm_str(bc.get("model"))
+                    a_atype = _norm_str(ac.get("asset_type"))
+                    b_atype = _norm_str(bc.get("asset_type"))
+                    if not (
+                        (a_model and a_model == b_model)
+                        or (a_atype and a_atype == b_atype)
+                    ):
+                        cell_mismatch = True
+                if cell_mismatch:
+                    pass
                 # PR9 gate — refuse Base vs Add-Alt cost-proposal lines
                 # for the same part number; those legitimately differ.
-                if not _scope_dimensions_compatible(a, b):
+                elif not _scope_dimensions_compatible(a, b):
                     pass
                 else:
                     qa_display = sorted(k.split(":", 1)[1] for k in qty_keys_a)
