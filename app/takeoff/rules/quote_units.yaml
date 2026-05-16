@@ -1,0 +1,45 @@
+# Quote-unit rules — each rule turns one DeviceInstance into N
+# QuoteLines, where N depends on the device's floor multiplier.
+#
+# The MVP covers wireless_node_outlet end-to-end. Other device types
+# fall through to a generic single-line quote so the takeoff is
+# never silent about a recognized device.
+
+rules:
+  - normalized_class: wireless_node_outlet
+    description: WN drops + terminations + tests + label pairs + service loop
+    system: structured_cabling_wireless
+    lines:
+      - item_key: cat6_wireless_node_drop
+        description: CAT6 CMP wireless node drop
+        unit: each
+        quantity_per_device: 1
+      - item_key: wireless_node_work_area_termination
+        description: CAT6 RJ45 work-area termination (jack or male plug)
+        unit: each
+        quantity_per_device: 1
+      - item_key: wireless_node_patch_panel_port
+        description: CAT6 RJ45 patch-panel port termination
+        unit: each
+        quantity_per_device: 1
+      - item_key: wireless_node_copper_certification_test
+        description: copper certification test per drop
+        unit: each
+        quantity_per_device: 1
+      - item_key: wireless_node_label_pair
+        description: drop / patch-panel label pair
+        unit: each
+        quantity_per_device: 1
+      - item_key: wireless_node_service_loop_allowance_ft
+        description: WN service loop allowance
+        unit: ft
+        quantity_per_device: 10
+    notes:
+      - PoE active WAP by others unless noted
+      - final WAP location subject to Wi-Fi vendor survey
+      - coordinate with detail 11/T9.02 where keynotes indicate
+
+# Generic fallbacks so other recognized device types still produce a
+# quote line even before they get a dedicated rule.
+generic_fallback:
+  default_unit: each

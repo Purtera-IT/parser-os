@@ -1,0 +1,27 @@
+# Scope responsibility hints.
+#
+# Drawing sets typically use an "L / M / X" matrix on T0.01 (or a
+# similar legend page) to identify who is responsible for each scope
+# item: L = low-voltage cabling contractor, M = MEP / electrical, X =
+# customer / by others. Future passes can extract this matrix and
+# attach it as evidence to each DeviceInstance / QuoteLine.
+#
+# For the v0 MVP the file is intentionally minimal — it documents the
+# expected matrix and lets downstream code look up responsibility by
+# symbol class once a real parser exists.
+
+defaults:
+  L: low_voltage_cabling_contractor
+  M: mep_contractor
+  X: by_others_owner_or_vendor
+
+# Default responsibility per normalized_class. Overridden by the
+# extracted T0.01 matrix when present.
+default_responsibility:
+  wireless_node_outlet: L
+  pos_terminal_outlet: L
+  pos_printer_outlet: L
+  matv_outlet: L
+  access_control_card_reader: L
+  door_alarm_contact: L
+  house_phone_outlet: L
