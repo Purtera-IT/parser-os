@@ -511,6 +511,12 @@ class OrbitBriefPdfParser(BaseParser):
             takeoff_doc = build_low_voltage_takeoff(path)
             write_takeoff_doc(path, takeoff_doc)
             write_takeoff_markdown(path, takeoff_doc)
+            try:
+                from app.takeoff.qa_overlay import write_qa_overlays
+
+                write_qa_overlays(pdf_path=path, takeoff=takeoff_doc)
+            except Exception:  # pragma: no cover - QA overlays are best-effort
+                pass
             atoms.extend(
                 takeoff_to_atoms(
                     takeoff=takeoff_doc,
