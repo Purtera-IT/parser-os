@@ -1,0 +1,127 @@
+# Project-level low-voltage symbol → quote-unit family rules.
+#
+# These defaults are used when a project's own legend page (T0.01)
+# cannot be parsed into structured rules yet. They cover the common
+# hotel / hospitality / commercial-building low-voltage device set.
+#
+# Each rule keys on `raw_symbol` (the token literally drawn on the
+# plan) and maps it to:
+#   normalized_class — internal canonical name
+#   system           — top-level system bucket
+#   quote_unit       — the line item it rolls up to
+#   plus cabling / termination / remarks for downstream pricing.
+
+defaults:
+  - raw_symbol: WN
+    normalized_class: wireless_node_outlet
+    system: structured_cabling_wireless
+    quote_unit: cat6_wireless_node_drop
+    description: wireless node outlet / WAP cabling outlet
+    cable_count: 1
+    cable_type: CAT6 CMP
+    work_area_termination: CAT6 RJ45 jack or male plug per legend/detail
+    closet_termination: CAT6 RJ45 patch panel
+    power: PoE by others / active WAP by Wi-Fi vendor
+    remarks:
+      - coordinate with Wi-Fi vendor
+      - final WAP locations may change after survey
+      - include service loop allowance
+
+  - raw_symbol: POS-T
+    normalized_class: pos_terminal_outlet
+    system: structured_cabling_pos
+    quote_unit: cat6_pos_terminal_drop
+    description: POS terminal outlet — cashier terminal / register location
+    cable_count: 1
+    cable_type: CAT6 CMP
+    work_area_termination: CAT6 RJ45 jack
+    closet_termination: CAT6 RJ45 patch panel
+    remarks:
+      - coordinate with POS vendor for active equipment
+      - confirm height + mounting with FF&E drawings
+
+  - raw_symbol: POS-P
+    normalized_class: pos_printer_outlet
+    system: structured_cabling_pos
+    quote_unit: cat6_pos_printer_drop
+    description: POS printer / peripheral outlet
+    cable_count: 1
+    cable_type: CAT6 CMP
+    work_area_termination: CAT6 RJ45 jack
+    closet_termination: CAT6 RJ45 patch panel
+    remarks:
+      - coordinate with POS vendor
+      - peripheral may be receipt printer, kitchen printer, or order display
+
+  - raw_symbol: TV
+    normalized_class: matv_outlet
+    system: matv
+    quote_unit: matv_tv_drop
+    description: MATV (television) outlet
+    cable_count: 1
+    cable_type: RG-6 quad shield
+    work_area_termination: F-connector wall plate
+    closet_termination: tap on MATV trunk per riser
+    remarks:
+      - F-connector outlet per detail
+      - coordinate active equipment with MATV vendor
+
+  - raw_symbol: CR
+    normalized_class: access_control_card_reader
+    system: access_control
+    quote_unit: access_control_card_reader_drop
+    description: card reader for access control
+    cable_count: 1
+    cable_type: 22 AWG composite per security legend
+    work_area_termination: reader mounting plate / single-gang box
+    closet_termination: access control panel terminal
+    remarks:
+      - coordinate with security vendor
+      - confirm reader model with owner/IT
+
+  - raw_symbol: DA
+    normalized_class: door_alarm_contact
+    system: access_control
+    quote_unit: door_alarm_contact_drop
+    description: door alarm / door contact
+    cable_count: 1
+    cable_type: 22 AWG, 2 conductor
+    work_area_termination: recessed magnetic contact
+    closet_termination: alarm panel / DPS input
+    remarks:
+      - coordinate with security vendor
+
+  - raw_symbol: H
+    normalized_class: house_phone_outlet
+    system: structured_cabling_voice
+    quote_unit: cat6_house_phone_drop
+    description: house / courtesy phone outlet
+    cable_count: 1
+    cable_type: CAT6 CMP
+    work_area_termination: CAT6 RJ45 jack
+    closet_termination: CAT6 RJ45 patch panel
+    remarks:
+      - coordinate with telephony vendor / front desk
+
+# Tokens that look like symbols but must NEVER be counted as devices.
+# Grid labels (A, B, C, D, E, F, G), bare numerals, room codes, sheet
+# coordinates, and the like.
+ignore_tokens:
+  - A
+  - B
+  - C
+  - D
+  - E
+  - F
+  - G
+  - X
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - "0"
