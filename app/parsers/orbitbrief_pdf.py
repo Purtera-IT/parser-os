@@ -479,26 +479,73 @@ class OrbitBriefPdfParser(BaseParser):
             )
         except Exception:  # pragma: no cover — never fail the parse
             pass
+        # Low-voltage takeoff layer — additive only. A failure here
+        # NEVER fails the parse; it is captured as a warning instead.
+        # The existing structured.json / structured.md / atom stream
+        # above is untouched whether or not this succeeds.
+        derived = derived_dir_for(path)
+        derived_files: list[dict[str, Any]] = [
+            {
+                "relative_path": f"{derived.name}/{STRUCTURED_FILENAME}",
+                "content_kind": "json",
+                "content_json": structured_doc,
+            },
+            {
+                "relative_path": f"{derived.name}/{STRUCTURED_MARKDOWN_FILENAME}",
+                "content_kind": "markdown",
+                "content_text": structured_doc_to_markdown(structured_doc),
+            },
+        ]
+        warnings: list[str] = []
+        try:
+            from app.takeoff.exports import (
+                TAKEOFF_FILENAME,
+                TAKEOFF_MARKDOWN_FILENAME,
+                takeoff_doc_to_markdown,
+                takeoff_to_atoms,
+                write_takeoff_doc,
+                write_takeoff_markdown,
+            )
+            from app.takeoff.pipeline import build_low_voltage_takeoff
+
+            takeoff_doc = build_low_voltage_takeoff(path)
+            write_takeoff_doc(path, takeoff_doc)
+            write_takeoff_markdown(path, takeoff_doc)
+            atoms.extend(
+                takeoff_to_atoms(
+                    takeoff=takeoff_doc,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=self.parser_version,
+                )
+            )
+            derived_files.append(
+                {
+                    "relative_path": f"{derived.name}/{TAKEOFF_FILENAME}",
+                    "content_kind": "json",
+                    "content_json": takeoff_doc.model_dump(mode="json"),
+                }
+            )
+            derived_files.append(
+                {
+                    "relative_path": f"{derived.name}/{TAKEOFF_MARKDOWN_FILENAME}",
+                    "content_kind": "markdown",
+                    "content_text": takeoff_doc_to_markdown(takeoff_doc),
+                }
+            )
+        except Exception as exc:  # pragma: no cover — never fail the parse
+            warnings.append(f"low_voltage_takeoff_failed: {exc!r}")
+
         # Surface the derived artifacts in the parser output so the
         # compiler-level cache captures them and replays them on every
         # cache hit.  This guarantees ``<stem>.derived/structured.json``
         # and ``structured.md`` are always present after a compile, even
         # for cache-hot artifacts.
-        derived = derived_dir_for(path)
         return ParserOutput(
             atoms=atoms,
-            derived_files=[
-                {
-                    "relative_path": f"{derived.name}/{STRUCTURED_FILENAME}",
-                    "content_kind": "json",
-                    "content_json": structured_doc,
-                },
-                {
-                    "relative_path": f"{derived.name}/{STRUCTURED_MARKDOWN_FILENAME}",
-                    "content_kind": "markdown",
-                    "content_text": structured_doc_to_markdown(structured_doc),
-                },
-            ],
+            warnings=warnings,
+            derived_files=derived_files,
         )
 
 
