@@ -1,0 +1,20 @@
+{
+  "case_id": "LOWVOLT_002_MARRIOTT_ATLANTA_T",
+  "domain": "low_voltage_structured_cabling",
+  "project_type": "hospitality structured cabling / security T-set",
+  "clean_or_messy": "clean",
+  "revision_heavy": false,
+  "service_line": "low_voltage",
+  "recommended_domain_pack": "copper_cabling",
+  "expected_pages": 25,
+  "expected_floor_plan_pages": 14,
+  "what_this_case_proves": [
+    "Adobe-style duplicate WN tokens at the same coordinate collapse to one base device.",
+    "Legend / detail pages are kept as rejected candidates but never count.",
+    "T1.00 SERVICE LEVEL is rejected by NOT IN SCOPE.",
+    "Multi-floor sheets apply correct multipliers (T1.06=9, T1.09=2, T1.10=5).",
+    "Homerun zone notes parse to IDF / MDF targets and trigger ambiguity / OCR-typo warnings."
+  ],
+  "compiler_domain_pack": "low_voltage_structured_cabling",
+  "recommended_command": "python -c \"from pathlib import Path; from app.takeoff.pipeline import build_low_voltage_takeoff; print(build_low_voltage_takeoff(Path('real_data_cases/LOWVOLT_002_MARRIOTT_ATLANTA_T/artifacts/2026-04-10 100% DD - MARRIOTT ATLANTA - T.pdf')).summary['wireless_node_outlet'])\""
+}

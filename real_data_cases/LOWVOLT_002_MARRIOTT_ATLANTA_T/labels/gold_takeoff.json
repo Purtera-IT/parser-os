@@ -1,0 +1,59 @@
+{
+  "case_id": "LOWVOLT_002_MARRIOTT_ATLANTA_T",
+  "service_line": "low_voltage",
+  "recommended_domain_pack": "copper_cabling",
+  "expected_sheet_count": 25,
+  "expected_accepted_base_counts": {
+    "T1.01": {"wireless_node_outlet": 13},
+    "T1.02": {"wireless_node_outlet": 12},
+    "T1.03": {"wireless_node_outlet": 23},
+    "T1.04": {"wireless_node_outlet": 16},
+    "T1.05": {"wireless_node_outlet": 14},
+    "T1.06": {"wireless_node_outlet": 12},
+    "T1.07": {"wireless_node_outlet": 12},
+    "T1.08": {"wireless_node_outlet": 12},
+    "T1.09": {"wireless_node_outlet": 13},
+    "T1.10": {"wireless_node_outlet": 13},
+    "T1.11": {"wireless_node_outlet": 12},
+    "T1.12": {"wireless_node_outlet": 22},
+    "T1.13": {"wireless_node_outlet": 0}
+  },
+  "expected_rejected_or_zero_counts": {
+    "T0.01": {"wireless_node_outlet": 0, "reason": "legend page — WN tokens exist as legend keys but never count"},
+    "T9.02": {"wireless_node_outlet": 0, "reason": "detail page — WN tokens exist in installation detail but never count"},
+    "T1.00": {"wireless_node_outlet": 0, "reason": "service level plan is NOT IN SCOPE"}
+  },
+  "expected_sheet_multipliers": {
+    "T1.01": 1,
+    "T1.02": 1,
+    "T1.03": 1,
+    "T1.04": 1,
+    "T1.05": 1,
+    "T1.06": 9,
+    "T1.07": 1,
+    "T1.08": 1,
+    "T1.09": 2,
+    "T1.10": 5,
+    "T1.11": 1,
+    "T1.12": 1,
+    "T1.13": 1
+  },
+  "expected_extended_counts": {
+    "wireless_node_outlet": 335
+  },
+  "expected_warning_contains": [
+    "missing_homerun_zone_for_levels: T1.06",
+    "possible_zone_note_ocr_or_design_typo: T1.10"
+  ],
+  "expected_zones": {
+    "T1.02": "MDF ROOM",
+    "T1.03": "IDF-2",
+    "T1.04": "IDF-3",
+    "T1.05": "IDF-5",
+    "T1.07": "IDF-15",
+    "T1.08": "IDF-15",
+    "T1.09": "IDF-18",
+    "T1.11": "IDF-25",
+    "T1.12": "IDF-25"
+  }
+}

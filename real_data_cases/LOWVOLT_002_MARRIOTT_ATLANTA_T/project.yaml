@@ -1,0 +1,10 @@
+domain_pack: copper_cabling
+service_line: low_voltage
+project_name: Marriott Atlanta T Low Voltage Drawing Set
+notes: |
+  100% DD T-series sheets (structured cabling, security, MATV, etc.).
+  Hard regression case for the new app/takeoff low-voltage pipeline:
+  Adobe-duplicated WN tokens, NOT IN SCOPE service-level sheet,
+  multi-floor typical plans with multipliers up to 9, multi-zone
+  homerun ambiguity, and an OCR-typo zone reference to level 10 on a
+  level 19-23 sheet.

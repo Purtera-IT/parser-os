@@ -123,10 +123,23 @@ def test_parser_output_carries_derived_files_for_cache_replay(tmp_path: Path) ->
     assert any(p.endswith(STRUCTURED_FILENAME) for p in rel_paths)
     assert any(p.endswith(STRUCTURED_MARKDOWN_FILENAME) for p in rel_paths)
 
-    # JSON content is parsed object, markdown content is text.
-    by_kind = {df.content_kind: df for df in output.derived_files}
-    assert by_kind["json"].content_json["schema_version"].startswith("orbitbrief.pdf.")
-    assert by_kind["markdown"].content_text.startswith("---")
+    # JSON content is parsed object, markdown content is text. There may
+    # be more than one JSON file in derived_files (structured.json AND
+    # takeoff.json since the low-voltage takeoff layer was added) — look
+    # up the structured file explicitly rather than relying on a
+    # last-wins dict-comprehension over content_kind.
+    by_path = {df.relative_path: df for df in output.derived_files}
+    structured_json_path = next(
+        p for p in by_path if p.endswith(STRUCTURED_FILENAME)
+    )
+    structured_md_path = next(
+        p for p in by_path if p.endswith(STRUCTURED_MARKDOWN_FILENAME)
+    )
+    assert (
+        by_path[structured_json_path].content_json["schema_version"]
+        .startswith("orbitbrief.pdf.")
+    )
+    assert by_path[structured_md_path].content_text.startswith("---")
 
 
 def test_compile_writes_envelope_with_typed_atoms_and_verified_receipts(tmp_path: Path) -> None:
