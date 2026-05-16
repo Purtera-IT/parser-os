@@ -9,16 +9,29 @@ Each overlay shows, for a single page:
 
 Overlays are written under ``<PDF_STEM>.derived/qa_overlays/`` and the
 QA pass silently no-ops when Pillow is not available.
+
+By default this renders ONLY floor-plan-ish pages that have at least one
+accepted device (spec/legend/detail/riser pages are skipped). Pass
+``include_rejected_pages=True`` or ``accepted_only=False`` to widen the
+scope. The render is deliberately not optimized for file-size, so it stays
+fast — call this from a CLI / offline review path, not from the hot
+parse path.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
 from app.takeoff.schemas import BBox, DeviceInstance, SheetRecord, SymbolCandidate, TakeoffDocument
 
 
-_DEFAULT_ZOOM = 1.5  # 1.5x the native PDF size — readable, modest file size.
+_DEFAULT_ZOOM = 1.0  # 1.0x the native PDF size — readable, fast to render.
+
+# Page types we skip by default. Floor plans / typical plans / equipment rooms /
+# component schedules / unknown pages CAN have accepted devices in some projects,
+# so they stay eligible unless the caller flips ``accepted_only`` themselves.
+_NON_DEVICE_PAGE_TYPES = frozenset({"spec", "legend", "detail", "riser"})
 
 
 def _qa_dir(pdf_path: Path) -> Path:
@@ -30,24 +43,60 @@ def write_qa_overlays(
     pdf_path: Path,
     takeoff: TakeoffDocument,
     zoom: float = _DEFAULT_ZOOM,
-) -> list[Path]:
-    """Render one PNG per page that contains any candidate (accepted or not).
+    include_rejected_pages: bool = False,
+    accepted_only: bool = True,
+    max_pages: int | None = None,
+) -> dict[str, Any]:
+    """Render QA overlay PNGs for pages of interest.
 
-    Returns the list of written PNG paths. If PyMuPDF or Pillow is
-    unavailable in the environment, returns an empty list.
+    Parameters
+    ----------
+    pdf_path:
+        Source PDF. Overlays land under ``<pdf_stem>.derived/qa_overlays/``.
+    takeoff:
+        The :class:`TakeoffDocument` produced by ``build_low_voltage_takeoff``.
+    zoom:
+        Pixmap scale factor. Default ``1.0`` (native pt). Bump to ``1.5`` /
+        ``2.0`` when zoomed-in detail is needed for human review.
+    include_rejected_pages:
+        When ``False`` (default), skip pages whose ``page_type`` is
+        spec / legend / detail / riser. Set ``True`` to include them — useful
+        when debugging why legend symbols are being miscounted.
+    accepted_only:
+        When ``True`` (default), skip pages that have candidates but no
+        accepted device instances. Set ``False`` to render every page that
+        has any candidate at all (rejected included).
+    max_pages:
+        Optional cap on the number of pages rendered, applied AFTER filtering.
+
+    Returns
+    -------
+    A small summary dict::
+
+        {
+          "pages_requested": int,           # pages we tried to render after filters
+          "pages_written":   int,           # PNGs actually saved
+          "skipped_non_device_pages": int,  # pages filtered out by page_type / accepted_only
+          "elapsed_seconds": float,
+        }
+
+    Silently no-ops (returning zeros) when PyMuPDF or Pillow is unavailable.
     """
+    started = time.perf_counter()
+    summary: dict[str, Any] = {
+        "pages_requested": 0,
+        "pages_written": 0,
+        "skipped_non_device_pages": 0,
+        "elapsed_seconds": 0.0,
+    }
+
     try:
         import fitz  # noqa: F401
         from PIL import Image, ImageDraw  # noqa: F401
     except Exception:
-        return []
+        summary["elapsed_seconds"] = time.perf_counter() - started
+        return summary
 
-    pages_with_candidates = {c.page_index for c in takeoff.candidates}
-    if not pages_with_candidates:
-        return []
-
-    out_dir = _qa_dir(pdf_path)
-    out_dir.mkdir(parents=True, exist_ok=True)
     sheet_index = {s.page_index: s for s in takeoff.sheets}
     device_index: dict[int, list[DeviceInstance]] = {}
     for d in takeoff.devices:
@@ -56,9 +105,36 @@ def write_qa_overlays(
     for c in takeoff.candidates:
         candidate_index.setdefault(c.page_index, []).append(c)
 
-    written: list[Path] = []
+    # Decide which pages to render.
+    pages_with_candidates = sorted({c.page_index for c in takeoff.candidates})
+    selected: list[int] = []
+    for page_index in pages_with_candidates:
+        sheet = sheet_index.get(page_index)
+        if (
+            not include_rejected_pages
+            and sheet is not None
+            and sheet.page_type in _NON_DEVICE_PAGE_TYPES
+        ):
+            summary["skipped_non_device_pages"] += 1
+            continue
+        if accepted_only and not device_index.get(page_index):
+            summary["skipped_non_device_pages"] += 1
+            continue
+        selected.append(page_index)
+
+    if max_pages is not None:
+        selected = selected[: max(0, max_pages)]
+
+    summary["pages_requested"] = len(selected)
+    if not selected:
+        summary["elapsed_seconds"] = time.perf_counter() - started
+        return summary
+
+    out_dir = _qa_dir(pdf_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     with fitz.open(str(pdf_path)) as doc:  # type: ignore[name-defined]
-        for page_index in sorted(pages_with_candidates):
+        for page_index in selected:
             try:
                 png = _render_page_overlay(
                     doc=doc,
@@ -70,10 +146,12 @@ def write_qa_overlays(
                     zoom=zoom,
                 )
                 if png is not None:
-                    written.append(png)
+                    summary["pages_written"] += 1
             except Exception:  # pragma: no cover - never fail the parse
                 continue
-    return written
+
+    summary["elapsed_seconds"] = time.perf_counter() - started
+    return summary
 
 
 def _render_page_overlay(
@@ -131,7 +209,7 @@ def _render_page_overlay(
         draw.text((rect[0] + 4, max(0, rect[1] - 12)), label, fill=color)
 
     out_path = out_dir / f"page_{page_index:04d}_takeoff.png"
-    img.save(out_path, format="PNG", optimize=True)
+    img.save(out_path, format="PNG")
     return out_path
 
 

@@ -20,6 +20,7 @@ prompt.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -511,12 +512,16 @@ class OrbitBriefPdfParser(BaseParser):
             takeoff_doc = build_low_voltage_takeoff(path)
             write_takeoff_doc(path, takeoff_doc)
             write_takeoff_markdown(path, takeoff_doc)
-            try:
-                from app.takeoff.qa_overlay import write_qa_overlays
+            # QA overlays are an expensive offline aid (one pixmap render per
+            # page). Skip them on the hot parse path unless the operator opts
+            # in via env flag. Truthy values: 1, true, yes, on (case-insensitive).
+            if os.environ.get("PARSER_OS_WRITE_TAKEOFF_QA", "").strip().lower() in {"1", "true", "yes", "on"}:
+                try:
+                    from app.takeoff.qa_overlay import write_qa_overlays
 
-                write_qa_overlays(pdf_path=path, takeoff=takeoff_doc)
-            except Exception:  # pragma: no cover - QA overlays are best-effort
-                pass
+                    write_qa_overlays(pdf_path=path, takeoff=takeoff_doc)
+                except Exception:  # pragma: no cover - QA overlays are best-effort
+                    pass
             atoms.extend(
                 takeoff_to_atoms(
                     takeoff=takeoff_doc,
