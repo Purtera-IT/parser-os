@@ -30,6 +30,7 @@ from app.takeoff.schemas import (
     SymbolCandidate,
     TakeoffDocument,
 )
+from app.takeoff.ocr_signals import OCREngineHandle, ocr_candidates_for_page
 from app.takeoff.shape_signals import (
     ShapeTemplate,
     extract_templates_from_legend,
@@ -82,6 +83,20 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
     shape_pass_enabled = _env_flag_enabled("PARSER_OS_ENABLE_SHAPE_SIGNALS")
     shape_pass_results: dict[int, list[SymbolCandidate]] = {}
     shape_pass_warnings: list[str] = []
+
+    ocr_pass_enabled = _env_flag_enabled("PARSER_OS_ENABLE_OCR_SIGNALS")
+    ocr_pass_results: dict[int, list[SymbolCandidate]] = {}
+    ocr_pass_warnings: list[str] = []
+    ocr_engine_handle: OCREngineHandle | None = None
+    if ocr_pass_enabled:
+        from app.takeoff.ocr_signals import _load_engine
+        ocr_engine_handle = _load_engine()
+        if ocr_engine_handle.name == "none":
+            ocr_pass_enabled = False
+            ocr_pass_warnings.append(
+                "ocr_signals_skipped_no_engine: neither easyocr nor "
+                "pytesseract is installed"
+            )
 
     with fitz.open(str(pdf_path)) as doc:
         legend_source_page = _find_legend_page_index(doc)
@@ -188,6 +203,26 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
                     # ones are added below too so they're visible.
                     candidates.extend(sheet_shape_cands)
                     shape_pass_results[sheet.page_index] = sheet_shape_cands
+
+                # Phase D: optional OCR pass — only when env flag opted
+                # in AND an engine was successfully loaded above.
+                if ocr_pass_enabled and ocr_engine_handle is not None:
+                    ocr_cands, ocr_reason = ocr_candidates_for_page(
+                        page=page,
+                        sheet=sheet,
+                        legend_rules=legend_rules,
+                        engine=ocr_engine_handle,
+                    )
+                    if ocr_reason:
+                        ocr_pass_warnings.append(ocr_reason)
+                    if ocr_cands:
+                        candidates.extend(ocr_cands)
+                        ocr_pass_results[sheet.page_index] = ocr_cands
+                        # OCR candidates currently go straight into
+                        # candidates (audit trail). Fusion with text /
+                        # shape is left for a follow-up commit — for
+                        # now they're tracked as ocr-only needs_review
+                        # markers.
 
                 sheet_devices = fuse_candidates_to_devices(
                     candidates=page_candidates,
@@ -348,6 +383,15 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
         }
     if shape_pass_warnings:
         warnings.extend(shape_pass_warnings)
+    if ocr_pass_enabled or ocr_pass_warnings:
+        summary["ocr_signals"] = {
+            "enabled": bool(ocr_pass_enabled),
+            "engine": ocr_engine_handle.name if ocr_engine_handle else "none",
+            "pages_scanned": len(ocr_pass_results),
+            "total_ocr_candidates": sum(len(v) for v in ocr_pass_results.values()),
+        }
+    if ocr_pass_warnings:
+        warnings.extend(ocr_pass_warnings)
 
     # Promote per-class zone-coverage open questions for downstream review.
     for w in warnings:

@@ -36,6 +36,14 @@ dev = [
   "pytest>=8.0,<9",
   "httpx>=0.28",
 ]
+# Optional vision dependencies for the takeoff pipeline's OCR fallback.
+# OpenCV is already a hard dependency (used by Phase B shape signals);
+# the OCR engines below are heavy (>500MB with model weights) and are
+# only required when the operator enables PARSER_OS_ENABLE_OCR_SIGNALS=1
+# on a project that embeds raster text instead of native PDF text.
+vision = [
+  "easyocr>=1.7",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*", "orbitbrief_page_os*"]
