@@ -191,3 +191,63 @@ def test_marriott_typical_plan_expansion_populates_summary() -> None:
     expanded = expansion.get("expanded_device_totals") or {}
     unresolved = expansion.get("unresolved_floors") or []
     assert expanded or unresolved, "neither expansion nor unresolved-floors emitted"
+
+
+def test_markdown_renders_typical_plan_section() -> None:
+    """The takeoff markdown gains a Typical-Plan Expansion section when
+    the summary has the expansion block populated."""
+    from app.takeoff.exports import takeoff_doc_to_markdown
+    from app.takeoff.schemas import TakeoffDocument
+
+    doc = TakeoffDocument(
+        source_pdf="x.pdf",
+        summary={
+            "typical_plan_expansion": {
+                "typical_plan_pages": [],
+                "typical_room_device_counts": {"K1": {"matv_outlet": 1}},
+                "floor_room_counts": {"T1.06": {"K1": 4}},
+                "expanded_device_totals": {"matv_outlet": 36},
+                "per_floor_expansion": {"T1.06": {"matv_outlet": 36}},
+                "unresolved_floors": ["T1.10"],
+            }
+        },
+    )
+    md = takeoff_doc_to_markdown(doc)
+    assert "## Typical-Plan Expansion" in md
+    assert "matv_outlet" in md
+    assert "T1.06" in md
+    assert "T1.10" in md  # unresolved-floors callout
+
+
+def test_atoms_include_typical_plan_expansion_quantity() -> None:
+    """takeoff_to_atoms yields one rollup-quantity + assumption atom
+    when a typical-plan expansion is present in the summary."""
+    from app.takeoff.exports import takeoff_to_atoms
+    from app.takeoff.schemas import TakeoffDocument
+
+    doc = TakeoffDocument(
+        source_pdf="x.pdf",
+        summary={
+            "typical_plan_expansion": {
+                "typical_plan_pages": [],
+                "typical_room_device_counts": {"K1": {"matv_outlet": 1}},
+                "floor_room_counts": {"T1.06": {"K1": 4}},
+                "expanded_device_totals": {"matv_outlet": 36},
+                "per_floor_expansion": {"T1.06": {"matv_outlet": 36}},
+                "unresolved_floors": [],
+            }
+        },
+    )
+    atoms = list(
+        takeoff_to_atoms(
+            takeoff=doc,
+            project_id="P",
+            artifact_id="A",
+            filename="x.pdf",
+            parser_version="v0",
+        )
+    )
+    raws = [a.raw_text for a in atoms]
+    assert any("matv_outlet: 36 drops on T1.06" in r for r in raws)
+    assert any("typical-plan expansion" in r and "all guest-room" in r for r in raws)
+    assert any("Typical-plan expansion is a heuristic" in r for r in raws)

@@ -143,6 +143,52 @@ def takeoff_doc_to_markdown(takeoff: TakeoffDocument) -> str:
         lines.append("- no WN devices detected")
     lines.append("")
 
+    # 4b) Typical-plan expansion (optional)
+    expansion = (takeoff.summary or {}).get("typical_plan_expansion")
+    if expansion:
+        lines.append("## Typical-Plan Expansion")
+        lines.append("")
+        # Typical-room device counts.
+        trdc = expansion.get("typical_room_device_counts") or {}
+        if trdc:
+            lines.append("### Per-room device counts")
+            lines.append("")
+            lines.append("| Room type | Class | Per room |")
+            lines.append("| --- | --- | --- |")
+            for room_type in sorted(trdc):
+                for cls, n in sorted(trdc[room_type].items()):
+                    lines.append(f"| {room_type} | {cls} | {n} |")
+            lines.append("")
+        # Floor room counts.
+        floor_counts = expansion.get("floor_room_counts") or {}
+        if floor_counts:
+            lines.append("### Per-floor room counts")
+            lines.append("")
+            room_types = sorted({r for v in floor_counts.values() for r in v})
+            lines.append("| Sheet | " + " | ".join(room_types) + " |")
+            lines.append("| --- | " + " | ".join(["---"] * len(room_types)) + " |")
+            for sn in sorted(floor_counts):
+                row = [sn] + [str(floor_counts[sn].get(rt, 0)) for rt in room_types]
+                lines.append("| " + " | ".join(row) + " |")
+            lines.append("")
+        # Expanded totals.
+        totals = expansion.get("expanded_device_totals") or {}
+        if totals:
+            lines.append("### Expanded device totals")
+            lines.append("")
+            lines.append("| Class | Extended count |")
+            lines.append("| --- | --- |")
+            for cls, n in sorted(totals.items()):
+                lines.append(f"| {cls} | {n} |")
+            lines.append("")
+        unresolved = expansion.get("unresolved_floors") or []
+        if unresolved:
+            lines.append(
+                f"**Unresolved floors (need operator key counts):** "
+                f"{', '.join(unresolved)}"
+            )
+            lines.append("")
+
     # 5) Quote Lines
     lines.append("## Quote Lines")
     lines.append("")
@@ -332,7 +378,141 @@ def takeoff_to_atoms(
             parser_version=parser_version,
         )
 
-    # 4) Wi-Fi vendor survey assumption (always emitted for WN takeoffs).
+    # 4) Typical-plan expansion atoms — one quantity atom per
+    #    (class, floor) expansion, one rollup atom per class, and one
+    #    assumption atom flagging that the expansion is heuristic.
+    expansion = (takeoff.summary or {}).get("typical_plan_expansion") or {}
+    if expansion:
+        # Per-floor, per-class expansion quantity atoms.
+        for sheet_number, per_class in (expansion.get("per_floor_expansion") or {}).items():
+            for normalized_class, extended in per_class.items():
+                source = _build_source_ref(
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    locator={
+                        "page": None,
+                        "sheet_number": sheet_number,
+                        "takeoff_kind": "typical_plan_floor_expansion",
+                        "normalized_class": normalized_class,
+                    },
+                )
+                rooms = (expansion.get("floor_room_counts") or {}).get(sheet_number, {})
+                room_blob = ", ".join(f"{k}={v}" for k, v in sorted(rooms.items()))
+                raw = (
+                    f"{normalized_class}: {extended} drops on {sheet_number} via "
+                    f"typical-plan expansion ({room_blob})"
+                )
+                yield EvidenceAtom(
+                    id=stable_id(
+                        "atom_takeoff",
+                        "typical_expansion",
+                        sheet_number,
+                        normalized_class,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.quantity,
+                    raw_text=raw,
+                    normalized_text=raw,
+                    value={
+                        "normalized_class": normalized_class,
+                        "sheet_number": sheet_number,
+                        "room_counts": dict(rooms),
+                        "extended_count": int(extended),
+                        "source": "typical_plan_expansion",
+                    },
+                    entity_keys=[normalized_class, sheet_number, "typical_plan_expansion"],
+                    source_refs=[source],
+                    authority_class=AuthorityClass.machine_extractor,
+                    confidence=0.75,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["typical_plan_expansion_v0"],
+                    parser_version=parser_version,
+                )
+
+        # Rollup atom per class across all floors.
+        for normalized_class, extended in (expansion.get("expanded_device_totals") or {}).items():
+            source = _build_source_ref(
+                artifact_id=artifact_id,
+                filename=filename,
+                parser_version=parser_version,
+                locator={
+                    "page": None,
+                    "sheet_number": None,
+                    "takeoff_kind": "typical_plan_expansion_rollup",
+                    "normalized_class": normalized_class,
+                },
+            )
+            raw = (
+                f"{normalized_class}: {extended} drops across all guest-room "
+                f"floors via typical-plan expansion"
+            )
+            yield EvidenceAtom(
+                id=stable_id(
+                    "atom_takeoff", "typical_expansion_rollup", normalized_class
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.quantity,
+                raw_text=raw,
+                normalized_text=raw,
+                value={
+                    "normalized_class": normalized_class,
+                    "extended_count": int(extended),
+                    "source": "typical_plan_expansion_rollup",
+                },
+                entity_keys=[normalized_class, "typical_plan_expansion_rollup"],
+                source_refs=[source],
+                authority_class=AuthorityClass.machine_extractor,
+                confidence=0.75,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["typical_plan_expansion_v0"],
+                parser_version=parser_version,
+            )
+
+        # One assumption atom flagging the heuristic nature of the
+        # expansion — operator review is REQUIRED. (Not emitted when
+        # no expansion happened.)
+        if (expansion.get("expanded_device_totals") or {}) or (
+            expansion.get("unresolved_floors") or []
+        ):
+            source = _build_source_ref(
+                artifact_id=artifact_id,
+                filename=filename,
+                parser_version=parser_version,
+                locator={
+                    "page": None,
+                    "sheet_number": None,
+                    "takeoff_kind": "assumption_typical_plan_expansion",
+                },
+            )
+            text = (
+                "Typical-plan expansion is a heuristic. Per-room device "
+                "counts come from partitioning the typical-plan sheet by "
+                "title position; per-floor room counts come from counting "
+                "native-text room labels on each guest-room floor. Both "
+                "are approximations — operator review is required before "
+                "expanded totals are quoted."
+            )
+            yield EvidenceAtom(
+                id=stable_id("atom_takeoff", "assumption", "typical_plan_expansion"),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.assumption,
+                raw_text=text,
+                normalized_text=text,
+                value={"assumption": "typical_plan_expansion_heuristic"},
+                entity_keys=["typical_plan_expansion", "heuristic"],
+                source_refs=[source],
+                authority_class=AuthorityClass.machine_extractor,
+                confidence=0.7,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["typical_plan_expansion_v0"],
+                parser_version=parser_version,
+            )
+
+    # 5) Wi-Fi vendor survey assumption (always emitted for WN takeoffs).
     if any(d.normalized_class == "wireless_node_outlet" for d in takeoff.devices):
         source = _build_source_ref(
             artifact_id=artifact_id,
