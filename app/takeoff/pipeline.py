@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from app.takeoff.candidate_fusion import fuse_candidates_to_devices
 from app.takeoff.corrections import apply_corrections_if_present
@@ -30,6 +31,12 @@ from app.takeoff.schemas import (
 )
 from app.takeoff.sheet_classifier import classify_sheet
 from app.takeoff.symbol_candidates import detect_symbol_candidates
+from app.takeoff.typical_plan_expander import (
+    TypicalPlanReport,
+    build_expansion_summary,
+    count_room_types_on_floor,
+    expand_typical_plan,
+)
 from app.takeoff.zones import collect_zone_warnings, parse_zones
 
 
@@ -53,6 +60,12 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
     devices: list[DeviceInstance] = []
     warnings: list[str] = []
     open_questions: list[str] = []
+    typical_reports: list[TypicalPlanReport] = []
+    # Buffer (sheet, page) for floor_plan-type sheets — used to scan
+    # for typical-room labels in the second pass while the PDF is
+    # still open.
+    floor_plan_pages: list[tuple[SheetRecord, Any]] = []
+    typical_expansion: dict[str, Any] = {}
 
     # Per-class candidate rejection tallies — used for the summary.
     candidates_by_class: dict[str, dict[str, int]] = defaultdict(
@@ -130,6 +143,76 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
                         f"multiple zone notes and device level cannot be resolved"
                     )
 
+                # Phase A: hold floor-plan sheets so we can scan them
+                # for typical-room labels after T4.xx has been parsed.
+                if sheet.page_type == "floor_plan":
+                    floor_plan_pages.append((sheet, page))
+
+                # Phase A: typical-plan device-per-room dictionary.
+                if sheet.page_type == "typical_plan":
+                    report = expand_typical_plan(
+                        page=page,
+                        sheet=sheet,
+                        candidates=page_candidates,
+                    )
+                    if report is not None and report.panels:
+                        typical_reports.append(report)
+
+        # Phase A: now that all typical-plan sheets have been parsed,
+        # scan guest-room floor pages for native-text room labels
+        # matching the room types discovered on the typical-plans
+        # (K1, K2, QQ1, QQ2, …). Floors without any visible room
+        # labels surface as ``unresolved_floors`` rather than silently
+        # being ignored. Done inside the with-block because we need
+        # the page objects.
+        if typical_reports:
+            known_room_types: set[str] = set()
+            for r in typical_reports:
+                known_room_types.update(p.room_type for p in r.panels)
+
+            floor_room_counts: dict[str, dict[str, int]] = {}
+            for f_sheet, f_page in floor_plan_pages:
+                if f_sheet.sheet_number is None:
+                    continue
+                counts = count_room_types_on_floor(f_page, known_room_types)
+                # Only record floors that actually look like guest-room
+                # floors — i.e. at least one room label present. Other
+                # floor_plan sheets (lobby, ballroom, …) are not in
+                # scope for expansion.
+                if any(v > 0 for v in counts.values()):
+                    floor_room_counts[f_sheet.sheet_number] = counts
+                elif _looks_like_guest_room_sheet(f_sheet):
+                    # Sheet is in the typical-floor range but no labels
+                    # were found — typically T1.10 / T1.11 / T1.12 on
+                    # the Marriott set. Record the floor as unresolved.
+                    floor_room_counts[f_sheet.sheet_number] = {
+                        r: 0 for r in known_room_types
+                    }
+
+            typical_expansion = build_expansion_summary(
+                typical_reports=typical_reports,
+                floor_room_counts=floor_room_counts,
+                sheet_records=sheets,
+            )
+
+            # Surface gaps explicitly — the operator should not be
+            # left guessing why a "typical plan + 5 guest-room floors"
+            # set produced zero expanded counts.
+            unresolved = typical_expansion.get("unresolved_floors") or []
+            if unresolved:
+                open_questions.append(
+                    "typical_plan_keycount_missing: no per-floor "
+                    f"{'/'.join(sorted(known_room_types))} room labels "
+                    f"parsed on {', '.join(unresolved)}; operator must "
+                    "supply room counts before typical-plan expansion "
+                    "can be applied"
+                )
+            elif not (typical_expansion.get("expanded_device_totals") or {}):
+                warnings.append(
+                    "typical_plan_expansion_empty: typical plan parsed but no "
+                    "floors mapped to expansion"
+                )
+
     # Apply (optional) human corrections file if present alongside the PDF.
     candidates, devices, applied_corrections = apply_corrections_if_present(
         pdf_path=pdf_path,
@@ -148,6 +231,8 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
 
     quote_lines = quote_lines_for_devices(devices)
     summary = takeoff_summary(sheets, devices, candidates_by_class=candidates_by_class)
+    if typical_expansion:
+        summary["typical_plan_expansion"] = typical_expansion
 
     # Promote per-class zone-coverage open questions for downstream review.
     for w in warnings:
@@ -165,6 +250,33 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
         open_questions=open_questions,
         summary=summary,
     )
+
+
+_GUEST_ROOM_TITLE_HINTS = (
+    "GUESTROOM",
+    "GUEST ROOM",
+    "LEVEL 19",
+    "LEVEL 24",
+    "LEVEL 25",
+    "LEVEL 5",
+    "LEVEL 17",
+)
+
+
+def _looks_like_guest_room_sheet(sheet: SheetRecord) -> bool:
+    """Heuristic: does this floor_plan sheet look like a guest-room floor?
+
+    Used to decide whether a floor_plan sheet *should* have produced
+    typical-room labels but didn't, so it should be surfaced as
+    ``unresolved`` instead of silently ignored. The heuristic checks for
+    typical guest-room sheet titles or for a non-trivial sheet
+    multiplier (``> 1``) — both are strong signals that the floor is
+    one of several repeated typical levels.
+    """
+    if sheet.multiplier and sheet.multiplier > 1:
+        return True
+    name = (sheet.sheet_name or "").upper()
+    return any(h in name for h in _GUEST_ROOM_TITLE_HINTS)
 
 
 def _find_legend_page_index(doc) -> int | None:

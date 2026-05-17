@@ -136,8 +136,11 @@ def panel_title_positions(
     order). Returns ``(idx, room_type, title_bbox)`` for every panel
     successfully located.
 
-    The bbox is the bounding rectangle of the index word + room word —
-    the caller projects the panel bbox down/up from this.
+    The bbox is the FULL title bounding rectangle — index + room +
+    "- GUESTROOM PLAN" suffix — so the caller has a better estimate
+    of where the panel's plan area actually sits. Cooper-Carry T-sets
+    typically center the plan above its title, so the plan's
+    horizontal center sits roughly at the title's horizontal center.
     """
     try:
         words = page.get_text("words")
@@ -174,6 +177,29 @@ def panel_title_positions(
             y0 = min(iy0, ry0)
             x1 = max(ix1, rx1)
             y1 = max(iy1, ry1)
+            # Extend x1 to include the "GUESTROOM PLAN" suffix if it
+            # sits on the same y as the room code (within ~8pt) AND
+            # within a tight horizontal gap (so we don't swallow the
+            # next panel's suffix). We accept consecutive suffix words
+            # only when each one starts within 12pt of the previous
+            # word's right edge.
+            suffix_tokens = ("-", "GUESTROOM", "PLAN")
+            cursor_right = rx1
+            for tok in suffix_tokens:
+                candidate = None
+                for w3 in words:
+                    if w3[4].upper() != tok:
+                        continue
+                    if abs(w3[1] - ry0) > 8.0:
+                        continue
+                    if not (cursor_right - 2.0 <= w3[0] <= cursor_right + 12.0):
+                        continue
+                    if candidate is None or w3[0] < candidate[0]:
+                        candidate = (w3[0], w3[2])
+                if candidate is None:
+                    break
+                cursor_right = candidate[1]
+                x1 = max(x1, cursor_right)
             key = (room, round(x0, 1), round(y0, 1))
             if key in seen_pairs:
                 continue
@@ -234,17 +260,34 @@ def derive_panel_bboxes(
         row_titles.sort(key=lambda t: t[2].x0)
         title_ys = [t[2].y0 for t in row_titles]
         row_top_y = min(title_ys)
-        # The plan area is everything above the title row up to either
-        # the previous row's titles or the top margin.
         plan_top = 0.05 * page_h
-        plan_bottom = row_top_y - 4.0  # a few points of margin
-        # Vertical splits between titles.
-        x_lefts = [t[2].x0 for t in row_titles]
-        x_rights = [t[2].x1 for t in row_titles]
-        x_centers = [(x_lefts[i] + x_rights[i]) / 2.0 for i in range(len(row_titles))]
+        plan_bottom = row_top_y - 4.0
+        # Vertical splits between titles. Cooper-Carry T-sets layout
+        # each panel as an equally-sized horizontal slab with its
+        # title centered underneath the plan. We use the median
+        # title-to-title pitch as the slab width — this is more
+        # robust than the simple midpoint method, which over-allocates
+        # to the leftmost and rightmost panels when titles are not
+        # exactly evenly spaced.
+        x_centers = [(t[2].x0 + t[2].x1) / 2.0 for t in row_titles]
+        if len(x_centers) >= 2:
+            pitches = sorted(
+                x_centers[i + 1] - x_centers[i] for i in range(len(x_centers) - 1)
+            )
+            slab_width = pitches[len(pitches) // 2]
+        else:
+            slab_width = page_w
+        half = slab_width / 2.0
         for i, (idx, room, title_bbox) in enumerate(row_titles):
-            left = 0.0 if i == 0 else (x_centers[i - 1] + x_centers[i]) / 2.0
-            right = page_w if i == len(row_titles) - 1 else (x_centers[i] + x_centers[i + 1]) / 2.0
+            cx = x_centers[i]
+            left = max(0.0, cx - half)
+            right = min(page_w, cx + half)
+            # Don't overlap the previous panel — clamp to that
+            # boundary's midpoint.
+            if i > 0:
+                left = max(left, (x_centers[i - 1] + cx) / 2.0)
+            if i < len(row_titles) - 1:
+                right = min(right, (cx + x_centers[i + 1]) / 2.0)
             panel_bbox = BBox(
                 x0=left,
                 y0=plan_top,
