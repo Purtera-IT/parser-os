@@ -1,17 +1,29 @@
 """Fuse accepted :class:`SymbolCandidate` objects into :class:`DeviceInstance`.
 
-The MVP fusion is intentionally one-to-one: each accepted candidate
-becomes a single device. Future passes can group multiple candidates
-(text + raster + vector) into a single fused device — the data
-structure already supports it via ``source_methods``.
+Fusion v0 was one-to-one: each accepted text candidate became a device.
+Fusion v1 (this module) also accepts a list of *shape* candidates and
+applies the cross-validation rules from the Phase B spec:
+
+- text + shape near same center (within ``XVAL_RADIUS_PT`` pt) →
+  confidence 0.99, source_methods=["pdf_native_text","shape_template"]
+- text only → confidence 0.94 (existing behaviour)
+- shape only → confidence 0.70, needs_review=True, NOT counted in the
+  accepted rollup
+
+Shape-only candidates remain in ``TakeoffDocument.candidates`` for
+auditors but are NOT promoted to ``devices`` so they cannot inflate
+the rollup counts that downstream packets quote.
 
 Zone assignment uses the home-run logic in :mod:`app.takeoff.zones`.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from app.core.ids import stable_id
 from app.takeoff.legend_extractor import rules_by_symbol
 from app.takeoff.schemas import (
+    BBox,
     DeviceInstance,
     LegendRule,
     SheetRecord,
@@ -19,9 +31,19 @@ from app.takeoff.schemas import (
 )
 from app.takeoff.zones import HomeRunZone, assign_home_run
 
+# Radius (in PDF points) within which a text candidate and a shape
+# candidate are considered to refer to the same device.
+XVAL_RADIUS_PT = 24.0
+
 
 def _legend_rule_id(rule: LegendRule) -> str:
     return stable_id("legrule", rule.raw_symbol, rule.normalized_class)
+
+
+def _center_dist(a: BBox, b: BBox) -> float:
+    ax, ay = a.center()
+    bx, by = b.center()
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
 
 
 def fuse_candidates_to_devices(
@@ -30,14 +52,36 @@ def fuse_candidates_to_devices(
     sheet: SheetRecord,
     zones: list[HomeRunZone],
     legend_rules: list[LegendRule],
+    shape_candidates: list[SymbolCandidate] | None = None,
 ) -> list[DeviceInstance]:
     """Convert accepted candidates on a sheet into devices.
 
-    Rejected candidates are silently skipped — they remain in
-    ``TakeoffDocument.candidates`` for the audit trail.
+    ``candidates`` are the native-text candidates produced by
+    ``detect_symbol_candidates``. ``shape_candidates`` (optional) are
+    OpenCV template-match candidates produced by
+    ``shape_candidates_for_page``. Cross-validation happens here:
+    a text candidate that has a shape candidate within ``XVAL_RADIUS_PT``
+    points of the same symbol family gets its source_methods extended
+    and confidence promoted to 0.99.
+
+    Shape-only candidates are NOT fused into devices. They get marked
+    needs_review and remain in the candidate list for human audit.
+
+    Rejected candidates are silently skipped.
     """
     rule_index = rules_by_symbol(legend_rules)
     devices: list[DeviceInstance] = []
+    shape_candidates = shape_candidates or []
+
+    # Index shape candidates by raw_symbol for fast neighbour lookup.
+    shape_index: dict[str, list[SymbolCandidate]] = {}
+    for sc in shape_candidates:
+        if sc.rejection_reason is not None:
+            continue
+        shape_index.setdefault(sc.raw_symbol, []).append(sc)
+
+    # Track which shape candidates were consumed by cross-validation.
+    matched_shape_ids: set[str] = set()
 
     for cand in candidates:
         if cand.rejection_reason is not None:
@@ -46,6 +90,35 @@ def fuse_candidates_to_devices(
         if rule is None:
             # No legend rule means we can't classify the device — skip.
             continue
+
+        # Cross-validate against shape candidates of the same symbol.
+        nearby_shapes = shape_index.get(cand.raw_symbol, [])
+        crossval_match: SymbolCandidate | None = None
+        for sc in nearby_shapes:
+            if sc.id in matched_shape_ids:
+                continue
+            if _center_dist(cand.bbox, sc.bbox) <= XVAL_RADIUS_PT:
+                crossval_match = sc
+                break
+        if crossval_match is not None:
+            matched_shape_ids.add(crossval_match.id)
+            # Extend the text candidate's source_methods and bump
+            # its confidence — these objects are mutable Pydantic
+            # models so this is a deliberate side-effect on the
+            # candidate that lives in TakeoffDocument.candidates.
+            methods = list(cand.source_methods)
+            if "shape_template" not in methods:
+                methods.append("shape_template")
+            cand.source_methods = methods
+            cand.confidence = max(cand.confidence, 0.99)
+            # Tag the matched shape candidate too so summary code
+            # can distinguish "shape-only" from "matched by text".
+            sm = list(crossval_match.source_methods)
+            if "pdf_native_text" not in sm:
+                sm.append("pdf_native_text")
+            crossval_match.source_methods = sm
+            # Marked as needs_review=False since text validated it.
+            crossval_match.needs_review = False
 
         # Pick a home-run target. For single-floor sheets the device's
         # level is unambiguous; for multi-floor sheets without a

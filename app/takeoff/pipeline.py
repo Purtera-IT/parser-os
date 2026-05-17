@@ -12,6 +12,7 @@ and finally unitizes everything into quote lines.
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from typing import Any
 from app.takeoff.candidate_fusion import fuse_candidates_to_devices
 from app.takeoff.corrections import apply_corrections_if_present
 from app.takeoff.exports import takeoff_summary
-from app.takeoff.legend_extractor import load_default_legend_rules
+from app.takeoff.legend_extractor import load_default_legend_rules, rules_by_symbol
 from app.takeoff.multipliers import floor_label_for_title, multiplier_for_title
 from app.takeoff.plan_regions import default_excluded_regions, default_plan_viewport
 from app.takeoff.schemas import (
@@ -28,6 +29,11 @@ from app.takeoff.schemas import (
     SheetRecord,
     SymbolCandidate,
     TakeoffDocument,
+)
+from app.takeoff.shape_signals import (
+    ShapeTemplate,
+    extract_templates_from_legend,
+    shape_candidates_for_page,
 )
 from app.takeoff.sheet_classifier import classify_sheet
 from app.takeoff.symbol_candidates import detect_symbol_candidates
@@ -72,12 +78,38 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
         lambda: {"not_in_scope": 0, "non_plan_page": 0, "outside_viewport": 0}
     )
 
+    shape_pass_enabled = _env_flag_enabled("PARSER_OS_ENABLE_SHAPE_SIGNALS")
+    shape_pass_results: dict[int, list[SymbolCandidate]] = {}
+    shape_pass_warnings: list[str] = []
+
     with fitz.open(str(pdf_path)) as doc:
         legend_source_page = _find_legend_page_index(doc)
         if legend_source_page is not None:
             for rule in legend_rules:
                 rule.source_page = legend_source_page
                 rule.confidence = max(rule.confidence, 0.92)
+
+        # Phase B: extract shape templates from the legend page once,
+        # then reuse them on every floor_plan / typical_plan page.
+        shape_templates: list[ShapeTemplate] = []
+        if shape_pass_enabled and legend_source_page is not None:
+            try:
+                shape_templates = extract_templates_from_legend(
+                    doc[legend_source_page], legend_rules
+                )
+                if not shape_templates:
+                    shape_pass_warnings.append(
+                        "shape_signals_no_templates_extracted: legend page "
+                        "found but no usable icon templates"
+                    )
+            except Exception as exc:  # pragma: no cover - env-specific
+                shape_pass_warnings.append(
+                    f"shape_signals_template_extraction_failed: {exc}"
+                )
+        elif shape_pass_enabled and legend_source_page is None:
+            shape_pass_warnings.append(
+                "shape_signals_no_legend_page: cannot extract templates"
+            )
         for page_index in range(len(doc)):
             page = doc[page_index]
             page_text = ""
@@ -119,11 +151,31 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
             # Zones + fusion only run on device-bearing in-scope pages.
             if sheet.page_type in {"floor_plan", "typical_plan"} and sheet.in_scope:
                 zones = parse_zones(page_text)
+
+                # Phase B: run the shape-template pass alongside the
+                # text candidate detection — only if templates were
+                # extracted and the env flag opted in.
+                sheet_shape_cands: list[SymbolCandidate] = []
+                if shape_templates:
+                    sheet_shape_cands = shape_candidates_for_page(
+                        page=page,
+                        sheet=sheet,
+                        templates=shape_templates,
+                        rules_by_symbol=rules_by_symbol(legend_rules),
+                    )
+                    # Carry rejected shape candidates over to the doc-
+                    # level audit list so reviewers can see the false
+                    # positives the pass produced. Accepted shape-only
+                    # ones are added below too so they're visible.
+                    candidates.extend(sheet_shape_cands)
+                    shape_pass_results[sheet.page_index] = sheet_shape_cands
+
                 sheet_devices = fuse_candidates_to_devices(
                     candidates=page_candidates,
                     sheet=sheet,
                     zones=zones,
                     legend_rules=legend_rules,
+                    shape_candidates=sheet_shape_cands,
                 )
                 devices.extend(sheet_devices)
 
@@ -230,9 +282,52 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
     from app.takeoff.quote_unitizer import quote_lines_for_devices
 
     quote_lines = quote_lines_for_devices(devices)
-    summary = takeoff_summary(sheets, devices, candidates_by_class=candidates_by_class)
+    # Split candidates so the summary can compute
+    # text_only_count / shape_only_count / cross_validated_count.
+    #
+    # A candidate produced by ``detect_symbol_candidates`` (native PDF
+    # text) starts with source_methods=["pdf_native_text"] and gains
+    # "shape_template" iff fusion matched it to a shape candidate.
+    #
+    # A candidate produced by ``shape_candidates_for_page`` starts
+    # with source_methods=["shape_template"] and is upgraded by
+    # fusion to also list "pdf_native_text" when it was matched.
+    #
+    # To avoid double-counting a cross-validated PAIR, we feed only the
+    # native-text candidates into ``text_candidates`` and only the
+    # shape candidates that did NOT get matched (i.e. shape-template
+    # in methods but NOT pdf_native_text) into ``shape_candidates``.
+    text_only_candidates = []
+    shape_only_candidates = []
+    for c in candidates:
+        sm = set(c.source_methods or [])
+        if "pdf_native_text" in sm and "shape_template" in sm:
+            # Either origin — counts once in text_only_candidates as
+            # a cross-validated text candidate.
+            if c.id.startswith("cand"):  # candidate id prefix
+                text_only_candidates.append(c)
+        elif "pdf_native_text" in sm:
+            text_only_candidates.append(c)
+        elif "shape_template" in sm:
+            shape_only_candidates.append(c)
+    summary = takeoff_summary(
+        sheets,
+        devices,
+        candidates_by_class=candidates_by_class,
+        text_candidates=text_only_candidates,
+        shape_candidates=shape_only_candidates,
+    )
     if typical_expansion:
         summary["typical_plan_expansion"] = typical_expansion
+    if shape_pass_enabled:
+        summary["shape_signals"] = {
+            "enabled": True,
+            "templates_extracted": [t.raw_symbol for t in shape_templates] if shape_templates else [],
+            "pages_scanned": len(shape_pass_results),
+            "total_shape_candidates": sum(len(v) for v in shape_pass_results.values()),
+        }
+    if shape_pass_warnings:
+        warnings.extend(shape_pass_warnings)
 
     # Promote per-class zone-coverage open questions for downstream review.
     for w in warnings:
@@ -250,6 +345,12 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
         open_questions=open_questions,
         summary=summary,
     )
+
+
+def _env_flag_enabled(var_name: str) -> bool:
+    """Truthy parse of an env var: 1/true/yes/on (case-insensitive)."""
+    raw = os.environ.get(var_name, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 _GUEST_ROOM_TITLE_HINTS = (
@@ -280,15 +381,32 @@ def _looks_like_guest_room_sheet(sheet: SheetRecord) -> bool:
 
 
 def _find_legend_page_index(doc) -> int | None:
-    """Best-effort scan for a 'SYMBOLS & LEGENDS' sheet (typically T0.01)."""
+    """Best-effort scan for a 'SYMBOLS & LEGENDS' sheet (typically T0.01).
+
+    Scoring: a page that is classified as a ``legend`` sheet (via
+    ``classify_sheet``) AND mentions 'SYMBOLS & LEGENDS' in its title
+    wins outright. Otherwise fall back to the first page whose text
+    contains the keyword. This prevents the SPEC page (T0.00) — which
+    may reference 'SYMBOLS & LEGENDS' in a table of contents — from
+    being chosen over the actual legend page (T0.01).
+    """
+    title_candidate: int | None = None
+    text_candidate: int | None = None
     for i in range(len(doc)):
         try:
-            text = (doc[i].get_text("text") or "").upper()
+            text = (doc[i].get_text("text") or "")
         except Exception:
             continue
-        if "SYMBOLS & LEGENDS" in text or "SYMBOLS AND LEGENDS" in text:
-            return i
-    return None
+        text_upper = text.upper()
+        if "SYMBOLS & LEGENDS" not in text_upper and "SYMBOLS AND LEGENDS" not in text_upper:
+            continue
+        if text_candidate is None:
+            text_candidate = i
+        sheet = classify_sheet(i, text)
+        if sheet.page_type == "legend":
+            title_candidate = i
+            break
+    return title_candidate if title_candidate is not None else text_candidate
 
 
 __all__ = ["build_low_voltage_takeoff"]

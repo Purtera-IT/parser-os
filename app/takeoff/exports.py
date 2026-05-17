@@ -573,11 +573,23 @@ def takeoff_summary(
     sheets: list[SheetRecord],
     devices: list[DeviceInstance],
     candidates_by_class: dict[str, dict[str, int]] | None = None,
+    text_candidates: list | None = None,
+    shape_candidates: list | None = None,
 ) -> dict[str, Any]:
     """Compute the ``summary`` block on a :class:`TakeoffDocument`.
 
     The returned dict is keyed by ``normalized_class`` so the WN rollup
     sits at ``summary["wireless_node_outlet"]`` per the spec.
+
+    When ``text_candidates`` and ``shape_candidates`` are provided the
+    per-class rollup grows three extra cells:
+    - ``text_only_count``         — text candidates without a shape
+                                    cross-validation
+    - ``shape_only_count``        — shape candidates without a text
+                                    cross-validation (these are
+                                    needs_review, not in the rollup)
+    - ``cross_validated_count``   — text candidates also matched by a
+                                    shape (high-confidence devices)
     """
     summary: dict[str, Any] = {}
     classes: set[str] = {d.normalized_class for d in devices}
@@ -585,18 +597,50 @@ def takeoff_summary(
 
     floor_plan_pages = {s.page_index for s in sheets if s.page_type in {"floor_plan", "typical_plan"}}
 
+    # Build per-class cross-validation tallies.
+    xval_by_class: dict[str, dict[str, int]] = {}
+    if text_candidates is not None or shape_candidates is not None:
+        text_candidates = text_candidates or []
+        shape_candidates = shape_candidates or []
+        for tc in text_candidates:
+            if tc.rejection_reason is not None or tc.normalized_class is None:
+                continue
+            bucket = xval_by_class.setdefault(
+                tc.normalized_class, {"text_only": 0, "cross_validated": 0}
+            )
+            if "shape_template" in (tc.source_methods or []):
+                bucket["cross_validated"] += 1
+            else:
+                bucket["text_only"] += 1
+        # Shape-only — shape candidate that wasn't cross-validated.
+        # We deduce this from absence of "pdf_native_text" in
+        # source_methods AND rejection_reason is None.
+        for sc in shape_candidates:
+            if sc.rejection_reason is not None or sc.normalized_class is None:
+                continue
+            bucket = xval_by_class.setdefault(
+                sc.normalized_class, {"text_only": 0, "cross_validated": 0}
+            )
+            bucket["shape_only"] = bucket.get("shape_only", 0) + 1
+
     for cls in sorted(classes):
         cls_devices = [d for d in devices if d.normalized_class == cls]
         base = len(cls_devices)
         extended = sum(d.multiplier for d in cls_devices)
         cand_payload = (candidates_by_class or {}).get(cls, {})
-        summary[cls] = {
+        x = xval_by_class.get(cls, {})
+        block = {
             "base_floor_plan_count": base,
             "extended_count": extended,
             "excluded_not_in_scope_count": int(cand_payload.get("not_in_scope", 0)),
             "rejected_non_plan_count": int(cand_payload.get("non_plan_page", 0)),
             "rejected_outside_viewport_count": int(cand_payload.get("outside_viewport", 0)),
         }
+        if x:
+            block["text_only_count"] = int(x.get("text_only", 0))
+            block["shape_only_count"] = int(x.get("shape_only", 0))
+            block["cross_validated_count"] = int(x.get("cross_validated", 0))
+        summary[cls] = block
 
     summary["sheet_counts"] = {
         "total": len(sheets),

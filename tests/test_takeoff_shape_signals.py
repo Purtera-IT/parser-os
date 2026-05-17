@@ -46,6 +46,125 @@ def test_shape_candidates_for_page_returns_empty_when_no_templates() -> None:
     assert result == []
 
 
+def test_fusion_cross_validates_text_with_nearby_shape() -> None:
+    """fuse_candidates_to_devices marks a text+shape pair as
+    cross-validated and bumps confidence to 0.99."""
+    from app.takeoff.candidate_fusion import fuse_candidates_to_devices
+    from app.takeoff.legend_extractor import load_default_legend_rules
+
+    rules = load_default_legend_rules()
+    sheet = SheetRecord(
+        page_index=5, page_type="floor_plan", in_scope=True,
+        sheet_number="T1.05", multiplier=1, levels_represented=["5"],
+    )
+    text_cand = SymbolCandidate(
+        id="text1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=100, y0=100, x1=110, y1=110),
+        source_methods=["pdf_native_text"], confidence=0.94,
+    )
+    shape_cand = SymbolCandidate(
+        id="shape1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=98, y0=98, x1=118, y1=118),  # within 24pt
+        source_methods=["shape_template"], confidence=0.80, needs_review=True,
+    )
+    devices = fuse_candidates_to_devices(
+        candidates=[text_cand],
+        sheet=sheet,
+        zones=[],
+        legend_rules=rules,
+        shape_candidates=[shape_cand],
+    )
+    assert len(devices) == 1
+    # Text candidate should now be source-methods-extended.
+    assert "shape_template" in text_cand.source_methods
+    assert text_cand.confidence == 0.99
+    # Shape candidate should be marked as text-validated, no longer needs_review.
+    assert "pdf_native_text" in shape_cand.source_methods
+    assert shape_cand.needs_review is False
+
+
+def test_fusion_leaves_far_apart_text_and_shape_unmerged() -> None:
+    """Shape candidate too far from text candidate stays needs_review."""
+    from app.takeoff.candidate_fusion import fuse_candidates_to_devices
+    from app.takeoff.legend_extractor import load_default_legend_rules
+
+    rules = load_default_legend_rules()
+    sheet = SheetRecord(
+        page_index=5, page_type="floor_plan", in_scope=True,
+        sheet_number="T1.05", multiplier=1, levels_represented=["5"],
+    )
+    text_cand = SymbolCandidate(
+        id="text1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=100, y0=100, x1=110, y1=110),
+        source_methods=["pdf_native_text"], confidence=0.94,
+    )
+    shape_cand = SymbolCandidate(
+        id="shape1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=400, y0=400, x1=420, y1=420),  # far away
+        source_methods=["shape_template"], confidence=0.80, needs_review=True,
+    )
+    devices = fuse_candidates_to_devices(
+        candidates=[text_cand],
+        sheet=sheet,
+        zones=[],
+        legend_rules=rules,
+        shape_candidates=[shape_cand],
+    )
+    # Still one device (text), no cross-validation.
+    assert len(devices) == 1
+    assert "shape_template" not in text_cand.source_methods
+    assert shape_cand.needs_review is True
+
+
+def test_summary_emits_text_only_shape_only_and_xval_counts() -> None:
+    """takeoff_summary surfaces the three cross-validation tallies."""
+    from app.takeoff.exports import takeoff_summary
+    from app.takeoff.schemas import DeviceInstance
+
+    sheet = SheetRecord(
+        page_index=5, page_type="floor_plan", in_scope=True,
+        sheet_number="T1.05", multiplier=1,
+    )
+    device = DeviceInstance(
+        id="d1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=100, y0=100, x1=110, y1=110),
+        multiplier=1,
+    )
+    text_xval = SymbolCandidate(
+        id="t1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=100, y0=100, x1=110, y1=110),
+        source_methods=["pdf_native_text", "shape_template"],
+    )
+    text_alone = SymbolCandidate(
+        id="t2", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=200, y0=200, x1=210, y1=210),
+        source_methods=["pdf_native_text"],
+    )
+    shape_alone = SymbolCandidate(
+        id="s1", page_index=5, raw_symbol="WN",
+        normalized_class="wireless_node_outlet",
+        bbox=BBox(x0=300, y0=300, x1=320, y1=320),
+        source_methods=["shape_template"],
+    )
+    summary = takeoff_summary(
+        [sheet], [device],
+        candidates_by_class=None,
+        text_candidates=[text_xval, text_alone],
+        shape_candidates=[shape_alone],
+    )
+    wn = summary["wireless_node_outlet"]
+    assert wn["cross_validated_count"] == 1
+    assert wn["text_only_count"] == 1
+    assert wn["shape_only_count"] == 1
+
+
 # ─── End-to-end synthetic PDF test ──────────────────────────────────
 
 
@@ -135,9 +254,35 @@ def test_marriott_wn_extended_total_still_335_after_shape_signals() -> None:
 
     Shape-only candidates go to needs_review (not the accepted rollup).
     Text+shape cross-validations preserve the count.
+
+    Runs the pipeline WITH ``PARSER_OS_ENABLE_SHAPE_SIGNALS=1`` so the
+    shape pass is actually exercised. The env var is restored after.
     """
     from app.takeoff.pipeline import build_low_voltage_takeoff
 
-    takeoff = build_low_voltage_takeoff(PDF_PATH)
+    prev = os.environ.get("PARSER_OS_ENABLE_SHAPE_SIGNALS")
+    os.environ["PARSER_OS_ENABLE_SHAPE_SIGNALS"] = "1"
+    try:
+        takeoff = build_low_voltage_takeoff(PDF_PATH)
+    finally:
+        if prev is None:
+            os.environ.pop("PARSER_OS_ENABLE_SHAPE_SIGNALS", None)
+        else:
+            os.environ["PARSER_OS_ENABLE_SHAPE_SIGNALS"] = prev
     wn = takeoff.summary.get("wireless_node_outlet") or {}
-    assert wn.get("extended_count") == 335
+    assert wn.get("extended_count") == 335, (
+        f"WN extended_count={wn.get('extended_count')} after shape pass — "
+        "shape signals inflated the WN rollup!"
+    )
+    # The shape signals summary block should be populated.
+    sig = takeoff.summary.get("shape_signals") or {}
+    assert sig.get("enabled") is True
+    assert sig.get("templates_extracted")
+    # Cross-validation should be sane: at least some WN cross-validations
+    # (or no shape candidates emitted at all if the template wasn't
+    # tuned for this set).
+    xval = wn.get("cross_validated_count", 0)
+    text_only = wn.get("text_only_count", 0)
+    assert xval + text_only == 174, (
+        f"WN candidates: text_only={text_only} xval={xval}, expected sum 174"
+    )
