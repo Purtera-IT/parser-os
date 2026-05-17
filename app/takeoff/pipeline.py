@@ -36,6 +36,7 @@ from app.takeoff.shape_signals import (
     shape_candidates_for_page,
 )
 from app.takeoff.sheet_classifier import classify_sheet
+from app.takeoff.spatial_zones import ZoneRegion, build_zone_regions
 from app.takeoff.symbol_candidates import detect_symbol_candidates
 from app.takeoff.typical_plan_expander import (
     TypicalPlanReport,
@@ -151,6 +152,24 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
             # Zones + fusion only run on device-bearing in-scope pages.
             if sheet.page_type in {"floor_plan", "typical_plan"} and sheet.in_scope:
                 zones = parse_zones(page_text)
+                # Phase C: derive spatial regions for SINGLE-LEVEL
+                # multi-zone sheets so fusion can pick a zone based on
+                # device position instead of falling through to
+                # ``ambiguous_homerun_zone``.
+                #
+                # Multi-LEVEL multi-zone sheets (T1.06 / T1.10 — each
+                # zone covers a different level) intentionally remain
+                # ambiguous: a single WN drawn on a typical-floor sheet
+                # represents many physical WNs (one per floor) which
+                # may route to DIFFERENT IDFs. Picking one IDF based
+                # on its spatial position would be wrong.
+                zone_regions: list[ZoneRegion] = []
+                if len(zones) > 1:
+                    all_zones_share_level = all(
+                        z.applies_to_all_levels for z in zones
+                    )
+                    if all_zones_share_level:
+                        zone_regions = build_zone_regions(page=page, zones=zones)
 
                 # Phase B: run the shape-template pass alongside the
                 # text candidate detection — only if templates were
@@ -176,6 +195,7 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
                     zones=zones,
                     legend_rules=legend_rules,
                     shape_candidates=sheet_shape_cands,
+                    zone_regions=zone_regions,
                 )
                 devices.extend(sheet_devices)
 

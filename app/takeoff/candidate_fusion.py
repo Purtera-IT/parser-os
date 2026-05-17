@@ -29,6 +29,7 @@ from app.takeoff.schemas import (
     SheetRecord,
     SymbolCandidate,
 )
+from app.takeoff.spatial_zones import ZoneRegion, assign_home_run_spatial
 from app.takeoff.zones import HomeRunZone, assign_home_run
 
 # Radius (in PDF points) within which a text candidate and a shape
@@ -53,6 +54,7 @@ def fuse_candidates_to_devices(
     zones: list[HomeRunZone],
     legend_rules: list[LegendRule],
     shape_candidates: list[SymbolCandidate] | None = None,
+    zone_regions: list[ZoneRegion] | None = None,
 ) -> list[DeviceInstance]:
     """Convert accepted candidates on a sheet into devices.
 
@@ -122,15 +124,50 @@ def fuse_candidates_to_devices(
 
         # Pick a home-run target. For single-floor sheets the device's
         # level is unambiguous; for multi-floor sheets without a
-        # device_level we fall through to ambiguity rules.
+        # device_level we fall through to ambiguity rules — unless
+        # ``zone_regions`` is provided, in which case spatial
+        # assignment runs FIRST and only ambiguous spatial outcomes
+        # fall back to the level-based logic.
         device_level = sheet.levels_represented[0] if len(sheet.levels_represented) == 1 else None
-        home_run_to, home_run_level, zone_notes, review_flags = assign_home_run(
-            zones=zones,
-            sheet_levels=sheet.levels_represented,
-            sheet_floor_label=sheet.floor_label,
-            sheet_number=sheet.sheet_number,
-            device_level=device_level,
-        )
+        home_run_to: str | None = None
+        home_run_level: str | None = None
+        zone_notes: list[str] = []
+        review_flags: list[str] = []
+
+        if zone_regions and len(zone_regions) > 1:
+            home_run_to, home_run_level, zone_notes, review_flags = (
+                assign_home_run_spatial(
+                    regions=zone_regions, device_bbox=cand.bbox,
+                )
+            )
+            # If spatial resolved to a specific zone, we're done. If
+            # ``ambiguous_homerun_zone`` came back AND we have a
+            # device level + level-aware zones, try the level-based
+            # logic as a fallback.
+            if (
+                "ambiguous_homerun_zone" in review_flags
+                and device_level is not None
+            ):
+                fb_to, fb_level, fb_notes, fb_flags = assign_home_run(
+                    zones=zones,
+                    sheet_levels=sheet.levels_represented,
+                    sheet_floor_label=sheet.floor_label,
+                    sheet_number=sheet.sheet_number,
+                    device_level=device_level,
+                )
+                if fb_to is not None:
+                    home_run_to = fb_to
+                    home_run_level = fb_level
+                    zone_notes = fb_notes
+                    review_flags = fb_flags
+        else:
+            home_run_to, home_run_level, zone_notes, review_flags = assign_home_run(
+                zones=zones,
+                sheet_levels=sheet.levels_represented,
+                sheet_floor_label=sheet.floor_label,
+                sheet_number=sheet.sheet_number,
+                device_level=device_level,
+            )
 
         device_id = stable_id(
             "dev",
