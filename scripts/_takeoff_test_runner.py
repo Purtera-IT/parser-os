@@ -167,11 +167,28 @@ class _ExpectedSkip(Exception):
 
 def main(argv: list[str]) -> int:
     modules = argv[1:] or [
+        # Universal layer — page classification, extraction, zoning.
         "test_takeoff_sheet_classifier",
+        "test_takeoff_page_type_router",
         "test_takeoff_multipliers",
         "test_takeoff_pdf_native",
         "test_takeoff_zones",
+        "test_takeoff_spatial_zones",
+        "test_takeoff_nearby_text",
+        "test_takeoff_keynotes",
+        "test_takeoff_shape_signals",
+        "test_takeoff_ocr_signals",
+        "test_takeoff_universal_patterns",
+        "test_takeoff_typical_plan_expander",
+        # Knowledge stack — reference + per-page intelligence.
+        "test_takeoff_legend_self_extractor",
+        "test_takeoff_project_reference",
+        "test_takeoff_parser_intelligence",
+        "test_takeoff_qa_overlay",
+        # Pricing layer.
         "test_takeoff_quote_unitizer",
+        # End-to-end invariant — WN=335 on the Marriott corpus.
+        "test_takeoff_marriott_wn",
     ]
     total_pass = total_fail = total_skip = 0
     all_messages: list[str] = []

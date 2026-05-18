@@ -65,21 +65,36 @@ def _normalize_symbol_code(raw: str) -> str | None:
     Legend rows often use ``"POS-T #"`` / ``"A #"`` / ``"TV #"`` /
     ``"F 2"`` / ``"F 2 TV"`` style codes where ``#`` is the per-row
     port-count placeholder. On the actual plans these appear as the
-    bare prefix (``POS-T``, ``A``, ``TV``). We strip the trailing
-    placeholder and validate the remainder as a code-shaped token.
+    bare prefix (``POS-T``, ``A``, ``TV``). We strip ONLY the trailing
+    placeholder and validate the remainder as a single code-shaped token.
 
     Returns the cleaned code, or ``None`` if the input is paragraph
-    text / a numeric placeholder / a multi-word note / etc.
+    text / a numeric placeholder / a multi-word description / etc.
+
+    Examples::
+
+        "WN"          → "WN"
+        "POS-T"       → "POS-T"
+        "POS-T #"     → "POS-T"
+        "F 2"         → "F"
+        "FACP-2"      → "FACP-2"
+        "SINGLE BUTTON EMERGENCY PHONE SYSTEM STATION" → None  (multi-word)
+        "1 PORT WIRELESS NODE OUTLET"                  → None  (multi-word)
+        "180°"        → None  (no leading letter)
+        "#"           → None
+        ""            → None
     """
     if not raw:
         return None
     s = raw.strip()
-    # Common placeholder variants — strip trailing ``" #"`` or ``" 2"``.
+    # Strip trailing port-count placeholder (``" #"``, ``" 2"``, ``" 12"``).
     s = re.sub(r"\s+[#\d]+\s*$", "", s).strip()
-    # Some rows are ``"F 2 TV"`` style — try just the first token.
-    parts = s.split()
-    candidate = parts[0] if parts else s
-    candidate = candidate.upper().strip()
+    # A real symbol code is a SINGLE token after the placeholder is stripped.
+    # Multi-word remnants ("SINGLE BUTTON EMERGENCY ...") are paragraph
+    # text the legend's segmentation captured as a SYMBOL cell, not a code.
+    if " " in s:
+        return None
+    candidate = s.upper()
     if not _SYMBOL_SHAPE_RE.match(candidate):
         return None
     return candidate

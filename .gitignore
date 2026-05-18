@@ -27,3 +27,7 @@ compiled_artifacts/
 
 # Claude Code worktree configuration (per-checkout, not source).
 .claude/
+
+# Per-checkout dev render scratch dir (template PNGs, page PNGs, etc.
+# — regenerated from PDF + detect; never source-controlled).
+.dev_renders/
