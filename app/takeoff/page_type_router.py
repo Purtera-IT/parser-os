@@ -5,15 +5,16 @@ Different sheet types need fundamentally different visual treatments:
 * ``floor_plan`` / ``typical_plan`` / ``equipment_room`` — show every
   device candidate as a colored dot + tooltips with home-run zone,
   room label, keynote text. This is the standard takeoff overlay.
-* ``legend`` — run the structural segmentation pipeline (the same one
-  that builds ``structured.json``), highlight each detected table cell
-  containing a known symbol code, and color the whole row by device
-  class. The user gets a visual confirmation that the parser
-  understood the legend table.
-* ``spec`` / ``component_schedule`` / ``riser`` / ``detail`` /
-  ``typical_plan`` (some) — skip overlay rendering by default. These
-  pages don't carry device counts and an empty colored-dots overlay
-  would be misleading.
+* ``legend`` / ``spec`` / ``component_schedule`` — reference-layer
+  pages. Run the segmentation pipeline and overlay the detected
+  BLUE table containers + ORANGE cells + MAGENTA titles + CYAN
+  column headers. Same treatment for all three because they're
+  structurally the same kind of tabular reference content — the
+  parser's job is to show "I saw the table structure", not to
+  count devices.
+* ``riser`` / ``detail`` — skip overlay rendering by default. These
+  carry diagrammatic content the current overlays can't usefully
+  annotate.
 * Out-of-scope sheets — skip too, regardless of page_type.
 
 The router is the single source of truth for "what should this page
@@ -38,13 +39,22 @@ OverlayStrategy = Literal[
 # Strategy decision table — keyed by page_type. Order in this dict is
 # documentation; the lookup is by exact key. Add new page types here
 # rather than spreading dispatch logic across overlay modules.
+#
+# Reference-style pages (spec / legend / component_schedule) all get
+# the same table-aware overlay — they're all tabular content where
+# the segmentation pipeline's BLUE / ORANGE / CYAN-header / MAGENTA-title
+# decomposition is what the operator actually wants to see. A spec
+# page's multi-column prose is structurally just as tabular as a
+# legend; a component-schedule's part-number listing is too. Routing
+# them all to ``legend_table_match`` keeps the visual treatment
+# consistent for "the project's reference layer".
 _STRATEGY_BY_PAGE_TYPE: dict[str, OverlayStrategy] = {
     "floor_plan":         "device_takeoff",
     "typical_plan":       "device_takeoff",
     "equipment_room":     "device_takeoff",
     "legend":             "legend_table_match",
-    "spec":               "skip",
-    "component_schedule": "skip",
+    "spec":               "legend_table_match",
+    "component_schedule": "legend_table_match",
     "riser":              "skip",
     "detail":             "skip",
     "unknown":            "skip",

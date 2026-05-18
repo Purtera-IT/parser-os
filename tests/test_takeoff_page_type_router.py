@@ -25,8 +25,15 @@ def test_legend_overlay_for_legend_page() -> None:
     assert overlay_strategy_for(_sheet("legend")) == "legend_table_match"
 
 
-def test_skip_for_spec_component_schedule_riser_detail() -> None:
-    for page_type in ("spec", "component_schedule", "riser", "detail", "unknown"):
+def test_legend_table_match_for_reference_pages() -> None:
+    """spec / legend / component_schedule are all tabular reference pages;
+    they should share the same table-aware overlay treatment."""
+    for page_type in ("spec", "legend", "component_schedule"):
+        assert overlay_strategy_for(_sheet(page_type)) == "legend_table_match", page_type
+
+
+def test_skip_for_riser_detail_unknown() -> None:
+    for page_type in ("riser", "detail", "unknown"):
         assert overlay_strategy_for(_sheet(page_type)) == "skip", page_type
 
 
@@ -41,4 +48,7 @@ def test_strategy_table_is_stable() -> None:
     table = strategy_table()
     assert ("floor_plan", "device_takeoff") in table
     assert ("legend", "legend_table_match") in table
-    assert ("spec", "skip") in table
+    assert ("spec", "legend_table_match") in table
+    assert ("component_schedule", "legend_table_match") in table
+    assert ("riser", "skip") in table
+    assert ("detail", "skip") in table
