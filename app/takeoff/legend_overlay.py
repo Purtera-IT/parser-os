@@ -134,23 +134,38 @@ def render_legend_overlay(
     blue_table_count = sum(1 for b in result.boxes if b.color == "BLUE" and b.nested_depth == 1)
     summary["tables_detected"] = blue_table_count
 
-    # Render base image.
+    # Render base image — raw segmentation visualization with NO obstructing
+    # legend box on top of the drawing. Three layers:
+    #   1. Every detected ORANGE cell — thin outline. Shows that the parser
+    #      found the full table grid.
+    #   2. Every BLUE table container — thicker outline. Shows the table
+    #      groupings.
+    #   3. Matched symbol cells — filled with the device-class color.
     img = Image.fromarray(rgb).convert("RGB")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
 
-    # Layer 1 — outline each detected table container in blue.
+    # Layer 1 — every detected ORANGE cell (the raw grid).
+    orange_cell_count = 0
+    for b in result.boxes:
+        if b.color != "ORANGE":
+            continue
+        x0, y0, x1, y1 = b.px_bbox
+        od.rectangle((x0, y0, x1, y1), outline=(255, 140, 0, 180), width=2)
+        orange_cell_count += 1
+    summary["orange_cells_drawn"] = orange_cell_count
+
+    # Layer 2 — outline each detected table container in thicker blue
+    # over the orange grid.
     for b in result.boxes:
         if b.color != "BLUE" or b.nested_depth != 1:
             continue
         x0, y0, x1, y1 = b.px_bbox
         od.rectangle((x0, y0, x1, y1), outline=(20, 70, 200, 255), width=8)
 
-    # Layer 2 — for each symbol hit, find its containing orange cell + color
-    # the cell + outline same-baseline neighbour cells in the matching color.
+    # Layer 3 — for each symbol hit, color its containing cell.
     matches_by_symbol: dict[str, int] = {}
     for sym, cx, cy, _word in symbol_hits:
-        # Smallest orange box containing the hit center is the symbol cell.
         cell = None
         cell_area = float("inf")
         for b in result.boxes:
@@ -182,38 +197,20 @@ def render_legend_overlay(
 
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-    # Legend annotation box.
+    # Optional small footer strip — a single line at the bottom that doesn't
+    # obstruct the table content. Keep it minimal: counts only, no per-symbol
+    # swatches. Skip entirely when the caller passes ``draw_footer=False``.
     try:
-        font_lg = ImageFont.truetype("arial.ttf", 44)
-        font_md = ImageFont.truetype("arial.ttf", 30)
-        font_sm = ImageFont.truetype("arial.ttf", 24)
+        font_footer = ImageFont.truetype("arial.ttf", 22)
     except Exception:
-        font_lg = font_md = font_sm = ImageFont.load_default()
-
+        font_footer = ImageFont.load_default()
     ld = ImageDraw.Draw(img)
-    LBOX_W = 740
-    LBOX_H = 240 + 42 * len(_COLORS)
-    ld.rectangle((30, 30, 30 + LBOX_W, 30 + LBOX_H), fill=(255, 255, 255), outline=(0, 0, 0), width=4)
-    ld.text((45, 42), "Legend page — segmentation-aware overlay", fill=(0, 0, 0), font=font_lg)
-    ld.text((45, 100), "Tables detected by segmentation pipeline, rows", fill=(50, 50, 50), font=font_md)
-    ld.text((45, 138), "colored by matched device class.", fill=(50, 50, 50), font=font_md)
-    y = 200
-    ld.rectangle((50, y + 4, 76, y + 30), fill=(255, 255, 255), outline=(20, 70, 200), width=4)
-    ld.text((90, y + 4), f"BLUE: {blue_table_count} table container(s)", fill=(0, 0, 0), font=font_sm)
-    y += 44
-    ld.text(
-        (45, y),
-        f"{summary['rows_matched']} row(s) matched / {summary['symbol_hits']} symbol token(s) found",
-        fill=(0, 80, 0),
-        font=font_md,
+    matches_text = ", ".join(f"{s}:{n}" for s, n in sorted(matches_by_symbol.items())) or "no matches"
+    footer = (
+        f"segmentation: {blue_table_count} tables  |  {orange_cell_count} cells  |  "
+        f"matched rows: {summary['rows_matched']} of {summary['symbol_hits']} symbol hits  ({matches_text})"
     )
-    y += 44
-    for sym, color in _COLORS.items():
-        n = matches_by_symbol.get(sym, 0)
-        ld.rectangle((50, y + 4, 76, y + 30), fill=color, outline=(0, 0, 0))
-        text_color = (0, 0, 0) if n else (140, 140, 140)
-        ld.text((90, y + 4), f"{sym}: {n} matched row(s)", fill=text_color, font=font_sm)
-        y += 42
+    ld.text((30, img.height - 36), footer, fill=(0, 0, 0), font=font_footer)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
