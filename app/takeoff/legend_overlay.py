@@ -97,44 +97,63 @@ def render_legend_overlay(
     blue_table_count = sum(1 for b in result.boxes if b.color == "BLUE" and b.nested_depth == 1)
     summary["tables_detected"] = blue_table_count
 
-    # Render — pure raw segmentation output, no device-class matching.
-    # The legend page is where symbols are DEFINED; we don't try to detect
-    # devices on it. We just visualize what the structural pipeline saw:
-    #
-    #   * BLUE  outlines  = every BLUE box (table wrappers + sub-wrappers)
-    #                        line width grows with nesting depth so the
-    #                        hierarchy is visible
-    #   * ORANGE outlines = every ORANGE box (cell-level detection)
-    #   * PURPLE outlines = every PURPLE box (semantic-cleanup markers)
-    #
-    # No filling. No device-class colors. No row matching. Pure structure.
+    # Render. The legacy detector's marker attributes are sparse on
+    # Marriott's T0.01 (only 1 subhdr_red_band, 0 cyan_colhdr / etc), so
+    # delegating to the official render_overlay produces a nearly-invisible
+    # output. We hand-draw the raw structure ourselves AND add our own
+    # column-header detection (topmost cell row of each BLUE table) so
+    # the user can see the structure end-to-end without depending on the
+    # legacy detector's heuristic markers.
     img = Image.fromarray(rgb).convert("RGB")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
 
-    box_counts: dict[str, int] = {"BLUE": 0, "ORANGE": 0, "PURPLE": 0}
+    box_counts: dict[str, int] = {"BLUE": 0, "ORANGE": 0, "PURPLE": 0, "CYAN_COLHDR": 0}
 
-    # Orange first (thin, beneath the blue hierarchy).
+    # Find each BLUE table-container at depth 1, then identify the
+    # ORANGE cells whose top edge is within ~20 px of the container's
+    # top — those are the column-header row. Color them cyan.
+    blue_d1 = [b for b in result.boxes if b.color == "BLUE" and b.nested_depth == 1]
+    cyan_cells: set[str] = set()
+    HEADER_BAND_PX = 90  # ~ first row height at 2.5x scale (≈ 36 pt × 2.5)
+    for table in blue_d1:
+        t_x0, t_y0, t_x1, t_y1 = table.px_bbox
+        for b in result.boxes:
+            if b.color != "ORANGE":
+                continue
+            cx0, cy0, cx1, cy1 = b.px_bbox
+            # Must be horizontally inside the table.
+            if cx0 < t_x0 - 2 or cx1 > t_x1 + 2:
+                continue
+            # Must sit in the top header band of the table.
+            if cy0 < t_y0 - 2 or cy0 > t_y0 + HEADER_BAND_PX:
+                continue
+            cyan_cells.add(b.box_id)
+
+    # Layer 1 — every detected ORANGE cell (thin outline). Cells flagged
+    # as header rows get a cyan fill on top of the outline so the
+    # header band reads obviously.
     for b in result.boxes:
         if b.color != "ORANGE":
             continue
         x0, y0, x1, y1 = b.px_bbox
         od.rectangle((x0, y0, x1, y1), outline=(255, 140, 0, 200), width=2)
         box_counts["ORANGE"] += 1
+        if b.box_id in cyan_cells:
+            od.rectangle((x0, y0, x1, y1), fill=(0, 200, 220, 90), outline=(0, 180, 200, 255), width=4)
+            box_counts["CYAN_COLHDR"] += 1
 
-    # Blue next, every depth. Outline width scales inversely with depth so
-    # outer tables read as thick frames and inner sub-blocks as thinner
-    # ones. Caps at depth 4.
+    # Layer 2 — every BLUE box (nesting hierarchy via line width).
     for b in result.boxes:
         if b.color != "BLUE":
             continue
         x0, y0, x1, y1 = b.px_bbox
         depth = max(0, min(b.nested_depth, 4))
-        width = max(2, 9 - 2 * depth)  # depth 0 → 9px, depth 4 → 1px
+        width = max(2, 9 - 2 * depth)
         od.rectangle((x0, y0, x1, y1), outline=(20, 70, 200, 255), width=width)
         box_counts["BLUE"] += 1
 
-    # Purple last (semantic markers — rare but worth showing).
+    # Layer 3 — PURPLE markers.
     for b in result.boxes:
         if b.color != "PURPLE":
             continue
@@ -142,28 +161,45 @@ def render_legend_overlay(
         od.rectangle((x0, y0, x1, y1), outline=(160, 60, 220, 255), width=3)
         box_counts["PURPLE"] += 1
 
+    # Layer 4 — semantic markers from the legacy detector (rare but
+    # render them when present).
+    marker_counts: dict[str, int] = {}
+    for marker, color in (
+        ("subhdr_red_band",        (220,  30,  30, 255)),
+        ("cover_footer_band",      (255, 220,   0, 255)),
+        ("subbullet_green_band",   ( 30, 180,  60, 255)),
+        ("subbullet_purple_band",  (160,  60, 220, 255)),
+    ):
+        for b in result.boxes:
+            if not getattr(b, marker, False):
+                continue
+            x0, y0, x1, y1 = b.px_bbox
+            od.rectangle((x0, y0, x1, y1), outline=color, width=5)
+            marker_counts[marker] = marker_counts.get(marker, 0) + 1
+
     summary["box_counts"] = box_counts
-    # Drop the symbol-matching summary fields entirely from the legend
-    # render — they're a floor-plan concept, not a legend-page concept.
+    summary["marker_counts"] = marker_counts
     summary.pop("symbol_hits", None)
     summary.pop("rows_matched", None)
     summary.pop("matches_by_symbol", None)
 
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-    # Small footer line with just the box counts. Doesn't sit on the
-    # table content. No device-class swatches — those are floor-plan
-    # concerns.
     try:
         font_footer = ImageFont.truetype("arial.ttf", 22)
     except Exception:
         font_footer = ImageFont.load_default()
     ld = ImageDraw.Draw(img)
-    footer = (
-        f"segmentation (raw): BLUE={box_counts['BLUE']}  ORANGE={box_counts['ORANGE']}"
-        f"  PURPLE={box_counts['PURPLE']}"
-    )
-    ld.text((30, img.height - 36), footer, fill=(0, 0, 0), font=font_footer)
+    footer_bits = [
+        f"BLUE={box_counts['BLUE']}",
+        f"ORANGE={box_counts['ORANGE']}",
+        f"CYAN_HDR={box_counts['CYAN_COLHDR']}",
+        f"PURPLE={box_counts['PURPLE']}",
+    ]
+    for m, n in marker_counts.items():
+        footer_bits.append(f"{m}={n}")
+    footer = "  |  ".join(footer_bits)
+    ld.text((30, img.height - 36), f"segmentation: {footer}", fill=(0, 0, 0), font=font_footer)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
