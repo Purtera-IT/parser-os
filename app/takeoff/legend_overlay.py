@@ -150,6 +150,13 @@ def render_legend_overlay(
     title_cells: set[str] = set()
     SAME_ROW_TOL = 18
     TITLE_WIDTH_FRAC = 0.60
+    # A title cell is wide AND short — a single line of text. Multi-line
+    # body paragraphs (e.g. the numbered notes inside LEGEND NOTES) also
+    # span the full row width but have several lines of text, so they're
+    # much taller. At 2.5x render scale a one-line title comes in around
+    # 30-60 px; multi-line paragraphs are typically 100 px+. The 95 px
+    # cap distinguishes them cleanly without rejecting padded title bars.
+    MAX_TITLE_HEIGHT_PX = 95
 
     for table in blue_d1:
         t_x0, t_y0, t_x1, t_y1 = table.px_bbox
@@ -191,15 +198,23 @@ def render_legend_overlay(
         if cur_row:
             rows.append((cur_y, cur_row))  # type: ignore[arg-type]
 
-        # Walk rows: a TITLE row is exactly 1 cell spanning ≥60% of the
-        # wrapper's width. The row right after a title that has ≥2
-        # cells becomes the column-header row.
+        # Walk rows: a TITLE row is exactly 1 cell that
+        #   (a) spans ≥60% of the wrapper's width, AND
+        #   (b) has height ≤ MAX_TITLE_HEIGHT_PX (single line of text)
+        # The row right after a title that has ≥2 cells becomes the
+        # column-header row.
         for i, (_, row_cells) in enumerate(rows):
             if len(row_cells) != 1:
                 continue
             cell = row_cells[0]
             cw = cell.px_bbox[2] - cell.px_bbox[0]
+            ch = cell.px_bbox[3] - cell.px_bbox[1]
             if cw / t_width < TITLE_WIDTH_FRAC:
+                continue
+            if ch > MAX_TITLE_HEIGHT_PX:
+                # Wide but tall — probably a multi-line body paragraph
+                # (e.g. the numbered notes inside LEGEND NOTES), NOT a
+                # title bar.
                 continue
             title_cells.add(cell.box_id)
             # Column-header row = the row immediately after this title.
