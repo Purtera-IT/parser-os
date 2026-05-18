@@ -184,6 +184,7 @@ def main(argv: list[str]) -> int:
         "test_takeoff_legend_self_extractor",
         "test_takeoff_project_reference",
         "test_takeoff_parser_intelligence",
+        "test_takeoff_symbol_footprint",
         "test_takeoff_qa_overlay",
         # Pricing layer.
         "test_takeoff_quote_unitizer",
