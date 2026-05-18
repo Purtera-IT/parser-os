@@ -38,16 +38,38 @@ class HomeRunZone:
 
 
 # ─── Patterns ───
-# Match the whole "HOMERUN ALL CABLES ... ." sentence — non-greedy, but
-# stops at the first period to avoid swallowing the next clause.
-_HOMERUN_SENTENCE_RE = re.compile(
-    r"HOMERUN\s+ALL\s+CABLES[^.]+?\.",
-    re.IGNORECASE | re.DOTALL,
+#
+# We accept many phrasings for "route cables to closet X" — each project
+# / engineer / firm uses slightly different language. Patterns are
+# evaluated in order; the first one that matches a sentence wins.
+
+_HOMERUN_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Cooper Carry / NTI: "HOMERUN ALL CABLES ON THIS LEVEL TO IDF-5, ..."
+    re.compile(r"\bHOMERUN\s+ALL\s+CABLES[^.]+?\.", re.IGNORECASE | re.DOTALL),
+    # "HOME RUN ALL CABLES ..." (two-word variant — only matches when
+    # the words are actually separated, so it doesn't double-count
+    # HOMERUN-as-one-word sentences).
+    re.compile(r"\bHOME\s+RUN\s+ALL\s+CABLES[^.]+?\.", re.IGNORECASE | re.DOTALL),
+    # "RUN ALL CABLES ON LEVELS X-Y TO TR-3 ..." — word-boundary at
+    # the start so this doesn't fire inside HOMERUN sentences.
+    re.compile(r"\bRUN\s+(?:ALL\s+)?CABLES?\s+(?:ON\s+[^.]+?\s+)?TO\s+(?:MDF|IDF|TR|ER|BDF)[^.]+?\.", re.IGNORECASE | re.DOTALL),
+    # "ALL CABLES BACK TO MDF ROOM ..." — anchored on the "ALL CABLES"
+    # / "CABLES" + "BACK TO" combo so it can't match a generic
+    # "cables back to" mid-sentence.
+    re.compile(r"\b(?:ALL\s+)?CABLES?\s+BACK\s+TO\s+(?:MDF|IDF|TR|ER|BDF)[^.]+?\.", re.IGNORECASE | re.DOTALL),
+    # "ROUTE ALL CABLES TO IDF-A ..."
+    re.compile(r"\bROUTE\s+(?:ALL\s+)?CABLES?\s+TO\s+(?:MDF|IDF|TR|ER|BDF)[^.]+?\.", re.IGNORECASE | re.DOTALL),
+    # "TERMINATE ALL CABLES AT IDF-12 ..."
+    re.compile(r"\bTERMINATE\s+(?:ALL\s+)?CABLES?\s+(?:AT|IN)\s+(?:MDF|IDF|TR|ER|BDF)[^.]+?\.", re.IGNORECASE | re.DOTALL),
 )
 
-# Closet target — covers "MDF ROOM", "IDF-5", "IDF 5", "IDF-21".
+# Legacy alias so existing tests still import the symbol.
+_HOMERUN_SENTENCE_RE = _HOMERUN_SENTENCE_PATTERNS[0]
+
+# Closet target — covers "MDF ROOM", "IDF-5", "IDF 5", "IDF-21", and
+# also "TR-3", "TR-A", "ER-1", "BDF-B" (other firms' room conventions).
 _TARGET_RE = re.compile(
-    r"\bTO\s+((?:MDF(?:\s+ROOM)?|IDF[-\s]?\d+))",
+    r"\b(?:TO|AT|IN)\s+((?:MDF(?:\s+ROOM)?|IDF[-\s]?[A-Z0-9]+|TR[-\s]?[A-Z0-9]+|ER[-\s]?[A-Z0-9]+|BDF[-\s]?[A-Z0-9]+))",
     re.IGNORECASE,
 )
 
@@ -74,9 +96,15 @@ def _normalize_target(raw: str) -> str:
     if t.startswith("MDF"):
         return "MDF ROOM"
     # Standardize IDF-NN form.
-    m = re.match(r"IDF[-\s]?(\d+)", t)
+    m = re.match(r"IDF[-\s]?([A-Z0-9]+)", t)
     if m:
         return f"IDF-{m.group(1)}"
+    # TR-N / ER-N / BDF-N — common alternatives to IDF in non-Marriott
+    # firms (NTI / Newcomb & Boyd / CMTA, …).
+    for prefix in ("TR", "ER", "BDF"):
+        m = re.match(rf"{prefix}[-\s]?([A-Z0-9]+)", t)
+        if m:
+            return f"{prefix}-{m.group(1)}"
     return t
 
 
@@ -119,7 +147,21 @@ def parse_zones(page_text: str) -> list[HomeRunZone]:
     # Collapse whitespace so multi-line sentences match.
     normalized = " ".join(page_text.split())
     zones: list[HomeRunZone] = []
-    for m in _HOMERUN_SENTENCE_RE.finditer(normalized):
+    # Collect every match from every pattern (different firms phrase
+    # cable-routing notes differently). De-dupe identical sentences so
+    # overlapping patterns don't double-count.
+    seen_sentences: set[str] = set()
+    matches: list = []
+    for pat in _HOMERUN_SENTENCE_PATTERNS:
+        for m in pat.finditer(normalized):
+            key = m.group(0).strip().lower()
+            if key in seen_sentences:
+                continue
+            seen_sentences.add(key)
+            matches.append(m)
+    # Stable order by position in document.
+    matches.sort(key=lambda m: m.start())
+    for m in matches:
         sentence = m.group(0).strip()
         target_m = _TARGET_RE.search(sentence)
         if not target_m:

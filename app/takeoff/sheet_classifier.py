@@ -48,16 +48,58 @@ _STRONG_KEYWORDS: tuple[tuple[str, SheetPageType], ...] = (
 )
 
 # ─── Prefix rules ───
-_PREFIX_RULES: tuple[tuple[str, SheetPageType], ...] = (
-    ("T0.00", "spec"),
-    ("T0.01", "legend"),
-    ("T0.02", "component_schedule"),
-    ("T1.", "floor_plan"),
-    ("T4.", "typical_plan"),
-    ("T7.", "riser"),
-    ("T8.", "equipment_room"),
-    ("T9.", "detail"),
+#
+# We treat the *digit family* (the number after the letter prefix) as
+# the universal signal, then layer specific .00/.01/.02 rules on top.
+# This makes T1.05 / LV1.05 / E1.05 / IT1.05 / TC1.05 all classify as
+# floor_plan with no project-specific code.
+
+_DIGIT_FAMILY_RE = re.compile(r"^[A-Z]+(\d+)(?:\.(\d+))?", re.IGNORECASE)
+
+# (digit_family_pattern, page_type). The pattern is matched against the
+# numeric portion only (letter prefix stripped). ``family_pattern`` of
+# ``"1."`` matches any sheet whose digit portion starts with ``"1."``,
+# e.g. ``T1.03`` or ``E1.0`` or ``LV1.05``.
+_DIGIT_FAMILY_RULES: tuple[tuple[str, SheetPageType], ...] = (
+    # Intro / setup pages.
+    ("0.00", "spec"),
+    ("0.01", "legend"),
+    ("0.02", "component_schedule"),
+    ("0.03", "component_schedule"),
+    # Plan series — most firms use 1.xx, some spill into 2.xx / 3.xx.
+    ("1.", "floor_plan"),
+    ("2.", "floor_plan"),
+    ("3.", "floor_plan"),
+    # Typical / enlarged plans.
+    ("4.", "typical_plan"),
+    # Riser diagrams.
+    ("5.", "riser"),  # some firms use 5.x for risers
+    ("6.", "riser"),  # ditto
+    ("7.", "riser"),
+    # Equipment rooms.
+    ("8.", "equipment_room"),
+    # Installation details.
+    ("9.", "detail"),
 )
+
+
+def _digit_family(sheet_number: str | None) -> str | None:
+    """Extract the digit family (e.g. ``"1.05"``) from a sheet number.
+
+    ``T1.05`` → ``"1.05"``. ``LV1.05`` → ``"1.05"``. ``E1.0`` →
+    ``"1.0"``. ``TC-101`` → ``None`` (non-standard format).
+    """
+    if not sheet_number:
+        return None
+    s = sheet_number.strip().upper()
+    m = _DIGIT_FAMILY_RE.match(s)
+    if not m:
+        return None
+    major = m.group(1)
+    minor = m.group(2)
+    if minor is not None:
+        return f"{major}.{minor}"
+    return f"{major}."
 
 # Scope rules — "NOT IN SCOPE" / "LEVEL NOT IN SCOPE" anywhere in the
 # sheet text marks it out of scope. Keep simple; the spec asks for it.
@@ -121,13 +163,18 @@ def classify_page_type(
     if "FLOOR PLAN" in name_upper or "ROOF PLAN" in name_upper:
         return "floor_plan"
 
-    # 2. Sheet-number prefix rules.
-    if sheet_number:
-        upper = sheet_number.upper()
-        for prefix, page_type in _PREFIX_RULES:
-            if upper == prefix or (
-                prefix.endswith(".") and upper.startswith(prefix)
-            ):
+    # 2. Sheet-number prefix rules — universal across any letter prefix.
+    # Match by the digit family (e.g. "1.05" → floor_plan) rather than
+    # the full "T1.05" string. Works for T-set / E-set / LV-set / etc.
+    family = _digit_family(sheet_number)
+    if family:
+        # Exact matches first (e.g. "0.01" → legend beats "0." → spec).
+        for pattern, page_type in _DIGIT_FAMILY_RULES:
+            if not pattern.endswith(".") and family == pattern:
+                return page_type
+        # Then prefix matches (e.g. "1." matches "1.05").
+        for pattern, page_type in _DIGIT_FAMILY_RULES:
+            if pattern.endswith(".") and family.startswith(pattern):
                 return page_type
 
     # 3. Full-text keyword rules — only when nothing else fired.

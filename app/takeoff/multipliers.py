@@ -17,25 +17,50 @@ from __future__ import annotations
 import re
 
 # ─── Range matchers ───
-# "LEVEL 5-12 AND LEVEL 15", "LEVELS 17-18", "LEVEL 19-23"
+#
+# We accept "LEVEL", "LEVELS", "FLOOR", and "FLOORS" interchangeably —
+# different firms / disciplines use different terms. The separator can
+# be a dash, en-dash, "TO", "THROUGH", or a slash ("LEVELS 5/8/12").
+
+_FLOOR_TOKEN = r"(?:LEVELS?|FLOORS?)"
+
+# "LEVEL 5-12", "FLOORS 17-18", "LEVELS 5 THROUGH 12", "LEVEL 5 TO 12"
 _LEVEL_RANGE_RE = re.compile(
-    r"LEVELS?\s*(\d+)\s*(?:-|–|TO|THROUGH)\s*(\d+)",
+    rf"{_FLOOR_TOKEN}\s*(\d+)\s*(?:-|–|TO|THROUGH)\s*(\d+)",
     re.IGNORECASE,
 )
-# "AND LEVEL 15", "AND LEVELS 14 & 15"
+# "AND LEVEL 15", "AND LEVELS 14 & 15", "AND FLOORS 8 / 12"
 _AND_LEVEL_RE = re.compile(
-    r"AND\s+LEVELS?\s*((?:\d+(?:\s*(?:,|&|AND)\s*)?)+)",
+    rf"AND\s+{_FLOOR_TOKEN}\s*((?:\d+(?:\s*(?:,|&|AND|/|\\)\s*)?)+)",
     re.IGNORECASE,
 )
-# Single-level "LEVEL 24"
-_SINGLE_LEVEL_RE = re.compile(r"LEVEL\s+(\d+)\b", re.IGNORECASE)
+# Single-level "LEVEL 24", "FLOOR 24"
+_SINGLE_LEVEL_RE = re.compile(rf"{_FLOOR_TOKEN}\s+(\d+)\b", re.IGNORECASE)
+# Slash-separated list "LEVELS 5/8/12"
+_SLASH_LIST_RE = re.compile(
+    rf"{_FLOOR_TOKEN}\s+(\d+(?:\s*/\s*\d+){{1,}})",
+    re.IGNORECASE,
+)
 
 # ─── Named-floor matchers ───
+#
+# Common named-floor conventions across hospitality / commercial /
+# residential projects. Order matters only when one phrase is a
+# substring of another (LOWER LOBBY before LOBBY).
 _NAMED_FLOOR_MAP: tuple[tuple[re.Pattern[str], list[str]], ...] = (
+    # Hospitality (Marriott, Hilton, Hyatt, ...).
     (re.compile(r"LOWER\s+LOBBY", re.IGNORECASE), ["Lower Lobby"]),
     (re.compile(r"LOBBY\s+LEVEL", re.IGNORECASE), ["Lobby"]),
     (re.compile(r"\bROOF\s+PLAN\b", re.IGNORECASE), ["Roof"]),
     (re.compile(r"SERVICE\s+LEVEL", re.IGNORECASE), ["Service"]),
+    # Generic / residential / commercial.
+    (re.compile(r"\bMEZZANINE\b", re.IGNORECASE), ["Mezzanine"]),
+    (re.compile(r"\bPENTHOUSE\b", re.IGNORECASE), ["Penthouse"]),
+    (re.compile(r"\bBASEMENT\b", re.IGNORECASE), ["Basement"]),
+    (re.compile(r"\bGROUND\s+(?:FLOOR|LEVEL)\b", re.IGNORECASE), ["Ground"]),
+    (re.compile(r"\bMAIN\s+(?:FLOOR|LEVEL)\b", re.IGNORECASE), ["Main"]),
+    (re.compile(r"\bGARAGE\b", re.IGNORECASE), ["Garage"]),
+    (re.compile(r"\bATTIC\b", re.IGNORECASE), ["Attic"]),
 )
 
 
@@ -81,6 +106,11 @@ def levels_from_title(title: str) -> list[str]:
 
     # "AND LEVEL[S] N (& N ...)" extras after a range.
     for m in _AND_LEVEL_RE.finditer(t):
+        for n in _parse_int_list(m.group(1)):
+            _push(n)
+
+    # Slash-separated list — "LEVELS 5/8/12".
+    for m in _SLASH_LIST_RE.finditer(t):
         for n in _parse_int_list(m.group(1)):
             _push(n)
 
