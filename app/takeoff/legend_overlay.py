@@ -32,28 +32,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.takeoff.legend_extractor import load_default_legend_rules
-from app.takeoff.pdf_native import extract_page_words
 from app.takeoff.schemas import LegendRule
-
-
-# Symbol color palette — mirrors the takeoff QA overlay so a reviewer
-# can correlate "WN cyan on T0.01" with "WN cyan on T1.03". Kept local
-# here (not imported from qa_overlay) so the legend overlay has no
-# coupling to the QA overlay module — they share a convention, not code.
-_COLORS: dict[str, tuple[int, int, int]] = {
-    "WN":    (  0, 200, 255),
-    "POS-T": ( 80, 200,  80),
-    "POS-P": ( 30, 150,  30),
-    "TV":    (255, 140,   0),
-    "CR":    (220,   0, 180),
-    "DA":    (220,  30,  30),
-    "H":     (255, 200,   0),
-}
-
-
-def _color_for_symbol(symbol: str) -> tuple[int, int, int]:
-    return _COLORS.get(symbol.upper(), (90, 90, 90))
 
 
 def render_legend_overlay(
@@ -106,109 +85,83 @@ def render_legend_overlay(
         summary["elapsed_seconds"] = time.perf_counter() - started
         return summary
 
-    if legend_rules is None:
-        legend_rules = load_default_legend_rules()
-    symbol_set = {r.raw_symbol.upper() for r in legend_rules}
-
-    # Compute pdf-pt → image-px scale (segmentation renders at 2.5x by default
-    # but we derive it from the actual image so any cfg overrides work).
-    doc = fitz.open(str(pdf_path))
-    try:
-        page = doc[page_index]
-        sx = result.image_width / page.rect.width
-        sy = result.image_height / page.rect.height
-        words = extract_page_words(page)
-    finally:
-        doc.close()
-
-    # Find symbol-token hits on the page.
-    symbol_hits: list[tuple[str, float, float, Any]] = []
-    for w in words:
-        text = (w.text or "").strip().upper().rstrip(".,;:")
-        if text in symbol_set:
-            cx = (w.x0 + w.x1) / 2 * sx
-            cy = (w.y0 + w.y1) / 2 * sy
-            symbol_hits.append((text, cx, cy, w))
-    summary["symbol_hits"] = len(symbol_hits)
+    # Note: ``legend_rules`` is intentionally unused in this render — the
+    # legend page is where symbols are DEFINED, not detected. We don't
+    # color cells by device class here. The argument stays in the
+    # signature so callers (qa_overlay's dispatcher) can keep passing
+    # legend_rules without an interface change; a future strategy might
+    # use them for verification, but the v1 contract is "raw segmentation
+    # output only".
+    del legend_rules  # silence the linter; kept for API stability
 
     blue_table_count = sum(1 for b in result.boxes if b.color == "BLUE" and b.nested_depth == 1)
     summary["tables_detected"] = blue_table_count
 
-    # Render base image — raw segmentation visualization with NO obstructing
-    # legend box on top of the drawing. Three layers:
-    #   1. Every detected ORANGE cell — thin outline. Shows that the parser
-    #      found the full table grid.
-    #   2. Every BLUE table container — thicker outline. Shows the table
-    #      groupings.
-    #   3. Matched symbol cells — filled with the device-class color.
+    # Render — pure raw segmentation output, no device-class matching.
+    # The legend page is where symbols are DEFINED; we don't try to detect
+    # devices on it. We just visualize what the structural pipeline saw:
+    #
+    #   * BLUE  outlines  = every BLUE box (table wrappers + sub-wrappers)
+    #                        line width grows with nesting depth so the
+    #                        hierarchy is visible
+    #   * ORANGE outlines = every ORANGE box (cell-level detection)
+    #   * PURPLE outlines = every PURPLE box (semantic-cleanup markers)
+    #
+    # No filling. No device-class colors. No row matching. Pure structure.
     img = Image.fromarray(rgb).convert("RGB")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
 
-    # Layer 1 — every detected ORANGE cell (the raw grid).
-    orange_cell_count = 0
+    box_counts: dict[str, int] = {"BLUE": 0, "ORANGE": 0, "PURPLE": 0}
+
+    # Orange first (thin, beneath the blue hierarchy).
     for b in result.boxes:
         if b.color != "ORANGE":
             continue
         x0, y0, x1, y1 = b.px_bbox
-        od.rectangle((x0, y0, x1, y1), outline=(255, 140, 0, 180), width=2)
-        orange_cell_count += 1
-    summary["orange_cells_drawn"] = orange_cell_count
+        od.rectangle((x0, y0, x1, y1), outline=(255, 140, 0, 200), width=2)
+        box_counts["ORANGE"] += 1
 
-    # Layer 2 — outline each detected table container in thicker blue
-    # over the orange grid.
+    # Blue next, every depth. Outline width scales inversely with depth so
+    # outer tables read as thick frames and inner sub-blocks as thinner
+    # ones. Caps at depth 4.
     for b in result.boxes:
-        if b.color != "BLUE" or b.nested_depth != 1:
+        if b.color != "BLUE":
             continue
         x0, y0, x1, y1 = b.px_bbox
-        od.rectangle((x0, y0, x1, y1), outline=(20, 70, 200, 255), width=8)
+        depth = max(0, min(b.nested_depth, 4))
+        width = max(2, 9 - 2 * depth)  # depth 0 → 9px, depth 4 → 1px
+        od.rectangle((x0, y0, x1, y1), outline=(20, 70, 200, 255), width=width)
+        box_counts["BLUE"] += 1
 
-    # Layer 3 — for each symbol hit, color its containing cell.
-    matches_by_symbol: dict[str, int] = {}
-    for sym, cx, cy, _word in symbol_hits:
-        cell = None
-        cell_area = float("inf")
-        for b in result.boxes:
-            if b.color != "ORANGE":
-                continue
-            x0, y0, x1, y1 = b.px_bbox
-            if x0 <= cx <= x1 and y0 <= cy <= y1:
-                area = (x1 - x0) * (y1 - y0)
-                if area < cell_area:
-                    cell_area = area
-                    cell = b
-        if cell is None:
+    # Purple last (semantic markers — rare but worth showing).
+    for b in result.boxes:
+        if b.color != "PURPLE":
             continue
-        color = _color_for_symbol(sym)
-        cx0, cy0, cx1, cy1 = cell.px_bbox
-        od.rectangle((cx0, cy0, cx1, cy1), fill=color + (120,), outline=color + (255,), width=6)
-        # Outline neighbour cells on same baseline, to the right.
-        row_y0, row_y1 = cy0 - 6, cy1 + 6
-        for b in result.boxes:
-            if b.color != "ORANGE" or b is cell:
-                continue
-            bx0, by0, bx1, by1 = b.px_bbox
-            if by0 >= row_y0 and by1 <= row_y1 and bx0 > cx1:
-                od.rectangle((bx0, by0, bx1, by1), outline=color + (220,), width=3)
-        matches_by_symbol[sym] = matches_by_symbol.get(sym, 0) + 1
+        x0, y0, x1, y1 = b.px_bbox
+        od.rectangle((x0, y0, x1, y1), outline=(160, 60, 220, 255), width=3)
+        box_counts["PURPLE"] += 1
 
-    summary["matches_by_symbol"] = matches_by_symbol
-    summary["rows_matched"] = sum(matches_by_symbol.values())
+    summary["box_counts"] = box_counts
+    # Drop the symbol-matching summary fields entirely from the legend
+    # render — they're a floor-plan concept, not a legend-page concept.
+    summary.pop("symbol_hits", None)
+    summary.pop("rows_matched", None)
+    summary.pop("matches_by_symbol", None)
 
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-    # Optional small footer strip — a single line at the bottom that doesn't
-    # obstruct the table content. Keep it minimal: counts only, no per-symbol
-    # swatches. Skip entirely when the caller passes ``draw_footer=False``.
+    # Small footer line with just the box counts. Doesn't sit on the
+    # table content. No device-class swatches — those are floor-plan
+    # concerns.
     try:
         font_footer = ImageFont.truetype("arial.ttf", 22)
     except Exception:
         font_footer = ImageFont.load_default()
     ld = ImageDraw.Draw(img)
-    matches_text = ", ".join(f"{s}:{n}" for s, n in sorted(matches_by_symbol.items())) or "no matches"
     footer = (
-        f"segmentation: {blue_table_count} tables  |  {orange_cell_count} cells  |  "
-        f"matched rows: {summary['rows_matched']} of {summary['symbol_hits']} symbol hits  ({matches_text})"
+        f"segmentation (raw): BLUE={box_counts['BLUE']}  ORANGE={box_counts['ORANGE']}"
+        f"  PURPLE={box_counts['PURPLE']}"
     )
     ld.text((30, img.height - 36), footer, fill=(0, 0, 0), font=font_footer)
 
