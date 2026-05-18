@@ -20,8 +20,15 @@ from typing import Any
 from app.takeoff.candidate_fusion import fuse_candidates_to_devices
 from app.takeoff.corrections import apply_corrections_if_present
 from app.takeoff.exports import takeoff_summary
+from app.takeoff.keynotes import KeynoteTable, parse_keynote_table
 from app.takeoff.legend_extractor import load_default_legend_rules, rules_by_symbol
+from app.takeoff.legend_self_extractor import (
+    extract_legend_from_page,
+    merge_with_defaults,
+)
 from app.takeoff.multipliers import floor_label_for_title, multiplier_for_title
+from app.takeoff.nearby_text import collect_nearby_text
+from app.takeoff.pdf_native import extract_page_words
 from app.takeoff.plan_regions import default_excluded_regions, default_plan_viewport
 from app.takeoff.schemas import (
     DeviceInstance,
@@ -100,10 +107,46 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
 
     with fitz.open(str(pdf_path)) as doc:
         legend_source_page = _find_legend_page_index(doc)
+        # Use the project's legend page as a runtime classifier — extract
+        # rows from the PDF, merge with the YAML defaults, and surface any
+        # new symbol codes as info messages. This is what makes the
+        # parser universal across drawing sets with different legends.
+        legend_self_info: list[str] = []
         if legend_source_page is not None:
+            try:
+                extracted_rules = extract_legend_from_page(
+                    page=doc[legend_source_page]
+                )
+            except Exception as exc:  # pragma: no cover - env-specific
+                extracted_rules = []
+                warnings.append(f"legend_self_extract_failed: {exc!r}")
+            if extracted_rules:
+                legend_rules, legend_self_info = merge_with_defaults(
+                    extracted=extracted_rules, defaults=legend_rules
+                )
             for rule in legend_rules:
-                rule.source_page = legend_source_page
+                if rule.source_page is None:
+                    rule.source_page = legend_source_page
                 rule.confidence = max(rule.confidence, 0.92)
+        if legend_self_info:
+            verified = [m for m in legend_self_info if m.startswith("legend_verified")]
+            noise = [m for m in legend_self_info if m.startswith("legend_extracted_new_symbol_not_in_defaults")]
+            if verified:
+                verified_codes = sorted({m.split(": ", 1)[1] for m in verified})
+                warnings.append(
+                    "legend_self_extract_verified: confirmed "
+                    f"{len(verified_codes)} symbol(s) on PDF legend: "
+                    + ", ".join(verified_codes)
+                )
+            if noise:
+                # Don't pollute the doc-level warnings with row-grouping
+                # noise. Surface only that there ARE extras so the
+                # operator knows to look at the detail if needed.
+                warnings.append(
+                    f"legend_self_extract_unmapped: {len(noise)} legend row(s) "
+                    "did not match a default symbol — extend rules/low_voltage_symbols.yaml "
+                    "if a real device is missing"
+                )
 
         # Phase B: extract shape templates from the legend page once,
         # then reuse them on every floor_plan / typical_plan page.
@@ -143,12 +186,31 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
             sheet.excluded_regions = default_excluded_regions(page)
             sheets.append(sheet)
 
+            # Pre-compute page words + keynote table once. The keynote
+            # table is per-page (each plan has its own) and the words
+            # feed both nearby-text capture and keynote-ref lookups.
+            page_words = extract_page_words(page)
+            keynote_table = parse_keynote_table(page_index, page_text)
+
             # Detect candidates on device-bearing pages (and emit rejected
             # candidates on legend / detail pages so the audit trail is
             # complete).
             page_candidates = detect_symbol_candidates(
                 page=page, sheet=sheet, legend_rules=legend_rules
             )
+
+            # Populate nearby_text on each accepted candidate — this is
+            # how we capture room labels like "EXISTING MDF ROOM" that
+            # live a few points to the side of the device symbol.
+            for cand in page_candidates:
+                if cand.rejection_reason is not None:
+                    continue
+                cand.nearby_text = collect_nearby_text(
+                    bbox=cand.bbox,
+                    page_words=page_words,
+                    own_symbol=cand.raw_symbol,
+                )
+
             candidates.extend(page_candidates)
 
             # Tally rejected candidates by class for the summary.
@@ -231,6 +293,8 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
                     legend_rules=legend_rules,
                     shape_candidates=sheet_shape_cands,
                     zone_regions=zone_regions,
+                    page_words=page_words,
+                    keynote_table=keynote_table,
                 )
                 devices.extend(sheet_devices)
 

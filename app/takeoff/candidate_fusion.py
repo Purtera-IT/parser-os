@@ -21,7 +21,13 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.ids import stable_id
+from app.takeoff.keynotes import (
+    KeynoteTable,
+    find_keynote_refs_near,
+    resolve_keynote,
+)
 from app.takeoff.legend_extractor import rules_by_symbol
+from app.takeoff.pdf_native import PdfWord
 from app.takeoff.schemas import (
     BBox,
     DeviceInstance,
@@ -47,6 +53,26 @@ def _center_dist(a: BBox, b: BBox) -> float:
     return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
 
 
+def _pick_room_guess(nearby_text: list[str]) -> str | None:
+    """Return the first nearby phrase that looks like a room/space label.
+
+    Heuristics: ≥2 words OR contains "ROOM"/"MDF"/"IDF"; mostly uppercase;
+    not just punctuation or a date.
+    """
+    for txt in nearby_text or []:
+        if not txt:
+            continue
+        upper = txt.upper()
+        has_room_marker = any(m in upper for m in ("ROOM", "MDF", "IDF", "LOBBY", "BALLROOM", "STORAGE", "CLOSET", "CORRIDOR"))
+        word_count = len(txt.split())
+        if has_room_marker or word_count >= 2:
+            # Drop obvious sheet metadata strings.
+            if any(skip in upper for skip in ("SHEET NUMBER", "DRAWING TITLE", "REVISIONS")):
+                continue
+            return txt
+    return None
+
+
 def fuse_candidates_to_devices(
     *,
     candidates: list[SymbolCandidate],
@@ -55,6 +81,8 @@ def fuse_candidates_to_devices(
     legend_rules: list[LegendRule],
     shape_candidates: list[SymbolCandidate] | None = None,
     zone_regions: list[ZoneRegion] | None = None,
+    page_words: list[PdfWord] | None = None,
+    keynote_table: KeynoteTable | None = None,
 ) -> list[DeviceInstance]:
     """Convert accepted candidates on a sheet into devices.
 
@@ -177,6 +205,21 @@ def fuse_candidates_to_devices(
             round(cand.bbox.center()[1], 1),
         )
 
+        # Room / keynote context resolution. The pipeline pre-populated
+        # ``cand.nearby_text`` via :func:`collect_nearby_text`; we lift
+        # the most-likely room label off it. Keynote refs are pulled
+        # straight from page words and resolved against the per-page
+        # keynote table.
+        room_guess = _pick_room_guess(cand.nearby_text)
+        keynote_num: str | None = None
+        keynote_text: str | None = None
+        if keynote_table is not None and page_words is not None:
+            refs = find_keynote_refs_near(bbox=cand.bbox, page_words=page_words)
+            if refs:
+                keynote_num, keynote_text = resolve_keynote(
+                    refs=refs, table=keynote_table
+                )
+
         devices.append(
             DeviceInstance(
                 id=device_id,
@@ -190,6 +233,9 @@ def fuse_candidates_to_devices(
                 floor_label=sheet.floor_label,
                 levels_represented=list(sheet.levels_represented),
                 multiplier=sheet.multiplier,
+                room_guess=room_guess,
+                keynote=keynote_num,
+                keynote_text=keynote_text,
                 home_run_to=home_run_to,
                 home_run_level=home_run_level,
                 zone_notes=list(zone_notes),
