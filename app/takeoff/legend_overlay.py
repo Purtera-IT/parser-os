@@ -131,7 +131,21 @@ def render_legend_overlay(
     #
     # When the top row IS multiple narrow cells (no title row above),
     # treat them as column headers directly.
-    blue_d1 = [b for b in result.boxes if b.color == "BLUE" and b.nested_depth == 1]
+    #
+    # Filter blue_d1 to boxes with at least one ORANGE child of their own.
+    # Without this filter the prose-pass adds full-page-width "paragraph
+    # layout band" wrappers (``prosepara_*``) at depth=1 with zero
+    # children — but their bbox spans most of the page, so when we
+    # scan ALL orange cells inside their bbox we end up incorrectly
+    # matching cells from real tables as "column headers" of these
+    # fake wrappers. Same filter the BLUE outline rendering already
+    # uses; applying it here keeps title-detection consistent.
+    blue_d1 = [
+        b for b in result.boxes
+        if b.color == "BLUE"
+        and b.nested_depth == 1
+        and (b.children_count or 0) >= 1
+    ]
     cyan_cells: set[str] = set()
     title_cells: set[str] = set()
     TITLE_BAND_PX = 120  # window for scanning candidate title row
