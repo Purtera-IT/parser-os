@@ -423,10 +423,122 @@ def write_legend_markdown(
     return out_path
 
 
+READABLE_SCHEMA_VERSION = "purtera.lowvoltage.legend.readable.v1"
+
+
+def legend_doc_to_readable(doc: dict[str, Any]) -> dict[str, Any]:
+    """Project the full extraction into a clean reference-style JSON.
+
+    Drops bbox / box_id / pixel-coordinate noise. What remains is the
+    legend *itself* as data an LLM or human can consume directly:
+    each table has a title, an ordered column list, and rows keyed by
+    column name. Empty / inherited-but-empty cells are dropped from
+    each row so rows stay readable for sparse sections.
+
+    Schema:
+
+        {
+          "schema_version": "purtera.lowvoltage.legend.readable.v1",
+          "source": "<pdf filename>",
+          "page_index": <int>,
+          "tables": [
+            {
+              "title": "<title text>",
+              "columns": ["SYMBOL", "DESCRIPTION", ...],
+              "columns_inherited": false,
+              "rows": [
+                {"SYMBOL": "WN", "DESCRIPTION": "...", ...},
+                ...
+              ]
+            },
+            ...
+          ],
+          "summary": { ... }
+        }
+    """
+    src = Path(doc.get("source_pdf", "")).name or "(unknown)"
+    out: dict[str, Any] = {
+        "schema_version": READABLE_SCHEMA_VERSION,
+        "source": src,
+        "page_index": doc.get("page_index"),
+        "tables": [],
+    }
+
+    sections_with_rows = 0
+    total_rows = 0
+    for table in doc.get("tables", []) or []:
+        for section in table.get("sections", []) or []:
+            title = section.get("title") or "(untitled section)"
+            cols = section.get("column_headers") or []
+            col_names = [
+                (c.get("text") or f"col{i+1}").strip()
+                for i, c in enumerate(cols)
+            ]
+            inherited = bool(section.get("column_headers_inherited"))
+            rows_clean: list[dict[str, str]] = []
+            for row in section.get("rows", []) or []:
+                by_hdr = row.get("cells_by_header") or {}
+                if by_hdr and col_names:
+                    # Use the header-keyed cells.
+                    row_obj: dict[str, str] = {}
+                    for name in col_names:
+                        val = by_hdr.get(name, "").strip()
+                        if val:
+                            row_obj[name] = val
+                    if row_obj:
+                        rows_clean.append(row_obj)
+                else:
+                    # No column structure — capture cells in positional
+                    # order under generic names.
+                    cells = row.get("cells") or []
+                    row_obj = {}
+                    for i, c in enumerate(cells):
+                        v = (c.get("text") or "").strip()
+                        if v:
+                            row_obj[f"col{i+1}"] = v
+                    if row_obj:
+                        rows_clean.append(row_obj)
+            table_entry: dict[str, Any] = {
+                "title": title,
+                "columns": col_names,
+                "columns_inherited": inherited,
+                "rows": rows_clean,
+            }
+            out["tables"].append(table_entry)
+            if rows_clean:
+                sections_with_rows += 1
+                total_rows += len(rows_clean)
+
+    out["summary"] = {
+        "tables": len(out["tables"]),
+        "tables_with_rows": sections_with_rows,
+        "total_rows": total_rows,
+    }
+    return out
+
+
+def write_legend_readable(
+    *,
+    doc: dict[str, Any],
+    out_path: Path,
+) -> Path:
+    """Write the readable JSON projection of ``doc`` to ``out_path``."""
+    import json
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    readable = legend_doc_to_readable(doc)
+    out_path.write_text(json.dumps(readable, indent=2), encoding="utf-8")
+    return out_path
+
+
 __all__ = [
     "SCHEMA_VERSION",
+    "READABLE_SCHEMA_VERSION",
     "extract_legend",
     "legend_doc_to_markdown",
+    "legend_doc_to_readable",
     "write_legend_extract",
     "write_legend_markdown",
+    "write_legend_readable",
 ]
