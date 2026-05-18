@@ -198,11 +198,20 @@ def render_legend_overlay(
         if cur_row:
             rows.append((cur_y, cur_row))  # type: ignore[arg-type]
 
-        # Walk rows: a TITLE row is exactly 1 cell that
+        # Walk rows. A TITLE row is exactly 1 cell that
         #   (a) spans ≥60% of the wrapper's width, AND
-        #   (b) has height ≤ MAX_TITLE_HEIGHT_PX (single line of text)
-        # The row right after a title that has ≥2 cells becomes the
-        # column-header row.
+        #   (b) has height ≤ MAX_TITLE_HEIGHT_PX (single line of text).
+        #
+        # Only the FIRST title in each wrapper gets to declare column
+        # headers — the row right after it (if multi-cell) is cyan.
+        # Every SUBSEQUENT title in the same wrapper is a sub-section
+        # divider (e.g. "AMPLIFIERS AND ACCESSORIES continued",
+        # "CONNECTORS", "COAXIAL CABLES" inside Marriott's T0.02
+        # MATV / EQUIPMENT ROOM tables) and the row right after it is
+        # body data, NOT new column headers. The wrapper's column
+        # headers are declared once and inherited — matches the
+        # behavior already in legend_extract.merge_with_defaults.
+        wrapper_headers_declared = False
         for i, (_, row_cells) in enumerate(rows):
             if len(row_cells) != 1:
                 continue
@@ -217,12 +226,19 @@ def render_legend_overlay(
                 # title bar.
                 continue
             title_cells.add(cell.box_id)
-            # Column-header row = the row immediately after this title.
+            if wrapper_headers_declared:
+                # Sub-section divider in the same wrapper — magenta
+                # but the row right after is body data, not a new
+                # column-header row.
+                continue
+            # First title in this wrapper — capture the row after it
+            # as the wrapper's canonical column headers.
             if i + 1 < len(rows):
                 _, next_cells = rows[i + 1]
                 if len(next_cells) >= 2:
                     for nc in next_cells:
                         cyan_cells.add(nc.box_id)
+                    wrapper_headers_declared = True
 
         # Edge case: if the very top row of the wrapper is already
         # multiple cells (no preceding title), treat them as column
