@@ -148,53 +148,79 @@ def render_legend_overlay(
     ]
     cyan_cells: set[str] = set()
     title_cells: set[str] = set()
-    TITLE_BAND_PX = 120  # window for scanning candidate title row
     SAME_ROW_TOL = 18
     TITLE_WIDTH_FRAC = 0.60
 
     for table in blue_d1:
         t_x0, t_y0, t_x1, t_y1 = table.px_bbox
         t_width = max(1.0, t_x1 - t_x0)
-        # Collect cells in the title-band region of this table.
-        in_band: list = []
+        # Collect ALL ORANGE cells fully inside this wrapper (not just
+        # the top band). This is what lets us find section-title rows
+        # in the middle of a wrapper too, e.g. "ACCESS CONTROL AND
+        # INTERCOM SYMBOL LEGEND" and "CCTV SYMBOL LEGEND" which sit
+        # midway through Marriott's v2 right-half wrapper.
+        inside: list = []
         for b in result.boxes:
             if b.color != "ORANGE":
                 continue
             cx0, cy0, cx1, cy1 = b.px_bbox
             if cx0 < t_x0 - 2 or cx1 > t_x1 + 2:
                 continue
-            if cy0 < t_y0 - 2 or cy0 > t_y0 + TITLE_BAND_PX + 80:
+            if cy0 < t_y0 - 2 or cy1 > t_y1 + 2:
                 continue
-            in_band.append(b)
-        if not in_band:
+            inside.append(b)
+        if not inside:
             continue
-        in_band.sort(key=lambda b: b.px_bbox[1])  # by y0
-        first_y0 = in_band[0].px_bbox[1]
-        # Topmost row = cells whose y0 is within SAME_ROW_TOL of the first.
-        top_row = [b for b in in_band if abs(b.px_bbox[1] - first_y0) <= SAME_ROW_TOL]
-        # Is the topmost row a single wide cell (= title)?
-        title_row_is_single_wide = False
-        if len(top_row) == 1:
-            tr_x0, _, tr_x1, _ = top_row[0].px_bbox
-            if (tr_x1 - tr_x0) / t_width >= TITLE_WIDTH_FRAC:
-                title_row_is_single_wide = True
-        if title_row_is_single_wide:
-            title_cells.add(top_row[0].box_id)
-            # Column-header row = next row below the title.
-            title_bottom = top_row[0].px_bbox[3]
-            next_row_candidates = [b for b in in_band if b.px_bbox[1] >= title_bottom - 2]
-            if next_row_candidates:
-                next_row_y0 = next_row_candidates[0].px_bbox[1]
-                col_row = [b for b in next_row_candidates if abs(b.px_bbox[1] - next_row_y0) <= SAME_ROW_TOL]
-                if len(col_row) >= 2:
-                    for b in col_row:
-                        cyan_cells.add(b.box_id)
-        else:
-            # No single-cell title — treat the top row's cells as column
-            # headers if there are 2+ of them.
-            if len(top_row) >= 2:
-                for b in top_row:
-                    cyan_cells.add(b.box_id)
+        inside.sort(key=lambda b: b.px_bbox[1])
+
+        # Group cells into rows by Y baseline.
+        rows: list[tuple[float, list]] = []
+        cur_row: list = []
+        cur_y: float | None = None
+        for b in inside:
+            y0 = b.px_bbox[1]
+            if cur_y is None:
+                cur_row = [b]
+                cur_y = y0
+            elif abs(y0 - cur_y) <= SAME_ROW_TOL:
+                cur_row.append(b)
+            else:
+                rows.append((cur_y, cur_row))
+                cur_row = [b]
+                cur_y = y0
+        if cur_row:
+            rows.append((cur_y, cur_row))  # type: ignore[arg-type]
+
+        # Walk rows: a TITLE row is exactly 1 cell spanning ≥60% of the
+        # wrapper's width. The row right after a title that has ≥2
+        # cells becomes the column-header row.
+        for i, (_, row_cells) in enumerate(rows):
+            if len(row_cells) != 1:
+                continue
+            cell = row_cells[0]
+            cw = cell.px_bbox[2] - cell.px_bbox[0]
+            if cw / t_width < TITLE_WIDTH_FRAC:
+                continue
+            title_cells.add(cell.box_id)
+            # Column-header row = the row immediately after this title.
+            if i + 1 < len(rows):
+                _, next_cells = rows[i + 1]
+                if len(next_cells) >= 2:
+                    for nc in next_cells:
+                        cyan_cells.add(nc.box_id)
+
+        # Edge case: if the very top row of the wrapper is already
+        # multiple cells (no preceding title), treat them as column
+        # headers directly. Matches behavior of small bottom-tables
+        # like RESPONSIBILITY MATRIX that have no obvious title row.
+        if rows and len(rows[0][1]) >= 2 and rows[0][1][0].box_id not in cyan_cells:
+            # Only do this when no title-row precedes (which we already
+            # checked above didn't fire on row 0). And only when those
+            # top cells aren't titles themselves.
+            top_row_cells = rows[0][1]
+            if not any(c.box_id in title_cells for c in top_row_cells):
+                for c in top_row_cells:
+                    cyan_cells.add(c.box_id)
 
     # Layer 1 — every detected ORANGE cell (thin outline). Header cells
     # get cyan fill; title cells get magenta fill. Title takes priority
