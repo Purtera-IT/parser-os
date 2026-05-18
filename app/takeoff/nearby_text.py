@@ -184,4 +184,125 @@ def collect_nearby_text(
     return out
 
 
-__all__ = ["collect_nearby_text"]
+# ─── Two-tier room-label search ──────────────────────────────────────
+#
+# Real architectural plans put room labels 80-150 pt away from the
+# devices that belong to that space (the symbols cluster near
+# wall/ceiling locations; the label sits in the middle of the room).
+# The default 60 pt radius for ``collect_nearby_text`` is too tight to
+# catch them. This function scans a much wider radius but ONLY keeps
+# phrases that contain a room-shaped keyword — that filter keeps noise
+# down even at 150 pt.
+
+_ROOM_KEYWORDS = frozenset({
+    "ROOM",
+    "MDF",
+    "IDF",
+    "BDF",
+    "TR",  # telecom room
+    "ER",  # equipment room
+    "LOBBY",
+    "PREFUNCTION",
+    "BALLROOM",
+    "MEETING",
+    "CONFERENCE",
+    "CORRIDOR",
+    "HALL",
+    "HALLWAY",
+    "VESTIBULE",
+    "STORAGE",
+    "STOR.",
+    "CLOSET",
+    "STAIR",
+    "ELEV",
+    "ELEVATOR",
+    "OFFICE",
+    "GUESTROOM",
+    "BEDROOM",
+    "BATHROOM",
+    "RESTROOM",
+    "WC",
+    "LOUNGE",
+    "LIBRARY",
+    "FITNESS",
+    "POOL",
+    "SPA",
+    "BAR",
+    "KITCHEN",
+    "PANTRY",
+    "DINING",
+    "RECEPTION",
+    "REGISTRATION",
+    "BACK",  # often "BACK OF HOUSE"
+    "MECH",  # mechanical
+    "ELEC",  # electrical
+    "EXISTING",  # qualifier: "EXISTING MDF ROOM"
+    "PROPOSED",
+    "GEORGIA",  # named rooms — e.g. "GEORGIA BALLROOM"
+})
+
+
+def _phrase_looks_like_room(phrase: str) -> bool:
+    """True when a phrase contains at least one room keyword."""
+    upper_tokens = set(phrase.upper().split())
+    return bool(upper_tokens & _ROOM_KEYWORDS)
+
+
+def collect_room_labels(
+    *,
+    bbox: BBox,
+    page_words: list[PdfWord],
+    radius_pt: float = 150.0,
+    own_symbol: str | None = None,
+    max_results: int = 2,
+) -> list[str]:
+    """Wider-radius search for room-shaped phrases near ``bbox``.
+
+    Returns up to ``max_results`` phrases that (a) sit within
+    ``radius_pt`` of the bbox center AND (b) contain a recognized
+    room keyword. Use this to populate ``DeviceInstance.room_guess``
+    even when the label is 80-150 pt away (real-plan-sized radius).
+    """
+    cx = (bbox.x0 + bbox.x1) / 2.0
+    cy = (bbox.y0 + bbox.y1) / 2.0
+    words = _word_centers(page_words)
+    if words:
+        heights = sorted(w.height for w in words)
+        median_h = heights[len(heights) // 2]
+    else:
+        median_h = 8.0
+    phrases = _group_into_phrases(words, y_tolerance=median_h * 0.5)
+
+    own_upper = (own_symbol or "").upper()
+    candidates: list[tuple[float, str]] = []
+    for ph in phrases:
+        text = ph.text.strip()
+        if not text:
+            continue
+        if own_upper:
+            tokens = text.upper().split()
+            if tokens and all(t == own_upper for t in tokens):
+                continue
+        if not _phrase_looks_like_room(text):
+            continue
+        dx = ph.cx - cx
+        dy = ph.cy - cy
+        d = (dx * dx + dy * dy) ** 0.5
+        if d > radius_pt:
+            continue
+        candidates.append((d, text))
+
+    candidates.sort(key=lambda row: row[0])
+    seen: set[str] = set()
+    out: list[str] = []
+    for _, text in candidates:
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= max_results:
+            break
+    return out
+
+
+__all__ = ["collect_nearby_text", "collect_room_labels"]

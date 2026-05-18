@@ -20,14 +20,14 @@ from typing import Any
 from app.takeoff.candidate_fusion import fuse_candidates_to_devices
 from app.takeoff.corrections import apply_corrections_if_present
 from app.takeoff.exports import takeoff_summary
-from app.takeoff.keynotes import KeynoteTable, parse_keynote_table
+from app.takeoff.keynotes import KeynoteTable, parse_keynote_table_spatial
 from app.takeoff.legend_extractor import load_default_legend_rules, rules_by_symbol
 from app.takeoff.legend_self_extractor import (
     extract_legend_from_page,
     merge_with_defaults,
 )
 from app.takeoff.multipliers import floor_label_for_title, multiplier_for_title
-from app.takeoff.nearby_text import collect_nearby_text
+from app.takeoff.nearby_text import collect_nearby_text, collect_room_labels
 from app.takeoff.pdf_native import extract_page_words
 from app.takeoff.plan_regions import default_excluded_regions, default_plan_viewport
 from app.takeoff.schemas import (
@@ -189,8 +189,15 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
             # Pre-compute page words + keynote table once. The keynote
             # table is per-page (each plan has its own) and the words
             # feed both nearby-text capture and keynote-ref lookups.
+            # The spatial parser uses bbox-pairing — pairs numbers with
+            # descriptions by geometry instead of sequence order, which
+            # handles Marriott's column-split keynote table correctly.
             page_words = extract_page_words(page)
-            keynote_table = parse_keynote_table(page_index, page_text)
+            keynote_table = parse_keynote_table_spatial(
+                page_index=page_index,
+                page_text=page_text,
+                page_words=page_words,
+            )
 
             # Detect candidates on device-bearing pages (and emit rejected
             # candidates on legend / detail pages so the audit trail is

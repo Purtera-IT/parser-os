@@ -27,6 +27,7 @@ from app.takeoff.keynotes import (
     resolve_keynote,
 )
 from app.takeoff.legend_extractor import rules_by_symbol
+from app.takeoff.nearby_text import collect_room_labels
 from app.takeoff.pdf_native import PdfWord
 from app.takeoff.schemas import (
     BBox,
@@ -53,23 +54,38 @@ def _center_dist(a: BBox, b: BBox) -> float:
     return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
 
 
-def _pick_room_guess(nearby_text: list[str]) -> str | None:
-    """Return the first nearby phrase that looks like a room/space label.
+_ROOM_MARKER_TOKENS = frozenset({
+    "ROOM", "MDF", "IDF", "BDF", "TR", "ER",
+    "LOBBY", "PREFUNCTION", "BALLROOM", "MEETING", "CONFERENCE",
+    "CORRIDOR", "HALL", "HALLWAY", "VESTIBULE",
+    "STORAGE", "CLOSET", "STAIR", "ELEV", "ELEVATOR",
+    "OFFICE", "GUESTROOM", "BEDROOM", "BATHROOM", "RESTROOM", "WC",
+    "LOUNGE", "LIBRARY", "FITNESS", "POOL", "SPA", "BAR",
+    "KITCHEN", "PANTRY", "DINING", "RECEPTION", "REGISTRATION",
+    "MECH", "ELEC",
+})
 
-    Heuristics: ≥2 words OR contains "ROOM"/"MDF"/"IDF"; mostly uppercase;
-    not just punctuation or a date.
+
+def _pick_room_guess(nearby_text: list[str], own_symbol: str | None = None) -> str | None:
+    """Fallback room-label picker for the candidate's pre-populated
+    ``nearby_text`` (60 pt radius). Only accepts phrases that contain a
+    room-marker token — avoids ``"WN WN"`` / ``"CR 3"`` style noise that
+    happens to be multi-word.
     """
+    own_upper = (own_symbol or "").upper()
+    skip_metadata = ("SHEET NUMBER", "DRAWING TITLE", "REVISIONS", "SCOPE")
     for txt in nearby_text or []:
         if not txt:
             continue
         upper = txt.upper()
-        has_room_marker = any(m in upper for m in ("ROOM", "MDF", "IDF", "LOBBY", "BALLROOM", "STORAGE", "CLOSET", "CORRIDOR"))
-        word_count = len(txt.split())
-        if has_room_marker or word_count >= 2:
-            # Drop obvious sheet metadata strings.
-            if any(skip in upper for skip in ("SHEET NUMBER", "DRAWING TITLE", "REVISIONS")):
-                continue
-            return txt
+        tokens = upper.split()
+        if own_upper and tokens and all(t == own_upper for t in tokens):
+            continue
+        if any(skip in upper for skip in skip_metadata):
+            continue
+        if not (set(tokens) & _ROOM_MARKER_TOKENS):
+            continue
+        return txt
     return None
 
 
@@ -205,12 +221,28 @@ def fuse_candidates_to_devices(
             round(cand.bbox.center()[1], 1),
         )
 
-        # Room / keynote context resolution. The pipeline pre-populated
-        # ``cand.nearby_text`` via :func:`collect_nearby_text`; we lift
-        # the most-likely room label off it. Keynote refs are pulled
-        # straight from page words and resolved against the per-page
-        # keynote table.
-        room_guess = _pick_room_guess(cand.nearby_text)
+        # Room / keynote context resolution.
+        #
+        # Room guess uses a two-tier strategy:
+        #   1. Wide-radius (150 pt) room-keyword search via
+        #      ``collect_room_labels`` — captures labels like
+        #      "EXISTING MDF ROOM" that sit well outside the 60 pt
+        #      ``collect_nearby_text`` window.
+        #   2. Fallback to the candidate's pre-populated ``nearby_text``
+        #      (60 pt) for short-radius matches when the wider search
+        #      returned nothing room-shaped.
+        room_guess: str | None = None
+        if page_words is not None:
+            room_hits = collect_room_labels(
+                bbox=cand.bbox,
+                page_words=page_words,
+                own_symbol=cand.raw_symbol,
+            )
+            if room_hits:
+                room_guess = room_hits[0]
+        if room_guess is None:
+            room_guess = _pick_room_guess(cand.nearby_text, own_symbol=cand.raw_symbol)
+
         keynote_num: str | None = None
         keynote_text: str | None = None
         if keynote_table is not None and page_words is not None:
