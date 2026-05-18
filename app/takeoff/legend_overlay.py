@@ -198,14 +198,31 @@ def render_legend_overlay(
             od.rectangle((x0, y0, x1, y1), fill=(0, 200, 220, 90), outline=(0, 180, 200, 255), width=4)
             box_counts["CYAN_COLHDR"] += 1
 
-    # Layer 2 — every BLUE box (nesting hierarchy via line width).
+    # Layer 2 — meaningful BLUE table containers only.
+    #
+    # Two filters:
+    # * Skip the depth-0 wrapper. It covers the whole plotted area of
+    #   the page (~page minus margins) — useful internally for the
+    #   detector but visual noise on an overlay.
+    # * Skip BLUE boxes that have NO ORANGE children at all. Those are
+    #   stray contour detections (faint borders / underlines that the
+    #   raster detector promoted to a wrapper) that don't enclose any
+    #   actual cells. Small real tables like LEGEND NOTES or
+    #   RESPONSIBILITY MATRIX have 1-2 orange children and we WANT
+    #   to keep those, so the threshold is "at least one child" not
+    #   "at least three".
+    #
+    # All surviving boxes draw with uniform line weight so the page
+    # reads cleanly and the title/header coloring stands out.
     for b in result.boxes:
         if b.color != "BLUE":
             continue
+        if b.nested_depth == 0:
+            continue
+        if (b.children_count or 0) < 1:
+            continue
         x0, y0, x1, y1 = b.px_bbox
-        depth = max(0, min(b.nested_depth, 4))
-        width = max(2, 9 - 2 * depth)
-        od.rectangle((x0, y0, x1, y1), outline=(20, 70, 200, 255), width=width)
+        od.rectangle((x0, y0, x1, y1), outline=(20, 70, 200, 255), width=5)
         box_counts["BLUE"] += 1
 
     # Layer 3 — PURPLE markers.
