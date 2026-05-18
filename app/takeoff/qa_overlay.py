@@ -105,36 +105,58 @@ def write_qa_overlays(
     for c in takeoff.candidates:
         candidate_index.setdefault(c.page_index, []).append(c)
 
-    # Decide which pages to render.
+    # Decide which pages to render — dispatch by page_type via the router.
+    # legend pages get a different overlay (legend_table_match) and other
+    # non-device pages are skipped. The ``include_rejected_pages`` flag
+    # widens scope to spec/detail/riser too.
+    from app.takeoff.page_type_router import overlay_strategy_for
+
     pages_with_candidates = sorted({c.page_index for c in takeoff.candidates})
-    selected: list[int] = []
+    selected_device: list[int] = []
+    selected_legend: list[int] = []
     for page_index in pages_with_candidates:
         sheet = sheet_index.get(page_index)
-        if (
-            not include_rejected_pages
-            and sheet is not None
-            and sheet.page_type in _NON_DEVICE_PAGE_TYPES
-        ):
-            summary["skipped_non_device_pages"] += 1
-            continue
-        if accepted_only and not device_index.get(page_index):
-            summary["skipped_non_device_pages"] += 1
-            continue
-        selected.append(page_index)
+        strategy = overlay_strategy_for(sheet) if sheet is not None else "skip"
+
+        if strategy == "device_takeoff":
+            if accepted_only and not device_index.get(page_index):
+                summary["skipped_non_device_pages"] += 1
+                continue
+            selected_device.append(page_index)
+        elif strategy == "legend_table_match":
+            # Legend pages always render when the env flag is on — they
+            # don't have ``accepted_only`` semantics because legend rows
+            # are matched, not accepted/rejected.
+            selected_legend.append(page_index)
+        elif strategy == "skip":
+            if include_rejected_pages and sheet is not None and sheet.in_scope:
+                # Caller explicitly opted in to see skipped pages — render
+                # them with the device overlay even though page_type would
+                # normally have skipped them.
+                selected_device.append(page_index)
+            else:
+                summary["skipped_non_device_pages"] += 1
 
     if max_pages is not None:
-        selected = selected[: max(0, max_pages)]
+        # Cap applies across both strategy buckets, device first then legend.
+        room = max(0, max_pages)
+        if len(selected_device) >= room:
+            selected_device = selected_device[:room]
+            selected_legend = []
+        else:
+            selected_legend = selected_legend[: room - len(selected_device)]
 
-    summary["pages_requested"] = len(selected)
-    if not selected:
+    summary["pages_requested"] = len(selected_device) + len(selected_legend)
+    if not (selected_device or selected_legend):
         summary["elapsed_seconds"] = time.perf_counter() - started
         return summary
 
     out_dir = _qa_dir(pdf_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Device-takeoff overlays (the established flow).
     with fitz.open(str(pdf_path)) as doc:  # type: ignore[name-defined]
-        for page_index in selected:
+        for page_index in selected_device:
             try:
                 png = _render_page_overlay(
                     doc=doc,
@@ -149,6 +171,29 @@ def write_qa_overlays(
                     summary["pages_written"] += 1
             except Exception:  # pragma: no cover - never fail the parse
                 continue
+
+    # Legend overlay — uses the segmentation pipeline to match symbol
+    # rows. Imported lazily so a module-level import doesn't pull in
+    # orbitbrief_page_os when no legend pages are scheduled.
+    if selected_legend:
+        try:
+            from app.takeoff.legend_overlay import render_legend_overlay
+        except Exception:  # pragma: no cover - env-specific
+            render_legend_overlay = None  # type: ignore[assignment]
+        if render_legend_overlay is not None:
+            for page_index in selected_legend:
+                try:
+                    out_path = out_dir / f"page_{page_index:04d}_legend.png"
+                    lg_summary = render_legend_overlay(
+                        pdf_path=pdf_path,
+                        page_index=page_index,
+                        out_path=out_path,
+                        legend_rules=takeoff.legend_rules,
+                    )
+                    if lg_summary.get("output"):
+                        summary["pages_written"] += 1
+                except Exception:  # pragma: no cover - never fail the parse
+                    continue
 
     summary["elapsed_seconds"] = time.perf_counter() - started
     return summary

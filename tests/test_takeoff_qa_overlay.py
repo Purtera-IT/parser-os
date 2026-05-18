@@ -136,10 +136,16 @@ def test_qa_overlay_default_only_renders_accepted_device_pages(tmp_path: Path) -
     assert "page_0000" in pngs[0].name
 
 
-def test_qa_overlay_does_not_render_legend_or_spec_pages_by_default(tmp_path: Path) -> None:
-    """spec / legend / detail / riser pages are skipped by default even when
-    they have accepted-looking candidates. Setting ``include_rejected_pages=True``
-    AND ``accepted_only=False`` widens the scope to those pages."""
+def test_qa_overlay_dispatches_legend_and_skips_spec_detail_riser(tmp_path: Path) -> None:
+    """The page-type router decides what each page gets:
+
+    * spec / detail / riser → skipped (no overlay drawn)
+    * legend → rendered via the segmentation-aware legend overlay
+      (the legend_table_match strategy).
+
+    This test verifies the dispatch contract — exact PNG content
+    fidelity is covered by the legend_overlay module's own tests.
+    """
     pytest.importorskip("fitz")
     pytest.importorskip("PIL")
     from app.takeoff.qa_overlay import write_qa_overlays
@@ -154,7 +160,6 @@ def test_qa_overlay_does_not_render_legend_or_spec_pages_by_default(tmp_path: Pa
         _mk_sheet(3, "T7.01", "RISER DIAGRAM", "riser"),
     ]
     bbox = BBox(x0=60, y0=60, x1=80, y1=80)
-    # All four pages carry a candidate marked rejected (non-floor-plan).
     candidates = [
         _mk_candidate(
             i, "WN", bbox, rejection_reason="non_floor_plan", cand_id=f"c{i}"
@@ -168,15 +173,23 @@ def test_qa_overlay_does_not_render_legend_or_spec_pages_by_default(tmp_path: Pa
         candidates=candidates,
     )
 
-    # Default settings — should render NONE of these.
+    # Default — legend gets routed to legend_table_match; spec / detail /
+    # riser are all skipped. With the legend_overlay dependency available
+    # the legend page renders; if it fails (no orbitbrief_page_os) it
+    # silently no-ops, still counted as a request.
     summary = write_qa_overlays(pdf_path=pdf, takeoff=doc)
-    assert summary["pages_written"] == 0, summary
-    assert summary["pages_requested"] == 0, summary
-    assert summary["skipped_non_device_pages"] == 4, summary
+    assert summary["skipped_non_device_pages"] == 3, summary  # spec/detail/riser
+    assert summary["pages_requested"] == 1, summary  # legend only
+    # pages_written can be 0 or 1 depending on whether the segmentation
+    # pipeline successfully ran on the blank synthesized PDF.
+    assert summary["pages_written"] in (0, 1), summary
 
     qa_dir = pdf.parent / f"{pdf.stem}.derived" / "qa_overlays"
     pngs_default = list(qa_dir.glob("*.png")) if qa_dir.exists() else []
-    assert pngs_default == [], pngs_default
+    # If the legend overlay rendered, it lives at page_0001_legend.png.
+    # The spec / detail / riser pages must NOT have produced any output.
+    other_pngs = [p for p in pngs_default if "page_0000" in p.name or "page_0002" in p.name or "page_0003" in p.name]
+    assert other_pngs == [], other_pngs
 
     # Opt-in: render all four, including rejected-only pages.
     summary_full = write_qa_overlays(
