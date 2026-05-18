@@ -108,38 +108,93 @@ def render_legend_overlay(
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
 
-    box_counts: dict[str, int] = {"BLUE": 0, "ORANGE": 0, "PURPLE": 0, "CYAN_COLHDR": 0}
+    box_counts: dict[str, int] = {
+        "BLUE": 0, "ORANGE": 0, "PURPLE": 0,
+        "CYAN_COLHDR": 0,    # column-header row (multiple narrow cells)
+        "MAGENTA_TITLE": 0,  # table-title row (single wide cell)
+    }
 
-    # Find each BLUE table-container at depth 1, then identify the
-    # ORANGE cells whose top edge is within ~20 px of the container's
-    # top — those are the column-header row. Color them cyan.
+    # For each BLUE table-container at depth 1, identify TWO kinds of
+    # heading cells:
+    #
+    # * Table TITLE row — the topmost row when it consists of a SINGLE
+    #   cell spanning ≥ 60% of the table's width. Examples on T0.01:
+    #   "STRUCTURED CABLING SYMBOL LEGEND" / "LEGEND NOTES" /
+    #   "RESPONSIBILITY MATRIX" / "GENERAL NOTES FOR SYMBOL LEGENDS".
+    #   Rendered MAGENTA so a reviewer can tell at a glance "this is
+    #   the table's name, not its column-header row".
+    #
+    # * Column-HEADER row — the row IMMEDIATELY below the title row,
+    #   when it consists of multiple narrower cells. Examples: SYMBOL /
+    #   DESCRIPTION / CABLE COUNT / CABLE DESCRIPTION / etc. Rendered
+    #   CYAN.
+    #
+    # When the top row IS multiple narrow cells (no title row above),
+    # treat them as column headers directly.
     blue_d1 = [b for b in result.boxes if b.color == "BLUE" and b.nested_depth == 1]
     cyan_cells: set[str] = set()
-    HEADER_BAND_PX = 90  # ~ first row height at 2.5x scale (≈ 36 pt × 2.5)
+    title_cells: set[str] = set()
+    TITLE_BAND_PX = 120  # window for scanning candidate title row
+    SAME_ROW_TOL = 18
+    TITLE_WIDTH_FRAC = 0.60
+
     for table in blue_d1:
         t_x0, t_y0, t_x1, t_y1 = table.px_bbox
+        t_width = max(1.0, t_x1 - t_x0)
+        # Collect cells in the title-band region of this table.
+        in_band: list = []
         for b in result.boxes:
             if b.color != "ORANGE":
                 continue
             cx0, cy0, cx1, cy1 = b.px_bbox
-            # Must be horizontally inside the table.
             if cx0 < t_x0 - 2 or cx1 > t_x1 + 2:
                 continue
-            # Must sit in the top header band of the table.
-            if cy0 < t_y0 - 2 or cy0 > t_y0 + HEADER_BAND_PX:
+            if cy0 < t_y0 - 2 or cy0 > t_y0 + TITLE_BAND_PX + 80:
                 continue
-            cyan_cells.add(b.box_id)
+            in_band.append(b)
+        if not in_band:
+            continue
+        in_band.sort(key=lambda b: b.px_bbox[1])  # by y0
+        first_y0 = in_band[0].px_bbox[1]
+        # Topmost row = cells whose y0 is within SAME_ROW_TOL of the first.
+        top_row = [b for b in in_band if abs(b.px_bbox[1] - first_y0) <= SAME_ROW_TOL]
+        # Is the topmost row a single wide cell (= title)?
+        title_row_is_single_wide = False
+        if len(top_row) == 1:
+            tr_x0, _, tr_x1, _ = top_row[0].px_bbox
+            if (tr_x1 - tr_x0) / t_width >= TITLE_WIDTH_FRAC:
+                title_row_is_single_wide = True
+        if title_row_is_single_wide:
+            title_cells.add(top_row[0].box_id)
+            # Column-header row = next row below the title.
+            title_bottom = top_row[0].px_bbox[3]
+            next_row_candidates = [b for b in in_band if b.px_bbox[1] >= title_bottom - 2]
+            if next_row_candidates:
+                next_row_y0 = next_row_candidates[0].px_bbox[1]
+                col_row = [b for b in next_row_candidates if abs(b.px_bbox[1] - next_row_y0) <= SAME_ROW_TOL]
+                if len(col_row) >= 2:
+                    for b in col_row:
+                        cyan_cells.add(b.box_id)
+        else:
+            # No single-cell title — treat the top row's cells as column
+            # headers if there are 2+ of them.
+            if len(top_row) >= 2:
+                for b in top_row:
+                    cyan_cells.add(b.box_id)
 
-    # Layer 1 — every detected ORANGE cell (thin outline). Cells flagged
-    # as header rows get a cyan fill on top of the outline so the
-    # header band reads obviously.
+    # Layer 1 — every detected ORANGE cell (thin outline). Header cells
+    # get cyan fill; title cells get magenta fill. Title takes priority
+    # if a box is somehow flagged as both (shouldn't happen, but safe).
     for b in result.boxes:
         if b.color != "ORANGE":
             continue
         x0, y0, x1, y1 = b.px_bbox
         od.rectangle((x0, y0, x1, y1), outline=(255, 140, 0, 200), width=2)
         box_counts["ORANGE"] += 1
-        if b.box_id in cyan_cells:
+        if b.box_id in title_cells:
+            od.rectangle((x0, y0, x1, y1), fill=(210, 50, 180, 105), outline=(190, 30, 160, 255), width=4)
+            box_counts["MAGENTA_TITLE"] += 1
+        elif b.box_id in cyan_cells:
             od.rectangle((x0, y0, x1, y1), fill=(0, 200, 220, 90), outline=(0, 180, 200, 255), width=4)
             box_counts["CYAN_COLHDR"] += 1
 
@@ -193,6 +248,7 @@ def render_legend_overlay(
     footer_bits = [
         f"BLUE={box_counts['BLUE']}",
         f"ORANGE={box_counts['ORANGE']}",
+        f"MAGENTA_TITLE={box_counts['MAGENTA_TITLE']}",
         f"CYAN_HDR={box_counts['CYAN_COLHDR']}",
         f"PURPLE={box_counts['PURPLE']}",
     ]
