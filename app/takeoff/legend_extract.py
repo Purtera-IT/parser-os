@@ -517,17 +517,133 @@ def legend_doc_to_readable(doc: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _resolve_symbol_column_index(column_headers: list) -> int | None:
+    """Pick the column index that holds the symbol icon for each row.
+
+    Looks for a column whose header text contains 'SYMBOL'. Falls back
+    to column 0 when no header matches but there's at least one column —
+    on real legend tables column 0 is the symbol column 99% of the
+    time. Returns None when there are no columns at all.
+    """
+    if not column_headers:
+        return None
+    for i, c in enumerate(column_headers):
+        text = (c.get("text") or "").upper()
+        if "SYMBOL" in text:
+            return i
+    return 0
+
+
+def crop_symbol_icons(
+    *,
+    pdf_path: Path,
+    doc: dict[str, Any],
+    icons_dir: Path,
+    zoom: float = 4.0,
+) -> dict[tuple[int, int], str]:
+    """Crop each row's SYMBOL cell from the PDF and save as a PNG.
+
+    For every section that has a recognizable SYMBOL column, the first
+    cell of each body row is rendered at ``zoom``× into a PNG file
+    under ``icons_dir``. Filenames are ``section_NN_row_NNN.png``.
+
+    Returns a dict mapping ``(section_index_1based, row_index_0based)``
+    to the PNG filename (not the full path), suitable for embedding in
+    the readable JSON.
+
+    Silently no-ops (returns empty dict) when PyMuPDF / PIL aren't
+    available, or when the page can't be opened.
+    """
+    icon_map: dict[tuple[int, int], str] = {}
+    try:
+        import fitz
+    except Exception:  # pragma: no cover - env-specific
+        return icon_map
+    icons_dir = Path(icons_dir)
+    icons_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        pdf_doc = fitz.open(str(pdf_path))
+    except Exception:  # pragma: no cover - env-specific
+        return icon_map
+    try:
+        page_index = int(doc.get("page_index") or 0)
+        if page_index < 0 or page_index >= pdf_doc.page_count:
+            return icon_map
+        page = pdf_doc[page_index]
+        section_idx = 0
+        for table in doc.get("tables", []) or []:
+            for section in table.get("sections", []) or []:
+                section_idx += 1
+                cols = section.get("column_headers") or []
+                sym_col = _resolve_symbol_column_index(cols)
+                if sym_col is None:
+                    continue
+                for row_idx, row in enumerate(section.get("rows", []) or []):
+                    cells = row.get("cells") or []
+                    if sym_col >= len(cells):
+                        continue
+                    bbox_pt = cells[sym_col].get("bbox_pt")
+                    if not bbox_pt or len(bbox_pt) != 4:
+                        continue
+                    x0, y0, x1, y1 = bbox_pt
+                    if x1 - x0 < 4 or y1 - y0 < 4:
+                        continue
+                    try:
+                        clip = fitz.Rect(x0, y0, x1, y1)
+                        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
+                        fname = f"section_{section_idx:02d}_row_{row_idx + 1:03d}.png"
+                        pix.save(str(icons_dir / fname))
+                        icon_map[(section_idx, row_idx)] = fname
+                    except Exception:  # pragma: no cover - never raise
+                        continue
+    finally:
+        pdf_doc.close()
+    return icon_map
+
+
 def write_legend_readable(
     *,
     doc: dict[str, Any],
     out_path: Path,
+    icon_map: dict[tuple[int, int], str] | None = None,
+    icons_subdir: str | None = None,
 ) -> Path:
-    """Write the readable JSON projection of ``doc`` to ``out_path``."""
+    """Write the readable JSON projection of ``doc`` to ``out_path``.
+
+    When ``icon_map`` is provided, each row gets an extra
+    ``"<SYMBOL column>_icon"`` field pointing to the PNG filename
+    (prefixed with ``icons_subdir`` if given), so a consumer can locate
+    the cropped icon alongside the JSON.
+    """
     import json
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     readable = legend_doc_to_readable(doc)
+
+    if icon_map:
+        # Walk in the same order as legend_doc_to_readable so section
+        # indices line up.
+        section_idx = 0
+        for table in doc.get("tables", []) or []:
+            for section in table.get("sections", []) or []:
+                section_idx += 1
+                cols = section.get("column_headers") or []
+                sym_col = _resolve_symbol_column_index(cols)
+                if sym_col is None:
+                    continue
+                col_name = (cols[sym_col].get("text") or "SYMBOL").strip() or "SYMBOL"
+                # The readable JSON tables list is built in the same
+                # walk order so index = section_idx - 1.
+                readable_table = readable["tables"][section_idx - 1]
+                for row_idx, row_obj in enumerate(readable_table.get("rows") or []):
+                    icon_name = icon_map.get((section_idx, row_idx))
+                    if not icon_name:
+                        continue
+                    path = (f"{icons_subdir}/{icon_name}"
+                            if icons_subdir else icon_name)
+                    row_obj[f"{col_name}_icon"] = path
+
     out_path.write_text(json.dumps(readable, indent=2), encoding="utf-8")
     return out_path
 
@@ -535,6 +651,7 @@ def write_legend_readable(
 __all__ = [
     "SCHEMA_VERSION",
     "READABLE_SCHEMA_VERSION",
+    "crop_symbol_icons",
     "extract_legend",
     "legend_doc_to_markdown",
     "legend_doc_to_readable",
