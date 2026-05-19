@@ -413,9 +413,18 @@ def _render_page_overlay(
         color = _GREEN if is_accepted else _RED
         draw.rectangle(rect, outline=color, width=2)
 
-        # 3) Label above the inflated box: just the symbol code + zone.
-        label_parts = [c.raw_symbol]
+        # 3) Label above the inflated box: human-friendly device name.
+        # For shape-only synthetic codes the raw_symbol is a hash
+        # (e.g. ``__shp_1a115fda94``) — show the normalized_class
+        # instead so reviewers see "mini_dome_single_lens_camera" not
+        # an opaque ID.
         device = _device_for_candidate(candidate=c, devices=devices)
+        if c.raw_symbol.startswith("__shp_"):
+            cls = (device.normalized_class if device else c.normalized_class) or "device"
+            display_symbol = cls[:30]
+        else:
+            display_symbol = c.raw_symbol
+        label_parts = [display_symbol]
         if device is not None and device.home_run_to:
             label_parts.append(f"-> {device.home_run_to}")
         label = " ".join(label_parts)
