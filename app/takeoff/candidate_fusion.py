@@ -277,6 +277,95 @@ def fuse_candidates_to_devices(
             )
         )
 
+    # ─── Shape-only synthetic codes (cameras, motion detectors, …) ───
+    #
+    # These symbols are drawn as pure vectors with no text token on the
+    # plan, so the regular cross-validation path above never produces a
+    # device for them. They're identified by the ``__shp_`` prefix on
+    # their raw_symbol. Each surviving shape candidate becomes a device
+    # in its own right with needs_review semantics surfaced via the
+    # device's review_flags.
+    for sc in shape_candidates:
+        if sc.rejection_reason is not None:
+            continue
+        sym = sc.raw_symbol or ""
+        if not sym.startswith("__shp_"):
+            continue  # text-coded shape candidates are handled by xval above
+        rule = rule_index.get(sym)
+        if rule is None:
+            continue
+
+        sc_device_level = (
+            sheet.levels_represented[0] if len(sheet.levels_represented) == 1 else None
+        )
+        sc_home_run_to: str | None = None
+        sc_home_run_level: str | None = None
+        sc_zone_notes: list[str] = []
+        sc_review_flags: list[str] = ["shape_only_match"]
+        if zone_regions and len(zone_regions) > 1:
+            sc_home_run_to, sc_home_run_level, sc_zone_notes, extra_flags = (
+                assign_home_run_spatial(regions=zone_regions, device_bbox=sc.bbox)
+            )
+            sc_review_flags.extend(extra_flags)
+        else:
+            sc_home_run_to, sc_home_run_level, sc_zone_notes, extra_flags = assign_home_run(
+                zones=zones,
+                sheet_levels=sheet.levels_represented,
+                sheet_floor_label=sheet.floor_label,
+                sheet_number=sheet.sheet_number,
+                device_level=sc_device_level,
+            )
+            sc_review_flags.extend(extra_flags)
+
+        sc_room_guess: str | None = None
+        if page_words is not None:
+            sc_room_hits = collect_room_labels(
+                bbox=sc.bbox, page_words=page_words, own_symbol=sym,
+            )
+            if sc_room_hits:
+                sc_room_guess = sc_room_hits[0]
+
+        sc_keynote_num: str | None = None
+        sc_keynote_text: str | None = None
+        if keynote_table is not None and page_words is not None:
+            refs = find_keynote_refs_near(bbox=sc.bbox, page_words=page_words)
+            if refs:
+                sc_keynote_num, sc_keynote_text = resolve_keynote(
+                    refs=refs, table=keynote_table,
+                )
+
+        sc_device_id = stable_id(
+            "dev",
+            sheet.page_index,
+            sym,
+            round(sc.bbox.center()[0], 1),
+            round(sc.bbox.center()[1], 1),
+        )
+        devices.append(
+            DeviceInstance(
+                id=sc_device_id,
+                page_index=sheet.page_index,
+                sheet_number=sheet.sheet_number,
+                sheet_name=sheet.sheet_name,
+                raw_symbol=sym,
+                normalized_class=rule.normalized_class,
+                system=rule.system,
+                bbox=sc.bbox,
+                floor_label=sheet.floor_label,
+                levels_represented=list(sheet.levels_represented),
+                multiplier=sheet.multiplier,
+                room_guess=sc_room_guess,
+                keynote=sc_keynote_num,
+                keynote_text=sc_keynote_text,
+                home_run_to=sc_home_run_to,
+                home_run_level=sc_home_run_level,
+                zone_notes=list(sc_zone_notes),
+                legend_rule_id=_legend_rule_id(rule),
+                confidence=sc.confidence,
+                review_flags=sc_review_flags,
+            )
+        )
+
     return devices
 
 

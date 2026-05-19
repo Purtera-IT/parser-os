@@ -40,6 +40,7 @@ from app.takeoff.schemas import (
 from app.takeoff.ocr_signals import OCREngineHandle, ocr_candidates_for_page
 from app.takeoff.shape_signals import (
     ShapeTemplate,
+    extract_shape_only_templates_from_legend_doc,
     extract_templates_from_legend,
     shape_candidates_for_page,
 )
@@ -164,6 +165,34 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
             except Exception as exc:  # pragma: no cover - env-specific
                 shape_pass_warnings.append(
                     f"shape_signals_template_extraction_failed: {exc}"
+                )
+            # Phase B.2: cover textless legend rows (CCTV cameras, motion
+            # detectors, etc. drawn as pure vectors with empty SYMBOL
+            # cells). The text-anchored extractor above can't see those,
+            # so we run a structured-legend pass that crops the cell
+            # bbox directly. Each match adds a synthetic shape-only
+            # raw_symbol to both ``shape_templates`` and ``legend_rules``.
+            try:
+                from app.takeoff.legend_extract import extract_legend as _extract_legend_doc
+                _legend_doc = _extract_legend_doc(
+                    pdf_path=pdf_path,
+                    page_index=legend_source_page,
+                )
+                _so_templates, _so_rules = extract_shape_only_templates_from_legend_doc(
+                    pdf_path=pdf_path,
+                    legend_doc=_legend_doc,
+                )
+                if _so_templates:
+                    shape_templates.extend(_so_templates)
+                    legend_rules.extend(_so_rules)
+                    warnings.append(
+                        "legend_shape_only_rules_added: "
+                        f"{len(_so_rules)} textless legend row(s) "
+                        "promoted to shape-template detection"
+                    )
+            except Exception as exc:  # pragma: no cover - env-specific
+                shape_pass_warnings.append(
+                    f"shape_signals_textless_extraction_failed: {exc}"
                 )
         elif shape_pass_enabled and legend_source_page is None:
             shape_pass_warnings.append(
