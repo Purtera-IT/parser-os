@@ -243,6 +243,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:speaker
+      - device:paging_device
   - key: paging_horn_speaker
     entity_key: device:horn_speaker
     aliases:
@@ -252,6 +255,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:speaker
+      - device:paging_device
   - key: paging_amplifier
     entity_key: device:amplifier
     aliases_from:
@@ -260,6 +266,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:amplifier
+      - device:paging_device
   - key: paging_mic
     entity_key: device:paging_mic
     aliases_from:
@@ -271,6 +280,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:microphone
+      - device:paging_device
   - key: intercom_station
     entity_key: device:intercom
     aliases_from:

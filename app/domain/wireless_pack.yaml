@@ -259,6 +259,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:access_point
+      - device:wireless_device
   - key: wireless_antenna
     entity_key: device:antenna
     aliases_from:
@@ -267,6 +270,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:antenna
+      - device:wireless_device
   - key: wireless_controller
     entity_key: device:wlc
     aliases_from:
@@ -278,6 +284,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:wlc
+      - device:wireless_device
   - key: wireless_switch
     entity_key: device:poe_switch
     aliases_from:

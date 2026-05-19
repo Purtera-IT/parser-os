@@ -405,6 +405,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:recorder
+      - device:storage
   - key: camera_switch
     entity_key: device:poe_switch
     aliases:

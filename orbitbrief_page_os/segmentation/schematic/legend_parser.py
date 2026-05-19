@@ -120,6 +120,24 @@ def _row_looks_like_header(row: Sequence[TextBlock]) -> bool:
         "responsibility",
         "color",
         "size",
+        # Common abbreviations the construction trade uses on legends.
+        "mtg",
+        "mnt",
+        "ht",
+        "cbl",
+        "cnt",
+        "ct",
+        "pwr",
+        "rem",
+        "rgh",
+        "term",
+        "term.",
+        "vendor",
+        "brand",
+        "scope",
+        "resp",
+        "part",
+        "dim",
     )
     cells = [_norm(b.text) for b in row]
     # Every header cell should be short — real header rows use 1-3
@@ -150,35 +168,83 @@ def _row_looks_like_header(row: Sequence[TextBlock]) -> bool:
 # Maps a header cell's normalized text to the canonical attribute key
 # we store on ParsedLegendEntry.attributes. Order matters — the most
 # specific header is tried first so "cable count" wins over "cable".
+# Patterns are matched as either substrings or whole-token aliases
+# (a token like ``mtg`` matches a 1-3 word cell where it appears as a
+# standalone token, but not as part of a longer word like ``image``).
 _HEADER_ATTRIBUTE_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Cable columns
     ("cable count", "cable_count"),
+    ("cbl count", "cable_count"),
+    ("cbl cnt", "cable_count"),
+    ("cbl ct", "cable_count"),
+    ("cable cnt", "cable_count"),
+    ("cable ct", "cable_count"),
     ("cable description", "cable_description"),
+    ("cbl desc", "cable_description"),
+    ("cable desc", "cable_description"),
     ("cable type", "cable_type"),
     ("cable", "cable"),
+    ("cbl", "cable"),
     ("strand count", "strand_count"),
     ("strands", "strand_count"),
+    # Mounting / height
     ("mounting height", "mounting_height"),
-    ("aff", "mounting_height"),
+    ("mtg height", "mounting_height"),
+    ("mtg ht", "mounting_height"),
+    ("mtg. ht", "mounting_height"),
+    ("mnt height", "mounting_height"),
+    ("mnt ht", "mounting_height"),
+    ("ht aff", "mounting_height"),
     ("mounting", "mounting"),
+    ("mtg", "mounting"),
+    ("mnt", "mounting"),
+    # Rough-in / install detail
     ("rough-in", "rough_in"),
     ("rough in", "rough_in"),
+    ("rgh in", "rough_in"),
+    ("rgh-in", "rough_in"),
+    # Power requirement
     ("power requirement", "power_requirement"),
+    ("power req", "power_requirement"),
+    ("pwr req", "power_requirement"),
     ("power", "power_requirement"),
+    ("pwr", "power_requirement"),
+    # Terminations
     ("work area termination", "termination_work_area"),
+    ("wa termination", "termination_work_area"),
+    ("wa term", "termination_work_area"),
     ("closet termination", "termination_closet"),
+    ("tr termination", "termination_closet"),
+    ("idf termination", "termination_closet"),
+    ("idf term", "termination_closet"),
     ("termination", "termination"),
+    ("term.", "termination"),
+    # Vendor info
     ("manufacturer", "mfg"),
     ("mfg", "mfg"),
+    ("mfgr", "mfg"),
+    ("vendor", "mfg"),
+    ("brand", "mfg"),
     ("model", "model"),
     ("part number", "part_number"),
+    ("part no", "part_number"),
+    ("part #", "part_number"),
+    # Responsibility / scope
     ("by others", "responsibility"),
-    ("nic", "responsibility"),
     ("not in contract", "responsibility"),
     ("responsibility", "responsibility"),
+    ("resp", "responsibility"),
+    ("scope", "responsibility"),
+    # Remarks / notes
     ("remarks", "remarks"),
     ("notes", "remarks"),
+    ("rem", "remarks"),
+    ("comments", "remarks"),
+    # Misc
     ("color", "color"),
     ("size", "size"),
+    ("dimensions", "size"),
+    ("dim.", "size"),
 )
 
 

@@ -329,6 +329,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:switch
+      - device:network_device
   - key: network_router
     entity_key: device:router
     aliases_from:
@@ -337,6 +340,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:router
+      - device:network_device
   - key: network_firewall
     entity_key: device:firewall
     aliases_from:
@@ -345,6 +351,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:firewall
+      - device:network_device
   - key: network_controller
     entity_key: device:controller
     aliases:

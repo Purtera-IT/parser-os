@@ -254,6 +254,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:das_amplifier
+      - device:das_device
   - key: donor_antenna
     entity_key: device:donor_antenna
     aliases:
@@ -262,6 +265,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:antenna
+      - device:das_device
   - key: das_antenna
     entity_key: device:das_antenna
     aliases_from:
@@ -273,6 +279,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:antenna
+      - device:das_device
   - key: das_head_end
     entity_key: device:das_head_end
     aliases:
@@ -283,6 +292,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:das_amplifier
+      - device:das_device
   - key: das_remote_unit
     entity_key: device:das_remote_unit
     aliases:
@@ -291,6 +303,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:das_amplifier
+      - device:das_device
   - key: das_splitter
     entity_key: device:das_splitter
     aliases_from:

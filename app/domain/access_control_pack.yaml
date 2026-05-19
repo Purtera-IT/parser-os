@@ -293,6 +293,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:reader
+      - device:access_device
   - key: ac_controller
     entity_key: device:ac_controller
     aliases_from:
@@ -304,6 +307,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:controller
+      - device:access_device
   - key: rex_device
     entity_key: device:rex
     aliases_from:
@@ -312,6 +318,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:rex
+      - device:access_device
   - key: door_contact
     entity_key: device:door_contact
     aliases_from:
@@ -323,6 +332,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:contact
+      - device:access_device
   - key: electric_strike
     entity_key: device:electric_strike
     aliases_from:
@@ -331,6 +343,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:lock_hardware
+      - device:access_device
   - key: mag_lock
     entity_key: device:mag_lock
     aliases_from:
@@ -339,6 +354,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:lock_hardware
+      - device:access_device
   - key: ac_power_supply
     entity_key: device:power_supply
     aliases:

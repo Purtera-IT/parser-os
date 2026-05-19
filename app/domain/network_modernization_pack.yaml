@@ -57,6 +57,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:switch
+      - device:network_device
   - key: nm_router
     entity_key: device:router
     aliases_from:
@@ -65,6 +68,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:router
+      - device:network_device
   - key: nm_firewall
     entity_key: device:firewall
     aliases:
@@ -73,6 +79,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:firewall
+      - device:network_device
   - key: nm_rack
     entity_key: device:rack
     aliases:

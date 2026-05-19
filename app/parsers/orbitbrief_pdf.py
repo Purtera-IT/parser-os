@@ -3707,9 +3707,19 @@ def _run_schematic_pre_pass(
             # dropping the page (boss-review fix).
             pack_expects_schematic = bool(domain_pack and domain_pack.detection_targets)
             page_text_density = sum(len((b.text or "").strip()) for b in blocks)
+            # Image-only drawing detection: if the page has effectively no
+            # text BUT the document has parsed legends from other pages
+            # AND the active pack expects schematic content, we still want
+            # to run the glyph-template matcher against the raster page so
+            # symbol counts come back instead of vanishing silently.
+            raster_only_page = (
+                pack_expects_schematic
+                and parsed_legends
+                and not blocks
+            )
             if sheet is None and not own_legend and not (
                 pack_expects_schematic and page_text_density >= 40
-            ):
+            ) and not raster_only_page:
                 continue
             try:
                 page = doc.load_page(page_index)
@@ -3824,6 +3834,37 @@ def _run_schematic_pre_pass(
             zones = detect_exclusion_zones(blocks, page_bbox=page_bbox)
             for zone in zones:
                 excluded.append(zone.bbox)
+
+            # Prose-with-symbol suppression: any text block whose text
+            # contains a legend symbol but ISN'T a standalone label
+            # (e.g. "PTZ ROOM", "Card Reader Suite") must be added to
+            # the exclusion set so the glyph_template matcher does
+            # not catch the symbol's pixels inside the prose word.
+            # The text-tag matcher already filters via
+            # _block_text_is_standalone_symbol; glyph_template needs
+            # the bboxes excluded explicitly because it operates on
+            # rendered pixels.
+            from orbitbrief_page_os.segmentation.schematic.symbol_detector import (
+                _block_text_is_standalone_symbol,
+            )
+
+            legend_symbol_tokens: dict[str, Any] = {
+                (e.normalized_symbol_text or "").upper(): e
+                for e in resolved.legend.entries
+                if e.normalized_symbol_text
+            }
+            for blk in blocks:
+                text = (blk.text or "").strip()
+                if not text:
+                    continue
+                upper = text.upper()
+                if not any(
+                    sym in upper.split() or sym + " " in upper or " " + sym in upper or upper == sym
+                    for sym in legend_symbol_tokens
+                ):
+                    continue
+                if not _block_text_is_standalone_symbol(text, legend_symbol_tokens):
+                    excluded.append(blk.bbox)
             detections = detect_symbols(
                 page=page,
                 page_index=page_index,

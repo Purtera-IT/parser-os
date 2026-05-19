@@ -277,6 +277,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:controller
+      - device:bms_device
   - key: thermostat
     entity_key: device:thermostat
     aliases_from:
@@ -285,6 +288,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:controller
+      - device:bms_device
   - key: bms_sensor
     entity_key: device:bms_sensor
     aliases_from:
@@ -297,6 +303,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:sensor
+      - device:bms_device
   - key: vav_box
     entity_key: device:vav_box
     aliases:

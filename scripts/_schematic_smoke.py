@@ -30,11 +30,12 @@ def _materialize_fixture(name: str, fn) -> object:
 def _parametrize_cases(fn) -> list[tuple[str, dict]]:
     """Expand pytest.mark.parametrize markers into (label, kwargs) pairs.
 
-    Only supports the simple single-argname form used by the schematic
-    test suite. Multi-arg/indirect parametrize is not handled — those
-    tests should be exercised via real pytest.
+    Supports two forms:
+      - single argname ``"x"`` with iterable of values
+      - comma-separated argnames ``"a,b"`` with iterable of value tuples
+    Stacked parametrize markers (one per arg group) are AND'd together.
     """
-    cases: list[tuple[str, dict]] = []
+    base: list[tuple[str, dict]] = [("", {})]
     marks = getattr(fn, "pytestmark", [])
     for mark in marks:
         if getattr(mark, "name", "") != "parametrize":
@@ -43,10 +44,31 @@ def _parametrize_cases(fn) -> list[tuple[str, dict]]:
         if len(args) < 2:
             continue
         argname, values = args[0], args[1]
-        if isinstance(argname, str) and "," not in argname:
-            for value in values:
-                cases.append((f"{argname}={value!r}", {argname: value}))
-    return cases
+        if not isinstance(argname, str):
+            continue
+        argnames = [n.strip() for n in argname.split(",") if n.strip()]
+        expansions: list[tuple[str, dict]] = []
+        for value in values:
+            if len(argnames) == 1:
+                value_tuple = (value,)
+            else:
+                value_tuple = tuple(value)
+            if len(value_tuple) != len(argnames):
+                continue
+            kwargs = dict(zip(argnames, value_tuple))
+            label = ",".join(f"{k}={kwargs[k]!r}" for k in argnames)
+            expansions.append((label, kwargs))
+        new_base: list[tuple[str, dict]] = []
+        for prefix_label, prefix_kwargs in base:
+            for label, kwargs in expansions:
+                merged = dict(prefix_kwargs)
+                merged.update(kwargs)
+                full_label = f"{prefix_label}|{label}" if prefix_label else label
+                new_base.append((full_label, merged))
+        base = new_base
+    if base == [("", {})]:
+        return []
+    return base
 
 
 def run_module(modname: str) -> int:

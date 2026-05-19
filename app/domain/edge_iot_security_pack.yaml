@@ -61,6 +61,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:ip_camera
+      - device:camera
   - key: edge_nvr
     entity_key: device:nvr
     aliases_from:
@@ -69,6 +72,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:nvr
+      - device:recorder
   - key: edge_door_reader
     entity_key: device:card_reader
     aliases_from:
@@ -77,6 +83,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:reader
+      - device:card_reader
   - key: edge_iot_gateway
     entity_key: device:iot_gateway
     aliases:

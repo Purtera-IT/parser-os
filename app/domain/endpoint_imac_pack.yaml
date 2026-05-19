@@ -72,6 +72,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:dock
+      - device:endpoint_device
   - key: monitor
     aliases:
       - 'monitor'
@@ -82,6 +85,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:display
+      - device:endpoint_device
   - key: user_printer
     aliases:
       - 'printer'
@@ -92,6 +98,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:printer
+      - device:endpoint_device
   - key: user_phone
     entity_key: device:phone
     aliases:

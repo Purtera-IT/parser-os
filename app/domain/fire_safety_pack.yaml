@@ -294,6 +294,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:panel
+      - device:fire_device
   - key: fire_subpanel
     entity_key: device:fire_subpanel
     aliases:
@@ -303,6 +306,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:panel
+      - device:fire_device
   - key: smoke_detector
     entity_key: device:smoke_detector
     aliases_from:
@@ -311,6 +317,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:detector
+      - device:fire_device
   - key: heat_detector
     entity_key: device:heat_detector
     aliases_from:
@@ -319,6 +328,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:detector
+      - device:fire_device
   - key: pull_station
     entity_key: device:pull_station
     aliases_from:
@@ -327,6 +339,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:initiating_device
+      - device:fire_device
   - key: horn_strobe
     entity_key: device:horn_strobe
     aliases_from:
@@ -335,6 +350,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:notification_appliance
+      - device:fire_device
   - key: fire_speaker
     entity_key: device:fire_speaker
     aliases_from:
@@ -343,6 +361,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:notification_appliance
+      - device:fire_device
   - key: duct_detector
     entity_key: device:duct_detector
     aliases:
@@ -352,6 +373,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:detector
+      - device:fire_device
   - key: fire_module
     entity_key: device:fire_module
     aliases:

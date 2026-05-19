@@ -62,6 +62,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:pos_register
+      - device:pos_device
   - key: pin_pad
     entity_key: device:pin_pad
     aliases_from:
@@ -73,6 +76,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:payment_device
+      - device:pos_device
   - key: receipt_printer
     entity_key: device:receipt_printer
     aliases:
@@ -97,6 +103,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:cash_drawer
+      - device:pos_device
   - key: pos_data_drop
     entity_key: device:data_drop
     aliases:

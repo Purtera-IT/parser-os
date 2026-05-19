@@ -46,6 +46,97 @@ _WS = re.compile(r"\s+")
 _TEXT_TAG_PAD = 1.5  # PDF-point padding around a matched word
 
 
+def _block_text_is_standalone_symbol(
+    block_text: str, symbol_to_entry: dict[str, Any]
+) -> bool:
+    """Decide whether a TextBlock's text is a standalone symbol label.
+
+    Returns True when the block IS a legend symbol or symbol + small
+    qualifier. Returns False when the symbol token is part of a
+    longer phrase like ``PTZ ROOM`` or ``CR DOOR`` — that's drawing
+    body prose, not a device callout.
+
+    Acceptable shapes:
+      - exact symbol: ``WN``
+      - symbol + small index: ``WN-1``, ``WN1``, ``WN.2``, ``WN(3)``
+      - symbol + room/unit suffix: ``WN A``, ``WN.A1``, ``PTZ-A``
+      - two stacked symbols on the same line: ``WN CR`` (each must
+        be a legend symbol)
+    Rejected shapes:
+      - ``PTZ ROOM`` — second token is not a legend symbol
+      - ``CR DOOR HARDWARE`` — same
+      - ``MAIN ENTRY PTZ`` — symbol surrounded by non-symbol words
+    """
+    if not block_text:
+        return False
+    # Tokenize on whitespace (preserves common qualifiers like "WN-1").
+    tokens = [t for t in re.split(r"\s+", block_text.strip()) if t]
+    if not tokens:
+        return False
+    # The first token MUST be a legend symbol (or symbol + qualifier).
+    if _extract_symbol_core(tokens[0], symbol_to_entry) is None:
+        return False
+    # Remaining tokens are allowed when they look like compact
+    # qualifiers (single letter, 1-3 digit number, room codes like
+    # ``A101``, ``B-12``) OR are themselves legend symbols. A pure
+    # alphabetic token of length >= 3 (``ROOM``, ``DOOR``, ``LOBBY``)
+    # is body prose and disqualifies the block — qualifier strings on
+    # real drawings either contain a digit or stay ≤ 2 letters long.
+    for token in tokens[1:]:
+        upper = token.upper()
+        if _extract_symbol_core(upper, symbol_to_entry) is not None:
+            continue
+        if not _looks_like_qualifier(upper):
+            return False
+    return True
+
+
+def _looks_like_qualifier(token: str) -> bool:
+    """Compact qualifier shapes like ``A``, ``B1``, ``12``, ``A101``, ``B-12``.
+
+    A pure alphabetic token of 3+ characters never qualifies — those
+    are body-prose words.
+    """
+    if not token:
+        return False
+    # Strip standard separators for the digit check.
+    core = re.sub(r"[\-./()]+", "", token)
+    if not core:
+        return False
+    if any(ch.isdigit() for ch in core):
+        # Numeric / mixed token: short enough? Construction room IDs
+        # rarely exceed 6 chars (``B-1201``).
+        return len(core) <= 6
+    # Pure alphabetic: max 2 letters (``A``, ``BC``).
+    return len(core) <= 2
+
+
+def _extract_symbol_core(token: str, symbol_to_entry: dict[str, Any]) -> str | None:
+    """Return the legend symbol embedded in ``token`` if one matches.
+
+    Tries the full uppercased token, then progressively shorter
+    leading-letter prefixes (so ``WN-1`` -> ``WN``, ``PTZ.3`` -> ``PTZ``).
+    Returns the matching legend key, or None if no prefix is a known
+    symbol.
+    """
+    t = token.upper().strip()
+    if not t:
+        return None
+    if t in symbol_to_entry:
+        return t
+    # Strip trailing non-letter qualifier: digits, punct, parens, dashes.
+    import re as _re
+
+    for stripped in (
+        _re.sub(r"[^A-Z0-9].*$", "", t),
+        _re.sub(r"[\-_./()]*\d.*$", "", t),
+        _re.match(r"^[A-Z]+", t).group(0) if _re.match(r"^[A-Z]+", t) else "",
+    ):
+        if stripped and stripped in symbol_to_entry:
+            return stripped
+    return None
+
+
 def _tokenize(text: str) -> list[tuple[str, int, int]]:
     """Return ``[(token, start, end), ...]`` for word-boundary tokens.
 
@@ -306,6 +397,16 @@ def _text_tag_matches(
 
     for blk in blocks:
         if any(_bbox_iou(blk.bbox, ex) > 0.0 for ex in excluded_bboxes):
+            continue
+        # Strong FP suppression: legend symbols on a real drawing
+        # appear as standalone labels next to a glyph, not embedded
+        # inside prose like "PTZ ROOM" or "ACCESS CR DOOR". The block's
+        # entire normalized text must equal a legend symbol (optionally
+        # padded by a small number — "WN 1", "PTZ-3") or be a
+        # space-separated list of legend symbols. Body text containing
+        # a legend token plus unrelated words is NOT counted.
+        block_text = (blk.text or "").strip()
+        if not _block_text_is_standalone_symbol(block_text, symbol_to_entry):
             continue
         chars = _char_bboxes_for_block(page, blk)
         tokens = _tokenize(blk.text)

@@ -305,6 +305,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:display
+      - device:av_device
   - key: av_projector
     entity_key: device:projector
     aliases_from:
@@ -313,6 +316,10 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:display
+      - device:projector
+      - device:av_device
   - key: av_speaker
     entity_key: device:speaker
     aliases_from:
@@ -321,6 +328,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:speaker
+      - device:av_device
   - key: av_mic
     entity_key: device:microphone
     aliases_from:
@@ -329,6 +339,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:microphone
+      - device:av_device
   - key: av_vc_camera
     entity_key: device:vc_camera
     aliases_from:
@@ -340,6 +353,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:camera
+      - device:av_device
   - key: av_rack
     aliases:
       - 'rack'
@@ -350,6 +366,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:rack
+      - device:av_device
   - key: av_floor_box
     entity_key: device:floor_box
     aliases:

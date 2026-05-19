@@ -273,6 +273,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:panel
+      - device:electrical_device
   - key: transformer
     entity_key: device:transformer
     aliases:
@@ -282,6 +285,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:transformer
+      - device:electrical_device
   - key: disconnect_switch
     entity_key: device:disconnect
     aliases:
@@ -304,6 +310,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:outlet
+      - device:electrical_device
   - key: home_run_circuit
     entity_key: device:home_run
     aliases:

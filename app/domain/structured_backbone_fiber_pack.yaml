@@ -84,6 +84,9 @@ detection_targets:
     completeness: load_bearing
     modalities:
       - line_run
+    parent_entity_keys:
+      - device:cable
+      - device:cabling_device
   - key: fiber_patch_panel
     entity_key: device:patch_panel
     aliases_from:
@@ -92,6 +95,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:patch_panel
+      - device:cabling_device
   - key: fiber_riser
     entity_key: device:fiber_riser
     aliases:
