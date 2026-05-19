@@ -390,6 +390,106 @@ def extract_shape_only_templates_from_legend_doc(
 # ─── Match runner ───────
 
 
+def _spatial_cluster(
+    points: list[tuple[float, float]],
+    *,
+    radius: float = 80.0,
+    min_size: int = 4,
+) -> list[tuple[float, float, int]]:
+    """Greedy spatial clustering of (x, y) points.
+
+    Returns ``[(cx, cy, n), …]`` where ``(cx, cy)`` is the centroid of
+    each cluster and ``n`` is the member count. Clusters with fewer
+    than ``min_size`` members are discarded — a small cluster of ORB
+    matches is usually noise, not a real icon location.
+    """
+    if not points:
+        return []
+    try:
+        import numpy as np  # type: ignore
+    except Exception:
+        return []
+    arr = np.array(points, dtype=np.float32)
+    n = len(arr)
+    assigned = np.zeros(n, dtype=bool)
+    out: list[tuple[float, float, int]] = []
+    for i in range(n):
+        if assigned[i]:
+            continue
+        dists = np.linalg.norm(arr - arr[i], axis=1)
+        mask = (dists < radius) & (~assigned)
+        if int(mask.sum()) < min_size:
+            continue
+        members = arr[mask]
+        out.append((
+            float(members[:, 0].mean()),
+            float(members[:, 1].mean()),
+            int(mask.sum()),
+        ))
+        assigned |= mask
+    return out
+
+
+def _verify_local_ncc(
+    *,
+    image: Any,
+    template: Any,
+    cx: float,
+    cy: float,
+    scales: tuple[float, ...] = (0.5, 0.7, 1.0, 1.4),
+) -> tuple[float, float]:
+    """Sweep NCC scores at ``(cx, cy)`` across ``scales`` on ``image``.
+
+    Returns ``(best_ncc, ink_density_at_best)``. Windows that are
+    nearly uniform white (no real content) or saturated ink (sit
+    inside hatching) are rejected at the gate so they can't trigger
+    a false positive — the returned NCC for such windows is 0.0.
+    """
+    cv2, np, reason = _try_import_cv2()
+    if reason is not None:
+        return (0.0, 0.0)
+    th, tw = template.shape[:2]
+    best_ncc = 0.0
+    best_ink = 0.0
+    for s in scales:
+        sw = max(MIN_TEMPLATE_PX, int(round(tw * s)))
+        sh = max(MIN_TEMPLATE_PX, int(round(th * s)))
+        if s != 1.0:
+            try:
+                tpl_s = cv2.resize(template, (sw, sh), interpolation=cv2.INTER_AREA)
+            except Exception:
+                continue
+        else:
+            tpl_s = template
+            sw, sh = tw, th
+        win_w = int(sw * 1.6)
+        win_h = int(sh * 1.6)
+        x0 = max(0, int(cx) - win_w // 2)
+        y0 = max(0, int(cy) - win_h // 2)
+        x1 = min(image.shape[1], x0 + win_w)
+        y1 = min(image.shape[0], y0 + win_h)
+        win = image[y0:y1, x0:x1]
+        if win.shape[0] < sh + 1 or win.shape[1] < sw + 1:
+            continue
+        ink_mask = (win < 200).astype("uint8")
+        ink_density = float(ink_mask.sum()) / max(1, ink_mask.size)
+        # Reject blank / over-inked windows so NCC math doesn't
+        # produce spurious high scores from low-variance regions.
+        if ink_density < 0.015 or ink_density > 0.35:
+            continue
+        if float(win.std()) < 15.0:
+            continue
+        try:
+            res = cv2.matchTemplate(win, tpl_s, cv2.TM_CCOEFF_NORMED)
+            score = float(res.max())
+            if score > best_ncc:
+                best_ncc = score
+                best_ink = ink_density
+        except Exception:
+            continue
+    return (best_ncc, best_ink)
+
+
 def _nms(points: list[tuple[int, int, float]], radius: float) -> list[tuple[int, int, float]]:
     """Greedy non-max suppression on (x, y, score) tuples.
 
@@ -447,6 +547,28 @@ def shape_candidates_for_page(
     page_type = sheet.page_type
     is_device_bearing = page_type in {"floor_plan", "typical_plan"} and sheet.in_scope
 
+    # Lazily compute page-wide ORB keypoints + descriptors — only when
+    # at least one shape-only synthetic template needs them. Text-
+    # anchored templates (WN, CR, etc.) keep the original full-page
+    # NCC path because their cell crop includes both the text + the
+    # icon, which is enough for clean correlation against plan icons.
+    _orb_cache: dict[str, Any] = {}
+
+    def _ensure_page_orb() -> tuple[Any, Any] | None:
+        if "kp" in _orb_cache:
+            return (_orb_cache["kp"], _orb_cache["des"])
+        try:
+            page_orb = cv2.ORB_create(
+                nfeatures=20000, scaleFactor=1.2, nlevels=8,
+                fastThreshold=10, edgeThreshold=10, patchSize=15,
+            )
+            kp, des = page_orb.detectAndCompute(image, None)
+        except Exception:  # pragma: no cover - never fail
+            kp, des = None, None
+        _orb_cache["kp"] = kp
+        _orb_cache["des"] = des
+        return (kp, des)
+
     for template in templates:
         tpl = template.image
         th, tw = tpl.shape[:2]
@@ -454,57 +576,73 @@ def shape_candidates_for_page(
             continue
         if image.shape[0] < th + 1 or image.shape[1] < tw + 1:
             continue
-        # Shape-only synthetic codes (cameras, motion detectors, etc.)
-        # get multi-scale matching because the legend icon is often
-        # drawn larger than the plan icon. Text-anchored templates use
-        # the original single-scale path because they're cropped from a
-        # cell at the same scale as the plan render.
         is_shape_only = template.raw_symbol.startswith("__shp_")
-        # Multi-scale matching for shape-only synthetic codes — but keep
-        # the scale list small (3 scales) so the pipeline stays usable.
-        # If a camera doesn't match at 0.50x / 0.75x / 1.00x, it's
-        # almost certainly not present.
-        scales_to_try = (
-            (0.50, 0.75, 1.00)
-            if is_shape_only
-            else (1.00,)
-        )
-        # Shape-only matches at a lower threshold to compensate for
-        # icon-style drift between legend and plan (legend icons are
-        # often bolder + cleaner backgrounds). 0.70 stays *strict* —
-        # at 0.55 the false-positive rate explodes because the plan's
-        # wall hatching alone correlates ~0.6 with many small icons.
-        # Universal: this only affects __shp_ codes; text-anchored
-        # templates keep the original 0.85 threshold.
-        effective_threshold = (
-            min(threshold, 0.70) if is_shape_only else threshold
-        )
         points: list[tuple[int, int, float]] = []
-        for s in scales_to_try:
+
+        if is_shape_only:
+            # ── ORB + local-NCC verification path ──
+            #
+            # Shape-only icons (cameras, motion detectors, etc.) are
+            # drawn small (5-15 pt) on plans, often surrounded by wall
+            # hatching that wrecks full-page NCC correlation. ORB finds
+            # candidate regions by matching distinctive corner features
+            # that survive scale and stroke-thickness drift. Then a
+            # *local* NCC on each candidate region verifies it, with
+            # ink-density and variance gates rejecting blank windows.
+            page_orb = _ensure_page_orb()
+            if page_orb is None or page_orb[1] is None:
+                continue
+            kp_page, des_page = page_orb
+            # Upscale the template so ORB has enough features to extract.
             try:
-                if s == 1.00:
-                    tpl_scaled = tpl
-                else:
-                    new_w = max(MIN_TEMPLATE_PX, int(round(tw * s)))
-                    new_h = max(MIN_TEMPLATE_PX, int(round(th * s)))
-                    tpl_scaled = cv2.resize(tpl, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                sth, stw = tpl_scaled.shape[:2]
-                if image.shape[0] < sth + 1 or image.shape[1] < stw + 1:
+                tpl_up = cv2.resize(
+                    tpl, (tw * 4, th * 4), interpolation=cv2.INTER_CUBIC,
+                )
+                tpl_orb = cv2.ORB_create(
+                    nfeatures=500, scaleFactor=1.2, nlevels=8,
+                    fastThreshold=10, edgeThreshold=10, patchSize=15,
+                )
+                kp_t, des_t = tpl_orb.detectAndCompute(tpl_up, None)
+            except Exception:
+                kp_t, des_t = None, None
+            if des_t is None or len(kp_t) < 8:
+                continue
+            try:
+                bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+                pairs = bf.knnMatch(des_page, des_t, k=2)
+            except Exception:
+                pairs = []
+            good = [p[0] for p in pairs if len(p) == 2
+                    and p[0].distance < 0.70 * p[1].distance]
+            if len(good) < 4:
+                continue
+            pts = [kp_page[m.queryIdx].pt for m in good]
+            clusters = _spatial_cluster(pts, radius=80.0, min_size=4)
+            for cx, cy, n_orb in clusters:
+                ncc, ink_density = _verify_local_ncc(
+                    image=image, template=tpl, cx=cx, cy=cy,
+                )
+                if ncc < 0.55:
                     continue
-                res = cv2.matchTemplate(image, tpl_scaled, cv2.TM_CCOEFF_NORMED)
+                if not (0.015 <= ink_density <= 0.35):
+                    continue
+                # ORB cluster + clean local NCC + sane ink = real match.
+                # Store as a points entry so the downstream NMS / bbox
+                # construction logic below handles it uniformly.
+                points.append((int(cx - tw // 2), int(cy - th // 2), ncc))
+        else:
+            # ── Text-anchored full-page NCC path (unchanged) ──
+            try:
+                res = cv2.matchTemplate(image, tpl, cv2.TM_CCOEFF_NORMED)
             except Exception:
                 continue
-            ys, xs = np.where(res >= effective_threshold)
+            ys, xs = np.where(res >= threshold)
             for y, x in zip(ys.tolist(), xs.tolist()):
                 score = float(res[y, x])
-                cx = int(x + stw / 2.0)
-                cy = int(y + sth / 2.0)
-                # Reproject to native-template coords for downstream
-                # consistency: every match's bbox uses the original
-                # template's tw/th.
+                cx = int(x + tw / 2.0)
+                cy = int(y + th / 2.0)
                 points.append((cx - tw // 2, cy - th // 2, score))
-        # ``points`` is populated by the multi-scale loop above —
-        # downstream NMS + candidate emission walks it as before.
+
         kept = _nms(points, NMS_RADIUS_PX)
         rule = rules_by_symbol.get(template.raw_symbol)
         normalized = rule.normalized_class if rule else None
