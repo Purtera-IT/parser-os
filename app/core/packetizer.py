@@ -32,6 +32,15 @@ def _valid_quantity_conflict_group(
     * AND multi-source provenance — either two artifacts or two
       authority classes — so we never certify a single source
       arguing with itself.
+
+    Narrow exception for schematic same-sheet quantity contradictions
+    (PR7): when the edge carries
+    ``edge_family="schematic_quantity_contradiction"`` AND both
+    quantity atoms have bbox provenance in PDF points, we allow
+    same-artifact certification.  The bbox requirement ensures we
+    can replay-verify each side independently, so the conflict is
+    not the same source arguing with itself but two pixel regions
+    of the same drawing disagreeing.
     """
     qty_atoms = [a for a in group if a.atom_type == AtomType.quantity]
     if len(qty_atoms) < 2:
@@ -41,8 +50,50 @@ def _valid_quantity_conflict_group(
     artifacts = {a.artifact_id for a in qty_atoms}
     authorities = {a.authority_class for a in qty_atoms}
     if len(artifacts) < 2 and len(authorities) < 2:
+        if _is_schematic_quantity_group(qty_atoms, related_edges):
+            return True
         return False
     return True
+
+
+def _is_schematic_quantity_group(
+    qty_atoms: list["EvidenceAtom"],
+    related_edges: list["EvidenceEdge"],
+) -> bool:
+    """Same-artifact schematic quantity-conflict gate.
+
+    Both atoms must:
+      - have ``value['schematic_target_key']`` set,
+      - have a ``SourceRef.locator`` with a 4-element ``bbox`` and
+        ``bbox_units == "pdf_points"``.
+    And at least one related edge must carry
+    ``metadata['edge_family'] == "schematic_quantity_contradiction"``.
+    """
+    if len(qty_atoms) < 2:
+        return False
+    for atom in qty_atoms:
+        value = atom.value if isinstance(atom.value, dict) else {}
+        if not value.get("schematic_target_key"):
+            return False
+        srefs = atom.source_refs or []
+        has_bbox = False
+        for src in srefs:
+            loc = src.locator if isinstance(src.locator, dict) else {}
+            bbox = loc.get("bbox")
+            if (
+                isinstance(bbox, (list, tuple))
+                and len(bbox) == 4
+                and loc.get("bbox_units") == "pdf_points"
+            ):
+                has_bbox = True
+                break
+        if not has_bbox:
+            return False
+    for edge in related_edges:
+        meta = getattr(edge, "metadata", {}) or {}
+        if isinstance(meta, dict) and meta.get("edge_family") == "schematic_quantity_contradiction":
+            return True
+    return False
 
 
 def _atom_can_govern_scope_exclusion(atom: "EvidenceAtom") -> bool:

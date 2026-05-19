@@ -451,7 +451,6 @@ class OrbitBriefPdfParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> ParserOutput:
-        del domain_pack
         structured_doc = build_structured_document(path)
         write_structured_doc(path, structured_doc)
         write_structured_markdown(path, structured_doc)
@@ -479,26 +478,47 @@ class OrbitBriefPdfParser(BaseParser):
             )
         except Exception:  # pragma: no cover — never fail the parse
             pass
+        # Schematic legend-first pre-pass (PR5).  Only fires when a
+        # legend is actually parsed in the document or when the
+        # domain pack declares detection targets; otherwise leaves
+        # the output stream untouched so RFP-only PDFs are unchanged.
+        schematic_atoms: list[EvidenceAtom] = []
+        schematic_derived: list[dict[str, Any]] = []
+        try:
+            schematic_atoms, schematic_derived = _run_schematic_pre_pass(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                path=path,
+                parser_version=self.parser_version,
+                domain_pack=domain_pack,
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            schematic_atoms = []
+            schematic_derived = []
+        if schematic_atoms:
+            atoms.extend(schematic_atoms)
         # Surface the derived artifacts in the parser output so the
         # compiler-level cache captures them and replays them on every
         # cache hit.  This guarantees ``<stem>.derived/structured.json``
         # and ``structured.md`` are always present after a compile, even
         # for cache-hot artifacts.
         derived = derived_dir_for(path)
+        derived_files: list[dict[str, Any]] = [
+            {
+                "relative_path": f"{derived.name}/{STRUCTURED_FILENAME}",
+                "content_kind": "json",
+                "content_json": structured_doc,
+            },
+            {
+                "relative_path": f"{derived.name}/{STRUCTURED_MARKDOWN_FILENAME}",
+                "content_kind": "markdown",
+                "content_text": structured_doc_to_markdown(structured_doc),
+            },
+        ]
+        derived_files.extend(schematic_derived)
         return ParserOutput(
             atoms=atoms,
-            derived_files=[
-                {
-                    "relative_path": f"{derived.name}/{STRUCTURED_FILENAME}",
-                    "content_kind": "json",
-                    "content_json": structured_doc,
-                },
-                {
-                    "relative_path": f"{derived.name}/{STRUCTURED_MARKDOWN_FILENAME}",
-                    "content_kind": "markdown",
-                    "content_text": structured_doc_to_markdown(structured_doc),
-                },
-            ],
+            derived_files=derived_files,
         )
 
 
@@ -3393,6 +3413,428 @@ def _group_form_option_atoms_from_text(
                 )
             )
     return out
+
+
+def _run_schematic_pre_pass(
+    *,
+    project_id: str,
+    artifact_id: str,
+    path: Path,
+    parser_version: str,
+    domain_pack: DomainPack | None,
+) -> tuple[list[EvidenceAtom], list[dict[str, Any]]]:
+    """Legend-first schematic pre-pass for a PDF (PR5).
+
+    Returns ``(atoms, derived_files)``.  ``atoms`` is a deterministic
+    list of ``schematic_*`` atoms; ``derived_files`` is a list of
+    ``ParserDerivedFile`` dicts to attach to ``ParserOutput``.
+
+    Behavior is conservative — if no legend is parsed anywhere in the
+    document AND the active domain pack declares no detection
+    targets, the pre-pass returns empty results so non-schematic PDFs
+    are untouched (preserves the determinism + provenance contracts
+    for the existing test grid).
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover
+        return [], []
+    from app.parsers.schematic_atom_emitters import (
+        collect_all,
+        emit_detection_atom,
+        emit_legend_atom,
+        emit_target_set_atom,
+        emit_warning_atom,
+        intersect_with_pack,
+    )
+    from app.parsers.schematic_models import DetectionTargetSet, SchematicWarning
+    from orbitbrief_page_os.segmentation.schematic.legend_locator import (
+        locate_legend_candidates,
+        page_text_blocks,
+    )
+    from orbitbrief_page_os.segmentation.schematic.legend_parser import parse_legend
+    from orbitbrief_page_os.segmentation.schematic.legend_resolver import (
+        LegendResolver,
+        extract_sheet_number,
+    )
+    from orbitbrief_page_os.segmentation.schematic.symbol_detector import detect_symbols
+
+    try:
+        doc = fitz.open(str(path))
+    except Exception:  # pragma: no cover
+        return [], []
+
+    resolver = LegendResolver()
+    per_page_blocks: dict[int, list[Any]] = {}
+    per_page_legend_bbox: dict[int, tuple[float, float, float, float]] = {}
+    parsed_legends: list[Any] = []
+
+    atoms: list[EvidenceAtom] = []
+    legend_records: list[dict[str, Any]] = []
+    target_records: list[dict[str, Any]] = []
+    detection_records: list[dict[str, Any]] = []
+
+    declared_emitted: set[tuple[str, str]] = set()
+    try:
+        for page_index in range(doc.page_count):
+            try:
+                blocks = page_text_blocks(doc.load_page(page_index))
+            except Exception:
+                blocks = []
+            per_page_blocks[page_index] = blocks
+            legend = None
+            candidates = locate_legend_candidates(page_index=page_index, blocks=blocks)
+            # Try candidates in score order; the first one whose
+            # parser returns a non-empty legend wins.  A pure
+            # ``is_strong`` filter is too aggressive here — a header
+            # match alone scores 0.55 (below the 0.65 strong cutoff)
+            # yet legitimately yields a legend when the rows below
+            # are tabular.  We trust ``parse_legend`` to return
+            # ``None`` when there is no real content; that prevents
+            # weak candidates from producing false legends.
+            ordered = sorted(
+                (c for c in candidates if c.score >= 0.45),
+                key=lambda c: (-c.score, c.page_index, c.bbox[1], c.bbox[0]),
+            )
+            chosen_bbox: tuple[float, float, float, float] | None = None
+            for cand in ordered:
+                sheet = extract_sheet_number(blocks)
+                # Promote to ``global`` scope when on a SYMBOLS &
+                # LEGENDS sheet — heuristic but conservative.
+                scope = "global" if (cand.header_text and "symbols & legends" in cand.header_text) else "page"
+                legend = parse_legend(
+                    candidate=cand,
+                    page_blocks=blocks,
+                    sheet_number=sheet,
+                    scope=scope,  # type: ignore[arg-type]
+                )
+                if legend is not None:
+                    chosen_bbox = cand.bbox
+                    break
+            resolver.ingest_page(page_index=page_index, blocks=blocks, legend=legend)
+            if legend is not None:
+                parsed_legends.append(legend)
+                if chosen_bbox is not None:
+                    per_page_legend_bbox[page_index] = chosen_bbox
+
+        pack_has_targets = bool(domain_pack and domain_pack.detection_targets)
+        if not parsed_legends and not pack_has_targets:
+            return [], []
+
+        for legend in parsed_legends:
+            atoms.append(
+                emit_legend_atom(
+                    legend=legend,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+            )
+            legend_records.append(
+                {
+                    "legend_id": legend.legend_id,
+                    "page": legend.page_index,
+                    "sheet_number": legend.sheet_number,
+                    "scope": legend.scope,
+                    "entries": [
+                        {
+                            "entry_id": e.entry_id,
+                            "symbol": e.raw_symbol_text,
+                            "label": e.label_text,
+                            "normalized_label": e.normalized_label,
+                            "count_column": e.count_column,
+                        }
+                        for e in legend.entries
+                    ],
+                }
+            )
+
+        # Per-page resolution + target-set emission. Pages without a sheet
+        # number AND without a parsed legend on them are skipped: this
+        # is the discriminator that prevents non-drawing PDFs from being
+        # spammed with ``missing_legend`` warnings.
+        for page_index in sorted(per_page_blocks):
+            blocks = per_page_blocks[page_index]
+            sheet = extract_sheet_number(blocks)
+            own_legend = any(l.page_index == page_index for l in parsed_legends)
+            if sheet is None and not own_legend:
+                continue
+            resolved = resolver.resolve_for_page(page_index)
+            for warning in resolved.warnings:
+                atoms.append(
+                    emit_warning_atom(
+                        warning=warning,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                    )
+                )
+            if resolved.legend is None or not domain_pack:
+                continue
+            targets, gaps = intersect_with_pack(
+                legend=resolved.legend, pack=domain_pack
+            )
+            target_set = DetectionTargetSet.make(
+                page_index=page_index,
+                sheet_number=sheet,
+                pack_id=domain_pack.pack_id,
+                legend_id=resolved.legend.legend_id,
+                targets=tuple(targets),
+                legend_gap_target_keys=tuple(gaps),
+            )
+            atoms.append(
+                emit_target_set_atom(
+                    target_set=target_set,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+            )
+            target_records.append(
+                {
+                    "page": page_index,
+                    "sheet_number": sheet,
+                    "legend_id": resolved.legend.legend_id,
+                    "rationale": resolved.rationale,
+                    "priority": resolved.priority,
+                    "targets": [t.target_key for t in targets],
+                    "legend_gap_target_keys": list(gaps),
+                }
+            )
+            for gap_key in gaps:
+                atoms.append(
+                    emit_warning_atom(
+                        warning=SchematicWarning.make(
+                            warning_type="legend_gap",
+                            page_index=page_index,
+                            sheet_number=sheet,
+                            detail=f"Pack '{domain_pack.pack_id}' declares load-bearing target '{gap_key}' but legend has no matching entry",
+                            target_key=gap_key,
+                            legend_id=resolved.legend.legend_id,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                    )
+                )
+
+            # Symbol detection (PR6) — run only when we have a
+            # resolved legend AND a non-empty target set. Without a
+            # target set, every text token would be "unknown" and we
+            # would not be classifying anyway.
+            if not target_set.targets:
+                continue
+            try:
+                page = doc.load_page(page_index)
+                legend_page = doc.load_page(resolved.legend.page_index)
+            except Exception:  # pragma: no cover
+                continue
+            excluded: list[tuple[float, float, float, float]] = []
+            if resolved.legend.page_index in per_page_legend_bbox:
+                if resolved.legend.page_index == page_index:
+                    excluded.append(per_page_legend_bbox[resolved.legend.page_index])
+            detections = detect_symbols(
+                page=page,
+                page_index=page_index,
+                sheet_number=sheet,
+                blocks=blocks,
+                target_set=target_set,
+                legend=resolved.legend,
+                legend_page=legend_page,
+                excluded_bboxes=tuple(excluded),
+            )
+            for det in detections:
+                atoms.append(
+                    emit_detection_atom(
+                        detection=det,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                    )
+                )
+                detection_records.append(
+                    {
+                        "detection_id": det.detection_id,
+                        "page": det.page_index,
+                        "target_key": det.target_key,
+                        "modality": det.modality,
+                        "bbox": list(det.bbox_pdf),
+                        "crop_sha256": det.crop_sha256,
+                        "confidence": det.confidence,
+                    }
+                )
+
+            # Schematic quantity aggregation (PR7) — turn detection
+            # counts into ``AtomType.quantity`` atoms and emit a
+            # declared-count atom from any legend row that has a
+            # count_column. Same-sheet conflicts are paired by
+            # ``_build_schematic_quantity_edges`` in the graph builder.
+            from app.parsers.schematic_atom_emitters import (
+                emit_declared_count_atom,
+                emit_detected_count_atom,
+            )
+
+            counts_by_target: dict[str, list] = {}
+            for det in detections:
+                counts_by_target.setdefault(det.target_key, []).append(det)
+            for target in target_set.targets:
+                hits = counts_by_target.get(target.target_key, [])
+                detected_atom = emit_detected_count_atom(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    target=target,
+                    detections=hits,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+                if detected_atom is not None:
+                    atoms.append(detected_atom)
+                if target.legend_entry_id is None:
+                    continue
+                # Walk the legend for the declared count for this entry.
+                # Emit the declared atom only once per (target, legend_entry)
+                # pair — without this guard the same declared count would
+                # be re-emitted for every drawing page that resolves to
+                # the same legend.
+                dedup_key = (target.target_key, target.legend_entry_id)
+                if dedup_key in declared_emitted:
+                    continue
+                for entry in resolved.legend.entries:
+                    if entry.entry_id != target.legend_entry_id:
+                        continue
+                    if entry.count_column is None:
+                        continue
+                    atoms.append(
+                        emit_declared_count_atom(
+                            page_index=resolved.legend.page_index,
+                            sheet_number=resolved.legend.sheet_number,
+                            target=target,
+                            declared_count=entry.count_column,
+                            entry=entry,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                        )
+                    )
+                    declared_emitted.add(dedup_key)
+                    break
+
+            # ``unknown_symbol`` warnings: tokens that look like
+            # legend-style symbol tags but matched no legend entry.
+            atoms.extend(
+                _unknown_symbol_warnings(
+                    blocks=blocks,
+                    page_index=page_index,
+                    sheet=sheet,
+                    legend=resolved.legend,
+                    excluded_bboxes=excluded,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+            )
+    finally:
+        try:
+            doc.close()
+        except Exception:  # pragma: no cover
+            pass
+
+    derived_relative = derived_dir_for(path).name
+    derived_files: list[dict[str, Any]] = [
+        {
+            "relative_path": f"{derived_relative}/schematic_legends.json",
+            "content_kind": "json",
+            "content_json": {"schema_version": "schematic.legends.v1", "legends": legend_records},
+        },
+        {
+            "relative_path": f"{derived_relative}/schematic_targets.json",
+            "content_kind": "json",
+            "content_json": {"schema_version": "schematic.targets.v1", "pages": target_records},
+        },
+        {
+            "relative_path": f"{derived_relative}/schematic_detections.json",
+            "content_kind": "json",
+            "content_json": {"schema_version": "schematic.detections.v1", "detections": detection_records},
+        },
+    ]
+    return collect_all(atoms), derived_files
+
+
+def _unknown_symbol_warnings(
+    *,
+    blocks: list[Any],
+    page_index: int,
+    sheet: str | None,
+    legend: Any,
+    excluded_bboxes: list[tuple[float, float, float, float]],
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Emit ``unknown_symbol`` warnings for legend-style tokens with no match.
+
+    We are conservative: only short ALL-CAPS tokens (length 2-5) that
+    appear repeatedly on the page count. This avoids classifying
+    every short word in body text as an unknown symbol.
+    """
+    import re as _re
+
+    from app.parsers.schematic_atom_emitters import emit_warning_atom
+    from app.parsers.schematic_models import SchematicWarning
+
+    known: set[str] = {
+        (e.normalized_symbol_text or "").upper()
+        for e in legend.entries
+        if e.normalized_symbol_text
+    }
+    counts: dict[str, int] = {}
+    first_bbox: dict[str, tuple[float, float, float, float]] = {}
+    for blk in blocks:
+        if any(_bbox_intersects(blk.bbox, ex) for ex in excluded_bboxes):
+            continue
+        for m in _re.finditer(r"\b[A-Z][A-Z0-9\-]{1,4}\b", blk.text):
+            tok = m.group(0).upper()
+            if tok in known:
+                continue
+            counts[tok] = counts.get(tok, 0) + 1
+            first_bbox.setdefault(tok, blk.bbox)
+    out: list[EvidenceAtom] = []
+    for tok, n in sorted(counts.items()):
+        if n < 3:  # ignore noise — only flag clearly repeated tokens
+            continue
+        out.append(
+            emit_warning_atom(
+                warning=SchematicWarning.make(
+                    warning_type="unknown_symbol",
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    detail=f"Token {tok!r} appears {n}× on page but is not in the resolved legend.",
+                    bbox_pdf=first_bbox[tok],
+                    extras={"token": tok, "count": n},
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=filename,
+                parser_version=parser_version,
+            )
+        )
+    return out
+
+
+def _bbox_intersects(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
 def _scan_pdf_for_extras(

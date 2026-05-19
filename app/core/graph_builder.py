@@ -29,6 +29,11 @@ EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH = "device_aggregate_mismatch"
 EDGE_FAMILY_MATERIAL_AGGREGATE_MISMATCH = "material_aggregate_mismatch"
 EDGE_FAMILY_CROSS_ARTIFACT_REINFORCEMENT = "cross_artifact_co_mention"
 EDGE_FAMILY_SEMANTIC_LINK = "semantic_link"
+# Schematic same-sheet quantity contradiction (PR7) — pairs an aggregated
+# detected count with a legend-declared count on the same drawing. Both
+# atoms carry bbox provenance so the packetizer's narrow exception can
+# certify them despite being from the same artifact / same authority.
+EDGE_FAMILY_SCHEMATIC_QUANTITY_CONTRADICTION = "schematic_quantity_contradiction"
 
 # An entity_key that matches more atoms than this threshold is treated as
 # too generic to use as a join point (e.g. ``site:campus`` would otherwise
@@ -411,6 +416,76 @@ def _edge_id(project_id: str, edge_type: EdgeType, from_id: str, to_id: str, rea
     return stable_id("edge", project_id, edge_type.value, from_id, to_id, reason)
 
 
+def _is_schematic_quantity_atom(atom: EvidenceAtom) -> bool:
+    if atom.atom_type != AtomType.quantity:
+        return False
+    value = atom.value if isinstance(atom.value, dict) else {}
+    return bool(value.get("schematic_target_key")) and bool(value.get("schematic_role"))
+
+
+def _schematic_quantity_signature(atom: EvidenceAtom) -> tuple[Any, ...]:
+    value = atom.value if isinstance(atom.value, dict) else {}
+    return (
+        atom.artifact_id,
+        value.get("schematic_sheet_number"),
+        value.get("schematic_target_key"),
+    )
+
+
+def _build_schematic_quantity_edges(
+    project_id: str, atoms: list[EvidenceAtom]
+) -> list[EvidenceEdge]:
+    """Pair detected/declared schematic quantity atoms and emit edges.
+
+    Two schematic quantity atoms contradict when they share the same
+    artifact, the same sheet, and the same target key, and one is
+    marked ``schematic_role="detected"`` while the other is
+    ``schematic_role="declared"``. The numeric quantities must
+    disagree by at least 1 to qualify (drawings often round
+    rough-in callouts so an exact-match pass is too sensitive in
+    other directions but a difference of <1 is rarely meaningful).
+    """
+    by_sig: dict[tuple[Any, ...], dict[str, list[EvidenceAtom]]] = {}
+    for atom in atoms:
+        if not _is_schematic_quantity_atom(atom):
+            continue
+        sig = _schematic_quantity_signature(atom)
+        role = str(atom.value.get("schematic_role"))
+        by_sig.setdefault(sig, {}).setdefault(role, []).append(atom)
+    edges: list[EvidenceEdge] = []
+    for sig, by_role in by_sig.items():
+        detected = sorted(by_role.get("detected", []), key=lambda a: a.id)
+        declared = sorted(by_role.get("declared", []), key=lambda a: a.id)
+        if not detected or not declared:
+            continue
+        # One-to-one pairing in deterministic ID order.
+        for det, dec in zip(detected, declared):
+            det_qty = det.value.get("quantity")
+            dec_qty = dec.value.get("quantity")
+            try:
+                if det_qty is None or dec_qty is None:
+                    continue
+                if abs(float(det_qty) - float(dec_qty)) < 1.0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            edges.append(
+                _build_edge(
+                    project_id,
+                    EdgeType.contradicts,
+                    det,
+                    dec,
+                    (
+                        f"Schematic quantity contradiction on sheet "
+                        f"{sig[1] or '?'} target {sig[2]}: detected={det_qty} declared={dec_qty}"
+                    ),
+                    0.9,
+                    edge_family=EDGE_FAMILY_SCHEMATIC_QUANTITY_CONTRADICTION,
+                )
+            )
+    return edges
+
+
 def _build_edge(
     project_id: str,
     edge_type: EdgeType,
@@ -697,6 +772,13 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                             edge_family=EDGE_FAMILY_PART_NUMBER_QUANTITY_CONFLICT,
                         )
                     )
+
+    # Schematic same-sheet quantity contradiction (PR7) — pairs an
+    # aggregated detected count with a legend-declared count on the
+    # same drawing. Both atoms carry bbox provenance so the
+    # packetizer's narrow same-artifact exception can certify them.
+    for edge in _build_schematic_quantity_edges(project_id, ordered):
+        push(edge)
 
     # excludes: exclusion atom mentions entity key in another atom.
     # Uses the entity-key index so we only iterate atoms that actually
