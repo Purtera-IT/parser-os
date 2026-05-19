@@ -241,3 +241,74 @@ packet_family_hints:
     - ahj approval
     - acceptance test schedule
     - secondary power
+
+detection_targets:
+  - key: bda
+    entity_key: device:bda
+    aliases_from:
+      - device_aliases.bda
+    aliases:
+      - 'bda'
+      - 'signal booster'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: donor_antenna
+    entity_key: device:donor_antenna
+    aliases:
+      - 'donor antenna'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: das_antenna
+    entity_key: device:das_antenna
+    aliases_from:
+      - device_aliases.antenna
+    aliases:
+      - 'remote antenna'
+      - 'indoor antenna'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: das_head_end
+    entity_key: device:das_head_end
+    aliases:
+      - 'master unit'
+      - 'head-end'
+      - 'head end'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: das_remote_unit
+    entity_key: device:das_remote_unit
+    aliases:
+      - 'remote unit'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: das_splitter
+    entity_key: device:das_splitter
+    aliases_from:
+      - device_aliases.splitter
+    aliases:
+      - 'splitter'
+      - 'tap'
+      - 'combiner'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: das_cable_run
+    entity_key: device:das_cable_run
+    aliases:
+      - 'coax'
+      - 'fiber'
+      - 'das run'
+    completeness: informational
+    modalities:
+      - line_run

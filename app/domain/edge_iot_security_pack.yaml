@@ -50,3 +50,63 @@ risk_defaults:
 packet_family_hints:
   vendor_mismatch: ["camera quantity"]
   site_access: ["badge", "escort"]
+
+detection_targets:
+  - key: edge_ip_camera
+    entity_key: device:ip_camera
+    ontology_key: edge_ip_security_camera
+    aliases_from:
+      - device_aliases.ip_camera
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: edge_nvr
+    entity_key: device:nvr
+    aliases_from:
+      - device_aliases.nvr
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: edge_door_reader
+    entity_key: device:card_reader
+    aliases_from:
+      - device_aliases.reader
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: edge_iot_gateway
+    entity_key: device:iot_gateway
+    aliases:
+      - 'iot gateway'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: edge_poe_switch
+    entity_key: device:poe_switch
+    aliases:
+      - 'poe switch'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: edge_sensor
+    entity_key: device:sensor
+    aliases:
+      - 'sensor'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: edge_enclosure
+    entity_key: device:enclosure
+    aliases:
+      - 'enclosure'
+      - 'cabinet'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template

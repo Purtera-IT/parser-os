@@ -256,3 +256,47 @@ packet_family_hints:
     - serial reconciliation
     - r2v3
     - nist 800-88
+
+detection_targets:
+  - key: itad_asset_marker
+    entity_key: marker:asset
+    aliases:
+      - 'asset'
+      - 'device'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+  - key: itad_rack
+    entity_key: device:rack
+    aliases:
+      - 'rack'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: itad_pallet
+    entity_key: marker:pallet
+    aliases:
+      - 'pallet'
+      - 'bin'
+      - 'cage'
+    completeness: informational
+    modalities:
+      - text_tag
+  - key: itad_wipe_station
+    entity_key: device:wipe_station
+    aliases:
+      - 'wipe'
+      - 'sanitization'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: itad_pickup_zone
+    entity_key: zone:pickup
+    aliases:
+      - 'pickup'
+      - 'staging'
+    completeness: informational
+    modalities:
+      - zone

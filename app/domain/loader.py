@@ -87,6 +87,21 @@ def _adapt_reference_pack_to_domain_pack(payload: dict[str, Any], *, source_path
         ref_onto = "ontology/copper_low_voltage_ontology.yaml"
     sl = payload.get("service_lines")
     service_lines = [str(x) for x in sl] if isinstance(sl, list) else base.service_lines
+    # Adapt detection_targets too — wide reference packs can declare
+    # them at top level. Invalid entries are silently dropped so a
+    # malformed wide pack does not regress base behavior.
+    detection_targets = []
+    raw_dt = payload.get("detection_targets")
+    if isinstance(raw_dt, list):
+        from app.domain.schemas import DetectionTargetSpec
+
+        for item in raw_dt:
+            if not isinstance(item, dict):
+                continue
+            try:
+                detection_targets.append(DetectionTargetSpec.model_validate(item))
+            except Exception:
+                continue
     return base.model_copy(
         update={
             "pack_id": pack_id,
@@ -95,6 +110,7 @@ def _adapt_reference_pack_to_domain_pack(payload: dict[str, Any], *, source_path
             "risk_defaults": merged_risk,
             "service_lines": service_lines or [pack_id],
             "reference_ontology_path": ref_onto,
+            "detection_targets": detection_targets,
         }
     )
 

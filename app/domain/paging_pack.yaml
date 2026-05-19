@@ -230,3 +230,68 @@ packet_family_hints:
     - intelligibility test
     - zone programming
     - emergency override
+
+detection_targets:
+  - key: paging_ceiling_speaker
+    entity_key: device:speaker
+    aliases_from:
+      - device_aliases.speaker
+    aliases:
+      - 'ceiling speaker'
+      - 'pendant speaker'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: paging_horn_speaker
+    entity_key: device:horn_speaker
+    aliases:
+      - 'horn speaker'
+      - 'outdoor horn'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: paging_amplifier
+    entity_key: device:amplifier
+    aliases_from:
+      - device_aliases.amplifier
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: paging_mic
+    entity_key: device:paging_mic
+    aliases_from:
+      - device_aliases.microphone
+    aliases:
+      - 'paging mic'
+      - 'call station'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: intercom_station
+    entity_key: device:intercom
+    aliases_from:
+      - device_aliases.intercom
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: paging_controller
+    entity_key: device:paging_controller
+    aliases_from:
+      - device_aliases.controller
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: paging_zone
+    entity_key: zone:paging_zone
+    aliases:
+      - 'paging zone'
+      - 'zone '
+    completeness: informational
+    modalities:
+      - zone

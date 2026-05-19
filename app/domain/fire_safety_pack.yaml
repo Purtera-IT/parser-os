@@ -281,3 +281,92 @@ packet_family_hints:
     - voice intelligibility
     - acceptance test schedule
     - secondary power
+
+detection_targets:
+  - key: fire_panel
+    entity_key: device:fire_panel
+    aliases_from:
+      - device_aliases.panel
+    aliases:
+      - 'facp'
+      - 'fire alarm control panel'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: fire_subpanel
+    entity_key: device:fire_subpanel
+    aliases:
+      - 'sub panel'
+      - 'sub-panel'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: smoke_detector
+    entity_key: device:smoke_detector
+    aliases_from:
+      - device_aliases.smoke_detector
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: heat_detector
+    entity_key: device:heat_detector
+    aliases_from:
+      - device_aliases.heat_detector
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: pull_station
+    entity_key: device:pull_station
+    aliases_from:
+      - device_aliases.pull_station
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: horn_strobe
+    entity_key: device:horn_strobe
+    aliases_from:
+      - device_aliases.horn_strobe
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: fire_speaker
+    entity_key: device:fire_speaker
+    aliases_from:
+      - device_aliases.speaker
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: duct_detector
+    entity_key: device:duct_detector
+    aliases:
+      - 'duct detector'
+      - 'beam detector'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: fire_module
+    entity_key: device:fire_module
+    aliases:
+      - 'control module'
+      - 'monitor module'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: nac_slc_run
+    entity_key: device:nac_slc_run
+    aliases:
+      - 'nac'
+      - 'slc'
+      - 'fire conduit'
+    completeness: informational
+    modalities:
+      - line_run

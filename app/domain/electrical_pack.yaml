@@ -260,3 +260,82 @@ packet_family_hints:
     - load calc
     - shutdown window
     - inspection
+
+detection_targets:
+  - key: electrical_panel
+    entity_key: device:electrical_panel
+    aliases_from:
+      - device_aliases.panel
+    aliases:
+      - 'panelboard'
+      - 'load center'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: transformer
+    entity_key: device:transformer
+    aliases:
+      - 'xfmr'
+      - 'transformer'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: disconnect_switch
+    entity_key: device:disconnect
+    aliases:
+      - 'disconnect'
+      - 'fused disconnect'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: receptacle
+    entity_key: device:receptacle
+    aliases_from:
+      - device_aliases.receptacle
+    aliases:
+      - 'outlet'
+      - 'duplex'
+      - 'quad'
+      - 'gfci'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: home_run_circuit
+    entity_key: device:home_run
+    aliases:
+      - 'home run'
+      - 'circuit'
+    completeness: informational
+    modalities:
+      - line_run
+  - key: breaker
+    entity_key: device:breaker
+    aliases_from:
+      - device_aliases.breaker
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: electrical_conduit
+    entity_key: device:conduit
+    aliases:
+      - 'emt'
+      - 'conduit'
+      - 'feeder'
+    completeness: informational
+    modalities:
+      - line_run
+      - vector_shape
+  - key: ground_busbar
+    entity_key: device:ground_busbar
+    aliases:
+      - 'ground bar'
+      - 'busbar'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template

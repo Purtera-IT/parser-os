@@ -263,3 +263,90 @@ packet_family_hints:
     - graphics
     - commissioning
     - tab
+
+detection_targets:
+  - key: bms_controller
+    entity_key: device:bms_controller
+    aliases_from:
+      - device_aliases.controller
+    aliases:
+      - 'ddc'
+      - 'jace'
+      - 'bms controller'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: thermostat
+    entity_key: device:thermostat
+    aliases_from:
+      - device_aliases.thermostat
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: bms_sensor
+    entity_key: device:bms_sensor
+    aliases_from:
+      - device_aliases.sensor
+    aliases:
+      - 'temp sensor'
+      - 'humidity sensor'
+      - 'co2 sensor'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: vav_box
+    entity_key: device:vav_box
+    aliases:
+      - 'vav'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: ahu
+    entity_key: device:ahu
+    aliases:
+      - 'ahu'
+      - 'air handler'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: rtu
+    entity_key: device:rtu
+    aliases:
+      - 'rtu'
+      - 'rooftop unit'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: vrf_unit
+    entity_key: device:vrf_unit
+    aliases:
+      - 'vrf'
+      - 'vrv'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: bms_actuator
+    entity_key: device:actuator
+    aliases:
+      - 'damper'
+      - 'valve actuator'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: bms_trunk
+    entity_key: device:bms_trunk
+    aliases:
+      - 'bacnet'
+      - 'modbus'
+      - 'ms/tp'
+    completeness: informational
+    modalities:
+      - line_run

@@ -49,3 +49,69 @@ risk_defaults:
   unpriced_scope_default: 5000
 packet_family_hints:
   quantity_conflict: ["lane count", "terminal mismatch"]
+
+detection_targets:
+  - key: pos_terminal
+    entity_key: device:pos_terminal
+    aliases_from:
+      - device_aliases.pos_terminal
+    aliases:
+      - 'register'
+      - 'pos'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: pin_pad
+    entity_key: device:pin_pad
+    aliases_from:
+      - device_aliases.pin_pad
+    aliases:
+      - 'payment device'
+      - 'pin entry'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: receipt_printer
+    entity_key: device:receipt_printer
+    aliases:
+      - 'printer'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: scanner
+    entity_key: device:scanner
+    aliases:
+      - 'barcode scanner'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: cash_drawer
+    entity_key: device:cash_drawer
+    aliases_from:
+      - device_aliases.cash_drawer
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: pos_data_drop
+    entity_key: device:data_drop
+    aliases:
+      - 'data drop'
+      - 'data jack'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: pos_power_outlet
+    entity_key: device:receptacle
+    aliases:
+      - 'outlet'
+      - 'receptacle'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template

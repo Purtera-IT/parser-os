@@ -319,3 +319,81 @@ packet_family_hints:
     - sd-wan license
     - cutover window
     - circuit lead time
+
+detection_targets:
+  - key: network_switch
+    entity_key: device:switch
+    aliases_from:
+      - device_aliases.switch
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: network_router
+    entity_key: device:router
+    aliases_from:
+      - device_aliases.router
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: network_firewall
+    entity_key: device:firewall
+    aliases_from:
+      - device_aliases.firewall
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: network_controller
+    entity_key: device:controller
+    aliases:
+      - 'gateway'
+      - 'controller'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: wan_circuit
+    entity_key: device:wan_circuit
+    aliases:
+      - 'wan'
+      - 'circuit'
+      - 'isp drop'
+    completeness: informational
+    modalities:
+      - text_tag
+      - line_run
+  - key: network_uplink
+    entity_key: device:uplink
+    aliases:
+      - 'uplink'
+      - 'fiber uplink'
+    completeness: informational
+    modalities:
+      - line_run
+  - key: network_rack
+    entity_key: device:rack
+    aliases_from:
+      - device_aliases.rack
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: network_pdu_ups
+    entity_key: device:pdu_ups
+    aliases:
+      - 'pdu'
+      - 'ups'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: network_patch_panel
+    entity_key: device:patch_panel
+    aliases:
+      - 'patch panel'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template

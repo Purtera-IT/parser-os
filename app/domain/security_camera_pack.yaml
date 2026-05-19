@@ -318,3 +318,120 @@ packet_family_hints:
     - integration
     - lpr
     - analytics license
+
+detection_targets:
+  - key: fixed_dome_camera
+    entity_key: device:fixed_dome_camera
+    aliases_from:
+      - device_aliases.ip_camera
+    aliases:
+      - 'dome'
+      - 'fixed dome'
+      - 'mini dome'
+      - 'indoor dome'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: bullet_camera
+    entity_key: device:bullet_camera
+    aliases_from:
+      - device_aliases.ip_camera
+    aliases:
+      - 'bullet'
+      - 'bullet camera'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: ptz_camera
+    entity_key: device:ptz_camera
+    aliases_from:
+      - device_aliases.ip_camera
+    aliases:
+      - 'ptz'
+      - 'ptz camera'
+      - 'pan tilt zoom'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: panoramic_camera
+    entity_key: device:panoramic_camera
+    aliases_from:
+      - device_aliases.ip_camera
+    aliases:
+      - 'panoramic'
+      - '360'
+      - 'fisheye'
+      - 'multi-sensor'
+      - 'multisensor'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: lpr_camera
+    entity_key: device:lpr_camera
+    aliases_from:
+      - device_aliases.ip_camera
+    aliases:
+      - 'lpr'
+      - 'license plate'
+      - 'lpr camera'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: nvr
+    entity_key: device:nvr
+    aliases_from:
+      - device_aliases.nvr
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: camera_switch
+    entity_key: device:poe_switch
+    aliases:
+      - 'poe switch'
+      - 'camera switch'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: camera_mount
+    entity_key: device:camera_mount
+    aliases_from:
+      - device_aliases.mount
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: weatherproof_housing
+    entity_key: device:weatherproof_housing
+    aliases_from:
+      - device_aliases.housing
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: camera_junction_box
+    entity_key: device:junction_box
+    aliases:
+      - 'jb'
+      - 'junction box'
+      - 'j-box'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: camera_conduit
+    entity_key: device:conduit
+    aliases:
+      - 'conduit'
+      - 'emt'
+      - 'pathway'
+    completeness: informational
+    modalities:
+      - line_run
+      - vector_shape

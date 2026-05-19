@@ -295,3 +295,93 @@ packet_family_hints:
     - dedicated circuit
     - acoustic
     - control programming
+
+detection_targets:
+  - key: av_display
+    entity_key: device:av_display
+    aliases_from:
+      - device_aliases.display
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_projector
+    entity_key: device:projector
+    aliases_from:
+      - device_aliases.projector
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_speaker
+    entity_key: device:speaker
+    aliases_from:
+      - device_aliases.speaker
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_mic
+    entity_key: device:microphone
+    aliases_from:
+      - device_aliases.microphone
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_vc_camera
+    entity_key: device:vc_camera
+    aliases_from:
+      - device_aliases.camera
+    aliases:
+      - 'ptz camera'
+      - 'vc camera'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_rack
+    entity_key: device:av_rack
+    aliases_from:
+      - device_aliases.rack
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_floor_box
+    entity_key: device:floor_box
+    aliases:
+      - 'floor box'
+      - 'poke-thru'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_touch_panel
+    entity_key: device:touch_panel
+    aliases:
+      - 'touch panel'
+      - 'control panel'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_dsp
+    entity_key: device:dsp
+    aliases:
+      - 'dsp'
+      - 'amplifier'
+      - 'switcher'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: av_conduit
+    entity_key: device:conduit
+    aliases:
+      - 'conduit'
+      - 'emt'
+    completeness: informational
+    modalities:
+      - line_run
+      - vector_shape

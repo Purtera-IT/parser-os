@@ -49,3 +49,60 @@ risk_defaults:
   unpriced_scope_default: 5000
 packet_family_hints:
   quantity_conflict: ["device count mismatch"]
+
+detection_targets:
+  - key: workstation_marker
+    entity_key: marker:workstation
+    aliases:
+      - 'workstation'
+      - 'desk'
+      - 'seat'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: laptop_dock
+    entity_key: device:dock
+    aliases_from:
+      - device_aliases.dock
+    aliases:
+      - 'dock'
+      - 'docking station'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: monitor
+    entity_key: device:monitor
+    aliases_from:
+      - device_aliases.monitor
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: user_printer
+    entity_key: device:printer
+    aliases_from:
+      - device_aliases.printer
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: user_phone
+    entity_key: device:phone
+    aliases:
+      - 'phone'
+      - 'handset'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: user_network_jack
+    entity_key: device:data_drop
+    aliases:
+      - 'jack'
+      - 'drop'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
