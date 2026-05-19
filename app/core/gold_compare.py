@@ -33,9 +33,16 @@ checked):
   must each have a ``missing_legend`` warning
 * ``expected_unknown_symbol_count_max`` — at most N
   ``unknown_symbol`` warnings allowed
-* ``expected_all_schematic_atoms_have_bbox`` — boolean; when true,
-  every schematic atom's source_refs must carry a 4-element bbox
-  with ``bbox_units=="pdf_points"``
+* ``expected_all_detections_have_bbox`` — boolean; when true, every
+  ``schematic_symbol_detection`` atom's source_refs must carry a
+  4-element bbox with ``bbox_units=="pdf_points"``.  The legacy
+  alias ``expected_all_schematic_atoms_have_bbox`` is accepted but
+  refers only to detections (renamed for accuracy: the original name
+  promised more than it enforced).
+* ``expected_all_schematic_atoms_carry_locator`` — boolean; when
+  true, every ``schematic_*`` atom must carry a ``page`` in its
+  ``SourceRef.locator`` (independent of bbox presence).  This is the
+  stronger contract for the broader atom set.
 
 The gold file may also embed nested ``per_artifact_gold_files`` references;
 those are advisory and ignored by the comparator (only the top-level
@@ -194,34 +201,71 @@ def _schematic_metrics(
     else:
         out["unknown_symbol_max"] = {"verdict": "skipped"}
 
-    if gold.get("expected_all_schematic_atoms_have_bbox") is True:
-        all_schematic = (
-            legend_atoms + target_atoms + detection_atoms + warning_atoms
-        )
+    detections_have_bbox_key = (
+        gold.get("expected_all_detections_have_bbox")
+        if gold.get("expected_all_detections_have_bbox") is not None
+        else gold.get("expected_all_schematic_atoms_have_bbox")
+    )
+    if detections_have_bbox_key is True:
         missing_bbox: list[str] = []
-        for a in all_schematic:
+        for a in detection_atoms:
+            has_bbox = False
             for src in a.get("source_refs") or []:
                 loc = src.get("locator") if isinstance(src, dict) else {}
                 if not isinstance(loc, dict):
                     continue
-                if str(a.get("atom_type")) == "schematic_symbol_detection":
-                    bbox = loc.get("bbox")
-                    if not (
-                        isinstance(bbox, (list, tuple))
-                        and len(bbox) == 4
-                        and loc.get("bbox_units") == "pdf_points"
-                    ):
-                        missing_bbox.append(str(a.get("id")))
-                # For non-detection schematic atoms, the bbox is optional
-                # (legend / target_set may not have one) — we only enforce
-                # it on detections via this gate.
-        out["all_schematic_atoms_have_bbox"] = {
+                bbox = loc.get("bbox")
+                if (
+                    isinstance(bbox, (list, tuple))
+                    and len(bbox) == 4
+                    and loc.get("bbox_units") == "pdf_points"
+                ):
+                    has_bbox = True
+                    break
+            if not has_bbox:
+                missing_bbox.append(str(a.get("id")))
+        out["all_detections_have_bbox"] = {
             "verdict": "pass" if not missing_bbox else "fail",
             "missing_bbox_atom_ids": missing_bbox[:8],
             "missing_count": len(missing_bbox),
         }
     else:
+        out["all_detections_have_bbox"] = {"verdict": "skipped"}
+
+    # Legacy metric key — older gold files may still spell it
+    # ``expected_all_schematic_atoms_have_bbox``. Surface it as an
+    # alias of the detections check so existing gold standards do
+    # not silently flip from pass to skipped on rename.
+    if gold.get("expected_all_schematic_atoms_have_bbox") is True:
+        out["all_schematic_atoms_have_bbox"] = dict(out["all_detections_have_bbox"])
+    else:
         out["all_schematic_atoms_have_bbox"] = {"verdict": "skipped"}
+
+    # Stronger contract: every schematic_* atom must at least carry a
+    # page locator (not necessarily a bbox). This catches the case
+    # where the prior bbox-only metric reported pass even though the
+    # legend / target / warning atoms had no replayable provenance.
+    if gold.get("expected_all_schematic_atoms_carry_locator") is True:
+        all_schematic = (
+            legend_atoms + target_atoms + detection_atoms + warning_atoms
+        )
+        missing_locator: list[str] = []
+        for a in all_schematic:
+            has_page = False
+            for src in a.get("source_refs") or []:
+                loc = src.get("locator") if isinstance(src, dict) else {}
+                if isinstance(loc, dict) and isinstance(loc.get("page"), int):
+                    has_page = True
+                    break
+            if not has_page:
+                missing_locator.append(str(a.get("id")))
+        out["all_schematic_atoms_carry_locator"] = {
+            "verdict": "pass" if not missing_locator else "fail",
+            "missing_locator_atom_ids": missing_locator[:8],
+            "missing_count": len(missing_locator),
+        }
+    else:
+        out["all_schematic_atoms_carry_locator"] = {"verdict": "skipped"}
 
     return out
 

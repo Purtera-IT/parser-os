@@ -77,7 +77,7 @@ detection_targets:
   - key: fiber_trunk
     entity_key: device:fiber_trunk
     aliases_from:
-      - device_aliases.trunk
+      - device_aliases.fiber_trunk
     aliases:
       - 'fiber trunk'
       - 'backbone'
@@ -87,7 +87,7 @@ detection_targets:
   - key: fiber_patch_panel
     entity_key: device:patch_panel
     aliases_from:
-      - device_aliases.patch_panel
+      - device_aliases.fiber_patch_panel
     completeness: load_bearing
     modalities:
       - text_tag

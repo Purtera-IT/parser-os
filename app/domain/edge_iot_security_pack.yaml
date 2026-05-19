@@ -72,7 +72,7 @@ detection_targets:
   - key: edge_door_reader
     entity_key: device:card_reader
     aliases_from:
-      - device_aliases.reader
+      - device_aliases.door_reader
     completeness: load_bearing
     modalities:
       - text_tag

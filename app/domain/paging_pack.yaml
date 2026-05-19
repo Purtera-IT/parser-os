@@ -235,7 +235,7 @@ detection_targets:
   - key: paging_ceiling_speaker
     entity_key: device:speaker
     aliases_from:
-      - device_aliases.speaker
+      - device_aliases.ceiling_speaker
     aliases:
       - 'ceiling speaker'
       - 'pendant speaker'
@@ -263,7 +263,7 @@ detection_targets:
   - key: paging_mic
     entity_key: device:paging_mic
     aliases_from:
-      - device_aliases.microphone
+      - device_aliases.paging_mic
     aliases:
       - 'paging mic'
       - 'call station'

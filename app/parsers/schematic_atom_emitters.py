@@ -6,7 +6,7 @@ the produced atoms go in the ``ParserOutput`` stream.
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.core.ids import stable_id
 from app.core.schemas import (
@@ -20,13 +20,74 @@ from app.core.schemas import (
 from app.domain.schemas import DetectionTargetSpec, DomainPack
 from app.parsers.schematic_models import (
     BBOX_UNITS_PDF_POINTS,
+    SCHEMATIC_REPLAY_DPI,
     DetectionTarget,
     DetectionTargetSet,
     ParsedLegend,
     ParsedLegendEntry,
     SchematicWarning,
     SymbolDetection,
+    crop_sha256_of_pixels,
 )
+
+
+def compute_crop_sha256(page: Any, bbox: tuple[float, float, float, float]) -> str | None:
+    """Render a PDF bbox at the schematic replay DPI and hash the pixels.
+
+    Returns ``None`` if fitz is unavailable or the bbox is degenerate.
+    Callers use the result to fill ``SourceRef.locator['crop_sha256']``
+    so source_replay can re-verify the exact region this atom claims.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover
+        return None
+    x0, y0, x1, y1 = (float(b) for b in bbox)
+    if not (x1 > x0 and y1 > y0):
+        return None
+    try:
+        zoom = SCHEMATIC_REPLAY_DPI / 72.0
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(zoom, zoom),
+            clip=fitz.Rect(x0, y0, x1, y1),
+            alpha=False,
+            colorspace=fitz.csRGB,
+        )
+        return crop_sha256_of_pixels(pix.samples, pix.width, pix.height, pix.n)
+    except Exception:  # pragma: no cover
+        return None
+
+
+def build_replayable_locator(
+    *,
+    page_index: int,
+    bbox: tuple[float, float, float, float] | None,
+    page: Any | None,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a ``SourceRef.locator`` carrying page + bbox + crop_sha256.
+
+    When ``page`` and ``bbox`` are both available, the resulting locator
+    is replayable by ``_verify_pdf_bbox_crop`` (the bbox is re-rendered
+    and the hash is recomputed). When ``bbox`` is missing we degrade to a
+    page-only locator — the atom is still emitted but is not replayable;
+    callers should pair that case with an explicit
+    ``low_provenance`` flag in ``extras`` so audits can find it later.
+    """
+    loc: dict[str, Any] = {"page": page_index}
+    if extras:
+        for k, v in extras.items():
+            loc[k] = v
+    if bbox is not None:
+        x0, y0, x1, y1 = (float(b) for b in bbox)
+        if x1 > x0 and y1 > y0:
+            loc["bbox"] = [x0, y0, x1, y1]
+            loc["bbox_units"] = BBOX_UNITS_PDF_POINTS
+            if page is not None:
+                crop = compute_crop_sha256(page, (x0, y0, x1, y1))
+                if crop:
+                    loc["crop_sha256"] = crop
+    return loc
 
 
 # ─────────────────────── shared SourceRef builder ─────────────────
@@ -212,14 +273,27 @@ def emit_legend_atom(
     artifact_id: str,
     filename: str,
     parser_version: str,
+    page: Any | None = None,
 ) -> EvidenceAtom:
-    locator = {
-        "page": legend.page_index,
-        "sheet_number": legend.sheet_number,
-        "legend_id": legend.legend_id,
-        "scope": legend.scope,
-        **legend.locator_dict(),
-    }
+    # The legend's source_ref_locator already carries the bbox the
+    # locator landed on; rebuild the locator through the replayable
+    # helper so a crop_sha256 lands on it too.
+    raw_loc = legend.locator_dict()
+    bbox_tuple: tuple[float, float, float, float] | None = None
+    bbox_raw = raw_loc.get("bbox")
+    if isinstance(bbox_raw, (list, tuple)) and len(bbox_raw) == 4:
+        bbox_tuple = (float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3]))
+    locator = build_replayable_locator(
+        page_index=legend.page_index,
+        bbox=bbox_tuple,
+        page=page,
+        extras={
+            "sheet_number": legend.sheet_number,
+            "legend_id": legend.legend_id,
+            "scope": legend.scope,
+            "layer": raw_loc.get("layer"),
+        },
+    )
     src = _source_ref(
         artifact_id=artifact_id,
         filename=filename,
@@ -273,13 +347,23 @@ def emit_target_set_atom(
     artifact_id: str,
     filename: str,
     parser_version: str,
+    page: Any | None = None,
+    page_bbox: tuple[float, float, float, float] | None = None,
 ) -> EvidenceAtom:
-    locator = {
-        "page": target_set.page_index,
-        "sheet_number": target_set.sheet_number,
-        "pack_id": target_set.pack_id,
-        "legend_id": target_set.legend_id,
-    }
+    # Target-set atom is page-scoped (it's a declaration about a whole
+    # drawing page, not a single region). Use the page rectangle as the
+    # bbox so source_replay can still verify *something* against the
+    # rendered page even though the atom doesn't pin a specific glyph.
+    locator = build_replayable_locator(
+        page_index=target_set.page_index,
+        bbox=page_bbox,
+        page=page,
+        extras={
+            "sheet_number": target_set.sheet_number,
+            "pack_id": target_set.pack_id,
+            "legend_id": target_set.legend_id,
+        },
+    )
     src = _source_ref(
         artifact_id=artifact_id,
         filename=filename,
@@ -341,8 +425,19 @@ def emit_warning_atom(
     artifact_id: str,
     filename: str,
     parser_version: str,
+    page: Any | None = None,
 ) -> EvidenceAtom:
-    locator = warning.locator_dict()
+    base_loc = warning.locator_dict()
+    bbox_raw = base_loc.get("bbox")
+    bbox_tuple: tuple[float, float, float, float] | None = None
+    if isinstance(bbox_raw, (list, tuple)) and len(bbox_raw) == 4:
+        bbox_tuple = (float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3]))
+    locator = build_replayable_locator(
+        page_index=warning.page_index,
+        bbox=bbox_tuple,
+        page=page,
+        extras={k: v for k, v in base_loc.items() if k not in {"bbox", "bbox_units", "page"}},
+    )
     src = _source_ref(
         artifact_id=artifact_id,
         filename=filename,
@@ -515,25 +610,41 @@ def emit_declared_count_atom(
     artifact_id: str,
     filename: str,
     parser_version: str,
-) -> EvidenceAtom:
+    page: Any | None = None,
+) -> EvidenceAtom | None:
     """Emit a ``quantity`` atom for a declared count from a legend row.
 
-    The bbox is the legend entry's symbol bbox (where the count column
-    sat on the legend sheet). It carries ``schematic_role="declared"``
-    so the graph builder pairs it with a same-(sheet, target) detected
-    atom and emits a schematic quantity contradiction edge when they
-    disagree.
+    Returns ``None`` when the legend entry has no real symbol bbox to
+    pin against. The earlier implementation faked a ``(0, 0, 1, 1)``
+    bbox so the locator would always look replayable; that produced
+    a crop hash for a 1-pt corner of the page which no future review
+    could re-verify. Callers should react to ``None`` by emitting a
+    ``schematic_warning`` instead so the count is still surfaced but
+    not laundered through fake provenance.
+
+    The atom carries ``schematic_role="declared"`` so the graph
+    builder pairs it with a same-(sheet, target) detected atom and
+    emits a schematic quantity contradiction edge when they disagree.
     """
-    bbox = entry.symbol_bbox_pdf or (0.0, 0.0, 1.0, 1.0)
-    locator = {
-        "page": page_index,
-        "sheet_number": sheet_number,
-        "bbox": list(bbox),
-        "bbox_units": BBOX_UNITS_PDF_POINTS,
-        "schematic_target_key": target.target_key,
-        "schematic_role": "declared",
-        "legend_entry_id": entry.entry_id,
-    }
+    bbox = entry.symbol_bbox_pdf
+    if bbox is None:
+        return None
+    locator = build_replayable_locator(
+        page_index=page_index,
+        bbox=bbox,
+        page=page,
+        extras={
+            "sheet_number": sheet_number,
+            "schematic_target_key": target.target_key,
+            "schematic_role": "declared",
+            "legend_entry_id": entry.entry_id,
+        },
+    )
+    # The atom must carry a real crop hash; if compute failed, refuse
+    # to emit so the packetizer's narrow same-artifact exception
+    # cannot certify a conflict without verifiable provenance.
+    if "crop_sha256" not in locator:
+        return None
     src = _source_ref(
         artifact_id=artifact_id,
         filename=filename,
@@ -579,9 +690,17 @@ def emit_declared_count_atom(
 def collect_all(atoms: Iterable[EvidenceAtom]) -> list[EvidenceAtom]:
     """Stable-sort schematic atoms for deterministic emission order.
 
-    PDF parser appends schematic atoms after structured atoms; this
-    helper keeps the schematic block internally sorted so two compiles
-    of the same PDF produce byte-identical envelopes.
+    Total sort key (each tier is a fallback when the previous tier ties):
+
+      1. atom-type priority
+      2. page (drawn from ``value['page']``, ``value['schematic_page']``,
+         or the first ``SourceRef.locator['page']`` — quantity atoms
+         carry ``schematic_page`` rather than ``page``, and a flat
+         ``value.get('page', 0)`` lookup would collapse them all to 0)
+      3. sheet number (so multi-sheet drawings stay grouped by sheet)
+      4. target key (load-bearing detections sort by target alphabetically)
+      5. atom type value (locked-in tiebreaker between same-priority types)
+      6. atom id (final guaranteed tiebreaker)
     """
     pri = {
         AtomType.schematic_legend: 0,
@@ -590,7 +709,41 @@ def collect_all(atoms: Iterable[EvidenceAtom]) -> list[EvidenceAtom]:
         AtomType.quantity: 4,
         AtomType.schematic_warning: 5,
     }
+
+    def _page(atom: EvidenceAtom) -> int:
+        value = atom.value if isinstance(atom.value, dict) else {}
+        for key in ("page", "schematic_page"):
+            v = value.get(key)
+            if isinstance(v, int):
+                return v
+        for src in atom.source_refs or []:
+            loc = src.locator if isinstance(src.locator, dict) else {}
+            v = loc.get("page")
+            if isinstance(v, int):
+                return v
+        return 0
+
+    def _sheet(atom: EvidenceAtom) -> str:
+        value = atom.value if isinstance(atom.value, dict) else {}
+        for key in ("sheet_number", "schematic_sheet_number"):
+            v = value.get(key)
+            if isinstance(v, str):
+                return v
+        return ""
+
+    def _target(atom: EvidenceAtom) -> str:
+        value = atom.value if isinstance(atom.value, dict) else {}
+        v = value.get("target_key") or value.get("schematic_target_key")
+        return str(v) if v else ""
+
     return sorted(
         atoms,
-        key=lambda a: (pri.get(a.atom_type, 99), a.value.get("page", 0), a.id),
+        key=lambda a: (
+            pri.get(a.atom_type, 99),
+            _page(a),
+            _sheet(a),
+            _target(a),
+            a.atom_type.value,
+            a.id,
+        ),
     )

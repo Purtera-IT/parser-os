@@ -332,7 +332,7 @@ detection_targets:
   - key: av_vc_camera
     entity_key: device:vc_camera
     aliases_from:
-      - device_aliases.camera
+      - device_aliases.ptz_camera
     aliases:
       - 'ptz camera'
       - 'vc camera'
@@ -341,9 +341,11 @@ detection_targets:
       - text_tag
       - glyph_template
   - key: av_rack
+    aliases:
+      - 'rack'
+      - 'equipment rack'
+      - 'av rack'
     entity_key: device:av_rack
-    aliases_from:
-      - device_aliases.rack
     completeness: load_bearing
     modalities:
       - text_tag

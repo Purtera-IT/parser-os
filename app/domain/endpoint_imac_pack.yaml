@@ -64,7 +64,7 @@ detection_targets:
   - key: laptop_dock
     entity_key: device:dock
     aliases_from:
-      - device_aliases.dock
+      - device_aliases.docking_station
     aliases:
       - 'dock'
       - 'docking station'
@@ -73,17 +73,21 @@ detection_targets:
       - text_tag
       - glyph_template
   - key: monitor
+    aliases:
+      - 'monitor'
+      - 'display'
+      - 'screen'
     entity_key: device:monitor
-    aliases_from:
-      - device_aliases.monitor
     completeness: informational
     modalities:
       - text_tag
       - glyph_template
   - key: user_printer
+    aliases:
+      - 'printer'
+      - 'user printer'
+      - 'desktop printer'
     entity_key: device:printer
-    aliases_from:
-      - device_aliases.printer
     completeness: informational
     modalities:
       - text_tag

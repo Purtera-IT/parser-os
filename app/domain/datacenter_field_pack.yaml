@@ -53,7 +53,7 @@ detection_targets:
   - key: dc_rack
     entity_key: device:rack
     aliases_from:
-      - device_aliases.rack
+      - device_aliases.server_rack
     aliases:
       - 'rack'
       - 'cabinet'
@@ -64,7 +64,7 @@ detection_targets:
   - key: rack_pdu
     entity_key: device:rack_pdu
     aliases_from:
-      - device_aliases.pdu
+      - device_aliases.rack_pdu
     aliases:
       - 'pdu'
     completeness: load_bearing
@@ -74,7 +74,7 @@ detection_targets:
   - key: tor_switch
     entity_key: device:tor_switch
     aliases_from:
-      - device_aliases.tor
+      - device_aliases.tor_switch
     aliases:
       - 'tor'
       - 'top of rack'

@@ -567,7 +567,25 @@ def _verify_pdf_bbox_crop(atom: EvidenceAtom, source_ref: SourceRef, path: Path)
                 f"Page index {page_index} out of range (page_count={doc.page_count})",
             )
         page = doc.load_page(page_index)
-        clip = fitz.Rect(x0, y0, x1, y1)
+        # Clamp bbox to page bounds so a malformed-but-positive locator
+        # (e.g. coordinates that drift outside the page after rounding,
+        # or a legend bbox that grew past the page edge) cannot throw
+        # inside ``get_pixmap``. We only clamp when the entire bbox
+        # intersects the page; an entirely off-page bbox stays an
+        # explicit failure.
+        page_rect = page.rect
+        px0 = max(float(page_rect.x0), min(x0, float(page_rect.x1)))
+        py0 = max(float(page_rect.y0), min(y0, float(page_rect.y1)))
+        px1 = max(float(page_rect.x0), min(x1, float(page_rect.x1)))
+        py1 = max(float(page_rect.y0), min(y1, float(page_rect.y1)))
+        if not (px1 > px0 and py1 > py0):
+            return _receipt(
+                atom,
+                source_ref,
+                "failed",
+                "Schematic bbox is entirely outside the page rectangle",
+            )
+        clip = fitz.Rect(px0, py0, px1, py1)
         zoom = SCHEMATIC_REPLAY_DPI / 72.0
         matrix = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False, colorspace=fitz.csRGB)

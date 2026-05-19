@@ -130,20 +130,35 @@ def _deterministic_nms(
     Two hits for the *same* target whose bboxes IoU > threshold are
     merged: highest confidence wins, then lowest detection_id.
     Detections for different targets do not suppress each other.
+
+    Sort order is total: iterate target keys in sorted order, and
+    use a full rounded bbox plus modality plus detection_id in the
+    final ordering so two compiles produce byte-identical output.
     """
     by_target: dict[str, list[SymbolDetection]] = {}
     for det in detections:
         by_target.setdefault(det.target_key, []).append(det)
     kept: list[SymbolDetection] = []
-    for target_key, group in by_target.items():
-        group.sort(key=lambda d: (-d.confidence, d.detection_id))
+    for target_key in sorted(by_target):
+        group = sorted(by_target[target_key], key=lambda d: (-d.confidence, d.detection_id))
         local_kept: list[SymbolDetection] = []
         for det in group:
             if any(_bbox_iou(det.bbox_pdf, k.bbox_pdf) > iou_threshold for k in local_kept):
                 continue
             local_kept.append(det)
         kept.extend(local_kept)
-    kept.sort(key=lambda d: (d.page_index, d.target_key, d.bbox_pdf[1], d.bbox_pdf[0]))
+    kept.sort(
+        key=lambda d: (
+            d.page_index,
+            d.target_key,
+            round(d.bbox_pdf[1], 3),
+            round(d.bbox_pdf[0], 3),
+            round(d.bbox_pdf[3], 3),
+            round(d.bbox_pdf[2], 3),
+            d.modality,
+            d.detection_id,
+        )
+    )
     return kept
 
 

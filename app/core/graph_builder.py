@@ -424,10 +424,19 @@ def _is_schematic_quantity_atom(atom: EvidenceAtom) -> bool:
 
 
 def _schematic_quantity_signature(atom: EvidenceAtom) -> tuple[Any, ...]:
+    """Pairing key for schematic detected/declared quantity atoms.
+
+    Intentionally *does not* include the sheet number: in a normal
+    drawing set, the declared count lives on the global legend sheet
+    (e.g. T0.01) while the detected count lives on a floor-plan sheet
+    (e.g. E1.01). Pairing only by (artifact, target_key) lets the
+    same legend govern many drawing pages — which is the whole point
+    of the cross-sheet resolver. The edge's reason string still names
+    both sheets for the reviewer.
+    """
     value = atom.value if isinstance(atom.value, dict) else {}
     return (
         atom.artifact_id,
-        value.get("schematic_sheet_number"),
         value.get("schematic_target_key"),
     )
 
@@ -469,6 +478,8 @@ def _build_schematic_quantity_edges(
                     continue
             except (TypeError, ValueError):
                 continue
+            det_sheet = det.value.get("schematic_sheet_number")
+            dec_sheet = dec.value.get("schematic_sheet_number")
             edges.append(
                 _build_edge(
                     project_id,
@@ -476,8 +487,9 @@ def _build_schematic_quantity_edges(
                     det,
                     dec,
                     (
-                        f"Schematic quantity contradiction on sheet "
-                        f"{sig[1] or '?'} target {sig[2]}: detected={det_qty} declared={dec_qty}"
+                        f"Schematic quantity contradiction target {sig[1]}: "
+                        f"detected={det_qty} on sheet {det_sheet or '?'} vs "
+                        f"declared={dec_qty} on sheet {dec_sheet or '?'}"
                     ),
                     0.9,
                     edge_family=EDGE_FAMILY_SCHEMATIC_QUANTITY_CONTRADICTION,

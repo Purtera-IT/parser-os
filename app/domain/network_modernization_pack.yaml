@@ -52,7 +52,7 @@ detection_targets:
   - key: nm_switch
     entity_key: device:switch
     aliases_from:
-      - device_aliases.switch
+      - device_aliases.l2_switch
     completeness: load_bearing
     modalities:
       - text_tag
@@ -60,7 +60,7 @@ detection_targets:
   - key: nm_router
     entity_key: device:router
     aliases_from:
-      - device_aliases.router
+      - device_aliases.branch_router
     completeness: load_bearing
     modalities:
       - text_tag

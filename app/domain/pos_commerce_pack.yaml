@@ -54,7 +54,7 @@ detection_targets:
   - key: pos_terminal
     entity_key: device:pos_terminal
     aliases_from:
-      - device_aliases.pos_terminal
+      - device_aliases.pos_register
     aliases:
       - 'register'
       - 'pos'
@@ -65,7 +65,7 @@ detection_targets:
   - key: pin_pad
     entity_key: device:pin_pad
     aliases_from:
-      - device_aliases.pin_pad
+      - device_aliases.pos_pin_pad
     aliases:
       - 'payment device'
       - 'pin entry'

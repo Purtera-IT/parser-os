@@ -20,6 +20,7 @@ prompt.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -482,6 +483,12 @@ class OrbitBriefPdfParser(BaseParser):
         # legend is actually parsed in the document or when the
         # domain pack declares detection targets; otherwise leaves
         # the output stream untouched so RFP-only PDFs are unchanged.
+        #
+        # We no longer swallow exceptions silently. Failures here
+        # used to be invisible: legacy tests stayed green while every
+        # schematic atom quietly disappeared. Instead, route any
+        # exception into a structured schematic_warning so the
+        # operator can see what went wrong and fix it.
         schematic_atoms: list[EvidenceAtom] = []
         schematic_derived: list[dict[str, Any]] = []
         try:
@@ -492,8 +499,19 @@ class OrbitBriefPdfParser(BaseParser):
                 parser_version=self.parser_version,
                 domain_pack=domain_pack,
             )
-        except Exception:  # pragma: no cover — never fail the parse
-            schematic_atoms = []
+        except Exception as exc:
+            import traceback as _tb
+
+            schematic_atoms = [
+                _build_schematic_prepass_failure_atom(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    path=path,
+                    parser_version=self.parser_version,
+                    exception=exc,
+                    traceback=_tb.format_exc(),
+                )
+            ]
             schematic_derived = []
         if schematic_atoms:
             atoms.extend(schematic_atoms)
@@ -3415,6 +3433,45 @@ def _group_form_option_atoms_from_text(
     return out
 
 
+def _build_schematic_prepass_failure_atom(
+    *,
+    project_id: str,
+    artifact_id: str,
+    path: Path,
+    parser_version: str,
+    exception: Exception,
+    traceback: str,
+) -> EvidenceAtom:
+    """Surface a schematic pre-pass crash as a single warning atom.
+
+    Without this, legacy tests stayed green even when the schematic
+    pre-pass blew up — the broad ``except`` simply dropped every
+    schematic atom. Boss-review fix: failures now ship as a
+    ``schematic_warning`` with the truncated traceback in
+    ``value['traceback']`` so the operator can see what happened.
+    """
+    from app.parsers.schematic_atom_emitters import emit_warning_atom
+    from app.parsers.schematic_models import SchematicWarning
+
+    detail = f"{type(exception).__name__}: {exception}"
+    truncated = traceback[-1500:] if len(traceback) > 1500 else traceback
+    warning = SchematicWarning.make(
+        warning_type="weak_legend",  # closest existing type for "something broke"
+        page_index=0,
+        sheet_number=None,
+        detail=f"Schematic pre-pass raised {detail}",
+        extras={"failure": detail, "traceback_tail": truncated},
+    )
+    return emit_warning_atom(
+        warning=warning,
+        project_id=project_id,
+        artifact_id=artifact_id,
+        filename=path.name,
+        parser_version=parser_version,
+        page=None,
+    )
+
+
 def _run_schematic_pre_pass(
     *,
     project_id: str,
@@ -3458,6 +3515,8 @@ def _run_schematic_pre_pass(
         extract_sheet_number,
     )
     from orbitbrief_page_os.segmentation.schematic.symbol_detector import detect_symbols
+    from orbitbrief_page_os.segmentation.schematic.raster import is_text_poor_page
+    from orbitbrief_page_os.segmentation.schematic import ocr as schematic_ocr
 
     try:
         doc = fitz.open(str(path))
@@ -3475,13 +3534,41 @@ def _run_schematic_pre_pass(
     detection_records: list[dict[str, Any]] = []
 
     declared_emitted: set[tuple[str, str]] = set()
+    pack_has_targets_for_warning = bool(domain_pack and domain_pack.detection_targets)
     try:
         for page_index in range(doc.page_count):
             try:
-                blocks = page_text_blocks(doc.load_page(page_index))
+                page_obj = doc.load_page(page_index)
+                blocks = page_text_blocks(page_obj)
             except Exception:
                 blocks = []
+                page_obj = None
             per_page_blocks[page_index] = blocks
+            # Raster fallback (PR8 wiring): if the page has effectively
+            # no text layer AND the active pack expects schematic content,
+            # emit an ``ocr_unavailable`` warning so the page doesn't
+            # silently parse as a blank document.  When local OCR is
+            # available, we still emit the warning today but the
+            # next-round PR can convert OCR words into TextBlocks here.
+            if (
+                page_obj is not None
+                and pack_has_targets_for_warning
+                and not blocks
+                and is_text_poor_page(page_obj)
+            ):
+                if not schematic_ocr.is_available():
+                    atoms.append(
+                        emit_warning_atom(
+                            warning=schematic_ocr.status_warning(
+                                page_index=page_index, sheet_number=None
+                            ),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                            page=page_obj,
+                        )
+                    )
             legend = None
             candidates = locate_legend_candidates(page_index=page_index, blocks=blocks)
             # Try candidates in score order; the first one whose
@@ -3522,6 +3609,10 @@ def _run_schematic_pre_pass(
             return [], []
 
         for legend in parsed_legends:
+            try:
+                legend_page = doc.load_page(legend.page_index)
+            except Exception:  # pragma: no cover
+                legend_page = None
             atoms.append(
                 emit_legend_atom(
                     legend=legend,
@@ -3529,6 +3620,7 @@ def _run_schematic_pre_pass(
                     artifact_id=artifact_id,
                     filename=path.name,
                     parser_version=parser_version,
+                    page=legend_page,
                 )
             )
             legend_records.append(
@@ -3558,8 +3650,21 @@ def _run_schematic_pre_pass(
             blocks = per_page_blocks[page_index]
             sheet = extract_sheet_number(blocks)
             own_legend = any(l.page_index == page_index for l in parsed_legends)
-            if sheet is None and not own_legend:
+            # The pack-with-targets case: even if a drawing-like page has
+            # no extractable sheet number, the active domain pack
+            # expects schematic context. Routing it through the resolver
+            # surfaces a ``missing_legend`` warning instead of silently
+            # dropping the page (boss-review fix).
+            pack_expects_schematic = bool(domain_pack and domain_pack.detection_targets)
+            page_text_density = sum(len((b.text or "").strip()) for b in blocks)
+            if sheet is None and not own_legend and not (
+                pack_expects_schematic and page_text_density >= 40
+            ):
                 continue
+            try:
+                page = doc.load_page(page_index)
+            except Exception:  # pragma: no cover
+                page = None
             resolved = resolver.resolve_for_page(page_index)
             for warning in resolved.warnings:
                 atoms.append(
@@ -3569,6 +3674,7 @@ def _run_schematic_pre_pass(
                         artifact_id=artifact_id,
                         filename=path.name,
                         parser_version=parser_version,
+                        page=page,
                     )
                 )
             if resolved.legend is None or not domain_pack:
@@ -3584,6 +3690,13 @@ def _run_schematic_pre_pass(
                 targets=tuple(targets),
                 legend_gap_target_keys=tuple(gaps),
             )
+            page_bbox: tuple[float, float, float, float] | None = None
+            if page is not None:
+                try:
+                    rect = page.rect
+                    page_bbox = (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
+                except Exception:  # pragma: no cover
+                    page_bbox = None
             atoms.append(
                 emit_target_set_atom(
                     target_set=target_set,
@@ -3591,6 +3704,8 @@ def _run_schematic_pre_pass(
                     artifact_id=artifact_id,
                     filename=path.name,
                     parser_version=parser_version,
+                    page=page,
+                    page_bbox=page_bbox,
                 )
             )
             target_records.append(
@@ -3604,21 +3719,34 @@ def _run_schematic_pre_pass(
                     "legend_gap_target_keys": list(gaps),
                 }
             )
+            # legend_gap warnings: pack declared the target as
+            # load-bearing but the resolved legend doesn't mention it.
+            # Attach the legend's bbox so source_replay still verifies
+            # the receipt against pixels (rather than emitting a
+            # locator with only a page index).
+            legend_bbox_for_gap = per_page_legend_bbox.get(resolved.legend.page_index)
+            legend_page_for_gap = None
+            try:
+                legend_page_for_gap = doc.load_page(resolved.legend.page_index)
+            except Exception:  # pragma: no cover
+                pass
             for gap_key in gaps:
                 atoms.append(
                     emit_warning_atom(
                         warning=SchematicWarning.make(
                             warning_type="legend_gap",
-                            page_index=page_index,
-                            sheet_number=sheet,
+                            page_index=resolved.legend.page_index,
+                            sheet_number=resolved.legend.sheet_number,
                             detail=f"Pack '{domain_pack.pack_id}' declares load-bearing target '{gap_key}' but legend has no matching entry",
                             target_key=gap_key,
                             legend_id=resolved.legend.legend_id,
+                            bbox_pdf=legend_bbox_for_gap,
                         ),
                         project_id=project_id,
                         artifact_id=artifact_id,
                         filename=path.name,
                         parser_version=parser_version,
+                        page=legend_page_for_gap,
                     )
                 )
 
@@ -3626,10 +3754,9 @@ def _run_schematic_pre_pass(
             # resolved legend AND a non-empty target set. Without a
             # target set, every text token would be "unknown" and we
             # would not be classifying anyway.
-            if not target_set.targets:
+            if not target_set.targets or page is None:
                 continue
             try:
-                page = doc.load_page(page_index)
                 legend_page = doc.load_page(resolved.legend.page_index)
             except Exception:  # pragma: no cover
                 continue
@@ -3696,6 +3823,43 @@ def _run_schematic_pre_pass(
                 )
                 if detected_atom is not None:
                     atoms.append(detected_atom)
+
+                # legend_orphan: load-bearing target declared by the
+                # legend but zero detections on this drawing body.
+                # Boss-review fix — previously declared but never emitted.
+                if (
+                    not hits
+                    and target.completeness == "load_bearing"
+                    and target.legend_entry_id is not None
+                ):
+                    orphan_entry = next(
+                        (e for e in resolved.legend.entries if e.entry_id == target.legend_entry_id),
+                        None,
+                    )
+                    orphan_bbox = orphan_entry.symbol_bbox_pdf if orphan_entry else None
+                    atoms.append(
+                        emit_warning_atom(
+                            warning=SchematicWarning.make(
+                                warning_type="legend_orphan",
+                                page_index=page_index,
+                                sheet_number=sheet,
+                                detail=(
+                                    f"Legend entry for load-bearing target "
+                                    f"'{target.target_key}' produced zero detections on this page."
+                                ),
+                                target_key=target.target_key,
+                                legend_id=resolved.legend.legend_id,
+                                legend_entry_id=target.legend_entry_id,
+                                bbox_pdf=orphan_bbox,
+                            ),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                            page=legend_page,
+                        )
+                    )
+
                 if target.legend_entry_id is None:
                     continue
                 # Walk the legend for the declared count for this entry.
@@ -3711,20 +3875,47 @@ def _run_schematic_pre_pass(
                         continue
                     if entry.count_column is None:
                         continue
-                    atoms.append(
-                        emit_declared_count_atom(
-                            page_index=resolved.legend.page_index,
-                            sheet_number=resolved.legend.sheet_number,
-                            target=target,
-                            declared_count=entry.count_column,
-                            entry=entry,
-                            project_id=project_id,
-                            artifact_id=artifact_id,
-                            filename=path.name,
-                            parser_version=parser_version,
-                        )
+                    declared = emit_declared_count_atom(
+                        page_index=resolved.legend.page_index,
+                        sheet_number=resolved.legend.sheet_number,
+                        target=target,
+                        declared_count=entry.count_column,
+                        entry=entry,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=legend_page,
                     )
-                    declared_emitted.add(dedup_key)
+                    if declared is not None:
+                        atoms.append(declared)
+                        declared_emitted.add(dedup_key)
+                    else:
+                        # Provenance gate refused (no symbol bbox or no
+                        # crop hash available). Emit a low-confidence
+                        # warning so the count isn't silently lost.
+                        atoms.append(
+                            emit_warning_atom(
+                                warning=SchematicWarning.make(
+                                    warning_type="weak_legend",
+                                    page_index=resolved.legend.page_index,
+                                    sheet_number=resolved.legend.sheet_number,
+                                    detail=(
+                                        f"Legend declared count={entry.count_column} for target "
+                                        f"'{target.target_key}' but the row had no replayable bbox; "
+                                        f"declared-count atom suppressed."
+                                    ),
+                                    target_key=target.target_key,
+                                    legend_id=resolved.legend.legend_id,
+                                    legend_entry_id=target.legend_entry_id,
+                                ),
+                                project_id=project_id,
+                                artifact_id=artifact_id,
+                                filename=path.name,
+                                parser_version=parser_version,
+                                page=legend_page,
+                            )
+                        )
                     break
 
             # ``unknown_symbol`` warnings: tokens that look like
@@ -3740,6 +3931,7 @@ def _run_schematic_pre_pass(
                     artifact_id=artifact_id,
                     filename=path.name,
                     parser_version=parser_version,
+                    page=page,
                 )
             )
     finally:
@@ -3766,7 +3958,145 @@ def _run_schematic_pre_pass(
             "content_json": {"schema_version": "schematic.detections.v1", "detections": detection_records},
         },
     ]
+    # Optional debug-overlay sidecars. The flag is opt-in via the
+    # ``PARSER_OS_SCHEMATIC_OVERLAYS`` env var so default compiles
+    # still produce byte-identical output. When set, one PNG per
+    # drawing page is written under ``<stem>.derived/overlays/`` and
+    # an ``schematic_overlays.json`` manifest is added so downstream
+    # consumers (OrbitBrief envelope renderer, debug viewer) can
+    # find them deterministically.
+    if os.environ.get("PARSER_OS_SCHEMATIC_OVERLAYS") == "1" and parsed_legends:
+        try:
+            from orbitbrief_page_os.segmentation.schematic.debug_overlay import render_overlay
+        except Exception:
+            render_overlay = None  # type: ignore[assignment]
+        if render_overlay is not None:
+            try:
+                overlay_doc = fitz.open(str(path))
+            except Exception:  # pragma: no cover
+                overlay_doc = None
+            overlay_manifest: list[dict[str, Any]] = []
+            target_pages = sorted({rec["page"] for rec in target_records})
+            if overlay_doc is not None:
+                try:
+                    for page_index in target_pages:
+                        try:
+                            overlay_page = overlay_doc.load_page(page_index)
+                        except Exception:  # pragma: no cover
+                            continue
+                        page_detections = [
+                            d for d in detection_records if d.get("page") == page_index
+                        ]
+                        legends_here = [
+                            l for l in parsed_legends if l.page_index == page_index
+                        ]
+                        # debug_overlay.render_overlay expects SymbolDetection
+                        # records, not raw dicts — rebuild lightweight stand-ins.
+                        from app.parsers.schematic_models import SymbolDetection
+
+                        dets: list[SymbolDetection] = []
+                        for d in page_detections:
+                            bbox = d.get("bbox") or [0, 0, 1, 1]
+                            try:
+                                dets.append(
+                                    SymbolDetection.make(
+                                        page_index=int(d.get("page", page_index)),
+                                        sheet_number=None,
+                                        target_key=str(d.get("target_key", "")),
+                                        entity_key=str(d.get("target_key", "")),
+                                        legend_entry_id=None,
+                                        bbox_pdf=(
+                                            float(bbox[0]),
+                                            float(bbox[1]),
+                                            float(bbox[2]),
+                                            float(bbox[3]),
+                                        ),
+                                        crop_sha256=str(d.get("crop_sha256") or ""),
+                                        modality=d.get("modality") or "text_tag",
+                                        confidence=float(d.get("confidence") or 0.0),
+                                    )
+                                )
+                            except ValueError:
+                                continue
+                        out_rel = f"{derived_relative}/overlays/page_{page_index:04d}.png"
+                        out_path = path.parent / out_rel.replace("/", os.sep)
+                        result = render_overlay(
+                            page=overlay_page,
+                            legends_on_page=legends_here,
+                            detections=dets,
+                            out_path=out_path,
+                        )
+                        if result is not None:
+                            overlay_manifest.append(
+                                {
+                                    "page": page_index,
+                                    "relative_path": out_rel,
+                                    "legend_count": result.legend_count,
+                                    "detection_count": result.detection_count,
+                                    "width": result.width,
+                                    "height": result.height,
+                                }
+                            )
+                finally:
+                    try:
+                        overlay_doc.close()
+                    except Exception:  # pragma: no cover
+                        pass
+            derived_files.append(
+                {
+                    "relative_path": f"{derived_relative}/schematic_overlays.json",
+                    "content_kind": "json",
+                    "content_json": {
+                        "schema_version": "schematic.overlays.v1",
+                        "overlays": overlay_manifest,
+                    },
+                }
+            )
     return collect_all(atoms), derived_files
+
+
+# Tokens that look symbol-shaped but are conventionally noise on
+# construction drawings — column-grid bubbles (single letters), simple
+# integer keyed-note numbers (handled separately by the keyed-notes
+# pass when present), the page's own sheet number, and a small set of
+# common page metadata tokens.  Boss-review fix: previously every
+# repeated short ALL-CAPS token became an unknown_symbol.
+_UNKNOWN_TOKEN_IGNORES = {
+    "NIC",
+    "NTS",
+    "NA",
+    "TBD",
+    "REF",
+    "REV",
+    "SEE",
+    "MAX",
+    "MIN",
+    "TYP",
+    "EQ",
+    "AFF",
+    "OC",
+    "DWG",
+    "SHT",
+    "GC",
+    "EC",
+    "MC",
+    "PC",
+    "AV",
+    "FA",
+    "AC",
+    "SC",
+    "BMS",
+    "AHU",
+    "VAV",
+    "PDU",
+    "UPS",
+    "ATS",
+    "MDF",
+    "IDF",
+    "TR",
+    "ER",
+    "MEP",
+}
 
 
 def _unknown_symbol_warnings(
@@ -3780,12 +4110,16 @@ def _unknown_symbol_warnings(
     artifact_id: str,
     filename: str,
     parser_version: str,
+    page: Any | None = None,
 ) -> list[EvidenceAtom]:
     """Emit ``unknown_symbol`` warnings for legend-style tokens with no match.
 
-    We are conservative: only short ALL-CAPS tokens (length 2-5) that
-    appear repeatedly on the page count. This avoids classifying
-    every short word in body text as an unknown symbol.
+    Conservative: only short ALL-CAPS tokens (length 2-5) that appear
+    repeatedly on the page.  The boss review caught that the previous
+    implementation flagged ordinary drawing furniture — sheet numbers,
+    grid bubbles, keyed-note integers, common drawing abbreviations —
+    as unknown symbols, drowning the real warnings.  This version
+    suppresses each of those classes.
     """
     import re as _re
 
@@ -3797,14 +4131,36 @@ def _unknown_symbol_warnings(
         for e in legend.entries
         if e.normalized_symbol_text
     }
+    sheet_token = (sheet or "").upper()
+
+    def _looks_like_grid_bubble(tok: str) -> bool:
+        # A single letter or single digit is a grid label, not a symbol.
+        return len(tok) == 1
+
+    def _looks_like_keyed_note_integer(tok: str) -> bool:
+        # Bare 1-3 digit integers are typically keyed-note markers.
+        return tok.isdigit() and 1 <= len(tok) <= 3
+
+    def _looks_like_sheet_number(tok: str) -> bool:
+        # The page's own sheet number repeats in the title block / index.
+        return tok == sheet_token or _re.match(r"^[A-Z]{1,3}\d+(?:\.\d+)?$", tok) is not None
+
     counts: dict[str, int] = {}
     first_bbox: dict[str, tuple[float, float, float, float]] = {}
     for blk in blocks:
         if any(_bbox_intersects(blk.bbox, ex) for ex in excluded_bboxes):
             continue
-        for m in _re.finditer(r"\b[A-Z][A-Z0-9\-]{1,4}\b", blk.text):
+        for m in _re.finditer(r"\b[A-Z0-9][A-Z0-9\-]{1,4}\b", blk.text):
             tok = m.group(0).upper()
             if tok in known:
+                continue
+            if tok in _UNKNOWN_TOKEN_IGNORES:
+                continue
+            if _looks_like_grid_bubble(tok):
+                continue
+            if _looks_like_keyed_note_integer(tok):
+                continue
+            if _looks_like_sheet_number(tok):
                 continue
             counts[tok] = counts.get(tok, 0) + 1
             first_bbox.setdefault(tok, blk.bbox)
@@ -3818,7 +4174,7 @@ def _unknown_symbol_warnings(
                     warning_type="unknown_symbol",
                     page_index=page_index,
                     sheet_number=sheet,
-                    detail=f"Token {tok!r} appears {n}× on page but is not in the resolved legend.",
+                    detail=f"Token {tok!r} appears {n} times on page but is not in the resolved legend.",
                     bbox_pdf=first_bbox[tok],
                     extras={"token": tok, "count": n},
                 ),
@@ -3826,6 +4182,7 @@ def _unknown_symbol_warnings(
                 artifact_id=artifact_id,
                 filename=filename,
                 parser_version=parser_version,
+                page=page,
             )
         )
     return out

@@ -284,7 +284,7 @@ detection_targets:
   - key: card_reader
     entity_key: device:card_reader
     aliases_from:
-      - device_aliases.reader
+      - device_aliases.card_reader
     aliases:
       - 'card reader'
       - 'prox reader'
@@ -307,7 +307,7 @@ detection_targets:
   - key: rex_device
     entity_key: device:rex
     aliases_from:
-      - device_aliases.rex
+      - device_aliases.rex_button
     completeness: load_bearing
     modalities:
       - text_tag

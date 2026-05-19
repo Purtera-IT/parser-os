@@ -265,7 +265,7 @@ detection_targets:
   - key: das_antenna
     entity_key: device:das_antenna
     aliases_from:
-      - device_aliases.antenna
+      - device_aliases.remote_antenna
     aliases:
       - 'remote antenna'
       - 'indoor antenna'

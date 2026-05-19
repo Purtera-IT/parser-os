@@ -62,33 +62,55 @@ def _is_schematic_quantity_group(
 ) -> bool:
     """Same-artifact schematic quantity-conflict gate.
 
-    Both atoms must:
-      - have ``value['schematic_target_key']`` set,
-      - have a ``SourceRef.locator`` with a 4-element ``bbox`` and
-        ``bbox_units == "pdf_points"``.
-    And at least one related edge must carry
-    ``metadata['edge_family'] == "schematic_quantity_contradiction"``.
+    Both atoms must satisfy ALL of the following — only then will the
+    packetizer certify a same-artifact ``quantity_conflict`` packet.
+    Boss-review fix: previously this gate accepted any bbox-carrying
+    atom whose value mentioned ``schematic_target_key``; it has been
+    tightened so a non-schematic atom cannot accidentally pass.
+
+      - ``value['schematic_target_key']`` is set,
+      - ``value['schematic_role']`` is exactly ``"detected"`` or ``"declared"``,
+      - at least one ``SourceRef`` has a 4-element ``bbox`` with
+        ``bbox_units == "pdf_points"`` AND a non-empty ``crop_sha256``
+        (so source_replay can independently re-verify the receipt),
+      - ``SourceRef.extraction_method`` starts with ``"schematic_"``.
+
+    Additionally the group must contain at least one ``detected``
+    role and one ``declared`` role, and at least one related edge
+    must carry ``metadata['edge_family'] == "schematic_quantity_contradiction"``.
     """
     if len(qty_atoms) < 2:
         return False
+    roles: set[str] = set()
     for atom in qty_atoms:
         value = atom.value if isinstance(atom.value, dict) else {}
         if not value.get("schematic_target_key"):
             return False
+        role = value.get("schematic_role")
+        if role not in {"detected", "declared"}:
+            return False
+        roles.add(role)
         srefs = atom.source_refs or []
-        has_bbox = False
+        has_replayable = False
         for src in srefs:
             loc = src.locator if isinstance(src.locator, dict) else {}
             bbox = loc.get("bbox")
-            if (
+            if not (
                 isinstance(bbox, (list, tuple))
                 and len(bbox) == 4
                 and loc.get("bbox_units") == "pdf_points"
+                and loc.get("crop_sha256")
             ):
-                has_bbox = True
-                break
-        if not has_bbox:
+                continue
+            method = (src.extraction_method or "") if hasattr(src, "extraction_method") else ""
+            if not str(method).startswith("schematic_"):
+                continue
+            has_replayable = True
+            break
+        if not has_replayable:
             return False
+    if "detected" not in roles or "declared" not in roles:
+        return False
     for edge in related_edges:
         meta = getattr(edge, "metadata", {}) or {}
         if isinstance(meta, dict) and meta.get("edge_family") == "schematic_quantity_contradiction":

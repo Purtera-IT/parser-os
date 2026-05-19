@@ -92,24 +92,33 @@ def _discipline_prefix(sheet: str | None) -> str | None:
 def extract_sheet_number(blocks: Sequence[TextBlock]) -> str | None:
     """Pull a sheet number from a page's text blocks.
 
-    Looks at the bottom-right region first (typical title-block
-    location), then anywhere on the page. Returns the normalized
-    sheet token (e.g. ``T0.01``) or ``None``. Deterministic: ties
-    resolve by smallest x0, then y0.
+    Prefers candidates in the bottom-right quadrant (typical title-block
+    location).  Ties resolve by largest y0 (lower on the page), then
+    largest x0 (further right), then the alphabetically smallest token
+    so the result is fully deterministic.
+
+    Earlier versions of this function inverted the scoring — they
+    appended ``(-y0, -x0, token)`` and returned ``cands[-1]``, which
+    actually preferred top-left incidental references over the
+    title-block. The boss review caught that.
     """
     cands: list[tuple[float, float, str]] = []
     for blk in blocks:
-        m = _SHEET_NUMBER_RE.search(blk.text)
-        if not m:
-            continue
-        # Prefer matches in the bottom-right quadrant of the page.
-        y_score = -blk.bbox[1]
-        x_score = -blk.bbox[0]
-        cands.append((y_score, x_score, m.group(1) + m.group(2)))
+        for m in _SHEET_NUMBER_RE.finditer(blk.text):
+            token = m.group(1) + m.group(2)
+            cands.append((blk.bbox[1], blk.bbox[0], token))
     if not cands:
         return None
-    cands.sort()
-    return _norm_sheet(cands[-1][2])
+    # Sort by y desc, x desc, token asc — last element pulled from a
+    # reverse-sorted list is what we want, but we use max() over the
+    # full keyspace so the tie-break is explicit and total.
+    best = max(cands, key=lambda c: (c[0], c[1], -1))
+    # Tie-breaker on identical y/x: choose the alphabetically smallest
+    # token for determinism (matters when a page accidentally repeats).
+    best_y, best_x, _ = best
+    same_xy = [c for c in cands if c[0] == best_y and c[1] == best_x]
+    chosen = min(c[2] for c in same_xy)
+    return _norm_sheet(chosen)
 
 
 def parse_drawing_index(blocks: Sequence[TextBlock]) -> dict[str, str]:

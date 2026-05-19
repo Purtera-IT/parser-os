@@ -286,7 +286,7 @@ detection_targets:
   - key: fire_panel
     entity_key: device:fire_panel
     aliases_from:
-      - device_aliases.panel
+      - device_aliases.fire_panel
     aliases:
       - 'facp'
       - 'fire alarm control panel'

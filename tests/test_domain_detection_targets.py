@@ -108,6 +108,49 @@ def test_target_keys_unique_per_pack() -> None:
         assert len(keys) == len(set(keys)), f"{pack_id} has duplicate target keys: {keys}"
 
 
+def test_no_broken_aliases_from_references() -> None:
+    """Every aliases_from path must resolve to an existing device_aliases key.
+
+    A broken reference silently degrades target matching because the parser's
+    alias resolver returns an empty list, falling back to the explicit aliases
+    only. This used to ship with 21 broken references; that mistake doesn't
+    get to happen quietly again.
+    """
+    failures: list[str] = []
+    for pack_id in PACKS_WITH_TARGETS:
+        pack = load_domain_pack(pack_id)
+        da_keys = set(pack.device_aliases.keys())
+        for target in pack.detection_targets:
+            for ref in target.aliases_from:
+                head, _, tail = ref.partition(".")
+                if head != "device_aliases" or not tail:
+                    failures.append(f"{pack_id}.{target.key}: malformed path {ref!r}")
+                    continue
+                if tail not in da_keys:
+                    failures.append(
+                        f"{pack_id}.{target.key}: device_aliases.{tail} missing"
+                        f" (available: {sorted(da_keys)})"
+                    )
+    assert not failures, "broken aliases_from references:\n  " + "\n  ".join(failures)
+
+
+def test_every_load_bearing_target_has_non_empty_resolved_aliases() -> None:
+    """A load-bearing target with an empty resolved alias bag can't match the
+    legend, so it effectively becomes a permanent legend_gap warning. Guarantee
+    every load-bearing target has *something* to match against.
+    """
+    failures: list[str] = []
+    for pack_id in PACKS_WITH_TARGETS:
+        pack = load_domain_pack(pack_id)
+        for target in pack.detection_targets:
+            if target.completeness != "load_bearing":
+                continue
+            resolved = pack.resolved_target_aliases(target)
+            if not resolved and not target.aliases:
+                failures.append(f"{pack_id}.{target.key} has zero aliases")
+    assert not failures, "load-bearing targets with no aliases:\n  " + "\n  ".join(failures)
+
+
 def test_copper_cabling_wide_reference_adapter_carries_targets() -> None:
     pack = load_domain_pack("copper_cabling")
     assert pack.pack_id == "copper_cabling"

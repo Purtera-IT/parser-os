@@ -312,7 +312,25 @@ def _expand_block_downward(seed: TextBlock, blocks: Sequence[TextBlock]) -> tupl
 
 
 def _dedup_candidates(cands: Iterable[LegendCandidate]) -> list[LegendCandidate]:
-    sorted_cands = sorted(cands, key=lambda c: (-c.score, c.page_index, c.bbox[1], c.bbox[0]))
+    # Total sort key: score desc, then full rounded bbox, then layer name,
+    # then header text, then continuation ref. Without all of these,
+    # candidates with identical (-score, page, y0, x0) could still rely
+    # on input order — that breaks the byte-identical re-compile
+    # contract any time a future layer is added.
+    def _key(c: LegendCandidate) -> tuple:
+        return (
+            -c.score,
+            c.page_index,
+            round(c.bbox[1], 3),
+            round(c.bbox[0], 3),
+            round(c.bbox[3], 3),
+            round(c.bbox[2], 3),
+            c.layer,
+            c.header_text or "",
+            c.continuation_ref or "",
+        )
+
+    sorted_cands = sorted(cands, key=_key)
     kept: list[LegendCandidate] = []
     for cand in sorted_cands:
         if any(_bbox_iou(cand.bbox, k.bbox) >= 0.7 and cand.page_index == k.page_index for k in kept):

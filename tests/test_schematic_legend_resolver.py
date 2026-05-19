@@ -51,6 +51,28 @@ def test_extract_sheet_number_returns_none_when_absent() -> None:
     assert extract_sheet_number(blocks) is None
 
 
+def test_extract_sheet_number_prefers_bottom_right_over_top_left_reference() -> None:
+    """Drawings commonly cite OTHER sheet numbers in the body text
+    (``see sheet T0.01``); the bottom-right title-block sheet number
+    is the one we actually want. The boss review caught an inverted
+    sort that picked the top-left reference instead.
+    """
+    blocks = [
+        _b("See sheet T0.01 for legend", 60, 80, w=300),
+        _b("ALSO REFERENCES E2.01 ON THIS PAGE", 60, 110, w=400),
+        _b("E1.04", 520, 740),  # bottom-right title block
+    ]
+    assert extract_sheet_number(blocks) == "E1.04"
+
+
+def test_extract_sheet_number_ties_break_deterministically() -> None:
+    """Two equally-placed tokens resolve to the alphabetically smallest."""
+    blocks = [
+        _b("Z9.99 X9.99", 500, 740, w=200),
+    ]
+    assert extract_sheet_number(blocks) == "X9.99"
+
+
 def test_parse_drawing_index_finds_sheets() -> None:
     blocks = [
         _b("DRAWING INDEX", 50, 50, w=200),
