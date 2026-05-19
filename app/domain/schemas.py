@@ -27,6 +27,13 @@ class DetectionTargetSpec(BaseModel):
     for crop-based matching of swatches/icons; vector_shape for
     PDF drawing primitives; zone for filled polygons such as a
     wireless heat-map area; line_run for cable trunk segments).
+
+    ``parent_entity_keys`` lets a subtype target roll up to broader
+    entity buckets so the cross-artifact conflict detector can pair
+    a schematic ``device:ptz_camera`` count with a BOM line item
+    keyed on the broader ``device:ip_camera`` or ``device:camera``.
+    Without these, the schematic upgrade improves subtype recall at
+    the cost of cross-artifact conflict recall.
     """
 
     key: str
@@ -41,6 +48,7 @@ class DetectionTargetSpec(BaseModel):
     count_semantics: Literal["each_instance", "each_zone", "each_run", "presence_only"] = (
         "each_instance"
     )
+    parent_entity_keys: list[str] = Field(default_factory=list)
 
     @field_validator("key", "entity_key")
     @classmethod

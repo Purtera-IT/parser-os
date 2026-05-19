@@ -153,6 +153,7 @@ def intersect_with_pack(
             ontology_key=spec.ontology_key,
             legend_entry_id=entry.entry_id,
             aliases=tuple(pack.resolved_target_aliases(spec)),
+            parent_entity_keys=tuple(spec.parent_entity_keys),
         )
     gaps: list[str] = []
     for spec in pack.detection_targets:
@@ -590,7 +591,11 @@ def emit_detected_count_atom(
             "schematic_page": page_index,
             "detection_ids": [d.detection_id for d in detections],
         },
-        entity_keys=[target.entity_key, f"schematic_count:{target.target_key}"],
+        entity_keys=sorted({
+            target.entity_key,
+            f"schematic_count:{target.target_key}",
+            *target.parent_entity_keys,
+        }),
         source_refs=[src],
         authority_class=AuthorityClass.machine_extractor,
         confidence=0.9,
@@ -678,7 +683,11 @@ def emit_declared_count_atom(
             "schematic_page": page_index,
             "legend_entry_id": entry.entry_id,
         },
-        entity_keys=[target.entity_key, f"schematic_count:{target.target_key}"],
+        entity_keys=sorted({
+            target.entity_key,
+            f"schematic_count:{target.target_key}",
+            *target.parent_entity_keys,
+        }),
         source_refs=[src],
         authority_class=AuthorityClass.machine_extractor,
         confidence=0.8,

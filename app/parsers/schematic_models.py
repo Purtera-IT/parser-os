@@ -58,6 +58,14 @@ class ParsedLegendEntry:
     deterministic crop hash when the symbol is a glyph/swatch. Both
     are optional but at least one must be present for the entry to be
     classified.
+
+    ``attributes`` carries the additional columns that real construction
+    legends use beyond symbol/description/count — mounting height,
+    cable count, work-area termination, closet termination, rough-in,
+    power requirement, NIC marker, manufacturer/model, etc. Keys are
+    canonical normalized strings ("mounting_height", "cable_count",
+    "rough_in", "power", "remarks", "nic", "mfg", "model"); values
+    are the raw text from the cell.
     """
 
     entry_id: str
@@ -70,6 +78,7 @@ class ParsedLegendEntry:
     vector_fingerprint: str | None = None
     count_column: float | None = None
     notes: tuple[str, ...] = ()
+    attributes: tuple[tuple[str, str], ...] = ()
     source_ref_locator: tuple[tuple[str, Any], ...] = ()
     confidence: float = 0.0
 
@@ -93,6 +102,7 @@ class ParsedLegendEntry:
         vector_fingerprint: str | None = None,
         count_column: float | None = None,
         notes: tuple[str, ...] = (),
+        attributes: dict[str, str] | None = None,
         source_ref_locator: dict[str, Any] | None = None,
         confidence: float = 0.0,
     ) -> "ParsedLegendEntry":
@@ -106,6 +116,9 @@ class ParsedLegendEntry:
         locator_pairs: tuple[tuple[str, Any], ...] = tuple(
             sorted((str(k), v) for k, v in (source_ref_locator or {}).items())
         )
+        attr_pairs: tuple[tuple[str, str], ...] = tuple(
+            sorted((str(k), str(v)) for k, v in (attributes or {}).items())
+        )
         return cls(
             entry_id=entry_id,
             label_text=label_text,
@@ -117,12 +130,16 @@ class ParsedLegendEntry:
             vector_fingerprint=vector_fingerprint,
             count_column=count_column,
             notes=tuple(notes),
+            attributes=attr_pairs,
             source_ref_locator=locator_pairs,
             confidence=confidence,
         )
 
     def locator_dict(self) -> dict[str, Any]:
         return dict(self.source_ref_locator)
+
+    def attributes_dict(self) -> dict[str, str]:
+        return dict(self.attributes)
 
 
 LegendScope = Literal["page", "sheet", "sheet_range", "global", "continuation"]
@@ -213,7 +230,9 @@ class DetectionTarget:
     the active pack's ontology YAML; ``legend_entry_id`` links back to
     the row of the parsed legend that established the target for this
     drawing page (when resolved from the legend rather than purely
-    from the pack).
+    from the pack); ``parent_entity_keys`` lets a subtype roll up
+    to a broader bucket so cross-artifact quantity conflicts catch
+    BOMs that use the parent key.
     """
 
     target_key: str
@@ -223,6 +242,7 @@ class DetectionTarget:
     ontology_key: str | None = None
     legend_entry_id: str | None = None
     aliases: tuple[str, ...] = ()
+    parent_entity_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.target_key:

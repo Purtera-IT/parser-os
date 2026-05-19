@@ -408,10 +408,19 @@ def _verify_pdf_block(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> 
     """
     locator = source_ref.locator
     block_id = locator.get("block_id")
-    if not block_id:
-        if _locator_is_bbox_crop(locator):
-            return _verify_pdf_bbox_crop(atom, source_ref, path)
+    has_bbox = _locator_is_bbox_crop(locator)
+    if not block_id and has_bbox:
+        return _verify_pdf_bbox_crop(atom, source_ref, path)
+    if not block_id and not has_bbox:
         return _receipt(atom, source_ref, "unsupported", "PDF locator missing block_id")
+    # Both block_id and a bbox+crop_sha256 are present. Both must
+    # verify; if either fails, the receipt fails so the locator's
+    # over-broad provenance can't quietly half-verify.
+    if block_id and has_bbox:
+        bbox_receipt = _verify_pdf_bbox_crop(atom, source_ref, path)
+        if bbox_receipt.replay_status != "verified":
+            return bbox_receipt
+        # fall through to block_id check below
     structured = _load_structured_doc(path)
     if structured is None:
         return _receipt(

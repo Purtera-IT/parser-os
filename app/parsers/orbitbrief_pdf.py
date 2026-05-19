@@ -3544,12 +3544,13 @@ def _run_schematic_pre_pass(
                 blocks = []
                 page_obj = None
             per_page_blocks[page_index] = blocks
-            # Raster fallback (PR8 wiring): if the page has effectively
-            # no text layer AND the active pack expects schematic content,
-            # emit an ``ocr_unavailable`` warning so the page doesn't
-            # silently parse as a blank document.  When local OCR is
-            # available, we still emit the warning today but the
-            # next-round PR can convert OCR words into TextBlocks here.
+            # Raster fallback: if the page has effectively no text layer
+            # AND the active pack expects schematic content, try local
+            # OCR to recover legend rows. When OCR is unavailable, emit
+            # an ``ocr_unavailable`` warning so the page doesn't silently
+            # parse as blank. When OCR IS available, convert recognized
+            # words into TextBlocks in PDF-point space and feed them to
+            # the rest of the legend pipeline.
             if (
                 page_obj is not None
                 and pack_has_targets_for_warning
@@ -3569,6 +3570,43 @@ def _run_schematic_pre_pass(
                             page=page_obj,
                         )
                     )
+                else:
+                    from orbitbrief_page_os.segmentation.schematic.raster import (
+                        render_page_to_ndarray,
+                    )
+                    from app.parsers.schematic_models import SCHEMATIC_REPLAY_DPI
+
+                    arr = render_page_to_ndarray(page_obj, dpi=SCHEMATIC_REPLAY_DPI)
+                    if arr is not None:
+                        words = schematic_ocr.ocr_words(arr)
+                        ocr_blocks = schematic_ocr.words_to_textblocks(
+                            words, page_dpi=SCHEMATIC_REPLAY_DPI
+                        )
+                        if ocr_blocks:
+                            blocks = ocr_blocks
+                            per_page_blocks[page_index] = ocr_blocks
+                            atoms.append(
+                                emit_warning_atom(
+                                    warning=SchematicWarning.make(
+                                        warning_type="weak_legend",
+                                        page_index=page_index,
+                                        sheet_number=None,
+                                        detail=(
+                                            f"Raster page parsed via OCR "
+                                            f"({len(ocr_blocks)} text rows recovered)."
+                                        ),
+                                        extras={
+                                            "ocr_word_count": len(words),
+                                            "ocr_block_count": len(ocr_blocks),
+                                        },
+                                    ),
+                                    project_id=project_id,
+                                    artifact_id=artifact_id,
+                                    filename=path.name,
+                                    parser_version=parser_version,
+                                    page=page_obj,
+                                )
+                            )
             legend = None
             candidates = locate_legend_candidates(page_index=page_index, blocks=blocks)
             # Try candidates in score order; the first one whose
@@ -3598,7 +3636,19 @@ def _run_schematic_pre_pass(
                 if legend is not None:
                     chosen_bbox = cand.bbox
                     break
-            resolver.ingest_page(page_index=page_index, blocks=blocks, legend=legend)
+            page_bbox_for_ingest: tuple[float, float, float, float] | None = None
+            if page_obj is not None:
+                try:
+                    r = page_obj.rect
+                    page_bbox_for_ingest = (float(r.x0), float(r.y0), float(r.x1), float(r.y1))
+                except Exception:  # pragma: no cover
+                    page_bbox_for_ingest = None
+            resolver.ingest_page(
+                page_index=page_index,
+                blocks=blocks,
+                legend=legend,
+                page_bbox=page_bbox_for_ingest,
+            )
             if legend is not None:
                 parsed_legends.append(legend)
                 if chosen_bbox is not None:
@@ -3764,6 +3814,16 @@ def _run_schematic_pre_pass(
             if resolved.legend.page_index in per_page_legend_bbox:
                 if resolved.legend.page_index == page_index:
                     excluded.append(per_page_legend_bbox[resolved.legend.page_index])
+            # Additional exclusion zones — title block, drawing index,
+            # keyed notes, and schedules. Without these, a "PTZ" inside
+            # "PTZ ROOM" or a schedule cell gets counted as a detection.
+            from orbitbrief_page_os.segmentation.schematic.exclusion_zones import (
+                detect_exclusion_zones,
+            )
+
+            zones = detect_exclusion_zones(blocks, page_bbox=page_bbox)
+            for zone in zones:
+                excluded.append(zone.bbox)
             detections = detect_symbols(
                 page=page,
                 page_index=page_index,

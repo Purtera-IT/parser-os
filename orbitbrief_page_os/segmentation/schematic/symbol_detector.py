@@ -165,6 +165,102 @@ def _deterministic_nms(
 # ─────────────────────── text-tag matcher ──────────────────────────
 
 
+def _char_bboxes_for_block(
+    page: Any, blk: Any
+) -> list[tuple[str, tuple[float, float, float, float]]] | None:
+    """Return per-character ``(char, bbox)`` pairs covering ``blk.text``.
+
+    Uses PyMuPDF's ``dict`` output with the ``chars`` flag set so each
+    glyph carries its own bbox. Lets the text-tag matcher emit
+    bboxes around real glyph extents rather than evenly interpolating
+    across the block — necessary for proportional fonts.
+
+    Returns ``None`` when char-level metrics aren't available
+    (PyMuPDF too old, raster-derived TextBlocks, etc.). Callers fall
+    back to the monospaced interpolation in ``_interpolate_bbox``.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover
+        return None
+    try:
+        raw = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT | fitz.TEXT_PRESERVE_LIGATURES)
+    except Exception:
+        try:
+            raw = page.get_text("rawdict")
+        except Exception:
+            return None
+    # Intersect by line bbox so we pick exactly the spans inside this block.
+    target_bbox = blk.bbox
+    chars: list[tuple[str, tuple[float, float, float, float]]] = []
+    for block in raw.get("blocks", []) or []:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []) or []:
+            lb = line.get("bbox") or (0.0, 0.0, 0.0, 0.0)
+            if not (
+                lb[1] >= target_bbox[1] - 1.0
+                and lb[3] <= target_bbox[3] + 1.0
+                and lb[0] >= target_bbox[0] - 1.0
+                and lb[2] <= target_bbox[2] + 1.0
+            ):
+                continue
+            for span in line.get("spans", []) or []:
+                for ch in span.get("chars", []) or []:
+                    bbox = ch.get("bbox")
+                    text = ch.get("c") or ""
+                    if not text or not bbox or len(bbox) != 4:
+                        continue
+                    chars.append(
+                        (text, (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])))
+                    )
+    return chars or None
+
+
+def _bbox_from_char_range(
+    chars: list[tuple[str, tuple[float, float, float, float]]],
+    start: int,
+    end: int,
+    pad: float = _TEXT_TAG_PAD,
+) -> tuple[float, float, float, float] | None:
+    if start >= end or end > len(chars):
+        return None
+    region = chars[start:end]
+    if not region:
+        return None
+    x0 = min(b[0] for _, b in region) - pad
+    y0 = min(b[1] for _, b in region) - pad
+    x1 = max(b[2] for _, b in region) + pad
+    y1 = max(b[3] for _, b in region) + pad
+    if x1 <= x0:
+        x1 = x0 + 1.0
+    if y1 <= y0:
+        y1 = y0 + 1.0
+    return (x0, y0, x1, y1)
+
+
+def _find_substring_char_offsets(
+    chars: list[tuple[str, tuple[float, float, float, float]]],
+    token: str,
+    occurrence: int,
+) -> tuple[int, int] | None:
+    """Return (start, end) char indices for the Nth occurrence of ``token``."""
+    if not chars or not token:
+        return None
+    flat = "".join(c for c, _ in chars)
+    found = -1
+    pos = 0
+    for _ in range(occurrence + 1):
+        idx = flat.find(token, pos)
+        if idx < 0:
+            return None
+        found = idx
+        pos = idx + len(token)
+    if found < 0:
+        return None
+    return (found, found + len(token))
+
+
 def _text_tag_matches(
     *,
     page: Any,
@@ -184,6 +280,12 @@ def _text_tag_matches(
         ``excluded_bbox`` (legend region, title-block region), and
       - the token matches the legend's normalized symbol text with
         word-boundary matching.
+
+    Sub-token bbox: prefer PyMuPDF's per-glyph character metrics
+    (``dict`` output's ``chars`` array) so proportional fonts produce
+    a tight bbox around the actual token pixels.  Falls back to the
+    monospaced ``_interpolate_bbox`` math when char metrics aren't
+    available.
     """
     out: list[SymbolDetection] = []
     entry_to_target = {
@@ -205,7 +307,9 @@ def _text_tag_matches(
     for blk in blocks:
         if any(_bbox_iou(blk.bbox, ex) > 0.0 for ex in excluded_bboxes):
             continue
+        chars = _char_bboxes_for_block(page, blk)
         tokens = _tokenize(blk.text)
+        token_seen: dict[str, int] = {}
         for token, start, end in tokens:
             tok_upper = token.upper()
             entry = symbol_to_entry.get(tok_upper)
@@ -214,7 +318,17 @@ def _text_tag_matches(
             target = entry_to_target[entry.entry_id]
             if "text_tag" not in target.expected_modalities:
                 continue
-            sub_bbox = _interpolate_bbox(blk.bbox, len(blk.text), start, end)
+            sub_bbox: tuple[float, float, float, float] | None = None
+            if chars is not None:
+                # Locate the Nth occurrence of `token` in the flat
+                # char stream to anchor the bbox accurately.
+                occurrence = token_seen.get(token, 0)
+                offsets = _find_substring_char_offsets(chars, token, occurrence)
+                if offsets is not None:
+                    sub_bbox = _bbox_from_char_range(chars, offsets[0], offsets[1])
+                token_seen[token] = occurrence + 1
+            if sub_bbox is None:
+                sub_bbox = _interpolate_bbox(blk.bbox, len(blk.text), start, end)
             crop_hash = _crop_and_hash_page_region(page, sub_bbox)
             out.append(
                 SymbolDetection.make(

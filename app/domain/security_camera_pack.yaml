@@ -333,6 +333,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:ip_camera
+      - device:camera
   - key: bullet_camera
     entity_key: device:bullet_camera
     aliases_from:
@@ -344,6 +347,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:ip_camera
+      - device:camera
   - key: ptz_camera
     entity_key: device:ptz_camera
     aliases_from:
@@ -356,6 +362,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:ip_camera
+      - device:camera
   - key: panoramic_camera
     entity_key: device:panoramic_camera
     aliases_from:
@@ -370,6 +379,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:ip_camera
+      - device:camera
   - key: lpr_camera
     entity_key: device:lpr_camera
     aliases_from:
@@ -382,6 +394,9 @@ detection_targets:
     modalities:
       - text_tag
       - glyph_template
+    parent_entity_keys:
+      - device:ip_camera
+      - device:camera
   - key: nvr
     entity_key: device:nvr
     aliases_from:

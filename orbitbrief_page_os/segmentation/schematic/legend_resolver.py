@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.parsers.schematic_models import ParsedLegend, SchematicWarning
@@ -53,6 +53,10 @@ _LEGEND_REF_INLINE_RE = re.compile(
 )
 _LEGEND_CONTINUED_RE = re.compile(
     r"(?:symbols?|legend)\s+continued\s+from\s+sheet\s+([A-Z]+[\s\-_]?[0-9.]+)",
+    re.IGNORECASE,
+)
+_INDEX_LEGEND_TITLE_RE = re.compile(
+    r"\b(symbol|symbols|legend|legends|abbreviation|abbreviations|key|notes)\b",
     re.IGNORECASE,
 )
 
@@ -87,6 +91,31 @@ def _discipline_prefix(sheet: str | None) -> str | None:
         return None
     m = re.match(r"^([A-Z]+)", sheet)
     return m.group(1) if m else None
+
+
+def extract_sheet_number_with_bbox(
+    blocks: Sequence[TextBlock],
+) -> tuple[str | None, tuple[float, float, float, float] | None]:
+    """Like ``extract_sheet_number`` but also returns the bbox the token
+    was found in.
+
+    Used by the resolver so warnings that carry sheet identity
+    (``missing_legend``, ``unresolved_legend_reference``) can attach a
+    replayable bbox to the receipt instead of falling back to a
+    page-only locator.
+    """
+    cands: list[tuple[float, float, str, tuple[float, float, float, float]]] = []
+    for blk in blocks:
+        for m in _SHEET_NUMBER_RE.finditer(blk.text):
+            token = m.group(1) + m.group(2)
+            cands.append((blk.bbox[1], blk.bbox[0], token, blk.bbox))
+    if not cands:
+        return None, None
+    best = max(cands, key=lambda c: (c[0], c[1], -1))
+    best_y, best_x, _, _ = best
+    same_xy = [c for c in cands if c[0] == best_y and c[1] == best_x]
+    same_xy.sort(key=lambda c: c[2])
+    return _norm_sheet(same_xy[0][2]), same_xy[0][3]
 
 
 def extract_sheet_number(blocks: Sequence[TextBlock]) -> str | None:
@@ -167,12 +196,43 @@ def detect_inline_references(blocks: Sequence[TextBlock]) -> dict[str, list[str]
     return out
 
 
+def detect_inline_references_with_bbox(
+    blocks: Sequence[TextBlock],
+) -> dict[str, list[tuple[str, tuple[float, float, float, float]]]]:
+    """Like ``detect_inline_references`` but each entry is ``(ref, bbox)``.
+
+    Lets resolver warnings cite the exact text region that mentioned a
+    sheet, instead of a page-only locator.
+    """
+    out: dict[str, list[tuple[str, tuple[float, float, float, float]]]] = {
+        "see_sheet": [],
+        "continuation": [],
+    }
+    for blk in blocks:
+        m = _LEGEND_REF_INLINE_RE.search(blk.text)
+        if m:
+            ref = _norm_sheet(m.group(1))
+            if ref:
+                out["see_sheet"].append((ref, blk.bbox))
+        m2 = _LEGEND_CONTINUED_RE.search(blk.text)
+        if m2:
+            ref = _norm_sheet(m2.group(1))
+            if ref:
+                out["continuation"].append((ref, blk.bbox))
+    return out
+
+
 @dataclass
 class _PageInfo:
     page_index: int
     sheet_number: str | None
     legend: ParsedLegend | None
     references: dict[str, list[str]]
+    sheet_number_bbox: tuple[float, float, float, float] | None = None
+    reference_bboxes: dict[str, list[tuple[float, float, float, float]]] = field(
+        default_factory=dict
+    )
+    page_bbox: tuple[float, float, float, float] | None = None
 
 
 class LegendResolver:
@@ -198,14 +258,22 @@ class LegendResolver:
         page_index: int,
         blocks: Sequence[TextBlock],
         legend: ParsedLegend | None = None,
+        page_bbox: tuple[float, float, float, float] | None = None,
     ) -> None:
-        sheet = extract_sheet_number(blocks)
-        refs = detect_inline_references(blocks)
+        sheet, sheet_bbox = extract_sheet_number_with_bbox(blocks)
+        ref_bbox_map = detect_inline_references_with_bbox(blocks)
+        refs = {kind: [ref for ref, _ in items] for kind, items in ref_bbox_map.items()}
+        ref_bboxes: dict[str, list[tuple[float, float, float, float]]] = {
+            f"{kind}:{ref}": [bbox] for kind, items in ref_bbox_map.items() for ref, bbox in items
+        }
         self._pages[page_index] = _PageInfo(
             page_index=page_index,
             sheet_number=sheet,
             legend=legend,
             references=refs,
+            sheet_number_bbox=sheet_bbox,
+            reference_bboxes=ref_bboxes,
+            page_bbox=page_bbox,
         )
         if sheet:
             # First-page-wins for the sheet → page map so a duplicate
@@ -239,6 +307,22 @@ class LegendResolver:
         warnings: list[SchematicWarning] = []
         sheet = info.sheet_number if info else None
 
+        # Best bbox we can attach to resolver-generated warnings.
+        # Prefer the sheet-number token bbox (cites the title block);
+        # fall back to the whole page rect; fall back to None.
+        def _warning_bbox(
+            *, ref_key: str | None = None
+        ) -> tuple[float, float, float, float] | None:
+            if info is None:
+                return None
+            if ref_key and ref_key in info.reference_bboxes:
+                refs = info.reference_bboxes[ref_key]
+                if refs:
+                    return refs[0]
+            if info.sheet_number_bbox is not None:
+                return info.sheet_number_bbox
+            return info.page_bbox
+
         # Priority 1 — in-page legend.
         if info and info.legend is not None:
             return ResolvedLegend(
@@ -265,6 +349,7 @@ class LegendResolver:
                                 page_index=page_index,
                                 sheet_number=sheet,
                                 detail=f"Reference to sheet {ref} not found in document",
+                                bbox_pdf=_warning_bbox(ref_key=f"{kind}:{ref}"),
                                 extras={"kind": kind, "ref": ref},
                             )
                         )
@@ -277,11 +362,30 @@ class LegendResolver:
                                 page_index=page_index,
                                 sheet_number=sheet,
                                 detail=f"Sheet {ref} has no parsed legend",
+                                bbox_pdf=_warning_bbox(ref_key=f"{kind}:{ref}"),
                                 extras={"kind": kind, "ref": ref},
                             )
                         )
                         continue
                     candidates.append((2, ref_legend, f"explicit_{kind}:{ref}"))
+
+        # Priority 2.5 — drawing-index hint. If the project's drawing
+        # index named a specific sheet as the legend sheet (title
+        # contains SYMBOLS / LEGEND / KEY / ABBREVIATIONS), prefer the
+        # parsed legend on that sheet even when the page didn't carry
+        # an explicit ``see sheet X`` reference.
+        for index_sheet, title in self._drawing_index.items():
+            if not _INDEX_LEGEND_TITLE_RE.search(title):
+                continue
+            ref_page = self._sheet_to_page.get(index_sheet)
+            if ref_page is None:
+                continue
+            ref_legend = self._pages[ref_page].legend
+            if ref_legend is None:
+                continue
+            candidates.append(
+                (3, ref_legend, f"drawing_index:{index_sheet}={title}")
+            )
 
         # Priority 3 — same-discipline global legend.
         my_prefix = _discipline_prefix(sheet) if sheet else None
@@ -303,6 +407,7 @@ class LegendResolver:
                     page_index=page_index,
                     sheet_number=sheet,
                     detail="No in-page legend, no resolvable cross-sheet reference, no global legend.",
+                    bbox_pdf=_warning_bbox(),
                 )
             )
             return ResolvedLegend(
@@ -338,6 +443,7 @@ class LegendResolver:
                         f"{len(unique)} legends tied at priority {best_priority}; "
                         f"selecting lowest page_index deterministically."
                     ),
+                    bbox_pdf=_warning_bbox(),
                     extras={
                         "tied_legend_ids": [legend.legend_id for legend, _ in unique],
                     },

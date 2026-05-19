@@ -93,12 +93,20 @@ class TextBlock:
     Producers (PyMuPDF wrapper, raster fallback) all reduce their
     native shapes to this contract so the locator can stay
     backend-agnostic.
+
+    ``rotation_deg`` captures the span's writing direction in
+    degrees (0 = normal left-to-right; 90/180/270 = rotated text
+    typically found in title-block borders, dimension callouts, or
+    rotated note labels).  Downstream code uses this to keep
+    legend-row clustering on rotated text from confusing the
+    locator's y-band heuristic.
     """
 
     text: str
     bbox: tuple[float, float, float, float]
     block_index: int = 0
     line_index: int = 0
+    rotation_deg: int = 0
 
 
 @dataclass(frozen=True)
@@ -236,6 +244,15 @@ def _layer_header_pair(page_index: int, blocks: Sequence[TextBlock]) -> list[Leg
             for j in (right_idx, count_idx):
                 if j is not None:
                     bbox = _bbox_union(bbox, row_sorted[j].bbox)
+            # Include any other cells on the same header row so
+            # multi-column legends (MOUNTING HEIGHT, CABLE COUNT,
+            # REMARKS, …) end up inside the candidate bbox instead of
+            # being clipped to the SYMBOL/DESCRIPTION/COUNT band.
+            for k, blk in enumerate(row_sorted):
+                if k in {left_idx, right_idx, count_idx}:
+                    continue
+                if blk.bbox[0] >= bbox[0] - 5:
+                    bbox = _bbox_union(bbox, blk.bbox)
             # Expand downward to capture data rows under the headers.
             below = [b for b in blocks if b.bbox[1] > bbox[3]]
             for b in below:
@@ -278,16 +295,25 @@ def _layer_continuation(page_index: int, blocks: Sequence[TextBlock]) -> list[Le
 def _expand_block_downward(seed: TextBlock, blocks: Sequence[TextBlock]) -> tuple[float, float, float, float]:
     """Grow the seed block to cover the legend rows below it.
 
-    We expand both vertically (to pull in all rows of the legend
-    table) and horizontally (to pull in flanking columns like
-    ``COUNT`` / ``QTY`` that may sit outside the header text's x
-    range).  Vertical growth halts at the first big gap (>72 pt)
-    so we don't swallow unrelated body text further down the page;
-    horizontal growth is bounded by the y-range of blocks we
-    actually accepted, so a wide block far below cannot drag the
-    bbox sideways.
+    Three independent bounds prevent the legend bbox from swallowing
+    unrelated body text below the legend:
+
+    1. **Vertical gap.** Stop when the next candidate row's top edge
+       is more than 36 pt below the last accepted bottom edge. Real
+       legends pack rows tightly; 36 pt is comfortable headroom but
+       half what the previous 72 pt limit allowed.
+    2. **Total grown height.** Cap the region's vertical extent at
+       400 pt — the largest construction legends rarely exceed that.
+    3. **Font-size jump.** Stop when a candidate's apparent line
+       height is more than 1.8x the seed's (a body heading right
+       below the legend, for example). Apparent height comes from
+       the block's bbox: ``(y1 - y0)`` for single-line blocks.
     """
     bbox = seed.bbox
+    seed_height = max(1.0, seed.bbox[3] - seed.bbox[1])
+    MAX_GAP_PT = 36.0
+    MAX_HEIGHT_PT = 400.0
+    HEIGHT_RATIO_LIMIT = 1.8
     below = sorted(
         (b for b in blocks if b is not seed and b.bbox[1] >= seed.bbox[1] - 1.0),
         key=lambda b: b.bbox[1],
@@ -295,12 +321,19 @@ def _expand_block_downward(seed: TextBlock, blocks: Sequence[TextBlock]) -> tupl
     last_bottom = seed.bbox[3]
     for blk in below:
         gap = blk.bbox[1] - last_bottom
-        if gap > 72.0:
+        if gap > MAX_GAP_PT:
             break
-        # Reject text that lives clearly to the left of the seed
-        # (e.g., the page's left margin numbering).  Right-side
-        # expansion is allowed because the count/qty column is the
-        # whole reason we union.
+        # Total height bound.
+        if (max(bbox[3], blk.bbox[3]) - bbox[1]) > MAX_HEIGHT_PT:
+            break
+        # Font-size jump bound — if this row's line height is far
+        # bigger than the seed's, it's almost certainly a section
+        # heading below the legend, not another legend row.
+        blk_height = max(1.0, blk.bbox[3] - blk.bbox[1])
+        if blk_height / seed_height > HEIGHT_RATIO_LIMIT:
+            break
+        # Reject text clearly to the left of the seed (e.g., the
+        # page's left margin numbering).
         if blk.bbox[2] < seed.bbox[0] - 5.0:
             continue
         bbox = _bbox_union(bbox, blk.bbox)
@@ -389,11 +422,42 @@ def locate_legend_candidates(
 # ─────────────────────────── PyMuPDF adapter ───────────────────────
 
 
+def _line_rotation_deg(line: Any) -> int:
+    """Read a PyMuPDF line's writing-direction vector and round to 0/90/180/270.
+
+    PyMuPDF's ``dict`` output gives each line a ``dir`` field, a
+    2-tuple unit vector. (1, 0) = normal text; (0, -1) or (0, 1) =
+    rotated 90°; (-1, 0) = 180°; etc.  We round to the nearest 90°
+    multiple so rotated text in title blocks, sheet borders, and
+    callouts is recognizable downstream.
+    """
+    direction = line.get("dir") if isinstance(line, dict) else None
+    if not direction or len(direction) != 2:
+        return 0
+    try:
+        dx = float(direction[0])
+        dy = float(direction[1])
+    except (TypeError, ValueError):
+        return 0
+    import math as _m
+
+    angle = _m.degrees(_m.atan2(dy, dx))
+    # PDF coords: positive y points DOWN in PyMuPDF's output for text
+    # lines. The dir vector is in page space, so a (0, -1) direction
+    # actually means text reads upward = rotated 90° CCW. Snap to the
+    # closest cardinal.
+    cardinals = (0, 90, 180, 270, -90, -180, -270)
+    best = min(cardinals, key=lambda c: abs(c - angle))
+    return best % 360
+
+
 def page_text_blocks(page: Any) -> list[TextBlock]:
     """Reduce a PyMuPDF ``Page`` to deterministic ``TextBlock`` records.
 
     Sort order is exact: by ``(round(y0, 2), round(x0, 2), block_index, line_index)``
     so two compiles of the same PDF produce identical block streams.
+    Rotated text is preserved with its ``rotation_deg`` so title-block
+    extraction and downstream callout detection can use it.
     """
     out: list[TextBlock] = []
     try:
@@ -417,6 +481,7 @@ def page_text_blocks(page: Any) -> list[TextBlock]:
                     bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
                     block_index=int(bi),
                     line_index=int(li),
+                    rotation_deg=_line_rotation_deg(line),
                 )
             )
     out.sort(key=lambda b: (round(b.bbox[1], 2), round(b.bbox[0], 2), b.block_index, b.line_index))
