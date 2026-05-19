@@ -398,10 +398,19 @@ def _verify_pdf_block(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> 
     or ``bullet_path`` for bullets) inside that doc and check that the
     atom's text actually came from there.  This makes PDF receipts
     first-class — same status as XLSX rows and DOCX paragraphs.
+
+    Schematic atoms (legend / detection / warning) instead point at a
+    bbox region of the page.  The locator carries ``page``, ``bbox``,
+    ``bbox_units="pdf_points"``, and ``crop_sha256``; we re-render the
+    page at a fixed DPI, crop the bbox, and hash the pixels to confirm
+    nothing has drifted.  This path is taken whenever the locator has
+    no ``block_id`` but does have a bbox + crop hash.
     """
     locator = source_ref.locator
     block_id = locator.get("block_id")
     if not block_id:
+        if _locator_is_bbox_crop(locator):
+            return _verify_pdf_bbox_crop(atom, source_ref, path)
         return _receipt(atom, source_ref, "unsupported", "PDF locator missing block_id")
     structured = _load_structured_doc(path)
     if structured is None:
@@ -502,6 +511,90 @@ def _bullet_at_path(items: list[dict[str, Any]], path: list[int]) -> dict[str, A
             return None
         current = node.get("children", []) or []
     return node
+
+
+def _locator_is_bbox_crop(locator: dict[str, Any]) -> bool:
+    bbox = locator.get("bbox")
+    if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+        return False
+    if locator.get("bbox_units") != "pdf_points":
+        return False
+    return bool(locator.get("crop_sha256"))
+
+
+def _verify_pdf_bbox_crop(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
+    """Verify a schematic PDF atom by re-rendering its bbox and hashing pixels.
+
+    Deterministic by construction: fixed DPI, fixed PyMuPDF render
+    parameters, and the hash is namespaced with ``crop_sha256_of_pixels``
+    so dimension differences cannot collide.  Returns ``verified`` only
+    when the recomputed hash equals the stored ``crop_sha256``.
+    """
+    from app.parsers.schematic_models import SCHEMATIC_REPLAY_DPI, crop_sha256_of_pixels
+
+    locator = source_ref.locator
+    page_index = locator.get("page")
+    if not isinstance(page_index, int) or page_index < 0:
+        return _receipt(atom, source_ref, "failed", "Schematic locator missing valid page index")
+    bbox = locator.get("bbox")
+    if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+        return _receipt(atom, source_ref, "failed", "Schematic locator missing valid bbox")
+    try:
+        x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (TypeError, ValueError):
+        return _receipt(atom, source_ref, "failed", "Schematic locator bbox is not numeric")
+    if not (x1 > x0 and y1 > y0):
+        return _receipt(atom, source_ref, "failed", "Schematic locator bbox is not strictly positive")
+    expected_hash = str(locator.get("crop_sha256") or "")
+    if not expected_hash:
+        return _receipt(atom, source_ref, "failed", "Schematic locator missing crop_sha256")
+
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except ImportError:  # pragma: no cover — pymupdf is in pyproject deps
+        return _receipt(atom, source_ref, "unsupported", "PyMuPDF unavailable for schematic replay")
+
+    try:
+        doc = fitz.open(str(path))
+    except Exception as exc:  # pragma: no cover
+        return _receipt(atom, source_ref, "failed", f"Could not open PDF for replay: {exc}")
+    try:
+        if page_index >= doc.page_count:
+            return _receipt(
+                atom,
+                source_ref,
+                "failed",
+                f"Page index {page_index} out of range (page_count={doc.page_count})",
+            )
+        page = doc.load_page(page_index)
+        clip = fitz.Rect(x0, y0, x1, y1)
+        zoom = SCHEMATIC_REPLAY_DPI / 72.0
+        matrix = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False, colorspace=fitz.csRGB)
+        actual_hash = crop_sha256_of_pixels(pix.samples, pix.width, pix.height, pix.n)
+    except Exception as exc:  # pragma: no cover
+        return _receipt(atom, source_ref, "failed", f"Crop render failed: {exc}")
+    finally:
+        try:
+            doc.close()
+        except Exception:  # pragma: no cover
+            pass
+
+    if actual_hash == expected_hash:
+        return _receipt(
+            atom,
+            source_ref,
+            "verified",
+            "Schematic bbox crop hash verified",
+            extracted_snippet=f"crop_sha256={actual_hash}",
+        )
+    return _receipt(
+        atom,
+        source_ref,
+        "failed",
+        f"Schematic bbox crop hash mismatch (expected {expected_hash[:12]}…, got {actual_hash[:12]}…)",
+        extracted_snippet=f"crop_sha256={actual_hash}",
+    )
 
 
 def _flatten_bullets(items: list[dict[str, Any]]) -> list[str]:

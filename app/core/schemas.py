@@ -78,6 +78,19 @@ class AtomType(str, Enum):
     # regulation rather than a project-internal rule.  Maps to the
     # ``compliance_clause`` packet family.
     compliance = "compliance"
+    # Schematic / drawing atoms (PR1 of the schematic intelligence
+    # upgrade). A schematic page is read legend-first: the parser
+    # locates and parses the legend, declares a detection target set
+    # for the page (intersected with the active domain pack), detects
+    # each instance of every target symbol on the drawing body, and
+    # emits warnings for missing legends, orphans, and unknowns. Every
+    # schematic atom carries a SourceRef whose locator has page + bbox
+    # in pdf_points so source_replay can re-render and crop-hash
+    # verify it.
+    schematic_legend = "schematic_legend"
+    schematic_detection_target_set = "schematic_detection_target_set"
+    schematic_symbol_detection = "schematic_symbol_detection"
+    schematic_warning = "schematic_warning"
 
 
 class AuthorityClass(str, Enum):
