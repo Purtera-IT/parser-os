@@ -469,8 +469,13 @@ def shape_candidates_for_page(
             if is_shape_only
             else (1.00,)
         )
-        # Shape-only matches at lower threshold to compensate for
-        # icon-style drift between legend and plan.
+        # Shape-only matches at a lower threshold to compensate for
+        # icon-style drift between legend and plan (legend icons are
+        # often bolder + cleaner backgrounds). 0.70 stays *strict* —
+        # at 0.55 the false-positive rate explodes because the plan's
+        # wall hatching alone correlates ~0.6 with many small icons.
+        # Universal: this only affects __shp_ codes; text-anchored
+        # templates keep the original 0.85 threshold.
         effective_threshold = (
             min(threshold, 0.70) if is_shape_only else threshold
         )

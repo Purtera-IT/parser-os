@@ -272,6 +272,29 @@ def discover_legend_rules(*, legend_doc: Any) -> list[LegendRule]:
                     if normalized_code:
                         raw_symbol = normalized_code
                     else:
+                        # Shape-only path: the SYMBOL cell must be large
+                        # enough to actually host an icon drawing. Notes
+                        # rows and cable-spec sub-rows in the legend
+                        # often have a tiny SYMBOL cell (e.g. 31 x 3 pt)
+                        # — keep those out so template-matching doesn't
+                        # produce thousands of false-positive matches
+                        # from a 13x26-px text-stamp template.
+                        sym_bbox = _cell_bbox(cells, sym_col)
+                        if sym_bbox is None:
+                            continue
+                        cell_w = sym_bbox.x1 - sym_bbox.x0
+                        cell_h = sym_bbox.y1 - sym_bbox.y0
+                        # Universal threshold: legend SYMBOL cells in any
+                        # firm's drawings are routinely 50-80 pt on a side
+                        # for real device rows. Cable-spec sub-rows are
+                        # ~48 wide x 27-32 tall (text only, no icon).
+                        # Notes blocks span 180+ pt. Accept cells in
+                        # [40, 140] pt on each axis — that admits every
+                        # observed device cell across firms while keeping
+                        # both the cable-spec strips and the notes blocks
+                        # out of the rule set.
+                        if not (40 <= cell_w <= 140 and 40 <= cell_h <= 140):
+                            continue
                         raw_symbol = _stable_shape_id(
                             section_title=section_title,
                             description=desc_text,
