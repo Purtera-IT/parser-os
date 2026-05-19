@@ -243,82 +243,39 @@ def extract_templates_from_legend(
 # Some legend sections — most commonly CCTV / camera — render the
 # symbol as PURE VECTOR drawings with NO text token in the SYMBOL cell.
 # ``extract_templates_from_legend`` can't anchor on a text token for
-# those rows, so it skips them and the parser is blind to every camera
-# on the project.
+# those rows, so it skips them and the parser would be blind to every
+# such device on the project.
 #
 # The shape-only path here uses the *structured* legend doc (cells with
 # explicit bbox_pt) to crop templates directly from each textless
-# row's SYMBOL cell. It synthesizes a stable raw_symbol per row so
-# downstream fusion + the QA overlay can route the resulting
-# candidates like any other device.
-
-# Description-keyword → (normalized_class, system, quote_unit) for
-# rows that have NO text in their SYMBOL cell. The keyword is searched
-# inside the row's DESCRIPTION text — order matters (specific first).
-_SHAPE_ONLY_DESCRIPTION_RULES: tuple[tuple[str, dict], ...] = (
-    ("BULLET STYLE CAMERA", {
-        "normalized_class": "cctv_camera_bullet",
-        "system": "video_surveillance",
-        "quote_unit": "cctv_camera_drop",
-    }),
-    ("MINI DOME", {
-        "normalized_class": "cctv_camera_dome",
-        "system": "video_surveillance",
-        "quote_unit": "cctv_camera_drop",
-    }),
-    ("CAMERA", {
-        "normalized_class": "cctv_camera",
-        "system": "video_surveillance",
-        "quote_unit": "cctv_camera_drop",
-    }),
-    ("MOTION DETECTOR", {
-        "normalized_class": "motion_detector",
-        "system": "intrusion_detection",
-        "quote_unit": "motion_detector_drop",
-    }),
-    ("DOOR CONTACT", {
-        "normalized_class": "door_alarm_contact",
-        "system": "intrusion_detection",
-        "quote_unit": "door_alarm_contact_drop",
-    }),
-)
-
-
-def _shape_only_class_for(description: str) -> dict | None:
-    upper = description.upper()
-    for keyword, payload in _SHAPE_ONLY_DESCRIPTION_RULES:
-        if keyword in upper:
-            return payload
-    return None
-
-
-def _synthesize_shape_only_code(*, section_idx: int, row_idx: int, normalized_class: str) -> str:
-    """Build a stable raw_symbol for a textless legend row.
-
-    Format: ``__shp_<normalized_class>_<section>-<row>``. The double
-    underscore prefix marks it as a synthetic shape-only code so
-    downstream consumers can distinguish it from a real symbol token
-    that appears on a plan.
-    """
-    return f"__shp_{normalized_class}_{section_idx:02d}-{row_idx:03d}"
+# row's SYMBOL cell. It pairs the templates with rules ALREADY
+# discovered by :mod:`legend_discovery` (which assigns a stable
+# ``__shp_<hash>`` raw_symbol per textless row) so downstream fusion
+# and the QA overlay can route the resulting candidates like any
+# other device. NO keyword tables — every textless row that has a
+# valid description and a non-blank icon cell becomes a template.
 
 
 def extract_shape_only_templates_from_legend_doc(
     *,
     pdf_path: Any,
     legend_doc: dict,
+    rules: list[LegendRule] | None = None,
 ) -> tuple[list[ShapeTemplate], list[LegendRule]]:
-    """Crop shape-only templates for every textless legend row whose
-    description matches a known shape-only keyword (CAMERA, MOTION, …).
+    """Crop a template image for every textless legend row.
 
-    Uses the structured legend's cell bboxes directly — no text-token
-    anchoring required, so this picks up every camera variant in the
-    Marriott CCTV section (and any equivalent textless legend row on
-    other projects).
+    ``rules`` should be the pre-discovered rule list produced by
+    :func:`app.takeoff.legend_discovery.discover_legend_rules`. Each
+    textless row already has a synthetic ``__shp_<hash>`` raw_symbol
+    in that list (with the row's bbox in ``source_bbox``); this
+    extractor uses those bboxes to crop the icon and pairs each
+    template with the matching rule.
 
-    Returns ``(templates, rules)``. Each template's ``raw_symbol`` is
-    a synthetic identifier; the matching rule carries the same code
-    plus the normalized device class derived from the description.
+    When ``rules`` is ``None``, no templates are produced (the function
+    no longer derives rules itself — that's :mod:`legend_discovery`'s
+    job and we want a single source of truth).
+
+    Returns ``(templates, rules_used)``.
 
     Silently returns ``([], [])`` when OpenCV / PyMuPDF aren't
     available or when the legend page can't be opened.
@@ -341,8 +298,11 @@ def extract_shape_only_templates_from_legend_doc(
     except Exception:  # pragma: no cover - env-specific
         return ([], [])
 
+    if not rules:
+        return ([], [])
+
     templates: list[ShapeTemplate] = []
-    rules: list[LegendRule] = []
+    rules_used: list[LegendRule] = []
     try:
         doc = fitz.open(str(pdf_path))
     except Exception:  # pragma: no cover - env-specific
@@ -357,133 +317,74 @@ def extract_shape_only_templates_from_legend_doc(
         image, scale = rendered
         img_h, img_w = image.shape[:2]
 
-        section_idx = 0
-        for table in legend_doc.get("tables", []) or []:
-            for section in table.get("sections", []) or []:
-                section_idx += 1
-                cols = section.get("column_headers") or []
-                if not cols:
-                    continue
-                # Resolve the SYMBOL column.
-                sym_col_idx: int | None = None
-                desc_col_idx: int | None = None
-                for i, c in enumerate(cols):
-                    upper = (c.get("text") or "").upper()
-                    if sym_col_idx is None and "SYMBOL" in upper:
-                        sym_col_idx = i
-                    if desc_col_idx is None and "DESCRIPTION" in upper:
-                        desc_col_idx = i
-                if sym_col_idx is None:
-                    sym_col_idx = 0
-                if desc_col_idx is None:
-                    desc_col_idx = 1 if len(cols) > 1 else 0
-
-                for row_idx, row in enumerate(section.get("rows", []) or []):
-                    cells = row.get("cells") or []
-                    if sym_col_idx >= len(cells) or desc_col_idx >= len(cells):
-                        continue
-                    sym_text = (cells[sym_col_idx].get("text") or "").strip()
-                    desc_text = (cells[desc_col_idx].get("text") or "").strip()
-                    # SHAPE-ONLY filter: SYMBOL cell must be empty OR
-                    # contain only non-letter glyphs (e.g. "180°").
-                    has_letter = any(ch.isalpha() for ch in sym_text)
-                    if has_letter:
-                        continue
-                    if not desc_text:
-                        continue
-                    payload = _shape_only_class_for(desc_text)
-                    if payload is None:
-                        continue
-                    bbox_pt = cells[sym_col_idx].get("bbox_pt")
-                    if not bbox_pt or len(bbox_pt) != 4:
-                        continue
-                    cx0, cy0, cx1, cy1 = bbox_pt
-                    if cx1 - cx0 < 6 or cy1 - cy0 < 6:
-                        continue
-                    # Crop the cell.
-                    px0 = max(0, int(round(cx0 * scale)) - CELL_PAD_PX)
-                    py0 = max(0, int(round(cy0 * scale)) - CELL_PAD_PX)
-                    px1 = min(img_w, int(round(cx1 * scale)) + CELL_PAD_PX)
-                    py1 = min(img_h, int(round(cy1 * scale)) + CELL_PAD_PX)
-                    if px1 - px0 < MIN_TEMPLATE_PX or py1 - py0 < MIN_TEMPLATE_PX:
-                        continue
-                    raw_crop = image[py0:py1, px0:px1]
-                    # Cell borders + row dividers are rendered as thin
-                    # gray strokes on the edges of the crop — they'd
-                    # span the whole crop if we trusted naive thresholding.
-                    # Trim a 6-pixel border from each side before
-                    # searching for the icon centroid, then use a strict
-                    # dark-ink threshold (<60) to ignore antialiased
-                    # text labels (180°, L X M) and keep only the bold
-                    # icon strokes.
-                    if raw_crop.shape[0] <= 16 or raw_crop.shape[1] <= 16:
-                        continue
-                    border_trim = 6
-                    inner = raw_crop[
-                        border_trim : raw_crop.shape[0] - border_trim,
-                        border_trim : raw_crop.shape[1] - border_trim,
-                    ]
-                    icon_mask = (inner < 60).astype("uint8")
-                    ys, xs = icon_mask.nonzero()
-                    if ys.size < 20:
-                        # Too few dark pixels — likely a blank cell.
-                        continue
-                    # Sanity: too much ink means the cell is full of text,
-                    # not a clean icon — skip.
-                    if (ys.size / max(1, icon_mask.size)) > 0.40:
-                        continue
-                    # Convert inner coords back to raw_crop coords.
-                    tx0 = int(xs.min()) + border_trim
-                    ty0 = int(ys.min()) + border_trim
-                    tx1 = int(xs.max()) + 1 + border_trim
-                    ty1 = int(ys.max()) + 1 + border_trim
-                    margin = 3
-                    tx0 = max(0, tx0 - margin)
-                    ty0 = max(0, ty0 - margin)
-                    tx1 = min(raw_crop.shape[1], tx1 + margin)
-                    ty1 = min(raw_crop.shape[0], ty1 + margin)
-                    crop = raw_crop[ty0:ty1, tx0:tx1]
-                    if crop.shape[0] < MIN_TEMPLATE_PX or crop.shape[1] < MIN_TEMPLATE_PX:
-                        continue
-                    code = _synthesize_shape_only_code(
-                        section_idx=section_idx,
-                        row_idx=row_idx,
-                        normalized_class=payload["normalized_class"],
-                    )
-                    templates.append(
-                        ShapeTemplate(
-                            raw_symbol=code,
-                            image=crop,
-                            height=int(crop.shape[0]),
-                            width=int(crop.shape[1]),
-                            legend_bbox_pt=BBox(
-                                x0=float(cx0), y0=float(cy0),
-                                x1=float(cx1), y1=float(cy1),
-                                coord_space="pdf_pt",
-                            ),
-                        )
-                    )
-                    rules.append(
-                        LegendRule(
-                            raw_symbol=code,
-                            normalized_class=payload["normalized_class"],
-                            system=payload.get("system"),
-                            description=desc_text,
-                            cable_count=payload.get("cable_count"),
-                            cable_type=payload.get("cable_type"),
-                            quote_unit=payload.get("quote_unit"),
-                            source_page=page_index,
-                            source_bbox=BBox(
-                                x0=float(cx0), y0=float(cy0),
-                                x1=float(cx1), y1=float(cy1),
-                                coord_space="pdf_pt",
-                            ),
-                            confidence=0.85,  # shape-only — slightly lower
-                        )
-                    )
+        # Only consider rules that:
+        #   a) are shape-only synthetic (raw_symbol starts with "__shp_")
+        #   b) carry a source_bbox we can crop from
+        #   c) live on THIS legend page (source_page == page_index)
+        for rule in rules:
+            if not rule.raw_symbol.startswith("__shp_"):
+                continue
+            if rule.source_bbox is None:
+                continue
+            if rule.source_page is not None and rule.source_page != page_index:
+                continue
+            cb = rule.source_bbox
+            cx0, cy0, cx1, cy1 = cb.x0, cb.y0, cb.x1, cb.y1
+            if cx1 - cx0 < 6 or cy1 - cy0 < 6:
+                continue
+            px0 = max(0, int(round(cx0 * scale)) - CELL_PAD_PX)
+            py0 = max(0, int(round(cy0 * scale)) - CELL_PAD_PX)
+            px1 = min(img_w, int(round(cx1 * scale)) + CELL_PAD_PX)
+            py1 = min(img_h, int(round(cy1 * scale)) + CELL_PAD_PX)
+            if px1 - px0 < MIN_TEMPLATE_PX or py1 - py0 < MIN_TEMPLATE_PX:
+                continue
+            raw_crop = image[py0:py1, px0:px1]
+            # Cell borders are thin gray strokes (~150 intensity). Trim a
+            # 6-px ring from each side then use a strict dark-ink threshold
+            # (<60) so we keep only the bold icon strokes — antialiased
+            # text labels ("180°", "L X M") fall below the cutoff too.
+            if raw_crop.shape[0] <= 16 or raw_crop.shape[1] <= 16:
+                continue
+            border_trim = 6
+            inner = raw_crop[
+                border_trim : raw_crop.shape[0] - border_trim,
+                border_trim : raw_crop.shape[1] - border_trim,
+            ]
+            icon_mask = (inner < 60).astype("uint8")
+            ys, xs = icon_mask.nonzero()
+            if ys.size < 20:
+                continue
+            if (ys.size / max(1, icon_mask.size)) > 0.40:
+                continue
+            tx0 = int(xs.min()) + border_trim
+            ty0 = int(ys.min()) + border_trim
+            tx1 = int(xs.max()) + 1 + border_trim
+            ty1 = int(ys.max()) + 1 + border_trim
+            margin = 3
+            tx0 = max(0, tx0 - margin)
+            ty0 = max(0, ty0 - margin)
+            tx1 = min(raw_crop.shape[1], tx1 + margin)
+            ty1 = min(raw_crop.shape[0], ty1 + margin)
+            crop = raw_crop[ty0:ty1, tx0:tx1]
+            if crop.shape[0] < MIN_TEMPLATE_PX or crop.shape[1] < MIN_TEMPLATE_PX:
+                continue
+            templates.append(
+                ShapeTemplate(
+                    raw_symbol=rule.raw_symbol,
+                    image=crop,
+                    height=int(crop.shape[0]),
+                    width=int(crop.shape[1]),
+                    legend_bbox_pt=BBox(
+                        x0=float(cx0), y0=float(cy0),
+                        x1=float(cx1), y1=float(cy1),
+                        coord_space="pdf_pt",
+                    ),
+                )
+            )
+            rules_used.append(rule)
     finally:
         doc.close()
-    return (templates, rules)
+    return (templates, rules_used)
 
 
 # ─── Match runner ───────
@@ -559,8 +460,12 @@ def shape_candidates_for_page(
         # the original single-scale path because they're cropped from a
         # cell at the same scale as the plan render.
         is_shape_only = template.raw_symbol.startswith("__shp_")
+        # Multi-scale matching for shape-only synthetic codes — but keep
+        # the scale list small (3 scales) so the pipeline stays usable.
+        # If a camera doesn't match at 0.50x / 0.75x / 1.00x, it's
+        # almost certainly not present.
         scales_to_try = (
-            (0.40, 0.55, 0.70, 0.85, 1.00, 1.20, 1.50)
+            (0.50, 0.75, 1.00)
             if is_shape_only
             else (1.00,)
         )

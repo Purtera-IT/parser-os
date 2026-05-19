@@ -21,6 +21,8 @@ from app.takeoff.candidate_fusion import fuse_candidates_to_devices
 from app.takeoff.corrections import apply_corrections_if_present
 from app.takeoff.exports import takeoff_summary
 from app.takeoff.keynotes import KeynoteTable, parse_keynote_table_spatial
+from app.takeoff.legend_discovery import discover_legend_rules
+from app.takeoff.legend_extract import extract_legend as _extract_legend_doc
 from app.takeoff.legend_extractor import load_default_legend_rules, rules_by_symbol
 from app.takeoff.legend_self_extractor import (
     extract_legend_from_page,
@@ -70,7 +72,12 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
         raise RuntimeError("PyMuPDF (fitz) is required for the takeoff pipeline") from exc
 
     pdf_path = Path(pdf_path)
-    legend_rules: list[LegendRule] = load_default_legend_rules()
+    # ``legend_rules`` is populated by walking the project's OWN legend
+    # page(s) below — no YAML defaults are consulted. The empty list
+    # here is the universal starting point: if the PDF has no legend
+    # page, the parser detects nothing rather than detecting the wrong
+    # things from a stale hardcoded whitelist.
+    legend_rules: list[LegendRule] = []
     sheets: list[SheetRecord] = []
     candidates: list[SymbolCandidate] = []
     devices: list[DeviceInstance] = []
@@ -108,91 +115,92 @@ def build_low_voltage_takeoff(pdf_path: Path) -> TakeoffDocument:
 
     with fitz.open(str(pdf_path)) as doc:
         legend_source_page = _find_legend_page_index(doc)
-        # Use the project's legend page as a runtime classifier — extract
-        # rows from the PDF, merge with the YAML defaults, and surface any
-        # new symbol codes as info messages. This is what makes the
-        # parser universal across drawing sets with different legends.
-        legend_self_info: list[str] = []
+
+        # ─── Universal rule discovery from THIS project's legend ───
+        #
+        # The pipeline used to load a 7-symbol YAML whitelist (WN, CR,
+        # TV, POS-T, POS-P, DA, H) and only trust device codes that
+        # appeared in that list. That was the OPPOSITE of universal —
+        # projects with cameras, motion detectors, fire alarm panels,
+        # intercoms, keypads, etc. all fell through.
+        #
+        # Now the project's OWN legend page is the source of truth. We
+        # extract a structured legend doc once (cells with explicit
+        # bboxes + column headers), walk every row of every section,
+        # and emit one LegendRule per row — with raw_symbol = text
+        # token when present, or a stable synthetic __shp_<hash> when
+        # the cell is text-less (cameras etc.). The normalized_class,
+        # system, cable info, mounting, power all come straight from
+        # the legend's columns. No YAML, no keyword tables.
+        legend_doc: dict[str, Any] | None = None
         if legend_source_page is not None:
             try:
-                extracted_rules = extract_legend_from_page(
-                    page=doc[legend_source_page]
+                legend_doc = _extract_legend_doc(
+                    pdf_path=pdf_path,
+                    page_index=legend_source_page,
                 )
             except Exception as exc:  # pragma: no cover - env-specific
-                extracted_rules = []
-                warnings.append(f"legend_self_extract_failed: {exc!r}")
-            if extracted_rules:
-                legend_rules, legend_self_info = merge_with_defaults(
-                    extracted=extracted_rules, defaults=legend_rules
-                )
-            for rule in legend_rules:
-                if rule.source_page is None:
-                    rule.source_page = legend_source_page
-                rule.confidence = max(rule.confidence, 0.92)
-        if legend_self_info:
-            verified = [m for m in legend_self_info if m.startswith("legend_verified")]
-            noise = [m for m in legend_self_info if m.startswith("legend_extracted_new_symbol_not_in_defaults")]
-            if verified:
-                verified_codes = sorted({m.split(": ", 1)[1] for m in verified})
-                warnings.append(
-                    "legend_self_extract_verified: confirmed "
-                    f"{len(verified_codes)} symbol(s) on PDF legend: "
-                    + ", ".join(verified_codes)
-                )
-            if noise:
-                # Don't pollute the doc-level warnings with row-grouping
-                # noise. Surface only that there ARE extras so the
-                # operator knows to look at the detail if needed.
-                warnings.append(
-                    f"legend_self_extract_unmapped: {len(noise)} legend row(s) "
-                    "did not match a default symbol — extend rules/low_voltage_symbols.yaml "
-                    "if a real device is missing"
-                )
+                warnings.append(f"legend_extract_failed: {exc!r}")
+                legend_doc = None
+            if isinstance(legend_doc, dict) and legend_doc.get("tables"):
+                try:
+                    legend_rules = discover_legend_rules(legend_doc=legend_doc)
+                except Exception as exc:  # pragma: no cover - env-specific
+                    warnings.append(f"legend_discovery_failed: {exc!r}")
+                    legend_rules = []
+                if legend_rules:
+                    text_coded = sum(
+                        1 for r in legend_rules if not r.raw_symbol.startswith("__shp_")
+                    )
+                    shape_only = len(legend_rules) - text_coded
+                    warnings.append(
+                        "legend_discovery: "
+                        f"{len(legend_rules)} rule(s) discovered from page "
+                        f"{legend_source_page} ({text_coded} text-coded, "
+                        f"{shape_only} shape-only)"
+                    )
+        if not legend_rules:
+            warnings.append(
+                "legend_discovery_empty: no rules discovered from PDF legend "
+                "— the parser will detect nothing. Verify a legend page exists "
+                "and the extractor classified it correctly."
+            )
 
-        # Phase B: extract shape templates from the legend page once,
-        # then reuse them on every floor_plan / typical_plan page.
+        # Phase B: shape-template extraction. Templates are cropped from
+        # the legend page for BOTH text-coded rules (anchored on the
+        # text token, via the original extractor) AND shape-only
+        # synthetic rules (anchored on the rule's source_bbox).
         shape_templates: list[ShapeTemplate] = []
-        if shape_pass_enabled and legend_source_page is not None:
+        if shape_pass_enabled and legend_source_page is not None and legend_rules:
             try:
                 shape_templates = extract_templates_from_legend(
                     doc[legend_source_page], legend_rules
                 )
-                if not shape_templates:
-                    shape_pass_warnings.append(
-                        "shape_signals_no_templates_extracted: legend page "
-                        "found but no usable icon templates"
-                    )
             except Exception as exc:  # pragma: no cover - env-specific
                 shape_pass_warnings.append(
                     f"shape_signals_template_extraction_failed: {exc}"
                 )
-            # Phase B.2: cover textless legend rows (CCTV cameras, motion
-            # detectors, etc. drawn as pure vectors with empty SYMBOL
-            # cells). The text-anchored extractor above can't see those,
-            # so we run a structured-legend pass that crops the cell
-            # bbox directly. Each match adds a synthetic shape-only
-            # raw_symbol to both ``shape_templates`` and ``legend_rules``.
-            try:
-                from app.takeoff.legend_extract import extract_legend as _extract_legend_doc
-                _legend_doc = _extract_legend_doc(
-                    pdf_path=pdf_path,
-                    page_index=legend_source_page,
-                )
-                _so_templates, _so_rules = extract_shape_only_templates_from_legend_doc(
-                    pdf_path=pdf_path,
-                    legend_doc=_legend_doc,
-                )
-                if _so_templates:
-                    shape_templates.extend(_so_templates)
-                    legend_rules.extend(_so_rules)
-                    warnings.append(
-                        "legend_shape_only_rules_added: "
-                        f"{len(_so_rules)} textless legend row(s) "
-                        "promoted to shape-template detection"
+            if isinstance(legend_doc, dict) and legend_doc.get("tables"):
+                try:
+                    _so_templates, _ = extract_shape_only_templates_from_legend_doc(
+                        pdf_path=pdf_path,
+                        legend_doc=legend_doc,
+                        rules=legend_rules,
                     )
-            except Exception as exc:  # pragma: no cover - env-specific
+                    if _so_templates:
+                        shape_templates.extend(_so_templates)
+                        warnings.append(
+                            f"shape_only_templates_cropped: {len(_so_templates)} "
+                            "textless legend row(s) ready for template-match"
+                        )
+                except Exception as exc:  # pragma: no cover - env-specific
+                    shape_pass_warnings.append(
+                        f"shape_signals_textless_extraction_failed: {exc}"
+                    )
+            if not shape_templates:
                 shape_pass_warnings.append(
-                    f"shape_signals_textless_extraction_failed: {exc}"
+                    "shape_signals_no_templates_extracted: legend page "
+                    "found but no usable icon templates"
                 )
         elif shape_pass_enabled and legend_source_page is None:
             shape_pass_warnings.append(
