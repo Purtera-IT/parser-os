@@ -419,6 +419,166 @@ def emit_target_set_atom(
     )
 
 
+def emit_sheet_metadata_atom(
+    *,
+    metadata: Any,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+    page: Any | None = None,
+) -> EvidenceAtom:
+    """Project a ``SheetMetadata`` record into a ``schematic_sheet_metadata`` atom."""
+    locator = build_replayable_locator(
+        page_index=metadata.page_index,
+        bbox=metadata.bbox,
+        page=page,
+        extras={"sheet_number": metadata.sheet_number},
+    )
+    src = _source_ref(
+        artifact_id=artifact_id,
+        filename=filename,
+        locator=locator,
+        parser_version=parser_version,
+        extraction_method="schematic_sheet_metadata",
+        suffix=f"{metadata.page_index}:{metadata.sheet_number or ''}",
+    )
+    fields = {
+        "sheet_number": metadata.sheet_number,
+        "sheet_title": metadata.sheet_title,
+        "project_name": metadata.project_name,
+        "scale": metadata.scale,
+        "issue_date": metadata.issue_date,
+        "revision": metadata.revision,
+        "drafter": metadata.drafter,
+        "checker": metadata.checker,
+        "approver": metadata.approver,
+        "client": metadata.client,
+    }
+    present = {k: v for k, v in fields.items() if v}
+    raw = (
+        f"Sheet {metadata.sheet_number or '?'}: "
+        + ", ".join(f"{k}={v!r}" for k, v in sorted(present.items()))
+    )
+    return EvidenceAtom(
+        id=stable_id(
+            "atom_schematic_sheet_metadata",
+            artifact_id,
+            metadata.page_index,
+            metadata.sheet_number or "",
+        ),
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.schematic_sheet_metadata,
+        raw_text=raw,
+        normalized_text=raw.lower(),
+        value={"page": metadata.page_index, **fields},
+        entity_keys=sorted(
+            {f"sheet:{metadata.sheet_number}"} if metadata.sheet_number else set()
+        ),
+        source_refs=[src],
+        authority_class=AuthorityClass.machine_extractor,
+        confidence=0.85,
+        review_status=ReviewStatus.auto_accepted,
+        parser_version=parser_version,
+    )
+
+
+def emit_room_atom(
+    *,
+    room: Any,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+    page: Any | None = None,
+) -> EvidenceAtom:
+    """Project a ``Room`` record into a ``schematic_room`` atom."""
+    locator = build_replayable_locator(
+        page_index=room.page_index,
+        bbox=room.bbox,
+        page=page,
+        extras={"sheet_number": room.sheet_number, "room_id": room.room_id},
+    )
+    src = _source_ref(
+        artifact_id=artifact_id,
+        filename=filename,
+        locator=locator,
+        parser_version=parser_version,
+        extraction_method="schematic_room",
+        suffix=room.room_id,
+    )
+    raw = f"Room {room.label!r} on page {room.page_index}"
+    return EvidenceAtom(
+        id=stable_id("atom_schematic_room", artifact_id, room.room_id),
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.schematic_room,
+        raw_text=raw,
+        normalized_text=raw.lower(),
+        value={
+            "room_id": room.room_id,
+            "page": room.page_index,
+            "sheet_number": room.sheet_number,
+            "label": room.label,
+            "number": room.number,
+        },
+        entity_keys=[f"room:{room.room_id}"],
+        source_refs=[src],
+        authority_class=AuthorityClass.machine_extractor,
+        confidence=room.confidence,
+        review_status=ReviewStatus.auto_accepted,
+        parser_version=parser_version,
+    )
+
+
+def emit_keyed_note_atom(
+    *,
+    note: Any,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+    page: Any | None = None,
+) -> EvidenceAtom:
+    locator = build_replayable_locator(
+        page_index=note.page_index,
+        bbox=note.bbox,
+        page=page,
+        extras={"sheet_number": note.sheet_number, "note_number": note.number},
+    )
+    src = _source_ref(
+        artifact_id=artifact_id,
+        filename=filename,
+        locator=locator,
+        parser_version=parser_version,
+        extraction_method="schematic_keyed_note",
+        suffix=f"{note.page_index}:{note.number}",
+    )
+    raw = f"Keyed note {note.number}: {note.text}"
+    return EvidenceAtom(
+        id=stable_id("atom_schematic_keyed_note", artifact_id, note.page_index, note.number),
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.schematic_keyed_note,
+        raw_text=raw,
+        normalized_text=raw.lower(),
+        value={
+            "number": note.number,
+            "text": note.text,
+            "page": note.page_index,
+            "sheet_number": note.sheet_number,
+            "callout_count": len(note.callout_bboxes),
+        },
+        entity_keys=[f"keyed_note:{note.page_index}:{note.number}"],
+        source_refs=[src],
+        authority_class=AuthorityClass.machine_extractor,
+        confidence=note.confidence,
+        review_status=ReviewStatus.auto_accepted,
+        parser_version=parser_version,
+    )
+
+
 def emit_warning_atom(
     *,
     warning: SchematicWarning,
@@ -712,11 +872,15 @@ def collect_all(atoms: Iterable[EvidenceAtom]) -> list[EvidenceAtom]:
       6. atom id (final guaranteed tiebreaker)
     """
     pri = {
-        AtomType.schematic_legend: 0,
-        AtomType.schematic_detection_target_set: 1,
-        AtomType.schematic_symbol_detection: 2,
-        AtomType.quantity: 4,
-        AtomType.schematic_warning: 5,
+        AtomType.schematic_sheet_metadata: 0,
+        AtomType.schematic_legend: 1,
+        AtomType.schematic_room: 2,
+        AtomType.schematic_keyed_note: 3,
+        AtomType.schematic_note_callout: 4,
+        AtomType.schematic_detection_target_set: 5,
+        AtomType.schematic_symbol_detection: 6,
+        AtomType.quantity: 7,
+        AtomType.schematic_warning: 8,
     }
 
     def _page(atom: EvidenceAtom) -> int:

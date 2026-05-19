@@ -3499,7 +3499,10 @@ def _run_schematic_pre_pass(
     from app.parsers.schematic_atom_emitters import (
         collect_all,
         emit_detection_atom,
+        emit_keyed_note_atom,
         emit_legend_atom,
+        emit_room_atom,
+        emit_sheet_metadata_atom,
         emit_target_set_atom,
         emit_warning_atom,
         intersect_with_pack,
@@ -3830,10 +3833,95 @@ def _run_schematic_pre_pass(
             from orbitbrief_page_os.segmentation.schematic.exclusion_zones import (
                 detect_exclusion_zones,
             )
+            from orbitbrief_page_os.segmentation.schematic.sheet_metadata import (
+                parse_sheet_metadata,
+            )
+            from orbitbrief_page_os.segmentation.schematic.rooms import (
+                Room,
+                assign_detections_to_rooms,
+                detect_rooms,
+            )
+            from orbitbrief_page_os.segmentation.schematic.keyed_notes import (
+                detect_keyed_notes,
+            )
 
             zones = detect_exclusion_zones(blocks, page_bbox=page_bbox)
             for zone in zones:
                 excluded.append(zone.bbox)
+
+            # Sheet metadata atom — one per drawing page that carries
+            # an extractable title block.
+            title_block_bbox = next(
+                (z.bbox for z in zones if z.label == "title_block"),
+                None,
+            )
+            try:
+                sheet_meta = parse_sheet_metadata(
+                    page_index=page_index,
+                    blocks=blocks,
+                    sheet_number=sheet,
+                    title_block_bbox=title_block_bbox,
+                )
+            except Exception:  # pragma: no cover
+                sheet_meta = None
+            if sheet_meta is not None:
+                atoms.append(
+                    emit_sheet_metadata_atom(
+                        metadata=sheet_meta,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
+            # Room / zone atoms — pulled from blocks outside the
+            # excluded zones so we don't pick up schedule-row room IDs.
+            try:
+                rooms_on_page: list[Room] = detect_rooms(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    blocks=blocks,
+                    excluded_bboxes=tuple(excluded),
+                )
+            except Exception:  # pragma: no cover
+                rooms_on_page = []
+            for room in rooms_on_page:
+                atoms.append(
+                    emit_room_atom(
+                        room=room,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
+            # Keyed-notes atoms — both the note rows and their resolved
+            # body callouts. The exclusion-zone pass already keeps the
+            # block out of symbol detection; this turns the contents
+            # into reviewable atoms.
+            try:
+                keyed_notes_on_page = detect_keyed_notes(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    blocks=blocks,
+                )
+            except Exception:  # pragma: no cover
+                keyed_notes_on_page = []
+            for note in keyed_notes_on_page:
+                atoms.append(
+                    emit_keyed_note_atom(
+                        note=note,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
 
             # Prose-with-symbol suppression: any text block whose text
             # contains a legend symbol but ISN'T a standalone label
@@ -3875,16 +3963,60 @@ def _run_schematic_pre_pass(
                 legend_page=legend_page,
                 excluded_bboxes=tuple(excluded),
             )
-            for det in detections:
-                atoms.append(
-                    emit_detection_atom(
-                        detection=det,
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=path.name,
-                        parser_version=parser_version,
+            # Assign each detection to its nearest room (when rooms
+            # were detected on this page). The mapping is recorded
+            # on the detection atom's value so downstream consumers
+            # can group counts by room without re-running geometry.
+            detection_room_map: dict[str, str] = {}
+            if rooms_on_page:
+                try:
+                    detection_room_map = assign_detections_to_rooms(
+                        detections, rooms_on_page
                     )
+                except Exception:  # pragma: no cover
+                    detection_room_map = {}
+
+            # Mounting-height callouts — attach the nearest one to each
+            # detection so a CR atom carries "48 AFF" without the
+            # reviewer opening the PDF.
+            from orbitbrief_page_os.segmentation.schematic.callouts import (
+                attach_callouts_to_detections,
+                detect_callouts,
+            )
+
+            try:
+                callouts_on_page = detect_callouts(blocks, excluded_bboxes=tuple(excluded))
+                detection_callout_map = attach_callouts_to_detections(
+                    detections, callouts_on_page
                 )
+            except Exception:  # pragma: no cover
+                detection_callout_map = {}
+
+            for det in detections:
+                room_id = detection_room_map.get(det.detection_id)
+                callout = detection_callout_map.get(det.detection_id)
+                atom = emit_detection_atom(
+                    detection=det,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+                updates: dict[str, Any] = {}
+                new_value = dict(atom.value)
+                new_entity_keys = list(atom.entity_keys)
+                if room_id:
+                    new_value["located_in_room_id"] = room_id
+                    new_entity_keys.append(f"room:{room_id}")
+                if callout is not None:
+                    new_value["mounting_height"] = callout.text
+                    new_value["callout_bbox"] = list(callout.bbox)
+                if room_id or callout is not None:
+                    updates["value"] = new_value
+                    updates["entity_keys"] = sorted(set(new_entity_keys))
+                if updates:
+                    atom = atom.model_copy(update=updates)
+                atoms.append(atom)
                 detection_records.append(
                     {
                         "detection_id": det.detection_id,
@@ -3894,6 +4026,8 @@ def _run_schematic_pre_pass(
                         "bbox": list(det.bbox_pdf),
                         "crop_sha256": det.crop_sha256,
                         "confidence": det.confidence,
+                        "located_in_room_id": room_id,
+                        "mounting_height": callout.text if callout else None,
                     }
                 )
 

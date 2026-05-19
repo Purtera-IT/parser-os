@@ -91,6 +91,17 @@ class AtomType(str, Enum):
     schematic_detection_target_set = "schematic_detection_target_set"
     schematic_symbol_detection = "schematic_symbol_detection"
     schematic_warning = "schematic_warning"
+    # Title-block field set parsed off a drawing sheet (sheet number,
+    # sheet title, scale, issue date, revision, project name, designer).
+    # One per drawing page that carries an extractable title block.
+    schematic_sheet_metadata = "schematic_sheet_metadata"
+    # Room / zone label on a floor plan. Each ``schematic_symbol_detection``
+    # near a room atom carries a ``located_in_room_id`` so downstream
+    # consumers can group counts by room.
+    schematic_room = "schematic_room"
+    # A numbered keyed-note row and its resolved body callout(s).
+    schematic_keyed_note = "schematic_keyed_note"
+    schematic_note_callout = "schematic_note_callout"
 
 
 class AuthorityClass(str, Enum):
