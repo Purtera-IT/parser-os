@@ -569,80 +569,31 @@ def shape_candidates_for_page(
         _orb_cache["des"] = des
         return (kp, des)
 
-    for template in templates:
+    # ─── Pass 1: text-anchored templates via full-page NCC ───
+    text_templates = [
+        t for t in templates if not t.raw_symbol.startswith("__shp_")
+    ]
+    shape_only_templates = [
+        t for t in templates if t.raw_symbol.startswith("__shp_")
+    ]
+    for template in text_templates:
         tpl = template.image
         th, tw = tpl.shape[:2]
         if th < MIN_TEMPLATE_PX or tw < MIN_TEMPLATE_PX:
             continue
         if image.shape[0] < th + 1 or image.shape[1] < tw + 1:
             continue
-        is_shape_only = template.raw_symbol.startswith("__shp_")
+        try:
+            res = cv2.matchTemplate(image, tpl, cv2.TM_CCOEFF_NORMED)
+        except Exception:
+            continue
         points: list[tuple[int, int, float]] = []
-
-        if is_shape_only:
-            # ── ORB + local-NCC verification path ──
-            #
-            # Shape-only icons (cameras, motion detectors, etc.) are
-            # drawn small (5-15 pt) on plans, often surrounded by wall
-            # hatching that wrecks full-page NCC correlation. ORB finds
-            # candidate regions by matching distinctive corner features
-            # that survive scale and stroke-thickness drift. Then a
-            # *local* NCC on each candidate region verifies it, with
-            # ink-density and variance gates rejecting blank windows.
-            page_orb = _ensure_page_orb()
-            if page_orb is None or page_orb[1] is None:
-                continue
-            kp_page, des_page = page_orb
-            # Upscale the template so ORB has enough features to extract.
-            try:
-                tpl_up = cv2.resize(
-                    tpl, (tw * 4, th * 4), interpolation=cv2.INTER_CUBIC,
-                )
-                tpl_orb = cv2.ORB_create(
-                    nfeatures=500, scaleFactor=1.2, nlevels=8,
-                    fastThreshold=10, edgeThreshold=10, patchSize=15,
-                )
-                kp_t, des_t = tpl_orb.detectAndCompute(tpl_up, None)
-            except Exception:
-                kp_t, des_t = None, None
-            if des_t is None or len(kp_t) < 8:
-                continue
-            try:
-                bf = cv2.BFMatcher(cv2.NORM_HAMMING)
-                pairs = bf.knnMatch(des_page, des_t, k=2)
-            except Exception:
-                pairs = []
-            good = [p[0] for p in pairs if len(p) == 2
-                    and p[0].distance < 0.70 * p[1].distance]
-            if len(good) < 4:
-                continue
-            pts = [kp_page[m.queryIdx].pt for m in good]
-            clusters = _spatial_cluster(pts, radius=80.0, min_size=4)
-            for cx, cy, n_orb in clusters:
-                ncc, ink_density = _verify_local_ncc(
-                    image=image, template=tpl, cx=cx, cy=cy,
-                )
-                if ncc < 0.55:
-                    continue
-                if not (0.015 <= ink_density <= 0.35):
-                    continue
-                # ORB cluster + clean local NCC + sane ink = real match.
-                # Store as a points entry so the downstream NMS / bbox
-                # construction logic below handles it uniformly.
-                points.append((int(cx - tw // 2), int(cy - th // 2), ncc))
-        else:
-            # ── Text-anchored full-page NCC path (unchanged) ──
-            try:
-                res = cv2.matchTemplate(image, tpl, cv2.TM_CCOEFF_NORMED)
-            except Exception:
-                continue
-            ys, xs = np.where(res >= threshold)
-            for y, x in zip(ys.tolist(), xs.tolist()):
-                score = float(res[y, x])
-                cx = int(x + tw / 2.0)
-                cy = int(y + th / 2.0)
-                points.append((cx - tw // 2, cy - th // 2, score))
-
+        ys, xs = np.where(res >= threshold)
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            score = float(res[y, x])
+            cx = int(x + tw / 2.0)
+            cy = int(y + th / 2.0)
+            points.append((cx - tw // 2, cy - th // 2, score))
         kept = _nms(points, NMS_RADIUS_PX)
         rule = rules_by_symbol.get(template.raw_symbol)
         normalized = rule.normalized_class if rule else None
@@ -684,11 +635,171 @@ def shape_candidates_for_page(
                     source_methods=["shape_template"],
                     confidence=confidence if rejection_reason is None else 0.5,
                     rejection_reason=rejection_reason,
-                    needs_review=True,  # shape-only candidates ALWAYS need review
+                    needs_review=True,
                     nearby_text=[],
                 )
             )
+
+    # ─── Pass 2: shape-only multi-template classifier ───
+    #
+    # All N shape-only templates are matched against the plan's ORB
+    # descriptors in a SINGLE pass through a concatenated descriptor
+    # bank. Each plan keypoint that survives Lowe's ratio test carries
+    # a vote for the template its matched descriptor came from. Spatial
+    # clustering groups votes by location; the per-cluster winning
+    # template (majority vote) is what that location is classified as.
+    #
+    # This is the "fast many-class classifier" path: instead of running
+    # the ORB+NCC pipeline once per camera/motion/etc., the legend's
+    # entire textless vocabulary classifies each plan region in one
+    # shot. Adding a new device class to the legend automatically
+    # makes it detectable without any code changes.
+    if shape_only_templates:
+        classifier_cands = _classify_shape_only_regions(
+            image=image,
+            scale=scale,
+            templates=shape_only_templates,
+            page_orb=_ensure_page_orb(),
+            rules_by_symbol=rules_by_symbol,
+            sheet=sheet,
+            viewport=viewport,
+            excluded=excluded,
+            is_device_bearing=is_device_bearing,
+            cv2=cv2,
+            np=np,
+        )
+        candidates.extend(classifier_cands)
+
     return candidates
+
+
+def _classify_shape_only_regions(
+    *,
+    image: Any,
+    scale: float,
+    templates: list[ShapeTemplate],
+    page_orb: tuple[Any, Any] | None,
+    rules_by_symbol: dict[str, LegendRule],
+    sheet: SheetRecord,
+    viewport: Any,
+    excluded: Any,
+    is_device_bearing: bool,
+    cv2: Any,
+    np: Any,
+) -> list[SymbolCandidate]:
+    """Run the per-class ORB+NCC pipeline for EVERY shape-only template,
+    then cross-template NMS to keep one candidate per spatial location.
+
+    For each of the N legend's textless device classes:
+      1. Compute ORB descriptors on a 4x upscaled template.
+      2. Match plan keypoints against this template (Lowe's ratio).
+      3. Spatially cluster surviving matches (radius 80 px, >=4 members).
+      4. NCC-verify each cluster locally; reject blank / hatching-heavy
+         windows by ink density and variance gates.
+      5. Emit one candidate per verified cluster.
+
+    Cross-template suppression: after all N classes have emitted, candidates
+    within 30 pixels of each other are deduplicated keeping the higher
+    NCC score. This is what makes the pipeline "multi-class without
+    duplication": every plan region is classified as the single
+    best-fitting device, never as two competing classes.
+    """
+    out: list[SymbolCandidate] = []
+    if page_orb is None or page_orb[1] is None or not templates:
+        return out
+    kp_page, des_page = page_orb
+
+    raw_candidates: list[tuple[float, float, float, ShapeTemplate]] = []
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+
+    for template in templates:
+        tw, th = template.width, template.height
+        if tw < MIN_TEMPLATE_PX or th < MIN_TEMPLATE_PX:
+            continue
+        try:
+            tpl_up = cv2.resize(template.image, (tw * 4, th * 4), interpolation=cv2.INTER_CUBIC)
+            orb = cv2.ORB_create(
+                nfeatures=500, scaleFactor=1.2, nlevels=8,
+                fastThreshold=10, edgeThreshold=10, patchSize=15,
+            )
+            _, des_t = orb.detectAndCompute(tpl_up, None)
+        except Exception:
+            des_t = None
+        if des_t is None or len(des_t) < 8:
+            continue
+        try:
+            pairs = bf.knnMatch(des_page, des_t, k=2)
+        except Exception:
+            continue
+        good = [
+            p[0] for p in pairs
+            if len(p) == 2 and p[0].distance < 0.70 * p[1].distance
+        ]
+        if len(good) < 4:
+            continue
+        pts = [kp_page[m.queryIdx].pt for m in good]
+        clusters = _spatial_cluster(pts, radius=80.0, min_size=4)
+        for cx, cy, _n in clusters:
+            ncc, ink = _verify_local_ncc(
+                image=image, template=template.image, cx=cx, cy=cy,
+            )
+            if ncc < 0.55:
+                continue
+            if not (0.015 <= ink <= 0.35):
+                continue
+            raw_candidates.append((float(cx), float(cy), float(ncc), template))
+
+    # Cross-template NMS: same plan region matching multiple classes
+    # gets resolved to the single highest-NCC class.
+    raw_candidates.sort(key=lambda r: r[2], reverse=True)
+    kept: list[tuple[float, float, float, ShapeTemplate]] = []
+    for cx, cy, ncc, tpl in raw_candidates:
+        ok = True
+        for kx, ky, _, _ in kept:
+            if (kx - cx) ** 2 + (ky - cy) ** 2 < (30.0 * 30.0):
+                ok = False
+                break
+        if ok:
+            kept.append((cx, cy, ncc, tpl))
+
+    for cx, cy, ncc, tpl in kept:
+        tw, th = tpl.width, tpl.height
+        cx_pt = cx / scale
+        cy_pt = cy / scale
+        half_pt = (max(th, tw) / 2.0) / scale
+        bbox = BBox(
+            x0=cx_pt - half_pt, y0=cy_pt - half_pt,
+            x1=cx_pt + half_pt, y1=cy_pt + half_pt,
+            coord_space="pdf_pt",
+        )
+        rejection_reason: str | None = None
+        if not is_device_bearing:
+            rejection_reason = f"page_type={sheet.page_type} is not device-bearing"
+        elif viewport is not None and not is_inside(bbox, viewport):
+            rejection_reason = "outside plan_viewport"
+        elif excluded and is_excluded(bbox, excluded):
+            rejection_reason = "inside excluded_region (titleblock)"
+        confidence = 0.70 + 0.29 * max(0.0, (ncc - 0.55) / 0.45)
+        rule = rules_by_symbol.get(tpl.raw_symbol)
+        out.append(SymbolCandidate(
+            id=stable_id(
+                "shapecand_cls",
+                sheet.page_index,
+                tpl.raw_symbol,
+                round(cx_pt, 1),
+                round(cy_pt, 1),
+            ),
+            page_index=sheet.page_index,
+            raw_symbol=tpl.raw_symbol,
+            normalized_class=rule.normalized_class if rule else None,
+            bbox=bbox,
+            source_methods=["shape_template_classifier"],
+            confidence=confidence if rejection_reason is None else 0.5,
+            rejection_reason=rejection_reason,
+            needs_review=True,
+            nearby_text=[],
+        ))
+    return out
 
 
 __all__ = [
