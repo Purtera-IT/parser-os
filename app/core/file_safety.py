@@ -5,7 +5,12 @@ import os
 import re
 from dataclasses import dataclass
 
-ALLOWED_EXTENSIONS = {".xlsx", ".csv", ".txt", ".md", ".eml", ".docx", ".vtt", ".srt", ".json", ".pdf"}
+ALLOWED_EXTENSIONS = {
+    ".xlsx", ".csv", ".txt", ".md", ".eml", ".docx", ".vtt", ".srt", ".json", ".pdf",
+    # New universality extensions
+    ".pptx",
+    ".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp",
+}
 DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 

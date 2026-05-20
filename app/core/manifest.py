@@ -54,6 +54,10 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.transcript
     if suffix in {".txt", ".md", ".json"}:
         return ArtifactType.transcript if "transcript" in path.name.lower() else ArtifactType.txt
+    if suffix == ".pptx":
+        return ArtifactType.pptx
+    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
+        return ArtifactType.image
     return ArtifactType.txt
 
 

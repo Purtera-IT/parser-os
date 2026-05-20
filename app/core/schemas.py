@@ -21,6 +21,9 @@ class ArtifactType(str, Enum):
     po = "po"
     txt = "txt"
     pdf = "pdf"
+    # New universality artifact types
+    pptx = "pptx"      # PowerPoint slide decks
+    image = "image"    # HEIC / PNG / JPG site survey photos, network diagrams
 
 
 class AtomType(str, Enum):

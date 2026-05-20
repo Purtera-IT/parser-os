@@ -24,8 +24,10 @@ def _ensure_defaults() -> None:
         return
     from app.parsers.docx_parser import DocxParser
     from app.parsers.email_parser import EmailParser
+    from app.parsers.image_parser import ImageParser
     from app.parsers.markdown_parser import MarkdownParser
     from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
+    from app.parsers.pptx_parser import PptxParser
     from app.parsers.quote_parser import QuoteParser
     from app.parsers.transcript_parser import TranscriptParser
     from app.parsers.xlsx_parser import XlsxParser
@@ -37,6 +39,8 @@ def _ensure_defaults() -> None:
         EmailParser(),
         TranscriptParser(),
         DocxParser(),
+        PptxParser(),
+        ImageParser(),
         OrbitBriefPdfParser(),
     ]:
         register_parser(parser)
@@ -62,6 +66,10 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.transcript
     if suffix == ".pdf":
         return ArtifactType.pdf
+    if suffix == ".pptx":
+        return ArtifactType.pptx
+    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
+        return ArtifactType.image
     return ArtifactType.txt
 
 
