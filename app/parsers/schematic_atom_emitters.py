@@ -532,6 +532,74 @@ def emit_room_atom(
     )
 
 
+def emit_line_run_atom(
+    *,
+    line_run: Any,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+    page: Any | None = None,
+) -> EvidenceAtom:
+    """Project a ``LineRun`` into a ``schematic_line_run`` atom."""
+    locator = build_replayable_locator(
+        page_index=line_run.page_index,
+        bbox=line_run.bbox_pdf,
+        page=page,
+        extras={
+            "sheet_number": line_run.sheet_number,
+            "line_run_id": line_run.line_run_id,
+        },
+    )
+    src = _source_ref(
+        artifact_id=artifact_id,
+        filename=filename,
+        locator=locator,
+        parser_version=parser_version,
+        extraction_method="schematic_line_run",
+        suffix=line_run.line_run_id,
+    )
+    endpoints = [
+        {"x": line_run.polyline[0][0], "y": line_run.polyline[0][1]},
+        {"x": line_run.polyline[-1][0], "y": line_run.polyline[-1][1]},
+    ]
+    raw = (
+        f"Line run on sheet {line_run.sheet_number or '?'} from "
+        f"({endpoints[0]['x']:.1f},{endpoints[0]['y']:.1f}) to "
+        f"({endpoints[1]['x']:.1f},{endpoints[1]['y']:.1f})"
+        f", length={line_run.length_pt:.1f}pt"
+    )
+    entity_keys = []
+    if line_run.from_detection_id:
+        entity_keys.append(f"line_run_from:{line_run.from_detection_id}")
+    if line_run.to_detection_id:
+        entity_keys.append(f"line_run_to:{line_run.to_detection_id}")
+    return EvidenceAtom(
+        id=stable_id("atom_schematic_line_run", artifact_id, line_run.line_run_id),
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.schematic_line_run,
+        raw_text=raw,
+        normalized_text=raw.lower(),
+        value={
+            "line_run_id": line_run.line_run_id,
+            "page": line_run.page_index,
+            "sheet_number": line_run.sheet_number,
+            "polyline": [list(p) for p in line_run.polyline],
+            "endpoints": endpoints,
+            "length_pt": round(line_run.length_pt, 2),
+            "from_detection_id": line_run.from_detection_id,
+            "to_detection_id": line_run.to_detection_id,
+        },
+        entity_keys=sorted(set(entity_keys)),
+        source_refs=[src],
+        authority_class=AuthorityClass.machine_extractor,
+        confidence=line_run.confidence,
+        review_status=ReviewStatus.auto_accepted,
+        parser_version=parser_version,
+    )
+
+
 def emit_schedule_row_atom(
     *,
     row: Any,
@@ -942,8 +1010,9 @@ def collect_all(atoms: Iterable[EvidenceAtom]) -> list[EvidenceAtom]:
         AtomType.schematic_schedule_row: 5,
         AtomType.schematic_detection_target_set: 6,
         AtomType.schematic_symbol_detection: 7,
-        AtomType.quantity: 8,
-        AtomType.schematic_warning: 9,
+        AtomType.schematic_line_run: 8,
+        AtomType.quantity: 9,
+        AtomType.schematic_warning: 10,
     }
 
     def _page(atom: EvidenceAtom) -> int:

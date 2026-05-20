@@ -106,6 +106,10 @@ class AtomType(str, Enum):
     # equipment/fixture/panel schedule). Joined to symbol detections
     # via the shared tag (CR-101 schedule row joins to CR-101 detection).
     schematic_schedule_row = "schematic_schedule_row"
+    # A line run on the drawing: conduit, cable, riser, home-run.
+    # Each atom carries the polyline endpoints and (when snapping
+    # succeeds) the device / panel atoms it connects.
+    schematic_line_run = "schematic_line_run"
 
 
 class AuthorityClass(str, Enum):

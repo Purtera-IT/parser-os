@@ -3501,6 +3501,7 @@ def _run_schematic_pre_pass(
         emit_detection_atom,
         emit_keyed_note_atom,
         emit_legend_atom,
+        emit_line_run_atom,
         emit_room_atom,
         emit_schedule_row_atom,
         emit_sheet_metadata_atom,
@@ -4029,6 +4030,35 @@ def _run_schematic_pre_pass(
                 )
             except Exception:  # pragma: no cover
                 detection_schedule_map = {}
+
+            # Line runs — conduit / cable / riser polylines, snapped
+            # to nearby detections. Emitted AFTER detections so the
+            # snap targets are deterministic.
+            from orbitbrief_page_os.segmentation.schematic.line_runs import (
+                detect_line_runs,
+            )
+
+            try:
+                line_runs_on_page = detect_line_runs(
+                    page=page,
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    detections=detections,
+                    excluded_bboxes=tuple(excluded),
+                )
+            except Exception:  # pragma: no cover
+                line_runs_on_page = []
+            for line_run in line_runs_on_page:
+                atoms.append(
+                    emit_line_run_atom(
+                        line_run=line_run,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
 
             for det in detections:
                 room_id = detection_room_map.get(det.detection_id)
