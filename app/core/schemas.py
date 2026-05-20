@@ -102,6 +102,10 @@ class AtomType(str, Enum):
     # A numbered keyed-note row and its resolved body callout(s).
     schematic_keyed_note = "schematic_keyed_note"
     schematic_note_callout = "schematic_note_callout"
+    # One row from a construction schedule table (camera/door/
+    # equipment/fixture/panel schedule). Joined to symbol detections
+    # via the shared tag (CR-101 schedule row joins to CR-101 detection).
+    schematic_schedule_row = "schematic_schedule_row"
 
 
 class AuthorityClass(str, Enum):

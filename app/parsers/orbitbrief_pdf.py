@@ -3502,6 +3502,7 @@ def _run_schematic_pre_pass(
         emit_keyed_note_atom,
         emit_legend_atom,
         emit_room_atom,
+        emit_schedule_row_atom,
         emit_sheet_metadata_atom,
         emit_target_set_atom,
         emit_warning_atom,
@@ -3923,6 +3924,34 @@ def _run_schematic_pre_pass(
                     )
                 )
 
+            # Construction schedule rows — door / camera / equipment /
+            # fixture / panel schedules.  Each row joins to a detection
+            # by tag downstream (after detect_symbols runs).
+            from orbitbrief_page_os.segmentation.schematic.schedules import (
+                detect_schedules,
+                join_schedule_rows_to_detections,
+            )
+
+            try:
+                schedule_rows_on_page = detect_schedules(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    blocks=blocks,
+                )
+            except Exception:  # pragma: no cover
+                schedule_rows_on_page = []
+            for row in schedule_rows_on_page:
+                atoms.append(
+                    emit_schedule_row_atom(
+                        row=row,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
             # Prose-with-symbol suppression: any text block whose text
             # contains a legend symbol but ISN'T a standalone label
             # (e.g. "PTZ ROOM", "Card Reader Suite") must be added to
@@ -3992,9 +4021,19 @@ def _run_schematic_pre_pass(
             except Exception:  # pragma: no cover
                 detection_callout_map = {}
 
+            # Schedule-row joins — link each detection to its schedule
+            # row when the detection's nearby_text contains the tag.
+            try:
+                detection_schedule_map = join_schedule_rows_to_detections(
+                    schedule_rows_on_page, detections
+                )
+            except Exception:  # pragma: no cover
+                detection_schedule_map = {}
+
             for det in detections:
                 room_id = detection_room_map.get(det.detection_id)
                 callout = detection_callout_map.get(det.detection_id)
+                schedule_row = detection_schedule_map.get(det.detection_id)
                 atom = emit_detection_atom(
                     detection=det,
                     project_id=project_id,
@@ -4011,7 +4050,13 @@ def _run_schematic_pre_pass(
                 if callout is not None:
                     new_value["mounting_height"] = callout.text
                     new_value["callout_bbox"] = list(callout.bbox)
-                if room_id or callout is not None:
+                if schedule_row is not None:
+                    new_value["schedule_row_id"] = schedule_row.row_id
+                    new_value["schedule_tag"] = schedule_row.tag
+                    new_value["schedule_kind"] = schedule_row.schedule_kind
+                    new_value["schedule_fields"] = dict(schedule_row.fields)
+                    new_entity_keys.append(f"schedule_tag:{schedule_row.tag}")
+                if room_id or callout is not None or schedule_row is not None:
                     updates["value"] = new_value
                     updates["entity_keys"] = sorted(set(new_entity_keys))
                 if updates:
@@ -4028,6 +4073,8 @@ def _run_schematic_pre_pass(
                         "confidence": det.confidence,
                         "located_in_room_id": room_id,
                         "mounting_height": callout.text if callout else None,
+                        "schedule_row_id": schedule_row.row_id if schedule_row else None,
+                        "schedule_tag": schedule_row.tag if schedule_row else None,
                     }
                 )
 

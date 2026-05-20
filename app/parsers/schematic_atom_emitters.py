@@ -532,6 +532,68 @@ def emit_room_atom(
     )
 
 
+def emit_schedule_row_atom(
+    *,
+    row: Any,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+    page: Any | None = None,
+) -> EvidenceAtom:
+    """Project a ``ScheduleRow`` into a ``schematic_schedule_row`` atom."""
+    locator = build_replayable_locator(
+        page_index=row.page_index,
+        bbox=row.bbox,
+        page=page,
+        extras={
+            "sheet_number": row.sheet_number,
+            "schedule_kind": row.schedule_kind,
+            "tag": row.tag,
+        },
+    )
+    src = _source_ref(
+        artifact_id=artifact_id,
+        filename=filename,
+        locator=locator,
+        parser_version=parser_version,
+        extraction_method="schematic_schedule_row",
+        suffix=row.row_id,
+    )
+    fields = dict(row.fields)
+    raw = (
+        f"{row.schedule_kind.title()} schedule: {row.tag} — "
+        + ", ".join(f"{k}={v!r}" for k, v in sorted(fields.items()))
+    )
+    return EvidenceAtom(
+        id=stable_id("atom_schematic_schedule_row", artifact_id, row.row_id),
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.schematic_schedule_row,
+        raw_text=raw,
+        normalized_text=raw.lower(),
+        value={
+            "row_id": row.row_id,
+            "schedule_kind": row.schedule_kind,
+            "tag": row.tag,
+            "page": row.page_index,
+            "sheet_number": row.sheet_number,
+            "fields": fields,
+        },
+        entity_keys=sorted(
+            {
+                f"schedule_tag:{row.tag}",
+                f"schedule:{row.schedule_kind}",
+            }
+        ),
+        source_refs=[src],
+        authority_class=AuthorityClass.machine_extractor,
+        confidence=row.confidence,
+        review_status=ReviewStatus.auto_accepted,
+        parser_version=parser_version,
+    )
+
+
 def emit_keyed_note_atom(
     *,
     note: Any,
@@ -877,10 +939,11 @@ def collect_all(atoms: Iterable[EvidenceAtom]) -> list[EvidenceAtom]:
         AtomType.schematic_room: 2,
         AtomType.schematic_keyed_note: 3,
         AtomType.schematic_note_callout: 4,
-        AtomType.schematic_detection_target_set: 5,
-        AtomType.schematic_symbol_detection: 6,
-        AtomType.quantity: 7,
-        AtomType.schematic_warning: 8,
+        AtomType.schematic_schedule_row: 5,
+        AtomType.schematic_detection_target_set: 6,
+        AtomType.schematic_symbol_detection: 7,
+        AtomType.quantity: 8,
+        AtomType.schematic_warning: 9,
     }
 
     def _page(atom: EvidenceAtom) -> int:
