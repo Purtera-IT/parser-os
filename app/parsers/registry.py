@@ -33,6 +33,9 @@ def _ensure_defaults() -> None:
     from app.parsers.universal_parsers import (
         HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
     )
+    from app.parsers._universal_extras import (
+        MsgParser, OdtParser, OdsParser, VsdxParser, MppParser,
+    )
     from app.parsers.xlsx_parser import XlsxParser
 
     for parser in [
@@ -49,6 +52,11 @@ def _ensure_defaults() -> None:
         RtfParser(),
         IcsParser(),
         ZipParser(),
+        MsgParser(),
+        OdtParser(),
+        OdsParser(),
+        VsdxParser(),
+        MppParser(),
         OrbitBriefPdfParser(),
     ]:
         register_parser(parser)
@@ -88,6 +96,16 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.ics
     if suffix == ".zip":
         return ArtifactType.zip_archive
+    if suffix == ".msg":
+        return ArtifactType.msg
+    if suffix == ".odt":
+        return ArtifactType.odt
+    if suffix == ".ods":
+        return ArtifactType.ods
+    if suffix in {".vsdx", ".vsd"}:
+        return ArtifactType.vsdx
+    if suffix == ".mpp":
+        return ArtifactType.mpp
     return ArtifactType.txt
 
 

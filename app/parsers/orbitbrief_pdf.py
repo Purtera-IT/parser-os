@@ -632,6 +632,31 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     page_text_lengths: list[int] = []
     page_texts: list[str] = []
     with fitz.open(str(pdf_path)) as doc:
+        # Encrypted PDF detection — explicit signal for PM_HANDOFF so
+        # the file gets routed to manual unlock rather than silently
+        # producing 0 atoms. ``doc.needs_pass`` is True when the PDF
+        # is password-protected and the open call didn't supply one.
+        if getattr(doc, "needs_pass", False) or getattr(doc, "is_encrypted", False):
+            encrypt_msg = (
+                f"[Encrypted PDF — {pdf_path.name} is password-protected. "
+                f"Manual unlock required: open in Acrobat / Preview, supply "
+                f"the password, save as an unencrypted copy, then re-attach "
+                f"to the intake. parser-os marks this file as needs_review "
+                f"and emits 0 evidence atoms until unlocked.]"
+            )
+            document_metadata.append(encrypt_msg)
+            # Skip the rest of the parse — return an empty page list
+            # so the rest of the pipeline degrades gracefully via A6.
+            return {
+                "schema_version": STRUCTURED_SCHEMA_VERSION,
+                "source": {
+                    "filename": pdf_path.name,
+                    "page_count": 0,
+                    "encrypted": True,
+                },
+                "document": {"title": None, "metadata": document_metadata},
+                "pages": [],
+            }
         full_page_count = len(doc)
         # A2: cap the working page_count for large PDFs but
         # remember the original so the metadata can report it.

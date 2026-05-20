@@ -68,6 +68,16 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.ics
     if suffix == ".zip":
         return ArtifactType.zip_archive
+    if suffix == ".msg":
+        return ArtifactType.msg
+    if suffix == ".odt":
+        return ArtifactType.odt
+    if suffix == ".ods":
+        return ArtifactType.ods
+    if suffix in {".vsdx", ".vsd"}:
+        return ArtifactType.vsdx
+    if suffix == ".mpp":
+        return ArtifactType.mpp
     return ArtifactType.txt
 
 

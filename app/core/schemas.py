@@ -29,6 +29,11 @@ class ArtifactType(str, Enum):
     rtf = "rtf"        # Rich Text Format (legacy SOW / contract templates)
     ics = "ics"        # iCalendar invites (kickoff meetings, etc.)
     zip_archive = "zip" # ZIP containers; auto-listed contents
+    msg = "msg"        # Outlook native email format
+    odt = "odt"        # OpenDocument Text (LibreOffice / OpenOffice writer)
+    ods = "ods"        # OpenDocument Spreadsheet
+    vsdx = "vsdx"      # Microsoft Visio diagrams
+    mpp = "mpp"        # Microsoft Project schedule files
 
 
 class AtomType(str, Enum):

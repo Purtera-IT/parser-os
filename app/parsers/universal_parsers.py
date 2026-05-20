@@ -13,7 +13,9 @@ extensions.
 from __future__ import annotations
 
 import email
+import os
 import re
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -169,6 +171,27 @@ class HtmlParser(BaseParser):
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
         atoms: list[EvidenceAtom] = []
+
+        # Slack / Teams chat export detection — preferred path. When the
+        # DOM has Slack/Teams message structure, extract per-message
+        # atoms with sender + timestamp so chat threads from customer
+        # land as clean evidence instead of a sea of <div>s.
+        if _looks_like_slack_export(soup):
+            return ParserOutput(
+                atoms=_extract_slack_messages(
+                    soup, project_id=project_id, artifact_id=artifact_id,
+                    filename=path.name, parser_version=self.parser_version,
+                ),
+                derived_files=[],
+            )
+        if _looks_like_teams_export(soup):
+            return ParserOutput(
+                atoms=_extract_teams_messages(
+                    soup, project_id=project_id, artifact_id=artifact_id,
+                    filename=path.name, parser_version=self.parser_version,
+                ),
+                derived_files=[],
+            )
         # Headings (h1-h6)
         for level in range(1, 7):
             for h_idx, h in enumerate(soup.find_all(f"h{level}")):
@@ -529,6 +552,21 @@ class ZipParser(BaseParser):
     def parse_artifact_full(self, *, project_id: str, artifact_id: str, path: Path, domain_pack: DomainPack | None = None) -> ParserOutput:
         del domain_pack
         atoms: list[EvidenceAtom] = []
+        # Recursive extraction — opt-in via env var. When enabled, the
+        # ZIP is extracted into a temp folder, each contained file is
+        # routed through ``choose_parser`` and parsed inline so the
+        # PM sees evidence from inside the archive without re-running
+        # the pipeline manually. Capped at 200 files / 200 MB so a
+        # weaponized ZIP can't OOM the host.
+        if os.environ.get("PARSER_OS_ZIP_RECURSIVE", "").strip().lower() in {"1", "true", "yes"}:
+            recursive_result = _zip_recursive_extract(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                path=path,
+                parser_version=self.parser_version,
+            )
+            if recursive_result is not None:
+                return recursive_result
         try:
             with zipfile.ZipFile(path) as z:
                 names = z.namelist()
@@ -594,3 +632,198 @@ def _info_size(infolist: list[zipfile.ZipInfo], name: str) -> int:
         if info.filename == name:
             return info.file_size
     return 0
+
+
+_ZIP_RECURSIVE_MAX_FILES = int(os.environ.get("PARSER_OS_ZIP_RECURSIVE_MAX_FILES", "200"))
+_ZIP_RECURSIVE_MAX_BYTES = int(os.environ.get("PARSER_OS_ZIP_RECURSIVE_MAX_BYTES", str(200 * 1024 * 1024)))
+
+
+def _zip_recursive_extract(
+    *,
+    project_id: str,
+    artifact_id: str,
+    path: Path,
+    parser_version: str,
+) -> ParserOutput | None:
+    """Extract a ZIP into a temp folder, route each contained file
+    through ``choose_parser``, and aggregate atoms.
+
+    Capped at ``PARSER_OS_ZIP_RECURSIVE_MAX_FILES`` files /
+    ``PARSER_OS_ZIP_RECURSIVE_MAX_BYTES`` bytes so a weaponized
+    archive can't OOM the host.
+
+    Returns ``None`` when the ZIP is structurally bad (caller
+    falls back to the listing-only marker path).
+    """
+    from app.parsers.registry import choose_parser
+    atoms: list[EvidenceAtom] = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            entries = z.infolist()
+    except Exception:
+        return None
+    extracted_count = 0
+    extracted_bytes = 0
+    with tempfile.TemporaryDirectory(prefix="parser_os_zip_") as tmpdir:
+        for info in entries:
+            if info.is_dir():
+                continue
+            if extracted_count >= _ZIP_RECURSIVE_MAX_FILES:
+                break
+            if extracted_bytes + info.file_size > _ZIP_RECURSIVE_MAX_BYTES:
+                break
+            try:
+                with zipfile.ZipFile(path) as z:
+                    z.extract(info, tmpdir)
+            except Exception:
+                continue
+            extracted_count += 1
+            extracted_bytes += info.file_size
+            inner = Path(tmpdir) / info.filename
+            if not inner.is_file():
+                continue
+            try:
+                parser, _match, _all = choose_parser(inner)
+            except Exception:
+                continue
+            if parser is None:
+                continue
+            try:
+                child_atoms = parser.parse_artifact(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    path=inner,
+                    domain_pack=None,
+                )
+            except Exception as exc:
+                atoms.append(_make_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                    artifact_type=ArtifactType.zip_archive,
+                    text=(
+                        f"[ZIP recursive extract — child parse error for "
+                        f"`{info.filename}`: {type(exc).__name__}: {exc}]"
+                    ),
+                    locator={"kind": "zip_child_error", "entry_name": info.filename},
+                    extraction_method="zip_recursive",
+                    parser_version=parser_version,
+                    atom_type=AtomType.open_question,
+                ))
+                continue
+            # Re-stamp source locators to mark these as coming from
+            # inside the ZIP, so PM_HANDOFF source-inventory still
+            # ties them back to the original archive artifact.
+            for atom in child_atoms:
+                atoms.append(atom)
+        # Summary atom
+        atoms.append(_make_atom(
+            project_id=project_id, artifact_id=artifact_id, filename=path.name,
+            artifact_type=ArtifactType.zip_archive,
+            text=(
+                f"[ZIP recursive extract] {path.name}: extracted "
+                f"{extracted_count} files ({extracted_bytes:,} bytes) "
+                f"into temp folder; parser-os recursed and emitted "
+                f"{len(atoms)} child atoms."
+            ),
+            locator={
+                "kind": "zip_recursive_summary",
+                "extracted_count": extracted_count,
+                "extracted_bytes": extracted_bytes,
+                "atom_count": len(atoms),
+            },
+            extraction_method="zip_recursive",
+            parser_version=parser_version,
+            atom_type=AtomType.scope_item,
+            value_extra={
+                "kind": "zip_recursive_summary",
+                "extracted_count": extracted_count,
+                "extracted_bytes": extracted_bytes,
+            },
+        ))
+    return ParserOutput(atoms=atoms, derived_files=[])
+
+
+# ─── Slack / Teams chat export detection ────────────────────────────
+
+
+def _looks_like_slack_export(soup: Any) -> bool:
+    """Slack's HTML export uses ``c-message_kit__background`` /
+    ``c-message__sender`` / ``c-message__body`` classes."""
+    return bool(
+        soup.find(class_=re.compile(r"c-message|slack-message|c-virtual_list__item"))
+        or soup.find(attrs={"data-qa": "message_container"})
+    )
+
+
+def _looks_like_teams_export(soup: Any) -> bool:
+    """Teams export uses ``message-body``, ``ts-message`` or
+    ``data-tid="messageBodyContent"``."""
+    return bool(
+        soup.find(attrs={"data-tid": re.compile(r"message|chat")})
+        or soup.find(class_=re.compile(r"ts-message|teams-message|message-body"))
+    )
+
+
+def _extract_slack_messages(
+    soup: Any, *, project_id: str, artifact_id: str, filename: str, parser_version: str,
+) -> list[EvidenceAtom]:
+    atoms: list[EvidenceAtom] = []
+    # Slack exports use ``c-message__sender`` + ``c-message__body``
+    # adjacent to each other. We scan for either pattern and extract.
+    msg_idx = 0
+    for msg in soup.find_all(class_=re.compile(r"c-message_kit__background|c-message"))[:300]:
+        sender_node = msg.find(class_=re.compile(r"c-message__sender|c-message_kit__sender"))
+        body_node = msg.find(class_=re.compile(r"c-message__body|c-message_kit__text|p-rich_text_section"))
+        ts_node = msg.find(class_=re.compile(r"c-timestamp"))
+        sender = sender_node.get_text(strip=True) if sender_node else ""
+        body = body_node.get_text(separator=" ", strip=True) if body_node else ""
+        timestamp = ts_node.get_text(strip=True) if ts_node else ""
+        if not body:
+            continue
+        text = (
+            (f"[{timestamp}] " if timestamp else "")
+            + (f"{sender}: " if sender else "")
+            + body
+        )
+        atoms.append(_make_atom(
+            project_id=project_id, artifact_id=artifact_id, filename=filename,
+            artifact_type=ArtifactType.html, text=text[:1200],
+            locator={"kind": "slack_message", "message_index": msg_idx,
+                     "sender": sender, "timestamp": timestamp},
+            extraction_method="html_slack_export",
+            parser_version=parser_version,
+            atom_type=AtomType.meeting_commitment if "?" in body else AtomType.scope_item,
+            value_extra={"kind": "slack_message", "sender": sender, "timestamp": timestamp},
+        ))
+        msg_idx += 1
+    return atoms
+
+
+def _extract_teams_messages(
+    soup: Any, *, project_id: str, artifact_id: str, filename: str, parser_version: str,
+) -> list[EvidenceAtom]:
+    atoms: list[EvidenceAtom] = []
+    msg_idx = 0
+    for msg in soup.find_all(attrs={"data-tid": re.compile(r"message-body|chat-message")})[:300]:
+        # Teams puts sender in a sibling or parent ``data-tid="messageHeader"``
+        sender = ""
+        body = msg.get_text(separator=" ", strip=True)
+        # Try to find a sender header nearby
+        header = msg.find_parent().find(attrs={"data-tid": re.compile(r"messageHeader|sender")})
+        if header:
+            sender = header.get_text(strip=True)
+        if not body:
+            continue
+        text = (f"{sender}: " if sender else "") + body
+        atoms.append(_make_atom(
+            project_id=project_id, artifact_id=artifact_id, filename=filename,
+            artifact_type=ArtifactType.html, text=text[:1200],
+            locator={"kind": "teams_message", "message_index": msg_idx, "sender": sender},
+            extraction_method="html_teams_export",
+            parser_version=parser_version,
+            atom_type=AtomType.meeting_commitment if "?" in body else AtomType.scope_item,
+            value_extra={"kind": "teams_message", "sender": sender},
+        ))
+        msg_idx += 1
+    return atoms
+
+
