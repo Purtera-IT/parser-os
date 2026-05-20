@@ -339,12 +339,32 @@ def compile_project(
                         "reasons": match.reasons,
                         "cache_hit": False,
                         "matches": [row.model_dump(mode="json") for row in all_matches],
+                        # A6 graceful degradation: per-file outcome
+                        # status. Defaults to pending; overwritten below
+                        # when the parse succeeds, is skipped, or fails.
+                        # PM_HANDOFF readers (and the systems engineer
+                        # diffing successful vs failed files) depend on
+                        # this being present on every routing entry.
+                        "outcome": {
+                            "status": "pending",
+                            "atom_count": 0,
+                            "warning_count": 0,
+                        },
                     }
                 )
                 parser_key = parser_name
                 if parser is None:
                     warning = f"WARNING: No parser matched artifact {relative_name}; skipping file"
                     parse_warnings.append(warning)
+                    parser_routing[-1]["outcome"] = {
+                        "status": "skipped_no_parser",
+                        "reason": (
+                            f"no parser matched (best candidate: {parser_name} "
+                            f"@ confidence={match.confidence:.2f})"
+                        ),
+                        "atom_count": 0,
+                        "warning_count": 0,
+                    }
                 else:
                     cached = None
                     if use_cache:
@@ -405,10 +425,33 @@ def compile_project(
                     parse_warnings.extend(per_artifact_warnings)
                     atoms.extend(parsed_atoms)
                     parser_atom_counts[parser_key] += len(parsed_atoms)
+                    if parser_routing:
+                        # Successful parse — record concrete outcome.
+                        # Use ``ok`` when the parser produced ≥1 atom;
+                        # ``ok_empty`` when it ran but produced none
+                        # (e.g. an image-only PDF the parser skipped
+                        # without erroring). PM_HANDOFF distinguishes
+                        # so reviewers know whether a 0-atom file means
+                        # "parser is healthy, just no content" vs "parser
+                        # silently failed."
+                        status = "ok" if len(parsed_atoms) > 0 else "ok_empty"
+                        parser_routing[-1]["outcome"] = {
+                            "status": status,
+                            "atom_count": len(parsed_atoms),
+                            "warning_count": len(per_artifact_warnings),
+                            "cache_hit": cache_hit,
+                        }
             except Exception as exc:  # pragma: no cover
                 message = f"Failed parsing {artifact.name} ({parser_key}): {exc}"
                 parse_warnings.append(message)
                 parse_errors.append(message)
+                if parser_routing:
+                    parser_routing[-1]["outcome"] = {
+                        "status": "failed_parse",
+                        "reason": f"{type(exc).__name__}: {str(exc)[:280]}",
+                        "atom_count": 0,
+                        "warning_count": len(per_artifact_warnings),
+                    }
                 cache_misses += 1
             fingerprints.append(
                 build_artifact_fingerprint(

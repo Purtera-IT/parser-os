@@ -107,6 +107,20 @@ def build_orbitbrief_envelope(
     for atom in atoms:
         atoms_by_artifact[atom.artifact_id].append(atom)
 
+    # A6 graceful degradation: build a per-file outcome index from the
+    # manifest's parser_routing so each document carries its own
+    # status (ok / ok_empty / skipped_no_parser / failed_parse).
+    # PM_HANDOFF builders read this to render a "Files processed"
+    # table and avoid the silent failure where a parse error left the
+    # file count looking normal but produced 0 evidence.
+    outcome_by_artifact: dict[str, dict[str, Any]] = {}
+    if manifest is not None:
+        for routing_entry in (manifest.parser_routing or []):
+            aid = routing_entry.get("artifact_id")
+            outcome = routing_entry.get("outcome")
+            if aid and isinstance(outcome, dict):
+                outcome_by_artifact[aid] = outcome
+
     documents: list[dict[str, Any]] = []
     artifact_iter = manifest.artifact_fingerprints if manifest is not None else []
     for fp in artifact_iter:
@@ -129,6 +143,14 @@ def build_orbitbrief_envelope(
                 "parser_version": fp.parser_version,
                 "structured": structured_projection,
                 "atom_ids": sorted(a.id for a in artifact_atoms),
+                # A6 graceful degradation: per-file parse outcome.
+                # ``status`` is one of ok / ok_empty / skipped_no_parser
+                # / failed_parse. PM_HANDOFF reads this to surface
+                # files that the engineer should manually inspect.
+                "parse_outcome": outcome_by_artifact.get(
+                    fp.artifact_id,
+                    {"status": "unknown", "atom_count": len(artifact_atoms), "warning_count": 0},
+                ),
             }
         )
 
@@ -688,6 +710,21 @@ def _build_summary(
         structured = doc.get("structured") or {}
         if isinstance(structured, dict):
             page_count += len(structured.get("pages") or [])
+    # A6 graceful degradation: roll up per-file parse_outcome into a
+    # summary counter + an explicit degraded-files list. PM_HANDOFF
+    # uses this to render a "Files requiring manual review" callout.
+    parse_outcomes_counter: Counter[str] = Counter()
+    degraded_files: list[dict[str, str]] = []
+    for doc in documents:
+        outcome = doc.get("parse_outcome") or {}
+        status = outcome.get("status") or "unknown"
+        parse_outcomes_counter[status] += 1
+        if status in {"failed_parse", "skipped_no_parser", "ok_empty"}:
+            degraded_files.append({
+                "filename": str(doc.get("filename", "")),
+                "status": status,
+                "reason": str(outcome.get("reason", ""))[:300],
+            })
     return {
         "artifact_count": len(documents),
         "page_count": page_count,
@@ -701,6 +738,8 @@ def _build_summary(
         "by_authority_class": dict(by_authority),
         "by_edge_type": dict(by_edge_type),
         "by_entity_type": dict(by_entity_type),
+        "parse_outcomes": dict(parse_outcomes_counter),
+        "degraded_files": degraded_files,
     }
 
 

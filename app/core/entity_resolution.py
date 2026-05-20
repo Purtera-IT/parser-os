@@ -88,6 +88,13 @@ def extract_entity_records(
                 continue
             entity_type, raw_value = key.split(":", 1)
             canonical_key = _canonical_alias_key(entity_type, raw_value, alias_index)
+            # ``normalize_entity_key`` returns "" for generic pseudo-values
+            # (e.g. site:"ALL" / site:"N/A" / site:"Various"). Skipping
+            # here prevents an IndexError below at
+            # ``canonical_key.split(":", 1)[1]`` and also prevents the
+            # noisy "ALL → unnamed site" record from leaking into outputs.
+            if not canonical_key or ":" not in canonical_key:
+                continue
             if canonical_key not in grouped:
                 grouped[canonical_key] = {
                     "entity_type": entity_type,
