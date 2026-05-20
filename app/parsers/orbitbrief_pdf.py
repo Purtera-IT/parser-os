@@ -596,6 +596,33 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     document_metadata: list[str] = []
     seen_metadata: set[str] = set()
 
+    # A2 large-PDF safety net: when a PDF is bigger than the soft
+    # cap, process only the first ``MAX_PAGES_LARGE_PDF`` pages and
+    # add a warning to the metadata so the PM sees the partial-
+    # parse explicitly. Prevents OOM on 500MB+ scanned dumps while
+    # still surfacing actionable evidence from the first chunk.
+    # Tunable via env vars so on H100/large-RAM hosts the caller
+    # can lift the limits.
+    import os as _os
+    LARGE_PDF_SOFT_CAP_MB = float(_os.environ.get("PARSER_OS_PDF_SOFT_CAP_MB", "50"))
+    MAX_PAGES_LARGE_PDF = int(_os.environ.get("PARSER_OS_PDF_MAX_PAGES", "200"))
+    try:
+        pdf_size_mb = pdf_path.stat().st_size / (1024 * 1024)
+    except OSError:
+        pdf_size_mb = 0.0
+    is_large_pdf = pdf_size_mb > LARGE_PDF_SOFT_CAP_MB
+    if is_large_pdf:
+        warning = (
+            f"[A2 large-PDF guard] {pdf_path.name} is "
+            f"{pdf_size_mb:.0f} MB > {LARGE_PDF_SOFT_CAP_MB:.0f} MB; "
+            f"processing only the first {MAX_PAGES_LARGE_PDF} pages. "
+            f"Set PARSER_OS_PDF_MAX_PAGES or PARSER_OS_PDF_SOFT_CAP_MB "
+            f"to lift this limit."
+        )
+        if warning not in seen_metadata:
+            seen_metadata.add(warning)
+            document_metadata.append(warning)
+
     # P2.1: pre-scan the PDF for per-page text length so we can fast-path
     # low-text pages (scanned drawings, image-only floor plans) without
     # running the heavyweight layout-detection pipeline on them.
@@ -605,7 +632,23 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     page_text_lengths: list[int] = []
     page_texts: list[str] = []
     with fitz.open(str(pdf_path)) as doc:
-        page_count = len(doc)
+        full_page_count = len(doc)
+        # A2: cap the working page_count for large PDFs but
+        # remember the original so the metadata can report it.
+        page_count = (
+            min(full_page_count, MAX_PAGES_LARGE_PDF)
+            if is_large_pdf
+            else full_page_count
+        )
+        if is_large_pdf and full_page_count > MAX_PAGES_LARGE_PDF:
+            skipped_msg = (
+                f"[A2 large-PDF guard] truncated {full_page_count} pages "
+                f"→ first {MAX_PAGES_LARGE_PDF}; "
+                f"{full_page_count - MAX_PAGES_LARGE_PDF} pages skipped."
+            )
+            if skipped_msg not in seen_metadata:
+                seen_metadata.add(skipped_msg)
+                document_metadata.append(skipped_msg)
         for page_idx in range(page_count):
             try:
                 page_text = doc[page_idx].get_text("text") or ""

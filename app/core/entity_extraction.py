@@ -223,9 +223,14 @@ _NUMBERED_SITE_REGEX = re.compile(
     r"\b("
     r"(?:Building|Bldg|Site|Branch|Office|Facility|Warehouse|"
     r"Annex|Block|Wing|Tower|Plant|Depot|Hub|Floor|Fl|Lvl|Level|"
-    # Common non-English building words
-    r"Edificio|Edif|Bâtiment|Bat|Gebäude|Geb|"
-    r"棟|楠|建物|建筑物|建筑"
+    # A7 non-English building words
+    r"Edificio|Edif|Edifício|"           # Spanish, Portuguese
+    r"Bâtiment|Bat|Immeuble|"            # French
+    r"Gebäude|Geb|Gebaeude|"             # German (+ ASCII fallback)
+    r"Palazzo|Edificio|"                 # Italian
+    r"Здание|"                            # Russian
+    r"棟|楠|建物|建筑物|建筑|建築物|"      # CJK
+    r"건물|동"                            # Korean
     r")\s+"
     r"([0-9A-Z]+(?:[\-/][0-9A-Z]+)?|[IVXLCDM]+)"
     r"\b)",
@@ -2522,18 +2527,50 @@ _STAKEHOLDER_ROLE_PATTERNS = re.compile(
     r"reviews?\s+and\s+(?:approves?|approved)|"
     r"authorized\s+by|approved\s+by|signed\s+by|"
     r"is\s+the\s+(?:owner|sponsor|approver|delegate)|"
-    r"responsible\s+for|accountable\s+for"
+    r"responsible\s+for|accountable\s+for|"
+    # A7 multi-language role cues (Spanish / French / German /
+    # Portuguese / Italian). Same intent — the word marks the
+    # nearby capitalized noun as a stakeholder.
+    # Spanish — approval verbs (present + past), titles
+    r"Director\s+de\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Gerente|Jefe\s+de\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Responsable\s+de|Aprobado\s+por|Firmado\s+por|"
+    r"aprobó|aprueba|aprobaron|firmó|firma|firmaron|"
+    r"autoriza|autorizó|autoriz[oó]\s+por|"
+    # French — approval verbs + titles
+    r"Directeur\s+(?:de|des|du)\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Chef\s+de\s+(?:projet|service|département)|"
+    r"Responsable|Approuvé\s+par|Signé\s+par|"
+    r"approuve|approuvé|approuvent|signe|signé|signent|autorise|autorisé|"
+    # German — approval verbs + titles
+    r"Geschäftsführer|Leiter\s+(?:der|des)\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Abteilungsleiter|Projektleiter|Genehmigt\s+(?:von|durch)|"
+    r"Unterzeichnet\s+(?:von|durch)|"
+    r"genehmigt|genehmigen|unterzeichnet|unterschreibt|freigibt|freigegeben|"
+    # Portuguese / Italian — verbs + titles
+    r"Diretor|Direttore|Aprovado\s+por|Approvato\s+da|"
+    r"Gerente\s+de|Responsabile|"
+    r"aprovou|aprova|aprovaram|approva|approvato|approvano|firmato"
     r")\b",
-    re.IGNORECASE,
+    re.IGNORECASE | re.UNICODE,
 )
 
 # Honorifics that prefix a name. We strip these before slugifying so
 # "Dr. Sara Chen" becomes ``stakeholder:sara_chen`` not
 # ``stakeholder:dr_sara_chen``.
+#
+# A7: multilingual honorifics — Spanish (Sr/Sra/Srta/Dn/Dña),
+# French (M/Mme/Mlle), German (Herr/Frau), Italian (Sig/Sig.ra/Sig.na),
+# Portuguese (Sr/Sra/Srta).
 _HONORIFIC_REGEX = re.compile(
-    r"^(?:Dr|Mr|Mrs|Ms|Mx|Prof|Professor|Sir|Dame|Hon|Rev|Fr)"
+    r"^(?:Dr|Mr|Mrs|Ms|Mx|Prof|Professor|Sir|Dame|Hon|Rev|Fr|"
+    r"Sr|Sra|Srta|Sr\.|Sra\.|Srta\.|Dn|D[oñ]a|Don|Doña|"
+    r"M|Mme|Mlle|Madame|Monsieur|Mademoiselle|"
+    r"Herr|Frau|Fräulein|"
+    r"Sig|Sig\.ra|Sig\.na|Signor|Signora|Signorina"
+    r")"
     r"\.?\s+",
-    re.IGNORECASE,
+    re.IGNORECASE | re.UNICODE,
 )
 
 # Name suffixes (Jr/Sr/II/III/IV/V) that may follow a name and break
@@ -2560,16 +2597,32 @@ _NAME_SUFFIX = r"(?:\s+(?:Jr|Sr|II|III|IV|V|PhD|Ph\.D\.|MD|M\.D\.|Esq))\.?"
 # overall (either in the main word or in the compound tail). This
 # rejects Roman numerals (II, III, IV, V) and all-caps acronyms from
 # being parsed as name tokens.
+# A7 multi-language: explicit case-aware Latin uppercase / lowercase
+# character classes so names with accents (García / Müller / André /
+# José / Søren) match _NAME_TOKEN while staying STRICT on case
+# (first char uppercase, rest lowercase) so the regex doesn't grab
+# lowercase prose like "de servicios" as a name.
+# Python's ``re`` doesn't support ``\p{Lu}`` / ``\p{Ll}``, so we
+# enumerate Latin-1 supplement (À-Ö, Ø-Þ uppercase; à-ö, ø-ÿ lowercase).
+# Slugification (A4) folds the accents to ASCII downstream.
+_UPPER = r"[A-ZÀ-ÖØ-Þ]"
+_LOWER = r"[a-zà-öø-ÿ]"
 _NAME_TOKEN = (
     r"(?:"
-    r"[A-Z][a-z]+(?:[\-'][A-Z][a-z]+)?"        # Smith / Smith-Jones / MacDonald
-    r"|[A-Z][\-'][A-Z][a-z]+"                  # O'Brien / D'Souza
-    r")"
+    + _UPPER + _LOWER + r"+(?:[\-']" + _UPPER + _LOWER + r"+)?"  # García / Smith-Jones
+    + r"|" + _UPPER + r"[\-']" + _UPPER + _LOWER + r"+"          # O'Brien / D'Souza
+    + r")"
 )
 
 _PERSON_NAME_REGEX = re.compile(
     r"\b("
-    r"(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr)\.?\s+"  # optional honorific
+    # A7 multilingual honorifics (optional)
+    r"(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr|"
+    r"Sr|Sra|Srta|Dn|Don|D[oñ]a|"
+    r"M|Mme|Mlle|Madame|Monsieur|Mademoiselle|"
+    r"Herr|Frau|Fräulein|"
+    r"Sig|Signor|Signora|Signorina"
+    r")\.?\s+"
     r")?"
     r"("
     # 3-word name: First Middle Last
@@ -2582,7 +2635,8 @@ _PERSON_NAME_REGEX = re.compile(
     + _NAME_TOKEN + r"\s+" + _NAME_TOKEN +
     r")"
     # Optional Roman / Jr / Sr suffix (captured but stripped downstream)
-    r"(?:\s+(?:Jr|Sr|II|III|IV|V)\.?)?"
+    r"(?:\s+(?:Jr|Sr|II|III|IV|V)\.?)?",
+    re.UNICODE,
 )
 
 # Honorific + single name ("Dr. Smith", "Mr. Lee", "Mrs. Park").
@@ -2592,9 +2646,16 @@ _PERSON_NAME_REGEX = re.compile(
 # regex catches that. This single-name path is only for honorific +
 # surname like "Dr. Smith".
 _HONORIFIC_SINGLE_NAME_REGEX = re.compile(
-    r"\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr)\.?\s+"
+    r"\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr|"
+    # A7 multilingual honorifics
+    r"Sr|Sra|Srta|Dn|Don|D[oñ]a|"
+    r"M|Mme|Mlle|Madame|Monsieur|Mademoiselle|"
+    r"Herr|Frau|Fräulein|"
+    r"Sig|Signor|Signora|Signorina"
+    r")\.?\s+"
     r"(" + _NAME_TOKEN + r")"
-    r"(?!\s+" + _NAME_TOKEN + r")\b"
+    r"(?!\s+" + _NAME_TOKEN + r")\b",
+    re.UNICODE,
 )
 
 # D3: Initial + Last form — ``R. Watkins`` / ``J Ames`` / ``J.A. Smith``.
@@ -2639,6 +2700,14 @@ _NON_PERSON_NAME_PREFIXES: frozenset[str] = frozenset({
     # Generic
     "mock", "test", "demo", "fake", "dummy", "sample", "example",
     "fictional", "synthetic",
+    # A7 multilingual honorifics that match _NAME_TOKEN but
+    # shouldn't fuse with the name into a stakeholder key. They
+    # appear as the first word of an "Honorific Name" pair when
+    # the main regex backtracks past the optional-honorific group.
+    "mme", "mlle", "monsieur", "madame", "mademoiselle",
+    "herr", "frau", "fraulein", "fräulein",
+    "sig", "signor", "signora", "signorina",
+    "sra", "srta", "doña", "dona", "don",
 })
 
 
@@ -2665,7 +2734,11 @@ def _emit_stakeholders(text: str) -> set[str]:
         r"Jr|Sr|Ph|Ph\.D|MD|M\.D|Esq|"
         r"Inc|Corp|Co|Ltd|LLC|PLC|GmbH|"
         r"St|Ave|Blvd|Rd|Hwy|Pkwy|"
-        r"U|S|N|E|W"
+        r"U|S|N|E|W|"
+        # A7 multilingual honorifics — protect their periods from
+        # the sentence splitter so "Sig. Rossi" / "Sra. García" /
+        # "Sgt. Smith" stay one sentence.
+        r"Sig|Sra|Srta|Dn|Sgt"
         r")\.",
         r"\1<DOT>",
         text,
@@ -2850,7 +2923,20 @@ def _emit_stakeholders(text: str) -> set[str]:
                 "instance", "cluster", "tenant", "region", "zone",
             }
             if tokens_lower & non_person_tokens:
-                continue
+                # A7 fallback: if a 3-token match starts with a
+                # non-person word ("Finance Jordan Ames"), retry
+                # the trailing 2 tokens as a 2-word name. The role
+                # context check below still gates emission.
+                if len(tokens) == 3 and tokens[0].lower() in (
+                    non_person_tokens | role_tokens
+                ):
+                    tokens = tokens[1:]
+                    name = " ".join(tokens)
+                    tokens_lower = {t.lower().rstrip(",.:") for t in tokens}
+                    if tokens_lower & non_person_tokens:
+                        continue
+                else:
+                    continue
             # Role-context proximity check (±60 chars in this sentence)
             pre = sentence[max(0, match.start() - 60):match.start()]
             post = sentence[match.end():min(len(sentence), match.end() + 60)]
