@@ -2123,7 +2123,21 @@ _CORPORATE_SUFFIXES = (
     r"Company|Co\.?|"
     r"L\.L\.C\.|LLC|"
     r"L\.L\.P\.|LLP|"
-    r"GmbH|AG|S\.?A\.?|S\.?p\.?A\.?|N\.?V\.?|B\.?V\.?|"
+    # International corporate suffixes (universal coverage)
+    r"GmbH|"                              # Germany
+    r"AG|"                                # Germany/Switzerland (after GmbH)
+    r"SE|"                                # EU Societas Europaea (BASF, SAP)
+    r"K\.K\.|KK|"                         # Japan (Kabushiki Kaisha)
+    r"Oyj|Oy|"                            # Finland
+    r"ApS|"                               # Denmark (must precede AS)
+    r"AS|"                                # Denmark/Norway
+    r"AB|"                                # Sweden
+    r"Pty\s+Ltd|Pty\.?|"                  # Australia
+    r"Pvt\s+Ltd|Pvt\.?|"                  # India
+    r"OAO|ZAO|PAO|OOO|"                   # Russia
+    r"S\.?A\.?\s*de\s*C\.?V\.?|"          # Mexico
+    r"Sdn\.?\s*Bhd\.?|"                   # Malaysia
+    r"S\.?A\.?|S\.?p\.?A\.?|N\.?V\.?|B\.?V\.?|"   # Spain/Italy/Netherlands
     r"PLC|P\.?C\.?|P\.?A\.?|PBC|"
     r"Holdings|Group|Partners|Enterprises|Industries|Solutions|"
     r"Systems|Technologies|Services|"
@@ -2172,17 +2186,33 @@ def _emit_customer_from_label(text: str) -> set[str]:
 # Matches dollar amounts: $1,847,250 / $1.8M / $250K / USD 1,500,000 /
 # 1,500,000 USD / $1,015,626.00. Captures the numeric portion and any
 # K/M/B suffix so we can normalize.
+# Universal multi-currency money pattern. Captures:
+#   - $-prefixed dollar amounts (USD assumed)
+#   - €-prefixed Euros
+#   - £-prefixed Pounds
+#   - ¥-prefixed Yen
+#   - ISO-coded prefixed amounts (USD/EUR/GBP/JPY/CHF/CAD/AUD/...)
+#   - ISO-coded suffixed amounts (... USD / ... EUR / ...)
+#   - K/M/B/T shorthand multipliers (case-insensitive)
+#
+# The slug carries no currency code (just the absolute numeric amount)
+# because cross-currency normalization without exchange rates would
+# introduce non-determinism. Downstream consumers can recover currency
+# context from atom raw_text if needed.
 _MONEY_REGEX = re.compile(
     r"(?:"
-    # $-prefixed: $1,847,250 or $1.5M or $250K (no whitespace before the
-    # number to avoid matching "$ FOO" / "$ TBD")
-    r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMB])?\b"
+    # Symbol-prefixed: $ € £ ¥ amounts with optional K/M/B/T suffix
+    r"[\$€£¥]\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMBT])?\b"
     r"|"
-    # USD-prefixed: USD 1,500,000
-    r"\bUSD\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMB])?\b"
+    # ISO-code-prefixed: USD 1,500,000 / EUR 250K / GBP 1.5M
+    r"\b(?:USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|HKD|SGD|CNY|INR|MXN|BRL|ZAR|"
+    r"DKK|NOK|SEK|PLN|CZK|HUF|TRY|RUB|KRW|TWD|THB|MYR|IDR|PHP|VND|AED|SAR|ILS|EGP|NGN|KES)\s+"
+    r"([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMBT])?\b"
     r"|"
-    # USD-suffixed: 1,500,000 USD
-    r"\b([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s+USD\b"
+    # ISO-code-suffixed: 1,500,000 USD / 250000 EUR / 500000 EUR
+    r"\b([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s+"
+    r"(?:USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|HKD|SGD|CNY|INR|MXN|BRL|ZAR|"
+    r"DKK|NOK|SEK|PLN|CZK|HUF|TRY|RUB|KRW|TWD|THB|MYR|IDR|PHP|VND|AED|SAR|ILS|EGP|NGN|KES)\b"
     r")",
     re.IGNORECASE,
 )
@@ -2246,6 +2276,19 @@ _LONG_DATE_REGEX = re.compile(
     r"October|November|December|"
     r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
     r"\s+([0-3]?[0-9])(?:st|nd|rd|th)?[,]?\s+(20[2-9][0-9])\b"
+)
+
+# Quarter notation: Q3 2026 / Q3-2026 / Q3 FY26 / 3Q26
+_QUARTER_REGEX = re.compile(
+    r"\b(?:Q([1-4])[\s\-/]?(?:FY)?\s*(20[2-9][0-9]|[2-9][0-9])"
+    r"|([1-4])Q[\s\-/]?(20[2-9][0-9]|[2-9][0-9]))\b"
+)
+
+# Fiscal year notation: FY26 / FY2026 / FY-26 / Fiscal Year 2026
+_FY_REGEX = re.compile(
+    r"\b(?:FY[\s\-]?(20[2-9][0-9]|[2-9][0-9])"
+    r"|fiscal\s+year\s+(20[2-9][0-9]))\b",
+    re.IGNORECASE,
 )
 
 _MONTH_TO_NUM = {
@@ -2343,6 +2386,28 @@ def _emit_date_keys(text: str) -> set[str]:
         post = text[end:min(len(text), end + 50)]
         if _MILESTONE_CONTEXT_REGEX.search(pre) or _MILESTONE_CONTEXT_REGEX.search(post):
             keys.add(f"milestone:{iso}")
+    # Quarter notation — emit as quarter:YYYY-Qn (always treated as a
+    # milestone since quarters are inherently project timeline markers)
+    for m in _QUARTER_REGEX.finditer(text):
+        q_num = m.group(1) or m.group(3)
+        year_raw = m.group(2) or m.group(4)
+        if not q_num or not year_raw:
+            continue
+        year = int(year_raw)
+        if year < 100:
+            year = 2000 + year
+        quarter = f"{year:04d}-Q{q_num}"
+        keys.add(f"quarter:{quarter}")
+        keys.add(f"milestone:{quarter}")
+    # Fiscal year notation — emit as fiscal_year:FYYY
+    for m in _FY_REGEX.finditer(text):
+        year_raw = m.group(1) or m.group(2)
+        if not year_raw:
+            continue
+        year = int(year_raw)
+        if year < 100:
+            year = 2000 + year
+        keys.add(f"fiscal_year:fy{year:04d}")
     return keys
 
 
@@ -2389,9 +2454,8 @@ _STAKEHOLDER_ROLE_PATTERNS = re.compile(
     r"approves?|approved|approving|"
     r"accepts?|accepted|accepting|"
     r"signs?\s+off|signed\s+off|sign[\s\-]off|signoff|"
-    # Ownership — "owns the X", "owned by Y", or bare "owns" / "owned"
-    # followed by a noun ("owns access", "owns the schedule", "owns risk")
-    r"owns?\s+(?:the\s+)?[a-z]|owned\s+by|"
+    # Ownership — "owns", "owned", "owns the", "owned by"
+    r"owns?|owned|"
     r"escalates?|escalated|"
     r"reviews?\s+and\s+(?:approves?|approved)|"
     r"authorized\s+by|approved\s+by|signed\s+by|"
@@ -2401,14 +2465,89 @@ _STAKEHOLDER_ROLE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Pattern: "First Last" (two capitalized words separated by a space,
-# each starting with an uppercase letter, allowing an initial like
-# "G." or apostrophes like "O'Brien").
+# Honorifics that prefix a name. We strip these before slugifying so
+# "Dr. Sara Chen" becomes ``stakeholder:sara_chen`` not
+# ``stakeholder:dr_sara_chen``.
+_HONORIFIC_REGEX = re.compile(
+    r"^(?:Dr|Mr|Mrs|Ms|Mx|Prof|Professor|Sir|Dame|Hon|Rev|Fr)"
+    r"\.?\s+",
+    re.IGNORECASE,
+)
+
+# Name suffixes (Jr/Sr/II/III/IV/V) that may follow a name and break
+# the regex if treated as part of the name. We accept them as optional
+# and strip when slugifying.
+_NAME_SUFFIX = r"(?:\s+(?:Jr|Sr|II|III|IV|V|PhD|Ph\.D\.|MD|M\.D\.|Esq))\.?"
+
+# Pattern: "First Last" / "First Middle Last" / "First M. Last" with
+# optional honorific prefix and optional name suffix.
+#
+# Three forms (alternation, longest first):
+#   3-word: First Middle Last      ("Mary Anne Smith")
+#   2-word + middle initial: First M. Last  ("Sara G. Chen")
+#   2-word: First Last             ("Jordan Ames")
+#
+# Each token allows hyphens and apostrophes for compound surnames
+# ("O'Brien", "Smith-Jones").
+# A single "name token" — either a standard capitalized word
+# ("Smith" / "MacDonald"), a compound name with hyphen or apostrophe
+# ("Smith-Jones" / "O'Brien"), or a single-letter + compound
+# ("O'Brien" where O alone is the first cluster).
+#
+# Critically, each token must contain at least one LOWERCASE letter
+# overall (either in the main word or in the compound tail). This
+# rejects Roman numerals (II, III, IV, V) and all-caps acronyms from
+# being parsed as name tokens.
+_NAME_TOKEN = (
+    r"(?:"
+    r"[A-Z][a-z]+(?:[\-'][A-Z][a-z]+)?"        # Smith / Smith-Jones / MacDonald
+    r"|[A-Z][\-'][A-Z][a-z]+"                  # O'Brien / D'Souza
+    r")"
+)
+
 _PERSON_NAME_REGEX = re.compile(
     r"\b("
-    r"[A-Z][a-z]+(?:\s+[A-Z]\.)?\s+[A-Z][a-z]+(?:[\-'][A-Z][a-z]+)?"
-    r"|[A-Z][a-z]+\s+[A-Z]\.\s+[A-Z][a-z]+"
-    r")\b"
+    r"(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr)\.?\s+"  # optional honorific
+    r")?"
+    r"("
+    # 3-word name: First Middle Last
+    + _NAME_TOKEN + r"\s+" + _NAME_TOKEN + r"\s+" + _NAME_TOKEN +
+    r"|"
+    # Initial-style: First M. Last
+    + _NAME_TOKEN + r"\s+[A-Z]\.\s+" + _NAME_TOKEN +
+    r"|"
+    # 2-word name: First Last
+    + _NAME_TOKEN + r"\s+" + _NAME_TOKEN +
+    r")"
+    # Optional Roman / Jr / Sr suffix (captured but stripped downstream)
+    r"(?:\s+(?:Jr|Sr|II|III|IV|V)\.?)?"
+)
+
+# Honorific + single name ("Dr. Smith", "Mr. Lee", "Mrs. Park").
+# Standalone regex because the main pattern requires ≥2 name tokens.
+# The negative lookahead ``(?!\s+`` _NAME_TOKEN `` )`` ensures we DON'T
+# fire when a full "Honorific First Last" name is present — the main
+# regex catches that. This single-name path is only for honorific +
+# surname like "Dr. Smith".
+_HONORIFIC_SINGLE_NAME_REGEX = re.compile(
+    r"\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr)\.?\s+"
+    r"(" + _NAME_TOKEN + r")"
+    r"(?!\s+" + _NAME_TOKEN + r")\b"
+)
+
+# Inverted form: "Smith, John" — last-name-first. Used in formal
+# author / stakeholder lists. We require an explicit FIELD label
+# ("Name:", "Author:", "Approver:", "Sponsor:", "Owner:", ...)
+# immediately before the inverted pair so we don't misinterpret
+# comma-separated lists of full names ("Jordan Ames, Priya Narang,
+# Camila Brooks") as a series of last-name-first records.
+_INVERTED_NAME_REGEX = re.compile(
+    r"(?:Name|Author|Approver|Sponsor|Owner|Contact|Stakeholder|PM|"
+    r"Manager|Delegate|Reviewer|Signatory)"
+    r"\s*[:=]\s*"
+    r"([A-Z][a-z]+(?:[\-'][A-Z][a-z]+)?)\s*,\s+"
+    r"([A-Z][a-z]+(?:\s+[A-Z]\.?)?)\b",
+    re.IGNORECASE,
 )
 
 # Names that look proper-noun-shaped but aren't actually people.
@@ -2444,31 +2583,112 @@ def _emit_stakeholders(text: str) -> set[str]:
     "Approved by Jordan Ames" is structurally a stakeholder mention.
     """
     keys: set[str] = set()
-    # Process sentence by sentence so the ±60 char window doesn't span
-    # unrelated material.
-    for sentence in re.split(r"[.?!\n]+", text):
-        sentence = sentence.strip()
+    # Sentence splitter that does NOT break at mid-word periods.
+    # Pre-protect periods inside honorifics, name suffixes, initials,
+    # and common abbreviations by swapping them for a sentinel
+    # ``<DOT>``, split on real sentence boundaries, then restore.
+    text_safe = re.sub(
+        r"\b(Mr|Mrs|Ms|Mx|Dr|Prof|Sir|Dame|Hon|Rev|Fr|"
+        r"Jr|Sr|Ph|Ph\.D|MD|M\.D|Esq|"
+        r"Inc|Corp|Co|Ltd|LLC|PLC|GmbH|"
+        r"St|Ave|Blvd|Rd|Hwy|Pkwy|"
+        r"U|S|N|E|W"
+        r")\.",
+        r"\1<DOT>",
+        text,
+    )
+    # Single-letter initial followed by space + capital: "Sara G. Chen"
+    text_safe = re.sub(r"\b([A-Z])\.\s+(?=[A-Z][a-z])", r"\1<DOT> ", text_safe)
+    # Split on real sentence boundaries (period + space + capital,
+    # terminal punctuation, newline) AND on colon/semicolon when
+    # followed by a name-shaped token — these mark field/value
+    # transitions in deal docs and prevent cross-name pollution
+    # ("Brooks: Approved. Priya Narang ..." → don't fuse Brooks +
+    # Priya across the colon).
+    for sentence in re.split(
+        r"(?:\.\s+(?=[A-Z])|[?!\n]+|[:;]\s+(?=[A-Z][a-z]+\s+[A-Z]))",
+        text_safe,
+    ):
+        sentence = sentence.replace("<DOT>", ".").strip()
         if not sentence:
             continue
         # Skip sentences without a role cue — saves work
         if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
             continue
+        # Honorific + single-name ("Dr. Smith", "Ms. Park"). Single
+        # capitalized word after an honorific is enough — the
+        # honorific is itself a strong stakeholder signal.
+        for h_match in _HONORIFIC_SINGLE_NAME_REGEX.finditer(sentence):
+            single_name = h_match.group(1).strip()
+            if len(single_name) < 3:
+                continue
+            if single_name.lower() in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # Role-context proximity check, same as the main path
+            pre = sentence[max(0, h_match.start() - 60):h_match.start()]
+            post = sentence[h_match.end():min(len(sentence), h_match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            slug = _slugify(single_name)
+            if slug and len(slug) >= 3:
+                keys.add(f"stakeholder:{slug}")
+        # Inverted "Smith, John" form — find these first and add them
+        # directly. The regex below would miss inverted names because
+        # the comma breaks the "First Last" pattern.
+        for inv_match in _INVERTED_NAME_REGEX.finditer(sentence):
+            last_name = inv_match.group(1).strip()
+            first_part = inv_match.group(2).strip()
+            # Only emit if a role cue is within ±60 chars of the match
+            pre = sentence[max(0, inv_match.start() - 60):inv_match.start()]
+            post = sentence[inv_match.end():min(len(sentence), inv_match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            # Re-order to "First Last" for canonical slug
+            reordered = f"{first_part} {last_name}"
+            first_lower = first_part.split()[0].lower()
+            if first_lower in _NON_PERSON_NAME_PREFIXES:
+                continue
+            slug = _slugify(reordered)
+            if slug and len(slug) >= 5:
+                keys.add(f"stakeholder:{slug}")
+        # Standard "First Last" / "First Middle Last" form
         for match in _PERSON_NAME_REGEX.finditer(sentence):
-            name = match.group(1).strip()
+            # group(2) is the name proper (after stripping optional
+            # honorific in group(1)).
+            name = (match.group(2) or "").strip()
+            if not name:
+                continue
+            # Strip trailing name-suffix tokens (Jr, Sr, II, III, IV, V)
+            # that may have been pulled into the 3-word-name alternative.
+            # "Robert Brown Jr" → "Robert Brown".
             tokens = name.split()
+            while tokens and tokens[-1].rstrip(".").upper() in {
+                "JR", "SR", "II", "III", "IV", "V",
+                "PHD", "MD", "ESQ",
+            }:
+                tokens.pop()
+            if not tokens:
+                continue
+            name = " ".join(tokens)
             if not tokens:
                 continue
             first_lower = tokens[0].lower()
             if first_lower in _NON_PERSON_NAME_PREFIXES:
                 continue
-            # Reject if the name's tail token is a corporate suffix
-            # ("Acme Corp" / "OPTBOT Inc" / "Innovation Tower")
+            # Reject if the name's tail token is a CORPORATE suffix
+            # ("Acme Corp" / "OPTBOT Inc"). Place suffixes (park,
+            # tower, building, plaza, ...) are deliberately omitted
+            # here because they collide with real surnames ("Linda
+            # Park", "Jenna Hill", "Sam Cross"). The role-context
+            # check is the discriminator for those — "Cedar Park"
+            # without an approver verb nearby won't trigger anyway.
             tail_lower = tokens[-1].lower().rstrip(",.:")
             if tail_lower in {
-                "inc", "llc", "corp", "company", "co", "ltd",
-                "tower", "building", "campus", "center", "annex",
-                "headquarters", "office", "branch", "store", "complex",
-                "park", "plaza", "terminal",
+                "inc", "incorporated", "llc", "corp", "corporation",
+                "company", "co", "ltd", "limited", "plc", "gmbh",
+                "holdings", "group", "partners", "enterprises",
             }:
                 continue
             # Reject if a role token appears WITHIN the name itself
@@ -2526,6 +2746,17 @@ def _emit_stakeholders(text: str) -> set[str]:
                 "table", "list", "form", "template", "report", "page",
                 "header", "footer", "title", "subtitle",
                 "version", "revision", "edition",
+                # Action verbs / common imperatives (sometimes
+                # capitalized at start of bullets)
+                "confirm", "verify", "validate", "check", "test",
+                "review", "approve", "submit", "publish", "send",
+                "create", "update", "delete", "remove", "add",
+                "attach", "run", "execute", "deploy", "install",
+                "configure", "setup", "enable", "disable", "start",
+                "stop", "schedule", "complete", "finalize",
+                # Hub / network terms
+                "hub", "node", "endpoint", "gateway", "proxy",
+                "instance", "cluster", "tenant", "region", "zone",
             }
             if tokens_lower & non_person_tokens:
                 continue

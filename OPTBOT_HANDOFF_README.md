@@ -37,6 +37,19 @@ of this README's earlier revision:
 actionable record. Total atom count unchanged (135) — these are
 additional entity-type lenses over the same atoms.
 
+**Wave 3** (universality upgrades, current commit): broadened all five
+v2 extractors to handle international / multi-format input. None of
+the v3 changes affect the OPTBOT entity count, but they make the
+extractors work universally on customer data that isn't OPTBOT:
+
+| Extractor | Now supports |
+|---|---|
+| Stakeholder | Honorifics (Dr/Mr/Mrs/Ms/Prof), 3-word names, suffixes (Jr/Sr/III), apostrophe surnames (O'Brien), hyphenated surnames (Garcia-Lopez), Asian 2-name (Li Wei), single-name with honorific (Dr. Smith), multiple per sentence, field-labeled inverted form (`Approver: Smith, John`) |
+| Customer | International suffixes — GmbH, AG, SE, K.K., Oy, Oyj, AB, ApS, AS, Pty Ltd, Pvt Ltd, OAO, ZAO, S.A. de C.V., Sdn Bhd, in addition to US Inc/LLC/Corp |
+| Money | $/€/£/¥ symbol prefixes + 35+ ISO codes (USD/EUR/GBP/JPY/CHF/CAD/AUD/SEK/NOK/DKK/INR/CNY/MXN/BRL/etc.) prefixed AND suffixed; K/M/B/T multipliers |
+| Date | Q1-Q4 YYYY notation (`Q3 2026`, `3Q26`, `Q3-2026`) → `quarter:YYYY-Qn` + `milestone:`; FY notation (`FY26`, `Fiscal Year 2026`) → `fiscal_year:fyYYYY` |
+| Sentence splitter | Smart enough to handle mid-name periods (Jr., Sr., G., Mrs., Inc., U.S.); colon/semicolon transitions; doesn't fuse across name lists ("Jordan Ames, Priya Narang" stays separate) |
+
 
 
 > "Site entity resolution is the main noise: 32 site-like entities / scope
@@ -82,7 +95,7 @@ Compile summary (`PYTHONHASHSEED=0`, `--no-cache`, `--allow-unverified-receipts`
 | Field | Value |
 |---|---|
 | `input_signature` | `2c3d103e57948babe0f3717212049afa0821cadbcbb7e60bd46526202e28bf9c` |
-| `output_signature` | `97f61cecccf8f7da5399559a114836baf7920326831a219e58c351e3f04686b2` |
+| `output_signature` | `78081229d79260c194be04b4f1b68a6f44f4ee87ef61c7d22ce7e28c01997b55` |
 | `atoms` | 135 |
 | `edges` | 175 |
 | `packets` | 28 |
