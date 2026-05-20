@@ -430,5 +430,7 @@ def _entity_keys_from_text(text: str) -> list[str]:
         text,
     )
     if site_match:
-        keys.append(normalize_entity_key("site", site_match.group(1)))
+        site_key = normalize_entity_key("site", site_match.group(1))
+        if site_key:
+            keys.append(site_key)
     return sorted(set(keys))

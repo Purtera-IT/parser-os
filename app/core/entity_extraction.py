@@ -218,6 +218,171 @@ _STREET_ADDRESS_REGEX = re.compile(
 )
 
 
+# Site-code pattern: ATL-HQ / ATL-WEST / ATL-AIR / NYC-DC1 / SFO-HQ /
+# CHI-MAIN style first-class site identifiers. Second segment must
+# start with a letter so RJ-45 / CAT-6 / Wi-Fi don't slip through.
+# These are the load-bearing site identifiers on most enterprise
+# deals — without explicit support, multi-segment site codes (ATL-WEST)
+# get missed entirely because they're single tokens and bypass the
+# proper-noun multi-word matcher.
+_SITE_CODE_REGEX = re.compile(
+    r"\b([A-Z]{2,5}-[A-Z][A-Z0-9]{0,5}(?:-[A-Z][A-Z0-9]{0,5})?)\b"
+)
+# Known non-site hyphenated all-caps codes that look site-shaped but
+# aren't — connectors, network specs, manufacturer abbreviations, etc.
+_SITE_CODE_DENYLIST: frozenset[str] = frozenset({
+    # connector / cable types
+    "RJ-45", "RJ-11", "RJ-48", "BNC-F", "USB-C", "USB-A", "USB-B",
+    "POE-PLUS",
+    # wireless / network specs
+    "WI-FI", "WIFI", "BT-LE", "BLE-5", "BT-5",
+    # power / building services
+    "PV-DC", "DC-POWER", "AC-POWER", "VFD-3", "VRF-1",
+    # document / form codes
+    "P-O", "PO-1", "RFQ-1", "RFP-1",
+    # generic
+    "TBD-1", "NTS-1",
+})
+
+# First-segment denylist for hyphen-separated codes. When `_SITE_CODE_REGEX`
+# matches something like `MOCK-OPTBOT-ATL` or `DEV-ATL` or `MSA-2026`, the
+# first segment is the discriminator — if it is a known non-site token
+# (test data marker, contract type, cloud platform, ID prefix), the whole
+# match is rejected even if the trailing segments look airport-shaped.
+# Without this OPTBOT-style mock deal text leaks `site:mock_optbot_atl`,
+# `site:dev_atl`, `site:mock_msa`.
+_SITE_CODE_HEAD_DENYLIST: frozenset[str] = frozenset({
+    # test / mock / dev data prefixes
+    "MOCK", "DEV", "TEST", "TESTS", "DEMO", "FAKE", "DUMMY",
+    "SAMPLE", "EXAMPLE", "STUB", "DRAFT", "TMP", "TEMP",
+    "PROTO", "POC",
+    # contract / document type prefixes
+    "MSA", "NDA", "SOW", "MOU", "LOI", "DPA", "BAA", "SLA",
+    "EULA", "RFP", "RFQ", "RFI", "PO", "WO", "INV", "TKT",
+    "TASK", "PROJ", "DEAL", "CASE", "REQ", "REQS", "QUO", "QUOTE",
+    "ORDER", "ORD",
+    # CRM / system ID prefixes
+    "HS", "SF", "SFDC", "HUBSPOT", "ZEN", "ZENDESK",
+    # cloud / SaaS platform prefixes
+    "AZURE", "AWS", "GCP", "ARM", "EC2", "GKE", "AKS",
+    "INTUNE", "OKTA", "ENTRA", "DUO",
+    # API / protocol prefixes
+    "API", "REST", "GRPC", "JSON", "XML", "YAML", "CSV",
+    # identifier-type prefixes
+    "ID", "IDS", "REF", "SKU", "UPC", "EAN", "ISBN", "GUID", "UUID",
+    "TAG", "TYPE",
+    # log / severity prefixes
+    "ERR", "WRN", "INF", "DBG", "FATAL",
+    # role / org prefixes that can look 3-letter site-shaped
+    "USR", "ADM", "MGR", "EMP", "STAFF",
+})
+
+
+# Tail nouns that turn an otherwise-capitalized phrase into NON-site
+# content. When the LAST non-stopword token is one of these, the whole
+# phrase is dropped from site emission — these tail nouns mean the
+# phrase describes a person, a document, a system, or a process, not
+# a place.
+#
+# Role tails (person, not place): "Regional Facilities Manager",
+#   "VP Workplace Operations", "Security Architecture Lead".
+# Document tails (artifact, not place): "Executive Deal Brief",
+#   "Site Surveys DOCX", "Procurement Packet PDF".
+# Pipeline / system tails (system, not place): "HubSpot Dev Deal",
+#   "Azure Dev Storage", "OrbitBrief Workspace".
+# Concept / process tails: "Three Site Modernization",
+#   "Target Close Date", "Total Mock Amount".
+_NON_SITE_PHRASE_TAIL_NOUNS: frozenset[str] = frozenset({
+    # === role / person tails ===
+    "manager", "managers", "lead", "leads", "director", "directors",
+    "sponsor", "sponsors", "engineer", "engineers", "architect",
+    "architects", "analyst", "analysts", "coordinator", "coordinators",
+    "admin", "administrator", "administrators", "owner", "owners",
+    "executive", "executives", "expert", "experts", "specialist",
+    "specialists", "rep", "representative", "consultant", "consultants",
+    "supervisor", "supervisors", "head", "heads", "chief", "officer",
+    "officers", "principal", "principals", "operator", "operators",
+    "stakeholder", "stakeholders", "approver", "approvers",
+    "respondent", "respondents", "assistant", "assistants",
+    "lieutenant", "captain", "designee", "delegate",
+    # Role-shaped initialisms / shorthand
+    "pm", "po", "ceo", "cto", "cio", "ciso", "cfo", "coo", "vp", "svp", "evp",
+    "exec", "mgr", "sup", "supt",
+    # Role-shaped activity / function tails
+    "operations", "operation", "ops", "ops.", "team", "teams",
+    "staff", "personnel", "crew", "crews", "worker", "workers",
+    "force", "leadership",
+    # === document / artifact tails ===
+    "document", "documents", "brief", "briefs", "packet", "packets",
+    "notes", "note", "memo", "memos", "plan", "plans", "report",
+    "reports", "deck", "decks", "list", "lists", "policy", "policies",
+    "guideline", "guidelines", "manual", "manuals", "presentation",
+    "presentations", "slides", "slide", "schedule", "schedules",
+    "worksheet", "worksheets", "spreadsheet", "spreadsheets",
+    "workbook", "workbooks", "draft", "drafts", "version", "versions",
+    "edition", "editions", "revision", "revisions",
+    "xlsx", "docx", "pdf", "csv", "json", "yaml",
+    # === pipeline / system / cloud-resource tails ===
+    "storage", "workspace", "workspaces", "deal", "deals",
+    "checkpoint", "checkpoints", "batch", "batches", "pipeline",
+    "pipelines", "workflow", "workflows", "job", "jobs",
+    "instance", "instances", "cluster", "clusters", "container",
+    "containers", "bucket", "buckets", "environment", "environments",
+    "env", "tenant", "tenants", "account", "accounts",
+    "subscription", "subscriptions", "repository", "repositories",
+    "repo", "repos", "endpoint", "endpoints", "queue", "queues",
+    "topic", "topics", "service", "services", "module", "modules",
+    "library", "libraries", "framework", "frameworks",
+    "platform", "platforms", "tool", "tools", "system", "systems",
+    "connector", "connectors", "adapter", "adapters",
+    # === concept / process tails (in addition to existing stopwords) ===
+    "modernization", "transformation", "migration", "deployment",
+    "deployments", "implementation", "implementations", "upgrade",
+    "upgrades", "refresh", "refreshes", "rollout", "rollouts",
+    "cutover", "cutovers", "amount", "amounts", "total", "subtotal",
+    "value", "values", "approval", "approvals", "controls", "control",
+    "use", "usage",
+    # === measurement / metric tails ===
+    "baseline", "baselines", "benchmark", "benchmarks",
+    "metric", "metrics", "kpi", "kpis", "target", "targets",
+    "threshold", "thresholds", "estimate", "estimates",
+    "forecast", "forecasts", "projection", "projections",
+    # === temporal tails ===
+    "date", "dates", "deadline", "deadlines", "milestone",
+    "milestones", "window", "windows", "timeline", "timelines",
+    "timeframe", "timeframes", "period", "periods",
+    "quarter", "quarters", "phase", "phases", "stage", "stages",
+    # === test / mock / demo tokens (any position kills the phrase) ===
+    "mock", "mocks", "mocked", "fictional", "fake", "fakes",
+    "dummy", "dummies", "demo", "demos", "test", "tests",
+    "sample", "samples", "example", "examples", "placeholder",
+    "stub", "stubs", "draft", "drafts", "preliminary", "tentative",
+    "synthetic", "simulated", "scratch",
+    # === classification / sensitivity tokens (not place names) ===
+    "confidential", "proprietary", "restricted", "classified",
+    "internal", "private", "public", "sensitive",
+    # === demonstratives / vague references that bleed into runs ===
+    "this", "that", "these", "those",
+})
+
+# Phrases that should never be treated as sites, regardless of shape.
+# These show up in enterprise deal docs as section labels / boilerplate.
+_SITE_PHRASE_BLOCKLIST: frozenset[str] = frozenset({
+    "three site modernization",
+    "three site modernization hubspot deal",
+    "scope of work",
+    "site surveys docx",
+    "site surveys",
+    "site survey",
+    "all sites",
+    "all locations",
+    "every site",
+    "every location",
+    "executive deal brief",
+    "executive deal brief mock document",
+})
+
+
 # Part-number / SKU pattern.  Cisco-style (CW9166I-B, AIR-DNA-E-T-5Y),
 # HPE-style (J9145A), Bosch DICENTIS (DCNM-DVT908), Streamvault
 # (SV-2030E-AC).  We anchor on a letter+digit+letter mix or a
@@ -722,6 +887,34 @@ def _emit_sites(text: str) -> set[str]:
             if slug and slug not in {"_"}:
                 keys.add(f"site:{slug}")
 
+    # First-class site-code capture: ATL-HQ / ATL-WEST / ATL-AIR /
+    # NYC-DC1 / SFO-HQ / CHI-MAIN. These are the load-bearing site
+    # identifiers on most enterprise deals and bypass the proper-
+    # noun multi-word matcher because they're single tokens. Without
+    # this branch, ATL-WEST is invisible to the entity extractor
+    # even though the BOM allocation row literally cites it.
+    for match in _SITE_CODE_REGEX.finditer(text):
+        code = match.group(1)
+        if code in _SITE_CODE_DENYLIST:
+            continue
+        # Require the FIRST segment to be 3+ letters (drops common
+        # 2-letter prefixes like RJ / PO / CO / IT that aren't site
+        # prefixes). Site codes in practice are airport-shape codes
+        # (ATL / SFO / LAX / ORD / DEN), city abbreviations (CHI /
+        # NYC), or 3+ letter facility codes.
+        first = code.split("-", 1)[0]
+        if len(first) < 3:
+            continue
+        # Head denylist — rejects test/mock/dev/contract-id prefixes
+        # so `MOCK-OPTBOT-ATL`, `DEV-ATL`, `MSA-2026-...` etc. don't
+        # leak as sites even though their trailing segments look
+        # airport-shaped.
+        if first in _SITE_CODE_HEAD_DENYLIST:
+            continue
+        slug = _slugify(code)
+        if slug:
+            keys.add(f"site:{slug}")
+
     # Street addresses → produce both an address: and (if combinable) a site:
     for match in _STREET_ADDRESS_REGEX.finditer(text):
         number, street, suffix = match.group(1), match.group(2), match.group(3)
@@ -796,6 +989,19 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
         for match in _PROPER_NOUN_RUN.finditer(sentence):
             phrase = match.group(1).strip()
             tokens = phrase.split()
+
+            # Whole-phrase block: a phrase whose final non-trivial
+            # token is a role / document / pipeline / process noun is
+            # NOT a site — it's a person, an artifact, or a system.
+            # We check this BEFORE trim-and-keep so phrases like
+            # "Regional Facilities Manager" or "Executive Deal Brief
+            # Mock Document" disappear entirely instead of being
+            # trimmed to "Regional Facilities" / "Executive Deal
+            # Brief Mock" and still emitted as sites.
+            final = tokens[-1].lower().rstrip(":,.") if tokens else ""
+            if final in _NON_SITE_PHRASE_TAIL_NOUNS:
+                continue
+
             # Strip trailing field-label words like "Vendor", "Description"
             while tokens and tokens[-1].lower().rstrip(":,.") in _PROPER_NOUN_TRAILING_STOPWORDS:
                 tokens.pop()
@@ -806,6 +1012,14 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
             # instead of recovering the real proper noun.
             while tokens and tokens[0].lower() in _LEADING_ARTICLES:
                 tokens.pop(0)
+
+            # Re-check the new final token after trimming — if trimming
+            # exposed a non-site tail noun, drop the phrase entirely.
+            if tokens:
+                final_after = tokens[-1].lower().rstrip(":,.")
+                if final_after in _NON_SITE_PHRASE_TAIL_NOUNS:
+                    continue
+
             # Two-word special case: a Capitalized + capitalized
             # organization name like "Virginia Tech" / "Boston College"
             # / "Cleveland Clinic" / "Houston ISD".  We accept these
@@ -824,6 +1038,20 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
             norm = normalize_text(phrase)
             if norm in _PROPER_NOUN_STOPLIST:
                 continue
+            # Explicit phrase blocklist — common deal-doc section
+            # labels that look site-shaped but never refer to a place.
+            if norm in _SITE_PHRASE_BLOCKLIST:
+                continue
+            # If ANY token in the phrase is a tail noun, the phrase
+            # is more likely to be a description than a site.
+            # (Skip when the trailing token is a recognized org suffix
+            # — "Atlanta Headquarters" / "Innovation Tower" are real
+            # sites and must survive.)
+            phrase_tokens_lower = {t.lower().rstrip(":,.") for t in tokens}
+            tail = tokens[-1].lower().rstrip(":,.")
+            is_org_tail = tail in _ORG_SUFFIX_TWO_WORD or tail in _SITE_TAIL_NOUNS
+            if not is_org_tail and (phrase_tokens_lower & _NON_SITE_PHRASE_TAIL_NOUNS):
+                continue
             # Skip if this run is dominated by a known vendor
             if any(surface in norm for surface in vendor_surfaces if surface and len(surface) >= 4):
                 continue
@@ -838,6 +1066,22 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
             if slug and len(slug) >= 6:
                 keys.add(f"site:{slug}")
     return keys
+
+
+# Place-noun tails: when a multi-word proper-noun run ends with one of
+# these, the phrase IS genuinely site-shaped even when intermediate
+# tokens might overlap the non-site tail list.  This guards against
+# the new non-site filter dropping real sites like
+# "Innovation Tower" / "Atlanta Headquarters".
+_SITE_TAIL_NOUNS: frozenset[str] = frozenset({
+    "building", "tower", "campus", "headquarters", "hq", "office",
+    "branch", "center", "centre", "facility", "annex", "warehouse",
+    "garage", "deck", "structure", "lot", "boardroom", "datacenter",
+    "data", "school", "college", "university", "academy", "hospital",
+    "clinic", "plant", "factory", "store", "mall", "complex",
+    "park", "plaza", "terminal", "concourse", "depot", "yard",
+    "airport", "station", "site", "location", "premises",
+})
 
 
 # Articles / demonstratives that can prefix a proper-noun run; we strip

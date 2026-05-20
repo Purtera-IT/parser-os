@@ -1350,7 +1350,9 @@ class XlsxParser(BaseParser):
         keys: list[str] = []
         for field in ("site_name", "site", "location"):
             if cells.get(field):
-                keys.append(normalize_entity_key("site", cells[field]))
+                key = normalize_entity_key("site", cells[field])
+                if key:
+                    keys.append(key)
         for field in ("mdf", "idf"):
             if cells.get(field):
                 keys.append(normalize_entity_key(field, cells[field]))

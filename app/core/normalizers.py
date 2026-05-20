@@ -28,9 +28,41 @@ def normalize_entity(value: str) -> str:
     return value
 
 
+_GENERIC_SITE_PSEUDO_VALUES: frozenset[str] = frozenset({
+    "",
+    "-",
+    "—",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "tbd",
+    "tba",
+    "tbc",
+    "all",
+    "any",
+    "various",
+    "multiple",
+    "site",
+    "location",
+    "address",
+    "see above",
+    "see below",
+    "see notes",
+    "see attached",
+    "as noted",
+    "unknown",
+})
+
+
 def normalize_entity_key(entity_type: str, value: str) -> str:
     normalized = normalize_text(value)
     if entity_type == "site":
+        # Generic pseudo-values like "ALL" / "N/A" / "Various" should not
+        # produce site entities — they show up in xlsx allocation tables
+        # to mean "applies everywhere", not "site named ALL".
+        if normalized in _GENERIC_SITE_PSEUDO_VALUES:
+            return ""
         site_aliases = {
             "west-wing": "west wing",
             "bldg a west": "west wing",
@@ -164,7 +196,9 @@ def extract_meeting_entities(text: str) -> list[str]:
 
     for match in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(Campus|Wing|Building|Store|Site))\b", text):
         phrase = match.group(1)
-        entity_keys.add(normalize_entity_key("site", phrase))
+        site_key = normalize_entity_key("site", phrase)
+        if site_key:
+            entity_keys.add(site_key)
 
     if "main campus" in lowered:
         entity_keys.add("site:main_campus")
