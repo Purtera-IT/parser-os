@@ -46,7 +46,13 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.pdf
     if suffix in {".eml"}:
         return ArtifactType.email
-    if suffix in {".txt", ".md", ".vtt", ".srt", ".json"}:
+    # A1 doc-type coverage: .vtt / .srt are always transcripts —
+    # the extension is the signal, not the filename. .txt / .md /
+    # .json still need the keyword check because those are
+    # ambiguous (could be config, README, ...).
+    if suffix in {".vtt", ".srt"}:
+        return ArtifactType.transcript
+    if suffix in {".txt", ".md", ".json"}:
         return ArtifactType.transcript if "transcript" in path.name.lower() else ArtifactType.txt
     return ArtifactType.txt
 
