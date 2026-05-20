@@ -61,14 +61,39 @@ def _canonical_alias_key(
 ) -> str:
     """Return the canonical entity key for ``raw_value`` using the
     domain-pack alias table; falls back to the regular normalizer.
+
+    A4 fix: the substring-match path used to collapse specific
+    instances like ``branch_42`` / ``building_13`` / ``site_7``
+    into the generic entity type ``site`` because the pack's
+    ``entity_types['site'].aliases`` contains ``branch`` /
+    ``building`` / ``site``. We now skip the substring fallback
+    when the raw_value contains a digit — that's the signal that
+    the raw_value is a specific instance rather than a bare
+    generic word the pack wants to route. Exact-match remains
+    enabled so a bare ``branch`` still routes to ``site``.
     """
     table = alias_index.get(entity_type) or {}
     needle = normalize_text(raw_value)
     if needle and needle in table:
         return f"{entity_type}:{_slugify(table[needle])}"
-    if needle:
+    # A4 fix: the substring fallback used to over-route specific
+    # instances like ``branch_42`` / ``building_c`` / ``warehouse_rf``
+    # into the generic entity type ``site`` because the pack's
+    # site-alias table contains ``branch`` / ``building`` /
+    # ``warehouse`` as routing-only entries. Guard with two
+    # constraints so specificity is preserved:
+    #   1. Skip for entity_type == "site" entirely. Sites are
+    #      canonicalized by ``_emit_sites`` so the substring
+    #      fallback only adds noise.
+    #   2. For other entity types, only apply when the needle is
+    #      short enough that the alias represents most of it
+    #      (length ratio ≥ 0.6). Avoids "rugged_logistics_tablet"
+    #      collapsing into a single device alias.
+    if needle and entity_type != "site":
         for alias, canonical in table.items():
-            if alias and alias in needle:
+            if not alias:
+                continue
+            if alias in needle and len(alias) / max(1, len(needle)) >= 0.6:
                 return f"{entity_type}:{_slugify(canonical)}"
     return normalize_entity_key(entity_type, raw_value)
 
@@ -123,6 +148,89 @@ def extract_entity_records(
     return records
 
 
+def collect_stakeholder_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]:
+    """D3: collapse multiple surface forms of the same person.
+
+    Real MSP deals reference one person multiple ways:
+      * Full name:        ``stakeholder:renee_watkins``
+      * Surname only:     ``stakeholder:watkins`` (parser-os emits
+                          these when an honorific like ``Ms. Watkins``
+                          appears)
+      * Initial + surname ``stakeholder:r_watkins`` (parser-os emits
+                          these when ``R. Watkins`` appears — see the
+                          companion change in ``_emit_stakeholders``)
+
+    Detection is purely key-shape based (no text scanning needed,
+    no false positives across documents):
+
+      For every ``stakeholder:*`` canonical key in the project,
+      classify it as either FULL (≥2 tokens, at least one with 2+
+      lowercase letters) or THIN (1 token, OR 2 tokens where the
+      first is a single letter or single letter + dot — i.e. an
+      initial). A THIN key fuses into a FULL key when the surname
+      matches AND the project contains *exactly one* FULL key
+      with that surname. If two people share the same surname
+      (``Watkins`` could be Renee or Bob), the THIN key is
+      ambiguous and stays unfused.
+
+    Returns alias groups in the same format as
+    ``collect_site_alias_groups`` so ``fuse_alias_groups`` can
+    consume both without changes.
+    """
+    if not atoms:
+        return []
+    all_stakeholder_keys: set[str] = set()
+    for atom in atoms:
+        for k in atom.entity_keys:
+            if isinstance(k, str) and k.startswith("stakeholder:"):
+                all_stakeholder_keys.add(k)
+    if len(all_stakeholder_keys) < 2:
+        return []
+
+    def classify(key: str) -> tuple[str, str]:
+        """Return (shape, surname). shape ∈ {full, thin}. surname is
+        the last token (slug) used for matching.
+        """
+        slug = key.split(":", 1)[1]
+        tokens = [t for t in slug.split("_") if t]
+        if not tokens:
+            return "", ""
+        # Initials-prefixed form: ``r_watkins`` or ``r_dot_watkins``
+        # (the latter shouldn't appear after slugify but be defensive).
+        if len(tokens) == 2 and len(tokens[0]) == 1:
+            return "thin", tokens[-1]
+        # Single-token form: ``watkins`` only.
+        if len(tokens) == 1:
+            return "thin", tokens[0]
+        # Otherwise it's a full name (≥2 multi-letter tokens).
+        return "full", tokens[-1]
+
+    surname_to_full_keys: dict[str, set[str]] = {}
+    thin_keys_by_surname: dict[str, set[str]] = {}
+    for key in all_stakeholder_keys:
+        shape, surname = classify(key)
+        if not surname:
+            continue
+        if shape == "full":
+            surname_to_full_keys.setdefault(surname, set()).add(key)
+        elif shape == "thin":
+            thin_keys_by_surname.setdefault(surname, set()).add(key)
+
+    groups: list[set[str]] = []
+    for surname, thin_keys in thin_keys_by_surname.items():
+        full_matches = surname_to_full_keys.get(surname, set())
+        # Ambiguous: 0 full matches (nothing to fuse into) or ≥2
+        # (could be either person). Skip — keep the thin key
+        # standalone so a downstream reviewer sees it.
+        if len(full_matches) != 1:
+            continue
+        canonical = next(iter(full_matches))
+        group = {canonical}
+        group.update(thin_keys)
+        groups.append(group)
+    return _coalesce_alias_groups(groups)
+
+
 def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]:
     """Scan every atom's raw_text for site-alias co-mention patterns
     and return the union of all discovered alias groups.
@@ -145,6 +253,39 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     return _coalesce_alias_groups(all_groups)
 
 
+def _pick_canonical(group: frozenset[str]) -> str:
+    """Choose a canonical key for an alias group.
+
+    For ``stakeholder:*`` groups we prefer the *most specific* key
+    (most tokens, then alphabetically first) so that a fused group
+    of ``{r_watkins, renee_watkins, watkins}`` picks
+    ``renee_watkins`` as canonical instead of the alphabetically
+    earlier ``r_watkins``. For all other entity types (sites,
+    devices, etc.) we keep the alphabetical preference so existing
+    site fusion behavior is unchanged.
+    """
+    if not group:
+        return ""
+    # Stakeholder preference: prefer keys whose first token is a
+    # real word (≥2 chars) over initials, then prefer more tokens,
+    # then alphabetical. Picks ``renee_watkins`` over both
+    # ``r_watkins`` (initial first token) and ``watkins`` (single
+    # token).
+    members = sorted(group)
+    if all(k.startswith("stakeholder:") for k in members):
+        def stake_key(key: str) -> tuple[int, int, str]:
+            slug = key.split(":", 1)[1]
+            tokens = [t for t in slug.split("_") if t]
+            first_is_initial = (len(tokens) >= 1 and len(tokens[0]) == 1)
+            return (
+                1 if first_is_initial else 0,  # 0 wins (full name first)
+                -(len(tokens)),                 # more tokens wins
+                key,                            # alphabetical tie-break
+            )
+        return sorted(members, key=stake_key)[0]
+    return members[0]
+
+
 def fuse_alias_groups(
     records: list[EntityRecord],
     alias_groups: list[frozenset[str]],
@@ -152,11 +293,16 @@ def fuse_alias_groups(
     """Collapse EntityRecords whose canonical_keys appear in the same
     alias group into a single record per group.
 
-    Canonical-key choice: the alphabetically-first key in the group
-    becomes the canonical (deterministic, stable across runs). All
-    other keys in the group are folded into the merged record's
-    ``aliases`` list. Source atoms and confidence are merged the same
-    way ``resolve_aliases`` does for fuzzy-matched records.
+    Canonical-key choice: for sites and other entities, the
+    alphabetically-first key in the group (deterministic, stable).
+    For stakeholders, the most-specific key (most tokens, then
+    alphabetical) so ``{r_watkins, renee_watkins, watkins}`` picks
+    ``renee_watkins`` as canonical, not ``r_watkins``.
+
+    All other keys in the group are folded into the merged
+    record's ``aliases`` list. Source atoms and confidence are
+    merged the same way ``resolve_aliases`` does for fuzzy-matched
+    records.
 
     Records whose keys aren't in any group pass through unchanged.
     """
@@ -167,7 +313,7 @@ def fuse_alias_groups(
     for group in alias_groups:
         if not group:
             continue
-        canonical = sorted(group)[0]
+        canonical = _pick_canonical(group)
         for key in group:
             canonical_map[key] = canonical
     # Group records by their (mapped) canonical key.

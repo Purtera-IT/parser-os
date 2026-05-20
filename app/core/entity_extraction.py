@@ -23,6 +23,7 @@ Design principles:
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from typing import Any
 
@@ -208,6 +209,29 @@ _SITE_SUFFIX_PATTERNS = [
     r"\b([A-Z][A-Za-z0-9'.\-]*(?:\s+[A-Z][A-Za-z0-9'.\-]*){0,4})\s+(Information Systems (?:Bldg|Building)|IT Building|Data Center|Server Room|Telecom Room|MDF|IDF)\b",
 ]
 _SITE_SUFFIX_REGEXES = [re.compile(p) for p in _SITE_SUFFIX_PATTERNS]
+
+
+# A4 universal naming: "Building 13" / "Site 7" / "Branch 42" /
+# "Edificio 4" / "Bâtiment 12" / "Gebäude 5" / "棟3". These appear in
+# enterprise floor plans and international deals where every site
+# has the same brand name and is distinguished only by a number.
+# Numbers can be roman ("Building III"), with optional letter
+# suffix ("Building 13A"), or unicode-digit. We deliberately
+# require the building-word + space + number form so that a bare
+# number elsewhere in text never becomes a site.
+_NUMBERED_SITE_REGEX = re.compile(
+    r"\b("
+    r"(?:Building|Bldg|Site|Branch|Office|Facility|Warehouse|"
+    r"Annex|Block|Wing|Tower|Plant|Depot|Hub|Floor|Fl|Lvl|Level|"
+    # Common non-English building words
+    r"Edificio|Edif|Bâtiment|Bat|Gebäude|Geb|"
+    r"棟|楠|建物|建筑物|建筑"
+    r")\s+"
+    r"([0-9A-Z]+(?:[\-/][0-9A-Z]+)?|[IVXLCDM]+)"
+    r"\b)",
+    re.UNICODE,
+)
+
 
 
 # Street address pattern — captures something like "1700 Pratt Drive" or
@@ -896,7 +920,31 @@ _FORM_FIELD_MARKERS = _FORM_FIELD_STRONG_MARKERS + _FORM_FIELD_WEAK_MARKERS
 
 
 def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    """ASCII-folded snake_case slug for entity keys.
+
+    Folds Unicode accents (Bâtiment → Batiment, Gebäude → Gebaude,
+    Edificio → Edificio) via NFKD normalization before stripping
+    to ASCII so international site names produce readable slugs
+    instead of "b_timent_12" / "geb_ude_5".
+
+    For non-Latin scripts that don't decompose to ASCII (CJK
+    Japanese / Chinese / Korean), the chars are preserved in
+    casefolded form so a deterministic slug still emits — the
+    raw CJK glyph IS the slug.
+    """
+    if not value:
+        return ""
+    # NFKD splits combining marks from base letters; the encode/decode
+    # drops the marks but leaves base ASCII letters intact. Non-ASCII
+    # scripts (CJK, Cyrillic, etc.) round-trip via ``replace`` so the
+    # slug still contains the original glyph and the entity is keyed
+    # consistently — albeit not Latin-readable.
+    folded = unicodedata.normalize("NFKD", value)
+    ascii_folded = folded.encode("ascii", "ignore").decode("ascii")
+    # If folding ate everything (e.g. a pure-CJK string), fall back to
+    # the casefolded original so the entity isn't silently dropped.
+    base = ascii_folded if ascii_folded.strip() else value
+    return re.sub(r"[^a-z0-9]+", "_", base.lower()).strip("_")
 
 
 def _device_alias_index(pack: DomainPack) -> dict[str, str]:
@@ -1082,6 +1130,20 @@ def _emit_sites(text: str) -> set[str]:
             slug = _slugify(" ".join(tokens))
             if slug and slug not in {"_"}:
                 keys.add(f"site:{slug}")
+
+    # A4 universal naming: "Building 13" / "Site 7" / "Bâtiment 12" /
+    # "Edificio 4" / "Gebäude 5" / "棟3". These are generic-shape
+    # site names used in enterprise floor plans and international
+    # deals where every facility is identified only by a number
+    # within a brand chain. We slug the full match so different
+    # numbers produce different sites.
+    for match in _NUMBERED_SITE_REGEX.finditer(text):
+        full = match.group(1).strip()
+        if not full:
+            continue
+        slug = _slugify(full)
+        if slug and slug not in {"_"}:
+            keys.add(f"site:{slug}")
 
     # First-class site-code capture: ATL-HQ / ATL-WEST / ATL-AIR /
     # NYC-DC1 / SFO-HQ / CHI-MAIN. These are the load-bearing site
@@ -2535,6 +2597,17 @@ _HONORIFIC_SINGLE_NAME_REGEX = re.compile(
     r"(?!\s+" + _NAME_TOKEN + r")\b"
 )
 
+# D3: Initial + Last form — ``R. Watkins`` / ``J Ames`` / ``J.A. Smith``.
+# Captures a single uppercase letter (optionally followed by a period
+# and another initial) plus a surname token. The downstream fuser in
+# ``entity_resolution.collect_stakeholder_alias_groups`` collapses
+# ``stakeholder:r_watkins`` into ``stakeholder:renee_watkins`` when
+# the surname uniquely identifies a full-name stakeholder elsewhere
+# in the project.
+_INITIAL_LAST_NAME_REGEX = re.compile(
+    r"\b([A-Z](?:\.[A-Z])?)\.?\s+(" + _NAME_TOKEN + r")\b"
+)
+
 # Inverted form: "Smith, John" — last-name-first. Used in formal
 # author / stakeholder lists. We require an explicit FIELD label
 # ("Name:", "Author:", "Approver:", "Sponsor:", "Owner:", ...)
@@ -2615,6 +2688,24 @@ def _emit_stakeholders(text: str) -> set[str]:
         # Skip sentences without a role cue — saves work
         if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
             continue
+        # D3: Initial + Last form ("R. Watkins", "J Ames").
+        # Like the honorific-single-name path, we require a role
+        # cue within ±60 chars to avoid grabbing every "T. Rex" /
+        # "V. Important" capitalization in the corpus.
+        for il_match in _INITIAL_LAST_NAME_REGEX.finditer(sentence):
+            initial = il_match.group(1).strip().rstrip(".")
+            last = il_match.group(2).strip()
+            if len(last) < 3 or last.lower() in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # Role-context proximity check, same disambiguator.
+            pre = sentence[max(0, il_match.start() - 60):il_match.start()]
+            post = sentence[il_match.end():min(len(sentence), il_match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            slug = _slugify(f"{initial} {last}")
+            if slug and len(slug) >= 3:
+                keys.add(f"stakeholder:{slug}")
         # Honorific + single-name ("Dr. Smith", "Ms. Park"). Single
         # capitalized word after an honorific is enough — the
         # honorific is itself a strong stakeholder signal.

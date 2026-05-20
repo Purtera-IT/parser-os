@@ -16,6 +16,7 @@ from app.core.candidates import summarize_candidate_outcomes
 from app.core.entity_extraction import enrich_atoms as enrich_entity_keys
 from app.core.entity_resolution import (
     collect_site_alias_groups,
+    collect_stakeholder_alias_groups,
     extract_entity_records,
     fuse_alias_groups,
     resolve_aliases,
@@ -549,7 +550,15 @@ def compile_project(
         # Detected via co-mention patterns in atom raw_text (copular
         # "is the", em-dash, slash, parenthetical aliasing, ...).
         site_alias_groups = collect_site_alias_groups(atoms)
-        entities = fuse_alias_groups(entities, site_alias_groups)
+        # D3: collapse multiple surface forms of the same person
+        # (``stakeholder:watkins`` + ``stakeholder:r_watkins`` →
+        # ``stakeholder:renee_watkins``) using the same fusion
+        # mechanism. Key-shape based, so no false positives across
+        # documents.
+        stakeholder_alias_groups = collect_stakeholder_alias_groups(atoms)
+        entities = fuse_alias_groups(
+            entities, site_alias_groups + stakeholder_alias_groups
+        )
         telemetry.end_stage(stage, output_count=len(entities))
 
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:
