@@ -183,6 +183,36 @@ RowKind = Literal[
 ]
 
 
+# Service-line classifier (mirrors the one in xlsx_parser for quote
+# rows). Routes labor / training / hypercare / governance / consulting
+# line items to `service:` instead of `device:`.
+_SERVICE_DESCRIPTION_TOKENS: tuple[str, ...] = (
+    "labor", "labour", "hours", "hour", "after-hours", "after hours",
+    "support", "supports",
+    "training", "trainings", "adoption",
+    "workshop", "workshops", "discovery",
+    "design", "engineering services",
+    "professional services", "managed services",
+    "consulting", "consultancy", "advisory",
+    "hypercare", "warranty", "warrantee",
+    "project management", "program management", "pmo",
+    "governance", "oversight",
+    "implementation", "installation services", "deployment services",
+    "commissioning", "decommissioning",
+    "migration", "cutover", "go-live", "go live",
+    "documentation services", "as-built", "as built",
+    "testing services", "validation services", "uat", "acceptance",
+    "rfp response", "proposal preparation",
+)
+
+
+def _looks_like_service_description(value: str) -> bool:
+    """Return True if a quote line-item description is a service
+    rather than a physical device."""
+    lower = value.lower()
+    return any(token in lower for token in _SERVICE_DESCRIPTION_TOKENS)
+
+
 def _header_cell_keys(cell: Any) -> set[str]:
     raw = str(cell or "").strip()
     if not raw:
@@ -1399,7 +1429,12 @@ class QuoteParser(BaseParser):
 
         entity_keys: list[str] = []
         if description:
-            entity_keys.append(normalize_entity_key("device", description))
+            # Service-vs-device classification — labor / support / training
+            # / hypercare / governance / consulting line items are routed
+            # to `service:` instead of `device:` so the device namespace
+            # contains only physical hardware.
+            etype = "service" if _looks_like_service_description(description) else "device"
+            entity_keys.append(normalize_entity_key(etype, description))
         if part_number:
             entity_keys.append(normalize_entity_key("part", part_number))
 

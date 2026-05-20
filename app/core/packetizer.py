@@ -792,13 +792,44 @@ def _gov_sort_key_power(atom: EvidenceAtom) -> tuple[int, str]:
 
 
 def _anchor_for_atoms(atoms: list[EvidenceAtom]) -> tuple[str, str]:
-    all_keys = [key for atom in atoms for key in atom.entity_keys]
-    site_keys = sorted(k for k in set(all_keys) if k.startswith("site:"))
-    device_keys = sorted(k for k in set(all_keys) if k.startswith("device:"))
+    """Select the most useful entity anchor for a packet.
+
+    Priority order (highest leverage first):
+      1. site:      — physical place is the most actionable anchor
+      2. device:    — equipment category
+      3. customer:  — named customer org
+      4. vendor:    — supplier
+      5. stakeholder: — named approver / owner
+      6. milestone: — schedule-anchored work
+      7. money:     — financial threshold / amount
+      8. part_number: — manufacturer SKU
+      9. address:   — physical address (when no site resolved)
+
+    Without a fallback chain, packets whose governing atoms only carry
+    secondary entity keys (date, money, stakeholder) collapse to
+    ``entity:unknown`` — a useless anchor for downstream consumers.
+    Falling through to lower-priority but still-meaningful anchor types
+    preserves the packet's connection to a real entity.
+    """
+    all_keys = {key for atom in atoms for key in (atom.entity_keys or [])}
+    # Tier 1 — site / device (legacy priority, unchanged)
+    site_keys = sorted(k for k in all_keys if k.startswith("site:"))
     if site_keys:
         return "site", site_keys[0]
+    device_keys = sorted(k for k in all_keys if k.startswith("device:"))
     if device_keys:
         return "device", device_keys[0]
+    # Tier 2 — customer / vendor / stakeholder (people / orgs)
+    for prefix in ("customer:", "vendor:", "stakeholder:"):
+        candidates = sorted(k for k in all_keys if k.startswith(prefix))
+        if candidates:
+            return prefix.rstrip(":"), candidates[0]
+    # Tier 3 — milestone / money / part_number / address (secondary
+    # but still concrete enough to anchor on)
+    for prefix in ("milestone:", "money:", "part_number:", "address:"):
+        candidates = sorted(k for k in all_keys if k.startswith(prefix))
+        if candidates:
+            return prefix.rstrip(":"), candidates[0]
     return "entity", "unknown"
 
 
@@ -1179,6 +1210,16 @@ def build_packets(
     excludes_edges = [e for e in edges if e.edge_type.value == "excludes"]
     grouped_exclusions: dict[str, list[EvidenceAtom]] = defaultdict(list)
     for atom in exclusion_atoms:
+        # Skip section-header-only exclusion atoms (text like "7. Out of
+        # Scope" / "Exclusions" / "Section 5 — Excluded" with zero
+        # entity keys). These were producing scope_exclusion:site:unknown
+        # packets with no actionable content. A real exclusion has at
+        # least one entity key (the thing being excluded); a heading
+        # has none.
+        atom_text = (atom.raw_text or "").strip()
+        if not atom.entity_keys and len(atom_text) < 40:
+            # Heuristic: short text + no entity keys = section header
+            continue
         site_keys = sorted(k for k in atom.entity_keys if k.startswith("site:"))
         bucket = _best_site_key([atom], prioritize_exclusion_text=True)
         if bucket == "site:unknown" and site_keys:

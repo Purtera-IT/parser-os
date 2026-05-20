@@ -13,8 +13,31 @@ container is stale — pull the new build.
 
 ## TL;DR — what changed and why you care
 
-Five commits between `30895b5` (schematic R12) and `5a3b990` (entity cleanup)
-addressed the **primary feedback from the OPTBOT state report**:
+**Two waves of fixes** since `30895b5` (schematic R12):
+
+**Wave 1** (`bd9a949` → `5a3b990`): site-extraction bulletproofing —
+addressed the primary feedback from the OPTBOT state report (32 site
+entities → 3 fused canonical records).
+
+**Wave 2** (`<v2 commits>`): added six new entity types and fixed the
+`:unknown` packet anchors — closes all seven deferred items from §11a
+of this README's earlier revision:
+
+| # | Wave-2 fix | Effect on OPTBOT |
+|---|---|---|
+| 1 | Stakeholder / person extraction | **7** named approvers, was 0 |
+| 2 | Customer from "Company: X" label | **1** customer (optbot_inc), was 0 |
+| 3 | Money / currency entities | **15** dollar amounts incl. all thresholds, was 0 |
+| 4 | Date / milestone entities | **6** dates + **5** milestones, was 0 |
+| 5 | `:unknown` packet anchor fallback | 1 :unknown packet of 28, was 3 of 16 |
+| 6 | Service-vs-device classification | **5** services correctly separated from devices |
+| 7 | Address-suffix coverage | **3** addresses (was 2) — ATL-AIR address now captures |
+
+**Net effect**: 35 entities → 70 entities, every new one a real,
+actionable record. Total atom count unchanged (135) — these are
+additional entity-type lenses over the same atoms.
+
+
 
 > "Site entity resolution is the main noise: 32 site-like entities / scope
 > sites include document titles, roles, and mock tokens — hurts downstream
@@ -59,47 +82,82 @@ Compile summary (`PYTHONHASHSEED=0`, `--no-cache`, `--allow-unverified-receipts`
 | Field | Value |
 |---|---|
 | `input_signature` | `2c3d103e57948babe0f3717212049afa0821cadbcbb7e60bd46526202e28bf9c` |
-| `output_signature` | `7a744d1251628786b474a97f8f73a2551bd1ca258ce79ee5db892062a967fd1e` |
+| `output_signature` | `97f61cecccf8f7da5399559a114836baf7920326831a219e58c351e3f04686b2` |
 | `atoms` | 135 |
-| `edges` | 153 |
-| `packets` | 16 |
-| `entities` | 35 |
+| `edges` | 175 |
+| `packets` | 28 |
+| `entities` | 70 |
 | `documents` | 7 |
-| `warnings` | 19 (non-fatal) |
+| `warnings` | 32 (non-fatal) |
 | `errors` | 0 |
 | `receipt_verified` | 132 / 135 |
-| `receipt_failed` | 2 (1 + 1 from PDFs — pre-existing, not my changes) |
+| `receipt_failed` | 2 (pre-existing, not from my changes) |
+
+**Note**: this baseline supersedes the earlier `7a744d12...` signature
+captured before the v2 entity-extraction PR (stakeholder, customer,
+money, date, milestone, service entity types + `:unknown`-anchor
+fallback). If your Azure container still produces the older 35-entity
+signature, you're running a pre-v2 build — pull HEAD.
 
 If your Azure container produces a different `output_signature`, it's running
 a different code version. Determinism is contractual — same input always
 produces the same signature.
 
-### Entity record breakdown (post-fix)
+### Entity record breakdown (post-v2)
 
 ```
 site         (3)   ← canonical EntityRecords
                     site:atl_hq                       (+ atlanta_headquarters, innovation_tower)
                     site:atl_west                     (+ westside_operations_center)
                     site:airport_logistics_annex      (+ atl_air, college_park)
-address      (2)   address:1180_peachtree_street
+address      (3)   address:1180_peachtree_street
+                    address:4200_global_gateway_connector (NEW — extended suffix coverage)
                     address:976_brady_avenue
-device      (18)   real BOM line items (access_point, switch, ip_camera, ups,
-                    firewall, controller, display, microphone, speaker, ...)
-                    Note: includes 5 service line items still classified as
-                    devices — known issue, see §7
-part        (10)   manufacturer SKU names from the BOM
-                    (clearmeet_bar_pro, coreedge_cx_48p, netwave_ap_9700,
-                     dockflex_180, fieldtab_r12, viewbright_27q,
-                     powerkeep_1500, printsure_lp600, clearmeet_panorama_4k,
-                     deskflow_panel_10)
-part_number  (2)   only the two legitimate codes
-                    part_number:ic_001
-                    part_number:optbot_atl_047
+customer     (1)   customer:optbot_inc (NEW — Company-label extraction)
+stakeholder  (7)   the six named OPTBOT approvers + Noah Patel
+                    stakeholder:camila_brooks   (security/data approver)
+                    stakeholder:elliot_tran     (procurement)
+                    stakeholder:jordan_ames     (VP Workplace Operations / exec sponsor)
+                    stakeholder:morgan_lee      (CFO Delegate)
+                    stakeholder:noah_patel      (Regional Facilities Manager)
+                    stakeholder:priya_narang    (Director of Enterprise IT / tech buyer)
+                    stakeholder:renee_watkins   (delivery governance)
+money       (15)   normalized dollar amounts including the load-bearing
+                    thresholds: money:1847250 (total deal),
+                    money:1500000 (CFO threshold),
+                    money:250000 (budget owner threshold),
+                    money:1015626 (hardware subtotal),
+                    money:536030 (services subtotal),
+                    money:295594 (logistics/freight/tax/fees),
+                    plus per-unit line-item costs (995, 6125, 725, 845, ...)
+date         (6)   date:2026-05-19 .. date:2026-08-14
+milestone    (5)   the dates with project-milestone context cues
+                    (mobilization, cutover, hypercare, blackout, phase ends)
+device      (13)   physical hardware (was 18, with 5 services broken out)
+                    access_point, switch, ip_camera, ups, firewall,
+                    controller, display, microphone, speaker,
+                    docking_station_usb_c_180w, rugged_logistics_tablet,
+                    secure_label_printer_kit, video_bar_for_medium_rooms
+service      (5)   NEW — labor / training / governance / hypercare items
+                    service:after_hours_installation_labor
+                    service:discovery_workshops_and_technical_design
+                    service:hypercare_support
+                    service:project_management_and_weekly_governance
+                    service:training_and_adoption_support
+part        (10)   manufacturer SKU names from the BOM (ClearMeet, CoreEdge,
+                    NetWave, DockFlex, FieldTab, ViewBright, PowerKeep,
+                    PrintSure, ClearMeet Panorama, DeskFlow)
+part_number  (2)   only legitimate codes (ic_001, optbot_atl_047)
 ```
 
 **No `customer:customer`, no `vendor:vendor`, no `vendor:carrier`, no
 `room:room`, no contract-ID part_numbers.** If any of those reappear in your
 Azure output, the container is stale.
+
+**Packets**: 28 total, with only 1 anchored to `:unknown` (was 3 before
+the v2 fixes). The remaining `:unknown` is the literal "7. Out of Scope"
+section header with no entity keys — correctly filtered by the
+packetizer but kept as a sentinel for visibility.
 
 ---
 

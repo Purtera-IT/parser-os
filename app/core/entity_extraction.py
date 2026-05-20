@@ -214,8 +214,15 @@ _SITE_SUFFIX_REGEXES = [re.compile(p) for p in _SITE_SUFFIX_PATTERNS]
 # "4700 Crest Drive" or "60 East Van Buren Street".  Conservative: we
 # require a number, then capitalized word(s), then a street suffix.
 _STREET_SUFFIXES = (
+    # Standard street suffixes
     "Street|Str|St|Ave|Avenue|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|"
-    "Court|Ct|Place|Pl|Highway|Hwy|Parkway|Pkwy|Trail|Trl|Circle|Cir"
+    "Court|Ct|Place|Pl|Highway|Hwy|Parkway|Pkwy|Trail|Trl|Circle|Cir|"
+    # Less-common but real street suffixes seen in commercial deals
+    "Connector|Corridor|Gateway|Crossing|Terrace|Loop|Run|Pike|Turnpike|"
+    "Bypass|Expressway|Expwy|Freeway|Fwy|Route|Rte|Spur|Branch|"
+    "Plaza|Square|Sq|Crescent|Cres|Mews|Walk|Promenade|Esplanade|"
+    "Alley|Aly|Mall|Path|Bridge|Brg|Causeway|Cswy|Junction|Jct|"
+    "Row|Greenway|Greenwy|Walkway"
 )
 _STREET_ADDRESS_REGEX = re.compile(
     r"\b(\d+(?:\-\d+)?)\s+([A-Z][A-Za-z0-9'.\-]*(?:\s+[A-Za-z0-9'.\-]+){0,4})\s+("
@@ -2103,6 +2110,437 @@ def _emit_csi_sections(text: str) -> set[str]:
     return keys
 
 
+# ─── Customer extraction from explicit "Company: X" / "Customer: X" labels ───
+
+# Corporate / institutional suffixes that signal a customer name.
+# Order matters: regex alternation is left-to-right, so the LONGER
+# alternative must come first ("Corporation" before "Corp"; otherwise
+# "Wonka Corporation" matches "Corp" then truncates at "oration").
+_CORPORATE_SUFFIXES = (
+    r"Corporation|Corp\.?|"
+    r"Limited|Ltd\.?|"
+    r"Incorporated|Inc\.?|"
+    r"Company|Co\.?|"
+    r"L\.L\.C\.|LLC|"
+    r"L\.L\.P\.|LLP|"
+    r"GmbH|AG|S\.?A\.?|S\.?p\.?A\.?|N\.?V\.?|B\.?V\.?|"
+    r"PLC|P\.?C\.?|P\.?A\.?|PBC|"
+    r"Holdings|Group|Partners|Enterprises|Industries|Solutions|"
+    r"Systems|Technologies|Services|"
+    r"Trust|Foundation|Institute|Association|Society|"
+    r"University|College|School District|Hospital|Health System|Medical Center"
+)
+
+# Detects labels like "Company: OPTBOT, Inc." / "Customer: Acme Corp" /
+# "Client: Globex LLC" / "Account: Initech, Inc." — followed by a
+# Capitalized phrase that ends in a corporate / institutional suffix.
+_COMPANY_LABEL_REGEX = re.compile(
+    r"\b(?:Company|Customer|Client|Account|Buyer|End[\s\-]Client|"
+    r"End[\s\-]Customer|Organization|Org)\s*[:=]\s*"
+    r"([A-Z][A-Za-z0-9'.\-]*(?:[\s,]+[A-Z][A-Za-z0-9'.\-]*){0,5}\s*[,]?\s*"
+    r"(?:" + _CORPORATE_SUFFIXES + r")\.?)",
+)
+
+
+def _emit_customer_from_label(text: str) -> set[str]:
+    """Extract customer entities from explicit "Company: X" / "Customer: X"
+    field labels.
+
+    Pattern: a label word ("Company"/"Customer"/"Client"/...) followed
+    by ``:`` or ``=`` and then a Capitalized phrase ending in a
+    recognized corporate or institutional suffix
+    (``Inc``, ``LLC``, ``Corp``, ``Company``, ``Holdings``, ``Group``,
+    ``University``, ``Hospital``, ...).
+
+    This catches "Company: OPTBOT, Inc." → ``customer:optbot_inc`` /
+    "Customer: Acme Corp" → ``customer:acme_corp`` /
+    "Client: Globex LLC" → ``customer:globex_llc``.
+    """
+    keys: set[str] = set()
+    for match in _COMPANY_LABEL_REGEX.finditer(text):
+        raw_value = match.group(1).strip().rstrip(",")
+        # Strip a trailing period after the suffix ("OPTBOT, Inc.")
+        raw_value = raw_value.rstrip(".")
+        slug = _slugify(raw_value)
+        if slug and len(slug) >= 3:
+            keys.add(f"customer:{slug}")
+    return keys
+
+
+# ─── Money / currency entity extraction ───
+
+# Matches dollar amounts: $1,847,250 / $1.8M / $250K / USD 1,500,000 /
+# 1,500,000 USD / $1,015,626.00. Captures the numeric portion and any
+# K/M/B suffix so we can normalize.
+_MONEY_REGEX = re.compile(
+    r"(?:"
+    # $-prefixed: $1,847,250 or $1.5M or $250K (no whitespace before the
+    # number to avoid matching "$ FOO" / "$ TBD")
+    r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMB])?\b"
+    r"|"
+    # USD-prefixed: USD 1,500,000
+    r"\bUSD\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMB])?\b"
+    r"|"
+    # USD-suffixed: 1,500,000 USD
+    r"\b([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s+USD\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _emit_money_keys(text: str) -> set[str]:
+    """Extract monetary amounts as ``money:<normalized>`` entities.
+
+    Normalizes K/M/B suffixes to absolute amounts:
+      ``$1.5M``    → ``money:1500000``
+      ``$250K``    → ``money:250000``
+      ``$1,847,250`` → ``money:1847250``
+      ``USD 100``  → ``money:100``
+
+    The OrbitBrief Core scorecard's "pricing structure" blocker depends
+    on having structured monetary entities to anchor against, not just
+    raw text mentions.
+    """
+    keys: set[str] = set()
+    for match in _MONEY_REGEX.finditer(text):
+        # Grab whichever capture group fired
+        num_str = match.group(1) or match.group(3) or match.group(5)
+        suffix = match.group(2) or match.group(4)
+        if not num_str:
+            continue
+        try:
+            num = float(num_str.replace(",", ""))
+        except ValueError:
+            continue
+        if suffix:
+            multiplier = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(
+                suffix.upper(), 1
+            )
+            num = num * multiplier
+        # Drop fractional cents — money entities are unit dollars.
+        amount = int(num) if num == int(num) else round(num, 2)
+        # Skip implausibly small amounts (likely false positives —
+        # "5K users" / "$1.99" line noise). Real deal money is ≥ $100.
+        if amount < 100:
+            continue
+        # Skip implausibly large amounts (regex catastrophe / OCR garbage).
+        if amount > 1_000_000_000_000:  # > $1T
+            continue
+        keys.add(f"money:{int(amount) if amount == int(amount) else amount}")
+    return keys
+
+
+# ─── Date / milestone entity extraction ───
+
+# ISO date: 2026-07-31 (the format used in OPTBOT and most modern deals).
+_ISO_DATE_REGEX = re.compile(r"\b(20[2-9][0-9])-([01][0-9])-([0-3][0-9])\b")
+
+# US-format date: 07/31/2026 or 7/31/26
+_US_DATE_REGEX = re.compile(
+    r"\b([01]?[0-9])/([0-3]?[0-9])/(20[2-9][0-9]|[2-9][0-9])\b"
+)
+
+# Long-format date: July 31, 2026 or Jul 31 2026
+_LONG_DATE_REGEX = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December|"
+    r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"\s+([0-3]?[0-9])(?:st|nd|rd|th)?[,]?\s+(20[2-9][0-9])\b"
+)
+
+_MONTH_TO_NUM = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2,
+    "march": 3, "mar": 3, "april": 4, "apr": 4,
+    "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
+# Milestone-context cues — labels that identify a date as a project
+# milestone rather than just an incidental date mention.
+_MILESTONE_CONTEXT_REGEX = re.compile(
+    r"\b("
+    r"close\s+date|closing\s+date|"
+    r"start\s+date|kickoff(?:\s+date)?|kick[\s\-]off(?:\s+date)?|"
+    r"end\s+date|completion(?:\s+date)?|due\s+date|deadline|"
+    r"target\s+(?:date|close|completion)|"
+    r"mobilization(?:\s+date|\s+start)?|"
+    r"cutover(?:\s+date|\s+begins?|\s+complete)?|"
+    r"go[\s\-]live(?:\s+date)?|"
+    r"implementation\s+(?:start|end|window|complete)|"
+    r"blackout(?:\s+window|\s+period)?|"
+    r"hypercare(?:\s+start|\s+end|\s+window)?|"
+    r"acceptance(?:\s+date)?|"
+    r"sign[\s\-]off|signoff|"
+    r"effective(?:\s+date)?|"
+    r"expir(?:y|es|ation)|"
+    r"milestone|deliverable\s+date|"
+    r"phase\s+\d+(?:\s+start|\s+end|\s+complete)?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _emit_date_keys(text: str) -> set[str]:
+    """Extract dates as ``date:YYYY-MM-DD`` entities, and additionally
+    as ``milestone:YYYY-MM-DD`` when a milestone-context cue (close
+    date, cutover, blackout, hypercare, kickoff, ...) appears within
+    50 chars of the date.
+
+    Captures three date formats:
+      ISO:     ``2026-07-31``
+      US:      ``07/31/2026`` / ``7/31/26``
+      Long:    ``July 31, 2026`` / ``Jul 31 2026``
+
+    All emitted in normalized ISO form (``date:2026-07-31``) so
+    downstream consumers can sort, compare, and join on them
+    deterministically regardless of input style.
+    """
+    keys: set[str] = set()
+    matches: list[tuple[int, int, str]] = []
+    # ISO format
+    for m in _ISO_DATE_REGEX.finditer(text):
+        try:
+            year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    # US format
+    for m in _US_DATE_REGEX.finditer(text):
+        try:
+            month, day, year_raw = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if year_raw < 100:
+                year = 2000 + year_raw
+            else:
+                year = year_raw
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    # Long format
+    for m in _LONG_DATE_REGEX.finditer(text):
+        try:
+            month_name = m.group(1).lower()
+            day = int(m.group(2))
+            year = int(m.group(3))
+            month = _MONTH_TO_NUM.get(month_name)
+            if month is None or not (1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    for start, end, iso in matches:
+        keys.add(f"date:{iso}")
+        # Look ±50 chars for a milestone-context cue
+        pre = text[max(0, start - 50):start]
+        post = text[end:min(len(text), end + 50)]
+        if _MILESTONE_CONTEXT_REGEX.search(pre) or _MILESTONE_CONTEXT_REGEX.search(post):
+            keys.add(f"milestone:{iso}")
+    return keys
+
+
+# ─── Stakeholder / person entity extraction ───
+
+# Role / title tokens that, when adjacent to a Capitalized name, mark
+# that name as a stakeholder/approver. Limited to the actually-load-
+# bearing roles in commercial deal documents; common-noun titles
+# ("manager"/"engineer") would over-fire without a discriminator.
+_STAKEHOLDER_ROLE_PATTERNS = re.compile(
+    r"\b("
+    # C-suite
+    r"CEO|Chief\s+Executive\s+Officer|"
+    r"CFO|Chief\s+Financial\s+Officer|"
+    r"CTO|Chief\s+Technology\s+Officer|"
+    r"CIO|Chief\s+Information\s+Officer|"
+    r"CISO|Chief\s+Information\s+Security\s+Officer|"
+    r"COO|Chief\s+Operating\s+Officer|"
+    # VP / SVP / EVP
+    r"VP|Vice\s+President|SVP|Senior\s+Vice\s+President|"
+    r"EVP|Executive\s+Vice\s+President|"
+    # Director / Manager — only when paired with a domain word
+    r"Director\s+of\s+[A-Z][\w\s]{2,30}|"
+    r"Senior\s+Director|Managing\s+Director|"
+    # Approval / sponsorship roles
+    r"Sponsor|Executive\s+Sponsor|Project\s+Sponsor|Business\s+Sponsor|"
+    r"Owner|Project\s+Owner|Product\s+Owner|Budget\s+Owner|"
+    r"Approver|Decision\s+Maker|Stakeholder|"
+    # Delegated authority
+    r"Delegate|CFO\s+Delegate|Approving\s+Authority|"
+    # Project roles
+    r"PM|Project\s+Manager|Program\s+Manager|"
+    # Workplace / technical leads
+    r"VP\s+Workplace\s+Operations|"
+    r"Head\s+of\s+[A-Z][\w\s]{2,30}|"
+    r"Lead\s+[A-Z][\w]+|"
+    # Generic "X Manager" — any 1-3 word prefix followed by Manager
+    # (catches "Regional Facilities Manager", "Senior Procurement Manager",
+    # "IT Operations Manager"). The prefix words must be Capitalized.
+    r"(?:[A-Z][a-z]+\s+){1,3}Manager|"
+    # Approval / decision VERBS — when a person name is the subject
+    # of an approval verb, the name itself is a stakeholder.
+    # "Priya Narang approves..." / "Camila Brooks: Approved..."
+    r"approves?|approved|approving|"
+    r"accepts?|accepted|accepting|"
+    r"signs?\s+off|signed\s+off|sign[\s\-]off|signoff|"
+    # Ownership — "owns the X", "owned by Y", or bare "owns" / "owned"
+    # followed by a noun ("owns access", "owns the schedule", "owns risk")
+    r"owns?\s+(?:the\s+)?[a-z]|owned\s+by|"
+    r"escalates?|escalated|"
+    r"reviews?\s+and\s+(?:approves?|approved)|"
+    r"authorized\s+by|approved\s+by|signed\s+by|"
+    r"is\s+the\s+(?:owner|sponsor|approver|delegate)|"
+    r"responsible\s+for|accountable\s+for"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Pattern: "First Last" (two capitalized words separated by a space,
+# each starting with an uppercase letter, allowing an initial like
+# "G." or apostrophes like "O'Brien").
+_PERSON_NAME_REGEX = re.compile(
+    r"\b("
+    r"[A-Z][a-z]+(?:\s+[A-Z]\.)?\s+[A-Z][a-z]+(?:[\-'][A-Z][a-z]+)?"
+    r"|[A-Z][a-z]+\s+[A-Z]\.\s+[A-Z][a-z]+"
+    r")\b"
+)
+
+# Names that look proper-noun-shaped but aren't actually people.
+# Conservative — when in doubt, leave it out (a name we miss is recoverable
+# downstream; a false-positive stakeholder is noise that hurts trust).
+_NON_PERSON_NAME_PREFIXES: frozenset[str] = frozenset({
+    # Place-shape leads
+    "atlanta", "houston", "dallas", "berlin", "tokyo", "seattle",
+    "phoenix", "chicago", "boston", "denver", "miami", "austin",
+    "north", "south", "east", "west", "central",
+    # Vendor / org-shape leads
+    "axis", "cisco", "genetec", "lenel", "honeywell", "siemens",
+    "schneider", "trane", "carrier", "philips", "dell", "hpe",
+    "microsoft", "google", "amazon", "azure", "aws", "gcp",
+    "hubspot", "optbot", "orbitbrief", "purpulse",
+    # Generic
+    "mock", "test", "demo", "fake", "dummy", "sample", "example",
+    "fictional", "synthetic",
+})
+
+
+def _emit_stakeholders(text: str) -> set[str]:
+    """Extract named approvers / stakeholders as ``stakeholder:first_last``
+    entities.
+
+    Strategy: find every "First Last" capitalized name, then accept it
+    only when a role/title cue (CFO, VP, Sponsor, Director, Approver,
+    Owner, PM, Delegate, …) appears within ±60 chars in the same
+    sentence. This is the "person + role context" pattern.
+
+    The role context is the disambiguator — a bare "Jordan Ames" might
+    be anything, but "Jordan Ames, VP Workplace Operations" or
+    "Approved by Jordan Ames" is structurally a stakeholder mention.
+    """
+    keys: set[str] = set()
+    # Process sentence by sentence so the ±60 char window doesn't span
+    # unrelated material.
+    for sentence in re.split(r"[.?!\n]+", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        # Skip sentences without a role cue — saves work
+        if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
+            continue
+        for match in _PERSON_NAME_REGEX.finditer(sentence):
+            name = match.group(1).strip()
+            tokens = name.split()
+            if not tokens:
+                continue
+            first_lower = tokens[0].lower()
+            if first_lower in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # Reject if the name's tail token is a corporate suffix
+            # ("Acme Corp" / "OPTBOT Inc" / "Innovation Tower")
+            tail_lower = tokens[-1].lower().rstrip(",.:")
+            if tail_lower in {
+                "inc", "llc", "corp", "company", "co", "ltd",
+                "tower", "building", "campus", "center", "annex",
+                "headquarters", "office", "branch", "store", "complex",
+                "park", "plaza", "terminal",
+            }:
+                continue
+            # Reject if a role token appears WITHIN the name itself
+            # ("Director Jane Doe" — capture "Jane Doe" not "Director Jane")
+            tokens_lower = {t.lower().rstrip(",.:") for t in tokens}
+            role_tokens = {
+                "director", "manager", "lead", "officer", "engineer",
+                "architect", "analyst", "ceo", "cfo", "cto", "cio", "ciso",
+                "coo", "vp", "svp", "evp", "sponsor", "approver", "delegate",
+                "owner", "stakeholder", "executive", "head", "senior",
+                "junior", "principal", "associate", "assistant",
+                "specialist", "coordinator", "supervisor",
+            }
+            if tokens_lower & role_tokens:
+                continue
+            # Reject if EITHER token is a department / function name
+            # (Workplace Operations, Marketing Department, ...). These
+            # match the two-word capitalized shape but aren't people.
+            non_person_tokens = {
+                # Department / function names
+                "workplace", "operations", "operation", "ops",
+                "marketing", "sales", "engineering", "finance",
+                "procurement", "security", "technology", "legal",
+                "design", "research", "development", "support",
+                "administration", "compliance", "audit", "infrastructure",
+                "platform", "product", "program", "project", "portfolio",
+                "delivery", "implementation", "deployment", "integration",
+                "facilities", "logistics", "warehouse",
+                "communications", "training", "education", "hr",
+                "workforce", "personnel", "talent", "resources",
+                "department", "team", "group", "division", "unit",
+                "organization", "function",
+                # Checklist / template / heading words
+                "checklist", "item", "items", "task", "tasks", "type",
+                "types", "category", "categories", "step", "steps",
+                "phase", "phases", "stage", "stages",
+                "due", "start", "end", "date", "dates", "deadline",
+                "milestone", "milestones", "duration", "schedule",
+                "evidence", "criteria", "criterion", "output", "outputs",
+                "input", "inputs", "result", "results",
+                "expected", "required", "actual", "estimated", "planned",
+                "exit", "entry", "review", "cadence", "frequency",
+                "help", "desk", "service",
+                "field", "fields", "column", "row", "rows",
+                "summary", "overview", "detail", "details",
+                "note", "notes", "comment", "comments",
+                "section", "subsection", "appendix", "attachment",
+                "exhibit", "schedule", "addendum",
+                # Status / quality words
+                "status", "priority", "severity", "impact", "risk",
+                "ready", "complete", "pending", "open", "closed",
+                "approved", "rejected", "draft", "final", "active",
+                "blocked", "blocker", "warning", "info",
+                # Generic objects
+                "table", "list", "form", "template", "report", "page",
+                "header", "footer", "title", "subtitle",
+                "version", "revision", "edition",
+            }
+            if tokens_lower & non_person_tokens:
+                continue
+            # Role-context proximity check (±60 chars in this sentence)
+            pre = sentence[max(0, match.start() - 60):match.start()]
+            post = sentence[match.end():min(len(sentence), match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            slug = _slugify(name)
+            if slug and len(slug) >= 5:
+                keys.add(f"stakeholder:{slug}")
+    return keys
+
+
 def extract_keys(
     text: str,
     *,
@@ -2142,6 +2580,23 @@ def extract_keys(
     # already-detected proper-noun runs.
     keys |= _emit_customer_keys(text, proper_noun_keys)
     keys |= _emit_requirement_keys(text)
+    # Direct customer-from-label extraction (Company: X / Customer: X)
+    # for cases where the customer is named explicitly with a corporate
+    # suffix but doesn't trigger the institutional-suffix promotion.
+    keys |= _emit_customer_from_label(text)
+    # Money / currency entities (dollar amounts, USD-prefixed, K/M/B
+    # shorthand). Unblocks downstream pricing-structure validation.
+    keys |= _emit_money_keys(text)
+    # Date and milestone entities. Every detected ISO/US/Long-format
+    # date becomes a ``date:YYYY-MM-DD`` key; dates adjacent to a
+    # milestone-context cue (close date, cutover, hypercare, blackout,
+    # ...) ALSO emit a ``milestone:YYYY-MM-DD`` key for timeline
+    # reasoning.
+    keys |= _emit_date_keys(text)
+    # Named stakeholders / approvers. Detected via "First Last" name
+    # pattern + role-context cue (CFO, VP, Sponsor, Approver, ...)
+    # within ±60 chars in the same sentence.
+    keys |= _emit_stakeholders(text)
 
     return sorted(keys)
 

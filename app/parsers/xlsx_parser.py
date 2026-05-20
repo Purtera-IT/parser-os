@@ -170,6 +170,42 @@ _OPERATIONAL_SHEET_PROFILES: dict[str, _OperationalSheetProfile] = {
 }
 
 
+# Service-line classifier — when a BOM line item description matches
+# one of these tokens (case-insensitive substring match), the line is
+# routed to `service:` instead of `device:`. Real device names rarely
+# include these tokens; service line items almost always do.
+_SERVICE_LINE_TOKENS: tuple[str, ...] = (
+    "labor", "labour", "hours", "hour", "after-hours", "after hours",
+    "support", "supports", "supported",
+    "training", "trainings", "adoption",
+    "workshop", "workshops", "discovery",
+    "design", "designs", "engineering services",
+    "professional services", "managed services",
+    "consulting", "consultancy", "advisory",
+    "hypercare", "warranty", "warrantee",
+    "project management", "program management", "pmo",
+    "governance", "oversight",
+    "implementation", "installation services", "deployment",
+    "commissioning", "decommissioning",
+    "migration", "cutover", "go-live",
+    "documentation services", "as-built", "as built",
+    "testing services", "validation", "uat", "acceptance",
+    "rfp response", "proposal preparation",
+)
+
+
+def _looks_like_service_line(value: str) -> bool:
+    """Return True if a BOM line-item description is a service rather
+    than a physical device.
+
+    Routes labor / support / training / hypercare / governance /
+    consulting / project-management line items to `service:<slug>`
+    instead of `device:<slug>` so the device namespace stays clean.
+    """
+    lower = value.lower()
+    return any(token in lower for token in _SERVICE_LINE_TOKENS)
+
+
 def _norm_op_sheet(sheet_name: str) -> str:
     return normalize_text(sheet_name).replace("_", " ").strip()
 
@@ -2043,12 +2079,24 @@ class XlsxParser(BaseParser):
             ("drop_id", "location"),
             ("mdf", "mdf"),
             ("idf", "idf"),
-            ("device", "device"),
         ]
         for field, etype in mapping:
             v = extracted.get(field, "").strip()
             if v:
-                keys.append(normalize_entity_key(etype, v))
+                key = normalize_entity_key(etype, v)
+                if key:
+                    keys.append(key)
+        # Device vs service classification — BOM rows describing labor,
+        # training, hypercare, project management, etc. are SERVICE line
+        # items, not devices. Routing them to `service:` instead of
+        # `device:` keeps the device namespace clean (only physical
+        # hardware ends up under `device:`).
+        device_value = extracted.get("device", "").strip()
+        if device_value:
+            etype = "service" if _looks_like_service_line(device_value) else "device"
+            key = normalize_entity_key(etype, device_value)
+            if key:
+                keys.append(key)
         return keys
 
     def _emit_subtotal_row(
