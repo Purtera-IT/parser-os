@@ -537,20 +537,36 @@ def test_hard_disqualify_overrides_place_tail(phrase: str) -> None:
 # their site keys so downstream consumers see one logical site, not N.
 
 
-def test_copular_pattern_fuses_three_names() -> None:
-    """`Site ATL-HQ is the Atlanta Headquarters at the Innovation Tower`
-    asserts that ATL-HQ, Atlanta Headquarters, and Innovation Tower
-    are all names for one physical place — fuse all three.
+def test_copular_pattern_fuses_two_names() -> None:
+    """`Site ATL-HQ is the Atlanta Headquarters` asserts X == Y.
+    The pairwise detector fuses these two. Note: "X is the Y AT the
+    Z" is NOT a 3-way alias because "at the" is a containment
+    relationship (Y located at Z), not an equivalence.
     """
-    text = (
-        "Site ATL-HQ is the Atlanta Headquarters at the Innovation "
-        "Tower, 1180 Peachtree Street NE."
-    )
+    text = "Site ATL-HQ is the Atlanta Headquarters."
     groups = _emit_site_aliases_from_text(text)
     assert len(groups) == 1, f"expected 1 group, got {len(groups)}: {groups}"
     g = groups[0]
-    for expected in ("site:atl_hq", "site:atlanta_headquarters", "site:innovation_tower"):
+    for expected in ("site:atl_hq", "site:atlanta_headquarters"):
         assert expected in g, f"{expected!r} missing from fused group {sorted(g)}"
+
+
+def test_optbot_table_row_fuses_all_three_aliases() -> None:
+    """The OPTBOT site-survey table row puts three surface names for
+    the same place in one cell: `ATL-HQ | Atlanta Headquarters -
+    Innovation Tower`. All three must fuse.
+
+    Pair 1: ATL-HQ | Atlanta Headquarters → pipe + mixed shape → alias
+    Pair 2: Atlanta Headquarters - Innovation Tower → hyphen-with-
+            spaces between two name-shaped keys → alias
+    Union-find merges them into one group of three.
+    """
+    text = "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 Peachtree"
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"expected 1 group: {groups}"
+    g = groups[0]
+    for expected in ("site:atl_hq", "site:atlanta_headquarters", "site:innovation_tower"):
+        assert expected in g, f"{expected!r} missing from {sorted(g)}"
 
 
 def test_three_independent_copular_sentences_yield_three_groups() -> None:
@@ -647,6 +663,98 @@ def test_transitive_fusion_across_sentences() -> None:
     assert "site:atl_hq" in g
     assert "site:atlanta_headquarters" in g
     assert "site:innovation_tower" in g
+
+
+# ─── N. PAIRWISE detector — adversarial edge cases ───
+#
+# These tests cover patterns that a sentence-level "any marker → fuse
+# all keys" approach gets wrong. The pairwise detector examines the
+# text between each ADJACENT pair of site-key spans and only fuses
+# the specific pair when the in-between text is aliasing.
+
+
+def test_mixed_shape_list_does_not_over_fuse() -> None:
+    """`Sites: ATL-HQ, Atlanta Headquarters, ATL-WEST, Westside
+    Operations Center` mixes code and name shapes, but commas are
+    list separators — NOT alias markers. A whole-sentence rule would
+    incorrectly fuse all 4 keys; pairwise correctly fuses nothing.
+    """
+    text = "Sites: ATL-HQ, Atlanta Headquarters, ATL-WEST, Westside Operations Center."
+    groups = _emit_site_aliases_from_text(text)
+    # All commas → no pairwise alias → no fusion
+    assert not groups, f"comma-list mixed-shape incorrectly fused: {groups}"
+
+
+def test_two_name_aliases_with_slash_fuse() -> None:
+    """`Atlanta Headquarters / Innovation Tower` — slash between two
+    name-shaped keys is an alias marker (slashes don't appear in
+    lists). Must fuse.
+    """
+    text = "Atlanta Headquarters / Innovation Tower hosts the MDF."
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"slash between two names didn't fuse: {groups}"
+    g = groups[0]
+    assert "site:atlanta_headquarters" in g
+    assert "site:innovation_tower" in g
+
+
+def test_two_name_aliases_with_em_dash_fuse() -> None:
+    """`Atlanta Headquarters — Innovation Tower` — em-dash between two
+    name-shaped keys is an alias marker. Must fuse.
+    """
+    text = "Atlanta Headquarters — Innovation Tower hosts the MDF."
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"em-dash between two names didn't fuse: {groups}"
+    g = groups[0]
+    assert "site:atlanta_headquarters" in g
+    assert "site:innovation_tower" in g
+
+
+def test_two_name_aliases_with_single_hyphen_fuse() -> None:
+    """`Atlanta Headquarters - Innovation Tower` — single hyphen with
+    surrounding spaces between two name-shaped keys is an alias
+    marker (real-world deal docs use this in table cells).
+    """
+    text = "Atlanta Headquarters - Innovation Tower"
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"hyphen between two names didn't fuse: {groups}"
+    g = groups[0]
+    assert "site:atlanta_headquarters" in g
+    assert "site:innovation_tower" in g
+
+
+def test_pipe_between_same_shape_does_not_fuse() -> None:
+    """`Atlanta Headquarters | Westside Operations Center` — pipes
+    are table-column separators. Two name-shaped keys on either side
+    of a pipe are likely two different cells (distinct sites), NOT
+    aliases. Must NOT fuse.
+    """
+    text = "Atlanta Headquarters | Westside Operations Center"
+    groups = _emit_site_aliases_from_text(text)
+    assert not groups, f"pipe between two names incorrectly fused: {groups}"
+
+
+def test_pipe_between_two_codes_does_not_fuse() -> None:
+    """Similarly `ATL-HQ | ATL-WEST` — pipe between two code-shaped
+    keys is two cells of a row, not aliases.
+    """
+    text = "ATL-HQ | ATL-WEST | ATL-AIR"
+    groups = _emit_site_aliases_from_text(text)
+    assert not groups, f"pipe between codes incorrectly fused: {groups}"
+
+
+def test_mixed_row_with_three_distinct_sites() -> None:
+    """A row that genuinely contains three DIFFERENT sites should
+    not fuse them, even when shapes mix:
+    `ATL-HQ at Atlanta Headquarters and ATL-WEST` — "at" + "and" are
+    not alias markers between the pairs.
+    """
+    text = "ATL-HQ at Atlanta Headquarters and ATL-WEST stand ready."
+    groups = _emit_site_aliases_from_text(text)
+    # Only ATL-HQ <-> Atlanta Headquarters could possibly fuse if
+    # "at" counted as alias. It does NOT — "at" is "located at",
+    # i.e. containment, not equivalence. So no fusion expected.
+    assert not groups, f"`at` was incorrectly treated as alias: {groups}"
 
 
 def test_optbot_full_table_row_yields_three_groups() -> None:

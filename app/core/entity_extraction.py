@@ -1335,62 +1335,304 @@ def _looks_like_site_code_key(site_key: str) -> bool:
     return all(len(t) <= 5 for t in tokens)
 
 
+# Between-key inspection — patterns we examine in the text that
+# falls between two adjacent site-key spans within a sentence.
+#
+# Aliasing patterns assert "the two keys are the same place":
+_BETWEEN_COPULAR = re.compile(
+    r"^\s*(?:[—–\-,]\s*)?"
+    r"(?:is|are|was|were)\s+(?:the|an?|our|its|their|also)?\s*"
+    r"(?:also\s+)?(?:known\s+as|called|named|designated)?",
+    re.IGNORECASE,
+)
+_BETWEEN_AKA = re.compile(
+    r"\b(?:a\.?k\.?a\.?|also\s+known\s+as|alias(?:es)?\s+(?:is|of|for)?|"
+    r"known\s+as|called|named|formerly|previously|officially)\b",
+    re.IGNORECASE,
+)
+_BETWEEN_PAREN_ALIAS = re.compile(r"^\s*[—–\-,]?\s*\(")
+_BETWEEN_COLON_BRIDGE = re.compile(r"^\s*:\s*$")
+# Separator-only patterns — pipe / em-dash / en-dash / slash / double-dash /
+# hyphenated with spaces. These are AMBIGUOUS without more info.
+_BETWEEN_SEPARATOR_ONLY = re.compile(
+    r"^\s*(?:\|\s*|[—–]\s*|--\s*|\s+/\s+|-\s+)$"
+)
+# List patterns — commas, semicolons, "and"/"or" with optional articles.
+# These are NOT alias markers; they separate distinct items.
+_BETWEEN_LIST = re.compile(
+    r"^\s*(?:,|;|\s+and\s+|\s+or\s+|,\s*and\s+|,\s*or\s+)\s*(?:the\s+)?$",
+    re.IGNORECASE,
+)
+
+
+def _find_site_key_spans(
+    sentence: str,
+) -> list[tuple[str, int, int]]:
+    """Locate every `site:*` key occurrence in the sentence with its
+    char span.
+
+    Sorted by start offset so callers can iterate adjacent pairs.
+    Returns a list of (canonical_key, start, end) tuples. The spans
+    are derived from the raw matches in the text (site code regex
+    matches + proper-noun runs that pass the structural gate), not
+    from the slugified keys, so we can examine the EXACT char window
+    between two adjacent key surface forms.
+    """
+    spans: list[tuple[str, int, int]] = []
+
+    # Site-code occurrences (ATL-HQ, NYC-DC1, ...)
+    for match in _SITE_CODE_REGEX.finditer(sentence):
+        code = match.group(1)
+        if code in _SITE_CODE_DENYLIST:
+            continue
+        segments = code.split("-")
+        first = segments[0]
+        last = segments[-1]
+        if not _site_code_suffix_ok(last):
+            continue
+        if first in _SITE_CODE_HEAD_DENYLIST:
+            continue
+        slug = _slugify(code)
+        if slug:
+            spans.append((f"site:{slug}", match.start(), match.end()))
+
+    # Proper-noun runs that pass the same structural gate _emit_proper_nouns
+    # applies. We can't easily call that function because it returns
+    # only the keys (no spans), so duplicate the acceptance logic here
+    # with span tracking.
+    for sub_sentence_match in re.finditer(r"[^;:?!\n]+", sentence):
+        sub = sub_sentence_match.group(0)
+        sub_offset = sub_sentence_match.start()
+        for match in _PROPER_NOUN_RUN.finditer(sub):
+            phrase = match.group(1).strip()
+            tokens = phrase.split()
+            if not tokens:
+                continue
+            final = tokens[-1].lower().rstrip(":,.")
+            if final in _NON_SITE_PHRASE_TAIL_NOUNS:
+                continue
+            while tokens and tokens[-1].lower().rstrip(":,.") in _PROPER_NOUN_TRAILING_STOPWORDS:
+                tokens.pop()
+            while tokens and tokens[0].lower() in _LEADING_ARTICLES:
+                tokens.pop(0)
+            if tokens:
+                final_after = tokens[-1].lower().rstrip(":,.")
+                if final_after in _NON_SITE_PHRASE_TAIL_NOUNS:
+                    continue
+            if len(tokens) == 2:
+                trail = tokens[-1].lower().rstrip(":,.")
+                two_org   = trail in _ORG_SUFFIX_TWO_WORD
+                two_place = trail in _SITE_TAIL_NOUNS
+                two_corr  = _has_site_corroboration(sub, match.start(), match.end())
+                if not (two_org or two_place or two_corr):
+                    continue
+            elif len(tokens) < 3:
+                continue
+            phrase_norm = " ".join(tokens)
+            norm = normalize_text(phrase_norm)
+            if norm in _PROPER_NOUN_STOPLIST:
+                continue
+            if norm in _SITE_PHRASE_BLOCKLIST:
+                continue
+            phrase_tokens_lower = {t.lower().rstrip(":,.") for t in tokens}
+            tail = tokens[-1].lower().rstrip(":,.")
+            is_org_tail = tail in _ORG_SUFFIX_TWO_WORD or tail in _SITE_TAIL_NOUNS
+            has_corroboration = _has_site_corroboration(sub, match.start(), match.end())
+            if (not (is_org_tail or has_corroboration)
+                and (phrase_tokens_lower & _NON_SITE_PHRASE_TAIL_NOUNS)):
+                continue
+            if phrase_tokens_lower & _HARD_DISQUALIFY_PHRASE_TOKENS:
+                continue
+            if len(tokens) >= 3:
+                non_stop = [w for w in norm.split() if w not in {"of", "and", "the", "for", "to", "in", "on", "at"}]
+                if len(non_stop) < 2:
+                    continue
+            has_place_tail = tail in _SITE_TAIL_NOUNS
+            has_org_tail   = tail in _ORG_SUFFIX_TWO_WORD
+            if not (has_place_tail or has_org_tail or _has_site_corroboration(sub, match.start(), match.end())):
+                continue
+            slug = _slugify(phrase_norm)
+            if slug and len(slug) >= 6:
+                spans.append((
+                    f"site:{slug}",
+                    sub_offset + match.start(),
+                    sub_offset + match.end(),
+                ))
+
+    spans.sort(key=lambda s: (s[1], s[2]))
+    # De-dupe overlaps: if two spans share a substring (e.g. proper-noun
+    # capture overlapped a site-code capture), keep the longer one.
+    dedup: list[tuple[str, int, int]] = []
+    for span in spans:
+        if dedup and span[1] < dedup[-1][2]:
+            # overlaps with previous — keep whichever is wider
+            if (span[2] - span[1]) > (dedup[-1][2] - dedup[-1][1]):
+                dedup[-1] = span
+            continue
+        dedup.append(span)
+    return dedup
+
+
+def _classify_pair(
+    between_text: str,
+    key_a: str,
+    key_b: str,
+    sentence: str,
+    end_a: int,
+    start_b: int,
+) -> bool:
+    """Return True if the text *between* two adjacent site-key spans
+    indicates the two keys refer to the same physical place.
+
+    The check is pairwise so mixed-shape LISTS don't over-fuse:
+    "Sites: ATL-HQ, Atlanta Headquarters, ATL-WEST, Westside Operations
+    Center" — the comma between ``Atlanta Headquarters`` and ``ATL-WEST``
+    is a list separator, so those two keys do NOT fuse; meanwhile
+    the immediate adjacency ``ATL-HQ , Atlanta Headquarters`` is also
+    a comma (also non-alias). Only the ``ATL-WEST | Westside Operations
+    Center`` pair (if present) would fuse.
+
+    Aliasing patterns (in priority order):
+      1. Explicit AKA / "also known as" / "called" / "designated"
+      2. Copular "is the" / "are the"
+      3. Parenthetical "(key_b)" immediately after key_a
+      4. Colon-bridge "key_a: key_b"
+      5. Separator + mixed shape (pipe/em-dash/slash/hyphen) between
+         a code-shaped key and a name-shaped key
+      6. Em-dash / slash between two name-shaped keys when they are
+         the ONLY two keys in the sentence (no list ambiguity)
+
+    NOT aliasing:
+      - comma / semicolon / "and" / "or" → list separator
+    """
+    if _BETWEEN_AKA.search(between_text):
+        return True
+    if _BETWEEN_COPULAR.search(between_text):
+        return True
+    if _BETWEEN_PAREN_ALIAS.search(between_text):
+        # Verify the paren actually closes between or at key_b
+        paren_close = sentence.find(")", end_a)
+        if paren_close != -1 and paren_close >= start_b - 1:
+            return True
+    if _BETWEEN_COLON_BRIDGE.search(between_text):
+        return True
+    # Strict list separator → never alias
+    if _BETWEEN_LIST.search(between_text):
+        return False
+    # Separator-only between two adjacent keys — alias when:
+    #   (a) mixed shape (code + name) with any common separator
+    #       (pipe / em-dash / slash / hyphen-with-spaces)
+    #   (b) same shape with em-dash, slash, or hyphen-with-spaces
+    #       (these patterns almost never delimit list items —
+    #       lists use commas, semicolons, "and", or "or")
+    # The pipe `|` between SAME-SHAPED keys is treated as a table
+    # column separator, NOT an alias — because pipes typically delimit
+    # different fields. If two adjacent keys of the same shape sit on
+    # either side of a pipe, they're likely two distinct items in a
+    # multi-column row, not aliases.
+    if _BETWEEN_SEPARATOR_ONLY.search(between_text):
+        a_is_code = _looks_like_site_code_key(key_a)
+        b_is_code = _looks_like_site_code_key(key_b)
+        if a_is_code != b_is_code:
+            # Mixed shape with any separator → alias
+            # (e.g. ATL-HQ | Atlanta Headquarters,
+            #       ATL-HQ — Atlanta Headquarters,
+            #       Atlanta Headquarters - ATL-HQ)
+            return True
+        # Same shape — em-dash, en-dash, slash, or hyphen-with-spaces
+        # almost always means alias when between two adjacent
+        # proper-noun phrases. Pipes don't (they're column separators).
+        if re.search(r"[—–]|/|\s-\s|\s--\s", between_text):
+            return True
+    return False
+
+
 def _emit_site_aliases_from_text(text: str) -> list[frozenset[str]]:
     """Return groups of site keys that refer to the same physical place.
 
-    Each group is a set of `site:*` keys co-occurring in a single
-    sentence with at least one of these alias markers:
+    Detection is PAIRWISE: for each adjacent pair of site-key spans in
+    a sentence, examine the text between them and decide whether the
+    two keys are aliases. Pairs marked as aliases feed into a union-
+    find that groups transitive aliases.
 
-      * Copular: "Site ATL-HQ is the Atlanta Headquarters"
-      * Explicit aliasing: "a.k.a.", "also known as", "called",
-        "officially named", "designated"
-      * Separator + mixed-shape: "ATL-HQ | Atlanta Headquarters"
-        or "ATL-HQ — Innovation Tower" (a separator alone is not
-        enough — "ATL-HQ; ATL-WEST; ATL-AIR" is a LIST of three
-        distinct sites, not aliases of one; the requirement that
-        the keys be of MIXED shape — at least one code-shaped key
-        AND at least one name-shaped key — prevents this collapse).
-      * Parenthetical: "Atlanta Headquarters (ATL-HQ)"
-      * Colon-bridge: "ATL-HQ: Atlanta Headquarters"
+    This is more accurate than a sentence-level "any marker → fuse all
+    keys" approach. The whole-sentence rule incorrectly fuses lists
+    like "Sites: ATL-HQ, Atlanta Headquarters, ATL-WEST, Westside Ops
+    Center" because they have mixed shape AND comma separators. The
+    pairwise check sees commas between distinct pairs and only fuses
+    pairs that have a real alias marker between them.
 
-    Groups union-find across sentences so transitive aliases fuse
-    correctly (A↔B in sentence 1, B↔C in sentence 2 → {A, B, C}).
+    See ``_classify_pair`` for the patterns that count as aliasing
+    (copular, AKA, parenthetical, colon-bridge, separator + mixed
+    shape, em-dash/slash between two names).
     """
     if not text:
         return []
-    groups: list[set[str]] = []
-    # Sentence boundaries: period + space, terminal punctuation, newline.
-    # Also split on pipe-table rows (each row is its own context).
+    pairs: list[tuple[str, str]] = []
     for sentence in re.split(r"(?:[?!\n]|\.\s+|\.$)", text):
         s = sentence.strip()
         if not s:
             continue
-        site_keys = _emit_sites(s) | _emit_proper_nouns(s, vendor_keys=set())
-        site_only = {k for k in site_keys if k.startswith("site:")}
-        if len(site_only) < 2:
+        spans = _find_site_key_spans(s)
+        if len(spans) < 2:
             continue
-        # Rule 1: copular / explicit-aliasing → fuse all site keys
-        if _COPULAR_ALIAS_REGEX.search(s):
-            groups.append(site_only)
-            continue
-        # Rule 2: parenthetical aliasing → fuse
-        if _PAREN_ALIAS_REGEX.search(s):
-            groups.append(site_only)
-            continue
-        # Rule 3: colon-bridge aliasing → fuse
-        if _COLON_ALIAS_REGEX.search(s):
-            groups.append(site_only)
-            continue
-        # Rule 4: separator + mixed shape → fuse
-        # We require at least one code-shaped key AND at least one
-        # name-shaped key. Pure-code lists ("ATL-HQ; ATL-WEST; ATL-AIR")
-        # are NOT aliases; pure-name lists ("Innovation Tower, Westside
-        # Operations Center, Airport Logistics Annex") aren't either.
-        if _SEPARATOR_ALIAS_REGEX.search(s):
-            codes = {k for k in site_only if _looks_like_site_code_key(k)}
-            names = site_only - codes
-            if codes and names:
-                groups.append(site_only)
+        # Inspect each adjacent pair of distinct keys.
+        pair_aliases_this_sentence: list[tuple[str, str]] = []
+        for i in range(len(spans) - 1):
+            key_a, _, end_a = spans[i]
+            key_b, start_b, _ = spans[i + 1]
+            if key_a == key_b:
+                continue
+            between = s[end_a:start_b]
+            if _classify_pair(between, key_a, key_b, s, end_a, start_b):
+                pair_aliases_this_sentence.append((key_a, key_b))
+        pairs.extend(pair_aliases_this_sentence)
+        # Row-level rule: in a pipe-separated row whose ONLY distinct
+        # site code is the row's leading identifier, every site key
+        # in subsequent cells refers to that row's site (named
+        # building, address-cell city, etc.).
+        #
+        # Concrete: `ATL-AIR | Airport Logistics Annex | 4200 Global
+        # Gateway Connector, Building C, College Park | 148 users`
+        # — ATL-AIR is the code, Airport Logistics Annex is the
+        # named alias, College Park is the city inside the address
+        # cell. All three refer to the same physical place.
+        #
+        # Guards against over-fusion:
+        #   - Row must contain "|" (it's a pipe-separated row)
+        #   - Row must already have at least one explicit alias pair
+        #     (so we know it's an alias-bearing row, not a list-row)
+        #   - Row must have AT MOST one distinct site code (rows like
+        #     "ATL-HQ | ATL-WEST | ATL-AIR" would have 3 codes and
+        #     fall back to pairwise — which correctly doesn't fuse
+        #     them since pipe + same-shape isn't an alias)
+        if pair_aliases_this_sentence and "|" in s:
+            codes_in_row = {
+                span[0] for span in spans
+                if _looks_like_site_code_key(span[0])
+            }
+            if len(codes_in_row) <= 1:
+                row_keys = [span[0] for span in spans]
+                for i in range(len(row_keys) - 1):
+                    if row_keys[i] != row_keys[i + 1]:
+                        pairs.append((row_keys[i], row_keys[i + 1]))
+    # Promote pairs to groups via union-find.
+    if not pairs:
+        return []
+    groups: list[set[str]] = []
+    for a, b in pairs:
+        target: set[str] | None = None
+        for g in groups:
+            if a in g or b in g:
+                if target is None:
+                    target = g
+                    target.add(a)
+                    target.add(b)
+                else:
+                    target.update(g)
+                    groups.remove(g)
+        if target is None:
+            groups.append({a, b})
     return _coalesce_alias_groups(groups)
 
 
