@@ -140,8 +140,15 @@ def build_orbitbrief_envelope(
         edges=edges,
     )
     indexes = _build_indexes(atoms=atoms, entities=entities, edges=edges)
+    drawings = _build_drawings_section(
+        atoms=atoms,
+        packets=packets,
+        edges=edges,
+        atoms_by_artifact=atoms_by_artifact,
+        documents=documents,
+    )
 
-    return {
+    envelope: dict[str, Any] = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
         "project_id": compile_result.project_id,
         "compile_id": compile_result.compile_id,
@@ -154,6 +161,11 @@ def build_orbitbrief_envelope(
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
     }
+    # Drawings section is omitted entirely on non-schematic projects so
+    # the envelope shape stays byte-identical for the existing test grid.
+    if drawings["artifacts"]:
+        envelope["drawings"] = drawings
+    return envelope
 
 
 def write_orbitbrief_envelope(
@@ -270,6 +282,75 @@ def envelope_to_markdown(envelope: dict[str, Any]) -> str:
             )
         lines.append("")
 
+    drawings = envelope.get("drawings") or {}
+    artifacts = drawings.get("artifacts") or []
+    if artifacts:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Drawings")
+        lines.append("")
+        idx = drawings.get("indexes") or {}
+        det_counts = idx.get("detections_by_target_key") or {}
+        if det_counts:
+            lines.append("**Detection counts across all drawings**")
+            for target_key, count in sorted(det_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                lines.append(f"- {target_key}: {count}")
+            lines.append("")
+        warn_counts = idx.get("warnings_by_type") or {}
+        if warn_counts:
+            lines.append("**Warnings across all drawings**")
+            for wt, count in sorted(warn_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                lines.append(f"- {wt}: {count}")
+            lines.append("")
+        for art in artifacts:
+            lines.append(f"### {art.get('filename') or art.get('artifact_id') or 'drawing'}")
+            lines.append("")
+            qc_ids = art.get("quantity_conflict_packet_ids") or []
+            if qc_ids:
+                lines.append(
+                    f"_{len(qc_ids)} quantity_conflict packet(s): "
+                    + ", ".join(qc_ids)
+                    + "_"
+                )
+                lines.append("")
+            for page in art.get("pages", []) or []:
+                p = page.get("page")
+                sn = page.get("sheet_number") or "?"
+                lines.append(f"#### Page {p} — Sheet {sn}")
+                meta = page.get("sheet_metadata") or {}
+                if meta:
+                    parts: list[str] = []
+                    for k in ("sheet_title", "project_name", "scale", "issue_date", "revision"):
+                        v = meta.get(k)
+                        if v:
+                            parts.append(f"{k}={v}")
+                    if parts:
+                        lines.append("- " + " • ".join(parts))
+                target_counts = page.get("target_counts") or {}
+                if target_counts:
+                    lines.append("- Target counts: " + ", ".join(
+                        f"{k}={v}" for k, v in sorted(target_counts.items())
+                    ))
+                rooms = page.get("rooms") or []
+                if rooms:
+                    lines.append(
+                        "- Rooms: "
+                        + ", ".join(
+                            f"{r.get('label')}{(' ' + r['number']) if r.get('number') else ''}"
+                            for r in rooms
+                        )
+                    )
+                notes = page.get("keyed_notes") or []
+                if notes:
+                    lines.append(f"- Keyed notes: {len(notes)}")
+                schedules = page.get("schedule_rows") or []
+                if schedules:
+                    lines.append(f"- Schedule rows: {len(schedules)}")
+                warnings = page.get("warnings") or []
+                if warnings:
+                    types = sorted({w.get("warning_type") for w in warnings if w.get("warning_type")})
+                    lines.append("- Warnings: " + ", ".join(types))
+                lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -396,6 +477,194 @@ def _atom_to_block_kind(atom: EvidenceAtom) -> str:
         if isinstance(locator_kind, str) and locator_kind:
             return locator_kind
     return "text"
+
+
+def _build_drawings_section(
+    *,
+    atoms: list[EvidenceAtom],
+    packets: list[Any],
+    edges: list[Any],
+    atoms_by_artifact: dict[str, list[EvidenceAtom]],
+    documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the schematic ``drawings`` envelope section.
+
+    Groups every schematic_* atom by (artifact, page), surfaces the
+    parsed legend, the per-page target counts, the resolved schedule
+    rows, the keyed notes, the rooms, the warnings, and any
+    quantity_conflict packets that came out of schematic atoms.
+
+    Empty by design when the project has no schematic atoms — the
+    envelope's caller drops the section in that case so non-schematic
+    projects produce byte-identical output.
+    """
+    schematic_atom_types = {
+        "schematic_sheet_metadata",
+        "schematic_legend",
+        "schematic_room",
+        "schematic_keyed_note",
+        "schematic_note_callout",
+        "schematic_schedule_row",
+        "schematic_detection_target_set",
+        "schematic_symbol_detection",
+        "schematic_warning",
+    }
+    schematic_atoms = [a for a in atoms if a.atom_type.value in schematic_atom_types]
+    if not schematic_atoms:
+        return {"artifacts": [], "indexes": {}}
+
+    artifact_filenames = {d["artifact_id"]: d.get("filename") for d in documents}
+
+    by_art: dict[str, list[EvidenceAtom]] = defaultdict(list)
+    for a in schematic_atoms:
+        by_art[a.artifact_id].append(a)
+
+    artifacts_out: list[dict[str, Any]] = []
+    drawings_by_sheet: dict[str, list[str]] = defaultdict(list)
+    detections_by_target: dict[str, int] = defaultdict(int)
+    warnings_by_type: dict[str, int] = defaultdict(int)
+
+    for artifact_id in sorted(by_art):
+        art_atoms = by_art[artifact_id]
+        per_page: dict[int, dict[str, Any]] = defaultdict(
+            lambda: {
+                "sheet_number": None,
+                "sheet_metadata": None,
+                "legend_id": None,
+                "target_counts": defaultdict(int),
+                "warnings": [],
+                "rooms": [],
+                "keyed_notes": [],
+                "schedule_rows": [],
+                "atom_ids": [],
+            }
+        )
+        legends_out: list[dict[str, Any]] = []
+        for atom in art_atoms:
+            value = atom.value if isinstance(atom.value, dict) else {}
+            page = value.get("page")
+            if isinstance(page, int):
+                per_page[page]["atom_ids"].append(atom.id)
+            atom_kind = atom.atom_type.value
+            if atom_kind == "schematic_sheet_metadata":
+                if isinstance(page, int):
+                    per_page[page]["sheet_metadata"] = {
+                        k: v for k, v in value.items() if k != "page"
+                    }
+                    per_page[page]["sheet_number"] = value.get("sheet_number")
+                    sn = value.get("sheet_number")
+                    if isinstance(sn, str) and sn:
+                        drawings_by_sheet[sn].append(atom.id)
+            elif atom_kind == "schematic_legend":
+                legends_out.append(
+                    {
+                        "legend_id": value.get("legend_id"),
+                        "page": value.get("page"),
+                        "sheet_number": value.get("sheet_number"),
+                        "scope": value.get("scope"),
+                        "entry_count": value.get("entry_count"),
+                    }
+                )
+            elif atom_kind == "schematic_detection_target_set":
+                if isinstance(page, int):
+                    per_page[page]["legend_id"] = value.get("legend_id")
+            elif atom_kind == "schematic_symbol_detection":
+                tk = value.get("target_key")
+                if isinstance(page, int) and isinstance(tk, str):
+                    per_page[page]["target_counts"][tk] += 1
+                    detections_by_target[tk] += 1
+            elif atom_kind == "schematic_warning":
+                wt = value.get("warning_type")
+                if isinstance(page, int):
+                    per_page[page]["warnings"].append(
+                        {
+                            "warning_type": wt,
+                            "detail": value.get("detail"),
+                            "target_key": value.get("target_key"),
+                        }
+                    )
+                if isinstance(wt, str):
+                    warnings_by_type[wt] += 1
+            elif atom_kind == "schematic_room":
+                if isinstance(page, int):
+                    per_page[page]["rooms"].append(
+                        {
+                            "room_id": value.get("room_id"),
+                            "label": value.get("label"),
+                            "number": value.get("number"),
+                        }
+                    )
+            elif atom_kind == "schematic_keyed_note":
+                if isinstance(page, int):
+                    per_page[page]["keyed_notes"].append(
+                        {
+                            "number": value.get("number"),
+                            "text": value.get("text"),
+                            "callout_count": value.get("callout_count", 0),
+                        }
+                    )
+            elif atom_kind == "schematic_schedule_row":
+                if isinstance(page, int):
+                    per_page[page]["schedule_rows"].append(
+                        {
+                            "row_id": value.get("row_id"),
+                            "schedule_kind": value.get("schedule_kind"),
+                            "tag": value.get("tag"),
+                            "fields": value.get("fields", {}),
+                        }
+                    )
+
+        # Schematic quantity conflicts on this artifact.
+        artifact_packet_ids: list[str] = []
+        artifact_atom_ids = {a.id for a in art_atoms}
+        for p in packets:
+            if p.family.value != "quantity_conflict":
+                continue
+            packet_atom_ids = set(
+                (p.contradicting_atom_ids or []) + (p.governing_atom_ids or [])
+            )
+            if packet_atom_ids & artifact_atom_ids:
+                artifact_packet_ids.append(p.id)
+
+        # Stabilize per_page payloads (dict -> dict).
+        pages_out = []
+        for page_index in sorted(per_page):
+            entry = per_page[page_index]
+            pages_out.append(
+                {
+                    "page": page_index,
+                    "sheet_number": entry["sheet_number"],
+                    "legend_id": entry["legend_id"],
+                    "sheet_metadata": entry["sheet_metadata"],
+                    "target_counts": dict(sorted(entry["target_counts"].items())),
+                    "warnings": entry["warnings"],
+                    "rooms": entry["rooms"],
+                    "keyed_notes": entry["keyed_notes"],
+                    "schedule_rows": entry["schedule_rows"],
+                    "atom_ids": sorted(entry["atom_ids"]),
+                }
+            )
+
+        artifacts_out.append(
+            {
+                "artifact_id": artifact_id,
+                "filename": artifact_filenames.get(artifact_id),
+                "pages": pages_out,
+                "legends": sorted(legends_out, key=lambda l: (l.get("page") or 0, l.get("legend_id") or "")),
+                "quantity_conflict_packet_ids": sorted(artifact_packet_ids),
+            }
+        )
+
+    return {
+        "artifacts": artifacts_out,
+        "indexes": {
+            "drawings_by_sheet_number": {
+                k: sorted(v) for k, v in sorted(drawings_by_sheet.items())
+            },
+            "detections_by_target_key": dict(sorted(detections_by_target.items())),
+            "warnings_by_type": dict(sorted(warnings_by_type.items())),
+        },
+    }
 
 
 def _build_summary(
