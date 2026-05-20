@@ -1270,6 +1270,171 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
     return keys
 
 
+# Copular / explicit-aliasing markers — fire alias fusion across
+# ALL site keys in the sentence regardless of shape.
+_COPULAR_ALIAS_REGEX = re.compile(
+    r"(?:"
+    r"\b(?:is|are|was|were)\s+(?:the|an?|our|its|their)\s+\w"
+    r"|\balso\s+known\s+as\b"
+    r"|\ba\.?k\.?a\.?\b"
+    r"|\balias(?:es)?\b"
+    r"|\bknown\s+as\b"
+    r"|\b(?:officially|formerly|previously)\s+(?:called|named|known\s+as)\b"
+    r"|\b(?:called|named|designated|labeled|tagged)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Separator-based markers — only count as alias markers when the
+# sentence contains a MIX of site-code shapes (ATL-HQ) and proper-noun
+# names (Atlanta Headquarters). Pure lists ("ATL-HQ; ATL-WEST; ATL-AIR"
+# are NOT aliases — they're a list of 3 different places).
+_SEPARATOR_ALIAS_REGEX = re.compile(
+    r"(?:"
+    r"\s+\|\s+"           # pipe with whitespace (table-row text)
+    r"|\s+[—–]\s+"        # em-dash or en-dash
+    r"|\s+--\s+"          # double hyphen as separator
+    r"|\s+/\s+"           # slash with whitespace
+    r"|\s+-\s+"           # single hyphen with whitespace
+    r")",
+)
+
+# Parenthetical-aliasing — "Atlanta Headquarters (ATL-HQ)" or
+# "ATL-HQ (Atlanta Headquarters)" → alias.
+_PAREN_ALIAS_REGEX = re.compile(
+    r"\(\s*[A-Z][A-Z0-9\-]{1,}\s*\)"      # "(ATL-HQ)" / "(NYC-DC1)"
+    r"|\(\s*[A-Z][A-Za-z\s]{2,40}\)",     # "(Atlanta Headquarters)"
+)
+
+# Colon-bridge — "ATL-HQ: Atlanta Headquarters" or "Site:
+# Innovation Tower". Used in tables and definition lists.
+_COLON_ALIAS_REGEX = re.compile(
+    r"\b[A-Z][A-Z0-9\-]{2,}:\s+[A-Z][a-zA-Z]"
+    r"|\b(?:site|location|facility|building|address)\s*:\s+[A-Z]",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_site_code_key(site_key: str) -> bool:
+    """Heuristic: does this `site:*` key look like a short alphanumeric
+    code (ATL-HQ, NYC-DC1) versus a multi-word name (Atlanta
+    Headquarters)?
+
+    Used by the alias-fusion logic to distinguish lists-of-distinct-
+    sites ("ATL-HQ; ATL-WEST; ATL-AIR" — all code-shaped, so NOT
+    aliases) from real alias pairs ("ATL-HQ | Atlanta Headquarters"
+    — mixed shapes, so aliases).
+    """
+    slug = site_key.removeprefix("site:")
+    if not slug:
+        return False
+    tokens = slug.split("_")
+    if not tokens or len(tokens) > 4:
+        return False
+    # All tokens short AND none looks like a recognizable English word
+    return all(len(t) <= 5 for t in tokens)
+
+
+def _emit_site_aliases_from_text(text: str) -> list[frozenset[str]]:
+    """Return groups of site keys that refer to the same physical place.
+
+    Each group is a set of `site:*` keys co-occurring in a single
+    sentence with at least one of these alias markers:
+
+      * Copular: "Site ATL-HQ is the Atlanta Headquarters"
+      * Explicit aliasing: "a.k.a.", "also known as", "called",
+        "officially named", "designated"
+      * Separator + mixed-shape: "ATL-HQ | Atlanta Headquarters"
+        or "ATL-HQ — Innovation Tower" (a separator alone is not
+        enough — "ATL-HQ; ATL-WEST; ATL-AIR" is a LIST of three
+        distinct sites, not aliases of one; the requirement that
+        the keys be of MIXED shape — at least one code-shaped key
+        AND at least one name-shaped key — prevents this collapse).
+      * Parenthetical: "Atlanta Headquarters (ATL-HQ)"
+      * Colon-bridge: "ATL-HQ: Atlanta Headquarters"
+
+    Groups union-find across sentences so transitive aliases fuse
+    correctly (A↔B in sentence 1, B↔C in sentence 2 → {A, B, C}).
+    """
+    if not text:
+        return []
+    groups: list[set[str]] = []
+    # Sentence boundaries: period + space, terminal punctuation, newline.
+    # Also split on pipe-table rows (each row is its own context).
+    for sentence in re.split(r"(?:[?!\n]|\.\s+|\.$)", text):
+        s = sentence.strip()
+        if not s:
+            continue
+        site_keys = _emit_sites(s) | _emit_proper_nouns(s, vendor_keys=set())
+        site_only = {k for k in site_keys if k.startswith("site:")}
+        if len(site_only) < 2:
+            continue
+        # Rule 1: copular / explicit-aliasing → fuse all site keys
+        if _COPULAR_ALIAS_REGEX.search(s):
+            groups.append(site_only)
+            continue
+        # Rule 2: parenthetical aliasing → fuse
+        if _PAREN_ALIAS_REGEX.search(s):
+            groups.append(site_only)
+            continue
+        # Rule 3: colon-bridge aliasing → fuse
+        if _COLON_ALIAS_REGEX.search(s):
+            groups.append(site_only)
+            continue
+        # Rule 4: separator + mixed shape → fuse
+        # We require at least one code-shaped key AND at least one
+        # name-shaped key. Pure-code lists ("ATL-HQ; ATL-WEST; ATL-AIR")
+        # are NOT aliases; pure-name lists ("Innovation Tower, Westside
+        # Operations Center, Airport Logistics Annex") aren't either.
+        if _SEPARATOR_ALIAS_REGEX.search(s):
+            codes = {k for k in site_only if _looks_like_site_code_key(k)}
+            names = site_only - codes
+            if codes and names:
+                groups.append(site_only)
+    return _coalesce_alias_groups(groups)
+
+
+def _coalesce_alias_groups(groups: list[set[str]]) -> list[frozenset[str]]:
+    """Union-find: merge any sets that share at least one key.
+
+    Iterates until no overlaps remain so transitive aliases fuse
+    correctly (A↔B in one sentence, B↔C in another → {A,B,C}).
+    """
+    if not groups:
+        return []
+    merged: list[set[str]] = []
+    for g in groups:
+        target: set[str] | None = None
+        for m in merged:
+            if g & m:
+                if target is None:
+                    target = m
+                    target.update(g)
+                else:
+                    # g overlaps with multiple existing groups — fuse them.
+                    target.update(m)
+                    merged.remove(m)
+        if target is None:
+            merged.append(set(g))
+    # Re-pass until stable (single-pass might miss chained overlaps).
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(merged):
+            j = i + 1
+            while j < len(merged):
+                if merged[i] & merged[j]:
+                    merged[i].update(merged[j])
+                    del merged[j]
+                    changed = True
+                else:
+                    j += 1
+            i += 1
+    # Deterministic sort: groups by smallest key, keys within group sorted.
+    return sorted((frozenset(g) for g in merged), key=lambda fs: sorted(fs)[0])
+
+
 def _has_site_corroboration(sentence: str, span_start: int, span_end: int) -> bool:
     """Return True if a street address or explicit site-context cue
     appears within ~80 chars of the matched span in this sentence.

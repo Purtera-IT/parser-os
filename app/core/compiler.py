@@ -14,7 +14,12 @@ from app.core.cache import (
 from app.core.candidate_adjudicator import adjudicate_candidates
 from app.core.candidates import summarize_candidate_outcomes
 from app.core.entity_extraction import enrich_atoms as enrich_entity_keys
-from app.core.entity_resolution import extract_entity_records, resolve_aliases
+from app.core.entity_resolution import (
+    collect_site_alias_groups,
+    extract_entity_records,
+    fuse_alias_groups,
+    resolve_aliases,
+)
 from app.core.quality_metrics import compute_quality
 from app.core.graph_builder import build_edges
 from app.core.ids import stable_id
@@ -494,6 +499,14 @@ def compile_project(
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
         )
+        # Cross-mention alias fusion: collapse `site:atl_hq +
+        # site:atlanta_headquarters + site:innovation_tower` (three
+        # surface names for one physical place) into a single
+        # EntityRecord whose `aliases` field carries all three keys.
+        # Detected via co-mention patterns in atom raw_text (copular
+        # "is the", em-dash, slash, parenthetical aliasing, ...).
+        site_alias_groups = collect_site_alias_groups(atoms)
+        entities = fuse_alias_groups(entities, site_alias_groups)
         telemetry.end_stage(stage, output_count=len(entities))
 
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:

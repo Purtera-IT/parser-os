@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.entity_extraction import _emit_proper_nouns, _emit_sites
+from app.core.entity_extraction import (
+    _emit_proper_nouns,
+    _emit_site_aliases_from_text,
+    _emit_sites,
+)
 
 
 # ─── A. site codes ───
@@ -522,4 +526,147 @@ def test_hard_disqualify_overrides_place_tail(phrase: str) -> None:
     assert not site_keys, (
         f"hard-disqualify token failed to override place-tail: "
         f"{sorted(site_keys)} from {phrase!r}"
+    )
+
+
+# ─── M. cross-mention alias fusion ───
+#
+# When a single sentence asserts that two surface names refer to the
+# same physical place (via copular "is the", separators + mixed shape,
+# parenthetical, or colon-bridge), the alias-fusion pass should group
+# their site keys so downstream consumers see one logical site, not N.
+
+
+def test_copular_pattern_fuses_three_names() -> None:
+    """`Site ATL-HQ is the Atlanta Headquarters at the Innovation Tower`
+    asserts that ATL-HQ, Atlanta Headquarters, and Innovation Tower
+    are all names for one physical place — fuse all three.
+    """
+    text = (
+        "Site ATL-HQ is the Atlanta Headquarters at the Innovation "
+        "Tower, 1180 Peachtree Street NE."
+    )
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"expected 1 group, got {len(groups)}: {groups}"
+    g = groups[0]
+    for expected in ("site:atl_hq", "site:atlanta_headquarters", "site:innovation_tower"):
+        assert expected in g, f"{expected!r} missing from fused group {sorted(g)}"
+
+
+def test_three_independent_copular_sentences_yield_three_groups() -> None:
+    """Three sentences each asserting one alias relationship must
+    produce three separate (non-overlapping) groups — not one
+    super-group.
+    """
+    text = (
+        "ATL-HQ is the Atlanta Headquarters. "
+        "ATL-WEST is the Westside Operations Center. "
+        "ATL-AIR is the Airport Logistics Annex."
+    )
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 3, f"expected 3 separate groups, got {len(groups)}: {groups}"
+    canonical_keys = {sorted(g)[0] for g in groups}
+    assert canonical_keys == {"site:airport_logistics_annex", "site:atl_hq", "site:atl_west"}
+
+
+def test_pipe_separator_with_mixed_shape_fuses() -> None:
+    """Table-row text uses pipes as separators. When the row contains
+    a site code (ATL-HQ) AND a multi-word name (Atlanta Headquarters),
+    the pipe is an alias marker.
+    """
+    text = "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 Peachtree Street NE"
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"expected 1 group: {groups}"
+    assert "site:atl_hq" in groups[0]
+    assert "site:atlanta_headquarters" in groups[0]
+    assert "site:innovation_tower" in groups[0]
+
+
+def test_pure_code_list_does_not_fuse() -> None:
+    """`project_sites = ATL-HQ; ATL-WEST; ATL-AIR` is a LIST of three
+    distinct sites, not aliases of one. The semicolon list (and any
+    pure-code or pure-name list) must NOT fuse.
+    """
+    text = "project_sites = ATL-HQ; ATL-WEST; ATL-AIR"
+    groups = _emit_site_aliases_from_text(text)
+    assert not groups, f"pure-code list incorrectly fused: {groups}"
+
+
+def test_pure_name_list_does_not_fuse() -> None:
+    """A list of named buildings without any code-shaped key is also
+    a list of distinct places, not aliases.
+    """
+    text = (
+        "Coverage includes Innovation Tower, Westside Operations Center, "
+        "and Airport Logistics Annex."
+    )
+    groups = _emit_site_aliases_from_text(text)
+    assert not groups, f"pure-name list incorrectly fused: {groups}"
+
+
+def test_parenthetical_aliasing_fuses() -> None:
+    """`Atlanta Headquarters (ATL-HQ)` and `ATL-HQ (Atlanta Headquarters)`
+    are both common alias styles — paren contents are alternate names.
+    """
+    text_a = "Atlanta Headquarters (ATL-HQ) hosts the executive suite."
+    groups = _emit_site_aliases_from_text(text_a)
+    assert groups and "site:atl_hq" in groups[0] and "site:atlanta_headquarters" in groups[0]
+
+    text_b = "ATL-HQ (Atlanta Headquarters) is the primary site."
+    groups = _emit_site_aliases_from_text(text_b)
+    assert groups and "site:atl_hq" in groups[0] and "site:atlanta_headquarters" in groups[0]
+
+
+def test_explicit_aka_fuses() -> None:
+    """`Atlanta Headquarters, also known as the Innovation Tower`
+    explicitly asserts two surface names — fuse them.
+    """
+    text = (
+        "The Atlanta Headquarters, also known as the Innovation Tower, "
+        "hosts the primary MDF."
+    )
+    groups = _emit_site_aliases_from_text(text)
+    assert groups, f"explicit aka pattern failed to fuse: {groups}"
+    g = groups[0]
+    assert "site:atlanta_headquarters" in g
+    assert "site:innovation_tower" in g
+
+
+def test_transitive_fusion_across_sentences() -> None:
+    """If sentence 1 says A↔B and sentence 2 says B↔C, the output
+    must contain a single fused group {A, B, C} — not two groups
+    {A, B} and {B, C}.
+    """
+    text = (
+        "ATL-HQ is the Atlanta Headquarters. "
+        "The Innovation Tower is also called the Atlanta Headquarters."
+    )
+    groups = _emit_site_aliases_from_text(text)
+    assert len(groups) == 1, f"transitive fusion failed: {groups}"
+    g = groups[0]
+    assert "site:atl_hq" in g
+    assert "site:atlanta_headquarters" in g
+    assert "site:innovation_tower" in g
+
+
+def test_optbot_full_table_row_yields_three_groups() -> None:
+    """The OPTBOT site-survey table is the gold real-world test:
+    three rows each fuse their code with their named building(s),
+    and the rows themselves don't cross-fuse.
+    """
+    text = (
+        "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 "
+        "Peachtree Street NE, Floors 12-15 | 620 users | 38 rooms. "
+        "ATL-WEST | Westside Operations Center | 976 Brady Avenue "
+        "NW, Suites 200-260 | 285 users | 21 rooms. "
+        "ATL-AIR | Airport Logistics Annex | College Park, GA "
+        "| 90 users | 5 rooms."
+    )
+    groups = _emit_site_aliases_from_text(text)
+    canonical_keys = {sorted(g)[0] for g in groups}
+    # Three rows → three groups, one per site
+    assert len(groups) == 3, f"expected 3 distinct site groups: {[sorted(g) for g in groups]}"
+    # Verify cross-row keys did NOT fuse (no super-group of 6+)
+    assert all(len(g) <= 4 for g in groups), (
+        f"a group fused across rows incorrectly: {[sorted(g) for g in groups]}"
     )
