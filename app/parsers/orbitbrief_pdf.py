@@ -3456,7 +3456,7 @@ def _build_schematic_prepass_failure_atom(
     detail = f"{type(exception).__name__}: {exception}"
     truncated = traceback[-1500:] if len(traceback) > 1500 else traceback
     warning = SchematicWarning.make(
-        warning_type="weak_legend",  # closest existing type for "something broke"
+        warning_type="prepass_failure",
         page_index=0,
         sheet_number=None,
         detail=f"Schematic pre-pass raised {detail}",
@@ -3594,7 +3594,7 @@ def _run_schematic_pre_pass(
                             atoms.append(
                                 emit_warning_atom(
                                     warning=SchematicWarning.make(
-                                        warning_type="weak_legend",
+                                        warning_type="ocr_recovered",
                                         page_index=page_index,
                                         sheet_number=None,
                                         detail=(
@@ -4347,7 +4347,7 @@ def _run_schematic_pre_pass(
                         atoms.append(
                             emit_warning_atom(
                                 warning=SchematicWarning.make(
-                                    warning_type="weak_legend",
+                                    warning_type="weak_declared_count_provenance",
                                     page_index=resolved.legend.page_index,
                                     sheet_number=resolved.legend.sheet_number,
                                     detail=(

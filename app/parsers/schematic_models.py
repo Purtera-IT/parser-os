@@ -388,8 +388,17 @@ WarningType = Literal[
     "ambiguous_legend_reference",
     "unresolved_legend_reference",
     "ocr_unavailable",
+    "ocr_recovered",
     "low_ocr_confidence",
     "schematic_quantity_contradiction",
+    # Pre-pass crash: the schematic pre-pass raised inside
+    # ``OrbitBriefPdfParser.parse_artifact``. The atom's value
+    # carries the failure message and a truncated traceback.
+    "prepass_failure",
+    # A legend row declared a count but had no replayable symbol
+    # bbox — the declared-count atom was refused on provenance
+    # grounds and surfaced as a warning instead.
+    "weak_declared_count_provenance",
 ]
 
 
