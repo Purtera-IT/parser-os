@@ -792,6 +792,15 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         "section_path": _atom_section_path(atom),
         "locator": dict(primary_ref.locator) if primary_ref is not None else {},
         "verified": _atom_verification_state(atom),
+        # A5 cross-doc reconciliation needs entity_keys + structured
+        # values on every atom so consumers can group atoms touching
+        # the same logical entity (e.g. total_contract_value) and
+        # flag value contradictions across documents. Previously the
+        # compact projection dropped both, forcing PM_HANDOFF to
+        # regex over raw_text. Same data unlocks B2 (risk register),
+        # B6 (per-site pricing rollup), etc.
+        "entity_keys": list(atom.entity_keys),
+        "structured": dict(atom.value) if atom.value else {},
     }
 
 
