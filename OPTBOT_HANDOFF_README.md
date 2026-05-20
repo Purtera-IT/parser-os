@@ -454,14 +454,110 @@ address text in its source atoms; downstream consumers can extract the city
 from the proper-noun matcher's output (`site:college_park` is folded into
 ATL-AIR).
 
-### 7.3 — Receipt verification under `--allow-unverified-receipts`
+### 7.3 — No stakeholder / person entities (TIER 1 gap, deferred)
+
+The OPTBOT deal mentions 6 named approvers across the documents:
+
+| Name | Role | Atoms mentioning |
+|---|---|---|
+| Jordan Ames | VP Workplace Operations | 5 |
+| Priya Narang | technical design approver | 6 |
+| Camila Brooks | security / data approver | 4 |
+| Elliot Tran | procurement | 5 |
+| Renee Watkins | delivery governance | 9 |
+| Morgan Lee | CFO Delegate | 2 |
+
+**Currently zero `stakeholder:` or `person:` entities are produced.** The
+proper-noun matcher captures `site:` and `customer:` shapes but doesn't
+emit person entities. SOW routing and approval workflow downstream cannot
+match approvers to roles without these.
+
+**Where to add it**: new `_emit_stakeholders` function in
+`app/core/entity_extraction.py`, hooked into `extract_keys` near
+`_emit_proper_nouns`. Should detect `First Last` capitalized pairs with a
+role context cue ("approves", "owner", "approver", "CFO", "VP", "Manager",
+"Director", "Sponsor"). Suggest emitting `stakeholder:first_last` keys with
+the surrounding role as an alias or metadata field.
+
+### 7.4 — Customer entity missing (TIER 1 gap, deferred)
+
+The deal overview text contains `Company: OPTBOT, Inc.` but no
+`customer:optbot` entity is produced. (My cleanup fix correctly killed
+the `customer:customer` noise but didn't add the real customer detection
+back.)
+
+**Where to add it**: add a "Company:" / "Customer:" / "Account:" label
+detector to `_emit_customer_keys` in `app/core/entity_extraction.py`.
+When the labeled value is a proper-noun with a corporate suffix
+(`Inc`, `LLC`, `Corp`, `Ltd`, `Co`), emit `customer:<slug>`.
+
+### 7.5 — Three packets anchored to `:unknown` (TIER 1 gap, deferred)
+
+Of the 16 OPTBOT packets, three lost their entity anchor:
+
+- `scope_exclusion` → `site:unknown`
+- `site_access` → `site:unknown`
+- `scope_inclusion` → `device:unknown`
+
+These packets have content but their anchor entity didn't resolve. The
+`anchor_key` is set to a sentinel `:unknown` rather than dropping the
+packet, which is correct (you'd lose information otherwise) but the
+systems engineer needs to know these are partial.
+
+**Where to investigate**: `app/core/packetizer.py` — look at the
+fallback path when `_select_anchor` can't find a deterministic entity
+from `governing_atom_ids`. Possibly worth filtering at the packet level
+or surfacing as `needs_review` with a clearer flag.
+
+### 7.6 — Money values not normalized as entities (TIER 2 gap, deferred)
+
+OPTBOT mentions multiple critical dollar amounts:
+
+- `$1,847,250` — total deal amount
+- `$1,500,000` — CFO approval threshold
+- `$250,000` — budget owner threshold
+- `$1,015,626` — hardware subtotal
+- `$536,030` — services subtotal
+- `$295,594` — logistics / freight / contingency / tax / fees
+
+These appear in raw text but produce **zero `money:` / `currency:`
+entities**. The OrbitBrief Core scorecard flagged "Pricing structure —
+pricing model not found" as a blocker — money entity extraction would
+unblock that.
+
+**Where to add it**: new `_emit_money_keys` in `app/core/entity_extraction.py`.
+Regex pattern: `\$\s*[\d,]+(?:\.\d+)?(?:\s*[KMB])?\b`. Emit
+`money:<normalized_amount>` keys. Consider also attaching the surrounding
+label context (`total`, `threshold`, `subtotal`) as an alias or metadata.
+
+### 7.7 — Dates not extracted as milestone entities (TIER 2 gap, deferred)
+
+Sixteen atoms contain ISO dates in raw text:
+
+- `2026-07-31` — close date
+- `2026-05-20` — mobilization start
+- `2026-08-14` — implementation end
+- `2026-06-14` — quote expiry
+- `2026-06-17` to `2026-06-21` — executive blackout
+- `2026-08-15` — hypercare start
+
+Zero `date:` or `milestone:` entity keys are emitted. Timeline reasoning
+(critical path, deadlines, blackout conflicts) needs structured date
+entities.
+
+**Where to add it**: new `_emit_date_keys` / `_emit_milestone_keys` in
+`app/core/entity_extraction.py`. ISO date regex
+`\b(20\d\d)-(\d\d)-(\d\d)\b` is straightforward; the labeling context
+("close date", "mobilization", "blackout") needs a small regex set.
+
+### 7.8 — Receipt verification under `--allow-unverified-receipts`
 
 Two PDF atoms (`atm_7eb5d051335f550b`, `atm_b6a06f3797db5857`) have receipt
 verification failures that get downgraded to warnings under
 `--allow-unverified-receipts`. Pre-existing, not introduced by my changes.
 For production semantics, drop the flag and these would become errors.
 
-### 7.4 — `pytest` crashes on Windows dev env
+### 7.9 — `pytest` crashes on Windows dev env
 
 Local pytest hits `STATUS_STACK_BUFFER_OVERRUN` on this Windows / CPython
 3.12.3 setup. The CI workflow at `.github/workflows/test.yml` runs the full
@@ -608,6 +704,29 @@ and why" so your engineer can pull any single commit for narrow review.
 | Top-level README + architecture | [README.md](README.md), [app/README.md](app/README.md) |
 
 ---
+
+## 11a. Follow-up PR priorities (deferred work, ordered by leverage)
+
+These are the deltas I audited after shipping the cleanup but explicitly
+deferred for a follow-up PR rather than bloating this hand-off. Priority
+order is what unlocks the most downstream value, not what's easiest:
+
+| # | Gap | Adds | Effort | Where |
+|---|---|---|---|---|
+| 1 | Stakeholder / person entities (§7.3) | 6 named approvers on OPTBOT alone — SOW approval routing | M | `app/core/entity_extraction.py` → new `_emit_stakeholders` |
+| 2 | Customer entity from "Company: X" label (§7.4) | `customer:optbot` (currently no customer record) | S | `app/core/entity_extraction.py` → `_emit_customer_keys` extension |
+| 3 | Money / currency entities (§7.6) | `money:1_847_250` etc. — unblocks Core "pricing structure" blocker | M | `app/core/entity_extraction.py` → new `_emit_money_keys` |
+| 4 | Date / milestone entities (§7.7) | timeline reasoning (close date, blackouts, cutover) | M | `app/core/entity_extraction.py` → new `_emit_date_keys` |
+| 5 | `:unknown` packet anchors (§7.5) | 3 of 16 OPTBOT packets carry partial data | S | `app/core/packetizer.py` `_select_anchor` |
+| 6 | Service-vs-device classification (§7.1) | clean separation in BOM line items | M | `app/parsers/xlsx_parser.py` — read BOM category column |
+| 7 | Address regex coverage (§7.2) | catches "Global Gateway Connector"-style suffixes | S | `app/core/entity_extraction.py` `_STREET_SUFFIXES` |
+
+Items 1, 2, 5 are the highest-leverage / lowest-risk follow-up. Items 3
+and 4 unblock the Core scorecard blocker that the optbotdealpath.md
+flagged. Items 6 and 7 are nice-to-have polish.
+
+A follow-up PR could ship items 1+2+5 together and stay under a day.
+Items 3+4 are their own PR with their own test coverage.
 
 ## 12. Open questions for the systems engineer
 
