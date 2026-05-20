@@ -333,3 +333,193 @@ def test_mock_classification_phrases_never_become_sites(phrase: str) -> None:
     assert not site_keys, (
         f"mock/classification phrase leaked: {sorted(site_keys)} from {phrase!r}"
     )
+
+
+# ─── K. UNIVERSALITY — brand-new junk phrases the deny lists have ───
+# ─── never seen must still drop because positive site signal is   ───
+# ─── absent.                                                       ───
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        # All of these are plausible deal-doc phrases that don't appear
+        # in any existing deny list. They share one property: no place-
+        # suffix, no org-suffix, no address nearby, no site context.
+        # The structural gate alone must drop them.
+        "Brilliant Strategic Initiative",
+        "Advanced Process Framework",
+        "Quarterly Operating Review",
+        "Cross Functional Action Group",
+        "Continuous Improvement Plan",
+        "Customer Success Roadmap",
+        "Annual Vendor Audit",
+        "Capital Investment Forecast",
+        "Risk Mitigation Strategy",
+        "Operational Excellence Charter",
+        "Change Management Committee",
+        "Procurement Optimization Initiative",
+        "Vendor Performance Scorecard",
+        "Compliance Readiness Assessment",
+        "Technology Refresh Justification",
+    ],
+)
+def test_unknown_junk_phrases_drop_without_positive_signal(phrase: str) -> None:
+    """A phrase the deny lists have never seen still drops because
+    it lacks any positive site signal (no place-suffix in tail, no
+    address corroboration, no explicit site-context cue).
+    """
+    keys = _emit_proper_nouns(phrase, vendor_keys=set())
+    site_keys = {k for k in keys if k.startswith("site:")}
+    assert not site_keys, (
+        f"unknown junk leaked without positive signal: {sorted(site_keys)} "
+        f"from {phrase!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "phrase,expected_substring",
+    [
+        # Place-tail signal: tail is a known place-noun → accept.
+        ("Magnolia Crossing Innovation Tower", "innovation_tower"),
+        ("Riverside Distribution Warehouse", "distribution_warehouse"),
+        ("Cedar Park Conference Pavilion", "conference_pavilion"),
+        ("Lakeside Research Campus", "research_campus"),
+        ("Harbor Logistics Terminal", "logistics_terminal"),
+        ("Greenfield Manufacturing Plant", "manufacturing_plant"),
+    ],
+)
+def test_unknown_real_sites_with_place_tail_are_captured(
+    phrase: str, expected_substring: str,
+) -> None:
+    """A site we've never seen before still surfaces when its tail
+    is a recognized place-noun.
+    """
+    keys = _emit_proper_nouns(phrase, vendor_keys=set())
+    site_keys = {k for k in keys if k.startswith("site:")}
+    assert any(expected_substring in k for k in site_keys), (
+        f"expected {expected_substring!r} in {sorted(site_keys)} "
+        f"from {phrase!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Address corroboration: phrase with no place-tail but with
+        # an address in the same sentence → accept.
+        "Phase 2 mobilization begins at Birchwood Atelier, 482 Maple "
+        "Avenue, Burlington VT 05401.",
+        # Explicit site-context cue near a place name.
+        "Site visit scheduled for Greenleaf Commons on June 10.",
+        "Located at the Aurora Operations Hub on the east edge.",
+        "Based in the Continental Distribution Network office building.",
+        "On-site at Pinnacle Logistics Yard for the kickoff.",
+    ],
+)
+def test_address_or_context_corroborates_unknown_phrases(text: str) -> None:
+    """When a Capitalized run lacks a place-tail but has an address
+    or explicit site-context cue nearby, accept it as a site.
+    """
+    keys = _emit_proper_nouns(text, vendor_keys=set())
+    site_keys = {k for k in keys if k.startswith("site:")}
+    assert site_keys, (
+        f"address/context-corroborated phrase produced no site: {text!r} "
+        f"→ {sorted(site_keys)}"
+    )
+
+
+# ─── L. UNIVERSAL site-code gate — only known site-suffixes pass ───
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Brand-new codes the deny list has never seen — these end in
+        # known site-suffixes so they MUST be captured.
+        ("Phase 1 hits HOUSTON-WAREHOUSE in week 3.", "site:houston_warehouse"),
+        ("Cutover proceeds at DALLAS-OPS by Friday.", "site:dallas_ops"),
+        ("Lab equipment lands at BERLIN-LAB on May 1.", "site:berlin_lab"),
+        ("Final stage covers TOKYO-HQ rollout.", "site:tokyo_hq"),
+        ("Cross-connect at SEATTLE-DC3 needs attention.", "site:seattle_dc3"),
+        ("Mobile team visits CHICAGO-FL12 next sprint.", "site:chicago_fl12"),
+        ("Building rights for PARIS-BLDG2 are pending.", "site:paris_bldg2"),
+        ("Inventory at PHOENIX-NORTH increases 12%.", "site:phoenix_north"),
+    ],
+)
+def test_unknown_site_codes_with_known_suffix_are_captured(
+    text: str, expected: str,
+) -> None:
+    """Codes with city/airport prefixes we've never enumerated still
+    capture, because the SUFFIX (HQ, WAREHOUSE, OPS, LAB, DC3, FL12,
+    BLDG2, NORTH) carries recognized site-function meaning.
+    """
+    keys = _emit_sites(text)
+    assert expected in keys, f"expected {expected!r} in {sorted(keys)}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Brand-new junk codes whose suffix is NOT in the allowlist —
+        # they must drop, no matter what the head looks like.
+        "Reference ALPHA-FOOBAR for the test data.",
+        "Container BETA-ZULU-XRAY holds the artifacts.",
+        "Workflow GAMMA-FOO-2026 runs nightly.",
+        "Tag ECHO-DELTA-001 was assigned today.",
+        "Pipeline OMEGA-SIGMA-PI is internal-only.",
+        # Mock/dev codes with garbage suffixes — also drop.
+        "MOCK-OPTBOT-FOOBAR is fictitious.",
+        "DEV-ATL-XRAY-2026 belongs to the test pipeline.",
+        # Project codes whose suffix happens to be a 3-letter airport
+        # prefix (ATL, NYC, LAX) — should DROP because airport prefixes
+        # alone aren't site-function suffixes.
+        "Tracking number HS-DEAL-ATL never refers to a site.",
+        "Quote Q-PROJ-NYC is part of the proposal.",
+        "Order O-WO-LAX is in fulfillment.",
+    ],
+)
+def test_unknown_junk_codes_drop_without_allowed_suffix(text: str) -> None:
+    """A hyphenated code whose last segment is NOT a known site
+    suffix is dropped, no matter what its head segments look like.
+    This is what makes the gate universal.
+    """
+    keys = _emit_sites(text)
+    site_keys = {k for k in keys if k.startswith("site:")}
+    assert not site_keys, (
+        f"junk code leaked despite no allowed suffix: {sorted(site_keys)} "
+        f"from {text!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        # Phrases with a valid place-tail BUT contaminated by a
+        # hard-disqualify token (mock/test/demo/fake/sample/...).
+        # These must drop — the test-marker token poisons the whole
+        # phrase even though "Tower" / "Lab" / "Center" are real
+        # place tails.
+        "Mock Atlanta Tower",
+        "Test Innovation Lab",
+        "Demo Houston Warehouse",
+        "Sample Logistics Annex",
+        "Fake Operations Center",
+        "Dummy Distribution Campus",
+        "Example Manufacturing Plant",
+        "Stub Lakeside Pavilion",
+        "Synthetic Riverside Terminal",
+        "Placeholder Conference Hall",
+    ],
+)
+def test_hard_disqualify_overrides_place_tail(phrase: str) -> None:
+    """Even with a valid place-tail (Tower, Lab, Center, ...), the
+    presence of a test-data marker token (mock/test/demo/fake/...)
+    drops the phrase entirely.
+    """
+    keys = _emit_proper_nouns(phrase, vendor_keys=set())
+    site_keys = {k for k in keys if k.startswith("site:")}
+    assert not site_keys, (
+        f"hard-disqualify token failed to override place-tail: "
+        f"{sorted(site_keys)} from {phrase!r}"
+    )

@@ -219,14 +219,21 @@ _STREET_ADDRESS_REGEX = re.compile(
 
 
 # Site-code pattern: ATL-HQ / ATL-WEST / ATL-AIR / NYC-DC1 / SFO-HQ /
-# CHI-MAIN style first-class site identifiers. Second segment must
-# start with a letter so RJ-45 / CAT-6 / Wi-Fi don't slip through.
-# These are the load-bearing site identifiers on most enterprise
-# deals — without explicit support, multi-segment site codes (ATL-WEST)
-# get missed entirely because they're single tokens and bypass the
-# proper-noun multi-word matcher.
+# CHI-MAIN-EAST / HOUSTON-WAREHOUSE style first-class site identifiers.
+#
+# First segment: 3–10 uppercase letters (covers 3-letter airport codes
+#   like ATL/SFO/LAX, 4-letter city codes like CHGO, and full city
+#   names like HOUSTON/DALLAS/BERLIN).
+# Trailing segments: must start with a letter, 1–10 alphanumerics.
+#   Up to 4 trailing segments (handles CHI-MAIN-EAST-1).
+#
+# Acceptance is gated by a positive suffix-allowlist (see
+# ``_SITE_CODE_SUFFIX_ALLOWLIST`` and ``_SITE_CODE_SUFFIX_PATTERN``)
+# so unknown junk codes (MOCK-OPTBOT-ATL, DEV-ATL, MSA-2026-001) can't
+# leak through — the absence of a recognized site-function suffix is
+# itself the filter.
 _SITE_CODE_REGEX = re.compile(
-    r"\b([A-Z]{2,5}-[A-Z][A-Z0-9]{0,5}(?:-[A-Z][A-Z0-9]{0,5})?)\b"
+    r"\b([A-Z]{3,10}(?:-[A-Z][A-Z0-9]{0,9}){1,4})\b"
 )
 # Known non-site hyphenated all-caps codes that look site-shaped but
 # aren't — connectors, network specs, manufacturer abbreviations, etc.
@@ -275,6 +282,155 @@ _SITE_CODE_HEAD_DENYLIST: frozenset[str] = frozenset({
     "ERR", "WRN", "INF", "DBG", "FATAL",
     # role / org prefixes that can look 3-letter site-shaped
     "USR", "ADM", "MGR", "EMP", "STAFF",
+})
+
+
+# Positive suffix allowlist for hyphenated site codes. A code only
+# becomes a site when its LAST segment matches one of these tokens
+# (closed list) or matches ``_SITE_CODE_SUFFIX_PATTERN`` (open shape
+# for numbered floors/buildings/data-centers/wings).
+#
+# This is the load-bearing universal gate: instead of trying to
+# enumerate every possible junk word in a head/middle position, we
+# require the trailing token to carry a known site-function meaning
+# (direction, facility type, datacenter number, floor number, wing).
+# Anything that doesn't end in a recognized site suffix fails the
+# gate, no matter what its head or middle segments look like.
+_SITE_CODE_SUFFIX_ALLOWLIST: frozenset[str] = frozenset({
+    # === Cardinal directions ===
+    "N", "S", "E", "W", "NE", "NW", "SE", "SW",
+    "NORTH", "SOUTH", "EAST", "WEST", "CENTRAL",
+    "NORTHEAST", "NORTHWEST", "SOUTHEAST", "SOUTHWEST",
+    # === Function labels ===
+    "HQ", "MAIN", "PRIMARY", "SECONDARY", "BACKUP", "FAILOVER",
+    "AIR", "AIRPORT", "ANNEX", "CAMPUS", "FACILITY",
+    "LAB", "LABS", "OFFICE", "OFFICES",
+    "PLANT", "FACTORY", "WAREHOUSE", "WH", "STORAGE",
+    "OPS", "OPERATIONS", "OPCENTER",
+    "HUB", "DEPOT", "TERMINAL", "GATEWAY",
+    "BRANCH", "STORE", "SHOP", "SHOWROOM",
+    "DEALER", "DEALERSHIP",
+    "CENTER", "CENTRE", "CTR",
+    "BLDG", "BLD", "BLOCK", "WING",
+    "FLOOR", "FL", "LEVEL", "LVL",
+    "RACK", "ROOM",
+    # === Datacenter / cabinet shorthand (bare suffix forms) ===
+    "DC", "MDC", "IDC", "POP", "POE",
+    # === Distribution / utility ===
+    "DIST", "DISTRIBUTION", "FULFILLMENT", "LOGISTICS",
+})
+
+# Open-shape suffix pattern — accepts numbered facility / wing /
+# datacenter / floor / building codes (DC1, FL3, B12, T5, BLDG2, WING7).
+_SITE_CODE_SUFFIX_PATTERN = re.compile(
+    r"^(?:"
+    r"DC\d{1,3}"       # DC1, DC15, DC100
+    r"|MDC\d{1,3}"     # MDC1
+    r"|IDC\d{1,3}"     # IDC1
+    r"|FL\d{1,3}"      # FL3
+    r"|FLOOR\d{1,3}"   # FLOOR12
+    r"|LVL\d{1,3}"     # LVL3
+    r"|LEVEL\d{1,3}"   # LEVEL3
+    r"|BLDG\d{1,3}"    # BLDG2
+    r"|BLD\d{1,3}"     # BLD2
+    r"|B\d{1,3}"       # B12
+    r"|T\d{1,3}"       # T5  (tower 5)
+    r"|H\d{1,3}"       # H1
+    r"|W\d{1,3}"       # W3  (wing 3)
+    r"|WING\d{1,3}"    # WING7
+    r"|BLOCK\d{1,3}"   # BLOCK2
+    r"|RACK\d{1,3}"    # RACK19
+    r"|ROOM\d{1,3}"    # ROOM101
+    r"|R\d{1,3}"       # R101 (room 101)
+    r"|POP\d{1,3}"     # POP2
+    r"|SITE\d{1,3}"    # SITE3
+    r"|STORE\d{1,3}"   # STORE142
+    r"|BRANCH\d{1,3}"  # BRANCH7
+    r")$"
+)
+
+
+def _site_code_suffix_ok(last_segment: str) -> bool:
+    """Universal gate: does this last segment carry site-function meaning?"""
+    if last_segment in _SITE_CODE_SUFFIX_ALLOWLIST:
+        return True
+    if _SITE_CODE_SUFFIX_PATTERN.match(last_segment):
+        return True
+    return False
+
+
+# Site-context regex — when a Capitalized-run is immediately adjacent
+# (within ~40 chars in the same sentence) to one of these UNAMBIGUOUS
+# cues, we treat the run as having positive site signal even if its
+# tail isn't a recognized place-noun.
+#
+# We deliberately use multi-word phrasing ("located at", "site visit:",
+# "based in") rather than bare nouns ("site", "location") because bare
+# nouns appear too often in unrelated contexts ("Three Site
+# Modernization") and would create false corroboration.
+#
+# The phrases below all have an unambiguous syntactic frame that
+# indicates "the noun phrase NEAR this cue refers to a physical place."
+_SITE_CONTEXT_REGEX = re.compile(
+    r"(?:"
+    # Prepositional/state-of-being cues (require explicit preposition)
+    r"\bbased\s+(?:at|in|out\s+of)\b"
+    r"|\blocated\s+(?:at|in|near|on|adjacent\s+to)\b"
+    r"|\bheadquartered(?:\s+(?:at|in))?\b"
+    r"|\bsituated\s+(?:at|in|on|near)\b"
+    r"|\bhoused\s+(?:at|in)\b"
+    r"|\boperat(?:es|ing|ed)\s+(?:out\s+of|from)\b"
+    # Site-activity cues
+    r"|\bsite\s+(?:visit|tour|survey|walk(?:-?through)?|walkthrough)\b"
+    r"|\bon(?:-|\s+)site\s+(?:at|in)\b"
+    r"|\bdeployed\s+(?:at|in|to)\b"
+    r"|\binstalled\s+(?:at|in)\b"
+    r"|\bvisit\s+(?:to|at)\b"
+    r"|\btour\s+(?:of|at)\b"
+    # Field-label cues (colon-separated)
+    r"|\b(?:site|location|address|facility|building|premises|venue)\s*[:=]"
+    # Coordinate-style cues
+    r"|\baddress(?:es)?\s+(?:is|are|of)\b"
+    r"|\bfacilit(?:y|ies)\s+(?:at|in|located|known)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+# Adjacent-window size in characters for corroboration. Tight enough
+# that a cue elsewhere in a long sentence ("Three Site Modernization"
+# 80 chars away) doesn't create false corroboration, wide enough that
+# "Site visit: Aurora Operations Hub on June 10" still corroborates.
+_SITE_CORROBORATION_WINDOW = 40
+
+
+# Hard-disqualify tokens — when ANY of these appears anywhere in a
+# Capitalized-run, the run is NEVER a site, even if its tail is an
+# otherwise-valid place-noun like "Tower" or "Center".
+#
+# Rationale: "Mock Atlanta Tower" / "Test Innovation Lab" / "Sample
+# Site Headquarters" — these are descriptive scaffolding around a
+# place noun, not real site names. The presence of a test-data marker
+# is itself disqualifying.
+#
+# This is narrower than ``_NON_SITE_PHRASE_TAIL_NOUNS`` (which kills
+# the phrase only when it appears in the TAIL or as an inner token
+# while the tail is non-place). Hard disqualify overrides the
+# place-tail bypass entirely.
+_HARD_DISQUALIFY_PHRASE_TOKENS: frozenset[str] = frozenset({
+    "mock", "mocks", "mocked",
+    "fictional", "fictitious",
+    "fake", "fakes",
+    "dummy", "dummies",
+    "demo", "demos",
+    "test", "tests",
+    "sample", "samples",
+    "example", "examples",
+    "placeholder", "placeholders",
+    "stub", "stubs",
+    "synthetic", "simulated",
+    "scratch",
+    "tbd", "tba", "tbc",
 })
 
 
@@ -897,18 +1053,23 @@ def _emit_sites(text: str) -> set[str]:
         code = match.group(1)
         if code in _SITE_CODE_DENYLIST:
             continue
-        # Require the FIRST segment to be 3+ letters (drops common
-        # 2-letter prefixes like RJ / PO / CO / IT that aren't site
-        # prefixes). Site codes in practice are airport-shape codes
-        # (ATL / SFO / LAX / ORD / DEN), city abbreviations (CHI /
-        # NYC), or 3+ letter facility codes.
-        first = code.split("-", 1)[0]
-        if len(first) < 3:
+        segments = code.split("-")
+        first = segments[0]
+        last = segments[-1]
+        # Universal POSITIVE gate: the last segment must carry recognized
+        # site-function meaning (direction, facility type, datacenter /
+        # floor / building / wing number).  This is the load-bearing
+        # robustness check — anything that doesn't end in a known
+        # site-suffix fails the gate, regardless of head or middle
+        # segments. Catches unknown junk codes like MOCK-OPTBOT-ATL,
+        # ALPHA-FOOBAR, GAMMA-FOO-2026 without needing to enumerate
+        # every possible junk word.
+        if not _site_code_suffix_ok(last):
             continue
-        # Head denylist — rejects test/mock/dev/contract-id prefixes
-        # so `MOCK-OPTBOT-ATL`, `DEV-ATL`, `MSA-2026-...` etc. don't
-        # leak as sites even though their trailing segments look
-        # airport-shaped.
+        # Head denylist — belt-and-suspenders for codes whose tail
+        # happens to look site-shaped but the head is a known test /
+        # contract-id marker.  Catches e.g. "DEV-WEST" where WEST is
+        # in the suffix allowlist but the whole code is a dev marker.
         if first in _SITE_CODE_HEAD_DENYLIST:
             continue
         slug = _slugify(code)
@@ -1023,14 +1184,20 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
             # Two-word special case: a Capitalized + capitalized
             # organization name like "Virginia Tech" / "Boston College"
             # / "Cleveland Clinic" / "Houston ISD".  We accept these
-            # when the trailing word matches a well-known organization
-            # suffix even though the standard ≥3-word minimum would
-            # otherwise drop them.  Without this VT_CAM never emits
-            # ``site:virginia_tech`` because the customer name is
-            # exactly two words.
+            # when (a) the trailing word matches a well-known
+            # organization suffix, (b) the tail is a known place-noun,
+            # or (c) explicit site-context / address corroborates the
+            # phrase nearby. Without this 2-word real sites like
+            # "Innovation Tower" or "Birchwood Atelier" (with address)
+            # would be dropped by the ≥3-word minimum.
             if len(tokens) == 2:
                 trail = tokens[-1].lower().rstrip(":,.")
-                if trail not in _ORG_SUFFIX_TWO_WORD:
+                two_word_org   = trail in _ORG_SUFFIX_TWO_WORD
+                two_word_place = trail in _SITE_TAIL_NOUNS
+                two_word_corr  = _has_site_corroboration(
+                    sentence, match.start(), match.end()
+                )
+                if not (two_word_org or two_word_place or two_word_corr):
                     continue
             elif len(tokens) < 3:
                 continue
@@ -1044,13 +1211,26 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
                 continue
             # If ANY token in the phrase is a tail noun, the phrase
             # is more likely to be a description than a site.
-            # (Skip when the trailing token is a recognized org suffix
-            # — "Atlanta Headquarters" / "Innovation Tower" are real
-            # sites and must survive.)
+            # Bypass when (a) the trailing token is a recognized org
+            # or place suffix ("Atlanta Headquarters", "Innovation
+            # Tower"), OR (b) explicit site-context / address
+            # corroborates the phrase nearby ("Located at Aurora
+            # Operations Hub").
             phrase_tokens_lower = {t.lower().rstrip(":,.") for t in tokens}
             tail = tokens[-1].lower().rstrip(":,.")
             is_org_tail = tail in _ORG_SUFFIX_TWO_WORD or tail in _SITE_TAIL_NOUNS
-            if not is_org_tail and (phrase_tokens_lower & _NON_SITE_PHRASE_TAIL_NOUNS):
+            has_corroboration = _has_site_corroboration(
+                sentence, match.start(), match.end()
+            )
+            if (not (is_org_tail or has_corroboration)
+                and (phrase_tokens_lower & _NON_SITE_PHRASE_TAIL_NOUNS)):
+                continue
+            # Hard-disqualify: certain tokens (mock/test/demo/fake/...)
+            # are NEVER part of a real site name, even when paired with
+            # a valid place-tail. "Mock Atlanta Tower" / "Test Innovation
+            # Lab" — the test-marker token is itself disqualifying.
+            # This OVERRIDES the is_org_tail bypass above.
+            if phrase_tokens_lower & _HARD_DISQUALIFY_PHRASE_TOKENS:
                 continue
             # Skip if this run is dominated by a known vendor
             if any(surface in norm for surface in vendor_surfaces if surface and len(surface) >= 4):
@@ -1062,10 +1242,57 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
                 non_stop = [w for w in norm.split() if w not in {"of", "and", "the", "for", "to", "in", "on", "at"}]
                 if len(non_stop) < 2:
                     continue
+            # UNIVERSAL POSITIVE STRUCTURAL GATE: emit a site key only
+            # when the run has at least one positive site signal:
+            #   (a) tail is a known place-noun (Tower, Building, Annex,
+            #       Headquarters, Plaza, Campus, ...)
+            #   (b) tail is a known org suffix (Tech, College, Hospital,
+            #       ISD, District, ...)
+            #   (c) the same sentence contains a street address — the
+            #       address corroborates that the phrase refers to a
+            #       physical place
+            #   (d) an explicit site-context cue ("site visit", "located
+            #       at", "based in", "address:", "Facility:", ...)
+            #       appears within ~80 chars of the phrase
+            # Without one of these positive signals, the phrase is
+            # dropped. This is universal: a brand-new junk phrase
+            # ("Brilliant Strategic Initiative", "Advanced Process
+            # Framework") cannot leak because the absence of positive
+            # signal is itself the filter — no enumeration of every
+            # possible junk word is required.
+            has_place_tail = tail in _SITE_TAIL_NOUNS
+            has_org_tail   = tail in _ORG_SUFFIX_TWO_WORD
+            if not (has_place_tail or has_org_tail or _has_site_corroboration(sentence, match.start(), match.end())):
+                continue
             slug = _slugify(phrase)
             if slug and len(slug) >= 6:
                 keys.add(f"site:{slug}")
     return keys
+
+
+def _has_site_corroboration(sentence: str, span_start: int, span_end: int) -> bool:
+    """Return True if a street address or explicit site-context cue
+    appears within ~80 chars of the matched span in this sentence.
+
+    This is the structural corroboration check that supplements the
+    place-tail / org-tail allowlists in _emit_proper_nouns. It lets
+    legitimate sites without a recognized tail (e.g. "Magnolia
+    Crossing 4500 Oak Ridge Parkway" or "Site visit: West Annex")
+    still surface as sites without opening the door to junk phrases.
+    """
+    # Same-sentence window of ±_SITE_CORROBORATION_WINDOW chars
+    # around the span. Tight enough that an unrelated cue elsewhere
+    # in a long sentence doesn't create false corroboration.
+    pre = sentence[max(0, span_start - _SITE_CORROBORATION_WINDOW):span_start]
+    post = sentence[span_end:min(len(sentence), span_end + _SITE_CORROBORATION_WINDOW)]
+    # Address pattern in either window — corroborates that the phrase
+    # refers to a physical place.
+    if _STREET_ADDRESS_REGEX.search(pre) or _STREET_ADDRESS_REGEX.search(post):
+        return True
+    # Explicit site-context cue near the phrase.
+    if _SITE_CONTEXT_REGEX.search(pre) or _SITE_CONTEXT_REGEX.search(post):
+        return True
+    return False
 
 
 # Place-noun tails: when a multi-word proper-noun run ends with one of
@@ -1081,6 +1308,29 @@ _SITE_TAIL_NOUNS: frozenset[str] = frozenset({
     "clinic", "plant", "factory", "store", "mall", "complex",
     "park", "plaza", "terminal", "concourse", "depot", "yard",
     "airport", "station", "site", "location", "premises",
+    # Expanded place-tails for universal coverage
+    "hub", "pavilion", "pavillion", "atelier", "studio", "studios",
+    "lab", "labs", "laboratory", "laboratories", "workshop", "workshops",
+    "hall", "halls", "auditorium", "arena", "stadium", "amphitheater",
+    "gymnasium", "fieldhouse",
+    "commons", "court", "courtyard", "square", "plaza",
+    "annexe", "wing", "wings", "block", "blocks",
+    "pavilion", "rotunda", "atrium",
+    "tower", "highrise", "skyrise",
+    "compound", "estate", "manor", "mansion",
+    "dormitory", "dorm", "dorms", "residence", "residences",
+    "library", "libraries", "museum", "museums", "gallery", "galleries",
+    "theater", "theatre", "theaters", "theatres", "cinema", "cinemas",
+    "church", "chapel", "cathedral", "synagogue", "mosque", "temple",
+    "fort", "barracks", "armory", "armoury", "garrison",
+    "harbor", "harbour", "wharf", "pier", "marina", "dock", "docks",
+    "lighthouse", "lookout", "watchtower",
+    "field", "fields", "track", "tracks", "course", "courses",
+    "ranch", "farm", "vineyard", "orchard",
+    "shed", "barn", "silo", "bunker",
+    "kiosk", "stall", "booth",
+    "village", "neighborhood", "district",
+    "metroplex", "townhouse",
 })
 
 
