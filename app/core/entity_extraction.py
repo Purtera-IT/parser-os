@@ -132,7 +132,13 @@ _CROSS_PACK_VENDORS: dict[str, list[str]] = {
     "alc": ["automated logic", "alc"],
     "distech": ["distech", "distech controls"],
     "trane": ["trane"],
-    "carrier": ["carrier"],
+    # NOTE: Carrier Corporation (HVAC manufacturer) is intentionally
+    # matched only via context-rich surfaces, never bare "carrier".
+    # The bare word too easily matches generic English usage —
+    # "telecom carrier", "common carrier", "carrier wave", "package
+    # carrier" — and would produce ``vendor:carrier`` false positives.
+    # Real Carrier brand mentions typically include qualifying context.
+    "carrier_corporation": ["carrier corporation", "carrier hvac", "carrier brand"],
     "edwards_est": ["edwards est", "est", "edwards"],
     "mircom": ["mircom"],
     # IP intercom
@@ -905,12 +911,30 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     return index
 
 
-def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
-    """Build ``{entity_type: {alias_norm: example_or_alias}}`` so we can
-    detect typed entities (room, site, vendor, etc.) generically.
+_GENERIC_TYPED_ALIAS_SENTINEL = "__generic__"
 
-    The returned ``example_or_alias`` is what we'll slugify for the
-    canonical key — preferring rich examples over bare aliases.
+
+def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
+    """Build ``{entity_type: {alias_norm: example_or_sentinel}}`` so we
+    can detect typed entities (room, site, vendor, etc.) generically.
+
+    Aliases come from two pack sources:
+      * ``entity.aliases`` — GENERIC synonyms for the type
+        ("tenant"/"client"/"owner" for customer; "closet"/"rm"/"mdf"
+        for room; "carrier"/"oem"/"reseller" for vendor). These are
+        mapped to the ``_GENERIC_TYPED_ALIAS_SENTINEL`` so callers
+        can detect them as generic-noun matches that should NOT
+        produce real entity keys.
+      * ``entity.examples`` — SPECIFIC named instances ("West Region
+        District" for customer, "Acme Cabling Co" for vendor). These
+        are mapped to the example string itself so they emit a real
+        entity key.
+
+    The sentinel is what fixes ``customer:customer`` / ``room:room`` /
+    ``vendor:carrier`` from leaking into the entity records: the
+    pack defines "tenant" / "closet" / "carrier" as generic synonyms,
+    but matching them as entities just because the text contains the
+    bare word produces tautological / meaningless keys.
     """
     out: dict[str, dict[str, str]] = {}
     for entity in pack.entity_types or []:
@@ -918,7 +942,7 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
         for alias in entity.aliases or []:
             alias_norm = normalize_text(alias)
             if alias_norm:
-                slot.setdefault(alias_norm, alias)
+                slot.setdefault(alias_norm, _GENERIC_TYPED_ALIAS_SENTINEL)
         for example in entity.examples or []:
             example_norm = normalize_text(example)
             if example_norm:
@@ -968,6 +992,17 @@ def _emit_typed(text_lower: str, typed_index: dict[str, dict[str, str]]) -> set[
                 continue
             if alias_norm in _BARE_TYPED_ALIAS_STOPLIST:
                 continue
+            # Skip generic-type aliases tagged by ``_typed_alias_index``
+            # with ``_GENERIC_TYPED_ALIAS_SENTINEL``. These are the
+            # ``entity.aliases`` entries from the pack — generic
+            # synonyms for the type ("tenant"/"client" for customer,
+            # "closet"/"rm" for room, "carrier"/"oem" for vendor) —
+            # which would otherwise emit tautological entity keys.
+            # Specific named instances (``entity.examples``) still
+            # emit because their slot value is the example string,
+            # not the sentinel.
+            if original == _GENERIC_TYPED_ALIAS_SENTINEL:
+                continue
             if _word_match(text_lower, alias_norm):
                 keys.add(normalize_entity_key(entity_type, original))
     return keys
@@ -980,33 +1015,31 @@ def _emit_typed(text_lower: str, typed_index: dict[str, dict[str, str]]) -> set[
 # alias entries, so this stoplist only kills the bare-word emission.
 _BARE_TYPED_ALIAS_STOPLIST: frozenset[str] = frozenset(
     {
-        "school",
-        "schools",
-        "campus",
-        "building",
-        "buildings",
-        "floor",
-        "floors",
-        "level",
-        "levels",
-        "warehouse",
-        "warehouses",
-        "hospital",
-        "hospitals",
-        "clinic",
-        "clinics",
-        "office",
-        "offices",
-        "branch",
-        "branches",
-        "store",
-        "stores",
-        "facility",
-        "facilities",
-        "site",
-        "sites",
-        "room",
-        "rooms",
+        # Place / facility generics — already caught by site / room
+        # extraction with real names
+        "school", "schools", "campus", "building", "buildings",
+        "floor", "floors", "level", "levels", "warehouse",
+        "warehouses", "hospital", "hospitals", "clinic", "clinics",
+        "office", "offices", "branch", "branches", "store", "stores",
+        "facility", "facilities", "site", "sites", "room", "rooms",
+        "lab", "labs", "laboratory", "laboratories", "suite", "suites",
+        # Business-role generics — pack aliases name "customer" /
+        # "vendor" / "owner" / "client" as canonical members, which
+        # leads to junk entity keys like `customer:customer` and
+        # `vendor:vendor` whenever the bare word appears in prose.
+        # Real customer / vendor names get caught by the cross-pack
+        # vendor matcher and the institutional-suffix customer
+        # promoter.
+        "customer", "customers", "client", "clients",
+        "vendor", "vendors", "subcontractor", "subcontractors",
+        "sub", "subs", "contractor", "contractors",
+        "owner", "owners", "partner", "partners",
+        "carrier", "carriers", "supplier", "suppliers",
+        "distributor", "distributors", "reseller", "resellers",
+        "manufacturer", "manufacturers", "oem", "oems",
+        "integrator", "integrators",
+        "operator", "operators",
+        "end user", "end-user", "endpoint", "endpoints",
     }
 )
 
@@ -1817,10 +1850,57 @@ def _emit_part_numbers(text: str) -> set[str]:
         # Skip 2-letter prefixes that are too short to be a SKU
         if len(sku) < 5:
             continue
+        # Reuse the site-code HEAD denylist: the same test / contract /
+        # CRM / cloud-platform prefixes that masquerade as site codes
+        # (HS-DEAL-..., MOCK-MSA-..., PO-..., DEV-...) also masquerade
+        # as part numbers because they share the hyphen-separated
+        # uppercase-alphanumeric shape. Manufacturer SKUs (CW9166I-B,
+        # AIR-DNA-E-T-5Y, J9145A) never start with these tokens, so
+        # the denylist drops contract/project IDs cleanly.
+        first_segment = re.split(r"[-/]", sku, 1)[0]
+        if first_segment in _SITE_CODE_HEAD_DENYLIST:
+            continue
+        # Also reject codes whose FIRST segment is a 3-letter airport
+        # / city code (ATL, NYC, SFO, ...) — these are project / batch
+        # prefixes when followed by digits ("ATL-047", "NYC-001"), not
+        # manufacturer SKUs. Real Cisco AIR-* products start with AIR
+        # (4 chars) not a 3-letter geo code.
+        if (len(first_segment) == 3
+            and first_segment.isalpha()
+            and first_segment in _AIRPORT_CITY_PREFIXES):
+            continue
         slug = _slugify(sku)
         if slug:
             keys.add(f"part_number:{slug}")
     return keys
+
+
+# 3-letter airport / city / region codes that appear in project IDs
+# and batch numbers but never in manufacturer SKUs. Used by
+# ``_emit_part_numbers`` to reject codes like ``ATL-047`` /
+# ``NYC-2026`` / ``SFO-001`` which would otherwise leak as
+# ``part_number:atl_047``.
+_AIRPORT_CITY_PREFIXES: frozenset[str] = frozenset({
+    # Major US airports
+    "ATL", "LAX", "ORD", "DFW", "DEN", "JFK", "SFO", "SEA", "LAS", "MCO",
+    "MIA", "PHX", "IAH", "BOS", "MSP", "FLL", "DTW", "PHL", "LGA", "CLT",
+    "BWI", "SAN", "TPA", "DCA", "IAD", "MDW", "SLC", "PDX", "STL", "HOU",
+    "BNA", "AUS", "RDU", "MCI", "OAK", "MSY", "SJC", "SMF", "SNA", "PIT",
+    "CVG", "IND", "CMH", "CLE", "MEM", "JAX", "RIC", "OMA", "ABQ", "ELP",
+    "OKC", "TUL", "ICT", "BUF", "SYR", "ROC", "ALB", "PVD", "MHT", "PWM",
+    "BTV", "BHM", "MOB", "HSV", "JAN", "BTR", "SHV", "LIT", "AMA", "LBB",
+    "MAF", "SAT", "CRP", "BRO", "HRL", "MFE", "LRD", "BPT", "ABE", "AVL",
+    # Major international hubs
+    "LHR", "LGW", "STN", "CDG", "ORY", "FRA", "MUC", "TXL", "BER", "AMS",
+    "MAD", "BCN", "FCO", "MXP", "VIE", "ZRH", "DUB", "CPH", "ARN", "OSL",
+    "HEL", "WAW", "PRG", "BUD", "ATH", "IST", "DXB", "DOH", "AUH",
+    "NRT", "HND", "KIX", "ICN", "PEK", "PVG", "HKG", "SIN", "BKK", "KUL",
+    "SYD", "MEL", "AKL", "YYZ", "YVR", "YUL", "GRU", "EZE", "SCL",
+    # Common US city abbreviations (not airport codes but used as
+    # project prefixes)
+    "NYC", "CHI", "PHL", "LAX", "SFO", "DAL", "HOU", "ATL", "BOS", "SEA",
+    "DEN", "MIA", "PHX", "DET", "MIN", "TOR", "MTL", "VAN",
+})
 
 
 # Week 6 P6.4 — institutional / customer suffixes.  When a proper-noun
