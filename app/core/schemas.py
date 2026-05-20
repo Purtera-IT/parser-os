@@ -24,6 +24,11 @@ class ArtifactType(str, Enum):
     # New universality artifact types
     pptx = "pptx"      # PowerPoint slide decks
     image = "image"    # HEIC / PNG / JPG site survey photos, network diagrams
+    html = "html"      # Confluence / wiki / customer static-docs exports
+    mbox = "mbox"      # Gmail / Thunderbird email archive (multi-message)
+    rtf = "rtf"        # Rich Text Format (legacy SOW / contract templates)
+    ics = "ics"        # iCalendar invites (kickoff meetings, etc.)
+    zip_archive = "zip" # ZIP containers; auto-listed contents
 
 
 class AtomType(str, Enum):

@@ -58,6 +58,16 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.pptx
     if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
         return ArtifactType.image
+    if suffix in {".html", ".htm", ".xhtml"}:
+        return ArtifactType.html
+    if suffix == ".mbox":
+        return ArtifactType.mbox
+    if suffix == ".rtf":
+        return ArtifactType.rtf
+    if suffix in {".ics", ".ical"}:
+        return ArtifactType.ics
+    if suffix == ".zip":
+        return ArtifactType.zip_archive
     return ArtifactType.txt
 
 

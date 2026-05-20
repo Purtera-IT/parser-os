@@ -30,6 +30,9 @@ def _ensure_defaults() -> None:
     from app.parsers.pptx_parser import PptxParser
     from app.parsers.quote_parser import QuoteParser
     from app.parsers.transcript_parser import TranscriptParser
+    from app.parsers.universal_parsers import (
+        HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
+    )
     from app.parsers.xlsx_parser import XlsxParser
 
     for parser in [
@@ -41,6 +44,11 @@ def _ensure_defaults() -> None:
         DocxParser(),
         PptxParser(),
         ImageParser(),
+        HtmlParser(),
+        MboxParser(),
+        RtfParser(),
+        IcsParser(),
+        ZipParser(),
         OrbitBriefPdfParser(),
     ]:
         register_parser(parser)
@@ -70,6 +78,16 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.pptx
     if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
         return ArtifactType.image
+    if suffix in {".html", ".htm", ".xhtml"}:
+        return ArtifactType.html
+    if suffix == ".mbox":
+        return ArtifactType.mbox
+    if suffix == ".rtf":
+        return ArtifactType.rtf
+    if suffix in {".ics", ".ical"}:
+        return ArtifactType.ics
+    if suffix == ".zip":
+        return ArtifactType.zip_archive
     return ArtifactType.txt
 
 
