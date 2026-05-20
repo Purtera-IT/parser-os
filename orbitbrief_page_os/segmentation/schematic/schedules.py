@@ -204,14 +204,22 @@ def detect_schedules(
 def join_schedule_rows_to_detections(
     schedule_rows: Sequence[ScheduleRow],
     detections: Sequence[Any],
+    *,
+    blocks: Sequence[Any] | None = None,
+    spatial_radius_pt: float = 144.0,
 ) -> dict[str, ScheduleRow]:
-    """Map ``{detection_id: ScheduleRow}`` by tag match.
+    """Map ``{detection_id: ScheduleRow}`` via two passes.
 
-    A schedule row joins to a detection when the detection's
-    ``nearby_text`` contains the row tag as a whole token (e.g.
-    ``CR-101`` in the detection's nearby_text matches schedule
-    row tag ``CR-101``).  Ties resolve by lexicographically smallest
-    row_id.
+    Pass 1 (text join): a schedule row joins to a detection whose
+    ``nearby_text`` contains the row tag as a whole token.
+
+    Pass 2 (spatial join): for detections still unjoined, look for
+    the row's tag rendered as a standalone TextBlock near the
+    detection center within ``spatial_radius_pt`` (default 144 pt =
+    2 inches). This catches real drawings where the tag is its
+    own text block, not part of the detection's neighborhood prose.
+
+    Ties resolve by lexicographically smallest row_id.
     """
     if not schedule_rows or not detections:
         return {}
@@ -219,6 +227,8 @@ def join_schedule_rows_to_detections(
     rows_by_tag: dict[str, list[ScheduleRow]] = {}
     for row in schedule_rows:
         rows_by_tag.setdefault(row.tag.upper(), []).append(row)
+
+    # Pass 1: nearby_text matches.
     for det in detections:
         nearby = (getattr(det, "nearby_text", None) or "").upper()
         if not nearby:
@@ -232,4 +242,61 @@ def join_schedule_rows_to_detections(
                     best = row
         if best is not None:
             out[det.detection_id] = best
+
+    if not blocks:
+        return out
+
+    # Pass 2: spatial join by tag-block proximity.  For each
+    # unjoined detection, find the closest TextBlock whose stripped
+    # text equals a schedule tag (and lives OUTSIDE the schedule
+    # region — the row itself doesn't count) within the radius.
+    schedule_regions = [
+        (
+            row.bbox[0] - 4.0,
+            row.bbox[1] - 4.0,
+            row.bbox[2] + 4.0,
+            row.bbox[3] + 4.0,
+        )
+        for row in schedule_rows
+    ]
+
+    def _in_schedule_region(bbox: tuple[float, float, float, float]) -> bool:
+        cx = (bbox[0] + bbox[2]) / 2.0
+        cy = (bbox[1] + bbox[3]) / 2.0
+        for r in schedule_regions:
+            if r[0] <= cx <= r[2] and r[1] <= cy <= r[3]:
+                return True
+        return False
+
+    tag_block_index: dict[str, list[tuple[float, float]]] = {}
+    for blk in blocks:
+        txt = (getattr(blk, "text", "") or "").strip().upper()
+        if not txt or len(txt) > 30:
+            continue
+        if txt not in rows_by_tag:
+            continue
+        if _in_schedule_region(blk.bbox):
+            continue
+        cx = (blk.bbox[0] + blk.bbox[2]) / 2.0
+        cy = (blk.bbox[1] + blk.bbox[3]) / 2.0
+        tag_block_index.setdefault(txt, []).append((cx, cy))
+
+    for det in detections:
+        if det.detection_id in out:
+            continue
+        dx = (det.bbox_pdf[0] + det.bbox_pdf[2]) / 2.0
+        dy = (det.bbox_pdf[1] + det.bbox_pdf[3]) / 2.0
+        best: tuple[float, ScheduleRow] | None = None
+        for tag, centers in tag_block_index.items():
+            for cx, cy in centers:
+                dist = ((dx - cx) ** 2 + (dy - cy) ** 2) ** 0.5
+                if dist > spatial_radius_pt:
+                    continue
+                for row in rows_by_tag[tag]:
+                    if best is None or dist < best[0] or (
+                        dist == best[0] and row.row_id < best[1].row_id
+                    ):
+                        best = (dist, row)
+        if best is not None:
+            out[det.detection_id] = best[1]
     return out

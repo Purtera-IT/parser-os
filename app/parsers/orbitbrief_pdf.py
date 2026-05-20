@@ -3539,6 +3539,7 @@ def _run_schematic_pre_pass(
     detection_records: list[dict[str, Any]] = []
 
     declared_emitted: set[tuple[str, str]] = set()
+    legend_gap_emitted: set[tuple[str, str]] = set()
     pack_has_targets_for_warning = bool(domain_pack and domain_pack.detection_targets)
     try:
         for page_index in range(doc.page_count):
@@ -3796,6 +3797,13 @@ def _run_schematic_pre_pass(
             except Exception:  # pragma: no cover
                 pass
             for gap_key in gaps:
+                # Dedupe: emit each (legend_id, target_key) gap once
+                # regardless of how many drawing pages resolve to the
+                # same legend.
+                dedup = (resolved.legend.legend_id, gap_key)
+                if dedup in legend_gap_emitted:
+                    continue
+                legend_gap_emitted.add(dedup)
                 atoms.append(
                     emit_warning_atom(
                         warning=SchematicWarning.make(
@@ -3867,16 +3875,33 @@ def _run_schematic_pre_pass(
             except Exception:  # pragma: no cover
                 sheet_meta = None
             if sheet_meta is not None:
-                atoms.append(
-                    emit_sheet_metadata_atom(
-                        metadata=sheet_meta,
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=path.name,
-                        parser_version=parser_version,
-                        page=page,
+                # Suppress fieldless sheet_metadata atoms: a sheet
+                # number alone is already captured elsewhere
+                # (target_set, legend, detections). Only emit when
+                # at least one substantive title-block field was
+                # parsed.
+                substantive = any([
+                    sheet_meta.sheet_title,
+                    sheet_meta.project_name,
+                    sheet_meta.scale,
+                    sheet_meta.issue_date,
+                    sheet_meta.revision,
+                    sheet_meta.drafter,
+                    sheet_meta.checker,
+                    sheet_meta.approver,
+                    sheet_meta.client,
+                ])
+                if substantive:
+                    atoms.append(
+                        emit_sheet_metadata_atom(
+                            metadata=sheet_meta,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                            page=page,
+                        )
                     )
-                )
 
             # Room / zone atoms — pulled from blocks outside the
             # excluded zones so we don't pick up schedule-row room IDs.
@@ -4022,11 +4047,65 @@ def _run_schematic_pre_pass(
             except Exception:  # pragma: no cover
                 detection_callout_map = {}
 
-            # Schedule-row joins — link each detection to its schedule
-            # row when the detection's nearby_text contains the tag.
+            # Mounting-height inheritance chain (PM-critical):
+            #   1. nearest inline callout (set above)
+            #   2. schedule row's "mounting" / "mounting_height" field
+            #   3. legend entry's MOUNTING / MOUNTING HEIGHT attribute
+            #   4. keyed-note default ("All devices mounted at X AFF
+            #      unless noted") — derived once per page
+            import re as _re
+
+            keyed_note_default_height: str | None = None
+            for note in keyed_notes_on_page:
+                m = _re.search(
+                    r"(?:mounted|mounting)\s+(?:at|height)?\s*"
+                    r"([0-9]+(?:\.[0-9]+)?\s*(?:\"|in|inches)?\s*"
+                    r"a\.?f\.?f\.?|"
+                    r"[0-9]+\s*'\s*-\s*[0-9]+(?:\s*[0-9]+/[0-9]+)?\s*\"|"
+                    r"ceiling|"
+                    r"verify\s+w/?\s*arch)",
+                    note.text,
+                    _re.IGNORECASE,
+                )
+                if m:
+                    keyed_note_default_height = m.group(1).strip()
+                    break
+
+            legend_mounting_by_entry: dict[str, str] = {}
+            legend_responsibility_by_entry: dict[str, str] = {}
+            legend_remarks_by_entry: dict[str, str] = {}
+            for entry in resolved.legend.entries:
+                attrs = dict(entry.attributes)
+                m_val = (
+                    attrs.get("mounting_height")
+                    or attrs.get("mounting")
+                )
+                if m_val:
+                    legend_mounting_by_entry[entry.entry_id] = m_val
+                # Responsibility / by-others markers — explicit
+                # ``responsibility`` column wins; otherwise scan
+                # the remarks column for the conventional phrases.
+                resp_val: str | None = attrs.get("responsibility")
+                remarks_text = attrs.get("remarks") or ""
+                if not resp_val and remarks_text:
+                    upper = remarks_text.upper()
+                    for marker in ("NIC", "BY OWNER", "BY GC", "BY OTHERS", "NOT IN CONTRACT"):
+                        if marker in upper:
+                            resp_val = marker
+                            break
+                if resp_val:
+                    legend_responsibility_by_entry[entry.entry_id] = resp_val
+                if remarks_text:
+                    legend_remarks_by_entry[entry.entry_id] = remarks_text
+
+            # Schedule-row joins — pass 1 is nearby_text tag match,
+            # pass 2 is spatial join when a TAG block sits within
+            # ~2 inches of the detection center.
             try:
                 detection_schedule_map = join_schedule_rows_to_detections(
-                    schedule_rows_on_page, detections
+                    schedule_rows_on_page,
+                    detections,
+                    blocks=blocks,
                 )
             except Exception:  # pragma: no cover
                 detection_schedule_map = {}
@@ -4076,9 +4155,29 @@ def _run_schematic_pre_pass(
                 new_entity_keys = list(atom.entity_keys)
                 if room_id:
                     new_value["located_in_room_id"] = room_id
+                    # Look up the room's human-readable label/number
+                    # so downstream consumers don't have to join on
+                    # the opaque room hash.
+                    room_obj = next(
+                        (r for r in rooms_on_page if r.room_id == room_id),
+                        None,
+                    )
+                    if room_obj is not None:
+                        new_value["located_in_room_label"] = room_obj.label
+                        if room_obj.number:
+                            new_value["located_in_room_number"] = room_obj.number
+                            new_value["located_in_room_display"] = (
+                                f"{room_obj.label} {room_obj.number}"
+                            )
+                        else:
+                            new_value["located_in_room_display"] = room_obj.label
                     new_entity_keys.append(f"room:{room_id}")
+                # Mounting-height inheritance chain.
+                resolved_height: str | None = None
+                height_source: str | None = None
                 if callout is not None:
-                    new_value["mounting_height"] = callout.text
+                    resolved_height = callout.text
+                    height_source = "inline_callout"
                     new_value["callout_bbox"] = list(callout.bbox)
                 if schedule_row is not None:
                     new_value["schedule_row_id"] = schedule_row.row_id
@@ -4086,7 +4185,46 @@ def _run_schematic_pre_pass(
                     new_value["schedule_kind"] = schedule_row.schedule_kind
                     new_value["schedule_fields"] = dict(schedule_row.fields)
                     new_entity_keys.append(f"schedule_tag:{schedule_row.tag}")
-                if room_id or callout is not None or schedule_row is not None:
+                    if resolved_height is None:
+                        sched_height = (
+                            schedule_row.fields_dict().get("mounting_height")
+                            or schedule_row.fields_dict().get("mounting")
+                        )
+                        if sched_height:
+                            resolved_height = sched_height
+                            height_source = "schedule"
+                # Legend column fallback.
+                if resolved_height is None and det.legend_entry_id:
+                    legend_height = legend_mounting_by_entry.get(det.legend_entry_id)
+                    if legend_height:
+                        resolved_height = legend_height
+                        height_source = "legend_column"
+                # Keyed-note default fallback ("X AFF unless noted").
+                if resolved_height is None and keyed_note_default_height:
+                    resolved_height = keyed_note_default_height
+                    height_source = "keyed_note_default"
+                if resolved_height is not None:
+                    new_value["mounting_height"] = resolved_height
+                    new_value["mounting_height_source"] = height_source
+
+                # Responsibility / NIC markers (PM-critical for scope).
+                if det.legend_entry_id:
+                    resp_val = legend_responsibility_by_entry.get(det.legend_entry_id)
+                    if resp_val:
+                        new_value["responsibility"] = resp_val
+                        new_entity_keys.append(
+                            f"responsibility:{resp_val.lower().replace(' ', '_')}"
+                        )
+                    remarks_val = legend_remarks_by_entry.get(det.legend_entry_id)
+                    if remarks_val:
+                        new_value["legend_remarks"] = remarks_val
+                # Trigger the update when ANY field was added or
+                # ANY new entity_key was appended.  The earlier code
+                # only checked the room/callout/schedule trio, which
+                # silently dropped keyed-note-default heights,
+                # legend-column heights, and responsibility markers
+                # on detections with no room/callout/schedule.
+                if new_value != atom.value or new_entity_keys != list(atom.entity_keys):
                     updates["value"] = new_value
                     updates["entity_keys"] = sorted(set(new_entity_keys))
                 if updates:
