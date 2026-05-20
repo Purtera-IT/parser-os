@@ -158,12 +158,15 @@ class ImageParser(BaseParser):
         return ParserOutput(atoms=atoms, derived_files=[])
 
     def _try_ocr(self, path: Path) -> str:
-        """Best-effort OCR via pytesseract; returns "" when unavailable."""
+        """Multi-backend OCR via ``_ocr_chain``.
+
+        Tries PyMuPDF Tesseract → pytesseract → easyocr → Ollama vision
+        in order. Returns the recovered text or "" when nothing fires.
+        """
         try:
-            import pytesseract
-            from PIL import Image
-            with Image.open(path) as img:
-                return (pytesseract.image_to_string(img) or "").strip()
+            from app.parsers._ocr_chain import ocr_image_file
+            result = ocr_image_file(path)
+            return (result.get("text") or "").strip()
         except Exception:
             return ""
 

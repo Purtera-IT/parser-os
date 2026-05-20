@@ -665,12 +665,46 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     TEXT_RICH_PAGE_THRESHOLD = 1200
 
     def _build_low_text_page(page_index: int) -> dict[str, Any]:
+        # Low-text page = likely scanned. Try the OCR chain
+        # (PyMuPDF Tesseract → pytesseract → easyocr → Ollama vision).
+        # If any backend recovers text, treat the page as text-rich.
+        # If nothing fires, keep the marker so PM_HANDOFF surfaces it
+        # under "Files requiring manual review".
+        try:
+            from app.parsers._ocr_chain import ocr_pdf_page
+            # Re-open the doc inside the OCR scope to keep fitz state
+            # isolated from the outer page-loop. PyMuPDF docs / pages
+            # are not thread-safe.
+            with fitz.open(str(pdf_path)) as _doc:
+                ocr_result = ocr_pdf_page(_doc[page_index])
+        except Exception as exc:
+            ocr_result = {
+                "text": "",
+                "backend": "",
+                "notes": [f"ocr_chain crashed: {type(exc).__name__}"],
+            }
+        if (ocr_result.get("text") or "").strip():
+            # Promote the page through the text-rich path using the
+            # OCR'd text. Stash the page text in our cache so any
+            # downstream consumer that re-reads ``page_texts`` sees
+            # the OCR result.
+            page_texts[page_index] = ocr_result["text"]
+            page_text_lengths[page_index] = len(ocr_result["text"].strip())
+            page_dict = _build_text_rich_page(page_index)
+            page_dict.setdefault("metadata", []).insert(
+                0,
+                f"[OCR-recovered via {ocr_result.get('backend','')} — "
+                f"text layer was missing; treat as scanned-source evidence]",
+            )
+            return page_dict
         return {
             "page": page_index,
             "title": None,
             "metadata": [
                 f"[low-text page (≤{LOW_TEXT_PAGE_THRESHOLD} chars) "
-                "— likely scanned image; layout pipeline skipped for perf]"
+                "— likely scanned image; OCR chain "
+                f"({', '.join(ocr_result.get('notes', []) or ['no backend reachable'])}) "
+                "produced no text. PM_HANDOFF will surface this page for manual review.]"
             ],
             "outline": [],
             "sections": [],
