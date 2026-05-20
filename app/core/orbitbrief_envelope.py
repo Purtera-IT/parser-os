@@ -78,6 +78,7 @@ from app.parsers.structured_projection import (
 ENVELOPE_SCHEMA_VERSION = "orbitbrief.input.v2"
 ENVELOPE_FILENAME = "orbitbrief.input.json"
 ENVELOPE_MARKDOWN_FILENAME = "orbitbrief.input.md"
+PARSER_MANIFEST_SIDECAR = ".parser_manifest.json"
 
 
 # ────────────────────────── public API ───────────────────────────────────
@@ -139,9 +140,12 @@ def build_orbitbrief_envelope(
         entities=entities,
         edges=edges,
     )
+    crm = _load_manifest_crm(project_dir)
+    if crm:
+        summary["crm"] = crm
     indexes = _build_indexes(atoms=atoms, entities=entities, edges=edges)
 
-    return {
+    envelope: dict[str, Any] = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
         "project_id": compile_result.project_id,
         "compile_id": compile_result.compile_id,
@@ -154,6 +158,25 @@ def build_orbitbrief_envelope(
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
     }
+    if crm:
+        envelope["crm"] = crm
+    return envelope
+
+
+def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
+    """Read ``context.crm`` from the parser manifest sidecar when present."""
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        ctx = manifest.get("context")
+        if not isinstance(ctx, dict):
+            return None
+        crm = ctx.get("crm")
+        return dict(crm) if isinstance(crm, dict) else None
+    except (json.JSONDecodeError, OSError, TypeError):
+        return None
 
 
 def write_orbitbrief_envelope(
