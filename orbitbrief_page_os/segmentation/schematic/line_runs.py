@@ -30,6 +30,12 @@ from app.core.ids import stable_id
 
 _MIN_RUN_LENGTH_PT = 18.0   # 1/4 inch — shorter is decoration, not a run
 _MAX_RUN_LENGTH_PT = 720.0  # 10 inches — longer is usually a border / grid line
+# Cap per-page run count. On a busy floor plan with no detection
+# anchors, every wall segment looks like a candidate. Without a cap,
+# a single sheet can emit tens of thousands of atoms and dominate
+# the compile output. ``detect_line_runs`` sorts by (top, left), so
+# the cap preserves a deterministic prefix.
+_MAX_RUNS_PER_PAGE = 200
 # Construction drawings often stop a cable run 1/4–1/2 inch short of
 # the symbol so the line doesn't visually overlap the device glyph.
 # 36 pt = 1/2 inch is a reasonable compromise between catching real
@@ -246,4 +252,24 @@ def detect_line_runs(
             r.line_run_id,
         )
     )
+    # Cap per-page count to avoid drowning consumers in wall segments
+    # on raster-heavy floor plans. Prefer runs with snapped endpoints
+    # (they carry topology info downstream).
+    if len(out) > _MAX_RUNS_PER_PAGE:
+        out.sort(
+            key=lambda r: (
+                -((1 if r.from_detection_id else 0) + (1 if r.to_detection_id else 0)),
+                round(r.bbox_pdf[1], 2),
+                round(r.bbox_pdf[0], 2),
+                r.line_run_id,
+            )
+        )
+        out = out[:_MAX_RUNS_PER_PAGE]
+        out.sort(
+            key=lambda r: (
+                round(r.bbox_pdf[1], 2),
+                round(r.bbox_pdf[0], 2),
+                r.line_run_id,
+            )
+        )
     return out

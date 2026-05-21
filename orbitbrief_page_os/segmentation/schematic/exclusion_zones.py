@@ -137,11 +137,18 @@ def _title_block_region(
     _, py0, px1, py1 = page_bbox
     page_h = py1 - py0
     page_w = px1 - page_bbox[0]
-    band_y = py0 + 0.75 * page_h
-    band_x = page_bbox[0] + 0.70 * page_w
+    # Bottom 15% strip and rightmost 10% strip is where title-block
+    # furniture really lives. Earlier the cutoffs were 0.75 and 0.70
+    # and we OR'd them, which led one stray sheet-number match in the
+    # top-right corner to drag the entire title-block region across
+    # the drawing body. Use tighter cutoffs AND require corroborating
+    # signals (token match or two strips overlapping) to keep blocks.
+    band_y = py0 + 0.85 * page_h
+    band_x = page_bbox[0] + 0.90 * page_w
     keep: list[tuple[float, float, float, float]] = []
     for blk in blocks:
-        in_band = (blk.bbox[1] >= band_y) or (blk.bbox[0] >= band_x)
+        in_bottom_band = blk.bbox[1] >= band_y
+        in_right_band = blk.bbox[0] >= band_x
         rotated = bool(getattr(blk, "rotation_deg", 0))
         # Rotated text in any region is almost always title-block /
         # border text in construction drawings.  Even when it lives
@@ -150,18 +157,52 @@ def _title_block_region(
         if rotated:
             keep.append(blk.bbox)
             continue
-        if not in_band:
+        if not (in_bottom_band or in_right_band):
             continue
-        if _TITLE_BLOCK_TOKENS_RE.search(blk.text) or re.search(
-            r"\b[A-Z]{1,3}\d+(?:\.\d+)?\b", blk.text
-        ):
+        text = (blk.text or "").strip()
+        # Right-margin disclaimer prose ("Owner and Architect ...") is
+        # often LONG (>40 chars) and contains title-block keywords by
+        # accident. Restrict token-hit qualification to SHORT blocks
+        # — real title-block labels are concise ("Date", "Drawn by",
+        # "Project Name").
+        token_hit = bool(_TITLE_BLOCK_TOKENS_RE.search(text)) and len(text) <= 40
+        sheet_hit = bool(re.search(r"\b[A-Z]{1,3}\d+(?:\.\d+)?\b", text))
+        if token_hit and (in_bottom_band or in_right_band):
             keep.append(blk.bbox)
             continue
-        if blk.bbox[1] >= band_y and blk.bbox[0] >= band_x:
-            # Anything in the inner intersection of bottom + right is
-            # also part of the title block by convention.
+        if in_bottom_band and sheet_hit:
             keep.append(blk.bbox)
-    return _union_bbox(keep)
+            continue
+        if in_bottom_band and in_right_band:
+            # Inner intersection of bottom + right is the title block
+            # corner by convention.
+            keep.append(blk.bbox)
+    if not keep:
+        return None
+    # Clamp the title-block region's top to band_y. Any block above
+    # band_y that landed in `keep` (e.g. a "Date" column header on a
+    # tall right-margin stamp) is a STRUCTURAL marker, but unioning
+    # its bbox with the bottom-strip blocks creates a title-block
+    # region that swallows the drawing body. The drawing body is
+    # ALWAYS above band_y, so clamping the region top there is safe:
+    # title-block furniture above band_y is rare, and when it
+    # exists it's covered by separate right-strip handling in
+    # detect_exclusion_zones (drawing_index / keyed_notes).
+    union = _union_bbox(keep)
+    if union is None:
+        return None
+    x0, y0, x1, y1 = union
+    if y0 < band_y:
+        y0 = band_y
+    if x0 < page_bbox[0]:
+        x0 = page_bbox[0]
+    if y1 > py1:
+        y1 = py1
+    if x1 > px1:
+        x1 = px1
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
 
 
 def detect_exclusion_zones(
