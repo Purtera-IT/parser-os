@@ -362,6 +362,7 @@ def fuse_alias_groups(
 # canonical_key matches EXACTLY.
 _EXACT_MATCH_ENTITY_TYPES: frozenset[str] = frozenset({
     "money", "quantity", "date", "milestone", "quarter", "part_number",
+    "part",  # xlsx_parser / quote_parser emit under "part:", not "part_number:"
     "phone", "email", "zip", "address",
 })
 

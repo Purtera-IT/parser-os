@@ -154,8 +154,58 @@ HEADER_ALIASES: dict[str, set[str]] = {
         "category",
         "phase",
         "area",
-        "location",
         "system",
+    },
+    # Site / facility identifier — when a BOM row carries a Site ID
+    # column, include it in the emitted atom raw_text so the site
+    # entity extractor can bind the row to a physical_site.
+    "site_id": {
+        "site id",
+        "site",
+        "site code",
+        "site key",
+        "site number",
+        "facility id",
+        "facility code",
+        "facility",
+        "location",
+        "location id",
+        "location code",
+        "store #",
+        "store id",
+        "store number",
+        "building",
+        "building id",
+        "campus id",
+    },
+    # Currency code (USD / EUR / GBP / JPY) — included in atom text
+    # so multi-currency BOMs don't silently lose the currency tag.
+    "currency": {
+        "currency",
+        "ccy",
+        "currency code",
+        "iso currency",
+    },
+    # Amount / total — when the row has its own Amount column
+    # (different shape from unit_price/extended_price).
+    "amount": {
+        "amount",
+        "total",
+        "value",
+        "spend",
+        "cost",
+        "subtotal",
+    },
+    # Region (US / EMEA / UK / APAC) — multi-region BOMs use this
+    # to group line items. Surface in atom text for cross-doc
+    # reasoning.
+    "region": {
+        "region",
+        "geo",
+        "geography",
+        "country",
+        "territory",
+        "market",
     },
     "vendor": {
         "vendor",
@@ -1227,18 +1277,45 @@ class QuoteParser(BaseParser):
     def _parse_xlsx(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
         workbook = load_workbook(path, read_only=True, data_only=True)
         atoms: list[EvidenceAtom] = []
+        # Build a fallback XlsxParser once so per-sheet "no quote
+        # shape" sheets (Pricing tables, Site lists, Notes tabs) can
+        # still emit row atoms via the generic xlsx path.
+        fallback_parser = None
+        try:
+            from app.parsers.xlsx_parser import XlsxParser
+            fallback_parser = XlsxParser()
+        except Exception:  # pragma: no cover
+            fallback_parser = None
         for sheet in workbook.worksheets:
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
-            atoms.extend(
-                self._parse_sheet(
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=path.name,
-                    sheet_name=sheet.title,
-                    artifact_type=ArtifactType.xlsx,
-                    rows=rows,
-                )
+            sheet_atoms = self._parse_sheet(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                sheet_name=sheet.title,
+                artifact_type=ArtifactType.xlsx,
+                rows=rows,
             )
+            if sheet_atoms:
+                atoms.extend(sheet_atoms)
+                continue
+            # Sheet produced 0 atoms via the quote path. Try the
+            # generic xlsx row emitter (catches Pricing / Site Roster /
+            # Notes tabs that don't fit the quote schema).
+            if fallback_parser is not None:
+                try:
+                    fb = fallback_parser._parse_sheet_rows(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        artifact_type=ArtifactType.xlsx,
+                        sheet_name=sheet.title,
+                        rows=rows,
+                    )
+                except Exception:  # pragma: no cover
+                    fb = []
+                if fb:
+                    atoms.extend(fb)
         return atoms
 
     def _parse_csv(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
@@ -1417,6 +1494,39 @@ class QuoteParser(BaseParser):
         notes = values.get("notes", "")
         uom_cell = values.get("uom", "")
         section = values.get("section", "")
+        # Site / location context — when the row has a Site ID
+        # column, include it in the atom raw_text so downstream
+        # entity_extraction picks up the site:* key. Without this,
+        # BOM rows like "ATL-HQ-01 | C9300-48P-A | 5" lose the
+        # site context after row-splitting.
+        site_id_value = (
+            values.get("site_id", "")
+            or values.get("site", "")
+            or values.get("location", "")
+            or values.get("location_id", "")
+            or ""
+        ).strip()
+        # Currency / amount context — when the row has explicit
+        # Currency / Amount columns (multi-currency BOMs especially),
+        # include them in the raw_text so money entity extraction
+        # picks up USD/EUR/GBP/JPY codes and the amount values.
+        currency_value = (values.get("currency", "") or "").strip()
+        amount_value = (
+            values.get("amount", "")
+            or values.get("total", "")
+            or values.get("value", "")
+            # extended_price is the canonical bucket for "Amount" /
+            # "Total" / "Line total" columns (HEADER_ALIASES routes
+            # the keyword "amount" here).
+            or values.get("extended_price", "")
+            or ""
+        )
+        if not isinstance(amount_value, str):
+            amount_value = str(amount_value)
+        amount_value = amount_value.strip()
+        # Region tag (US / EMEA / UK / APAC) — useful for cross-doc
+        # reasoning even though it's not a canonical entity.
+        region_value = (values.get("region", "") or "").strip()
 
         inc_obj = normalize_inclusion(included_raw, notes)
         qty_obj = parse_quote_quantity(description, quantity_raw, uom_cell, notes)
@@ -1564,7 +1674,10 @@ class QuoteParser(BaseParser):
         if has_line and row_kind in {"real_line_item", "allowance", "alternate", "option", "excluded", "included_no_qty", "malformed"}:
             append_atom(
                 AtomType.vendor_line_item,
-                f"Line item {part_number} {description}".strip(),
+                (f"Line item {part_number} {description}".strip()
+                 + (f" at {site_id_value}" if site_id_value else "")
+                 + (f" [{region_value}]" if region_value else "")
+                 + (f" {currency_value} {amount_value}".strip() if (currency_value and amount_value) else "")).strip(),
                 vli_value,
                 0.88 if not flags else 0.72,
                 flags,
@@ -1605,7 +1718,9 @@ class QuoteParser(BaseParser):
             )
             append_atom(
                 AtomType.quantity,
-                f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}",
+                (f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}"
+                 + (f" {part_number}" if part_number else "")
+                 + (f" at {site_id_value}" if site_id_value else "")).strip(),
                 qval,
                 0.88 if not qty_obj.get("uncertain") else 0.7,
                 list(flags),

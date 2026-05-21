@@ -3082,33 +3082,89 @@ def extract_keys(
     return sorted(keys)
 
 
+# Entity-key prefixes that the text extractor can SAFELY add even
+# when the parser already supplied other keys. Parser-supplied keys
+# remain authoritative for their own type; these prefixes are
+# typically textual-pattern matches (sites, dates, money, etc.) that
+# parsers don't always carry per-row.
+_AUGMENT_ALWAYS_PREFIXES: tuple[str, ...] = (
+    "site:",
+    "address:",
+    "date:",
+    "milestone:",
+    "quarter:",
+    "money:",
+    "stakeholder:",
+    "phone:",
+    "email:",
+    "zip:",
+    "customer:",
+    "vendor:",
+)
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
-    """Mutate ``atoms`` in place: populate ``entity_keys`` for any atom
-    whose list is currently empty.
+    """Mutate ``atoms`` in place: populate ``entity_keys``.
+
+    Two passes per atom:
+      1. If the atom has no entity_keys, run ``extract_keys`` on its
+         raw_text and value.
+      2. If the atom already has entity_keys (parser-supplied), STILL
+         run ``extract_keys`` to add textual-pattern keys (``site:``,
+         ``date:``, ``money:``, ``stakeholder:``, …) the parser
+         doesn't typically emit. Parser-supplied keys for the same
+         prefix family are preserved; only NEW prefixes get merged.
 
     Returns ``(atoms_enriched, total_keys_added)`` for telemetry.
-    Atoms that already have ``entity_keys`` are left untouched —
-    parser-supplied keys are authoritative.
     """
     atoms_enriched = 0
     total_keys_added = 0
     for atom in atoms:
-        if getattr(atom, "entity_keys", None):
-            # Even pre-populated keys go through hygiene so a parser
-            # that mints a fake ``site:belden_cat6`` gets cleaned up.
-            cleaned = filter_entity_keys_for_atom(atom, atom.entity_keys)
-            if cleaned != list(atom.entity_keys):
-                atom.entity_keys = cleaned
-            continue
+        existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
         value = getattr(atom, "value", None)
-        new_keys = extract_keys(text, pack=pack, value=value)
-        if new_keys:
-            new_keys = filter_entity_keys_for_atom(atom, new_keys)
+
+        if not existing:
+            new_keys = extract_keys(text, pack=pack, value=value)
             if new_keys:
-                atom.entity_keys = new_keys
+                new_keys = filter_entity_keys_for_atom(atom, new_keys)
+                if new_keys:
+                    atom.entity_keys = new_keys
+                    atoms_enriched += 1
+                    total_keys_added += len(new_keys)
+            continue
+
+        # Parser already populated keys. Run hygiene first.
+        cleaned = filter_entity_keys_for_atom(atom, existing)
+        # Augment with textual-pattern keys the parser doesn't emit
+        # per-row (sites, dates, money, stakeholders).
+        textual_keys = extract_keys(text, pack=pack, value=value)
+        existing_prefixes = {
+            k.split(":", 1)[0] + ":" if ":" in k else k
+            for k in cleaned
+        }
+        augment: list[str] = []
+        for k in textual_keys:
+            if ":" not in k:
+                continue
+            prefix = k.split(":", 1)[0] + ":"
+            if prefix not in _AUGMENT_ALWAYS_PREFIXES:
+                continue
+            # Preserve parser-supplied keys for the same prefix —
+            # parser knows the structured source better. Only add
+            # NEW prefix families.
+            if prefix in existing_prefixes:
+                continue
+            augment.append(k)
+        if augment:
+            merged = sorted(set(cleaned) | set(augment))
+            merged = filter_entity_keys_for_atom(atom, merged)
+            if merged != list(cleaned):
+                atom.entity_keys = merged
                 atoms_enriched += 1
-                total_keys_added += len(new_keys)
+                total_keys_added += len(augment)
+        elif cleaned != list(getattr(atom, "entity_keys", [])):
+            atom.entity_keys = cleaned
     return atoms_enriched, total_keys_added
 
 
