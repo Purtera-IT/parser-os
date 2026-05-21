@@ -515,6 +515,34 @@ class OrbitBriefPdfParser(BaseParser):
             schematic_derived = []
         if schematic_atoms:
             atoms.extend(schematic_atoms)
+
+        # Site-roster fitz fallback: when the structured-doc pipeline
+        # didn't expose any site-roster tables (e.g. reportlab-rendered
+        # PDFs whose cells the column-heuristic doesn't recognize),
+        # call fitz.find_tables() directly. Any table that smells like
+        # a site roster gets fed through site_roster_extractor and
+        # emitted as physical_site atoms. This is additive — it does
+        # not deduplicate against the structured path because we want
+        # at-least-one path to fire.
+        try:
+            existing_site_ids = {
+                (a.value or {}).get("site_id")
+                for a in atoms
+                if isinstance(a.value, dict) and a.value.get("kind") == "physical_site"
+            }
+            existing_site_ids.discard(None)
+            atoms.extend(
+                _fitz_site_roster_fallback(
+                    pdf_path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                    already_emitted=existing_site_ids,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
+
         # Surface the derived artifacts in the parser output so the
         # compiler-level cache captures them and replays them on every
         # cache hit.  This guarantees ``<stem>.derived/structured.json``
@@ -541,6 +569,193 @@ class OrbitBriefPdfParser(BaseParser):
 
 
 # ──────────────────────── public helpers ─────────────────────────────────
+
+
+def _fitz_site_roster_fallback(
+    *,
+    pdf_path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    already_emitted: set[str | None] | None = None,
+) -> list[EvidenceAtom]:
+    """Use ``fitz.find_tables()`` to catch site rosters the structured
+    pipeline missed.
+
+    Returns a list of structured ``physical_site`` entity atoms. Never
+    raises — on any error (fitz unavailable, PDF unreadable, no tables)
+    returns an empty list.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    try:
+        from app.parsers.site_roster_extractor import (
+            extract_site_roster,
+            looks_like_site_roster,
+        )
+    except Exception:
+        return []
+
+    already_emitted = already_emitted or set()
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+    try:
+        # Pull the document-level surrounding text once so the
+        # extractor can spot ``kind=physical_site`` declarations.
+        page_texts: list[str] = []
+        try:
+            for p in doc:
+                try:
+                    page_texts.append(p.get_text() or "")
+                except Exception:
+                    continue
+        except Exception:
+            page_texts = []
+        document_text = "\n".join(page_texts)
+
+        for page_index, page in enumerate(doc):
+            try:
+                tables_finder = page.find_tables()
+            except Exception:
+                continue
+            tables = list(getattr(tables_finder, "tables", []) or [])
+            if not tables:
+                continue
+            for table_index, table in enumerate(tables):
+                try:
+                    extracted = table.extract()
+                except Exception:
+                    continue
+                if not extracted or len(extracted) < 2:
+                    continue
+                header = [(c or "") for c in extracted[0]]
+                body = extracted[1:]
+                rows: list[dict[str, Any]] = []
+                for r in body:
+                    if not r:
+                        continue
+                    rows.append({
+                        header[i] if i < len(header) and header[i] else f"col_{i}": (
+                            # Collapse internal whitespace in cell values so a
+                            # word that wrapped across two display lines (e.g.
+                            # "ATL-WEST-0\n2") renders as a single token.
+                            " ".join((c or "").split())
+                        )
+                        for i, c in enumerate(r)
+                    })
+                if not rows:
+                    continue
+                # Build column header list, then route through
+                # site_roster_extractor.
+                columns = [
+                    header[i] if i < len(header) and header[i] else f"col_{i}"
+                    for i in range(len(header) if header else (len(rows[0]) if rows else 0))
+                ]
+                try:
+                    is_roster = looks_like_site_roster(
+                        columns=columns, rows=rows, surrounding_text=document_text
+                    )
+                except Exception:
+                    is_roster = False
+                if not is_roster:
+                    continue
+                try:
+                    roster_rows = extract_site_roster(
+                        columns=columns, rows=rows, surrounding_text=document_text
+                    )
+                except Exception:
+                    roster_rows = []
+                # Bbox from fitz table -> base locator
+                try:
+                    bbox = table.bbox
+                    locator_base = {
+                        "page": int(page_index),
+                        "block_kind": "table",
+                        "bbox": list(bbox),
+                        "extraction": "site_roster_fitz_fallback_v1",
+                    }
+                except Exception:
+                    locator_base = {"page": int(page_index), "extraction": "site_roster_fitz_fallback_v1"}
+                for site_row in roster_rows:
+                    sid = (site_row.site_id or "").strip()
+                    # Normalize whitespace inside the ID (PDF wrap
+                    # artifacts: "ATL-WEST-0 2" -> "ATL-WEST-02")
+                    if sid and " " in sid:
+                        compact = re.sub(r"\s+", "", sid)
+                        # Only collapse when the compact form still
+                        # looks like a site ID — keeps "Building C"
+                        # type values from getting smushed.
+                        from app.parsers.site_roster_extractor import _SITE_ID_SHAPE_RE
+                        if _SITE_ID_SHAPE_RE.match(compact):
+                            sid = compact
+                    if sid in already_emitted:
+                        continue
+                    already_emitted.add(sid)
+                    canon_id = sid or site_row.facility_name or ""
+                    if not canon_id:
+                        continue
+                    site_text = " | ".join(
+                        f"{k}: {v}"
+                        for k, v in [
+                            ("site_id", sid or site_row.site_id),
+                            ("facility", site_row.facility_name),
+                            ("address", site_row.street_address),
+                            ("mdf_idf", site_row.mdf_idf),
+                            ("access", site_row.access_window),
+                            ("escort", site_row.escort_owner),
+                            ("contact", site_row.contact),
+                            ("phone", site_row.phone),
+                            ("email", site_row.email),
+                            ("notes", site_row.notes),
+                        ]
+                        if v
+                    )
+                    locator = {
+                        **locator_base,
+                        "row_index": site_row.row_index,
+                        "table_index": table_index,
+                    }
+                    out.append(
+                        _make_atom(
+                            text=site_text or canon_id,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=pdf_path.name,
+                            parser_version=parser_version,
+                            atom_type=AtomType.entity,
+                            authority_class=AuthorityClass.contractual_scope,
+                            confidence=site_row.confidence,
+                            locator=locator,
+                            value={
+                                "kind": "physical_site",
+                                "site_id": sid or site_row.site_id,
+                                "facility_name": site_row.facility_name,
+                                "street_address": site_row.street_address,
+                                "mdf_idf": site_row.mdf_idf,
+                                "access_window": site_row.access_window,
+                                "escort_owner": site_row.escort_owner,
+                                "contact": site_row.contact,
+                                "phone": site_row.phone,
+                                "email": site_row.email,
+                                "city_state": site_row.city_state,
+                                "sqft": site_row.sqft,
+                                "occupancy": site_row.occupancy,
+                                "notes": site_row.notes,
+                                "extras": dict(site_row.extra_fields),
+                            },
+                        )
+                    )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
 
 
 def build_structured_document(pdf_path: Path) -> dict[str, Any]:
@@ -1131,6 +1346,97 @@ def _atoms_for_block(
             columns=columns,
             sample_cells=sample_cells,
         )
+
+        # Site-roster fast path: when the table looks like a list of
+        # physical sites (column headers like Site ID / Facility Name
+        # / Street Address, OR surrounding prose declares
+        # kind=physical_site), emit one structured ``site`` atom per
+        # row carrying all the canonical fields. This bypasses the
+        # row-as-prose path that was shattering rosters into junk
+        # entity fragments ("site id", "n terminal", "building c").
+        try:
+            from app.parsers.site_roster_extractor import (
+                extract_site_roster,
+                looks_like_site_roster,
+            )
+        except Exception:  # pragma: no cover
+            extract_site_roster = None  # type: ignore[assignment]
+            looks_like_site_roster = None  # type: ignore[assignment]
+        if extract_site_roster is not None and looks_like_site_roster is not None:
+            surrounding = " ".join(str(s) for s in (section_path or []))
+            try:
+                is_roster = looks_like_site_roster(
+                    columns=columns, rows=rows, surrounding_text=surrounding
+                )
+            except Exception:  # pragma: no cover
+                is_roster = False
+            if is_roster:
+                try:
+                    roster_rows = extract_site_roster(
+                        columns=columns, rows=rows, surrounding_text=surrounding
+                    )
+                except Exception:  # pragma: no cover
+                    roster_rows = []
+                for site_row in roster_rows:
+                    # The site_id is the canonical key. When absent,
+                    # fall back to a slug of the facility_name.
+                    canon_id = site_row.site_id or site_row.facility_name or ""
+                    if not canon_id:
+                        continue
+                    site_text = " | ".join(
+                        f"{k}: {v}"
+                        for k, v in [
+                            ("site_id", site_row.site_id),
+                            ("facility", site_row.facility_name),
+                            ("address", site_row.street_address),
+                            ("mdf_idf", site_row.mdf_idf),
+                            ("access", site_row.access_window),
+                            ("escort", site_row.escort_owner),
+                            ("contact", site_row.contact),
+                            ("phone", site_row.phone),
+                            ("email", site_row.email),
+                            ("notes", site_row.notes),
+                        ]
+                        if v
+                    )
+                    yield _make_atom(
+                        text=site_text or canon_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=filename,
+                        parser_version=parser_version,
+                        atom_type=AtomType.entity,
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=site_row.confidence,
+                        locator={
+                            **base_locator,
+                            "row_index": site_row.row_index,
+                            "extraction": "site_roster_v1",
+                        },
+                        value={
+                            "kind": "physical_site",
+                            "site_id": site_row.site_id,
+                            "facility_name": site_row.facility_name,
+                            "street_address": site_row.street_address,
+                            "mdf_idf": site_row.mdf_idf,
+                            "access_window": site_row.access_window,
+                            "escort_owner": site_row.escort_owner,
+                            "contact": site_row.contact,
+                            "phone": site_row.phone,
+                            "email": site_row.email,
+                            "city_state": site_row.city_state,
+                            "sqft": site_row.sqft,
+                            "occupancy": site_row.occupancy,
+                            "notes": site_row.notes,
+                            "extras": dict(site_row.extra_fields),
+                        },
+                    )
+                # Site-roster rows are emitted as structured ``entity``
+                # atoms above; the legacy table-as-prose path is
+                # skipped for this block. We return here to prevent
+                # duplicate scope_item atoms covering the same cells.
+                return
+
         for row_index, row in enumerate(rows):
             row_text = _row_to_text(row)
             if not row_text:
@@ -3574,6 +3880,127 @@ def _build_schematic_prepass_failure_atom(
     )
 
 
+# Filter list for "orphan token" harvesting — common column-header
+# words and English filler that shouldn't be treated as symbols.
+_LEGEND_TOKEN_BLOCKLIST: frozenset[str] = frozenset({
+    "ABOVE", "AFF", "ARCH", "BACK", "CABLE", "CAT6", "CEILING",
+    "CLOSET", "CMP", "COAX", "COMPONENT", "COMPONENTS", "CONDUIT",
+    "CONTROL", "COOPER", "COPPER", "COUNT", "COUNTER", "COVER",
+    "DESCRIPTION", "DEVICE", "DOCK", "DOOR", "DRAWING", "DRAWINGS",
+    "ELECTRICAL", "ENTRY", "EQUIP", "ETC", "FINISH", "FLUSH",
+    "FRAME", "FROM", "GROUP", "HARDWARE", "HEIGHT", "INSERT",
+    "INSTALLATION", "JACK", "LIST", "LOAD", "LOWER", "MANUFACTURERS",
+    "MOUNT", "MOUNTED", "MOUNTING", "MUD", "NIC", "NOT", "NOTE",
+    "NOTES", "N/A", "NA", "NORMAL", "NUMBER", "OUTLET", "OWNER",
+    "PANEL", "PART", "PATCH", "PER", "PLANS", "POE", "PORT",
+    "POWER", "PROVIDE", "READER", "REFER", "REMARKS", "REQUIREMENT",
+    "REQUIREMENTS", "RING", "RISER", "ROOM", "ROOMS", "ROUGH",
+    "ROUGH-IN", "SCHEDULE", "SECONDARY", "SECURITY", "SEE",
+    "SHIELDED", "SHOWN", "SIZE", "SPACE", "STANDARD", "STRANDED",
+    "STUB", "SUITE", "SYMBOL", "SYMBOLS", "SYSTEM", "TERMINATION",
+    "TYPE", "TYPES", "TYPICAL", "TYPICALLY", "UNDER", "UNLESS",
+    "UPS", "USE", "USED", "VAULT", "VERIFY", "WALL", "WAREHOUSE",
+    "WIRE", "WITH", "WORK", "ZONE",
+    "AND", "OR", "FOR", "THE", "ARE", "WAS", "WERE", "ALL", "ANY",
+    "PER", "VERIFY", "TBD",
+    "A", "B", "C", "D", "E", "F", "G",
+    # ----- column letters used as grid coordinates -----
+    "A#", "A #",
+})
+
+
+def _augment_legend_with_orphan_tokens(
+    *,
+    legend: Any,
+    per_page_legend_bbox: dict[int, tuple[float, float, float, float]],
+    per_page_blocks: dict[int, list[Any]],
+) -> Any:
+    """Harvest short uppercase tokens from a legend's bbox region.
+
+    The row-parser pairs blocks into (symbol, description) rows but
+    occasionally misses the symbol token (multi-column legends with
+    wide gaps, columns of nothing-but-icon swatches, etc.). For each
+    legend, scan its bbox for short standalone uppercase tokens that
+    don't already appear as ``normalized_symbol_text`` in the legend
+    entries, and append a synthetic ParsedLegendEntry for each.
+
+    Filtered by ``_LEGEND_TOKEN_BLOCKLIST`` to keep English filler /
+    column-header words out of the symbol vocabulary.
+    """
+    from app.parsers.schematic_models import ParsedLegend, ParsedLegendEntry
+    import re
+
+    legend_bbox = per_page_legend_bbox.get(legend.page_index)
+    if legend_bbox is None:
+        return legend
+    blocks = per_page_blocks.get(legend.page_index) or []
+    if not blocks:
+        return legend
+
+    have: set[str] = set()
+    for e in legend.entries:
+        s = (e.normalized_symbol_text or "").strip().upper()
+        if s:
+            have.add(s)
+    new_entries: list[ParsedLegendEntry] = list(legend.entries)
+    seen_new: set[str] = set()
+    # Pattern: short uppercase alphanum tokens, optionally with -, /, or digits
+    pat = re.compile(r"^[A-Z][A-Z0-9/\-]{0,5}$")
+    for b in blocks:
+        bbox = getattr(b, "bbox", None)
+        if not bbox or len(bbox) != 4:
+            continue
+        # Must lie inside the legend bbox
+        if not (
+            legend_bbox[0] <= bbox[0]
+            and bbox[2] <= legend_bbox[2]
+            and legend_bbox[1] <= bbox[1]
+            and bbox[3] <= legend_bbox[3]
+        ):
+            continue
+        text = (getattr(b, "text", "") or "").strip()
+        if not text or len(text) > 6:
+            continue
+        upper = text.upper()
+        if upper in have or upper in seen_new:
+            continue
+        if upper in _LEGEND_TOKEN_BLOCKLIST:
+            continue
+        if not pat.match(upper):
+            continue
+        # Looks like a real legend symbol — synthesize an entry.
+        try:
+            entry = ParsedLegendEntry.make(
+                page_index=legend.page_index,
+                label_text=upper,
+                normalized_label=upper.lower(),
+                raw_symbol_text=upper,
+                normalized_symbol_text=upper,
+                symbol_bbox_pdf=tuple(float(x) for x in bbox),
+                confidence=0.6,
+            )
+        except (TypeError, ValueError):
+            continue
+        new_entries.append(entry)
+        seen_new.add(upper)
+
+    if not seen_new:
+        return legend
+    # Rebuild the ParsedLegend with the new entry tuple. Use make() so
+    # legend_id rolls forward to reflect the new entry set.
+    return ParsedLegend.make(
+        page_index=legend.page_index,
+        sheet_number=legend.sheet_number,
+        title=legend.title,
+        scope=legend.scope,
+        entries=tuple(new_entries),
+        continuation_refs=legend.continuation_refs,
+        source_ref_locator=dict(legend.source_ref_locator),
+        confidence=legend.confidence,
+        warnings=legend.warnings,
+    )
+
+
 def _run_schematic_pre_pass(
     *,
     project_id: str,
@@ -3980,8 +4407,21 @@ def _run_schematic_pre_pass(
             # a real DD with WN/CR/TV symbols produces detections
             # regardless of which domain pack is loaded.
             if not targets:
+                # Augment the legend with orphan symbol tokens.
+                # Real legends have one column of short symbol tokens
+                # (WN / CR / ZN / DC / FACP-2 / MATV / etc.) but the
+                # row-parser occasionally fails to pair a token with
+                # its description, so the resulting entry list omits
+                # the symbol. Scan the legend bbox for standalone
+                # uppercase tokens and synthesize entries for any
+                # that aren't already represented.
+                augmented_legend = _augment_legend_with_orphan_tokens(
+                    legend=resolved.legend,
+                    per_page_legend_bbox=per_page_legend_bbox,
+                    per_page_blocks=per_page_blocks,
+                )
                 synthesized: list[DetectionTarget] = []
-                for entry in resolved.legend.entries:
+                for entry in augmented_legend.entries:
                     key_seed = (
                         entry.normalized_symbol_text
                         or entry.normalized_label
@@ -4013,6 +4453,14 @@ def _run_schematic_pre_pass(
                         continue
                 targets = synthesized
                 pack_id_for_set = "legend_only"
+                # Replace resolved.legend with the augmented copy so
+                # downstream code (symbol detector, atom emitters)
+                # see the harvested entries too.
+                import dataclasses as _dc
+                try:
+                    resolved = _dc.replace(resolved, legend=augmented_legend)
+                except (TypeError, ValueError):  # pragma: no cover
+                    pass
 
             target_set = DetectionTargetSet.make(
                 page_index=page_index,

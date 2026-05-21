@@ -275,7 +275,13 @@ _STREET_ADDRESS_REGEX = re.compile(
 # leak through — the absence of a recognized site-function suffix is
 # itself the filter.
 _SITE_CODE_REGEX = re.compile(
-    r"\b([A-Z]{3,10}(?:-[A-Z][A-Z0-9]{0,9}){1,4})\b"
+    # Head: 2-10 uppercase letters (was 3-10; tighter is too restrictive
+    # for shorter region prefixes like "SF" or "AT").
+    # Continuation: 1-5 segments, each either alphanumeric starting with
+    # a letter (HQ, DC1, WEST) OR pure digits 1-3 chars (01, 12, 100).
+    # The trailing digit segment is required to capture "ATL-HQ-01" style
+    # IDs where the row number lives in its own segment.
+    r"\b([A-Z]{2,10}(?:-(?:[A-Z][A-Z0-9]{0,9}|\d{1,3})){1,5})\b"
 )
 # Known non-site hyphenated all-caps codes that look site-shaped but
 # aren't — connectors, network specs, manufacturer abbreviations, etc.
@@ -392,11 +398,37 @@ _SITE_CODE_SUFFIX_PATTERN = re.compile(
 )
 
 
-def _site_code_suffix_ok(last_segment: str) -> bool:
-    """Universal gate: does this last segment carry site-function meaning?"""
+def _site_code_suffix_ok(last_segment: str, *, prev_segment: str | None = None) -> bool:
+    """Universal gate: does this last segment carry site-function meaning?
+
+    Accepts three shapes:
+      1. ``last`` is in the curated allowlist (HQ, MAIN, WEST, ...).
+      2. ``last`` matches the open-shape pattern (DC1, FL3, BLDG2, ...).
+      3. ``last`` is 1-3 digits AND ``prev_segment`` is a recognized
+         site-function token. Pattern ``<region>-<function>-<NN>`` is
+         the most common enterprise site-ID shape (``ATL-HQ-01``,
+         ``NYC-DC-12``, ``SFO-WEST-05``). Without this, every numbered
+         site instance of the form gets silently dropped.
+    """
     if last_segment in _SITE_CODE_SUFFIX_ALLOWLIST:
         return True
     if _SITE_CODE_SUFFIX_PATTERN.match(last_segment):
+        return True
+    if (
+        prev_segment is not None
+        and last_segment.isdigit()
+        and 1 <= len(last_segment) <= 3
+        and (
+            prev_segment in _SITE_CODE_SUFFIX_ALLOWLIST
+            or _SITE_CODE_SUFFIX_PATTERN.match(prev_segment)
+            or (prev_segment.isalnum() and any(c.isalpha() for c in prev_segment) and 2 <= len(prev_segment) <= 5)
+            or (prev_segment.isdigit() and 1 <= len(prev_segment) <= 4)
+        )
+    ):
+        # Accepts ``<region>-<function>-<NN>`` AND ``<region>-<NNN>-<NN>``.
+        # The street-number-as-function case (``ATL-047-04`` for
+        # "OPTBOT Brady Training, 047 Brady Ave NW") is real in
+        # enterprise rosters and would otherwise be silently dropped.
         return True
     return False
 
@@ -1163,6 +1195,7 @@ def _emit_sites(text: str) -> set[str]:
         segments = code.split("-")
         first = segments[0]
         last = segments[-1]
+        prev = segments[-2] if len(segments) >= 2 else None
         # Universal POSITIVE gate: the last segment must carry recognized
         # site-function meaning (direction, facility type, datacenter /
         # floor / building / wing number).  This is the load-bearing
@@ -1171,7 +1204,7 @@ def _emit_sites(text: str) -> set[str]:
         # segments. Catches unknown junk codes like MOCK-OPTBOT-ATL,
         # ALPHA-FOOBAR, GAMMA-FOO-2026 without needing to enumerate
         # every possible junk word.
-        if not _site_code_suffix_ok(last):
+        if not _site_code_suffix_ok(last, prev_segment=prev):
             continue
         # Head denylist — belt-and-suspenders for codes whose tail
         # happens to look site-shaped but the head is a known test /
@@ -1495,7 +1528,8 @@ def _find_site_key_spans(
         segments = code.split("-")
         first = segments[0]
         last = segments[-1]
-        if not _site_code_suffix_ok(last):
+        prev = segments[-2] if len(segments) >= 2 else None
+        if not _site_code_suffix_ok(last, prev_segment=prev):
             continue
         if first in _SITE_CODE_HEAD_DENYLIST:
             continue
