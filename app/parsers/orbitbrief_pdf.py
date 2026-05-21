@@ -210,7 +210,20 @@ def _looks_like_form_field(text: str) -> bool:
 # as both a footer and a redundant header band) and contribute pure
 # noise — they're the same string with only the page number changing,
 # so they pollute the atom set with N copies per N-page PDF.
-_PAGE_NUMBER_PATTERN = re.compile(r"\bpage\s+\d+\s+of\s+\d+\b", re.IGNORECASE)
+_PAGE_NUMBER_PATTERN = re.compile(
+    # Match real "Page 3 of 12" AND the unrendered template version
+    # "Page X of Y" / "Page X of N" (reportlab footers sometimes leave
+    # placeholders unresolved when the doc is generated quickly).
+    r"\bpage\s+(?:\d+|[xn])\s+of\s+(?:\d+|[xny])\b",
+    re.IGNORECASE,
+)
+# Standalone "Page N" / "Page X" without "of" — only counts as a
+# footer when corroborated by other footer hints in the same line.
+_PAGE_NUMBER_LOOSE_PATTERN = re.compile(r"\bpage\s+(?:\d+|[xn])\b", re.IGNORECASE)
+# Copyright line shape: "(c) 2026 ORG", "© 2026 ORG", "Copyright 2026 ORG"
+_COPYRIGHT_PATTERN = re.compile(
+    r"(?:\(c\)|©|copyright)\s*(?:19|20)\d{2}", re.IGNORECASE
+)
 _PAGE_FOOTER_HINTS = (
     "rfp ",
     "rfp#",
@@ -225,6 +238,10 @@ _PAGE_FOOTER_HINTS = (
     "copyright",
     "confidential",
     "proprietary",
+    "do not redistribute",
+    "do not distribute",
+    "internal use only",
+    "internal only",
 )
 
 
@@ -247,10 +264,10 @@ def _looks_like_page_footer(text: str) -> bool:
         return False  # Real footers are short; long blocks are scope.
     if _PAGE_NUMBER_PATTERN.search(text):
         return True
+    text_lower = text.lower()
     # "Page 17" alone (no "of M") on a short line that also carries an
     # RFP/footer hint is also a footer.
-    if re.search(r"\bpage\s+\d+\b", text, re.IGNORECASE):
-        text_lower = text.lower()
+    if _PAGE_NUMBER_LOOSE_PATTERN.search(text):
         if any(hint in text_lower for hint in _PAGE_FOOTER_HINTS):
             # Make sure it doesn't carry quantitative info that scope
             # atoms care about.
@@ -258,6 +275,18 @@ def _looks_like_page_footer(text: str) -> bool:
             has_qty = bool(re.search(r"\b\d+(?:,\d{3})*\s*(?:cameras?|aps?|drops?|outlets?|jacks?|users?|licenses?|installations?)\b", text, re.IGNORECASE))
             if not (has_money or has_qty):
                 return True
+    # Copyright + confidentiality marker on a short pipe-separated line
+    # is universally a footer band (every page repeats it).
+    if _COPYRIGHT_PATTERN.search(text):
+        hint_count = sum(1 for hint in _PAGE_FOOTER_HINTS if hint in text_lower)
+        if hint_count >= 1:
+            return True
+    # Two-or-more footer hints in a single short line — pipe-separated
+    # bands like "Confidential | Page X of Y | (c) 2026 X | DO NOT
+    # REDISTRIBUTE" are universally footer furniture.
+    hint_count = sum(1 for hint in _PAGE_FOOTER_HINTS if hint in text_lower)
+    if hint_count >= 2 and len(text) <= 200:
+        return True
     return False
 
 
@@ -1163,8 +1192,9 @@ def atoms_from_structured_doc(
     """
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
+        sections = page.get("sections", []) or []
         yield from _atoms_for_sections(
-            sections=page.get("sections", []) or [],
+            sections=sections,
             section_path=[],
             page_index=page_index,
             project_id=project_id,
@@ -1172,6 +1202,46 @@ def atoms_from_structured_doc(
             filename=filename,
             parser_version=parser_version,
         )
+        # Metadata-fallback path: when the structured extractor was
+        # unable to assemble any sections from the page (heading
+        # classifier misfired on short-paragraph PDFs, weak heading
+        # styling, scanned/rasterized documents), the page's body
+        # content ends up classified as ``metadata`` and is otherwise
+        # silently dropped. Emit one scope_item atom per metadata
+        # line as a fallback so content like a date roster or a
+        # one-paragraph SLA isn't completely invisible to the
+        # downstream compiler.
+        if not sections:
+            page_metadata = page.get("metadata") or []
+            for meta_index, meta_text in enumerate(page_metadata):
+                text = (str(meta_text or "")).strip()
+                if not text or len(text) < 6:
+                    continue
+                if _looks_like_form_field(text) or _looks_like_page_footer(text):
+                    continue
+                # Apply the same text-pattern classifier the normal
+                # paragraph path uses — without it, SLA / decision /
+                # constraint / risk shapes that arrive via the
+                # fallback all get the default scope_item label.
+                atom_type, authority = _classify_text_block(
+                    text=text, section_path=[], kind="paragraph"
+                )
+                yield _make_atom(
+                    text=text,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=atom_type,
+                    authority_class=authority,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={
+                        "page": page_index,
+                        "block_kind": "metadata_fallback",
+                        "meta_index": meta_index,
+                    },
+                    value={"kind": "paragraph", "fallback": "page_metadata"},
+                )
 
 
 def _atoms_for_sections(
@@ -1832,6 +1902,19 @@ _TEXT_OVERRIDES: list[tuple[re.Pattern[str], AtomType]] = [
     # Constraint shapes — modal verbs at the start of a clause.
     (re.compile(r"^\s*(must|shall|required to|is required to|will be required to)\b", re.I), AtomType.constraint),
     (re.compile(r"\b(must\s+(?:comply|conform|support|meet|include)|is\s+required|shall\s+comply)\b", re.I), AtomType.constraint),
+    # SLA / managed-services constraint shapes — response/resolution
+    # times, uptime percentages, service credits. These appear in
+    # every managed-service contract and were previously falling
+    # through to scope_item, hiding the operational commitments.
+    (re.compile(r"\b(?:response|resolution|repair|restoration|acknowledg(?:e|ement))\s+(?:time\s+)?(?:within|of|<|≤|in)\s+\d+\s*(?:business\s+)?(?:hours?|days?|minutes?)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bpriority\s+\d\b.*\b(?:response|resolution)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bp[1-4]\b.*\b(?:response|resolution|hours?|days?)\b", re.I), AtomType.constraint),
+    (re.compile(r"\b(?:uptime|availability)\b.*?\d+(?:\.\d+)?\s*%", re.I), AtomType.constraint),
+    (re.compile(r"\b\d+(?:\.\d+)?\s*%\s+(?:uptime|availability|sla)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bservice\s+credits?\s+(?:apply|granted|owed|due)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bservice\s+level\s+(?:agreement|objective|commitment)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bmean\s+time\s+(?:to|between)\s+(?:repair|restore|failure|recovery)\b", re.I), AtomType.constraint),
+    (re.compile(r"\b(?:mttr|mtbf|rpo|rto)\s*[:=]?\s*\d+\s*(?:hours?|days?|minutes?)\b", re.I), AtomType.constraint),
     # Decision shapes — "will be", "is to be", "centralized at",
     # "decided to", "approved to".  These are the meeting-decision
     # cues that used to fall through to scope_item.

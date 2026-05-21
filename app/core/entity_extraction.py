@@ -638,6 +638,30 @@ _QUANTITY_REGEX = re.compile(
     re.IGNORECASE,
 )
 
+# Noun-anchored quantity pattern: matches "<NUMBER> <unit-or-device-noun>"
+# so prose statements like "Install 50 access points", "60 wireless
+# devices", "5 distribution switches", "12 SFP modules", "75 power
+# cords", "8 spools of cable" produce quantity entities. The trailing
+# noun must be from the install-vocabulary list (extensible) so this
+# does not match prices ("50 dollars"), dates ("2026 March"), or
+# generic prose ("50 reasons").
+_QUANTITY_NOUN_REGEX = re.compile(
+    r"\b([0-9]+(?:,[0-9]{3})*)\s+"
+    r"(?:wireless\s+)?"
+    r"(?:access\s+points?|aps?|wireless\s+devices?|"
+    r"switches?|firewalls?|routers?|cameras?|sensors?|"
+    r"sfp(?:\+|s)?\s*modules?|sfp(?:\+|s)?|modules?|"
+    r"patch\s+panels?|patch\s+cords?|panels?|"
+    r"jacks?|outlets?|drops?|ports?|"
+    r"cables?|cords?|spools?(?:\s+of\s+\w+)?|"
+    r"licenses?|seats?|users?|endpoints?|"
+    r"servers?|appliances?|chassis|chasses|"
+    r"workstations?|laptops?|desktops?|"
+    r"installations?|sites?|locations?|facilities|facility|"
+    r"units?|devices?|pieces?|each)\b",
+    re.IGNORECASE,
+)
+
 
 # Q-and-A markers — Q1., A1., Q.1, A.1, Q-1
 _QA_MARKER_REGEX = re.compile(r"\b([QA])\s*\.?\s*(\d{1,3})\b")
@@ -2181,6 +2205,21 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
         try:
             n = int(raw)
         except ValueError:
+            continue
+        keys.add(f"quantity:{n}")
+
+    # Noun-anchored quantities: "Install 50 access points",
+    # "60 wireless devices", "5 distribution switches", etc.
+    for match in _QUANTITY_NOUN_REGEX.finditer(text):
+        raw = match.group(1).replace(",", "")
+        try:
+            n = int(raw)
+        except ValueError:
+            continue
+        # Skip implausibly small ("0 cables") or implausibly large
+        # ("1000000 each") values that are almost always not real
+        # quantities.
+        if n <= 0 or n > 100_000:
             continue
         keys.add(f"quantity:{n}")
 

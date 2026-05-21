@@ -355,6 +355,17 @@ def fuse_alias_groups(
     return out
 
 
+# Entity types whose canonical_name is a number / structured value.
+# Fuzzy string-similarity makes no sense here (`100000` vs `10000`
+# scores high but means very different things; `2026-04-30` vs
+# `2026-04-03` differ by one digit). These types only merge when the
+# canonical_key matches EXACTLY.
+_EXACT_MATCH_ENTITY_TYPES: frozenset[str] = frozenset({
+    "money", "quantity", "date", "milestone", "quarter", "part_number",
+    "phone", "email", "zip", "address",
+})
+
+
 def resolve_aliases(records: list[EntityRecord]) -> list[EntityRecord]:
     if not records:
         return []
@@ -368,12 +379,17 @@ def resolve_aliases(records: list[EntityRecord]) -> list[EntityRecord]:
             continue
         merged = record.model_copy(deep=True)
         consumed.add(record.id)
+        exact_only = merged.entity_type in _EXACT_MATCH_ENTITY_TYPES
 
         for other in ordered:
             if other.id in consumed or other.entity_type != merged.entity_type:
                 continue
             if other.canonical_key == merged.canonical_key:
                 score = 100.0
+            elif exact_only:
+                # Skip fuzzy merging for numeric / structured entity
+                # types — "100000" vs "10000" must NOT collapse.
+                continue
             else:
                 score = _fuzzy_score(merged.canonical_name, other.canonical_name)
 
