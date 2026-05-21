@@ -52,6 +52,39 @@ _GENERIC_SITE_PSEUDO_VALUES: frozenset[str] = frozenset({
     "see attached",
     "as noted",
     "unknown",
+    # Column-header / row-label noise that gets surfaced as a "site"
+    # when prose mentions the column name (e.g. "Site ID Facility"
+    # is a header row caught by the proper-noun matcher).
+    "site id",
+    "site id facility",
+    "site code",
+    "site number",
+    "facility name",
+    "access window",
+    "escort owner",
+    "mdf",
+    "idf",
+    "mdf idf",
+    # Telecom-closet identifiers that aren't physical sites —
+    # they're rooms WITHIN a site (already captured via mdf_idf on
+    # the physical_site atom). The bare slug shouldn't surface as
+    # its own site entity.
+    "mdf 1", "mdf 2", "mdf 3", "mdf 4", "mdf 5", "mdf 6",
+    "mdf a", "mdf b", "mdf c", "mdf d", "mdf w", "mdf w1", "mdf w2",
+    "mdf cp", "mdf e",
+    "idf 1", "idf 2", "idf 3", "idf 4", "idf 5",
+    "idf a", "idf b", "idf w", "idf w1", "idf w2",
+    "warehouse rf",
+    "n terminal",
+    "ic 001", "ic 002", "ic 003",
+    "am 3", "am 4", "am 5",
+    "atlanta ga", "atlanta",
+    # Bare ATL- prefixes that survived without their numbered suffix
+    # (the full forms atl_hq_01 / atl_west_02 / atl_air_03 are
+    # already canonical via the site-code regex).
+    "atl hq", "atl west", "atl air", "atl cp", "atl 047",
+    # Building / closet identifiers
+    "building c", "building d", "building e",
 })
 
 
@@ -62,6 +95,11 @@ def normalize_entity_key(entity_type: str, value: str) -> str:
         # produce site entities — they show up in xlsx allocation tables
         # to mean "applies everywhere", not "site named ALL".
         if normalized in _GENERIC_SITE_PSEUDO_VALUES:
+            return ""
+        # Also reject the underscore-slug form ("site_id_facility",
+        # "n_terminal", "mdf_w1"). The slug form is what shows up in
+        # canonical_keys after entity_resolution.
+        if normalized.replace("_", " ") in _GENERIC_SITE_PSEUDO_VALUES:
             return ""
         site_aliases = {
             "west-wing": "west wing",
