@@ -3624,6 +3624,14 @@ def _run_schematic_pre_pass(
     from orbitbrief_page_os.segmentation.schematic.symbol_detector import detect_symbols
     from orbitbrief_page_os.segmentation.schematic.raster import is_text_poor_page
     from orbitbrief_page_os.segmentation.schematic import ocr as schematic_ocr
+    from orbitbrief_page_os.segmentation.schematic.page_kind_classifier import (
+        LEGEND_TABLE,
+        SCHEDULE_BOM,
+        SPEC_PROSE,
+        SCHEMATIC_DRAWING,
+        UNKNOWN as PAGE_UNKNOWN,
+        classify_page_kind,
+    )
 
     try:
         doc = fitz.open(str(path))
@@ -3715,35 +3723,93 @@ def _run_schematic_pre_pass(
                                     page=page_obj,
                                 )
                             )
+            # ── Page-kind routing (PR: Marriott multi-legend fix) ──
+            # Classify the page so we (a) skip prose/schedule pages
+            # and (b) extract MULTIPLE legends from legend-table
+            # pages instead of bailing on the first match.
+            classification = classify_page_kind(
+                page_index=page_index, page=page_obj, blocks=blocks
+            )
+            page_kind = classification.kind
+
+            # SPEC_PROSE + SCHEDULE_BOM pages have no schematic content;
+            # skip the entire legend/symbol flow. The generic PDF parser
+            # (table/text extraction) handles these pages.
+            if page_kind in (SPEC_PROSE, SCHEDULE_BOM):
+                # Still ingest into resolver so cross-doc state is
+                # consistent (it just produces no legends/targets).
+                page_bbox_for_ingest_skip: tuple[float, float, float, float] | None = None
+                if page_obj is not None:
+                    try:
+                        r = page_obj.rect
+                        page_bbox_for_ingest_skip = (
+                            float(r.x0), float(r.y0), float(r.x1), float(r.y1)
+                        )
+                    except Exception:  # pragma: no cover
+                        page_bbox_for_ingest_skip = None
+                resolver.ingest_page(
+                    page_index=page_index,
+                    blocks=blocks,
+                    legend=None,
+                    page_bbox=page_bbox_for_ingest_skip,
+                )
+                continue
+
             legend = None
             candidates = locate_legend_candidates(page_index=page_index, blocks=blocks)
-            # Try candidates in score order; the first one whose
-            # parser returns a non-empty legend wins.  A pure
-            # ``is_strong`` filter is too aggressive here — a header
-            # match alone scores 0.55 (below the 0.65 strong cutoff)
-            # yet legitimately yields a legend when the rows below
-            # are tabular.  We trust ``parse_legend`` to return
-            # ``None`` when there is no real content; that prevents
-            # weak candidates from producing false legends.
             ordered = sorted(
                 (c for c in candidates if c.score >= 0.45),
                 key=lambda c: (-c.score, c.page_index, c.bbox[1], c.bbox[0]),
             )
             chosen_bbox: tuple[float, float, float, float] | None = None
-            for cand in ordered:
-                sheet = extract_sheet_number(blocks)
-                # Promote to ``global`` scope when on a SYMBOLS &
-                # LEGENDS sheet — heuristic but conservative.
-                scope = "global" if (cand.header_text and "symbols & legends" in cand.header_text) else "page"
-                legend = parse_legend(
-                    candidate=cand,
-                    page_blocks=blocks,
-                    sheet_number=sheet,
-                    scope=scope,  # type: ignore[arg-type]
-                )
-                if legend is not None:
-                    chosen_bbox = cand.bbox
-                    break
+            sheet = extract_sheet_number(blocks)
+
+            # LEGEND_TABLE pages contain MULTIPLE legends (Marriott
+            # T0.01 = Structured Cabling + Intrusion + Access Control
+            # + CCTV). Extract every non-bogus candidate; promote
+            # scope to ``global`` since the legend applies to all
+            # subsequent drawing pages with the same domain.
+            if page_kind == LEGEND_TABLE:
+                page_legends: list[Any] = []
+                seen_header_keys: set[str] = set()
+                for cand in ordered:
+                    header_key = (cand.header_text or "").lower().strip()
+                    if header_key and header_key in seen_header_keys:
+                        continue
+                    parsed = parse_legend(
+                        candidate=cand,
+                        page_blocks=blocks,
+                        sheet_number=sheet,
+                        scope="global",
+                    )
+                    if parsed is None:
+                        continue
+                    if header_key:
+                        seen_header_keys.add(header_key)
+                    page_legends.append(parsed)
+                    if chosen_bbox is None:
+                        chosen_bbox = cand.bbox
+
+                # Promote the in-loop ``legend`` to the first parsed
+                # (for the ``if legend is not None`` block below); the
+                # rest get appended directly to parsed_legends.
+                if page_legends:
+                    legend = page_legends[0]
+                    parsed_legends.extend(page_legends[1:])
+            else:
+                # SCHEMATIC_DRAWING / COVER_TITLE / UNKNOWN — keep
+                # current "first non-empty candidate wins" behavior.
+                for cand in ordered:
+                    scope = "global" if (cand.header_text and "symbols & legends" in cand.header_text) else "page"
+                    legend = parse_legend(
+                        candidate=cand,
+                        page_blocks=blocks,
+                        sheet_number=sheet,
+                        scope=scope,  # type: ignore[arg-type]
+                    )
+                    if legend is not None:
+                        chosen_bbox = cand.bbox
+                        break
             page_bbox_for_ingest: tuple[float, float, float, float] | None = None
             if page_obj is not None:
                 try:

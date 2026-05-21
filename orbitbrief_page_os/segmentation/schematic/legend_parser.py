@@ -29,6 +29,38 @@ from app.parsers.schematic_models import (
     ParsedLegend,
     ParsedLegendEntry,
 )
+# Tokens that look like dimensional callouts / units — used to
+# reject bogus legend candidates that picked up a conduit-size table
+# (e.g. label='1-1/4"∅' on Marriott T0.01) instead of a real symbol
+# legend. A legitimate legend label is a *descriptive phrase* like
+# "CARD READER" or "PTZ CAMERA"; dimensional text is short and
+# unit-laden.
+_DIMENSIONAL_LABEL_PATTERN = re.compile(
+    # Numeric prefix (digits / fraction slash / decimal point / dash for
+    # ranges) followed by ZERO OR MORE unit tokens. The Marriott DD
+    # produced `1-1/4"∅` (inch + diameter symbol stacked), so we accept
+    # multiple unit suffixes back-to-back. Whitespace allowed throughout.
+    r"^\s*[\d/\.\-]+\s*"
+    r"(?:[Ø∅ø]|\"|'|in\.?|mm|cm|ft\.?|m\b|kg|lb|oz|VAC|VDC|AWG|MHz|GHz)*"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+
+def _looks_dimensional(label: str) -> bool:
+    """True if a label is a dimensional callout, not a descriptive legend label."""
+    if not label:
+        return True
+    return bool(_DIMENSIONAL_LABEL_PATTERN.match(label.strip()))
+
+
+def _all_entries_look_dimensional(entries: list) -> bool:
+    """Reject a legend if EVERY entry's label is dimensional/unit text."""
+    if not entries:
+        return False
+    return all(_looks_dimensional(e.label_text or "") for e in entries)
+
+
 from orbitbrief_page_os.segmentation.schematic.legend_locator import (
     LegendCandidate,
     TextBlock,
@@ -506,6 +538,19 @@ def parse_legend(
             entries.append(entry)
 
     if not entries:
+        return None
+
+    # Drop dimensional-callout rows that snuck into the legend region.
+    # The Marriott DD case mixes a conduit-diameter callout
+    # (symbol="7-8", label='1-1/4"∅') in the same bbox as the real
+    # symbol/label rows. Per-row filtering keeps the real entries
+    # while dropping the bogus one. Done BEFORE the all-dimensional
+    # whole-legend check (which now fires only when every survivor
+    # is dimensional).
+    entries = [e for e in entries if not _looks_dimensional(e.label_text or "")]
+    if not entries:
+        return None
+    if _all_entries_look_dimensional(entries):
         return None
 
     # Deterministic ordering: by symbol token, then by row.
