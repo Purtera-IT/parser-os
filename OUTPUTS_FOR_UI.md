@@ -1,468 +1,729 @@
-# Parser-OS + OrbitBrief output schema — UI mapping guide
+# Parser-OS + OrbitBrief — Complete UI Output Catalog
 
-This document catalogs every field that lands on disk after a single
-``compile_brief`` run on a real-deal folder. Use it to plan the
-auditing-dashboard UI for next month's review phase and the
-PM-facing front-end.
+Every field your UI can read, with real OPTBOT values + audit / PM
+classification. Built for two front-ends:
 
-Each output file is listed with:
-- **What it is** (what role it plays for the PM / auditor)
-- **Top-level fields** (shape of the JSON / sections of the markdown)
-- **Per-row / per-atom fields** when applicable
-- **UI mapping notes** (how to surface it, what's "ready" vs "needs aggregation")
+1. **AUDIT dashboard** — "how good was this run?" (next month's project review)
+2. **PM brief** — "what do I do with this deal?" (per-deal consumption)
 
-The two top-level deliverables are:
-1. **parser-os** — `orbitbrief.input.json` envelope (the evidence corpus)
-2. **OrbitBrief** — `PM_HANDOFF.json` + companion markdown / HTML files
-
-A typical OPTBOT run drops the following files into `<out>/`:
+Last verified: OPTBOT compile produces these 17 files in `<out>/`:
 
 ```
-00_envelope.json           # parser-os envelope (full evidence corpus)
-10_pack_prior_state.json   # OrbitBrief: pack activation + prior beliefs
-11_site_reality_state.json # OrbitBrief: site cluster state
-20_retrieval_bundles/      # OrbitBrief: per-brain retrieval bundles
-40_brain_outputs/          # OrbitBrief: per-brain LLM outputs (when --ollama)
-50_validations/            # OrbitBrief: rulebook validation results
-60_calibrations/           # OrbitBrief: confidence calibration outputs
-70_review_queue/           # OrbitBrief: items flagged for PM review
-90_inspection_report.json  # OrbitBrief: per-artifact funnel view
-91_inspection_report.html  # Same, browsable HTML
-PM_EXECUTIVE_SUMMARY.md    # Short PM-facing brief
-PM_EXECUTIVE_SUMMARY.html
-PM_HANDOFF.md              # Full 31-section PM brief
-PM_HANDOFF.html
-PM_HANDOFF.json            # Same data, machine-readable
-RFP_DRAFT.md               # Auto-drafted vendor RFP packets
-SA_REVIEW_PACKET.md        # Solution-architect technical view
-SA_REVIEW_PACKET.html
-SOW_DRAFT.md               # 21-section auto-drafted SOW
-manifest.json              # Run audit metadata (compile_id, signatures)
-pipeline_log.json          # Per-stage telemetry
-.orbitbrief_history.jsonl  # Append-only corpus for comparable-deals
+00_envelope.json              527 KB   raw parser-os evidence
+10_pack_prior_state.json        7 KB   OrbitBrief pack activation
+11_site_reality_state.json      4 KB   OrbitBrief site clusters
+90_inspection_report.json     493 KB   per-artifact funnel
+91_inspection_report.html     230 KB   browsable HTML version
+PM_HANDOFF.json               147 KB   ← PRIMARY UI PAYLOAD
+PM_HANDOFF.md                  53 KB   rendered markdown view
+PM_HANDOFF.html                61 KB   styled HTML
+SOW_DRAFT.md                   16 KB   21-section auto SOW
+RFP_DRAFT.md                   10 KB   vendor RFP packets
+SA_REVIEW_PACKET.md/.html      19 KB   SA technical view
+PM_EXECUTIVE_SUMMARY.md/.html   5 KB   1-page exec brief
+manifest.json                 0.4 KB   run audit metadata
+pipeline_log.json               7 KB   per-stage telemetry
+.orbitbrief_history.jsonl     0.7 KB   append-only deal corpus
+```
+
+**The UI only needs to fetch 3 files**: `PM_HANDOFF.json` (PM brief
+tabs), `00_envelope.json` (audit drilldown), `manifest.json` (run
+header). `PM_HANDOFF.json` already embeds `sow_draft_markdown` +
+`rfp_draft_markdown` so SOW/RFP viewers don't need separate fetches.
+
+---
+
+# AUDIT DASHBOARD — "how good was this run?"
+
+These are the fields a project-quality auditor needs.
+
+## A1. Headline KPI: `PM_HANDOFF.json.parser_quality_score`
+
+**One field tells you everything.** OPTBOT:
+
+```json
+{
+  "score": 99,
+  "grade": "A+",
+  "components": {
+    "parse_outcome_ok_pct":  100.0,   // 7/7 files parsed cleanly
+    "parse_outcome_pts":      40.0,   // out of 40
+    "receipt_verified_pct":   97.8,   // 132/135 atoms passed replay
+    "receipt_pts":            24.4,   // out of 25
+    "error_free_pts":         15,     // 0 errors
+    "n_errors":                0,
+    "warning_health_pts":     10.0,   // 0 warnings
+    "n_warnings":              0,
+    "authority_diversity_pts":10,     // 6 authority classes mixed
+    "authority_classes_seen": ["approved_site_roster", "contractual_scope",
+                               "customer_current_authored", "machine_extractor",
+                               "meeting_note", "vendor_quote"]
+  }
+}
+```
+
+**UI:** giant score gauge + grade letter + 5-component breakdown chart.
+
+## A2. Run metadata: `manifest.json`
+
+```json
+{
+  "envelope_path":         "...",
+  "generated_at":          "2026-05-21T00:30:13.778414Z",
+  "active_packs":          ["wireless", "delivery_execution", "procurement_finance"],
+  "brains_run":            [],
+  "queued_for_review":     0,
+  "skipped_brains_no_chat":true,
+  "stage_count":           20,
+  "stage_status_counts":   {"ok": 7, "skipped": 13}
+}
+```
+
+**UI:** run timeline + active-packs chips.
+
+## A3. Corpus signal: `00_envelope.json.summary` (top-level)
+
+```json
+{
+  "artifact_count":              7,
+  "page_count":                  20,
+  "atom_count":                  135,
+  "packet_count":                28,
+  "entity_count":                79,
+  "edge_count":                  172,
+  "cross_artifact_edge_count":   84,    // ← STRONG cross-doc reconciliation signal
+  "by_artifact_type":  {"pdf": 3, "docx": 2, "xlsx": 2},
+  "by_atom_type":      {"scope_item": 65, "quantity": 16, "vendor_line_item": 16,
+                        "entity": 15, "constraint": 11, "risk": 5,
+                        "exclusion": 3, "decision": 2, "open_question": 1,
+                        "assumption": 1},
+  "by_authority_class":{"contractual_scope": 48, "meeting_note": 32,
+                        "vendor_quote": 32, "approved_site_roster": 17,
+                        "customer_current_authored": 5,
+                        "machine_extractor": 1},
+  "by_entity_type":    {"device": 20, "approved_site_roster": 17,
+                        "money": 15, "part": 10, "stakeholder": 7,
+                        "date": 6, "service": 5, "site": 5,
+                        "milestone": 5, "address": 3, "part_number": 2,
+                        "customer": 1},
+  "by_edge_type":      {"supports": 110, "same_as": 39, "requires": 22,
+                        "excludes": 1},
+  "parse_outcomes":    {"ok": 7},                      // ← A6 graceful degradation signal
+  "degraded_files":    []                              // ← red-flag list when non-empty
+}
+```
+
+**UI:** stacked-bar donuts for each `by_*` map; KPI tiles for the
+scalar counts; red-flag callout when `degraded_files` is non-empty.
+
+## A4. Per-file health: `00_envelope.json.documents[*]`
+
+Each document carries 10 fields. Sample OPTBOT row:
+
+```json
+{
+  "artifact_id":     "art_1aca83887728bf98",
+  "filename":        "07_contracting_procurement_packet.pdf",
+  "artifact_type":   "pdf",                 // 19 enum values: pdf/docx/xlsx/csv/email/transcript/pptx/image/html/mbox/rtf/ics/zip/msg/odt/ods/vsdx/mpp/txt
+  "sha256":          "65b82ad4d492964c...",  // change-detection hash
+  "size_bytes":      5047,
+  "parser_name":     "orbitbrief_pdf",
+  "parser_version":  "orbitbrief_pdf_v3",
+  "structured":      {...},                   // full per-doc projection
+  "atom_ids":        [9 atom IDs],
+  "parse_outcome":   {                          // ← A6 status column
+      "status":         "ok",                  // ok / ok_empty / failed_parse / skipped_no_parser
+      "atom_count":     9,
+      "warning_count":  0,
+      "cache_hit":      false
+  }
+}
+```
+
+**UI:** source-inventory table with type chip, parser badge, atom
+count, status pill (✅/⚠️/❌/⏭️), size column.
+
+## A5. Per-stage telemetry: `pipeline_log.json`
+
+Each row = one stage of the parser-os pipeline:
+
+```
+discover_artifacts → parse_artifacts → candidate_adjudication → source_replay
+→ confidence_floor → enrich_entities → entity_resolution → graph_build
+→ packetize → packet_certificates → quality_gates
+```
+
+Per-stage fields: `stage`, `duration_ms`, `counts.input_count`,
+`counts.output_count`, `warning_count`, `error_count`,
+`status` (OK / FALLBACK / SKIPPED).
+
+**UI:** funnel diagram showing input→output count per stage; bar
+chart for stage durations; per-stage drilldown panel.
+
+## A6. Replay verification: `90_inspection_report.json.verification`
+
+```json
+{
+  "atom_total":             135,
+  "counts":                 {"verified": 132, "unsupported": 1, "failed": 2},
+  "verified_count":         132,
+  "failed_count":           2,
+  "partial_count":          0,
+  "unverified_count":       0,
+  "unsupported_count":      1,
+  "verified_pct":           97.8,
+  "failed_pct":             1.5,
+  "partial_pct":            0.0,
+  "health_pct":             97.8,
+  "top_failed_artifacts":   [{"artifact_id": "...", "filename": "...",
+                              "failed_atoms": 2, "atom_count": 40}]
+}
+```
+
+**UI:** verification donut + "top failed artifacts" drilldown table.
+
+## A7. Funnel rollup: `90_inspection_report.json.funnel`
+
+```json
+{
+  "source_artifacts":         7,
+  "atoms_extracted":          135,
+  "entities_normalized":      79,
+  "edges_built":              172,
+  "packets_certified":        28,
+  "active_packs":             [15 pack IDs],
+  "bundled_packets_total":    23,
+  "bundled_packets_per_pack": {...},
+  "brain_items_per_pack":     {...},
+  "brain_cited_packets":      0,    // 0 because --ollama wasn't used
+  "brain_cited_atoms":        0,
+  "composed_brief_items":     0,
+  "atoms_to_brief_pct":       0,
+  "packets_to_brief_pct":     0,
+  "pack_prior_top":           "wireless",
+  "pack_prior_margin":        0.83
+}
+```
+
+**UI:** Sankey diagram from "atoms extracted" → "in packet" → "cited
+by brain" → "in composed brief"; pack-prior chart.
+
+## A8. Drill-down: `00_envelope.json.atoms[*]`
+
+135 atoms on OPTBOT. Each has 12 fields. Audit drilldown table
+columns:
+
+| Field | Purpose | Sample |
+|---|---|---|
+| `id` | Atom ID | `atm_03774208dd92edcc` |
+| `artifact_id` | Source doc | `art_8a3ff646a0735900` |
+| `atom_type` | Classification | `quantity` (one of 22 types) |
+| `authority_class` | Trust tier | `vendor_quote` (one of 6+ classes) |
+| `confidence` | 0.0-1.0 | `0.88` |
+| `text` | Display | `Quantity 1` |
+| `section_path` | Breadcrumb | `["Services"]` |
+| `locator` | Source link | `{"sheet": "Services", "row": 3, "columns": {...}}` |
+| `verified` | Replay status | `verified` (verified/failed/partial/unsupported/unverified) |
+| `entity_keys` | Tag pills | `["service:project_management_and_weekly_governance"]` |
+| `structured` | Per-type fields | `{quantity_raw, uom, quantity, unit, ...}` (23 fields) |
+
+**UI:** sortable/filterable table with confidence heat color,
+authority badge, verified pill, click-through to source.
+
+## A9. Cross-atom graph: `00_envelope.json.edges[*]`
+
+172 edges on OPTBOT. Each has 8 fields. **The relationship signal:**
+
+```json
+{
+  "id":            "edge_00a3b5c29f295fc6",
+  "edge_type":     "supports",     // supports / contradicts / same_as /
+                                  //  requires / excludes / refines /
+                                  //  quantity_conflict
+  "from_atom_id":  "atm_e7de...",
+  "to_atom_id":    "atm_427b...",
+  "reason":        "Cross-artifact reinforcement on money:1500000",
+  "confidence":    0.78,
+  "cross_artifact": true,
+  "metadata":      {family, target_keys, ...}
+}
+```
+
+**UI:** force-directed graph with edge-type color, click-an-atom for
+neighborhood; cross-artifact filter chip.
+
+## A10. Resolved entities: `00_envelope.json.entities[*]`
+
+79 entities on OPTBOT. Each has 9 fields:
+
+| Field | Sample |
+|---|---|
+| `id` | `ent_01705d7119adafbd` |
+| `entity_type` | `device` (or: site, stakeholder, money, date, part, vendor, customer, service, milestone, address) |
+| `canonical_key` | `device:rugged_logistics_tablet` |
+| `canonical_name` | `rugged logistics tablet` |
+| `aliases` | Multiple surface forms |
+| `artifact_ids` | Which files mention it |
+| `source_atom_ids` | Atoms that produced it |
+| `review_status` | `auto_accepted` / `needs_review` |
+| `confidence` | 0.0-1.0 |
+
+**UI:** entity browser grouped by entity_type with tag pills.
+
+## A11. Pack-activation prior: `10_pack_prior_state.json`
+
+Which OrbitBrief packs the router decided to activate (each pack
+= one workstream lens). OPTBOT activated 15 packs with `wireless`
+at top.
+
+**UI:** pack-prior bar chart with margin badge.
+
+## A12. Recommended AUDIT dashboard layout
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Quality Score: A+ 99/100                                   │
+│ ┌─Score Gauge──┐ ┌─Component Breakdown─────────────────┐   │
+│ │      99      │ │ parse_outcome  ████████ 40/40 (100%)│   │
+│ │     A+       │ │ receipt_verify ████▌    24.4/25     │   │
+│ └──────────────┘ │ error_free     ███      15/15 (0)   │   │
+│                  │ warning_health ██       10/10 (0)   │   │
+│                  │ authority_div  ██       10/10 (6cls)│   │
+│                  └─────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│ Run badge: cmp_xxx · OPTBOT · 2026-05-21T00:30:13Z         │
+├─────────────────────────────────────────────────────────────┤
+│ KPI tiles: 7 files · 20 pages · 135 atoms · 28 packets ·   │
+│            79 entities · 172 edges · 84 cross-artifact     │
+├─────────────────────────────────────────────────────────────┤
+│ Atoms by Type | Atoms by Authority | Entities by Type     │
+│ (donut)       | (donut)            | (donut)              │
+├─────────────────────────────────────────────────────────────┤
+│ Source Inventory (per-file): name · type · parser ·       │
+│ atoms · status · size · sha256                            │
+├─────────────────────────────────────────────────────────────┤
+│ Pipeline Funnel (Sankey): atoms→packets→bundled→cited     │
+├─────────────────────────────────────────────────────────────┤
+│ Stage timeline: bar chart per stage                       │
+├─────────────────────────────────────────────────────────────┤
+│ Drift tracker: input_signature & output_signature vs prev │
+│ run; if input same but output different → parser regress  │
+└─────────────────────────────────────────────────────────────┘
+[Drill-down: Atoms · Entities · Edges · Packets]
 ```
 
 ---
 
-# 1. PARSER-OS AUDIT SIGNALS — for your auditing dashboard
+# PM BRIEF — "what do I do with this deal?"
 
-These are the fields a PM / auditor needs to answer **"how good was this run?"**
+Single payload: `PM_HANDOFF.json`. 54 top-level fields. Here's every
+single one with its real OPTBOT value:
 
-## 1.1 `manifest.json` — single-record run audit
+## P1. Header & status (5 fields)
 
-| Field | Type | UI hint | Purpose |
+| Field | Type | OPTBOT value | UI hint |
 |---|---|---|---|
-| `project_id` | str | Header tag | The project this run analyzed |
-| `compile_id` | str | "Run ID" badge | Unique compile identifier (e.g. `cmp_d0cfff3a0d7e556a`) |
-| `input_signature` | hex | "Inputs hash" pill | SHA256 of input artifacts — if this changes, the inputs changed |
-| `output_signature` | hex | "Outputs hash" pill | SHA256 of output atoms — if THIS changes with same input, parser regressed |
-| `atom_count` | int | KPI card | Total evidence atoms extracted |
-| `edge_count` | int | KPI card | Cross-atom relationships discovered |
-| `packet_count` | int | KPI card | Certified evidence packets emitted |
-| `warning_count` | int | KPI card (orange when > 5) | Parser warnings |
-| `error_count` | int | KPI card (red when > 0) | Parser errors |
-| `receipt_verified` | int | Coverage % vs `atom_count` | Atoms with verified source replay |
-| `receipt_failed` | int | Failures bucket | Atoms with replay failure |
-| `receipt_unsupported` | int | Coverage bucket | Atoms where replay isn't supported |
-| `cache_hits` / `cache_misses` | int | Perf gauge | Incremental-compile cache efficiency |
+| `case_id` | str | `OPTBOT_Atlanta_Office_Refresh_Mock_Deal` | Header title |
+| `status` | enum | `red` | Status traffic light |
+| `status_label` | str | `Not SOW-ready: 5 blocker question(s) remain` | Header subtitle |
+| `one_line_summary` | str | `OPTBOT_..._Mock_Deal: Security camera / VMS, Sites / facilities, Commercial terms, Electrical / power at airport logistics annex, atl hq; 5 blocker and 7 warning SOW question(s) need PM/SA review.` | Top banner |
+| `executive_summary` | dict (3 keys) | See below | Above-the-fold callout |
 
-## 1.2 `00_envelope.json` (a.k.a. `orbitbrief.input.json`) — evidence corpus
-
-This is the canonical handoff from parser-os to any downstream consumer. Top-level shape:
-
-| Field | Type | UI hint | Purpose |
-|---|---|---|---|
-| `schema_version` | str | "v2" tag | Envelope contract version |
-| `project_id` | str | Header | Project identifier |
-| `compile_id` | str | Header | Run identifier |
-| `generated_at` | ISO timestamp | "Last run" | When the envelope was produced |
-| `summary` | dict | Dashboard KPI block | See **1.2.1** below |
-| `documents` | list[doc] | Source-inventory table | One row per ingested artifact |
-| `atoms` | list[atom] | Detail drilldown | Every evidence atom — the bedrock |
-| `packets` | list[packet] | "Packets" tab | Certified evidence packets |
-| `entities` | list[entity] | "Entities" tab | Cross-artifact entity records |
-| `edges` | list[edge] | Graph view | Cross-atom relationships |
-| `indexes` | dict | Backing data | Pre-computed lookup tables |
-| `drawings` | dict | (optional) | Schematic-page detail (when present) |
-
-### 1.2.1 `envelope.summary` — top of the auditor dashboard
-
-| Field | Type | UI hint | Purpose |
-|---|---|---|---|
-| `artifact_count` | int | KPI | Files ingested |
-| `page_count` | int | KPI | Total pages processed (across PDFs) |
-| `atom_count` | int | KPI | Atoms produced |
-| `packet_count` | int | KPI | Packets certified |
-| `entity_count` | int | KPI | Entities resolved |
-| `edge_count` | int | KPI | Cross-atom edges |
-| `cross_artifact_edge_count` | int | "Cross-doc reconciliation" KPI | Edges spanning multiple artifacts |
-| `by_artifact_type` | dict[str, int] | Stacked bar / donut | Atoms broken out by file type |
-| `by_atom_type` | dict[str, int] | Stacked bar | Atoms by type (scope_item, risk, ...) |
-| `by_authority_class` | dict[str, int] | Quality gauge | Distribution by authority (verified vs machine vs LLM) |
-| `by_edge_type` | dict[str, int] | Stacked bar | Edges by relationship kind |
-| `by_entity_type` | dict[str, int] | Stacked bar | Entities by type (site / stakeholder / device / etc.) |
-| **`parse_outcomes`** | dict[str, int] | Coverage donut | Per-file outcome status (ok / ok_empty / failed_parse / skipped_no_parser) — **A6 graceful degradation signal** |
-| **`degraded_files`** | list[dict] | Red-flag table | Each failed/skipped file with reason |
-
-### 1.2.2 `envelope.documents[*]` — per-file row
-
-| Field | Type | UI hint |
-|---|---|---|
-| `artifact_id` | str | Row ID |
-| `filename` | str | Display name |
-| `artifact_type` | enum | Type chip (pdf / docx / xlsx / pptx / image / html / mbox / rtf / ics / zip / msg / odt / ods / vsdx / mpp / email / transcript / csv / txt) |
-| `sha256` | hex | Hash chip |
-| `size_bytes` | int | Size column |
-| `parser_name` | str | Parser badge |
-| `parser_version` | str | Hover detail |
-| `structured` | dict | (drilldown) Full structured projection — pages / sections / tables |
-| `atom_ids` | list[str] | Count + drilldown |
-| **`parse_outcome`** | dict | Status column with reason: `{"status": "ok\|ok_empty\|failed_parse\|skipped_no_parser", "atom_count": N, "warning_count": N, "reason": "..."}` |
-
-### 1.2.3 `envelope.atoms[*]` — the evidence row
-
-| Field | Type | UI hint |
-|---|---|---|
-| `id` | str | Atom ID |
-| `artifact_id` | str | Link to source doc |
-| `atom_type` | enum | Type chip (quantity / entity / constraint / exclusion / scope_item / customer_instruction / vendor_line_item / assumption / open_question / decision / action_item / meeting_commitment / risk / asset_record / support_entitlement / site_roster / lifecycle_status / form_option_state / project_metadata / site_survey_row / port_vlan_assignment) |
-| `authority_class` | enum | Authority badge (customer_current_authored / vendor_quote / meeting_note / machine_extractor / ...) |
-| `confidence` | 0..1 | Heat color |
-| `text` | str | Display |
-| `section_path` | list[str] | Breadcrumb |
-| `locator` | dict | Source link (page / sheet / row / paragraph / etc.) |
-| `verified` | enum | Replay status (verified / failed / partial / unsupported / unverified) |
-| `entity_keys` | list[str] | Tag pills (`site:atl_hq`, `money:1847250`, ...) |
-| `structured` | dict | Per-atom-type structured fields (canonical_cells for risk rows, etc.) |
-
-### 1.2.4 `envelope.packets[*]` — certified evidence packets
-
-| Field | Type | UI hint |
-|---|---|---|
-| `id` | str | Packet ID |
-| `family` | enum | Family chip (scope_inclusion / scope_exclusion / customer_override / meeting_decision / action_item / site_access / missing_info / compliance_clause / quantity_claim / quantity_conflict / vendor_mismatch) |
-| `status` | enum | Certification chip (certified / hold / dropped) |
-| `governing_atom_ids` | list[str] | Linked atoms |
-| `supporting_atom_ids` | list[str] | Linked atoms |
-| `entity_keys` | list[str] | Tag pills |
-| `risk_score` | float | Risk heat |
-| `claim_hash` | hex | Dedup key |
-| `policy_decisions` | list[dict] | Why-was-this-certified breakdown |
-
-### 1.2.5 `envelope.entities[*]` — resolved entities
-
-| Field | Type | UI hint |
-|---|---|---|
-| `id` | str | Entity ID |
-| `entity_type` | enum | site / stakeholder / device / part / vendor / money / date / quantity / service / customer |
-| `canonical_key` | str | The key (e.g. `site:atl_hq`) |
-| `canonical_name` | str | Display name |
-| `aliases` | list[str] | Other surface forms |
-| `artifact_ids` | list[str] | Where it appears |
-| `source_atom_ids` | list[str] | Atoms that mention it |
-| `confidence` | float | Resolution confidence |
-| `review_status` | enum | auto_accepted / needs_review |
-
-### 1.2.6 `envelope.edges[*]` — relationships
-
-| Field | Type | UI hint |
-|---|---|---|
-| `id` | str | Edge ID |
-| `edge_type` | enum | supports / contradicts / same_as / requires / excludes / refines / quantity_conflict |
-| `from_atom_id` / `to_atom_id` | str | Graph nodes |
-| `confidence` | float | Edge weight |
-| `metadata` | dict | (cross_artifact flag, family, reason) |
-
-## 1.3 `pipeline_log.json` — per-stage telemetry (auditor's perf view)
-
-One record per pipeline stage:
-
-| Stage | What runs |
-|---|---|
-| `discover_artifacts` | Walk the project folder |
-| `parse_artifacts` | Run each parser on its assigned artifact |
-| `candidate_adjudication` | Resolve parser-emitted candidates |
-| `source_replay` | Verify each atom's text actually appears in its source |
-| `confidence_floor` | Drop atoms below confidence threshold |
-| `enrich_entities` | Pull entity_keys + structured fields |
-| `entity_resolution` | Alias fusion (sites + stakeholders) |
-| `graph_build` | Build the cross-atom edge graph |
-| `packetize` | Group atoms into evidence packets |
-| `packet_certificates` | Certify packets per policy |
-| `quality_gates` | Apply quality threshold checks |
-
-Per-record fields:
-
-| Field | UI hint |
-|---|---|
-| `stage` | Row label |
-| `duration_ms` | Bar chart |
-| `counts.input_count` / `counts.output_count` | Funnel widths |
-| `warning_count` / `error_count` | Heat chips |
-
-**Auditor insight from this:** a healthy run produces non-zero outputs at every stage, with quality_gates emitting ≤ 0 errors. A spike in any stage's duration_ms across runs flags a perf regression.
-
-## 1.4 Parser-OS audit dashboard — recommended layout
-
-```
-┌──────────────────────────────────────────────────────────┐
-│ Run badge: cmp_xxx / project_id / generated_at           │
-│ Status: 🟢 OK  ·  Errors: 0  ·  Warnings: 32             │
-└──────────────────────────────────────────────────────────┘
-
-[KPI cards row]
- Files  Atoms  Packets  Entities  Edges
- 7      135    28       70        172
-
-[Coverage donuts]
- parse_outcomes: { ok: 7, failed_parse: 0, ... }
- by_authority_class: { customer_current_authored: 100, vendor_quote: 32, ... }
-
-[Source-inventory table]
- # | File | Type | Parser | Atoms | Status | Size
- ...
-
-[Quality timeline]
- stage_durations: bar chart per stage
- receipt_verified vs failed: stacked
-
-[Drift tracker — compares to previous run signatures]
- input_signature: same/changed
- output_signature: same/changed → if changed with same input → parser regression
+`executive_summary` on OPTBOT:
+```json
+{
+  "headline":    "OPTBOT_..._Mock_Deal: deal worth $1,847,250 across 3 confirmed site(s) covering Security camera / VMS, Sites / facilities, Commercial terms.",
+  "health_line": "Status is RED: 5 blocker(s) and 7 warning(s) need PM resolution before SOW lock.",
+  "next_action": "Resolve the blocker checklist below and confirm the customer clarifications email starter. Do not publish a SOW until blockers clear."
+}
 ```
 
----
+## P2. Scorecard: `metrics` (11 fields)
 
-# 2. ORBITBRIEF PM_HANDOFF — for the PM-facing UI
+```json
+{
+  "blockers":                 5,
+  "warnings":                 7,
+  "info":                     1,
+  "evidence_groups_certified":28,
+  "evidence_items_extracted": 135,
+  "missing_sow_items":        13,
+  "pm_visible_fact_cards":    56,
+  "sites_published":          3,
+  "source_files":             7,
+  "sow_validator_status":     "red",
+  "top_workstream":           "Wireless / WLAN"
+}
+```
 
-## 2.1 PM_HANDOFF.json — single-record source of truth
+**UI:** KPI tile row.
 
-Every field below is JSON-serializable and ready to feed a UI component. Field-name = key in `PM_HANDOFF.json`.
+## P3. Intake quality (2 fields)
 
-### Header / status
+`intake_completeness` (10 items, OPTBOT scores 9/10):
+```
+[YES] Confirmed contract value
+[YES] At least one confirmed physical site
+[YES] Project schedule with start + end dates
+[YES] Named executive sponsor (stakeholder)
+[YES] Hardware BOM or vendor quote
+[YES] Risk register
+[YES] Acceptance criteria definition
+[NO ] Payment terms and pricing model
+[YES] Out-of-scope / exclusions list
+[YES] Compliance / MSA / NDA reference
+```
 
-| Field | Type | UI hint |
-|---|---|---|
-| `case_id` | str | Header |
-| `status` | enum | Traffic light: `red` / `yellow` / `green` |
-| `status_label` | str | Status badge text |
-| `one_line_summary` | str | Subheader |
-| `executive_summary` | dict | Top-of-doc 3-line briefing (headline / health_line / next_action) |
+`ocr_backend_status`:
+```json
+{
+  "available":     [],
+  "install_hints": ["Install Tesseract...", "pip install pytesseract...", "ollama pull llava..."]
+}
+```
 
-### Scorecard
+**UI:** completeness checklist + progress bar; OCR-status chip with
+install dropdown when empty.
 
-| Field | Type | UI hint |
-|---|---|---|
-| `metrics` | dict | KPI tiles: source_files, evidence_items_extracted, pm_visible_fact_cards, sites_published, blockers, warnings, top_workstream |
+## P4. Money & commercial (10 fields)
 
-### Intake quality
+| Field | OPTBOT count | What's in it |
+|---|---:|---|
+| `money_mentions` | 16 | Each money value across docs |
+| `reconciliation_flags` | 2 | $1.85M vs $1.5M flagged |
+| `currency_mentions` | 0 | (no non-USD) |
+| `currency_conversions` | 0 | (USD-only deal) |
+| `tax_clauses` | 0 | |
+| `margin_view` | dict (9) | See below — **$1.8M zero-margin SOW caught** |
+| `engagement_model` | dict (7) | T&M / Fixed Fee / Subscription detection |
+| `license_items` | 2 | Recurring software tracker |
+| `eol_flags` | 0 | (none triggered) |
 
-| Field | Type | UI hint |
-|---|---|---|
-| `intake_completeness` | list[{item, detector_key, present}] | 10-item checklist with green/red dots |
-| `ocr_backend_status` | dict[available, install_hints] | OCR backend chips + install hints |
+`margin_view` on OPTBOT (the most important finance signal):
+```json
+{
+  "deal_total":             1847250,
+  "hardware_cost_subtotal": 1015626,
+  "services_subtotal":       536030,
+  "other_cost_subtotal":     295594,
+  "total_cost":             1847250,
+  "gross_profit":                  0,
+  "margin_pct":                  0.0,
+  "confidence":             "high",
+  "notes": ["⚠ Zero-margin SOW: deal total exactly matches computed cost. PM should add margin or confirm this is intentional (pass-through pricing)."]
+}
+```
 
-### Universality / scope
+**UI:** finance cards. Margin gauge with red-band <15%; reconciliation
+"needs attention" panel; license tracker table.
 
-| Field | Type | UI hint |
-|---|---|---|
-| `domains` | list[{domain_id, label, selected_by_router, active_for_sow, blockers, warnings, info}] | Workstream rows with counts |
-| `sites` | list[{name, kind, publishable, member_evidence_count, artifact_count}] | Sites map / list |
-| `source_files` | list[{filename, artifact_type, parser_name, evidence_items, status, status_reason}] | Source-inventory table |
+## P5. Sites & per-site rollups (3 fields)
 
-### Stakeholders
+`sites` (3 confirmed on OPTBOT): `airport logistics annex`, `atl hq`, `atl west`.
 
-| Field | Type | UI hint |
-|---|---|---|
-| `stakeholder_contacts` | list[{name, role, email, phone, source}] | Contact directory cards |
-| `stakeholder_pagers` | list[{role, title, summary_lines, money_lines, risk_lines, action_lines}] | Per-stakeholder tab (CFO / IT / Procurement) |
+`site_rollups` (4 items, one per site + per-alias) carrying:
+- `atom_count`
+- `devices` (e.g. access point, ip camera, switch)
+- `money_values` (e.g. `["$18,500", "$6,125", ...]`)
+- `dates` (e.g. `["2026-05-20", ...]`)
+- `stakeholders` (e.g. `["Jordan Ames", "Priya Narang", ...]`)
 
-### Money / commercial
+`site_allocations` (3): per-site BOM math —
+```
+ATL-HQ:    52 × $995 = $51,740
+ATL-WEST:  27 × $995 = $26,865
+ATL-AIR:   15 × $995 = $14,925
+```
 
-| Field | Type | UI hint |
-|---|---|---|
-| `money_mentions` | list[{value, display, sources}] | Money table with source provenance |
-| `reconciliation_flags` | list[{kind, label, values}] | Reconciliation queue cards |
-| `currency_mentions` | list[{currency, amount, source, snippet}] | Non-USD callouts |
-| `currency_conversions` | list[{currency, amount, usd_equivalent, fx_rate_used, source, snippet}] | USD-equivalent table |
-| `tax_clauses` | list[{rate_pct, label, source, snippet}] | Tax handling table |
-| `margin_view` | dict | Margin / profitability card (deal_total, hardware, services, other, total_cost, gross_profit, margin_pct, confidence, notes) |
-| `engagement_model` | dict | Engagement-model card (detected_model, evidence, has_tm_cap, tm_cap_amount) |
-| `license_items` | list[{part_number, description, quantity, unit_price, term_text, source}] | Subscription tracker table |
+**UI:** site cards + per-site coverage matrix + computed BOM rollup
+table.
 
-### Schedule
+## P6. Stakeholders (2 fields)
 
-| Field | Type | UI hint |
-|---|---|---|
-| `schedule_phases` | list[{phase, start, end, owner, source}] | Gantt chart (Mermaid in MD) |
-| `critical_path` | list[{phase, start, end, duration_days, is_critical}] | Critical-path highlighting |
-| `phase_dependencies` | list[{upstream, downstream, evidence, source}] | Dependency graph |
-| `critical_path_chain` | list[str] | Sequential phase chain |
-| `lead_time_flags` | list[{part_number, description, quantity, lead_time_text, lead_time_days, risk_tier, source}] | Lead-time risk table |
-| `resource_conflicts` | list[{owner, phases, overlap_windows}] | Resource conflict alerts |
+`stakeholder_contacts` (6 contacts captured on OPTBOT — Jordan Ames,
+Priya Narang, Elliot Tran, Camila Brooks, Noah Patel, Renee Watkins).
+Each: `name`, `role`, `email`, `phone`, `source`.
 
-### Risks
+`stakeholder_pagers` (3 lenses: CFO / IT / Procurement) — each with
+`summary_lines`, `money_lines`, `risk_lines`, `action_lines` filtered
+to that role.
 
-| Field | Type | UI hint |
-|---|---|---|
-| `risk_register` | list[{risk_id, description, likelihood, impact, mitigation, owner, sites, source}] | Risk register table |
-| `risk_aging` | list[{risk_id, severity, days_open, aging_bucket, description}] | Risk aging buckets |
+**UI:** contact directory table + 3-tab one-pager browser.
 
-### Quality / hardware lifecycle
+## P7. Schedule (5 fields)
 
-| Field | Type | UI hint |
-|---|---|---|
-| `subcontractor_mentions` | list[{name, role_hint, source, snippet}] | Subs / vendors table |
-| `eol_flags` | list[{part_number, description, quantity, eol_status, replacement_hint, source}] | EOL/EOS callouts |
-| `crm_detections` | list[{vendor, source, deal_fields, sample_row}] | CRM-export source chips |
+| Field | OPTBOT count | Renders as |
+|---|---:|---|
+| `schedule_phases` | 6 | Gantt + table |
+| `critical_path` | 6 | Critical-path overlay |
+| `critical_path_chain` | 6 | Phase chain string |
+| `phase_dependencies` | 0 | (no explicit deps detected) |
+| `resource_conflicts` | 0 | Owner-overlap alerts |
+| `lead_time_flags` | 0 | BOM lead-time risk |
 
-### Compliance / legal
+OPTBOT schedule (6 phases, all critical):
+```
+1. Discovery and intake    2026-05-20 → 2026-05-29   Renee Watkins
+2. Design validation       2026-06-01 → 2026-06-12   Priya Narang
+3. Procurement and staging 2026-06-15 → 2026-07-03   Elliot Tran
+4. Site implementation     2026-07-06 → 2026-07-24   Noah Patel
+5. Cutover and adoption    2026-07-27 → 2026-07-31   Jordan Ames
+6. Post go-live            2026-08-03 → 2026-08-14   Renee Watkins
+```
 
-| Field | Type | UI hint |
-|---|---|---|
-| `compliance_callouts` | list[{framework, snippet, source, severity}] | Compliance routing table |
-| `sla_penalties` | list[{kind, snippet, source}] | SLA / liq-damages alerts |
-| `change_order_triggers` | list[{snippet, source, kind}] | Change-order pre-flags |
+**UI:** Mermaid Gantt + critical-path highlighter + resource-conflict
+red-flag table.
 
-### Scope structure
+## P8. Risks (2 fields)
 
-| Field | Type | UI hint |
-|---|---|---|
-| `exclusions` | list[{text, source}] | Out-of-scope list |
-| `responsibilities` | list[{party, text, source}] | Customer vs Provider split |
-| `quantity_claims` | list[{target, quantity, snippet, source}] | Quantity table |
-| `quantity_contradictions` | list[{target, values, files, examples}] | Quantity reconciliation alerts |
-| `acceptance_checks` | list[{phase_or_step, criterion, owner, evidence_required, timing, source}] | Acceptance checklist |
-| `acceptance_by_site` | dict[site, list[check]] | Per-site acceptance tabs |
-| `site_rollups` | list[{site_key, site_name, atom_count, devices, money_values, dates, stakeholders}] | Per-site evidence cards |
-| `site_allocations` | list[{site, device, quantity, unit_price, extended, source}] | Per-site BOM computed costs |
+`risk_register` (5 risks on OPTBOT) — each with `risk_id`, `description`,
+`likelihood`, `impact`, `mitigation`, `owner`, `sites`, `source`.
 
-### PM action / output
+`risk_aging` — suppressed on OPTBOT because intake date = today.
 
-| Field | Type | UI hint |
-|---|---|---|
-| `gaps` | list[{rule_id, domain_id, domain_label, label, severity, message, suggested_open_question, observed_summary}] | Gap-question queue |
-| `customer_questions` | list[gap_card] | Customer-facing question list |
-| `action_items` | list[{kind, label, owner, due, severity}] | Action checklist |
-| `actions_by_week` | dict[bucket, list[action]] | This-week / next-week tabs |
-| `sa_focus` | list[str] | SA review-lane chips |
-| `facts_by_category` | dict[category, list[card]] | Evidence cards grouped by category |
+**UI:** risk table sorted by L×I score; risk aging buckets (fresh /
+active / stale) when timestamps land.
 
-### Strategic
+## P9. Compliance & legal (3 fields)
 
-| Field | Type | UI hint |
-|---|---|---|
-| `comparable_deals` | list[{case_id, closed_at, deal_value_usd, domains, sites_count, phase_count, final_margin_pct, outcome}] | "Similar past deals" panel |
+| Field | OPTBOT count | What's in it |
+|---|---:|---|
+| `compliance_callouts` | 3 | SOC 2 / MSA / Legal-review-required refs |
+| `sla_penalties` | 0 | Liquidated damages / SLA credits |
+| `change_order_triggers` | 1 | "Substitutions require written approval..." |
 
-### Output deliverables (auto-generated files)
+**UI:** compliance routing table + change-order pre-flag panel.
 
-| Field | Type | UI hint |
-|---|---|---|
-| `rfp_line_items` | list[{category, part_number, description, quantity, unit_price, lead_time, notes, source}] | Used by `RFP_DRAFT.md` |
-| `date_mentions` | list[{iso, sources}] | Date cross-doc table |
+## P10. Scope structure (8 fields)
 
-## 2.2 PM_HANDOFF.md — 31 rendered sections
-
-The markdown is the **human-readable** projection of `PM_HANDOFF.json`. Every section in the markdown corresponds to one or more JSON fields above. Use the JSON for the UI; keep the markdown for export / print / customer share.
-
-## 2.3 SOW_DRAFT.md — 21-section auto-drafted Statement of Work
-
-Currently markdown-only (no separate JSON). Drives off the same `PMHandoff` object. UI could either:
-- Render the markdown as-is (Mermaid-compatible viewer)
-- OR parse the section structure and surface as a multi-tab editor
-
-## 2.4 RFP_DRAFT.md — categorized vendor RFP packets
-
-Built from `rfp_line_items`. Categories (Network & Wireless, AV / Collaboration, Power & Environmentals, Endpoints / IT Devices, Structured Cabling, Security / Surveillance, Services & Labor, Miscellaneous) auto-bucket BOM rows.
-
-## 2.5 Companion files
-
-| File | What's in it |
-|---|---|
-| `90_inspection_report.json` | Per-artifact funnel view (atoms in / atoms cited / atoms in composed brief) — useful for "where does this evidence end up" debugging |
-| `91_inspection_report.html` | Same, browsable HTML with click-through |
-| `SA_REVIEW_PACKET.md` | Solution-architect technical view (longer evidence trail) |
-| `PM_EXECUTIVE_SUMMARY.md` | Short 1-page brief for exec consumption |
-| `.orbitbrief_history.jsonl` | Append-only ledger; one row per compile for the comparable-deals corpus |
-
----
-
-# 3. OPTBOT example — what the PM actually sees
-
-Latest OPTBOT compile produced these top-level numbers (from
-`manifest.json` + `envelope.summary` + `PMHandoff`):
-
-| Metric | Value |
+| Field | OPTBOT count |
 |---|---:|
-| Files ingested | 7 |
-| Atoms extracted | 135 |
-| Packets certified | 28 |
-| Entities resolved | 70 |
-| Cross-atom edges | 172 |
-| Cross-artifact edges | high — reconciliation working |
-| Parser errors | 0 |
-| Warnings | 32 |
-| `parse_outcomes.ok` | 7/7 (100%) |
-| Confidence-weighted authority distribution | customer_current_authored: dominant |
-| Intake completeness | 9/10 (90%) |
-| Margin | 0% (zero-margin SOW flagged) |
-| Sites confirmed | 3 |
-| Stakeholders in directory | 7 |
-| Risks tracked | 5 |
-| Schedule phases | 6 |
-| Cross-doc money reconciliation flags | 2 |
-| Cross-doc date alignment rows | 12 |
-| Compliance callouts | 2 |
-| Action items | 22 |
-| SOW_DRAFT.md size | 16 KB / 21 sections |
+| `exclusions` | 3 |
+| `responsibilities` | 1 (customer vs provider split) |
+| `quantity_claims` | 10 |
+| `quantity_contradictions` | 0 |
+| `acceptance_checks` | 14 |
+| `acceptance_by_site` | dict[1] |
+| `domains` (workstreams) | 9 |
+| `subcontractor_mentions` | 8 (Cisco / Meraki / Aruba / etc.) |
 
-**Digestibility:** the PM opens `PM_HANDOFF.md` and reads top-to-bottom in 5 minutes. Critical signals (margin %, blockers, reconciliation flags) all appear above the fold. Everything that requires action has an owner field and (where dated) a due field.
+**UI:** scope tabs (in-scope / exclusions / customer-vs-provider /
+acceptance) + workstream router visualization.
+
+## P11. PM action queue (4 fields)
+
+| Field | OPTBOT count |
+|---|---:|
+| `gaps` | 13 (5 blocker + 7 warning + 1 info) |
+| `customer_questions` | 12 (filtered for PM-to-customer email) |
+| `action_items` | 21 (consolidated from gaps + risks + phases) |
+| `actions_by_week` | dict (this_week / next_week / later / no_date) |
+
+`actions_by_week` on OPTBOT (today = 2026-05-21):
+- `this_week`: 1 phase kickoff
+- `next_week`: 1 phase kickoff
+- `later`: 4 phase kickoffs
+- `no_date`: 15 actions (blockers + warnings + risks)
+
+**UI:** action checklist + week-bucket tabs + customer-email
+clipboard-copy.
+
+## P12. Cross-doc reconciliation (4 fields)
+
+| Field | OPTBOT count |
+|---|---:|
+| `money_mentions` | 16 (per-value sources) |
+| `reconciliation_flags` | 2 ($1.85M vs $1.5M caught) |
+| `date_mentions` | 16 (12 are cross-doc) |
+| `quantity_contradictions` | 0 (would surface "94 APs vs 92 APs" if real) |
+
+**UI:** reconciliation queue panel with "needs PM resolution" badges.
+
+## P13. Output deliverables embedded in PM_HANDOFF.json (3 fields)
+
+| Field | OPTBOT size | What's in it |
+|---|---:|---|
+| `sow_draft_markdown` | 16,090 chars | 21-section auto-drafted SOW |
+| `rfp_draft_markdown` | 9,974 chars | Categorized vendor RFP packets |
+| `rfp_line_items` | 16 items | Structured BOM data backing the RFP |
+
+**UI:** SOW / RFP viewer tabs with markdown render + "copy to
+clipboard" + download buttons.
+
+## P14. Strategic (1 field)
+
+`comparable_deals` — historical bench match. OPTBOT corpus has 1 prior
+entry (itself, from earlier run). Each row:
+
+```json
+{
+  "case_id":          "OPTBOT_...",
+  "closed_at":        "",
+  "deal_value_usd":   1847250,
+  "domains":          ["Security camera / VMS", ...],
+  "sites_count":      3,
+  "phase_count":      6,
+  "final_margin_pct": 0.0,
+  "outcome":          ""
+}
+```
+
+**UI:** "similar past deals" panel; grows over time as the corpus
+accretes.
+
+## P15. Universality / source provenance (3 fields)
+
+`source_files` (7 on OPTBOT) — each with `filename`, `artifact_type`,
+`parser_name`, `evidence_items`, `status`, `status_reason`.
+
+`facts_by_category` (8 categories on OPTBOT) — evidence cards grouped
+by `sites_access`, `scope_deliverables`, `bom_procurement_pricing`,
+`network_vlans_circuits`, etc.
+
+`sa_focus` (4 SA-owned items).
+
+**UI:** source-inventory table (audit chain) + facts browser +
+SA-review-lane tabs.
+
+## P16. Domain detection (1 field)
+
+`domains` (9 on OPTBOT) — each row: `domain_id`, `label`,
+`selected_by_router`, `active_for_sow`, `blockers`, `warnings`, `info`.
+
+OPTBOT activated:
+```
+Security camera / VMS         (active, 3 blockers, 3 warnings)
+Sites / facilities            (active, 1 blocker, 2 warnings)
+Commercial terms              (active, 1 blocker)
+Electrical / power            (active, 0 blockers, 1 warning)
+Procurement / finance         (active, 0 blockers, 1 warning)
+Delivery / execution planning (active)
+Hardware / equipment          (active)
+Wireless / WLAN               (selected, not active for SOW)
+Global                        (none)
+```
+
+**UI:** workstream chips with severity badges.
 
 ---
 
-# 4. What's NOT yet in the JSON (gaps for UI build)
+# OPTBOT — Concrete digestibility check
 
-These fields would help the UI but aren't surfaced as structured JSON today:
+PM_HANDOFF.json is **147 KB** with **54 top-level fields**. Of those:
 
-| Missing | What it'd enable | Effort |
-|---|---|---|
-| `sow_draft` (rendered markdown) embedded in PM_HANDOFF.json | Single-payload UI render of the SOW | 30 min |
-| `rfp_draft` (rendered markdown) embedded in PM_HANDOFF.json | Same for RFP | 30 min |
-| Aggregated `parser_quality_score` (0-100 from atoms/files/warnings/errors) | Headline quality KPI for the audit dashboard | 1 h |
-| Per-file `time_to_parse_ms` from `pipeline_log.json` | Slowest-file panel | 1 h |
-| `entity_coverage_pct` (% of expected entity types present) | Coverage gauge per project | 1 h |
-| `change_history` (diff vs previous compile) | Re-parse drift alerts pre-rendered into the JSON | 2 h |
-| Stable atom-color heat (for graph view) | Graph-visualizer styling | 1 h |
-| Per-section ready/needs-review flag in SOW_DRAFT | "Skip already-OK sections" mode for the PM | 2 h |
+| Group | Count |
+|---|---:|
+| Empty on OPTBOT (suppress in UI) | 9 fields |
+| Single-value scalars (status / metrics) | 5 fields |
+| Lists with 1-5 items (table-sized) | 18 fields |
+| Lists with 6-20 items (still scannable) | 14 fields |
+| Lists with 21+ items (need filter/search) | 3 fields (`action_items` 21, `acceptance_checks` 14, `quantity_claims` 10) |
+| Dicts | 5 fields |
+
+**Above-the-fold (first scroll):** exec summary + intake completeness
++ margin warning. PM gets the signal in ~10 seconds.
+
+**Densest panels** (will need pagination / lazy load in UI):
+- Money mentions: 16 rows
+- Subcontractor mentions: 8 rows
+- Source files: 7 rows + drilldowns
+- Risk register: 5 rows
+- Acceptance criteria: 14 rows
+
+Everything is **JSON-serializable**, **list-or-dict shaped**, and **no
+nested-string-parsing needed**. UI is pure data binding.
 
 ---
 
-# 5. Recommended UI tabs (matched to fields above)
+# What's READY for UI and what's MISSING
+
+## Ready (51 of 54 fields, fully data-bound)
+- All scalar fields
+- All list-of-dict fields where every row is a clean record
+- Both embedded markdown deliverables (SOW + RFP)
+- Quality score + components
+
+## Almost-ready (3 fields, minor polish)
+- `acceptance_by_site` — keyed by site code, UI needs a per-site tab
+- `actions_by_week` — keyed by week bucket, UI needs ordered tabs
+- `stakeholder_pagers` — 3 fixed entries (CFO/IT/Procurement)
+
+## Genuinely missing (not in JSON yet)
+- **Per-stage durations rolled into PM brief** (currently only in
+  `pipeline_log.json`) — would let the UI show "this brief took 8s
+  to produce" badges
+- **Drift signals** — `input_signature` / `output_signature` from
+  `manifest.json` aren't in PM_HANDOFF.json yet; would enable a
+  per-deal "changed vs last run" banner
+- **Confidence histograms** for atoms — would help auditors see
+  whether the corpus is high-confidence or borderline
+- **Brain run results** when LLM stages run (`brains_run`,
+  `40_brain_outputs/`) — empty on OPTBOT because `--ollama` wasn't
+  used, but UI should plan for this when LLM stages fire
+
+Each is ~30 min of work. None blocks UI development today.
+
+---
+
+# UI scaffolding — recommended tab structure
 
 ```
-┌─ AUDIT (parser-os) ─────────────────────────────────┐
-│ Run badge  KPIs  Coverage donut  Source inventory   │
-│ Stage timeline  Drift tracker  Atom drill-down      │
-└─────────────────────────────────────────────────────┘
-┌─ PM BRIEF (OrbitBrief) ─────────────────────────────┐
-│ Executive summary  Intake completeness  Status      │
-│ Tabs:                                               │
-│   • Scope (workstreams / scope items / exclusions)  │
-│   • Sites (rollup + BOM allocation)                 │
-│   • Stakeholders (contacts + 3 one-pagers)          │
-│   • Risks (register + aging + lead-time)            │
-│   • Schedule (Gantt + critical path)                │
-│   • Commercial (margin + reconciliation + currency) │
-│   • Compliance & Legal (callouts + SLA + CO)        │
-│   • Actions (consolidated + by-week)                │
-│   • Vendor / RFP (RFP draft + subcontractor list)   │
-│   • SOW draft viewer                                │
-└─────────────────────────────────────────────────────┘
-┌─ HISTORICAL ────────────────────────────────────────┐
-│ Comparable deals  Portfolio rollup  Run history    │
-└─────────────────────────────────────────────────────┘
+┌─ AUDIT DASHBOARD (per project) ─────────────────────────┐
+│ Top: Quality Score gauge + grade letter                │
+│ Tabs:                                                  │
+│   • Run metadata        (manifest.json)                │
+│   • Source inventory    (envelope.documents)           │
+│   • Pipeline funnel     (pipeline_log + funnel)        │
+│   • Atom browser        (envelope.atoms)               │
+│   • Entity browser      (envelope.entities)            │
+│   • Edge graph          (envelope.edges)               │
+│   • Packet browser      (envelope.packets)             │
+│   • Drift tracker       (signatures vs prior runs)     │
+└────────────────────────────────────────────────────────┘
+
+┌─ PM BRIEF (per project) ────────────────────────────────┐
+│ Top: Executive summary + intake completeness + status  │
+│ Tabs:                                                  │
+│   • Overview            (metrics + workstreams)        │
+│   • Sites               (sites + rollups + allocation) │
+│   • Stakeholders        (contacts + 3 one-pagers)      │
+│   • Money & Margin      (margin_view + mentions)       │
+│   • Reconciliation      (money + quantity + date)      │
+│   • Schedule            (gantt + critical path)        │
+│   • Risks               (register + aging)             │
+│   • Scope               (in/out + responsibilities)    │
+│   • Acceptance          (checks + per-site)            │
+│   • Compliance & Legal  (callouts + SLA + CO triggers) │
+│   • Subcontractors      (mentions + vendor list)       │
+│   • Lead-time + EOL     (BOM lifecycle alerts)         │
+│   • Actions             (consolidated + by-week)       │
+│   • SOW Draft           (sow_draft_markdown)           │
+│   • RFP Draft           (rfp_draft_markdown)           │
+│   • Customer Email      (drafted clarification email)  │
+└────────────────────────────────────────────────────────┘
+
+┌─ HISTORICAL / PORTFOLIO ────────────────────────────────┐
+│   • Run history         (.orbitbrief_history.jsonl)    │
+│   • Comparable deals    (per-project)                  │
+│   • Portfolio rollup    (cross-project KPIs)           │
+└────────────────────────────────────────────────────────┘
 ```
 
-Every tab maps to specific PMHandoff fields documented above; the UI
-can be 100% data-driven from `PM_HANDOFF.json` + `00_envelope.json`
-without any string parsing of markdown.
+## Pulling the data
+
+```python
+# Audit dashboard
+manifest  = json.load(open("manifest.json"))
+envelope  = json.load(open("00_envelope.json"))
+pipeline  = json.load(open("pipeline_log.json"))
+inspect   = json.load(open("90_inspection_report.json"))
+
+# PM brief — ONE file
+handoff   = json.load(open("PM_HANDOFF.json"))
+# handoff.sow_draft_markdown and handoff.rfp_draft_markdown
+# are already embedded; no extra fetches.
+```
+
+That's the complete catalog. Every field your UI can read, every
+real value it produces on OPTBOT, every audit signal, every PM
+signal, every gap.
