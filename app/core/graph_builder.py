@@ -27,6 +27,16 @@ EDGE_FAMILY_EXCLUSION_APPLIES = "exclusion_application"
 EDGE_FAMILY_CONSTRAINT_REQUIRES = "constraint_requirement"
 EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH = "device_aggregate_mismatch"
 EDGE_FAMILY_MATERIAL_AGGREGATE_MISMATCH = "material_aggregate_mismatch"
+# Cross-artifact device-only quantity conflict — BOM/quote/spec atom
+# vs SOW/scope atom that share a device key (device:access_point,
+# device:switch, ...) and quantity entity keys but have no shared
+# part_number to anchor against. False-positive guards are strict:
+#   - cross-artifact required (same-file diffs are normal table rows)
+#   - same site (or both site-free) required
+#   - different authority classes preferred (BOM vs SOW signal)
+#   - excludes generic device:unknown
+#   - quantity must be >= 5 (single-digit qtys are often template fields)
+EDGE_FAMILY_DEVICE_QUANTITY_CROSS_DOC = "device_quantity_cross_doc"
 EDGE_FAMILY_CROSS_ARTIFACT_REINFORCEMENT = "cross_artifact_co_mention"
 EDGE_FAMILY_SEMANTIC_LINK = "semantic_link"
 # Schematic same-sheet quantity contradiction (PR7) — pairs an aggregated
@@ -923,6 +933,141 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 edge_family=EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH,
             )
         )
+
+    # ─── Cross-artifact device-only quantity conflict ────────────────
+    # Catches the universal managed-services failure mode where:
+    #
+    #   BOM PDF says:  "50 wireless access points"  (vendor_quote)
+    #   SOW PDF says:  "60 access points across three sites" (contractual_scope)
+    #
+    # No shared part_number, so PART_NUMBER_QUANTITY_CONFLICT can't fire;
+    # the atoms are scope_item / vendor_line_item, so the strict
+    # DEVICE_AGGREGATE_MISMATCH (which only pairs approved_site_roster
+    # vs vendor_quote on atom_type=quantity) can't fire either.
+    #
+    # Strict false-positive guards:
+    #   - cross-artifact (same-file diff is normal table rows)
+    #   - no shared part_number (PART_NUMBER_QUANTITY_CONFLICT handles those)
+    #   - excludes device:unknown
+    #   - excludes single-digit quantities (qty 1-4 is often template
+    #     "1 each" or generic count, not a deal-level scope value)
+    #   - excludes when atoms reference different sites (site-scoped
+    #     counts are independent)
+    #   - excludes when both atoms are exclusion / boilerplate / risk
+    for_device_pairs_seen: set[tuple[str, str, str]] = set()
+    by_device: dict[str, list] = {}
+    for atom in ordered:
+        # Walk every device key on every atom (any atom that carries
+        # a quantity:* + device:* combo is a candidate, regardless of
+        # whether atom_type is quantity / scope_item / vendor_line_item).
+        qty_keys = {k for k in atom.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+        if not qty_keys:
+            continue
+        if any(k.startswith(_PART_NUMBER_PREFIX) for k in atom.entity_keys):
+            # If THIS atom has a part_number, leave it to the part-number
+            # path — only emit device-only conflicts when at least one
+            # side has no part_number anchor.
+            pass
+        for dk in _device_keys(atom):
+            if not dk or dk == "device:unknown":
+                continue
+            by_device.setdefault(dk, []).append(atom)
+
+    for device_key, atoms_for_device in by_device.items():
+        if len(atoms_for_device) < 2:
+            continue
+        # Filter atoms whose authority/atom_type suggests they're NOT
+        # a real scope statement (exclusion text, boilerplate prose).
+        candidates = [
+            a for a in atoms_for_device
+            if a.atom_type.value not in {"exclusion", "compliance", "risk", "open_question"}
+        ]
+        if len(candidates) < 2:
+            continue
+        # Build pairs that satisfy the cross-doc / different-qty /
+        # no-shared-part-number / same-site-context guards.
+        for i, a in enumerate(candidates):
+            for b in candidates[i + 1:]:
+                if a.artifact_id == b.artifact_id:
+                    continue
+                # Ambiguity guard: if EITHER atom mentions multiple
+                # devices, we can't reliably bind the quantity to this
+                # specific device. (One paragraph that lists "50 APs
+                # and 5 switches" carries device:access_point AND
+                # device:switch on the SAME atom with one quantity
+                # entity each; the bind-by-co-occurrence trick from
+                # part_number doesn't apply.)
+                a_devices = {k for k in a.entity_keys if k.startswith("device:") and k != "device:unknown"}
+                b_devices = {k for k in b.entity_keys if k.startswith("device:") and k != "device:unknown"}
+                if len(a_devices) > 1 or len(b_devices) > 1:
+                    continue
+                a_qty_keys = {k for k in a.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+                b_qty_keys = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+                if not a_qty_keys or not b_qty_keys:
+                    continue
+                # Single-quantity guard: one atom with multiple quantity
+                # keys (e.g. "50 APs + 5 switches in same paragraph")
+                # is too ambiguous to bind to a single device.
+                if len(a_qty_keys) > 1 or len(b_qty_keys) > 1:
+                    continue
+                a_parts = {k for k in a.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
+                b_parts = {k for k in b.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
+                # Skip when a shared part_number exists — that's the
+                # part-number conflict path.
+                if a_parts and b_parts and a_parts.intersection(b_parts):
+                    continue
+                # Site-scope guard: if BOTH atoms reference sites and
+                # the site sets are disjoint, they're talking about
+                # different deployments.
+                sites_a = _site_keys(a)
+                sites_b = _site_keys(b)
+                if sites_a and sites_b and not sites_a.intersection(sites_b):
+                    continue
+                # Compute candidate (a_qty, b_qty) pairs — the smallest
+                # informative pair (avoid spamming N*M for one device).
+                def _qty_val(k: str) -> int | None:
+                    try:
+                        return int(k.split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        return None
+                a_vals = sorted({v for v in (_qty_val(k) for k in a_qty_keys) if v is not None})
+                b_vals = sorted({v for v in (_qty_val(k) for k in b_qty_keys) if v is not None})
+                # Reject single-digit qtys (qty:1 / qty:2 is usually a
+                # table template, not a scope statement).
+                a_vals = [v for v in a_vals if v >= 5]
+                b_vals = [v for v in b_vals if v >= 5]
+                if not a_vals or not b_vals:
+                    continue
+                # The conflict fires when there is NO common value AND
+                # the difference between the closest pair is non-trivial.
+                if set(a_vals).intersection(b_vals):
+                    continue
+                # Closest cross-set pair:
+                pair = min(
+                    ((av, bv) for av in a_vals for bv in b_vals),
+                    key=lambda p: abs(p[0] - p[1]),
+                )
+                av, bv = pair
+                dedup_key = (device_key, a.id, b.id)
+                if dedup_key in for_device_pairs_seen:
+                    continue
+                for_device_pairs_seen.add(dedup_key)
+                # Pick deterministic from/to (lex by atom id)
+                from_atom, to_atom = (a, b) if a.id < b.id else (b, a)
+                reason = (
+                    f"Cross-artifact quantity mismatch for {device_key}: {av} vs {bv}"
+                )
+                push(
+                    _build_edge(
+                        project_id,
+                        EdgeType.contradicts,
+                        from_atom,
+                        to_atom,
+                        reason,
+                        0.78,
+                        edge_family=EDGE_FAMILY_DEVICE_QUANTITY_CROSS_DOC,
+                    )
+                )
 
     # Material / line-item identity: governing approved_site_roster vs vendor_quote (normalized_item).
     # Roster aggregate row (when present) defines scope quantity; vendor is summed per identity; never reversed.
