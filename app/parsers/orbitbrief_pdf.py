@@ -3832,6 +3832,42 @@ def _run_schematic_pre_pass(
         if not parsed_legends and not pack_has_targets:
             return [], []
 
+        # Vision-LLM symbol detection bootstrap. Extract legend symbol
+        # crops once per document so they can be reused across every
+        # SCHEMATIC_DRAWING page during the per-page detection loop.
+        # Opt-in via PARSER_OS_VISION_DETECT=1 so default compiles stay
+        # byte-stable for the existing test grid.
+        vision_legend_crops: list[Any] = []
+        vision_enabled = os.environ.get("PARSER_OS_VISION_DETECT") == "1"
+        vision_cache_path: Path | None = None
+        if vision_enabled and parsed_legends:
+            try:
+                from orbitbrief_page_os.segmentation.schematic.legend_symbol_crops import (
+                    extract_legend_symbol_crops,
+                )
+                from orbitbrief_page_os.segmentation.schematic.vision_symbol_detector import (
+                    is_vision_endpoint_reachable,
+                )
+            except Exception:  # pragma: no cover
+                extract_legend_symbol_crops = None  # type: ignore[assignment]
+                is_vision_endpoint_reachable = None  # type: ignore[assignment]
+            if extract_legend_symbol_crops is not None and is_vision_endpoint_reachable is not None:
+                if is_vision_endpoint_reachable():
+                    crops_out_dir = derived_dir_for(path)
+                    try:
+                        crops_out_dir.mkdir(parents=True, exist_ok=True)
+                    except OSError:  # pragma: no cover
+                        pass
+                    try:
+                        vision_legend_crops = extract_legend_symbol_crops(
+                            legends=parsed_legends,
+                            pdf_path=path,
+                            out_dir=crops_out_dir,
+                        )
+                    except Exception:  # pragma: no cover
+                        vision_legend_crops = []
+                    vision_cache_path = path.parent / ".orbitbrief_vision_detect_cache.jsonl"
+
         for legend in parsed_legends:
             try:
                 legend_page = doc.load_page(legend.page_index)
@@ -4186,6 +4222,84 @@ def _run_schematic_pre_pass(
                 legend_page=legend_page,
                 excluded_bboxes=tuple(excluded),
             )
+            # Vision-LLM augmentation for SCHEMATIC_DRAWING pages.
+            # On real schematics the symbol IS an icon, not text — the
+            # text-tag detector returns 0 hits. Vision detector finds
+            # icons via region proposals + qwen2.5vl match against the
+            # legend symbol crops. Only runs when the endpoint is
+            # reachable + at least one legend crop was extracted.
+            classification_for_page = classify_page_kind(
+                page_index=page_index, page=page, blocks=blocks
+            ) if page is not None else None
+            page_kind_for_vision = (
+                classification_for_page.kind if classification_for_page else PAGE_UNKNOWN
+            )
+            if (
+                vision_enabled
+                and vision_legend_crops
+                and page_kind_for_vision in (SCHEMATIC_DRAWING, PAGE_UNKNOWN)
+                and page is not None
+            ):
+                try:
+                    from orbitbrief_page_os.segmentation.schematic.region_proposals import (
+                        propose_regions,
+                    )
+                    from orbitbrief_page_os.segmentation.schematic.vision_symbol_detector import (
+                        detect_symbols_via_vision,
+                    )
+                except Exception:  # pragma: no cover
+                    propose_regions = None  # type: ignore[assignment]
+                    detect_symbols_via_vision = None  # type: ignore[assignment]
+                if propose_regions is not None and detect_symbols_via_vision is not None:
+                    try:
+                        proposals = propose_regions(page=page, page_index=page_index)
+                    except Exception:  # pragma: no cover
+                        proposals = []
+                    if proposals:
+                        try:
+                            vision_dets = detect_symbols_via_vision(
+                                page=page,
+                                page_index=page_index,
+                                region_proposals=proposals,
+                                legend_crops=vision_legend_crops,
+                                cache_path=vision_cache_path,
+                            )
+                        except Exception:  # pragma: no cover
+                            vision_dets = []
+                        # Convert VisionDetection → SymbolDetection so the
+                        # downstream emit pipeline treats them uniformly
+                        # with the text_tag detections.
+                        from app.parsers.schematic_models import SymbolDetection as _SymbolDetection
+                        entry_by_id = {
+                            e.entry_id: e
+                            for l in parsed_legends
+                            for e in l.entries
+                        }
+                        target_by_entry_id: dict[str, Any] = {}
+                        for t in target_set.targets:
+                            if t.legend_entry_id:
+                                target_by_entry_id[t.legend_entry_id] = t
+                        for vd in vision_dets:
+                            entry = entry_by_id.get(vd.matched_entry_id)
+                            target = target_by_entry_id.get(vd.matched_entry_id)
+                            if target is None or entry is None:
+                                continue
+                            try:
+                                sd = _SymbolDetection.make(
+                                    page_index=page_index,
+                                    sheet_number=sheet,
+                                    target_key=target.target_key,
+                                    entity_key=target.target_key,
+                                    legend_entry_id=entry.entry_id,
+                                    bbox_pdf=vd.bbox_pdf,
+                                    crop_sha256="",
+                                    modality="vision_llm",
+                                    confidence=vd.confidence,
+                                    nearby_text=vd.matched_label_text,
+                                )
+                            except (TypeError, ValueError):
+                                continue
+                            detections.append(sd)
             # Assign each detection to its nearest room (when rooms
             # were detected on this page). The mapping is recorded
             # on the detection atom's value so downstream consumers

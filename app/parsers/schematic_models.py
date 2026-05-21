@@ -217,7 +217,7 @@ class ParsedLegend:
 
 
 Completeness = Literal["load_bearing", "informational"]
-Modality = Literal["text_tag", "glyph_template", "vector_shape", "zone", "line_run"]
+Modality = Literal["text_tag", "glyph_template", "vector_shape", "zone", "line_run", "vision_llm"]
 
 
 @dataclass(frozen=True)
