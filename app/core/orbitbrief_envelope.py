@@ -856,7 +856,7 @@ def _compact_edge(edge: EvidenceEdge) -> dict[str, Any]:
 
 
 def _compact_packet(packet: EvidencePacket) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "id": packet.id,
         "family": packet.family.value,
         "anchor_type": packet.anchor_type,
@@ -868,6 +868,24 @@ def _compact_packet(packet: EvidencePacket) -> dict[str, Any]:
         "contradicting_atom_ids": list(packet.contradicting_atom_ids),
         "reason": packet.reason,
     }
+    # Preserve the PacketCertificate so downstream consumers
+    # (SOWSmith.scope_clause, OrbitBrief.scope_truth, RunbookGen.site_steps,
+    # AtlasDispatch.site_readiness, VisionQC.photo_requirements) see the
+    # cert's blast_radius declaration through the envelope.
+    cert = getattr(packet, "certificate", None)
+    if cert is not None:
+        try:
+            out["certificate"] = cert.model_dump()
+        except Exception:  # pragma: no cover
+            try:
+                out["certificate"] = dict(cert)
+            except Exception:
+                out["certificate"] = None
+        if out.get("certificate") and isinstance(out["certificate"], dict):
+            br = out["certificate"].get("blast_radius") or []
+            if br:
+                out["blast_radius"] = list(br)
+    return out
 
 
 def _render_generic_structured_md(structured: dict[str, Any]) -> str:
