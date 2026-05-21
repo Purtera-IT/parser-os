@@ -40,15 +40,21 @@ from typing import Any, Iterable, Sequence
 # the FIRST matching field wins so order matters (more specific
 # patterns first). Each value is a tuple of regex patterns that
 # the column header must MATCH (substring search).
+# Field-header patterns — order matters. The first matching field
+# wins, so more specific patterns go first to prevent generic
+# keywords like "location" from claiming the wrong column when a
+# more authoritative match exists later in the row.
 _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Site identifier (most authoritative)
-    ("site_id", ("site id", "site #", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id")),
+    ("site_id", ("site id", "site #", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
+    # Street address — keep BEFORE facility_name so an "Address" or
+    # "Street" header takes the address column even when a "Location"
+    # header would also match facility_name's "location name".
+    ("street_address", ("street address", "physical address", "site address", "address", "street", "addr")),
     # Facility / building name
-    ("facility_name", ("facility name", "facility", "site name", "location name", "building", "building name", "premises name", "store name")),
-    # Street address
-    ("street_address", ("street address", "address", "physical address", "site address", "location")),
+    ("facility_name", ("facility name", "facility", "site name", "location name", "building name", "premises name", "store name", "name", "location", "use", "building")),
     # City/state
-    ("city_state", ("city/state", "city, state", "city / state", "region")),
+    ("city_state", ("city/state", "city, state", "city / state", "city", "state", "region")),
     # MDF/IDF closet
     ("mdf_idf", ("mdf/idf", "mdf / idf", "mdf", "idf", "closet", "tr ", "main distribution", "telecom room")),
     # Access window / hours
@@ -59,8 +65,10 @@ _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("contact", ("contact", "site contact", "primary contact", "facility contact")),
     ("phone", ("phone", "telephone", "tel ", "tel#", "phone #")),
     ("email", ("email", "e-mail", "email address")),
+    # Zip code as its own column
+    ("zip", ("zip", "zipcode", "zip code", "postal", "postcode", "postal code")),
     # Square footage / occupancy
-    ("sqft", ("square footage", "sqft", "sq ft", "footprint", "size (sqft)", "size sqft")),
+    ("sqft", ("square footage", "sqft", "sq ft", "footprint", "size (sqft)", "size sqft", "size")),
     ("occupancy", ("occupancy", "occupants", "headcount", "users", "seats")),
     # Notes
     ("notes", ("notes", "remarks", "comments")),
@@ -116,6 +124,7 @@ class SiteRosterRow:
     phone: str | None = None
     email: str | None = None
     city_state: str | None = None
+    zip: str | None = None
     sqft: str | None = None
     occupancy: str | None = None
     notes: str | None = None
@@ -136,6 +145,7 @@ class SiteRosterRow:
             "phone": self.phone,
             "email": self.email,
             "city_state": self.city_state,
+            "zip": self.zip,
             "sqft": self.sqft,
             "occupancy": self.occupancy,
             "notes": self.notes,
@@ -232,13 +242,24 @@ def looks_like_site_roster(
             return True
 
     # Signal 3: row-shape — count rows whose leftmost non-empty cell
-    # matches the site-ID shape.
+    # matches the site-ID shape. Accept when either
+    #   - 3+ rows match (universal high-confidence), or
+    #   - 2 rows match AND at least one column maps to a canonical
+    #     field (medium-confidence with corroboration), or
+    #   - 1 row matches AND we only have 1 row (single-site roster
+    #     after the table-prelude has been declared elsewhere).
     id_hits = 0
+    inspected = 0
     for row in rows[:20]:
+        inspected += 1
         leftmost = _leftmost_nonempty_cell(row, columns)
         if leftmost and _SITE_ID_SHAPE_RE.match(leftmost.strip()):
             id_hits += 1
     if id_hits >= 3:
+        return True
+    if id_hits >= 2 and fields_present:
+        return True
+    if id_hits == inspected == 1 and fields_present:
         return True
 
     return False
@@ -400,6 +421,39 @@ def extract_site_roster(
             sid = _infer_site_id_from_row(row, columns)
             if sid:
                 cells["site_id"] = sid
+                # When site_id was inferred FROM a cell that's also
+                # mapped to another canonical field (e.g. header is
+                # "Building", cell is "BLDG-1", which is BOTH the
+                # building name AND the site ID), DON'T set the
+                # other field to the same value — that's a
+                # duplicate, not a real facility_name. Clear those
+                # so a later column with the real name (like "Use")
+                # has a chance to take facility_name via positional
+                # fallback / extras.
+                for fname, val in list(cells.items()):
+                    if fname != "site_id" and val == sid:
+                        cells.pop(fname)
+                # And — if facility_name is now empty, promote the
+                # NEXT non-empty cell to facility_name. This is the
+                # universal "first non-id cell becomes the human
+                # label" rule that handles "Building, Use,
+                # Square footage" with cells "BLDG-1, Office,
+                # 120000sf" → site_id="BLDG-1", facility="Office".
+                if "facility_name" not in cells:
+                    for i, col in enumerate(columns):
+                        v = _cell_value(row, columns, i)
+                        if not v or v == sid:
+                            continue
+                        # Skip cells already absorbed into other
+                        # canonical fields
+                        if any(v == cv for cv in cells.values()):
+                            continue
+                        # Skip cells that themselves look like a
+                        # site_id (don't take a second ID as the name)
+                        if _SITE_ID_SHAPE_RE.match(v.strip()):
+                            continue
+                        cells["facility_name"] = v
+                        break
 
         # Collapse internal whitespace on the site_id when the
         # compact form still looks like a site ID. PDF wrap can
@@ -450,6 +504,7 @@ def extract_site_roster(
                 phone=cells.get("phone"),
                 email=cells.get("email"),
                 city_state=cells.get("city_state"),
+                zip=cells.get("zip"),
                 sqft=cells.get("sqft"),
                 occupancy=cells.get("occupancy"),
                 notes=cells.get("notes"),

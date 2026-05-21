@@ -245,3 +245,62 @@ def test_extract_phone_and_email():
     out = _rosterized(cols, rows)
     assert out[0].phone == "512-555-0100"
     assert out[0].email == "ops@acme.test"
+
+
+def test_extract_location_then_address_columns():
+    # "Store #" + "Location" + "Address" — Location maps to
+    # facility_name (it's the human label), Address maps to
+    # street_address.
+    cols = ["Store #", "Location", "Address"]
+    rows = [
+        {"Store #": "STORE-142", "Location": "Cherry Creek",
+         "Address": "3030 E 1st Ave, Denver CO"},
+    ]
+    out = _rosterized(cols, rows)
+    assert out[0].site_id == "STORE-142"
+    assert out[0].facility_name == "Cherry Creek"
+    assert out[0].street_address == "3030 E 1st Ave, Denver CO"
+
+
+def test_extract_building_use_columns():
+    # Headers: "Building" (where the site ID lives) + "Use" + "Square footage".
+    # site_id should infer from BLDG-1 in the leftmost cell;
+    # facility_name should NOT duplicate that — should pick up "Office"
+    # from the Use column.
+    cols = ["Building", "Use", "Square footage"]
+    rows = [
+        {"Building": "BLDG-1",  "Use": "Office",     "Square footage": "120,000 sf"},
+        {"Building": "BLDG-12", "Use": "Warehouse",  "Square footage": "85,000 sf"},
+    ]
+    out = _rosterized(cols, rows)
+    assert {r.site_id for r in out} == {"BLDG-1", "BLDG-12"}
+    by_id = {r.site_id: r for r in out}
+    assert by_id["BLDG-1"].facility_name == "Office"
+    assert by_id["BLDG-12"].facility_name == "Warehouse"
+    # And the sqft field is captured
+    assert by_id["BLDG-1"].sqft == "120,000 sf"
+
+
+def test_extract_street_header():
+    # "Street" (instead of "Street address") should still map to street_address.
+    cols = ["Site ID", "Facility", "Street", "City", "State", "Zip"]
+    rows = [
+        {"Site ID": "SEA-HQ-01", "Facility": "Acme Seattle",
+         "Street": "1200 5th Ave", "City": "Seattle",
+         "State": "WA", "Zip": "98101"},
+    ]
+    out = _rosterized(cols, rows)
+    assert out[0].site_id == "SEA-HQ-01"
+    assert out[0].street_address == "1200 5th Ave"
+    assert out[0].city_state == "Seattle" or out[0].city_state == "WA"
+    assert out[0].zip == "98101"
+
+
+def test_extract_preserves_case_lowercase_ids():
+    # Source has lowercase IDs — parser preserves case.
+    cols = ["Site Code", "Name", "Address"]
+    rows = [
+        {"Site Code": "atl_hq_01", "Name": "Atlanta HQ", "Address": "1200 Peachtree St NE"},
+    ]
+    out = _rosterized(cols, rows)
+    assert out[0].site_id == "atl_hq_01"
