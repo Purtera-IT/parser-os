@@ -572,6 +572,25 @@ class OrbitBriefPdfParser(BaseParser):
         except Exception:  # pragma: no cover — never fail the parse
             pass
 
+        # Generic table fallback: when the structured pipeline did NOT
+        # emit any tables but fitz can find them (reportlab-generated
+        # tables, scanned-then-OCR'd grids, etc.), emit one
+        # table_row atom per row so part_numbers / quantities /
+        # money inside cells are captured. No-op when the structured
+        # pipeline already surfaced tables.
+        try:
+            atoms.extend(
+                _fitz_generic_table_fallback(
+                    pdf_path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                    structured_doc=structured_doc,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
+
         # Surface the derived artifacts in the parser output so the
         # compiler-level cache captures them and replays them on every
         # cache hit.  This guarantees ``<stem>.derived/structured.json``
@@ -776,6 +795,154 @@ def _fitz_site_roster_fallback(
                                 "occupancy": site_row.occupancy,
                                 "notes": site_row.notes,
                                 "extras": dict(site_row.extra_fields),
+                            },
+                        )
+                    )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
+
+
+def _structured_doc_has_tables(structured_doc: dict[str, Any]) -> bool:
+    """True iff any section/subsection contains a block of kind='table'."""
+    for page in structured_doc.get("pages") or []:
+        for section in page.get("sections") or []:
+            stack: list[dict[str, Any]] = [section]
+            while stack:
+                cur = stack.pop()
+                for b in cur.get("blocks") or []:
+                    if isinstance(b, dict) and b.get("kind") == "table":
+                        return True
+                for sub in cur.get("subsections") or []:
+                    stack.append(sub)
+    return False
+
+
+def _fitz_generic_table_fallback(
+    *,
+    pdf_path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    structured_doc: dict[str, Any],
+) -> list[EvidenceAtom]:
+    """Recover ANY tabular content fitz.find_tables sees that the
+    structured pipeline didn't surface.
+
+    The structured extractor's heuristic table detector misses
+    reportlab-generated tables and some scanned/CSV-converted PDFs.
+    fitz's vector-based table finder catches those. We emit one
+    table_row-shaped atom per row so enrich_entities can pull
+    part_numbers / quantities / money out of the cells.
+
+    Skipped entirely when the structured pipeline already exposed
+    at least one table — that path is more accurate and we don't
+    want to double-emit.
+    """
+    if _structured_doc_has_tables(structured_doc):
+        return []
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+    try:
+        for page_index, page in enumerate(doc):
+            try:
+                tables_finder = page.find_tables()
+            except Exception:
+                continue
+            tables = list(getattr(tables_finder, "tables", []) or [])
+            if not tables:
+                continue
+            for table_index, table in enumerate(tables):
+                try:
+                    extracted = table.extract()
+                except Exception:
+                    continue
+                if not extracted or len(extracted) < 2:
+                    continue
+                header = [(c or "").strip() for c in extracted[0]]
+                body = extracted[1:]
+                # Build columns list (use col_N for blank headers)
+                columns = [
+                    header[i] if i < len(header) and header[i] else f"col_{i}"
+                    for i in range(len(header) if header else (len(body[0]) if body else 0))
+                ]
+                # Classify the table once (pricing vs scope)
+                sample_cells: list[str] = []
+                for r in body[:5]:
+                    for c in r or ():
+                        if c is None:
+                            continue
+                        s = " ".join(str(c).split()).strip()
+                        if s:
+                            sample_cells.append(s)
+                try:
+                    atom_type, authority = _classify_table(
+                        section_path=[],
+                        columns=columns,
+                        sample_cells=sample_cells,
+                    )
+                except Exception:
+                    atom_type, authority = AtomType.scope_item, AuthorityClass.contractual_scope
+                # Bbox for locator
+                try:
+                    bbox = table.bbox
+                    locator_base = {
+                        "page": int(page_index),
+                        "block_kind": "table",
+                        "bbox": list(bbox),
+                        "extraction": "fitz_generic_table_fallback_v1",
+                        "table_index": table_index,
+                    }
+                except Exception:
+                    locator_base = {
+                        "page": int(page_index),
+                        "block_kind": "table",
+                        "extraction": "fitz_generic_table_fallback_v1",
+                        "table_index": table_index,
+                    }
+                for row_index, row in enumerate(body):
+                    if not row:
+                        continue
+                    cells: dict[str, str] = {}
+                    cell_strs: list[str] = []
+                    for i, c in enumerate(row):
+                        col_name = columns[i] if i < len(columns) else f"col_{i}"
+                        val = " ".join(str(c or "").split()).strip()
+                        if val:
+                            cells[col_name] = val
+                            cell_strs.append(f"{col_name}: {val}")
+                    if not cells:
+                        continue
+                    row_text = " | ".join(cell_strs)
+                    # Skip rows whose text is a form-field / page-footer
+                    if _looks_like_form_field(row_text) or _looks_like_page_footer(row_text):
+                        continue
+                    out.append(
+                        _make_atom(
+                            text=row_text,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=pdf_path.name,
+                            parser_version=parser_version,
+                            atom_type=atom_type,
+                            authority_class=authority,
+                            confidence=TABLE_ROW_CONFIDENCE,
+                            locator={**locator_base, "row_index": row_index},
+                            value={
+                                "kind": "table_row",
+                                "columns": columns,
+                                "cells": cells,
+                                "fallback": "fitz_generic_table",
                             },
                         )
                     )

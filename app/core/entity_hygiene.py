@@ -98,6 +98,24 @@ def filter_entity_keys_with_audit(
     return _filter_with_audit(atom, keys, blob=_atom_text_blob(atom))
 
 
+# Structured enterprise site-code shape — when the SITE KEY ITSELF
+# matches this pattern (region-function-N / region-NN / store-N /
+# bldg-N), it's intrinsically a site identifier and the candidate's
+# structure IS the positive evidence. Bypass the negative-blob test
+# so site IDs aren't dropped just because the surrounding atom text
+# also happens to mention "contract" / "license" / a vendor name.
+_STRUCTURED_SITE_KEY_RE = re.compile(
+    r"^(?:"
+    r"[a-z]{2,5}_[a-z0-9]{1,8}(?:_[a-z0-9]{1,6}){0,3}"  # atl_hq_01, nyc_dc_12
+    r"|s\d{2,4}|site_?\d{1,4}"                          # s001, site_12
+    r"|store_?\d{1,4}|loc_?\d{1,4}"                     # store_142
+    r"|bldg_?[a-z0-9]{1,4}|b\d{1,4}"                    # bldg_12
+    r"|mdc_?\d{1,4}|idc_?\d{1,4}|dc\d{1,4}"             # mdc_01
+    r")$",
+    re.IGNORECASE,
+)
+
+
 def _filter_with_audit(
     atom: Any, keys: Iterable[str], *, blob: str
 ) -> tuple[list[str], list[dict[str, Any]]]:
@@ -112,7 +130,17 @@ def _filter_with_audit(
             kept.append(key)
             continue
 
-        candidate = key.replace("site:", "").replace("_", " ")
+        slug = key[len("site:"):]
+        candidate = slug.replace("_", " ")
+
+        # Structured site IDs (atl_hq_01, store_142, bldg_a2, ...) ARE
+        # the positive evidence. Bypass the negative-blob test so a
+        # canonical site code isn't dropped just because the same
+        # sentence mentions "contract" / "license" / a vendor name.
+        if _STRUCTURED_SITE_KEY_RE.match(slug):
+            kept.append(key)
+            continue
+
         cand_neg = bool(_SITE_NEGATIVE_RE.search(candidate))
         cand_pos = bool(_SITE_POSITIVE_RE.search(candidate))
 
