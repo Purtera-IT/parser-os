@@ -3611,7 +3611,7 @@ def _run_schematic_pre_pass(
         emit_warning_atom,
         intersect_with_pack,
     )
-    from app.parsers.schematic_models import DetectionTargetSet, SchematicWarning
+    from app.parsers.schematic_models import DetectionTarget, DetectionTargetSet, SchematicWarning
     from orbitbrief_page_os.segmentation.schematic.legend_locator import (
         locate_legend_candidates,
         page_text_blocks,
@@ -3771,10 +3771,23 @@ def _run_schematic_pre_pass(
             # subsequent drawing pages with the same domain.
             if page_kind == LEGEND_TABLE:
                 page_legends: list[Any] = []
-                seen_header_keys: set[str] = set()
+                seen_legend_ids: set[str] = set()
+                seen_bbox_centers: list[tuple[float, float]] = []
+                # Marriott T0.01 has FOUR legend tables (STRUCTURED
+                # CABLING + INTRUSION DETECTION + ACCESS CONTROL +
+                # CCTV) — the locator normalizes their headers to the
+                # same string ("symbol legend"), so deduping by header
+                # text used to collapse all four into one. Instead,
+                # dedupe by the parsed legend_id (entry-set hash) and
+                # by bbox-center proximity so distinct legends survive.
+                BBOX_DUPE_PT = 36.0
                 for cand in ordered:
-                    header_key = (cand.header_text or "").lower().strip()
-                    if header_key and header_key in seen_header_keys:
+                    cx = (cand.bbox[0] + cand.bbox[2]) / 2.0
+                    cy = (cand.bbox[1] + cand.bbox[3]) / 2.0
+                    if any(
+                        abs(cx - sc[0]) <= BBOX_DUPE_PT and abs(cy - sc[1]) <= BBOX_DUPE_PT
+                        for sc in seen_bbox_centers
+                    ):
                         continue
                     parsed = parse_legend(
                         candidate=cand,
@@ -3784,8 +3797,10 @@ def _run_schematic_pre_pass(
                     )
                     if parsed is None:
                         continue
-                    if header_key:
-                        seen_header_keys.add(header_key)
+                    if parsed.legend_id in seen_legend_ids:
+                        continue
+                    seen_legend_ids.add(parsed.legend_id)
+                    seen_bbox_centers.append((cx, cy))
                     page_legends.append(parsed)
                     if chosen_bbox is None:
                         chosen_bbox = cand.bbox
@@ -3947,15 +3962,62 @@ def _run_schematic_pre_pass(
                         page=page,
                     )
                 )
-            if resolved.legend is None or not domain_pack:
+            if resolved.legend is None:
                 continue
-            targets, gaps = intersect_with_pack(
-                legend=resolved.legend, pack=domain_pack
-            )
+            if domain_pack is not None:
+                targets, gaps = intersect_with_pack(
+                    legend=resolved.legend, pack=domain_pack
+                )
+                pack_id_for_set = domain_pack.pack_id
+            else:
+                targets, gaps = [], []
+                pack_id_for_set = "legend_only"
+
+            # When the active pack doesn't intersect the legend (e.g.
+            # fiber pack vs telecom legend), synthesize one target per
+            # legend entry so the text-tag + vision detectors have
+            # something to look for. This keeps the parser universal:
+            # a real DD with WN/CR/TV symbols produces detections
+            # regardless of which domain pack is loaded.
+            if not targets:
+                synthesized: list[DetectionTarget] = []
+                for entry in resolved.legend.entries:
+                    key_seed = (
+                        entry.normalized_symbol_text
+                        or entry.normalized_label
+                        or entry.entry_id
+                    )
+                    if not key_seed:
+                        continue
+                    tk = key_seed.lower().strip()
+                    ek = f"device:{tk}".replace(" ", "_")
+                    try:
+                        synthesized.append(
+                            DetectionTarget(
+                                target_key=tk,
+                                entity_key=ek,
+                                completeness="informational",
+                                expected_modalities=("text_tag", "vision_llm"),
+                                legend_entry_id=entry.entry_id,
+                                aliases=tuple(
+                                    a for a in (
+                                        entry.raw_symbol_text or "",
+                                        entry.normalized_symbol_text or "",
+                                        entry.label_text or "",
+                                        entry.normalized_label or "",
+                                    ) if a
+                                ),
+                            )
+                        )
+                    except ValueError:
+                        continue
+                targets = synthesized
+                pack_id_for_set = "legend_only"
+
             target_set = DetectionTargetSet.make(
                 page_index=page_index,
                 sheet_number=sheet,
-                pack_id=domain_pack.pack_id,
+                pack_id=pack_id_for_set,
                 legend_id=resolved.legend.legend_id,
                 targets=tuple(targets),
                 legend_gap_target_keys=tuple(gaps),
@@ -4027,11 +4089,20 @@ def _run_schematic_pre_pass(
                     )
                 )
 
-            # Symbol detection (PR6) — run only when we have a
-            # resolved legend AND a non-empty target set. Without a
-            # target set, every text token would be "unknown" and we
-            # would not be classifying anyway.
-            if not target_set.targets or page is None:
+            # Symbol detection (PR6) — run when we have a resolved
+            # legend AND either:
+            #   (a) a non-empty pack target set, OR
+            #   (b) vision-LLM detection is enabled + crops exist
+            #
+            # The original guard only allowed pack-matched targets,
+            # which silenced vision detection whenever the domain
+            # pack didn't match the legend vocabulary (e.g. running
+            # the fiber pack against a security/telecom legend). The
+            # vision detector matches directly against legend
+            # entries, so it can fire even when no pack target
+            # intersects.
+            vision_can_run = bool(vision_enabled and vision_legend_crops)
+            if page is None or (not target_set.targets and not vision_can_run):
                 continue
             try:
                 legend_page = doc.load_page(resolved.legend.page_index)
@@ -4281,15 +4352,30 @@ def _run_schematic_pre_pass(
                                 target_by_entry_id[t.legend_entry_id] = t
                         for vd in vision_dets:
                             entry = entry_by_id.get(vd.matched_entry_id)
-                            target = target_by_entry_id.get(vd.matched_entry_id)
-                            if target is None or entry is None:
+                            if entry is None:
                                 continue
+                            target = target_by_entry_id.get(vd.matched_entry_id)
+                            # When the active pack doesn't intersect the
+                            # legend (e.g. running the fiber pack on a
+                            # security/telecom legend), synthesize a
+                            # target_key from the entry itself so the
+                            # vision detection isn't dropped.
+                            if target is not None:
+                                target_key = target.target_key
+                                entity_key = target.target_key
+                            else:
+                                target_key = (
+                                    entry.normalized_label
+                                    or (entry.normalized_symbol_text or "")
+                                    or entry.entry_id
+                                )
+                                entity_key = f"device:{target_key}".lower().replace(" ", "_")
                             try:
                                 sd = _SymbolDetection.make(
                                     page_index=page_index,
                                     sheet_number=sheet,
-                                    target_key=target.target_key,
-                                    entity_key=target.target_key,
+                                    target_key=target_key,
+                                    entity_key=entity_key,
                                     legend_entry_id=entry.entry_id,
                                     bbox_pdf=vd.bbox_pdf,
                                     crop_sha256="",
