@@ -129,26 +129,95 @@ class DocxParser(BaseParser):
                 )
             )
 
+        # Build all-document text once for ``kind=physical_site`` declarations.
+        document_text = " ".join(
+            (p.text or "").strip() for p in document.paragraphs
+        )
+
         for table_idx, table in enumerate(document.tables):
+            # Build a column/rows view of the table for the site_roster
+            # extractor (and a per-row atom emitter below).
+            table_rows: list[list[str]] = []
+            for row_cells in table.rows:
+                table_rows.append([c.text.strip() for c in row_cells.cells])
+
+            # Site-roster fast path — when the first non-empty row
+            # looks like roster headers + a roster-specific column,
+            # emit one physical_site atom per data row.
+            roster_atoms = self._maybe_emit_docx_site_roster_atoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                table_index=table_idx,
+                rows=table_rows,
+                surrounding_text=document_text,
+            )
+            if roster_atoms:
+                atoms.extend(roster_atoms)
+                continue
+
+            # Per-row atom — concatenate all cells so the row's
+            # context (Site + Part + Qty) survives as one atom for
+            # entity extraction. Skip the all-cell header row when
+            # row 0 looks like field labels.
+            header_cells = table_rows[0] if table_rows else []
             for row_idx, row_cells in enumerate(table.rows):
-                for cell_idx, cell_obj in enumerate(row_cells.cells):
-                    text = cell_obj.text.strip()
-                    if not text:
-                        continue
-                    atoms.extend(
-                        self._emit_atoms_for_text(
-                            project_id=project_id,
-                            artifact_id=artifact_id,
-                            filename=path.name,
-                            text=text,
-                            paragraph_index=None,
-                            table_index=table_idx,
-                            row=row_idx,
-                            cell=cell_idx,
-                            tracked_change=None,
-                            heading=False,
-                        )
+                cell_texts = [c.text.strip() for c in row_cells.cells if c.text.strip()]
+                if not cell_texts:
+                    continue
+                # Skip the header row (first row) when it looks like
+                # column labels — its cells are repeated below as
+                # data labels.
+                if row_idx == 0 and len(cell_texts) >= 2 and all(
+                    len(c) <= 30 for c in cell_texts
+                ):
+                    continue
+                row_text = " | ".join(cell_texts)
+                # Table rows carry structured data even without
+                # scope/constraint verbs — emit unconditionally as
+                # a scope_item (the classifier path is for prose).
+                row_atom_id = stable_id(
+                    "atm", artifact_id, "docx_row",
+                    table_idx, row_idx, row_text
+                )
+                row_src = SourceRef(
+                    id=stable_id("src", row_atom_id),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.docx,
+                    filename=path.name,
+                    locator={
+                        "table_index": table_idx,
+                        "row": row_idx,
+                        "extraction": "docx_table_row_v1",
+                    },
+                    extraction_method="docx_table_row_v1",
+                    parser_version=self.parser_version,
+                )
+                atoms.append(
+                    EvidenceAtom(
+                        id=row_atom_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item,
+                        raw_text=row_text,
+                        normalized_text=row_text.lower(),
+                        value={
+                            "kind": "table_row",
+                            "columns": header_cells,
+                            "cells": dict(zip(header_cells, cell_texts)) if header_cells else {f"col_{i}": v for i, v in enumerate(cell_texts)},
+                        },
+                        entity_keys=[],
+                        source_refs=[row_src],
+                        receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.85,
+                        confidence_raw=0.85,
+                        calibrated_confidence=0.85,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
                     )
+                )
 
         atoms.extend(
             self._extract_tracked_change_atoms(
@@ -165,6 +234,141 @@ class DocxParser(BaseParser):
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
         )
+
+    def _maybe_emit_docx_site_roster_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        table_index: int,
+        rows: list[list[str]],
+        surrounding_text: str,
+    ) -> list[EvidenceAtom]:
+        """Emit ``physical_site`` entity atoms when a DOCX table looks
+        like a site roster (header row with Site ID + Facility +
+        Address / MDF / Access / Escort columns).
+        """
+        try:
+            from app.parsers.site_roster_extractor import (
+                extract_site_roster,
+                looks_like_site_roster,
+                map_columns_to_fields,
+            )
+        except Exception:  # pragma: no cover
+            return []
+        if not rows or len(rows) < 2:
+            return []
+        header = [(c or "").strip() for c in rows[0]]
+        data_rows: list[dict[str, str]] = []
+        for r in rows[1:]:
+            cells = {
+                header[i] if i < len(header) and header[i] else f"col_{i}":
+                (r[i] if i < len(r) else "") or ""
+                for i in range(max(len(header), len(r)))
+            }
+            if any(v.strip() for v in cells.values()):
+                data_rows.append(cells)
+        if not data_rows:
+            return []
+        try:
+            if not looks_like_site_roster(
+                columns=header, rows=data_rows, surrounding_text=surrounding_text
+            ):
+                return []
+            field_map = map_columns_to_fields(header)
+            roster_specific = {
+                "facility_name", "street_address", "mdf_idf",
+                "access_window", "escort_owner", "city_state",
+            }
+            if not (set(field_map.values()) & roster_specific):
+                return []
+            roster_rows = extract_site_roster(
+                columns=header, rows=data_rows, surrounding_text=surrounding_text
+            )
+        except Exception:  # pragma: no cover
+            return []
+        if not roster_rows:
+            return []
+
+        out: list[EvidenceAtom] = []
+        for site_row in roster_rows:
+            sid = (site_row.site_id or "").strip()
+            canon_id = sid or site_row.facility_name or ""
+            if not canon_id:
+                continue
+            row_index = site_row.row_index + 1  # +1 for header
+            text_parts: list[str] = []
+            for label, val in [
+                ("site_id", sid or site_row.site_id),
+                ("facility", site_row.facility_name),
+                ("address", site_row.street_address),
+                ("mdf_idf", site_row.mdf_idf),
+                ("access", site_row.access_window),
+                ("escort", site_row.escort_owner),
+            ]:
+                if val:
+                    text_parts.append(f"{label}: {val}")
+            row_text = " | ".join(text_parts) or canon_id
+            entity_keys: list[str] = []
+            if sid:
+                slug = re.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+                if slug:
+                    entity_keys.append(f"site:{slug}")
+            atom_id = stable_id(
+                "atm", artifact_id, "docx_site_roster",
+                table_index, row_index, canon_id
+            )
+            src = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.docx,
+                filename=filename,
+                locator={
+                    "table_index": table_index,
+                    "row": row_index,
+                    "extraction": "docx_site_roster_v1",
+                },
+                extraction_method="docx_site_roster_v1",
+                parser_version=self.parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.entity,
+                    raw_text=row_text,
+                    normalized_text=row_text.lower(),
+                    value={
+                        "kind": "physical_site",
+                        "site_id": sid or site_row.site_id,
+                        "facility_name": site_row.facility_name,
+                        "street_address": site_row.street_address,
+                        "mdf_idf": site_row.mdf_idf,
+                        "access_window": site_row.access_window,
+                        "escort_owner": site_row.escort_owner,
+                        "contact": site_row.contact,
+                        "phone": site_row.phone,
+                        "email": site_row.email,
+                        "city_state": site_row.city_state,
+                        "zip": site_row.zip,
+                        "notes": site_row.notes,
+                        "extras": dict(site_row.extra_fields),
+                    },
+                    entity_keys=sorted(set(entity_keys)),
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=site_row.confidence,
+                    confidence_raw=site_row.confidence,
+                    calibrated_confidence=site_row.confidence,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
 
     def _build_structured_doc(
         self,
@@ -341,6 +545,25 @@ class DocxParser(BaseParser):
             atom_types.append(AtomType.assumption)
         if "?" in text:
             atom_types.append(AtomType.open_question)
+        # Stakeholder / signature-block pattern: a role keyword
+        # adjacent to a proper-noun name. Emit a scope_item so the
+        # downstream stakeholder extractor sees the name in atom
+        # entity_keys. Without this, signature paragraphs like
+        # "OPTBOT - Director of Workplace Technology: Jane Roe"
+        # produce zero atoms despite carrying a load-bearing
+        # stakeholder.
+        if not atom_types and re.search(
+            r"\b(?:director|vp|cio|cto|cfo|coo|ceo|president|"
+            r"manager|architect|engineer|owner|sponsor|"
+            r"program\s+manager|project\s+manager|principal|"
+            r"foreman|superintendent|approver|signatory|"
+            r"officer|administrator|consultant)\b",
+            lowered,
+        ):
+            # Must also contain at least one likely name token
+            # (Capitalized word, 2+ chars).
+            if re.search(r"\b[A-Z][a-z]{1,}\b", text):
+                atom_types.append(AtomType.scope_item)
         return atom_types
 
     def _emit_atoms_for_text(
