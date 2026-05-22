@@ -61,9 +61,14 @@ from pathlib import Path
 from typing import Any
 
 from app.core.orbitbrief_core import (
+    build_change_order_timeline,
     build_pm_dashboard,
+    build_project_vitals,
+    build_scope_truth,
+    build_site_readiness,
     build_sow_readiness_scorecard,
     build_srl_missing_checklist,
+    build_stakeholder_load,
 )
 from app.core.schemas import (
     ArtifactType,
@@ -200,6 +205,25 @@ def build_orbitbrief_envelope(
     )
     envelope["srl_missing_checklist"] = build_srl_missing_checklist(
         atoms=atoms, documents=documents,
+    )
+    # S+++++ cockpit surfaces — authority-weighted scope truth,
+    # chronological change-order audit, per-site readiness rollup,
+    # per-stakeholder workload matrix, and a single 0-100 project
+    # vitals number that blends every signal above into one
+    # auditable cockpit-header score.
+    envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
+    envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
+    envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
+    envelope["project_vitals"] = build_project_vitals(
+        atoms=atoms,
+        edges=edges,
+        packets=packets,
+        scorecard=envelope["sow_readiness_scorecard"],
+        checklist=envelope["srl_missing_checklist"],
+        site_readiness=envelope["site_readiness"],
+        stakeholder_load=envelope["stakeholder_load"],
+        scope_truth=envelope["scope_truth"],
     )
     # Drawings section is omitted entirely on non-schematic projects so
     # the envelope shape stays byte-identical for the existing test grid.

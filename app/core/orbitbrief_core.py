@@ -4,12 +4,23 @@ The envelope (orbitbrief.input.v2) carries atoms, edges, packets, and
 indexes — everything an LLM needs to reason about the project, but
 nothing pre-aggregated for the operator running the show.
 
-This module computes the three deliverables the Purpulse one-pager
-attributes to OrbitBrief-Core:
+This module computes the deliverables the Purpulse one-pager attributes
+to OrbitBrief-Core, plus the operator-facing surfaces a PM cockpit
+needs to render the cockpit without re-deriving:
 
-  * ``pm_dashboard``         — what a PM looks at first thing Monday
-  * ``sow_readiness_scorecard`` — weighted readiness across dimensions
-  * ``srl_missing_checklist`` — required-field gaps before kickoff
+Core deliverables:
+  * ``pm_dashboard``           — Monday-morning view
+  * ``sow_readiness_scorecard``— weighted readiness across dimensions
+  * ``srl_missing_checklist``  — required-field gaps before kickoff
+
+Cockpit surfaces (S+++++):
+  * ``scope_truth``           — authority-weighted canonical
+                                 (device, site) counts with audit trail
+  * ``change_order_timeline`` — chronological audit of every scope
+                                 change with from→to deltas
+  * ``site_readiness``        — per-site rollup of all signals
+  * ``stakeholder_load``      — who owes what, severity-weighted
+  * ``project_vitals``        — single 0-100 health score with breakdown
 
 These are pure functions over the compile primitives — no I/O, no LLM,
 deterministic, and fast. The LLM-synthesis layer consumes them as
@@ -155,11 +166,12 @@ def build_pm_dashboard(
 
         # Risk atoms — group by owner (stakeholder slug or raw owner string).
         if atom_type == "risk":
+            risk_summary = (value.get("risk_summary") if isinstance(value, dict) else None) or text or ""
             risk_entry = {
                 "atom_id": atom.id,
                 "artifact_id": atom.artifact_id,
                 "risk_id": value.get("risk_id") if isinstance(value, dict) else None,
-                "summary": value.get("risk_summary") if isinstance(value, dict) else text[:200],
+                "summary": risk_summary[:200],
                 "severity": value.get("severity") if isinstance(value, dict) else None,
                 "mitigation": value.get("mitigation") if isinstance(value, dict) else None,
             }
@@ -700,8 +712,590 @@ def _owner_slug_from_atom(atom: EvidenceAtom, owner_raw: str) -> str | None:
     return None
 
 
+# ─────────────────────────── SCOPE TRUTH ───────────────────────────
+
+
+# Authority precedence — the higher number wins when two atoms make
+# contradicting claims about the same (device, site) count. Matches
+# the architecture from item_identity: signed legal artifacts top
+# vendor proposals top meeting transcripts.
+_AUTHORITY_PRECEDENCE: dict[str, int] = {
+    "approved_site_roster": 100,
+    "contractual_scope": 90,
+    "formal_sow": 85,
+    "current_addendum": 80,
+    "customer_current_authored": 75,
+    "vendor_quote": 60,
+    "meeting_note": 40,
+    "quoted_old_email": 20,
+    "machine_extractor": 10,
+}
+
+
+def _atom_authority_rank(atom: EvidenceAtom) -> int:
+    ac = atom.authority_class
+    name = ac.value if hasattr(ac, "value") else str(ac)
+    return _AUTHORITY_PRECEDENCE.get(name, 30)
+
+
+def build_scope_truth(
+    *,
+    atoms: list[EvidenceAtom],
+    edges: list[EvidenceEdge],
+) -> dict[str, Any]:
+    """Return the authoritative scope per (device, site) tuple.
+
+    When multiple artifacts make contradicting quantity claims for the
+    same device at the same site (SOW says 48 cameras, vendor quote
+    says 42, customer email says 36), the highest-authority claim wins
+    and the others surface as ``contested_claims`` so a PM sees the
+    full audit trail and which artifact governs.
+
+    ``scope_truth.devices`` is the canonical answer the LLM should
+    quote. ``scope_truth.contested`` is the open-questions list the
+    PM should chase to close. Both carry source atom IDs so any claim
+    is traceable to a page.
+    """
+    # Group quantity-bearing atoms by (device, site).
+    by_key: dict[tuple[str, str], list[EvidenceAtom]] = defaultdict(list)
+    for atom in atoms:
+        atom_type = _atom_type_str(atom)
+        if atom_type not in ("quantity", "scope_item", "vendor_line_item", "constraint", "site_roster"):
+            continue
+        devices = {k for k in (atom.entity_keys or []) if k.startswith("device:") and k != "device:unknown"}
+        sites = {k for k in (atom.entity_keys or []) if k.startswith("site:")}
+        if not devices:
+            continue
+        # When no site is named we still want a row, just under (device, "site:*").
+        sites_for_row = sites if sites else {"site:*"}
+        for d in devices:
+            for s in sites_for_row:
+                by_key[(d, s)].append(atom)
+
+    devices_truth: list[dict[str, Any]] = []
+    contested: list[dict[str, Any]] = []
+    import re as _re
+    for (device, site), bucket in sorted(by_key.items()):
+        # Extract the noun-anchored quantity per atom for THIS device.
+        from app.core.graph_builder import _noun_anchored_quantity
+        device_canonical = device.split(":", 1)[1]
+        claims: list[dict[str, Any]] = []
+        for atom in bucket:
+            qty = _noun_anchored_quantity(atom.raw_text or "", device_canonical)
+            if qty is None:
+                # Fallback: take qty:N from atom.entity_keys IF this
+                # atom has only ONE device. Multi-device atoms without
+                # noun-anchored binding are too ambiguous to credit.
+                atom_devices = {k for k in atom.entity_keys or [] if k.startswith("device:") and k != "device:unknown"}
+                atom_qtys = {k for k in atom.entity_keys or [] if k.startswith("quantity:")}
+                if len(atom_devices) == 1 and len(atom_qtys) == 1:
+                    try:
+                        qty = int(list(atom_qtys)[0].split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        qty = None
+            if qty is None:
+                continue
+            ac = atom.authority_class
+            ac_name = ac.value if hasattr(ac, "value") else str(ac)
+            claims.append({
+                "atom_id": atom.id,
+                "artifact_id": atom.artifact_id,
+                "quantity": qty,
+                "authority_class": ac_name,
+                "authority_rank": _atom_authority_rank(atom),
+                "text": (atom.raw_text or "")[:160],
+            })
+        if not claims:
+            continue
+        # Group by quantity value.
+        by_value: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for c in claims:
+            by_value[c["quantity"]].append(c)
+        # The governing claim is the highest authority. Ties broken by
+        # claim count (more sources agreeing wins).
+        ranked = sorted(
+            by_value.items(),
+            key=lambda kv: (-max(c["authority_rank"] for c in kv[1]), -len(kv[1]), kv[0]),
+        )
+        governing_value, governing_claims = ranked[0]
+        all_values = sorted(by_value.keys())
+        entry = {
+            "device": device,
+            "site": site,
+            "canonical_quantity": governing_value,
+            "governing_claims": governing_claims,
+            "governing_authority": max(c["authority_class"] for c in governing_claims),
+            "all_reported_values": all_values,
+            "is_contested": len(by_value) > 1,
+        }
+        devices_truth.append(entry)
+        if entry["is_contested"]:
+            contested.append({
+                "device": device,
+                "site": site,
+                "canonical_quantity": governing_value,
+                "competing_values": [v for v in all_values if v != governing_value],
+                "audit": [
+                    {"quantity": qty, "claims": cl}
+                    for qty, cl in sorted(by_value.items())
+                ],
+            })
+
+    return {
+        "devices": devices_truth,
+        "contested": contested,
+        "device_count": len({e["device"] for e in devices_truth}),
+        "site_count": len({e["site"] for e in devices_truth if e["site"] != "site:*"}),
+        "contested_count": len(contested),
+    }
+
+
+# ─────────────────────── CHANGE ORDER TIMELINE ───────────────────────
+
+
+def build_change_order_timeline(
+    *,
+    atoms: list[EvidenceAtom],
+) -> dict[str, Any]:
+    """Return the chronological audit trail of every scope change.
+
+    Each entry: timestamp (from message_index / line_start / atom
+    ordering as a proxy), source artifact, the change_delta (from→to)
+    when structured, the raw text, and approval signal (explicit
+    "approved" / "approve to proceed" in the same atom).
+
+    Sorted oldest-first when locator metadata permits, otherwise by
+    deterministic atom_id order so repeated compiles produce the same
+    timeline.
+    """
+    entries: list[dict[str, Any]] = []
+    # The markdown classifier may emit the same paragraph as multiple
+    # atom types (e.g. "Hold off on Phase 2" lands as both
+    # ``exclusion`` and ``customer_instruction``). Dedup by atom_id
+    # so the timeline doesn't double-count one change-order event.
+    seen_atom_ids: set[str] = set()
+    # When the same paragraph is split into multiple atom types,
+    # prefer ``customer_instruction`` over ``exclusion`` over
+    # ``decision`` so the most-actionable label wins.
+    type_priority = {
+        "customer_instruction": 0,
+        "decision": 1,
+        "exclusion": 2,
+    }
+    atoms_sorted_for_dedupe = sorted(
+        atoms, key=lambda a: type_priority.get(_atom_type_str(a), 99),
+    )
+    for atom in atoms_sorted_for_dedupe:
+        atom_type = _atom_type_str(atom)
+        value = atom.value if isinstance(atom.value, dict) else {}
+        if atom_type not in ("customer_instruction", "exclusion", "decision"):
+            continue
+        # Dedupe on (artifact, raw_text) — same text emitted as two
+        # atom types from one paragraph should produce ONE entry.
+        text_key = (atom.artifact_id, (atom.raw_text or "")[:120])
+        if text_key in seen_atom_ids:
+            continue
+        seen_atom_ids.add(text_key)
+        text_lower = (atom.raw_text or "").lower()
+        # Only count atoms that look like a change-order signal:
+        # explicit add/remove/cancel/reduce/approve language OR
+        # a structured change_delta.
+        is_change = (
+            isinstance(value.get("change_delta"), dict)
+            or any(t in text_lower for t in (
+                "please add", "please remove", "please include",
+                "cancel", "reduce", "drop the", "drop from",
+                "approve", "approved to proceed", "approved the revised",
+                "hold off", "go ahead",
+            ))
+        )
+        if not is_change:
+            continue
+        # Locator ordering: prefer (artifact_id, message_index OR
+        # line_start OR row) as a sortable tuple. Falls back to atom.id.
+        locator = (atom.source_refs[0].locator if atom.source_refs else {}) or {}
+        if not isinstance(locator, dict):
+            locator = {}
+        sort_key = (
+            atom.artifact_id,
+            locator.get("message_index") or 0,
+            locator.get("line_start") or locator.get("row") or 0,
+            atom.id,
+        )
+        text = atom.raw_text or ""
+        approval_signal = any(t in text_lower for t in (
+            "approved to proceed", "approved the revised", "approve to proceed",
+            "we approve", "we agree", "approved",
+        ))
+        entry: dict[str, Any] = {
+            "atom_id": atom.id,
+            "artifact_id": atom.artifact_id,
+            "kind": atom_type,
+            "text": text[:240],
+            "approval_signal": approval_signal,
+            "sort_key": list(sort_key),
+        }
+        if isinstance(value.get("change_delta"), dict):
+            entry["change_delta"] = value["change_delta"]
+        # Capture the stakeholder driving the change when present on
+        # the atom (e.g. customer-email From: header).
+        for k in atom.entity_keys or []:
+            if k.startswith("stakeholder:"):
+                entry["driven_by"] = k[len("stakeholder:"):]
+                break
+        entries.append(entry)
+    entries.sort(key=lambda e: e["sort_key"])
+    return {
+        "entries": entries,
+        "entry_count": len(entries),
+        "with_structured_delta": sum(1 for e in entries if "change_delta" in e),
+        "with_approval_signal": sum(1 for e in entries if e["approval_signal"]),
+    }
+
+
+# ─────────────────────────── SITE READINESS ───────────────────────────
+
+
+def build_site_readiness(
+    *,
+    atoms: list[EvidenceAtom],
+    edges: list[EvidenceEdge],
+) -> dict[str, Any]:
+    """Return a per-site rollup of completeness signals.
+
+    For each site mentioned anywhere, surface: device count, named
+    constraints, stakeholders attached, contradictions targeting that
+    site, and a 0-1 readiness score.
+    """
+    sites: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "site_key": "",
+        "device_keys": set(),
+        "constraint_count": 0,
+        "stakeholder_keys": set(),
+        "contradiction_count": 0,
+        "scope_atom_count": 0,
+        "money_present": False,
+        "milestone_present": False,
+    })
+
+    for atom in atoms:
+        site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
+        if not site_keys:
+            continue
+        atom_type = _atom_type_str(atom)
+        for sk in site_keys:
+            entry = sites[sk]
+            entry["site_key"] = sk
+            for k in atom.entity_keys or []:
+                if k.startswith("device:") and k != "device:unknown":
+                    entry["device_keys"].add(k)
+                if k.startswith("stakeholder:"):
+                    entry["stakeholder_keys"].add(k)
+                if k.startswith("money:"):
+                    entry["money_present"] = True
+                if k.startswith("milestone:"):
+                    entry["milestone_present"] = True
+            if atom_type == "constraint":
+                entry["constraint_count"] += 1
+            if atom_type in ("scope_item", "quantity", "vendor_line_item"):
+                entry["scope_atom_count"] += 1
+
+    # Cross-doc contradictions can include a site key in either
+    # endpoint atom — match those against per-site totals.
+    import re as _re
+    atom_by_id = {a.id: a for a in atoms}
+    for edge in edges:
+        meta = edge.metadata or {}
+        fam = meta.get("edge_family") if isinstance(meta, dict) else None
+        if fam != "device_quantity_cross_doc":
+            continue
+        for atom_id in (edge.from_atom_id, edge.to_atom_id):
+            atom = atom_by_id.get(atom_id)
+            if not atom:
+                continue
+            for k in atom.entity_keys or []:
+                if k.startswith("site:"):
+                    sites[k]["contradiction_count"] += 1
+                    break
+
+    out: list[dict[str, Any]] = []
+    for sk, entry in sorted(sites.items()):
+        device_count = len(entry["device_keys"])
+        stakeholder_count = len(entry["stakeholder_keys"])
+        # Per-site readiness: small weighted sum of "do we have it?"
+        # bools, scaled to 0-1.
+        score = 0.0
+        if device_count > 0:
+            score += 0.25
+        if stakeholder_count > 0:
+            score += 0.20
+        if entry["constraint_count"] > 0:
+            score += 0.15
+        if entry["scope_atom_count"] > 0:
+            score += 0.15
+        if entry["money_present"]:
+            score += 0.10
+        if entry["milestone_present"]:
+            score += 0.15
+        # Penalize contradictions.
+        score = max(0.0, score - 0.10 * min(3, entry["contradiction_count"]))
+        out.append({
+            "site": sk,
+            "readiness": round(score, 3),
+            "device_keys": sorted(entry["device_keys"]),
+            "device_count": device_count,
+            "stakeholder_keys": sorted(entry["stakeholder_keys"]),
+            "stakeholder_count": stakeholder_count,
+            "constraint_count": entry["constraint_count"],
+            "scope_atom_count": entry["scope_atom_count"],
+            "money_present": entry["money_present"],
+            "milestone_present": entry["milestone_present"],
+            "contradiction_count": entry["contradiction_count"],
+        })
+
+    return {
+        "sites": out,
+        "site_count": len(out),
+        "avg_readiness": round(
+            sum(s["readiness"] for s in out) / max(1, len(out)), 3
+        ),
+        "least_ready_sites": [
+            s["site"] for s in sorted(out, key=lambda r: r["readiness"])[:3]
+            if s["readiness"] < 0.75
+        ],
+    }
+
+
+# ─────────────────────────── STAKEHOLDER LOAD ───────────────────────────
+
+
+_SEVERITY_WEIGHT = {
+    "critical": 5,
+    "high": 3,
+    "medium": 2,
+    "med": 2,
+    "low": 1,
+    "info": 0,
+}
+
+
+def build_stakeholder_load(
+    *,
+    atoms: list[EvidenceAtom],
+) -> dict[str, Any]:
+    """Return a per-stakeholder workload matrix.
+
+    Surfaces who owns what — risks (severity-weighted), action items,
+    open questions, decisions, change orders driven — so a PM can spot
+    bottlenecks (one stakeholder carrying all critical risks) and
+    bandwidth gaps (unowned action items).
+    """
+    by_slug: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "slug": "",
+        "risk_count": 0,
+        "risk_severity_load": 0,
+        "critical_risk_count": 0,
+        "high_risk_count": 0,
+        "action_item_count": 0,
+        "decision_count": 0,
+        "change_order_count": 0,
+        "risks": [],
+        "action_items": [],
+    })
+
+    for atom in atoms:
+        atom_type = _atom_type_str(atom)
+        value = atom.value if isinstance(atom.value, dict) else {}
+        owner_slug = _owner_slug_from_atom(atom, value.get("owner") if isinstance(value, dict) else "")
+        if not owner_slug:
+            continue
+        entry = by_slug[owner_slug]
+        entry["slug"] = owner_slug
+        if atom_type == "risk":
+            entry["risk_count"] += 1
+            sev = (value.get("severity") if isinstance(value, dict) else "") or ""
+            sev_lower = sev.lower().strip()
+            entry["risk_severity_load"] += _SEVERITY_WEIGHT.get(sev_lower, 1)
+            if sev_lower == "critical":
+                entry["critical_risk_count"] += 1
+            elif sev_lower == "high":
+                entry["high_risk_count"] += 1
+            risk_summary = (value.get("risk_summary") if isinstance(value, dict) else None) or atom.raw_text or ""
+            entry["risks"].append({
+                "atom_id": atom.id,
+                "severity": sev,
+                "risk_id": value.get("risk_id") if isinstance(value, dict) else None,
+                "summary": risk_summary[:160],
+            })
+        elif atom_type == "action_item":
+            entry["action_item_count"] += 1
+            entry["action_items"].append({
+                "atom_id": atom.id,
+                "text": (atom.raw_text or "")[:200],
+            })
+        elif atom_type == "decision":
+            entry["decision_count"] += 1
+        elif atom_type == "customer_instruction":
+            entry["change_order_count"] += 1
+
+    stakeholders = sorted(
+        by_slug.values(),
+        key=lambda x: (-x["risk_severity_load"], -x["risk_count"], x["slug"]),
+    )
+
+    # Bottleneck detection: stakeholders carrying 2+ critical risks or
+    # 4+ high risks.
+    bottlenecks = [
+        s["slug"] for s in stakeholders
+        if s["critical_risk_count"] >= 2 or s["high_risk_count"] >= 4
+    ]
+
+    return {
+        "stakeholders": stakeholders,
+        "stakeholder_count": len(stakeholders),
+        "bottlenecks": bottlenecks,
+        "max_severity_load": max((s["risk_severity_load"] for s in stakeholders), default=0),
+    }
+
+
+# ─────────────────────────── PROJECT VITALS ───────────────────────────
+
+
+def build_project_vitals(
+    *,
+    atoms: list[EvidenceAtom],
+    edges: list[EvidenceEdge],
+    packets: list[EvidencePacket],
+    scorecard: dict[str, Any] | None = None,
+    checklist: dict[str, Any] | None = None,
+    site_readiness: dict[str, Any] | None = None,
+    stakeholder_load: dict[str, Any] | None = None,
+    scope_truth: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a single 0-100 health score with breakdown.
+
+    Blends the SOW readiness scorecard, SRL coverage, site readiness,
+    contradiction surface, and unowned-work signal into one number a
+    PM can put on the cockpit header. ``components`` records every
+    input weight + score so the number can be audited.
+
+    Bands:
+      90-100 ``green``   — ready, low risk
+      75-89  ``yellow``  — minor gaps, watchable
+      55-74  ``orange``  — needs attention before kickoff
+      0-54   ``red``     — substantial work remaining
+    """
+    components: list[dict[str, Any]] = []
+
+    # 1. SOW readiness scorecard (weight 0.30)
+    sow_score = (scorecard or {}).get("readiness_score", 0.0) or 0.0
+    components.append({
+        "name": "sow_readiness",
+        "weight": 0.30,
+        "raw_score": sow_score,
+        "contribution": round(sow_score * 0.30, 3),
+    })
+
+    # 2. SRL coverage (weight 0.20)
+    srl_coverage = (checklist or {}).get("coverage", 0.0) or 0.0
+    components.append({
+        "name": "srl_field_coverage",
+        "weight": 0.20,
+        "raw_score": srl_coverage,
+        "contribution": round(srl_coverage * 0.20, 3),
+    })
+
+    # 3. Site readiness average (weight 0.15)
+    site_score = (site_readiness or {}).get("avg_readiness", 0.0) or 0.0
+    components.append({
+        "name": "site_readiness_avg",
+        "weight": 0.15,
+        "raw_score": site_score,
+        "contribution": round(site_score * 0.15, 3),
+    })
+
+    # 4. Contradiction penalty (weight 0.15) — fewer is better, 1.0 means none.
+    contradiction_count = 0
+    for edge in edges:
+        meta = edge.metadata or {}
+        if isinstance(meta, dict) and meta.get("edge_family") in (
+            "device_quantity_cross_doc",
+            "part_number_quantity_conflict",
+            "quantity_contradiction",
+        ):
+            contradiction_count += 1
+    contested_count = (scope_truth or {}).get("contested_count", 0) or 0
+    raw_signal = contradiction_count + 2 * contested_count
+    contradiction_health = max(0.0, 1.0 - min(1.0, raw_signal / 20.0))
+    components.append({
+        "name": "contradiction_health",
+        "weight": 0.15,
+        "raw_score": round(contradiction_health, 3),
+        "contribution": round(contradiction_health * 0.15, 3),
+        "signal": {"edges": contradiction_count, "contested_in_scope_truth": contested_count},
+    })
+
+    # 5. Ownership signal (weight 0.10) — fraction of risks with owners.
+    risks = [a for a in atoms if _atom_type_str(a) == "risk"]
+    risks_with_owner = sum(
+        1 for a in risks
+        if isinstance(a.value, dict) and a.value.get("owner")
+    )
+    ownership = risks_with_owner / len(risks) if risks else 1.0
+    components.append({
+        "name": "risk_ownership",
+        "weight": 0.10,
+        "raw_score": round(ownership, 3),
+        "contribution": round(ownership * 0.10, 3),
+        "signal": {"risk_count": len(risks), "risks_with_owner": risks_with_owner},
+    })
+
+    # 6. Stakeholder bottleneck signal (weight 0.10) — penalty when
+    # one stakeholder is overloaded.
+    bottlenecks = (stakeholder_load or {}).get("bottlenecks", []) or []
+    bottleneck_health = max(0.0, 1.0 - 0.5 * len(bottlenecks))
+    components.append({
+        "name": "load_balance",
+        "weight": 0.10,
+        "raw_score": round(bottleneck_health, 3),
+        "contribution": round(bottleneck_health * 0.10, 3),
+        "signal": {"bottleneck_stakeholders": bottlenecks},
+    })
+
+    total = sum(c["contribution"] for c in components)
+    score_100 = round(total * 100, 1)
+    if score_100 >= 90:
+        band = "green"
+    elif score_100 >= 75:
+        band = "yellow"
+    elif score_100 >= 55:
+        band = "orange"
+    else:
+        band = "red"
+
+    # Top-3 drivers (highest contribution) and top-3 detractors
+    # (lowest raw_score) so a PM can render a "what's pushing us up /
+    # down" summary directly.
+    sorted_by_score = sorted(components, key=lambda c: c["raw_score"])
+    top_detractors = [c["name"] for c in sorted_by_score[:3]]
+    top_drivers = [c["name"] for c in sorted(components, key=lambda c: -c["contribution"])[:3]]
+
+    return {
+        "score_100": score_100,
+        "band": band,
+        "components": components,
+        "top_drivers": top_drivers,
+        "top_detractors": top_detractors,
+    }
+
+
 __all__ = [
     "build_pm_dashboard",
     "build_sow_readiness_scorecard",
     "build_srl_missing_checklist",
+    "build_scope_truth",
+    "build_change_order_timeline",
+    "build_site_readiness",
+    "build_stakeholder_load",
+    "build_project_vitals",
 ]
