@@ -22,6 +22,7 @@ Design principles:
 
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -1092,6 +1093,10 @@ _UNIVERSAL_DEVICE_BASELINE: dict[str, tuple[str, ...]] = {
 }
 
 
+_DEVICE_INDEX_CACHE: dict[int, dict[str, str]] = {}
+_TYPED_INDEX_CACHE: dict[int, dict[str, dict[str, str]]] = {}
+
+
 def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     """Flatten pack.device_aliases into ``{normalized_alias: canonical}``.
 
@@ -1111,7 +1116,13 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     wireless-routed bundle), the device atom would be dropped. We
     layer a small UNIVERSAL_DEVICE_BASELINE on top so cross-pack
     devices still surface. The routed pack still wins on conflicts.
+
+    Cached by ``id(pack)`` so subsequent calls inside a compile
+    hit the cache instead of rebuilding the index per atom.
     """
+    cached = _DEVICE_INDEX_CACHE.get(id(pack))
+    if cached is not None:
+        return cached
     index: dict[str, str] = {}
 
     def _add(form: str, canonical: str) -> None:
@@ -1138,6 +1149,7 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
         _add(canonical.replace("_", " "), canonical)
         for alias in aliases:
             _add(alias, canonical)
+    _DEVICE_INDEX_CACHE[id(pack)] = index
     return index
 
 
@@ -1165,7 +1177,12 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
     pack defines "tenant" / "closet" / "carrier" as generic synonyms,
     but matching them as entities just because the text contains the
     bare word produces tautological / meaningless keys.
+
+    Cached by ``id(pack)``.
     """
+    cached = _TYPED_INDEX_CACHE.get(id(pack))
+    if cached is not None:
+        return cached
     out: dict[str, dict[str, str]] = {}
     for entity in pack.entity_types or []:
         slot = out.setdefault(entity.name, {})
@@ -1177,19 +1194,65 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
             example_norm = normalize_text(example)
             if example_norm:
                 slot.setdefault(example_norm, example)
+    _TYPED_INDEX_CACHE[id(pack)] = out
     return out
+
+
+@functools.lru_cache(maxsize=4096)
+def _compiled_word_pattern(alias_lower: str) -> "re.Pattern[str]":
+    """Cache compiled word-boundary patterns per alias. The pack
+    vocabulary is tiny relative to the atom count — a 4k LRU more
+    than covers every alias we'll ever see, with O(1) lookup."""
+    return re.compile(r"(?<![a-z0-9])" + re.escape(alias_lower) + r"(?![a-z0-9])")
 
 
 def _word_match(text_lower: str, alias_lower: str) -> bool:
     """Word-boundary match for an alias inside a pre-lowercased text."""
     if not alias_lower:
         return False
-    pattern = r"(?<![a-z0-9])" + re.escape(alias_lower) + r"(?![a-z0-9])"
-    return re.search(pattern, text_lower) is not None
+    return _compiled_word_pattern(alias_lower).search(text_lower) is not None
 
 
-def _emit_devices(text_lower: str, alias_index: dict[str, str]) -> set[str]:
+# Pre-built per-pack matcher: a single union regex over all device
+# aliases. Reduces _emit_devices from O(aliases) regex compiles per
+# atom to O(1) — one search, one canonical lookup per match.
+_DEVICE_UNION_CACHE: dict[int, tuple["re.Pattern[str]", dict[str, str]]] = {}
+
+
+def _device_union_for_pack(pack: DomainPack, alias_index: dict[str, str]) -> tuple["re.Pattern[str]", dict[str, str]]:
+    key = id(pack)
+    cached = _DEVICE_UNION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if not alias_index:
+        pattern = re.compile(r"(?!.*)")  # never matches
+        _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
+        return _DEVICE_UNION_CACHE[key]
+    # Sort longest-first so longer aliases win when nested
+    # ("access point" before "point").
+    aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
+    body = "|".join(re.escape(a) for a in aliases_sorted)
+    pattern = re.compile(r"(?<![a-z0-9])(" + body + r")(?![a-z0-9])")
+    _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
+    return _DEVICE_UNION_CACHE[key]
+
+
+def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack | None = None) -> set[str]:
+    """Emit ``device:<canonical>`` keys for every alias in
+    ``alias_index`` that word-matches ``text_lower``.
+
+    Fast path: when ``pack`` is supplied we use the cached union regex
+    (single sweep, O(matches) work). Legacy path: iterate aliases.
+    """
     keys: set[str] = set()
+    if pack is not None:
+        pattern, _ = _device_union_for_pack(pack, alias_index)
+        for match in pattern.finditer(text_lower):
+            alias = match.group(1)
+            canonical = alias_index.get(alias)
+            if canonical:
+                keys.add(f"device:{_slugify(canonical)}")
+        return keys
     for alias_norm, canonical in alias_index.items():
         if _word_match(text_lower, alias_norm):
             keys.add(f"device:{_slugify(canonical)}")
@@ -3188,7 +3251,7 @@ def extract_keys(
     typed_idx = _typed_alias_index(pack)
 
     keys: set[str] = set()
-    keys |= _emit_devices(text_lower, device_idx)
+    keys |= _emit_devices(text_lower, device_idx, pack=pack)
     keys |= _emit_typed(text_lower, typed_idx)
     vendor_keys = _emit_vendors(text_lower)
     keys |= vendor_keys

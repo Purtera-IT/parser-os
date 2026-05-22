@@ -63,6 +63,13 @@ NOISY_ENTITY_KEY_BUCKET_FLOOR = 20
 # order so deterministic output is preserved up to the cap.
 MAX_CANDIDATE_PAIRS = 250_000
 
+# Per-atom edge density cap. With very large corpora (10k+ atoms),
+# even the sqrt-bucket cap can produce 25 edges per atom which is
+# both noisy for consumers and expensive to construct. This caps
+# pairs at ``MAX_PAIRS_PER_ATOM`` * N so per-atom edge density stays
+# bounded sub-linearly.
+MAX_PAIRS_PER_ATOM = 12
+
 # Part-number entities are the strongest signal for quantity contradictions.
 # When two atoms share the same ``part_number:*`` key but report different
 # ``Qty: N`` values (or different ``quantity:*`` entity keys), that's a
@@ -737,6 +744,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     # processed once (by sorted (i, j) tuple) regardless of how many keys
     # it shares.  Process keys in ascending bucket size so the pairs we
     # cap-out have the biggest noisy buckets, not the precise ones.
+    #
+    # Scale governor: cap pairs at ``min(MAX_CANDIDATE_PAIRS,
+    # N * MAX_PAIRS_PER_ATOM)`` so a 10k-row BOM doesn't generate
+    # 250k pairs (which would otherwise produce 25 edges per atom).
+    pair_cap = min(MAX_CANDIDATE_PAIRS, len(ordered) * MAX_PAIRS_PER_ATOM)
     candidate_pairs: set[tuple[int, int]] = set()
     keys_by_bucket_size = sorted(
         informative_keys, key=lambda k: (len(key_to_indices.get(k, [])), k)
@@ -746,11 +758,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         if len(indices) < 2:
             continue
         for ii in range(len(indices)):
-            if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+            if len(candidate_pairs) >= pair_cap:
                 break
             i = indices[ii]
             for jj in range(ii + 1, len(indices)):
-                if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+                if len(candidate_pairs) >= pair_cap:
                     break
                 j = indices[jj]
                 if i == j:
@@ -764,7 +776,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                     candidate_pairs.add((i, j))
                 else:
                     candidate_pairs.add((j, i))
-        if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+        if len(candidate_pairs) >= pair_cap:
             break
 
     for i, j in sorted(candidate_pairs):
@@ -1091,6 +1103,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 continue
             by_device.setdefault(dk, []).append(atom)
 
+    # Scale cap: when a single device shows up in too many atoms (e.g.
+    # a 10k-row BOM where every row mentions "switch"), the N^2 pair
+    # check explodes. Limit per-device candidates so the inner loop
+    # stays linear-ish. Aggregate rows / governing atoms keep priority.
+    DEVICE_QTY_BUCKET_CAP = 200
     for device_key, atoms_for_device in by_device.items():
         if len(atoms_for_device) < 2:
             continue
@@ -1102,6 +1119,21 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         ]
         if len(candidates) < 2:
             continue
+        # Bucket cap: when a device appears in too many atoms (e.g. a
+        # 10k-row BOM where every row mentions "switch"), prefer atoms
+        # that look like roster aggregates / governing claims and cap
+        # the bucket to ``DEVICE_QTY_BUCKET_CAP``. This keeps the
+        # contradiction surface honest without doing 50M pair checks.
+        if len(candidates) > DEVICE_QTY_BUCKET_CAP:
+            def _priority(a: EvidenceAtom) -> tuple[int, str]:
+                ac = a.authority_class.value if hasattr(a.authority_class, "value") else str(a.authority_class)
+                # approved_site_roster / contractual_scope first;
+                # vendor_quote / customer_email next; everything else last.
+                tier = 0 if ac in {"approved_site_roster", "contractual_scope", "customer_current_authored"} else (
+                    1 if ac in {"vendor_quote", "formal_sow", "current_addendum"} else 2
+                )
+                return (tier, a.id)
+            candidates = sorted(candidates, key=_priority)[:DEVICE_QTY_BUCKET_CAP]
         # Build pairs that satisfy the cross-doc / different-qty /
         # no-shared-part-number / same-site-context guards.
         for i, a in enumerate(candidates):
