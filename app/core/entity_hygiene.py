@@ -123,7 +123,18 @@ def _filter_with_audit(
     dropped: list[dict[str, Any]] = []
     atom_id = getattr(atom, "id", None)
 
-    for key in keys:
+    # Person-vs-place conflict resolution: when the SAME slug appears
+    # both under ``stakeholder:`` and ``site:`` in this atom, the
+    # stakeholder reading always wins. A row with "Lisa Park" + an
+    # email is a person whose last name happens to be a place-noun.
+    keys_list = list(keys)
+    stakeholder_slugs = {
+        k[len("stakeholder:"):]
+        for k in keys_list
+        if isinstance(k, str) and k.startswith("stakeholder:")
+    }
+
+    for key in keys_list:
         if not isinstance(key, str):
             continue
         if not key.startswith("site:"):
@@ -132,6 +143,21 @@ def _filter_with_audit(
 
         slug = key[len("site:"):]
         candidate = slug.replace("_", " ")
+
+        # Person-overrides-place: drop site:X when stakeholder:X also
+        # present on the same atom.
+        if slug in stakeholder_slugs:
+            dropped.append(
+                {
+                    "atom_id": atom_id,
+                    "dropped_site_candidate": key,
+                    "reason": "person_overrides_place",
+                    "negative_terms": ["stakeholder:" + slug],
+                    "positive_terms": [],
+                    "source_atom_id": atom_id,
+                }
+            )
+            continue
 
         # Structured site IDs (atl_hq_01, store_142, bldg_a2, ...) ARE
         # the positive evidence. Bypass the negative-blob test so a

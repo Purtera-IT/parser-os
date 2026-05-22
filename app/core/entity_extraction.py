@@ -522,6 +522,14 @@ _HARD_DISQUALIFY_PHRASE_TOKENS: frozenset[str] = frozenset({
 #   "Azure Dev Storage", "OrbitBrief Workspace".
 # Concept / process tails: "Three Site Modernization",
 #   "Target Close Date", "Total Mock Amount".
+_ROLE_INNER_MARKERS: frozenset[str] = frozenset({
+    "manager", "managers", "director", "directors", "sponsor", "sponsors",
+    "officer", "officers", "supervisor", "supervisors",
+    "coordinator", "coordinators", "administrator", "administrators",
+    "lead", "leads", "owner", "owners", "approver", "approvers",
+})
+
+
 _NON_SITE_PHRASE_TAIL_NOUNS: frozenset[str] = frozenset({
     # === role / person tails ===
     "manager", "managers", "lead", "leads", "director", "directors",
@@ -647,9 +655,22 @@ _QUANTITY_REGEX = re.compile(
 # generic prose ("50 reasons").
 _QUANTITY_NOUN_REGEX = re.compile(
     r"\b([0-9]+(?:,[0-9]{3})*)\s+"
-    r"(?:wireless\s+)?"
-    r"(?:access\s+points?|aps?|wireless\s+devices?|"
-    r"switches?|firewalls?|routers?|cameras?|sensors?|"
+    # Allow common qualifier prefixes that precede the device noun:
+    # "24 IP cameras", "50 wireless access points", "5 PoE+ switches",
+    # "12 mesh APs", "8 dome cameras". Each prefix is optional and
+    # consumed silently — the noun list below remains the anchor.
+    r"(?:(?:wireless|ip|poe\+?\+?|core|access|distribution|mesh|"
+    r"managed|layer\s*[23]|mgig|multi[-\s]?gig|2\.5g|5g|10g|"
+    r"dome|bullet|ptz|fixed|thermal|fisheye|panoramic|"
+    r"hd|high\s+density|indoor|outdoor|hardened|"
+    r"prox|badge|card|hid|mobile|multi[-\s]?format|"
+    r"smoke|heat|motion|pir|dual\s+tech|"
+    r"ceiling|wall|pendant|paging|horn|sound\s+mask|"
+    r"rack|server|blade|hyperconverged|1u|2u|"
+    r"thin|chrome|"
+    r"sd[-\s]?wan|edge|next[-\s]?gen|ngfw|utm)\s+)*"
+    r"(?:access\s+points?|aps?|waps?|wireless\s+access\s+points?|wireless\s+devices?|"
+    r"switches?|firewalls?|fws?|routers?|cameras?|cams?|sensors?|"
     r"sfp(?:\+|s)?\s*modules?|sfp(?:\+|s)?|modules?|"
     r"patch\s+panels?|patch\s+cords?|panels?|"
     r"jacks?|outlets?|drops?|ports?|"
@@ -658,6 +679,11 @@ _QUANTITY_NOUN_REGEX = re.compile(
     r"servers?|appliances?|chassis|chasses|"
     r"workstations?|laptops?|desktops?|"
     r"installations?|sites?|locations?|facilities|facility|"
+    r"readers?|controllers?|displays?|monitors?|projectors?|"
+    r"speakers?|microphones?|mics?|"
+    r"upses?|racks?|cabinets?|"
+    r"strikes?|maglocks?|"
+    r"detectors?|pull\s+stations?|horn\s+strobes?|"
     r"units?|devices?|pieces?|each)\b",
     re.IGNORECASE,
 )
@@ -1008,6 +1034,64 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", base.lower()).strip("_")
 
 
+_UNIVERSAL_DEVICE_BASELINE: dict[str, tuple[str, ...]] = {
+    "ip_camera": (
+        "ip camera", "ip cameras", "camera", "cameras", "cctv camera",
+        "security camera", "surveillance camera", "ip cam", "ip cams",
+        "dome camera", "bullet camera", "ptz camera", "ptz",
+        "fixed camera", "thermal camera", "fisheye camera",
+    ),
+    "access_point": (
+        "access point", "access points", "wireless access point",
+        "ap", "aps", "wap", "waps", "wifi ap", "wi-fi ap",
+        "wifi access point", "indoor ap", "outdoor ap",
+    ),
+    "switch": (
+        "switch", "switches", "poe switch", "poe+ switch", "poe++ switch",
+        "core switch", "access switch", "distribution switch",
+        "managed switch", "layer 2 switch", "layer 3 switch",
+        "mgig switch", "multi-gig switch",
+    ),
+    "router": (
+        "router", "routers", "edge router", "core router",
+        "sd-wan", "sdwan", "sd-wan appliance",
+    ),
+    "firewall": (
+        "firewall", "firewalls", "fw", "ngfw", "next-gen firewall",
+        "utm", "utm appliance",
+    ),
+    "card_reader": (
+        "card reader", "card readers", "prox reader", "badge reader",
+        "access reader", "reader", "readers", "hid reader", "mobile reader",
+    ),
+    "controller": (
+        "controller", "controllers", "access controller", "door controller",
+        "access control panel",
+    ),
+    "electric_strike": (
+        "electric strike", "strike", "mag lock", "maglock",
+        "magnetic lock", "electric lock",
+    ),
+    "motion_sensor": ("motion sensor", "motion detector", "pir", "pir sensor"),
+    "smoke_detector": (
+        "smoke detector", "smoke detectors", "smoke sensor",
+        "heat detector", "heat detectors",
+    ),
+    "pull_station": ("pull station", "pull stations", "manual pull station", "fire pull"),
+    "horn_strobe": ("horn strobe", "horn/strobe", "notification appliance"),
+    "fire_panel": ("fire panel", "facp", "fire alarm control panel", "fire alarm panel"),
+    "speaker": ("speaker", "speakers", "ceiling speaker", "pendant speaker"),
+    "microphone": ("microphone", "microphones", "mic", "mics"),
+    "display": ("display", "displays", "tv", "monitor", "monitors", "video wall", "touchscreen"),
+    "projector": ("projector", "projectors", "laser projector"),
+    "videoconferencing_codec": ("codec", "vc codec", "room kit", "video bar"),
+    "ups": ("ups", "battery backup", "rack ups"),
+    "rack": ("rack", "racks", "cabinet", "server rack"),
+    "workstation": ("workstation", "workstations", "pc", "desktop", "laptop"),
+    "server": ("server", "servers", "rack server", "blade server"),
+}
+
+
 def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     """Flatten pack.device_aliases into ``{normalized_alias: canonical}``.
 
@@ -1020,6 +1104,13 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     plural form. So a pack that only lists ``switch`` will still
     match ``switches`` in prose. This avoids forcing every pack to
     list every plural variant.
+
+    Universal baseline: the routed pack may be narrow (e.g.
+    ``wireless`` only covers APs/switches). When a doc mentions
+    devices outside the pack's vocabulary ("24 cameras" in a
+    wireless-routed bundle), the device atom would be dropped. We
+    layer a small UNIVERSAL_DEVICE_BASELINE on top so cross-pack
+    devices still surface. The routed pack still wins on conflicts.
     """
     index: dict[str, str] = {}
 
@@ -1040,6 +1131,12 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     for canonical, aliases in (pack.device_aliases or {}).items():
         _add(canonical.replace("_", " "), canonical)
         for alias in aliases or []:
+            _add(alias, canonical)
+    # Universal baseline — only adds entries that aren't already
+    # bound to a different canonical (setdefault preserves pack winner).
+    for canonical, aliases in _UNIVERSAL_DEVICE_BASELINE.items():
+        _add(canonical.replace("_", " "), canonical)
+        for alias in aliases:
             _add(alias, canonical)
     return index
 
@@ -1342,6 +1439,15 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
             # Brief Mock" and still emitted as sites.
             final = tokens[-1].lower().rstrip(":,.") if tokens else ""
             if final in _NON_SITE_PHRASE_TAIL_NOUNS:
+                continue
+            # Inner role-marker block: phrases like "Site Manager Main
+            # Campus" or "Network Director West Wing" describe a ROLE
+            # (Manager/Director/Sponsor/Officer/Lead) responsible for a
+            # location — they're role+site composites that should NOT
+            # become a fake site key. If a strong role marker appears
+            # ANYWHERE in the phrase (not just the tail), reject.
+            inner_lc = {t.lower().rstrip(":,.") for t in tokens}
+            if inner_lc & _ROLE_INNER_MARKERS:
                 continue
 
             # Strip trailing field-label words like "Vendor", "Description"
@@ -2435,6 +2541,16 @@ _LONG_DATE_REGEX = re.compile(
     r"\s+([0-3]?[0-9])(?:st|nd|rd|th)?[,]?\s+(20[2-9][0-9])\b"
 )
 
+# Day-Month-Year: 15-Jun-2026 / 5-Jul-26 / 15 Jun 2026
+_DMY_DATE_REGEX = re.compile(
+    r"\b([0-3]?[0-9])[\s\-/]"
+    r"(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December|"
+    r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"[\s\-/](20[2-9][0-9]|[2-9][0-9])\b",
+    re.IGNORECASE,
+)
+
 # Quarter notation: Q3 2026 / Q3-2026 / Q3 FY26 / 3Q26
 _QUARTER_REGEX = re.compile(
     r"\b(?:Q([1-4])[\s\-/]?(?:FY)?\s*(20[2-9][0-9]|[2-9][0-9])"
@@ -2529,6 +2645,20 @@ def _emit_date_keys(text: str) -> set[str]:
             month_name = m.group(1).lower()
             day = int(m.group(2))
             year = int(m.group(3))
+            month = _MONTH_TO_NUM.get(month_name)
+            if month is None or not (1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    # Day-Month-Year format: 15-Jun-2026 / 5 Jul 2026 / 15-Jun-26
+    for m in _DMY_DATE_REGEX.finditer(text):
+        try:
+            day = int(m.group(1))
+            month_name = m.group(2).lower()
+            year_raw = int(m.group(3))
+            year = 2000 + year_raw if year_raw < 100 else year_raw
             month = _MONTH_TO_NUM.get(month_name)
             if month is None or not (1 <= day <= 31):
                 continue

@@ -101,9 +101,12 @@ def _noun_anchored_quantity(text: str, device_canonical: str) -> int | None:
     r"""Return the integer quantity that occurs nearest to a device noun.
 
     ``device_canonical`` is the YAML key (e.g. ``access_point``,
-    ``switch``). We look for ``\b\d+\b`` tokens within ~40 chars of
-    any matching noun pattern in ``text``. The CLOSEST integer wins.
-    Returns None when no noun match or no nearby integer.
+    ``switch``). We look for ``\b\d+\b`` tokens within a 30-char
+    window BEFORE the noun (or 15-char window AFTER) in the same
+    clause. Sentence boundaries (``.`` ``;`` newline) terminate the
+    window so "Install 12 APs. We will install 4 switches" doesn't
+    bind 12 to switches. Returns None when no noun match or no
+    nearby integer in the same clause.
     """
     if not text:
         return None
@@ -112,33 +115,78 @@ def _noun_anchored_quantity(text: str, device_canonical: str) -> int | None:
         return None
     best_qty: int | None = None
     best_dist = 10**9
-    for pat in patterns:
-        for noun_match in pat.finditer(text):
-            n_start = noun_match.start()
-            for num_match in re.finditer(r"\b(\d{1,5})\b", text):
-                raw = num_match.group(1)
-                try:
-                    val = int(raw)
-                except ValueError:
-                    continue
-                # Single-digit guard mirrors the existing cross-doc
-                # heuristic: qty:1..4 is usually template noise.
-                if val < 5:
-                    continue
-                num_pos = num_match.start()
-                # Prefer integers that appear BEFORE the noun ("50
-                # access points") but accept post-noun within window
-                # ("access points: 50") too.
-                dist = abs(n_start - num_pos)
-                if dist > 60:
-                    continue
-                # Slight preference for numbers BEFORE the noun: subtract
-                # 5 from distance when the integer precedes the noun.
-                effective = dist - (5 if num_pos < n_start else 0)
-                if effective < best_dist:
-                    best_dist = effective
-                    best_qty = val
+    # Split text into clauses on strong boundaries: ``.``, ``;``, newline.
+    # Each clause is processed independently so numbers in one clause
+    # can't bind to nouns in another.
+    clause_offsets: list[tuple[int, int]] = []  # (start, end)
+    cursor = 0
+    for sep_match in re.finditer(r"[.;\n]", text):
+        clause_offsets.append((cursor, sep_match.end()))
+        cursor = sep_match.end()
+    if cursor < len(text):
+        clause_offsets.append((cursor, len(text)))
+    for clause_start, clause_end in clause_offsets:
+        clause = text[clause_start:clause_end]
+        for pat in patterns:
+            for noun_match in pat.finditer(clause):
+                n_start = noun_match.start()
+                for num_match in re.finditer(r"\b(\d{1,5})\b", clause):
+                    raw = num_match.group(1)
+                    try:
+                        val = int(raw)
+                    except ValueError:
+                        continue
+                    # Noun-anchored has a strong signal (the integer
+                    # is right next to the device noun), so we accept
+                    # qty:2..4 here even though the broader cross-doc
+                    # binding drops them. Real bids do say "4
+                    # switches" / "2 firewalls".
+                    if val < 2:
+                        continue
+                    num_pos = num_match.start()
+                    before = num_pos < n_start
+                    dist = abs(n_start - num_pos)
+                    # Tighter windows: 30 chars before the noun
+                    # ("Install 50 access points") or 15 chars after
+                    # ("access points: 50"). Anything farther is
+                    # almost certainly an unrelated number.
+                    if before and dist > 30:
+                        continue
+                    if (not before) and dist > 15:
+                        continue
+                    # Numbers BEFORE the noun get a strong bonus.
+                    effective = dist - (10 if before else 0)
+                    if effective < best_dist:
+                        best_dist = effective
+                        best_qty = val
     return best_qty
+
+
+def _atoms_are_distinct_positions(a: EvidenceAtom, b: EvidenceAtom) -> bool:
+    """True when two same-artifact atoms came from clearly different
+    positions in the source doc.
+
+    Compares ``sentence_index`` (set by the markdown sentence splitter
+    and other multi-emission parsers), then line numbers in
+    ``source_refs[0].locator``, then ``value.row`` / ``value.line``
+    fallbacks. Returns False when both atoms came from the same line
+    + same sentence (same template row).
+    """
+    if a.id == b.id:
+        return False
+    a_val = a.value if isinstance(a.value, dict) else {}
+    b_val = b.value if isinstance(b.value, dict) else {}
+    a_sent = a_val.get("sentence_index")
+    b_sent = b_val.get("sentence_index")
+    if a_sent is not None and b_sent is not None and a_sent != b_sent:
+        return True
+    a_loc = (a.source_refs[0].locator if a.source_refs else {}) or {}
+    b_loc = (b.source_refs[0].locator if b.source_refs else {}) or {}
+    a_line = a_loc.get("line_start") or a_loc.get("row") or a_loc.get("page") or a_val.get("line")
+    b_line = b_loc.get("line_start") or b_loc.get("row") or b_loc.get("page") or b_val.get("line")
+    if a_line is not None and b_line is not None and a_line != b_line:
+        return True
+    return False
 
 
 def _is_unknown_entity_key(key: str) -> bool:
@@ -1059,7 +1107,17 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         for i, a in enumerate(candidates):
             for b in candidates[i + 1:]:
                 if a.artifact_id == b.artifact_id:
-                    continue
+                    # Same artifact — allow ONLY when the two atoms
+                    # come from clearly different positions in the
+                    # source doc (different line OR different
+                    # sentence_index). Same-row table cells with the
+                    # same qty get filtered out by the value-set
+                    # intersection check below, so we don't need extra
+                    # guards here. This unlocks intra-doc self-
+                    # contradictions ("24 cameras... 30 cameras...")
+                    # while keeping the original cross-doc behavior.
+                    if not _atoms_are_distinct_positions(a, b):
+                        continue
                 # Multi-device atoms now bind quantities to specific
                 # device nouns via ``_noun_anchored_quantity``. If both
                 # atoms can pin a specific qty to ``device_key`` via
@@ -1111,10 +1169,14 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         return None
                 a_vals = sorted({v for v in (_qty_val(k) for k in a_qty_keys) if v is not None})
                 b_vals = sorted({v for v in (_qty_val(k) for k in b_qty_keys) if v is not None})
-                # Reject single-digit qtys (qty:1 / qty:2 is usually a
-                # table template, not a scope statement).
-                a_vals = [v for v in a_vals if v >= 5]
-                b_vals = [v for v in b_vals if v >= 5]
+                # Single-digit guard. When binding came from a
+                # noun-anchored pin (pinned_a/pinned_b set above), the
+                # signal is strong enough to keep qty:2..4. Otherwise
+                # the template-row noise risk is real and we keep
+                # qty>=5.
+                min_qty = 2 if (pinned_a is not None or pinned_b is not None) else 5
+                a_vals = [v for v in a_vals if v >= min_qty]
+                b_vals = [v for v in b_vals if v >= min_qty]
                 if not a_vals or not b_vals:
                     continue
                 # The conflict fires when there is NO common value AND
@@ -1133,8 +1195,10 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 for_device_pairs_seen.add(dedup_key)
                 # Pick deterministic from/to (lex by atom id)
                 from_atom, to_atom = (a, b) if a.id < b.id else (b, a)
+                is_intra_doc = a.artifact_id == b.artifact_id
+                scope_label = "intra-doc" if is_intra_doc else "Cross-artifact"
                 reason = (
-                    f"Cross-artifact quantity mismatch for {device_key}: {av} vs {bv}"
+                    f"{scope_label} quantity mismatch for {device_key}: {av} vs {bv}"
                 )
                 push(
                     _build_edge(
