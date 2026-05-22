@@ -240,6 +240,13 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     to the same physical place. The groups feed into
     :func:`fuse_alias_groups` so the entity_resolution stage collapses
     them into one canonical EntityRecord per physical site.
+
+    Two passes:
+      1. Co-mention patterns from raw text ("X (also known as Y)").
+      2. Key-shape inference: ``site:atl_hq`` and ``site:atl_hq_01``
+         are obvious aliases of the same physical site — the longer
+         form just adds a row-number suffix. Same for ``atl_west``
+         and ``atl_west_02``.
     """
     if not atoms:
         return []
@@ -250,6 +257,34 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
             continue
         for group in _emit_site_aliases_from_text(text):
             all_groups.append(set(group))
+
+    # Pass 2: key-shape inference.
+    # Collect every site key actually emitted across atoms, then
+    # group keys whose slugs share a prefix and differ only by a
+    # numeric suffix.
+    all_site_keys: set[str] = set()
+    for atom in atoms:
+        for k in (atom.entity_keys or []):
+            if k.startswith("site:"):
+                all_site_keys.add(k)
+    # Group by the prefix-without-trailing-digits
+    import re as _re
+    prefix_map: dict[str, set[str]] = {}
+    for k in all_site_keys:
+        slug = k[len("site:"):]
+        # Strip trailing `_NN` (1-3 digits) suffix if present
+        m = _re.match(r"^(.+?)_(\d{1,3})$", slug)
+        prefix = m.group(1) if m else slug
+        prefix_map.setdefault(prefix, set()).add(k)
+    for prefix, group in prefix_map.items():
+        if len(group) >= 2:
+            # Also include the bare-prefix form (no suffix) when it
+            # exists as a separate site key.
+            bare = f"site:{prefix}"
+            if bare in all_site_keys:
+                group.add(bare)
+            all_groups.append(group)
+
     return _coalesce_alias_groups(all_groups)
 
 
@@ -283,6 +318,30 @@ def _pick_canonical(group: frozenset[str]) -> str:
                 key,                            # alphabetical tie-break
             )
         return sorted(members, key=stake_key)[0]
+    # Site preference: prefer the most-specific form (longest slug
+    # ending in a numeric suffix wins, then more tokens, then
+    # alphabetical). Picks ``atl_hq_01`` as canonical over
+    # ``atl_hq``, and ``atl_west_02`` over ``atl_west`` /
+    # ``atl_west_0`` (the truncated PDF-wrap form).
+    if all(k.startswith("site:") for k in members):
+        import re as _re
+        def site_key(key: str) -> tuple[int, int, int, str]:
+            slug = key.split(":", 1)[1]
+            m = _re.match(r"^.+_(\d{1,3})$", slug)
+            # Has numeric suffix? Length of that suffix as proxy for
+            # specificity (atl_hq_01 has 2-digit, atl_west_0 has
+            # 1-digit). Prefer 2+ digit complete suffixes over
+            # 1-digit truncated ones.
+            has_suffix = 1 if m else 0
+            suffix_len = len(m.group(1)) if m else 0
+            tokens = [t for t in slug.split("_") if t]
+            return (
+                -has_suffix,        # has-suffix wins
+                -suffix_len,        # 2-digit wins over 1-digit truncated
+                -len(tokens),       # more tokens wins
+                key,                # alphabetical
+            )
+        return sorted(members, key=site_key)[0]
     return members[0]
 
 

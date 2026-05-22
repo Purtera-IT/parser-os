@@ -69,12 +69,22 @@ def _block_text_is_standalone_symbol(
     """
     if not block_text:
         return False
+    # Drop trailing parenthesized location callouts like " (KITCHEN)" /
+    # " (RM 201)" before tokenization. These are tail annotations next
+    # to a tag, not body prose. "WN-3 (KITCHEN)" should pass; the
+    # full-block case "(WN)" is handled separately below.
+    stripped_text = re.sub(r"\s+\([^)]*\)\s*$", "", block_text).strip()
+    if not stripped_text:
+        stripped_text = block_text.strip()
     # Tokenize on whitespace (preserves common qualifiers like "WN-1").
-    tokens = [t for t in re.split(r"\s+", block_text.strip()) if t]
+    tokens = [t for t in re.split(r"\s+", stripped_text) if t]
     if not tokens:
         return False
     # The first token MUST be a legend symbol (or symbol + qualifier).
-    if _extract_symbol_core(tokens[0], symbol_to_entry) is None:
+    # Allow a leading-parenthesized symbol like "(WN)" by stripping
+    # bounding parens before the symbol check.
+    first = tokens[0].strip("()")
+    if _extract_symbol_core(first, symbol_to_entry) is None:
         return False
     # Remaining tokens are allowed when they look like compact
     # qualifiers (single letter, 1-3 digit number, room codes like
@@ -83,7 +93,7 @@ def _block_text_is_standalone_symbol(
     # is body prose and disqualifies the block — qualifier strings on
     # real drawings either contain a digit or stay ≤ 2 letters long.
     for token in tokens[1:]:
-        upper = token.upper()
+        upper = token.upper().strip("()")
         if _extract_symbol_core(upper, symbol_to_entry) is not None:
             continue
         if not _looks_like_qualifier(upper):

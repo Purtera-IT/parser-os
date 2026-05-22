@@ -228,6 +228,19 @@ class DocxParser(BaseParser):
             )
         )
 
+        # Comments — sidebar Word comments often carry scope-relevant
+        # notes ("we're cutting this from scope", "verify w/ vendor",
+        # "approved by Jane"). Extract them so they don't get
+        # silently dropped.
+        atoms.extend(
+            self._extract_comment_atoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                path=path,
+            )
+        )
+
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
@@ -463,6 +476,80 @@ class DocxParser(BaseParser):
             metadata=[],
             pages=[page],
         )
+
+    def _extract_comment_atoms(
+        self,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        path: Path,
+    ) -> list[EvidenceAtom]:
+        """Pull Word comments out of word/comments.xml. Each comment
+        becomes a low-confidence scope_item atom flagged so the
+        reviewer can decide whether the side-note is in-scope."""
+        atoms: list[EvidenceAtom] = []
+        try:
+            with zipfile.ZipFile(path) as zf:
+                if "word/comments.xml" not in zf.namelist():
+                    return []
+                xml_raw = zf.read("word/comments.xml")
+        except Exception:
+            return []
+        try:
+            root = ET.fromstring(xml_raw)
+        except Exception:
+            return []
+        for idx, node in enumerate(root.findall(".//w:comment", WORD_NS)):
+            text_parts = [t.text for t in node.findall(".//w:t", WORD_NS) if t.text]
+            text = " ".join(part.strip() for part in text_parts if part.strip()).strip()
+            if not text:
+                continue
+            author = node.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}author", "")
+            initials = node.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}initials", "")
+            comment_id = node.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id", str(idx))
+            atom_text = text if not author else f"[Comment by {author}] {text}"
+            atom_id = stable_id("atm", project_id, artifact_id, "docx_comment", comment_id, atom_text)
+            src = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.docx,
+                filename=filename,
+                locator={
+                    "comment_id": comment_id,
+                    "author": author,
+                    "initials": initials,
+                    "extraction": "docx_comment_v1",
+                },
+                extraction_method="docx_comment_v1",
+                parser_version=self.parser_version,
+            )
+            atoms.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.open_question,
+                    raw_text=atom_text,
+                    normalized_text=atom_text.lower(),
+                    value={
+                        "kind": "docx_comment",
+                        "author": author,
+                        "initials": initials,
+                        "comment_id": comment_id,
+                    },
+                    entity_keys=[],
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.meeting_note,
+                    confidence=0.55,
+                    confidence_raw=0.55,
+                    calibrated_confidence=0.55,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["docx_sidebar_comment"],
+                    parser_version=self.parser_version,
+                )
+            )
+        return atoms
 
     def _extract_tracked_change_atoms(
         self,

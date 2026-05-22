@@ -1014,16 +1014,33 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     The canonical is the YAML key (e.g. ``ip_camera``).  We add a
     word-boundary entry for every alias so we don't match
     ``"camera"`` inside ``"cameramen"``.
+
+    Auto-plural: when an alias is singular and ends in a plural-safe
+    suffix (consonant + non-'s'/'x'/'z') we also register its English
+    plural form. So a pack that only lists ``switch`` will still
+    match ``switches`` in prose. This avoids forcing every pack to
+    list every plural variant.
     """
     index: dict[str, str] = {}
+
+    def _add(form: str, canonical: str) -> None:
+        norm = normalize_text(form)
+        if norm:
+            index.setdefault(norm, canonical)
+        # Auto-plural for short device nouns. Skip if the alias ends in
+        # a non-pluralizable suffix or already looks plural.
+        if norm and " " not in norm and len(norm) >= 4 and not norm.endswith(("s", "x", "z", "ay", "ey", "iy", "oy", "uy")):
+            if norm.endswith(("ch", "sh", "ss")):
+                index.setdefault(norm + "es", canonical)
+            elif norm.endswith("y") and len(norm) >= 2 and norm[-2] not in "aeiou":
+                index.setdefault(norm[:-1] + "ies", canonical)
+            else:
+                index.setdefault(norm + "s", canonical)
+
     for canonical, aliases in (pack.device_aliases or {}).items():
-        canonical_norm = normalize_text(canonical.replace("_", " "))
-        if canonical_norm:
-            index.setdefault(canonical_norm, canonical)
+        _add(canonical.replace("_", " "), canonical)
         for alias in aliases or []:
-            alias_norm = normalize_text(alias)
-            if alias_norm:
-                index.setdefault(alias_norm, canonical)
+            _add(alias, canonical)
     return index
 
 
@@ -2819,13 +2836,14 @@ def _emit_stakeholders(text: str) -> set[str]:
     # Single-letter initial followed by space + capital: "Sara G. Chen"
     text_safe = re.sub(r"\b([A-Z])\.\s+(?=[A-Z][a-z])", r"\1<DOT> ", text_safe)
     # Split on real sentence boundaries (period + space + capital,
-    # terminal punctuation, newline) AND on colon/semicolon when
-    # followed by a name-shaped token — these mark field/value
-    # transitions in deal docs and prevent cross-name pollution
-    # ("Brooks: Approved. Priya Narang ..." → don't fuse Brooks +
-    # Priya across the colon).
+    # terminal punctuation, newline) AND on semicolon when followed
+    # by a name-shaped token. We previously also split on colon, but
+    # that broke "Org — Role: Name" signature lines by separating
+    # the role context from the name. Colons inside signature lines
+    # are FIELD separators, not sentence ends — keep them in the
+    # same sentence so the role-context proximity check fires.
     for sentence in re.split(
-        r"(?:\.\s+(?=[A-Z])|[?!\n]+|[:;]\s+(?=[A-Z][a-z]+\s+[A-Z]))",
+        r"(?:\.\s+(?=[A-Z])|[?!\n]+|;\s+(?=[A-Z][a-z]+\s+[A-Z]))",
         text_safe,
     ):
         sentence = sentence.replace("<DOT>", ".").strip()

@@ -493,6 +493,24 @@ class OrbitBriefPdfParser(BaseParser):
                 parser_version=self.parser_version,
             )
         )
+        # Universal OCR fallback: for text-poor pages where the
+        # structured pipeline produced no atoms, try Tesseract OCR
+        # and emit scope_item atoms from recovered words. Handles
+        # phone-photographed contracts, scan-only PDFs, and image-
+        # only marketing PDFs. No-op when Tesseract isn't installed
+        # or every page already has body text.
+        try:
+            atoms.extend(
+                _ocr_fallback_atoms(
+                    path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                    already_emitted=atoms,
+                )
+            )
+        except Exception:  # pragma: no cover - never fail the parse
+            pass
         # PR7 — checkbox states, NOC/SOC workflow steps, and review
         # markers for low-text visual pages. These are extracted from
         # raw PDF text in a single fitz pass; opening fitz here avoids
@@ -617,6 +635,148 @@ class OrbitBriefPdfParser(BaseParser):
 
 
 # ──────────────────────── public helpers ─────────────────────────────────
+
+
+def _ocr_fallback_atoms(
+    *,
+    path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    already_emitted: list[EvidenceAtom],
+) -> list[EvidenceAtom]:
+    """For each page that produced ZERO atoms via the structured
+    pipeline AND is text-poor (likely a scanned image), run OCR and
+    emit one scope_item atom per recovered text block.
+
+    Returns [] when Tesseract isn't installed or every page already
+    contributed atoms.
+    """
+    try:
+        from orbitbrief_page_os.segmentation.schematic.ocr import is_available
+        from orbitbrief_page_os.segmentation.schematic.raster import (
+            is_text_poor_page,
+            render_page_to_ndarray,
+        )
+    except Exception:
+        return []
+    if not is_available():
+        return []
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    try:
+        from orbitbrief_page_os.segmentation.schematic.ocr import ocr_words
+    except Exception:
+        return []
+
+    # Pages that already have atoms
+    pages_with_atoms: set[int] = set()
+    for a in already_emitted:
+        if not a.source_refs:
+            continue
+        loc = a.source_refs[0].locator if a.source_refs[0] else {}
+        if isinstance(loc, dict) and loc.get("page") is not None:
+            try:
+                pages_with_atoms.add(int(loc["page"]))
+            except (TypeError, ValueError):
+                continue
+
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(path))
+    except Exception:
+        return []
+    try:
+        for page_index in range(doc.page_count):
+            if page_index in pages_with_atoms:
+                continue
+            try:
+                page = doc.load_page(page_index)
+            except Exception:
+                continue
+            try:
+                if not is_text_poor_page(page):
+                    continue
+            except Exception:
+                continue
+            try:
+                arr = render_page_to_ndarray(page, dpi=200)
+            except Exception:
+                arr = None
+            if arr is None:
+                continue
+            try:
+                words = ocr_words(arr)
+            except Exception:
+                words = []
+            if not words:
+                continue
+            # Group OCR words into lines by y-coordinate buckets.
+            lines: dict[int, list] = {}
+            for w in words:
+                y_bucket = round(w.bbox[1] / 12.0) * 12
+                lines.setdefault(y_bucket, []).append(w)
+            recovered_text_blocks: list[str] = []
+            for y in sorted(lines):
+                sorted_words = sorted(lines[y], key=lambda w: w.bbox[0])
+                line_text = " ".join(w.text for w in sorted_words).strip()
+                if len(line_text) >= 6:
+                    recovered_text_blocks.append(line_text)
+            if not recovered_text_blocks:
+                continue
+            page_text = " ".join(recovered_text_blocks)
+            atom_id = stable_id(
+                "atm", project_id, artifact_id, "ocr_fallback",
+                page_index, page_text
+            )
+            src = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.pdf,
+                filename=path.name,
+                locator={
+                    "page": page_index,
+                    "block_kind": "ocr_fallback",
+                    "extraction": "pdf_ocr_fallback_v1",
+                    "word_count": len(words),
+                },
+                extraction_method="pdf_ocr_fallback_v1",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.scope_item,
+                    raw_text=page_text[:2000],
+                    normalized_text=page_text[:2000].lower(),
+                    value={
+                        "kind": "ocr_recovered",
+                        "page": page_index,
+                        "word_count": len(words),
+                        "lines": len(recovered_text_blocks),
+                    },
+                    entity_keys=[],
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.60,
+                    confidence_raw=0.60,
+                    calibrated_confidence=0.60,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["ocr_recovered"],
+                    parser_version=parser_version,
+                )
+            )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
 
 
 def _fitz_site_roster_fallback(

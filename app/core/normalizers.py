@@ -166,11 +166,13 @@ def parse_timestamp(line: str) -> str | None:
 def detect_speaker(line: str) -> str | None:
     line = line.strip()
     # [00:00:01] Speaker: text
-    match = re.match(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*([^:]{2,80}):\s*.+$", line)
+    match = re.match(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*([A-Za-zÀ-ÿ][^:]{1,79}):\s*.+$", line)
     if match:
         return match.group(1).strip()
-    # Speaker: text
-    match = re.match(r"^([^:]{2,80}):\s*.+$", line)
+    # Speaker: text — anchor on a letter to avoid matching a leading
+    # bracketed timestamp like ``[00:00:01] Welcome everyone.`` which
+    # otherwise yielded speaker="[00" and crashed the segment splitter.
+    match = re.match(r"^([A-Za-zÀ-ÿ][^:]{1,79}):\s*.+$", line)
     if match:
         key = match.group(1).strip()
         if key.lower() not in {"decision", "decisions", "action items", "open questions", "ai"}:
@@ -207,9 +209,18 @@ def split_transcript_segments(text: str) -> list[dict[str, Any]]:
         if speaker:
             # remove timestamp prefix and speaker label from content
             content = re.sub(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*", "", content)
-            content = content.split(":", 1)[1].strip()
+            # Defensive: a future regex change could yield a "speaker"
+            # whose label isn't followed by ``:`` in the line. Skip the
+            # split rather than crashing — keep the full line as content.
+            if ":" in content:
+                content = content.split(":", 1)[1].strip()
         elif stripped.startswith("- "):
             content = stripped[2:].strip()
+        else:
+            # Bracketed-timestamp leader (``[00:00:01] body``) with no
+            # speaker label: strip the timestamp so the body reads
+            # cleanly downstream.
+            content = re.sub(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*", "", content)
 
         segments.append(
             {

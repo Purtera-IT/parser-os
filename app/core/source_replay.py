@@ -324,6 +324,33 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
                     full_row,
                 )
 
+    # Constraint-keyword fallback: xlsx parser emits synthetic atoms
+    # like "After-hours access constraint" / "Site access constraint"
+    # whose canonical phrase doesn't appear in any cell. Verify by
+    # matching the atom's value.constraint_type against keyword
+    # signals in the actual row text. This keeps receipts honest
+    # (the row contains "after-hours" → after_hours constraint) while
+    # not failing verification on parser-synthesized headlines.
+    if full_row and isinstance(atom.value, dict):
+        ctype = atom.value.get("constraint_type")
+        if isinstance(ctype, str) and ctype:
+            ctype_signals = {
+                "after_hours": ("after-hours", "after hours", "nights only", "weekends only"),
+                "access": ("badge", "escort", "ceiling access"),
+                "lift": ("lift required", "elevator", "customer provides lift"),
+                "certification": ("certification required", "certify", "test standard"),
+            }
+            keywords = ctype_signals.get(ctype, ())
+            full_norm = _replay_norm(full_row)
+            if any(_replay_norm(kw) in full_norm for kw in keywords):
+                return _receipt(
+                    atom,
+                    source_ref,
+                    "verified",
+                    f"Spreadsheet row verified via constraint_type={ctype!r}",
+                    full_row,
+                )
+
     return _receipt(
         atom,
         source_ref,

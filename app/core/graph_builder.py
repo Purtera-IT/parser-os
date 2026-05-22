@@ -71,6 +71,76 @@ _PART_NUMBER_PREFIX = "part_number:"
 _QUANTITY_PREFIX = "quantity:"
 
 
+# Noun-anchored qty extraction for atoms that carry multiple device
+# keys. "Install 50 access points and 5 switches" should bind 50 to
+# access_point and 5 to switch so cross-doc binding can compare the
+# right quantities per device.
+_DEVICE_NOUN_PATTERNS: dict[str, tuple[str, ...]] = {
+    "access_point": (r"access\s+points?", r"\baps?\b", r"wireless\s+access\s+points?", r"waps?"),
+    "switch": (r"switches?(?:\b|\s)", r"poe\s+switches?", r"core\s+switches?", r"access\s+switches?"),
+    "router": (r"routers?", r"edge\s+routers?", r"core\s+routers?"),
+    "firewall": (r"firewalls?", r"ngfws?", r"\butms?\b"),
+    "ip_camera": (r"ip\s+cameras?", r"cameras?", r"ptz(?:\s+cameras?)?", r"dome\s+cameras?", r"bullet\s+cameras?"),
+    "card_reader": (r"card\s+readers?", r"badge\s+readers?", r"\breaders?\b"),
+    "controller": (r"controllers?", r"access\s+controllers?", r"door\s+controllers?"),
+    "ups": (r"\bupses?\b", r"battery\s+backup"),
+    "rack": (r"racks?", r"cabinets?", r"server\s+racks?"),
+    "display": (r"displays?", r"monitors?", r"video\s+walls?", r"touchscreens?"),
+    "speaker": (r"speakers?", r"ceiling\s+speakers?"),
+    "microphone": (r"microphones?", r"\bmics?\b"),
+}
+
+# Compile once.
+_DEVICE_NOUN_REGEXES: dict[str, list[re.Pattern[str]]] = {
+    canonical: [re.compile(pat, re.IGNORECASE) for pat in patterns]
+    for canonical, patterns in _DEVICE_NOUN_PATTERNS.items()
+}
+
+
+def _noun_anchored_quantity(text: str, device_canonical: str) -> int | None:
+    r"""Return the integer quantity that occurs nearest to a device noun.
+
+    ``device_canonical`` is the YAML key (e.g. ``access_point``,
+    ``switch``). We look for ``\b\d+\b`` tokens within ~40 chars of
+    any matching noun pattern in ``text``. The CLOSEST integer wins.
+    Returns None when no noun match or no nearby integer.
+    """
+    if not text:
+        return None
+    patterns = _DEVICE_NOUN_REGEXES.get(device_canonical)
+    if not patterns:
+        return None
+    best_qty: int | None = None
+    best_dist = 10**9
+    for pat in patterns:
+        for noun_match in pat.finditer(text):
+            n_start = noun_match.start()
+            for num_match in re.finditer(r"\b(\d{1,5})\b", text):
+                raw = num_match.group(1)
+                try:
+                    val = int(raw)
+                except ValueError:
+                    continue
+                # Single-digit guard mirrors the existing cross-doc
+                # heuristic: qty:1..4 is usually template noise.
+                if val < 5:
+                    continue
+                num_pos = num_match.start()
+                # Prefer integers that appear BEFORE the noun ("50
+                # access points") but accept post-noun within window
+                # ("access points: 50") too.
+                dist = abs(n_start - num_pos)
+                if dist > 60:
+                    continue
+                # Slight preference for numbers BEFORE the noun: subtract
+                # 5 from distance when the integer precedes the noun.
+                effective = dist - (5 if num_pos < n_start else 0)
+                if effective < best_dist:
+                    best_dist = effective
+                    best_qty = val
+    return best_qty
+
+
 def _is_unknown_entity_key(key: str) -> bool:
     """Return True for sentinel '*:unknown' keys we never want to anchor on."""
     return key.endswith(":unknown") or key == "device:unknown" or key == "site:unknown"
@@ -990,26 +1060,35 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             for b in candidates[i + 1:]:
                 if a.artifact_id == b.artifact_id:
                     continue
-                # Ambiguity guard: if EITHER atom mentions multiple
-                # devices, we can't reliably bind the quantity to this
-                # specific device. (One paragraph that lists "50 APs
-                # and 5 switches" carries device:access_point AND
-                # device:switch on the SAME atom with one quantity
-                # entity each; the bind-by-co-occurrence trick from
-                # part_number doesn't apply.)
+                # Multi-device atoms now bind quantities to specific
+                # device nouns via ``_noun_anchored_quantity``. If both
+                # atoms can pin a specific qty to ``device_key`` via
+                # noun proximity, treat those pinned values as the
+                # single qty for the comparison below. Otherwise fall
+                # back to the original "single device + single qty"
+                # ambiguity guard.
                 a_devices = {k for k in a.entity_keys if k.startswith("device:") and k != "device:unknown"}
                 b_devices = {k for k in b.entity_keys if k.startswith("device:") and k != "device:unknown"}
-                if len(a_devices) > 1 or len(b_devices) > 1:
-                    continue
                 a_qty_keys = {k for k in a.entity_keys if k.startswith(_QUANTITY_PREFIX)}
                 b_qty_keys = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
                 if not a_qty_keys or not b_qty_keys:
                     continue
-                # Single-quantity guard: one atom with multiple quantity
-                # keys (e.g. "50 APs + 5 switches in same paragraph")
-                # is too ambiguous to bind to a single device.
-                if len(a_qty_keys) > 1 or len(b_qty_keys) > 1:
-                    continue
+                device_canonical = device_key.split(":", 1)[1]
+                pinned_a: int | None = None
+                pinned_b: int | None = None
+                if len(a_devices) > 1 or len(b_devices) > 1 or len(a_qty_keys) > 1 or len(b_qty_keys) > 1:
+                    pinned_a = _noun_anchored_quantity(a.raw_text or "", device_canonical)
+                    pinned_b = _noun_anchored_quantity(b.raw_text or "", device_canonical)
+                    if pinned_a is None or pinned_b is None:
+                        # Couldn't disambiguate — preserve the old
+                        # safety guards. Multi-device or multi-qty
+                        # without a noun-anchor stays skipped.
+                        continue
+                    # Substitute the pinned values into the
+                    # comparison sets so the downstream logic uses
+                    # the device-specific qty for each side.
+                    a_qty_keys = {f"quantity:{pinned_a}"}
+                    b_qty_keys = {f"quantity:{pinned_b}"}
                 a_parts = {k for k in a.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
                 b_parts = {k for k in b.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
                 # Skip when a shared part_number exists — that's the

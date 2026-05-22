@@ -193,24 +193,33 @@ class PptxParser(BaseParser):
                             is_heading=is_heading,
                         ))
                 if shape.has_table:
-                    for row_idx, row in enumerate(shape.table.rows):
-                        for cell_idx, cell in enumerate(row.cells):
-                            text = (cell.text or "").strip()
-                            if not text:
-                                continue
-                            atoms.append(self._make_atom(
-                                project_id=project_id,
-                                artifact_id=artifact_id,
-                                filename=path.name,
-                                text=text,
-                                slide_index=slide_idx,
-                                slide_title=slide_title_text,
-                                shape_index=shape_idx,
-                                paragraph_index=None,
-                                table_row=row_idx,
-                                table_cell=cell_idx,
-                                is_heading=False,
-                            ))
+                    # Emit one atom per row (joined cells) plus a header
+                    # atom for row 0 if it looks like a header. Per-row
+                    # atoms preserve "Item | Qty | Unit" together so
+                    # quantity / device extraction can bind them. Empty
+                    # rows are skipped.
+                    rows_data: list[list[str]] = []
+                    for row in shape.table.rows:
+                        cells = [(cell.text or "").strip() for cell in row.cells]
+                        if any(cells):
+                            rows_data.append(cells)
+                    for row_idx, cells in enumerate(rows_data):
+                        row_text = " | ".join(c for c in cells if c)
+                        if not row_text:
+                            continue
+                        atoms.append(self._make_atom(
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            text=row_text,
+                            slide_index=slide_idx,
+                            slide_title=slide_title_text,
+                            shape_index=shape_idx,
+                            paragraph_index=None,
+                            table_row=row_idx,
+                            table_cell=None,
+                            is_heading=False,
+                        ))
 
             # Speaker notes — secondary atoms that capture the
             # narrator's context; tagged as ``meeting_commitment``

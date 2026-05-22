@@ -117,6 +117,24 @@ class EmailParser(BaseParser):
             elif " wrote:" in text:
                 confidence = 0.83
                 reasons.append("email_thread_marker")
+            else:
+                # Headerless body fallback: short .txt files whose content
+                # reads as customer correspondence (instruction / exclusion
+                # / constraint keywords) still need an extractor. Take a
+                # low-confidence claim so other parsers can override but
+                # the file isn't silently dropped.
+                email_hits = sum(
+                    1
+                    for needle in (
+                        "please add", "please remove", "please include",
+                        "approved to proceed", "hold off", "go ahead",
+                        "badge required", "escort required",
+                    )
+                    if needle in text
+                )
+                if email_hits >= 1:
+                    confidence = 0.55
+                    reasons.append(f"email_keyword_heuristic({email_hits})")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,

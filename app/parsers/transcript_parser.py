@@ -129,9 +129,20 @@ class TranscriptParser(BaseParser):
             if "open questions:" in lowered or "decisions:" in lowered:
                 confidence = 0.9
                 reasons.append("meeting_sections_detected")
-            elif parse_timestamp(text) is not None or detect_speaker(text) is not None:
-                confidence = 0.82
-                reasons.append("speaker_or_timestamp_markers")
+            else:
+                # Per-line check: ``detect_speaker`` / ``parse_timestamp``
+                # were anchored on a leading-letter for safety, and the
+                # bare ``.+$`` end-of-string anchor inside detect_speaker
+                # fails when the full document has more than one line.
+                # Walk the first ~40 lines and accept on any single hit.
+                speaker_or_ts = False
+                for line in text.splitlines()[:40]:
+                    if parse_timestamp(line) is not None or detect_speaker(line) is not None:
+                        speaker_or_ts = True
+                        break
+                if speaker_or_ts:
+                    confidence = 0.82
+                    reasons.append("speaker_or_timestamp_markers")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,
