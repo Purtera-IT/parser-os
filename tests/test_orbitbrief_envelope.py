@@ -177,10 +177,10 @@ def test_compile_writes_envelope_with_typed_atoms_and_verified_receipts(tmp_path
     assert "atoms_by_atom_type" in indexes
     assert "atoms_by_authority" in indexes
 
-    json_path, md_path, sow_path = write_orbitbrief_envelope(project_dir=project, envelope=envelope)
+    json_path, md_path, sow_preview_path = write_orbitbrief_envelope(project_dir=project, envelope=envelope)
     assert json_path.name == ENVELOPE_FILENAME
     assert md_path.name == ENVELOPE_MARKDOWN_FILENAME
-    assert sow_path.name == "sow.md"
+    assert sow_preview_path.name == "sow_preview.md"
     md_text = md_path.read_text(encoding="utf-8")
     assert "## File:" in md_text
     assert '<a id="blk_' in md_text
@@ -370,7 +370,7 @@ def test_mixed_package_envelope_renders_every_artifact(tmp_path: Path) -> None:
         assert key in indexes, f"index {key} missing from envelope"
 
     # Markdown projection includes all four files plus the entities table.
-    json_path, md_path, sow_path = write_orbitbrief_envelope(project_dir=project, envelope=envelope)
+    json_path, md_path, sow_preview_path = write_orbitbrief_envelope(project_dir=project, envelope=envelope)
     md_text = md_path.read_text(encoding="utf-8")
     for label, fp in files.items():
         assert f"## File: {fp.name}" in md_text
