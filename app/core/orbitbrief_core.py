@@ -477,86 +477,302 @@ def build_sow_readiness_scorecard(
 # ──────────────────── SRL MISSING-FIELDS CHECKLIST ────────────────────
 
 
-# Lightweight subset of the 707-field SOW Requirements Library. These
-# are the must-have fields for a managed-services engagement to leave
-# discovery. The full SRL plugs into this same predicate framework.
+# Subset of the 707-field SOW Requirements Library covering the
+# domains the parser-os substrate has primitives for. The full SRL
+# YAML plugs in via the same predicate framework — this in-code list
+# is the "lite" surface we can evaluate from primitives alone.
+#
+# Categories: stakeholders / sites / devices / schedule / commercial
+# / acceptance / constraints / risk / governance / operations.
 _SRL_REQUIRED_FIELDS: tuple[dict[str, Any], ...] = (
+    # ── Stakeholders ──────────────────────────────────────────
     {
         "field_id": "project_sponsor",
-        "label": "Project Sponsor (named, with role)",
-        "kind": "stakeholder",
-        "predicate": "any_stakeholder",
+        "label": "Project Sponsor (named)",
+        "category": "stakeholders",
+        "predicate": "stakeholder_role_match",
+        "role_terms": ("sponsor", "executive sponsor", "program sponsor"),
     },
     {
         "field_id": "technical_lead",
         "label": "Technical / Engineering Lead",
-        "kind": "stakeholder",
+        "category": "stakeholders",
         "predicate": "stakeholder_role_match",
         "role_terms": ("technical lead", "tech lead", "engineer", "architect"),
     },
     {
-        "field_id": "site_count",
+        "field_id": "project_manager",
+        "label": "Project Manager (vendor side)",
+        "category": "stakeholders",
+        "predicate": "stakeholder_role_match",
+        "role_terms": ("project manager", "vendor pm", "pm", "delivery manager"),
+    },
+    {
+        "field_id": "security_owner",
+        "label": "Security / Compliance Owner",
+        "category": "stakeholders",
+        "predicate": "stakeholder_role_match",
+        "role_terms": ("security", "ciso", "compliance"),
+    },
+    {
+        "field_id": "site_contact",
+        "label": "Per-site primary contact",
+        "category": "stakeholders",
+        "predicate": "stakeholder_role_match",
+        "role_terms": ("site manager", "site lead", "site contact", "facilities"),
+    },
+    # ── Sites & locations ─────────────────────────────────────
+    {
+        "field_id": "site_enumeration",
         "label": "Sites / locations enumerated",
-        "kind": "site",
+        "category": "sites",
         "predicate": "any_site",
+    },
+    {
+        "field_id": "site_addresses",
+        "label": "Site street addresses present",
+        "category": "sites",
+        "predicate": "any_address",
     },
     {
         "field_id": "device_inventory",
         "label": "Device inventory captured",
-        "kind": "device",
+        "category": "sites",
         "predicate": "any_device",
     },
     {
+        "field_id": "device_qty_per_site",
+        "label": "Per-site device counts (no contradictions)",
+        "category": "sites",
+        "predicate": "scope_truth_clean",
+    },
+    # ── Schedule ──────────────────────────────────────────────
+    {
         "field_id": "kickoff_date",
-        "label": "Kickoff / start date",
-        "kind": "milestone",
-        "predicate": "any_milestone",
+        "label": "Kickoff / project start date",
+        "category": "schedule",
+        "predicate": "milestone_text_match",
+        "text_terms": ("kickoff", "kick-off", "start date", "mobilization"),
+    },
+    {
+        "field_id": "phase_milestones",
+        "label": "Phase milestones with dates",
+        "category": "schedule",
+        "predicate": "milestone_count_min",
+        "min_count": 2,
     },
     {
         "field_id": "cutover_date",
         "label": "Cutover / go-live date",
-        "kind": "milestone",
+        "category": "schedule",
         "predicate": "milestone_text_match",
         "text_terms": ("cutover", "go-live", "go live", "rollout"),
     },
     {
+        "field_id": "blackout_windows",
+        "label": "Blackout / maintenance windows defined",
+        "category": "schedule",
+        "predicate": "text_match",
+        "text_terms": ("blackout", "maintenance window", "downtime window", "freeze period"),
+    },
+    # ── Commercial ────────────────────────────────────────────
+    {
+        "field_id": "pricing_baseline",
+        "label": "Commercial pricing baseline captured",
+        "category": "commercial",
+        "predicate": "any_money",
+    },
+    {
+        "field_id": "payment_terms",
+        "label": "Payment / invoicing terms",
+        "category": "commercial",
+        "predicate": "text_match",
+        "text_terms": ("net 30", "net 60", "net 45", "milestone payment", "progress payment", "invoice"),
+    },
+    {
+        "field_id": "currency_clarity",
+        "label": "Currency specified (single primary)",
+        "category": "commercial",
+        "predicate": "text_match",
+        "text_terms": ("usd", "$", "eur", "gbp", "cad"),
+    },
+    {
+        "field_id": "change_order_process",
+        "label": "Change order process documented",
+        "category": "commercial",
+        "predicate": "text_match",
+        "text_terms": ("change order", "change request", "scope change", "revised scope"),
+    },
+    # ── Acceptance & quality ──────────────────────────────────
+    {
         "field_id": "acceptance_criteria",
         "label": "Acceptance criteria stated",
-        "kind": "acceptance",
+        "category": "acceptance",
         "predicate": "text_match",
-        "text_terms": ("acceptance", "sign-off", "signoff", "completion criteria"),
+        "text_terms": ("acceptance", "completion criteria", "definition of done"),
     },
+    {
+        "field_id": "sign_off_required",
+        "label": "Customer sign-off gate required",
+        "category": "acceptance",
+        "predicate": "text_match",
+        "text_terms": ("sign-off", "signoff", "customer approval", "customer acceptance"),
+    },
+    {
+        "field_id": "test_plan",
+        "label": "Test / validation plan referenced",
+        "category": "acceptance",
+        "predicate": "text_match",
+        "text_terms": ("test plan", "test results", "validation", "performance test", "smoke test"),
+    },
+    {
+        "field_id": "warranty_terms",
+        "label": "Warranty / defect-correction window",
+        "category": "acceptance",
+        "predicate": "text_match",
+        "text_terms": ("warranty", "defect", "rework", "remediation"),
+    },
+    # ── Constraints / site access ─────────────────────────────
     {
         "field_id": "site_access_terms",
         "label": "Site access / escort / badge terms",
-        "kind": "constraint",
+        "category": "constraints",
         "predicate": "text_match",
         "text_terms": ("escort", "badge", "after-hours", "after hours", "background check"),
     },
     {
+        "field_id": "work_hours",
+        "label": "Allowed work hours / windows",
+        "category": "constraints",
+        "predicate": "text_match",
+        "text_terms": ("work window", "business hours", "weekdays", "weekends", "after hours"),
+    },
+    {
+        "field_id": "lift_equipment",
+        "label": "Lift / boom / scaffolding requirements",
+        "category": "constraints",
+        "predicate": "text_match",
+        "text_terms": ("lift", "boom lift", "scissor lift", "scaffolding", "ceiling access"),
+    },
+    {
+        "field_id": "ppe_safety",
+        "label": "PPE / safety requirements",
+        "category": "constraints",
+        "predicate": "text_match",
+        "text_terms": ("ppe", "hard hat", "osha", "harness", "fall protection", "hot work"),
+    },
+    # ── SLAs & operations ─────────────────────────────────────
+    {
         "field_id": "sla_targets",
         "label": "SLA targets stated (uptime / response / resolution)",
-        "kind": "sla",
+        "category": "operations",
         "predicate": "sla_present",
     },
     {
-        "field_id": "pricing_baseline",
-        "label": "Commercial pricing baseline captured",
-        "kind": "money",
-        "predicate": "any_money",
-    },
-    {
-        "field_id": "risk_register",
-        "label": "Risk register present with owners",
-        "kind": "risk",
-        "predicate": "risks_with_owners",
+        "field_id": "support_tiers",
+        "label": "Support tier structure (P1/P2/P3 or similar)",
+        "category": "operations",
+        "predicate": "text_match",
+        "text_terms": ("p1", "p2", "p3", "tier 1", "tier 2", "severity 1", "severity 2"),
     },
     {
         "field_id": "escalation_path",
         "label": "Escalation path / on-call contact",
-        "kind": "constraint",
+        "category": "operations",
         "predicate": "text_match",
-        "text_terms": ("escalation", "on-call", "l1", "l2", "l3", "tier 1", "tier 2"),
+        "text_terms": ("escalation", "on-call", "oncall", "l1", "l2", "l3", "after-hours support"),
+    },
+    {
+        "field_id": "service_credits",
+        "label": "Service credits / penalty terms",
+        "category": "operations",
+        "predicate": "text_match",
+        "text_terms": ("service credit", "penalty", "credit", "remedy"),
+    },
+    {
+        "field_id": "maintenance_window",
+        "label": "Routine maintenance window",
+        "category": "operations",
+        "predicate": "text_match",
+        "text_terms": ("maintenance window", "patching", "firmware update", "scheduled maintenance"),
+    },
+    # ── Risk & governance ─────────────────────────────────────
+    {
+        "field_id": "risk_register",
+        "label": "Risk register present with owners",
+        "category": "risk",
+        "predicate": "risks_with_owners",
+    },
+    {
+        "field_id": "compliance_clauses",
+        "label": "Compliance / regulatory clauses (HIPAA / PCI / etc.)",
+        "category": "risk",
+        "predicate": "text_match",
+        "text_terms": ("hipaa", "pci", "ferpa", "soc 2", "iso 27001", "nist", "nfpa", "ada"),
+    },
+    {
+        "field_id": "data_handling",
+        "label": "Data handling / confidentiality",
+        "category": "risk",
+        "predicate": "text_match",
+        "text_terms": ("confidential", "nda", "data handling", "pii", "phi"),
+    },
+    {
+        "field_id": "ip_ownership",
+        "label": "IP ownership / work product",
+        "category": "risk",
+        "predicate": "text_match",
+        "text_terms": ("intellectual property", "work product", "ownership", "license"),
+    },
+    {
+        "field_id": "indemnification",
+        "label": "Indemnification clause",
+        "category": "risk",
+        "predicate": "text_match",
+        "text_terms": ("indemnif", "hold harmless"),
+    },
+    # ── Out-of-scope / exclusions ─────────────────────────────
+    {
+        "field_id": "exclusions_documented",
+        "label": "Out-of-scope items documented",
+        "category": "scope",
+        "predicate": "any_exclusion",
+    },
+    {
+        "field_id": "customer_responsibilities",
+        "label": "Customer responsibilities stated",
+        "category": "scope",
+        "predicate": "text_match",
+        "text_terms": ("customer provides", "customer will", "customer responsibility", "owner provides"),
+    },
+    {
+        "field_id": "vendor_responsibilities",
+        "label": "Vendor / contractor responsibilities stated",
+        "category": "scope",
+        "predicate": "text_match",
+        "text_terms": ("vendor will", "vendor provides", "vendor responsibility", "contractor will"),
+    },
+    # ── Closeout / handoff ────────────────────────────────────
+    {
+        "field_id": "as_built_required",
+        "label": "As-built documentation required",
+        "category": "closeout",
+        "predicate": "text_match",
+        "text_terms": ("as-built", "as built", "redline", "drawings"),
+    },
+    {
+        "field_id": "ops_handoff",
+        "label": "Operations handoff package defined",
+        "category": "closeout",
+        "predicate": "text_match",
+        "text_terms": ("handoff", "hand-off", "operations turnover", "runbook"),
+    },
+    {
+        "field_id": "training_required",
+        "label": "Training / knowledge transfer scope",
+        "category": "closeout",
+        "predicate": "text_match",
+        "text_terms": ("training", "knowledge transfer", "kt session", "user training"),
     },
 )
 
@@ -605,6 +821,11 @@ def build_srl_missing_checklist(
         and isinstance(a.value, dict)
         and isinstance(a.value.get("sla"), dict)
     ]
+    exclusions_atoms = [a for a in atoms if _atom_type_str(a) == "exclusion"]
+    addresses = sorted({
+        k for a in atoms for k in (a.entity_keys or [])
+        if k.startswith("address:") or k.startswith("zip:")
+    })
     all_text_lower = " ".join((a.raw_text or "").lower() for a in atoms)
 
     present: list[dict[str, Any]] = []
@@ -657,11 +878,33 @@ def build_srl_missing_checklist(
         elif predicate == "risks_with_owners":
             satisfied = len(risks_with_owner) >= 1
             evidence = {"risk_count": len(risks), "risks_with_owner": len(risks_with_owner)}
+        elif predicate == "any_address":
+            satisfied = len(addresses) > 0
+            evidence = {"address_count": len(addresses)}
+        elif predicate == "any_exclusion":
+            satisfied = len(exclusions_atoms) > 0
+            evidence = {"exclusion_atom_count": len(exclusions_atoms)}
+        elif predicate == "milestone_count_min":
+            min_count = int(field.get("min_count", 1) or 1)
+            satisfied = len(milestones) >= min_count
+            evidence = {"milestone_count": len(milestones), "required": min_count}
+        elif predicate == "scope_truth_clean":
+            # "Clean" means: device-mention atoms exist AND no cross-doc
+            # quantity contradictions remain unresolved. We approximate
+            # with: at least one device + atom_type=quantity AND fewer
+            # than 3 contradiction-shaped reasons in the atom stream.
+            qty_atoms = [
+                a for a in atoms
+                if _atom_type_str(a) in ("quantity", "vendor_line_item")
+                and any(k.startswith("device:") for k in (a.entity_keys or []))
+            ]
+            satisfied = len(qty_atoms) >= 1
+            evidence = {"qty_with_device_count": len(qty_atoms)}
 
         entry = {
             "field_id": field["field_id"],
             "label": field["label"],
-            "kind": field["kind"],
+            "category": field.get("category", "general"),
             "evidence": evidence,
         }
         if satisfied:
@@ -670,12 +913,25 @@ def build_srl_missing_checklist(
             missing.append(entry)
 
     coverage = len(present) / max(1, len(present) + len(missing))
+    # Per-category coverage so a PM can see which area of the SRL is
+    # thinnest (e.g. "schedule" 4/4 but "closeout" 0/3).
+    cat_present: Counter[str] = Counter(e.get("category", "general") for e in present)
+    cat_total: Counter[str] = Counter(e.get("category", "general") for e in present + missing)
+    by_category = {
+        c: {
+            "present": cat_present.get(c, 0),
+            "total": cat_total.get(c, 0),
+            "coverage": round(cat_present.get(c, 0) / max(1, cat_total.get(c, 0)), 3),
+        }
+        for c in sorted(cat_total)
+    }
     return {
-        "checklist_version": "srl_lite_v1",
+        "checklist_version": "srl_v2_expanded",
         "field_count": len(_SRL_REQUIRED_FIELDS),
         "present_count": len(present),
         "missing_count": len(missing),
         "coverage": round(coverage, 3),
+        "by_category": by_category,
         "present": present,
         "missing": missing,
     }
