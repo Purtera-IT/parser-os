@@ -60,6 +60,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.orbitbrief_core import (
+    build_pm_dashboard,
+    build_sow_readiness_scorecard,
+    build_srl_missing_checklist,
+)
 from app.core.schemas import (
     ArtifactType,
     CompileResult,
@@ -183,6 +188,19 @@ def build_orbitbrief_envelope(
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
     }
+    # OrbitBrief-Core deliverables — deterministic pre-aggregations so
+    # the downstream LLM synthesis layer (and the PM cockpit) can render
+    # the Monday-morning view, the SOW-readiness scorecard, and the
+    # required-fields checklist directly without re-scanning atoms.
+    envelope["pm_dashboard"] = build_pm_dashboard(
+        atoms=atoms, packets=packets, edges=edges, entities=entities,
+    )
+    envelope["sow_readiness_scorecard"] = build_sow_readiness_scorecard(
+        atoms=atoms, packets=packets, edges=edges, entities=entities,
+    )
+    envelope["srl_missing_checklist"] = build_srl_missing_checklist(
+        atoms=atoms, documents=documents,
+    )
     # Drawings section is omitted entirely on non-schematic projects so
     # the envelope shape stays byte-identical for the existing test grid.
     if drawings["artifacts"]:
