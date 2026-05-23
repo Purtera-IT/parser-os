@@ -180,7 +180,9 @@ def test_compile_writes_envelope_with_typed_atoms_and_verified_receipts(tmp_path
     json_path, md_path, sow_path = write_orbitbrief_envelope(project_dir=project, envelope=envelope)
     assert json_path.name == ENVELOPE_FILENAME
     assert md_path.name == ENVELOPE_MARKDOWN_FILENAME
-    assert sow_path.name == "sow.md"
+    # sow_path is the optional standalone SowSmith output —
+    # written when ``sowsmith`` package is on the path, None otherwise.
+    assert sow_path is None or sow_path.name == "sow.md"
     md_text = md_path.read_text(encoding="utf-8")
     assert "## File:" in md_text
     assert '<a id="blk_' in md_text
