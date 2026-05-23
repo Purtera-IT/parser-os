@@ -161,7 +161,7 @@ def orbitbrief_envelope(
         project_dir=project_dir,
         compile_result=result,
     )
-    json_path, md_path, sow_preview_path = write_orbitbrief_envelope(
+    json_path, md_path, sow_path = write_orbitbrief_envelope(
         project_dir=project_dir,
         envelope=envelope,
         out_dir=out_dir,
@@ -171,7 +171,7 @@ def orbitbrief_envelope(
             {
                 "envelope_json": str(json_path),
                 "envelope_md": str(md_path),
-                "sow_preview_md": str(sow_preview_path),
+                "sow_md": str(sow_path),
                 "documents": len(envelope.get("documents", [])),
                 "atoms": len(envelope.get("atoms", [])),
                 "packets": len(envelope.get("packets", [])),
