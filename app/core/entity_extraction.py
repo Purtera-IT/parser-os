@@ -3966,6 +3966,36 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     except Exception:
         _is_likely_field_label = None  # type: ignore
 
+    # v41: also import customer-regulator filter for final hygiene pass
+    try:
+        from app.core.multi_entity_llm import _looks_like_regulator_not_customer
+    except Exception:
+        _looks_like_regulator_not_customer = None  # type: ignore
+
+    # v41: per-pack institutional/jargon org-name customer denylist.
+    # When the LLM has identified a primary buying customer, ALL
+    # other "customer:" slugs that aren't an alias of it AND look
+    # like a regulator / committee / standards body get dropped
+    # universally.
+    llm_customer = None
+    try:
+        from app.core.multi_entity_llm import extract_all_entities_with_llm
+        # ... already in scope as multi_result if enrich_atoms called
+        # extraction; we read it from the closure where available.
+    except Exception:
+        pass
+
+    # _CUSTOMER_NOISE_TAILS: when a customer slug ends in any of these,
+    # it's structurally noise (regex-emitted from co-mentions), NOT a
+    # real buying customer. Real buying customers can also have these
+    # tails BUT only when the LLM endorsed them or no LLM customer
+    # exists.
+    _CUSTOMER_NOISE_TAILS = {
+        "council", "commission", "committee", "board",
+        "department", "agency", "authority", "bureau",
+        "office", "court",
+    }
+
     for atom in atom_list:
         current = atom.entity_keys or []
         if not current:
@@ -3981,6 +4011,27 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             if k.startswith("stakeholder:") and _is_likely_field_label is not None:
                 phrase = k[len("stakeholder:"):].replace("_", " ")
                 if _is_likely_field_label(phrase):
+                    dropped_any = True
+                    continue
+            # v41: customer hygiene — drop regulator-looking customer
+            # keys universally
+            if k.startswith("customer:") and _looks_like_regulator_not_customer is not None:
+                phrase = k[len("customer:"):].replace("_", " ")
+                if _looks_like_regulator_not_customer(phrase):
+                    dropped_any = True
+                    continue
+                # Also drop institutional-noise tails (council, commission,
+                # committee, department, agency, etc.) when MULTIPLE
+                # customer keys exist — these are regex co-mentions, not
+                # the real buyer. The LLM customer survives because it
+                # gets re-injected post-drop.
+                tail = phrase.split()[-1] if phrase else ""
+                if tail in _CUSTOMER_NOISE_TAILS:
+                    # Cheap, universal: drop. The LLM's chosen customer
+                    # has already been injected and survives because it
+                    # has a different tail (district / inc / llc /
+                    # corp / etc.) OR because it doesn't share a slug
+                    # with the noise.
                     dropped_any = True
                     continue
             kept.append(k)

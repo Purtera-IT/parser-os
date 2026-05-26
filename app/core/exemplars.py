@@ -111,6 +111,15 @@ STAKEHOLDER_EXEMPLARS: list[str] = [
     # Project organization callouts
     "Heartland's implementation team is led by Shaun Tozer.",
     "Renee Watkins will serve as the IT Director for post-go-live support.",
+    # NEW v41 — Team roster / signature block patterns
+    "Front of the House: Lisa Brock/Implementation Project Manager, Randall Hughes/Specialist, Michael Panzica/Client Support.",
+    "Account Team: Alice Brown — Customer Success, Bob White — Solution Architect.",
+    "Implementation Team consists of Lisa Brock, Michael Panzica, and Sarah Smith.",
+    "Key personnel: Kaylee Yinger (PM), Lisa Brock (Implementation Lead), Michael Panzica (Client Support).",
+    "Heartland Project Manager: Shaun Tozer; Lead Engineer: Matthew Brener.",
+    "Project staff include Jane Doe, John Smith, and Sarah Johnson.",
+    "Senior Project Manager Michael Panzica oversees client onboarding.",
+    "Engineering lead: Renee Watkins. Field operations: Camila Brooks. Sales: Noah Patel.",
 ]
 
 

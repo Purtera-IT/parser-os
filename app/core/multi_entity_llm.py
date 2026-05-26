@@ -1075,8 +1075,8 @@ def _extract_stakeholders_retrieved(
         by_artifact,
         entity_type="stakeholder",
         exemplars=STAKEHOLDER_EXEMPLARS,
-        top_k_per_artifact=200,
-        min_score=0.35,
+        top_k_per_artifact=300,
+        min_score=0.30,
         canonical_key="name",
     )
     out = []
