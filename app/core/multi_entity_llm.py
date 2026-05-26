@@ -592,6 +592,14 @@ _FIELD_LABEL_TAILS: frozenset[str] = frozenset({
     "address", "addresses", "phone", "phones", "email", "emails",
     "date", "dates", "time", "times",
     "window", "windows", "range", "ranges",
+    # Insurance / legal / procurement jargon often misclassified
+    "insurance", "policy", "policies", "coverage",
+    "injury", "damage", "claim", "claims",
+    "order", "orders", "invoice", "invoices",
+    "service", "services", "department", "departments",
+    "office", "offices", "agency", "agencies", "authority",
+    "board", "boards", "committee", "committees", "council", "councils",
+    "court", "courts", "commission", "commissions",
 })
 
 _FIELD_LABEL_PHRASES: frozenset[str] = frozenset({
@@ -605,21 +613,83 @@ _FIELD_LABEL_PHRASES: frozenset[str] = frozenset({
     "mock deal", "mock document",
     "primary contact", "secondary contact",
     "internal contact", "external contact",
-    "the customer", "the contractor", "the bidder",
-    "the engineer", "the architect", "the vendor",
-    "the project", "the team",
+    "customer", "contractor", "bidder",
+    "engineer", "architect", "vendor",
+    "project", "team",
+    "county", "city", "town", "district",
+    # Insurance / legal patterns
+    "bodily injury", "property damage",
+    "liability insurance", "general liability",
+    "workers comp", "workers compensation",
+    "policy holder", "policy holders",
+    # Procurement patterns
+    "purchase order", "purchase orders",
+    "invoice receipt", "receipt invoice",
+    "rfp response", "rfq response",
+    # Mail / postal
+    "postal office", "post office", "us postal",
+    "fed ex", "fedex", "ups", "usps",
+})
+
+
+_ORG_TOKENS: frozenset[str] = frozenset({
+    # Government / jurisdictional
+    "county", "city", "town", "state", "federal", "municipal",
+    # Org body types
+    "court", "board", "committee", "council", "commission",
+    "department", "office", "agency", "authority", "bureau",
+    "ministry", "directorate",
+    # Postal / mail
+    "postal",
+    # Legal / financial
+    "treasurer", "comptroller",
+    # Generic
+    "us", "usa", "u.s.", "u.s.a.",
 })
 
 
 def _is_likely_field_label(name: str) -> bool:
-    """True if name looks like a field label / column header, not a person."""
+    """True if name looks like a field label / column header / org
+    name, NOT a real person.
+
+    Pipeline:
+      1. Strip leading articles ("the ", "a ", "an "), repeated.
+      2. Exact phrase match against the denylist.
+      3. Single-word matching the tail-word denylist.
+      4. Trailing-word matching the tail-word denylist (catches
+         "Liability Insurance", "Purchase Order", etc.).
+      5. ANY org-keyword token present (catches "Hood County
+         Emergency", "County Commissioners", "U.S. Postal", etc.).
+    """
     norm = re.sub(r"\s+", " ", name.lower().strip())
+    # Strip leading articles (handle "the the" too)
+    while True:
+        changed = False
+        for art in ("the ", "a ", "an "):
+            if norm.startswith(art):
+                norm = norm[len(art):]
+                changed = True
+        if not changed:
+            break
     if not norm:
         return True
     if norm in _FIELD_LABEL_PHRASES:
         return True
     tokens = norm.split()
-    if tokens and tokens[-1] in _FIELD_LABEL_TAILS:
+    if not tokens:
+        return True
+    # Single-word match against tails (e.g. "Insurance" alone)
+    if len(tokens) == 1 and tokens[0] in _FIELD_LABEL_TAILS:
+        return True
+    # Tail-word match against denylist (e.g. "Liability Insurance",
+    # "Hood County", "Purchase Order")
+    if tokens[-1] in _FIELD_LABEL_TAILS:
+        return True
+    # ANY org-keyword present → not a person. Catches "Hood County
+    # Emergency", "County Commissioners", "U.S. Postal Service".
+    # Accept the rare false positive (a real person named "Sherry
+    # Court") to keep org names out of the stakeholder list.
+    if any(t in _ORG_TOKENS for t in tokens):
         return True
     return False
 

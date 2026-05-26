@@ -3739,6 +3739,12 @@ def _inject_multi_entity_keys(
     atoms whose text mentions the entity.
 
     Returns (atoms_modified, keys_added).
+
+    When the LLM provided customer or stakeholder data, ALL pre-
+    existing regex-emitted customer:/stakeholder: keys are dropped
+    first (the LLM read the full doc context and is the source of
+    truth for those categories). The injection then re-populates
+    with clean LLM-derived keys.
     """
     atoms_modified = 0
     keys_added = 0
@@ -3753,6 +3759,29 @@ def _inject_multi_entity_keys(
         name = s.get("name")
         if isinstance(name, str) and name.strip():
             stakeholder_entries.append((name.strip(), _slug(name)))
+
+    # LLM-trumps-regex: when the LLM gave us customer or
+    # stakeholder data, drop the noisy regex emissions for those
+    # categories so the LLM output is the source of truth.
+    drop_regex_customer = bool(customer_slug)
+    drop_regex_stakeholder = bool(stakeholder_entries)
+    if drop_regex_customer or drop_regex_stakeholder:
+        for atom in atom_list:
+            keys = atom.entity_keys or []
+            if not keys:
+                continue
+            filtered = []
+            changed = False
+            for k in keys:
+                if drop_regex_customer and k.startswith("customer:"):
+                    changed = True
+                    continue
+                if drop_regex_stakeholder and k.startswith("stakeholder:"):
+                    changed = True
+                    continue
+                filtered.append(k)
+            if changed:
+                atom.entity_keys = filtered
 
     milestones = multi.get("milestones") or []
     milestone_entries: list[tuple[str, str]] = []
