@@ -4378,6 +4378,67 @@ def _inject_multi_entity_keys(
             match_phrase = " ".join(words)
             quantity_entries.append((match_phrase, _slug(text[:80])))
 
+    # v43/v44.2 — wire the 5 new entity types into the injection layer.
+    # The extractors return data but until v44.2 this layer didn't
+    # know to inject `certification:` / `risk:` / `acceptance_criteria:`
+    # / `penalty:` / `compliance_obligation:` keys onto atoms — which
+    # meant entity_resolution never saw them and they ended up at 0
+    # in the final output.
+    certifications = multi.get("certifications") or []
+    cert_entries: list[tuple[str, str]] = []
+    for c in certifications:
+        name = c.get("name")
+        if isinstance(name, str) and name.strip():
+            words = [w for w in re.split(r"\W+", name) if len(w) >= 3][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            cert_entries.append((match_phrase, _slug(name[:80])))
+
+    risks = multi.get("risks") or []
+    risk_entries: list[tuple[str, str]] = []
+    for r in risks:
+        desc = r.get("description")
+        if isinstance(desc, str) and desc.strip():
+            words = [w for w in re.split(r"\W+", desc) if len(w) >= 4][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            risk_entries.append((match_phrase, _slug(desc[:80])))
+
+    acceptance_items = multi.get("acceptance_criteria") or []
+    acceptance_entries: list[tuple[str, str]] = []
+    for a in acceptance_items:
+        crit = a.get("criterion")
+        if isinstance(crit, str) and crit.strip():
+            words = [w for w in re.split(r"\W+", crit) if len(w) >= 4][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            acceptance_entries.append((match_phrase, _slug(crit[:80])))
+
+    penalties = multi.get("penalties") or []
+    penalty_entries: list[tuple[str, str]] = []
+    for p in penalties:
+        desc = p.get("description")
+        if isinstance(desc, str) and desc.strip():
+            words = [w for w in re.split(r"\W+", desc) if len(w) >= 4][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            penalty_entries.append((match_phrase, _slug(desc[:80])))
+
+    compliance_items = multi.get("compliance_obligations") or []
+    compliance_entries: list[tuple[str, str]] = []
+    for c in compliance_items:
+        obl = c.get("obligation")
+        if isinstance(obl, str) and obl.strip():
+            words = [w for w in re.split(r"\W+", obl) if len(w) >= 4][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            compliance_entries.append((match_phrase, _slug(obl[:80])))
+
     for atom in atom_list:
         full = _atom_full_text(atom)
         if not full:
@@ -4410,6 +4471,23 @@ def _inject_multi_entity_keys(
         for match_phrase, slug in quantity_entries:
             if _phrase_in_atom(match_phrase, full):
                 to_add.append(f"quantity:{slug}")
+
+        # v43/v44.2 — 5 new entity types
+        for match_phrase, slug in cert_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"certification:{slug}")
+        for match_phrase, slug in risk_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"risk:{slug}")
+        for match_phrase, slug in acceptance_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"acceptance_criteria:{slug}")
+        for match_phrase, slug in penalty_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"penalty:{slug}")
+        for match_phrase, slug in compliance_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"compliance_obligation:{slug}")
 
         # Sites — emit the CANONICAL site key for each cluster whose
         # alias phrase appears in this atom. This force-merges all
