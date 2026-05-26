@@ -422,6 +422,13 @@ def _is_obvious_non_site(normalized: str) -> bool:
     # Denylist match
     if normalized in _OBVIOUS_NON_SITES:
         return True
+    # Duplicate-token fragment: "MCS MCS", "POS POS", "BCSD BCSD" —
+    # these come from heading-split where the same code/acronym
+    # appears twice (cover page header echo, table-of-contents
+    # styling). Real site names never repeat a token verbatim.
+    _tokens = normalized.replace("-", " ").replace("_", " ").split()
+    if len(_tokens) >= 2 and len(set(_tokens)) == 1:
+        return True
     # Tiny single-word fragments (e.g., "apac", "back", "rock")
     if " " not in normalized and "-" not in normalized and "/" not in normalized:
         # Allow site codes (anything with digits) and 5+ char acronyms
