@@ -4263,6 +4263,20 @@ def _inject_multi_entity_keys(
             continue
         cluster_lookups.append((canon_slug, alias_phrases))
 
+    # v38: LLM quantities — bind by text-phrase to atoms that mention
+    # them so they become quantity:<slug> entities. Same loose-match
+    # pattern as requirements (longest meaningful word + 2-token hit).
+    quantities = multi.get("quantities") or []
+    quantity_entries: list[tuple[str, str]] = []
+    for q in quantities:
+        text = q.get("text")
+        if isinstance(text, str) and text.strip():
+            words = [w for w in re.split(r"\W+", text) if len(w) >= 3][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            quantity_entries.append((match_phrase, _slug(text[:80])))
+
     for atom in atom_list:
         full = _atom_full_text(atom)
         if not full:
@@ -4290,6 +4304,11 @@ def _inject_multi_entity_keys(
         for match_phrase, slug in requirement_entries:
             if _phrase_in_atom(match_phrase, full):
                 to_add.append(f"requirement:{slug}")
+
+        # Quantities (v38)
+        for match_phrase, slug in quantity_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"quantity:{slug}")
 
         # Sites — emit the CANONICAL site key for each cluster whose
         # alias phrase appears in this atom. This force-merges all
