@@ -3895,6 +3895,32 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         if dropped_any:
             atom.entity_keys = kept
 
+    # ─── FINAL PASS: contact-anchor stakeholder recovery ───
+    # The noisy regex _emit_stakeholders may have been dropped by the
+    # LLM-trumps-regex rule above (or by hygiene). The contact-anchor
+    # extractor (_emit_person_from_contact) is the LOW-FALSE-POSITIVE
+    # path — it requires an email or explicit "contact <Name>" /
+    # "Project Manager: <Name>" trigger, so its output is PM-critical
+    # signal that should NEVER be dropped just because the LLM ran
+    # successfully. Walk every atom one more time and re-emit those
+    # keys. Catches Glenn Tilleman, Shaun Tozer, John Foster, Matthew
+    # Brener even when LLM extract returned a different / no person.
+    for atom in atom_list:
+        raw = getattr(atom, "raw_text", "") or ""
+        if not raw:
+            continue
+        contact_keys = _emit_person_from_contact(raw)
+        contact_keys |= _emit_email_keys(raw)
+        contact_keys |= _emit_phone_keys(raw)
+        if not contact_keys:
+            continue
+        existing = set(atom.entity_keys or [])
+        new_keys = contact_keys - existing
+        if new_keys:
+            atom.entity_keys = sorted(existing | new_keys)
+            atoms_enriched += 1
+            total_keys_added += len(new_keys)
+
     return atoms_enriched, total_keys_added
 
 
@@ -3976,37 +4002,31 @@ def _inject_multi_entity_keys(
         if isinstance(name, str) and name.strip():
             stakeholder_entries.append((name.strip(), _slug(name)))
 
-    # LLM-trumps-regex rule (REVISED — softer to preserve PM-critical
-    # bid contacts):
+    # LLM-AUTHORITATIVE for customer + stakeholder when the LLM ran
+    # successfully (returned ANY output for any category):
     #
-    #   - customer:   drop regex emissions whenever LLM ran and
-    #                 returned a customer (LLM is reliable here —
-    #                 returns 1 canonical per pack)
-    #   - stakeholder: drop regex emissions ONLY when LLM RETURNED
-    #                  STAKEHOLDERS. When LLM returns 0 stakeholders,
-    #                  KEEP the regex output (filtered by hygiene) so
-    #                  we don't lose PM-critical bid contacts like
-    #                  "Glenn Tilleman, Hood County Purchasing Agent"
-    #                  or "Shaun Tozer, Project Manager".
-    #
-    # Why the asymmetry:
-    #   On a feasibility/spec pack with no explicit "people" sections,
-    #   the LLM correctly returns 0 stakeholders. But the bid-contact
-    #   email line (`gtilleman@hoodcounty.texas.gov`) is still in the
-    #   docs and the regex stakeholder extractor catches it. Dropping
-    #   regex output in that case loses the single most important
-    #   contact for the deal — which is the opposite of what PMs need.
-    #
-    #   For customer, dropping regex when LLM ran is safe because the
-    #   LLM is very reliable at customer identification (we see 1
-    #   customer per pack on all 15 OPTBOT-style packs).
+    #   - customer:    drop regex emissions; the LLM's single
+    #                  canonical customer is the truth.
+    #   - stakeholder: drop ALL regex _emit_stakeholders emissions
+    #                  (these include jargon-y false positives like
+    #                  "annual_electricity_bill" on Pack 14 Neptune
+    #                  because the regex catches any "First Last"
+    #                  + role-context pattern). The new contact-
+    #                  anchor emitter (_emit_person_from_contact)
+    #                  RUNS AGAIN at the end of enrich_atoms to
+    #                  recover PM-critical names like Glenn Tilleman,
+    #                  Shaun Tozer, John Foster, Matthew Brener.
+    #                  Contact-anchor requires email/phone or
+    #                  explicit trigger ("contact <Name>") so its
+    #                  false-positive rate is much lower than the
+    #                  noisy regex.
     llm_ran = bool(multi.get("customer") is not None or
                    multi.get("stakeholders") or
                    multi.get("milestones") or
                    multi.get("requirements") or
                    multi.get("site_clusters"))
     drop_regex_customer = llm_ran and bool(customer_slug)
-    drop_regex_stakeholder = llm_ran and bool(stakeholder_entries)
+    drop_regex_stakeholder = llm_ran
     if drop_regex_customer or drop_regex_stakeholder:
         for atom in atom_list:
             keys = atom.entity_keys or []
