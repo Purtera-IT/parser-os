@@ -985,7 +985,14 @@ _CANONICALIZE_PROMPTS: dict[str, str] = {
         "  - a job title alone with no person name\n"
         "  - a generic noun phrase ('end users', 'customer support', 'mosaic front')\n"
         "  - an email address used as a 'name'\n"
-        "  - a product / service / SaaS name\n\n"
+        "  - a product / service / SaaS name\n"
+        "  - a FRAGMENT like 'John S' / 'Russell R' / 'Edmund G' (single-letter\n"
+        "    initial as last name suggests the doc only shows redacted initials;\n"
+        "    NEVER fabricate the missing surname or letter-only 'name')\n"
+        "  - a single-word name with no surname (Russell / John / Edmund alone)\n\n"
+        "REQUIREMENT: each kept person MUST have a full surname (≥2 chars).\n"
+        "If you see 'Russell R.' with no full surname elsewhere, DROP — don't\n"
+        "extract 'Russell R' as a stakeholder.\n\n"
         "For each kept person, extract role + email/phone if visible.\n\n"
         "SENTENCE: {sentence}\n\n"
         "OUTPUT exactly one JSON object on one line:\n"
@@ -1521,6 +1528,20 @@ def _extract_stakeholders_retrieved(
                 continue
             if _is_likely_field_label(name):
                 continue
+            # v44.1: drop initial-only surnames ("John S" / "Russell R" /
+            # "Edmund G"). A real surname is ≥2 alphabetic chars.
+            tokens = name.split()
+            if len(tokens) >= 2:
+                last = tokens[-1].rstrip(".")
+                # Surname must be ≥2 chars AND not be a single-letter initial
+                if len(last) < 2 or (len(last) == 1 and last.isalpha()):
+                    continue
+                # Drop "Name X." pattern where X is single uppercase letter
+                if len(last) == 2 and last[1] == "." and last[0].isupper():
+                    continue
+            if len(tokens) == 1:
+                # Single-word name without surname → drop
+                continue
             # Dedupe by name across multi-person entries
             sig = re.sub(r"\s+", " ", name.lower()).strip()[:120]
             if sig in seen_names:
@@ -1619,8 +1640,8 @@ def _extract_certifications_retrieved(
         by_artifact,
         entity_type="certification",
         exemplars=CERTIFICATION_EXEMPLARS,
-        top_k_per_artifact=200,
-        min_score=0.35,
+        top_k_per_artifact=300,
+        min_score=0.25,  # v44.1: lowered — was 0.35, missed cabling/wireless certs
         canonical_key="canonical",
     )
     out = []
@@ -1647,8 +1668,8 @@ def _extract_risks_retrieved(
         by_artifact,
         entity_type="risk",
         exemplars=RISK_EXEMPLARS,
-        top_k_per_artifact=200,
-        min_score=0.32,
+        top_k_per_artifact=300,
+        min_score=0.25,  # v44.1: lowered
         canonical_key="canonical",
     )
     out = []
@@ -1675,8 +1696,8 @@ def _extract_acceptance_retrieved(
         by_artifact,
         entity_type="acceptance",
         exemplars=ACCEPTANCE_EXEMPLARS,
-        top_k_per_artifact=150,
-        min_score=0.32,
+        top_k_per_artifact=250,
+        min_score=0.25,  # v44.1: lowered
         canonical_key="canonical",
     )
     out = []
@@ -1703,8 +1724,8 @@ def _extract_penalties_retrieved(
         by_artifact,
         entity_type="penalty",
         exemplars=PENALTY_EXEMPLARS,
-        top_k_per_artifact=150,
-        min_score=0.32,
+        top_k_per_artifact=250,
+        min_score=0.25,  # v44.1: lowered
         canonical_key="canonical",
     )
     out = []
@@ -1732,8 +1753,8 @@ def _extract_compliance_obligations_retrieved(
         by_artifact,
         entity_type="compliance_obligation",
         exemplars=COMPLIANCE_EXEMPLARS,
-        top_k_per_artifact=200,
-        min_score=0.32,
+        top_k_per_artifact=300,
+        min_score=0.25,  # v44.1: lowered
         canonical_key="canonical",
     )
     out = []
@@ -1978,6 +1999,16 @@ _FIELD_LABEL_PHRASES: frozenset[str] = frozenset({
     "engineer", "architect", "vendor",
     "project", "team",
     "county", "city", "town", "district",
+    # v44.1: form-field label leaks
+    "date issue", "issue date", "issued date",
+    "effective date", "expiration date", "due date",
+    "page number", "page", "section number",
+    "doc number", "document number", "form number",
+    "revision number", "version number",
+    "from", "to", "by", "via",
+    "yes", "no", "n/a", "tbd",
+    "true", "false",
+    "name", "title", "role",
     # Insurance / legal patterns
     "bodily injury", "property damage",
     "liability insurance", "general liability",
