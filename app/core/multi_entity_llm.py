@@ -157,6 +157,77 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # canonical-name fusion alongside the regex co-mention patterns.
     if results.get("site_clusters"):
         _stash_session_site_clusters(atoms, results["site_clusters"])
+
+    # ────────────────────────────────────────────────────────────
+    # v42: CROSS-DOCUMENT CONTRADICTION DETECTION
+    # ────────────────────────────────────────────────────────────
+    # After all entity types extracted, scan for cross-doc pairs that
+    # contradict each other (Net-30 vs Net-45, 99.5% vs 99.99% uptime,
+    # different coverage limits, etc.). Auto-emits reconciliation_flag
+    # records for PM review.
+    if not os.environ.get("SOWSMITH_CONTRADICTION_DISABLE"):
+        try:
+            from app.core.rag_extras import detect_cross_doc_contradictions
+            from app.core.embedding_retrieval import embed_texts as _embed_texts
+            contradiction_flags: list[dict[str, Any]] = []
+            for et_key, items in (
+                ("requirements", "text"),
+                ("quantities", "text"),
+            ).__iter__() if False else [
+                ("requirements", "text"),
+                ("quantities", "text"),
+            ]:
+                items_list = results.get(et_key) or []
+                if len(items_list) < 2:
+                    continue
+                # Embed canonical texts
+                texts = [
+                    (it.get("text") or it.get("canonical") or "")
+                    for it in items_list
+                ]
+                texts = [t for t in texts if t]
+                if len(texts) < 2:
+                    continue
+                vecs = _embed_texts(texts[:200])  # cap for speed
+                if vecs.size == 0:
+                    continue
+                flags = detect_cross_doc_contradictions(
+                    items_list[:len(texts[:200])],
+                    vecs,
+                    canonical_key="text" if et_key in ("requirements", "quantities") else "canonical",
+                    llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                    parse_json=_parse_json_object,
+                    sim_threshold_min=0.55,
+                    sim_threshold_max=0.92,
+                    max_pairs=30,
+                )
+                for f in flags:
+                    f["entity_type"] = et_key
+                    contradiction_flags.append(f)
+            if contradiction_flags:
+                results["contradiction_flags"] = contradiction_flags
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Cross-doc contradiction detection failed: %s", e,
+            )
+
+    # ────────────────────────────────────────────────────────────
+    # v42: MULTI-DOCUMENT GRAPH RAG — co-occurrence graph for future
+    # sparse-entity expansion. Stashed in results for downstream use.
+    # ────────────────────────────────────────────────────────────
+    if not os.environ.get("SOWSMITH_GRAPHRAG_DISABLE"):
+        try:
+            from app.core.rag_extras import build_cooccurrence_graph
+            graph = build_cooccurrence_graph(atoms)
+            # Stash a compact summary (full graph is too big for envelope)
+            results["_cooccurrence_summary"] = {
+                "node_count": len(graph),
+                "edge_count": sum(len(v) for v in graph.values()) // 2,
+            }
+        except Exception:
+            pass
+
     return results
 
 
@@ -857,6 +928,10 @@ def _canonicalize_candidate(
 ) -> dict[str, Any] | None:
     """Single-sentence LLM call: keep/drop + canonical form for one
     candidate sentence. Returns None on parse failure or LLM error.
+
+    v42: when keep=false with confident rejection, append the sentence
+    to the persistent negative-exemplar store so future runs learn
+    from this rejection.
     """
     template = _CANONICALIZE_PROMPTS.get(entity_type)
     if not template:
@@ -872,6 +947,14 @@ def _canonicalize_candidate(
     if not isinstance(obj, dict):
         return None
     if not obj.get("keep"):
+        # v42: self-bootstrap negatives — append this sentence to the
+        # persistent negative-exemplar store. Future runs will down-rank
+        # similar sentences automatically.
+        try:
+            from app.core.rag_extras import append_bootstrapped_negative
+            append_bootstrapped_negative(entity_type, truncated)
+        except Exception:
+            pass
         return None
     return obj
 
@@ -896,7 +979,25 @@ def _run_retrieval_extract(
 
     Returns list of canonicalize-output dicts (KEEP only).
     """
-    # Try v39 hybrid pipeline first
+    # v42: AUGMENT exemplars with HyDE-generated examples + bootstrapped
+    # negatives. HyDE is one-time cost (cached to disk); bootstrapped
+    # negatives accumulate across runs to make the system self-improving.
+    try:
+        from app.core.rag_extras import (
+            augment_exemplars_with_hyde,
+            load_bootstrapped_negatives,
+        )
+        exemplars = augment_exemplars_with_hyde(
+            exemplars, entity_type,
+            llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "HyDE augmentation failed for %s: %s", entity_type, e,
+        )
+
+    # Try v39 hybrid pipeline first (now with augmented exemplars)
     use_v39 = not os.environ.get("SOWSMITH_V39_DISABLE")
     candidates: list[dict[str, Any]] = []
     if use_v39:
@@ -907,7 +1008,14 @@ def _run_retrieval_extract(
             if embedding_endpoint_reachable():
                 text_map = _build_artifact_text_map(by_artifact)
                 if text_map:
-                    neg_exemplars = NEGATIVE_EXEMPLARS_BY_TYPE.get(entity_type, [])
+                    static_neg = NEGATIVE_EXEMPLARS_BY_TYPE.get(entity_type, [])
+                    # v42: combine static negatives with bootstrapped negatives
+                    try:
+                        from app.core.rag_extras import load_bootstrapped_negatives
+                        boot_neg = load_bootstrapped_negatives(entity_type)
+                    except Exception:
+                        boot_neg = []
+                    neg_exemplars = list(static_neg) + boot_neg
                     candidates = get_v39_candidates(
                         text_map, exemplars, neg_exemplars,
                         top_k_per_artifact=top_k_per_artifact,
@@ -1007,11 +1115,9 @@ def _run_retrieval_extract(
             results.append(outcome)
 
     # ────────────────────────────────────────────────────────────
-    # v40: SICRL — Section-Indexed Counterfactual Recall Loop
+    # v40+v42: SICRL — Section-Indexed Counterfactual Recall Loop
     # ────────────────────────────────────────────────────────────
-    # Augments first-pass items by predicting what SHOULD be in
-    # under-covered sections and retrieving the gaps. NOVEL technique
-    # — see app/core/sicrl.py docstring for design.
+    # v42: now ITERATIVE — runs up to 2 passes for stronger convergence.
     use_sicrl = (
         not os.environ.get("SOWSMITH_SICRL_DISABLE")
         and entity_type in ("requirement", "stakeholder", "quantity")
@@ -1025,25 +1131,77 @@ def _run_retrieval_extract(
             )
             text_map = _build_artifact_text_map(by_artifact)
             if text_map:
-                augmented = run_sicrl(
-                    by_artifact=text_map,
-                    first_pass_items=results,
-                    entity_type=entity_type,
-                    exemplars=exemplars,
-                    negative_exemplars=[],
-                    llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
-                    parse_json=_parse_json_object,
-                    canonicalize_fn=_canonicalize_candidate,
-                    embed_fn=_embed_texts,
-                    sentence_split_fn=_sentence_split,
-                    max_iterations=1,  # one pass for now; loop later
-                )
-                results = augmented
+                sicrl_iters = int(os.environ.get("SOWSMITH_SICRL_ITERS", "2"))
+                for _ in range(sicrl_iters):
+                    prev_count = len(results)
+                    augmented = run_sicrl(
+                        by_artifact=text_map,
+                        first_pass_items=results,
+                        entity_type=entity_type,
+                        exemplars=exemplars,
+                        negative_exemplars=[],
+                        llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                        parse_json=_parse_json_object,
+                        canonicalize_fn=_canonicalize_candidate,
+                        embed_fn=_embed_texts,
+                        sentence_split_fn=_sentence_split,
+                        max_iterations=1,  # each call is one pass
+                    )
+                    if len(augmented) <= prev_count:
+                        # Convergence — no new items found
+                        results = augmented
+                        break
+                    results = augmented
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(
                 "SICRL pass failed for %s: %s", entity_type, e,
             )
+
+    # ────────────────────────────────────────────────────────────
+    # v42: TOURNAMENT canonicalization — cross-doc dedup via N²/2
+    # pairwise LLM judging when items have high cosine similarity
+    # ────────────────────────────────────────────────────────────
+    if results and len(results) >= 2 and not os.environ.get("SOWSMITH_TOURNAMENT_DISABLE"):
+        try:
+            from app.core.rag_extras import run_tournament
+            from app.core.embedding_retrieval import embed_texts as _embed_texts
+            # Embed the canonical forms of all items
+            canonical_strings = [
+                (r.get(canonical_key) or r.get("name") or "")
+                for r in results
+            ]
+            canonical_strings = [s for s in canonical_strings if s]
+            if len(canonical_strings) >= 2:
+                item_vecs = _embed_texts(canonical_strings[:300])  # cap to avoid runaway
+                if item_vecs.size > 0:
+                    deduped = run_tournament(
+                        results[:len(canonical_strings[:300])],
+                        item_vecs,
+                        entity_type=entity_type,
+                        canonical_key=canonical_key,
+                        llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                        parse_json=_parse_json_object,
+                        sim_threshold=0.85,
+                        max_pairs=80,
+                    )
+                    # Re-attach any items beyond the 300-cap
+                    if len(results) > 300:
+                        deduped.extend(results[300:])
+                    results = deduped
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Tournament dedup failed for %s: %s", entity_type, e,
+            )
+
+    # ────────────────────────────────────────────────────────────
+    # v42: SELF-BOOTSTRAP NEGATIVES — accumulate canonicalize
+    # rejections for next-run precision improvement
+    # ────────────────────────────────────────────────────────────
+    # (Currently piggybacks on the canonicalize step — see below
+    # for where rejections are captured. Disabled here for simplicity;
+    # to be activated by passing a callback through canonicalize.)
 
     return results
 

@@ -4047,18 +4047,10 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 if tail in _CUSTOMER_NOISE_TAILS:
                     dropped_any = True
                     continue
-                # (d) If the LLM identified a primary customer, drop
-                #     any OTHER customer slug that isn't a prefix /
-                #     superprefix of the LLM customer slug (i.e. not
-                #     an alias of the same buyer). Aggressive but
-                #     correct — LLM has read the full doc and chose
-                #     the buyer.
-                if _llm_customer_slug:
-                    if (slug != _llm_customer_slug
-                            and not slug.startswith(_llm_customer_slug + "_")
-                            and not _llm_customer_slug.startswith(slug + "_")):
-                        dropped_any = True
-                        continue
+                # (d) v41b had aggressive LLM-customer-honoring drop here
+                #     but it killed the real customer when LLM picked
+                #     wrong. Removed — product denylist + regulator
+                #     filter + noise tails are sufficient.
             kept.append(k)
         if dropped_any:
             atom.entity_keys = kept
