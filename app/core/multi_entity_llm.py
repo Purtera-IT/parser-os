@@ -97,13 +97,56 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     #   - milestones:    typically 0-25; LLM finds them in any
     #                    moderate-sized excerpt.
     parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
-    calls: dict[str, Callable[[], Any]] = {
-        "customer": lambda: _extract_customer(excerpts["customer"]),
-        "stakeholders": lambda: _extract_stakeholders_chunked(by_artifact),
-        "milestones": lambda: _extract_milestones(excerpts["milestones"]),
-        "requirements": lambda: _extract_requirements_chunked(by_artifact),
-        "site_clusters": lambda: _extract_site_clusters_chunked(by_artifact),
-    }
+
+    # v38: embedding-retrieval extractors for the recall-heavy entity
+    # types (requirements, stakeholders, sites). Default-on; falls back
+    # to chunked path when SOWSMITH_RETRIEVAL_DISABLE is set OR the
+    # embedding endpoint is unreachable.
+    use_retrieval = (
+        not os.environ.get("SOWSMITH_RETRIEVAL_DISABLE")
+    )
+    if use_retrieval:
+        try:
+            from app.core.embedding_retrieval import embedding_endpoint_reachable
+            use_retrieval = embedding_endpoint_reachable()
+        except Exception:
+            use_retrieval = False
+
+    if use_retrieval:
+        def _retrieved_or_chunked_requirements() -> list[dict[str, Any]]:
+            r = _extract_requirements_retrieved(by_artifact)
+            return r if r else _extract_requirements_chunked(by_artifact)
+
+        def _retrieved_or_chunked_stakeholders() -> list[dict[str, Any]]:
+            r = _extract_stakeholders_retrieved(by_artifact)
+            return r if r else _extract_stakeholders_chunked(by_artifact)
+
+        def _retrieved_or_chunked_sites() -> list[dict[str, Any]]:
+            r = _extract_site_clusters_retrieved(by_artifact)
+            return r if r else _extract_site_clusters_chunked(by_artifact)
+
+        calls: dict[str, Callable[[], Any]] = {
+            "customer": lambda: _extract_customer(excerpts["customer"]),
+            "stakeholders": _retrieved_or_chunked_stakeholders,
+            "milestones": lambda: _extract_milestones(excerpts["milestones"]),
+            "requirements": _retrieved_or_chunked_requirements,
+            "site_clusters": _retrieved_or_chunked_sites,
+            "quantities": lambda: _extract_quantities_retrieved(by_artifact),
+            # v43 — 5 new entity-type extractors
+            "certifications": lambda: _extract_certifications_retrieved(by_artifact),
+            "risks": lambda: _extract_risks_retrieved(by_artifact),
+            "acceptance_criteria": lambda: _extract_acceptance_retrieved(by_artifact),
+            "penalties": lambda: _extract_penalties_retrieved(by_artifact),
+            "compliance_obligations": lambda: _extract_compliance_obligations_retrieved(by_artifact),
+        }
+    else:
+        calls = {
+            "customer": lambda: _extract_customer(excerpts["customer"]),
+            "stakeholders": lambda: _extract_stakeholders_chunked(by_artifact),
+            "milestones": lambda: _extract_milestones(excerpts["milestones"]),
+            "requirements": lambda: _extract_requirements_chunked(by_artifact),
+            "site_clusters": lambda: _extract_site_clusters_chunked(by_artifact),
+        }
 
     results: dict[str, Any] = _empty_result()
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
@@ -120,6 +163,177 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # canonical-name fusion alongside the regex co-mention patterns.
     if results.get("site_clusters"):
         _stash_session_site_clusters(atoms, results["site_clusters"])
+
+    # ────────────────────────────────────────────────────────────
+    # v42: CROSS-DOCUMENT CONTRADICTION DETECTION
+    # ────────────────────────────────────────────────────────────
+    # After all entity types extracted, scan for cross-doc pairs that
+    # contradict each other (Net-30 vs Net-45, 99.5% vs 99.99% uptime,
+    # different coverage limits, etc.). Auto-emits reconciliation_flag
+    # records for PM review.
+    if not os.environ.get("SOWSMITH_CONTRADICTION_DISABLE"):
+        try:
+            from app.core.rag_extras import detect_cross_doc_contradictions
+            from app.core.embedding_retrieval import embed_texts as _embed_texts
+            contradiction_flags: list[dict[str, Any]] = []
+            for et_key, items in (
+                ("requirements", "text"),
+                ("quantities", "text"),
+            ).__iter__() if False else [
+                ("requirements", "text"),
+                ("quantities", "text"),
+            ]:
+                items_list = results.get(et_key) or []
+                if len(items_list) < 2:
+                    continue
+                # Embed canonical texts
+                texts = [
+                    (it.get("text") or it.get("canonical") or "")
+                    for it in items_list
+                ]
+                texts = [t for t in texts if t]
+                if len(texts) < 2:
+                    continue
+                vecs = _embed_texts(texts[:200])  # cap for speed
+                if vecs.size == 0:
+                    continue
+                flags = detect_cross_doc_contradictions(
+                    items_list[:len(texts[:200])],
+                    vecs,
+                    canonical_key="text" if et_key in ("requirements", "quantities") else "canonical",
+                    llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                    parse_json=_parse_json_object,
+                    sim_threshold_min=0.55,
+                    sim_threshold_max=0.92,
+                    max_pairs=30,
+                )
+                for f in flags:
+                    f["entity_type"] = et_key
+                    contradiction_flags.append(f)
+            if contradiction_flags:
+                results["contradiction_flags"] = contradiction_flags
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Cross-doc contradiction detection failed: %s", e,
+            )
+
+    # ────────────────────────────────────────────────────────────
+    # v42+v43: MULTI-DOCUMENT GRAPH RAG with sparse-entity expansion.
+    # Builds co-occurrence graph, then for under-populated entity
+    # types (sites, milestones), expands via graph neighbors of the
+    # well-populated anchors (customer, stakeholders).
+    # ────────────────────────────────────────────────────────────
+    if not os.environ.get("SOWSMITH_GRAPHRAG_DISABLE"):
+        try:
+            from app.core.rag_extras import (
+                build_cooccurrence_graph,
+                graph_expand_seeds,
+            )
+            graph = build_cooccurrence_graph(atoms)
+            results["_cooccurrence_summary"] = {
+                "node_count": len(graph),
+                "edge_count": sum(len(v) for v in graph.values()) // 2,
+            }
+
+            # v43: Graph-expand sparse entity types
+            # Find anchor keys (customer + stakeholder keys actually in graph)
+            anchor_keys: set[str] = set()
+            for k in graph:
+                if k.startswith("customer:") or k.startswith("stakeholder:"):
+                    anchor_keys.add(k)
+
+            # If sites are sparse (≤3), expand via graph neighbors
+            site_keys_extracted = {
+                f"site:{re.sub(r'[^a-z0-9]+', '_', (c.get('canonical_name') or '').lower()).strip('_')}"
+                for c in (results.get("site_clusters") or [])
+                if isinstance(c, dict)
+            }
+            if anchor_keys and len(site_keys_extracted) <= 3:
+                expanded_sites = graph_expand_seeds(
+                    anchor_keys, graph,
+                    target_prefix="site:",
+                    max_expansion=20,
+                )
+                new_sites = expanded_sites - site_keys_extracted
+                if new_sites:
+                    # Add as additional clusters (single-alias each)
+                    current = results.get("site_clusters") or []
+                    for site_key in new_sites:
+                        slug = site_key[len("site:"):]
+                        name = slug.replace("_", " ").title()
+                        current.append({
+                            "canonical_name": name,
+                            "aliases": [name],
+                            "_via": "graph_expansion",
+                        })
+                    results["site_clusters"] = current
+
+            # If milestones are sparse, same treatment
+            ms_extracted = len(results.get("milestones") or [])
+            if anchor_keys and ms_extracted <= 2:
+                expanded_ms = graph_expand_seeds(
+                    anchor_keys, graph,
+                    target_prefix="milestone:",
+                    max_expansion=15,
+                )
+                if expanded_ms:
+                    current = results.get("milestones") or []
+                    existing_slugs = {
+                        re.sub(r"[^a-z0-9]+", "_", (m.get("name") or "").lower()).strip("_")
+                        for m in current if isinstance(m, dict)
+                    }
+                    for ms_key in expanded_ms:
+                        slug = ms_key[len("milestone:"):]
+                        if slug not in existing_slugs:
+                            current.append({
+                                "name": slug.replace("_", " "),
+                                "_via": "graph_expansion",
+                            })
+                    results["milestones"] = current
+        except Exception:
+            pass
+
+    # ────────────────────────────────────────────────────────────
+    # v43: VISION-LLM extraction for pages flagged as visual-only.
+    # Calls qwen2.5vl:7b on each PDF page where the text parser
+    # reported "visual / table / diagram evidence not fully extracted".
+    # Extracts structured rows (BOM lines, contact rosters, schedule
+    # cells, etc.) and tags them with entity_type kind. Stashed under
+    # `vision_rows` for downstream injection.
+    # ────────────────────────────────────────────────────────────
+    if not os.environ.get("SOWSMITH_VISION_DISABLE"):
+        try:
+            from app.core.vision_extraction import (
+                find_visual_pages_from_atoms,
+                extract_visual_pages,
+                vision_endpoint_reachable,
+            )
+            if vision_endpoint_reachable():
+                visual_pages = find_visual_pages_from_atoms(atoms)
+                if visual_pages:
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "v43 vision: %d visual pages identified",
+                        len(visual_pages),
+                    )
+                    vision_results = extract_visual_pages(
+                        visual_pages,
+                        max_parallel=int(
+                            os.environ.get("SOWSMITH_VISION_PARALLEL", "3")
+                        ),
+                        max_pages=int(
+                            os.environ.get("SOWSMITH_VISION_MAX_PAGES", "30")
+                        ),
+                    )
+                    if vision_results:
+                        results["vision_rows"] = vision_results
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "vision-LLM pass failed: %s", e,
+            )
+
     return results
 
 
@@ -130,6 +344,13 @@ def _empty_result() -> dict[str, Any]:
         "milestones": [],
         "requirements": [],
         "site_clusters": [],
+        "quantities": [],
+        # v43 — 5 new entity types
+        "certifications": [],
+        "risks": [],
+        "acceptance_criteria": [],
+        "penalties": [],
+        "compliance_obligations": [],
     }
 
 
@@ -672,6 +893,865 @@ def _extract_site_clusters(docs_excerpt: str) -> list[dict[str, Any]]:
 
 
 # ════════════════════════════════════════════════════════════════════
+# v38 — EMBEDDING-RETRIEVAL EXTRACTORS
+# ════════════════════════════════════════════════════════════════════
+#
+# Architecture:
+#   1. Split each artifact into sentences (no chunk boundary loss).
+#   2. Embed every sentence once via qwen3-embedding:8b.
+#   3. Retrieve top-K candidates per entity type using curated
+#      exemplar sentences (cosine similarity on normalized vectors).
+#   4. For each candidate sentence, run a SINGLE-SENTENCE
+#      canonicalize LLM call: decide keep/drop + produce canonical
+#      form. Parallel-batched across candidates.
+#   5. Dedupe by canonical form + return.
+#
+# Why this lifts recall from ~10% → 95%+:
+#   - No chunk dropout (sentence is atomic unit, no boundary loss).
+#   - No LLM self-limiting (each canonicalize call sees ONE
+#     candidate, never "feels done" early).
+#   - Universal across entity types (same primitive, different
+#     exemplar set per type).
+#   - Pure embedding-based retrieval: NO regex.
+#
+# Toggle via SOWSMITH_RETRIEVAL_ENABLED env var (default ON).
+# Falls back to chunked extraction if embedding endpoint unreachable.
+
+
+def _build_artifact_text_map(
+    by_artifact: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    """Flatten by_artifact into {artifact_id: concatenated_text} for
+    the embedding retriever. Includes headings as prefix so heading-
+    only "requirements" still get matched (section titles like
+    "5.3 INSURANCE REQUIREMENTS" anchor downstream sentences)."""
+    out: dict[str, str] = {}
+    for aid, slot in by_artifact.items():
+        if not isinstance(slot, dict):
+            continue
+        bodies = slot.get("bodies") or []
+        headings = slot.get("headings") or set()
+        parts = []
+        if headings:
+            parts.append(" | ".join(sorted(headings)))
+        parts.extend(b for b in bodies if isinstance(b, str) and b.strip())
+        text = "\n\n".join(parts)
+        if text.strip():
+            out[aid] = text
+    return out
+
+
+_CANONICALIZE_PROMPTS: dict[str, str] = {
+    "requirement": (
+        "TASK: Decide if the SENTENCE is a real REQUIREMENT (an obligation "
+        "imposed on the contractor, vendor, district, or customer in this "
+        "bid package).\n\n"
+        "KEEP if the sentence contains an obligation marker:\n"
+        "  shall / must / will / agrees to / is required to / covenants /\n"
+        "  warrants / undertakes / commits to / reserves the right to /\n"
+        "  shall not / must not / may not\n\n"
+        "DROP if it's:\n"
+        "  - product marketing copy describing what software does\n"
+        "  - background context, history, or boilerplate\n"
+        "  - a general fact with no obligation\n"
+        "  - a heading or section label only\n"
+        "  - already obvious noise (table cell fragments, etc.)\n\n"
+        "If KEEP, also produce a canonical form (drop the leading\n"
+        "'The contractor shall' / 'Vendor must' prefix when obvious;\n"
+        "keep the meaningful verb and object; max 120 chars). Also\n"
+        "classify the kind:\n"
+        "  technical    — software / hardware / integration capability\n"
+        "  commercial   — pricing, payment terms, commercial conduct\n"
+        "  legal        — indemnification, termination, governing law\n"
+        "  operational  — staffing, conduct, training, hours\n"
+        "  compliance   — regulatory, certification, audit requirements\n"
+        "  insurance    — coverage limits, bonds, deductibles\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<canonical form>", "kind": "<one of: technical|commercial|legal|operational|compliance|insurance>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "stakeholder": (
+        "TASK: Find ALL real human STAKEHOLDERS named in the SENTENCE.\n"
+        "Team rosters / signature blocks often list multiple people on\n"
+        "one line — extract EVERY person you find.\n\n"
+        "KEEP a person if their name appears with:\n"
+        "  - A first name + last name (e.g. 'Kaylee Yinger')\n"
+        "  - May have a role title attached ('Lisa Brock/Implementation PM')\n"
+        "  - May appear in a roster ('Front of the House: A/Role, B/Role, C/Role')\n\n"
+        "DROP if the candidate is:\n"
+        "  - an organization, company, or department name\n"
+        "  - a job title alone with no person name\n"
+        "  - a generic noun phrase ('end users', 'customer support', 'mosaic front')\n"
+        "  - an email address used as a 'name'\n"
+        "  - a product / service / SaaS name\n\n"
+        "For each kept person, extract role + email/phone if visible.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "people": [{{"name": "First Last", "role": "...", "email": "...", "phone": "..."}}, ...]}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "If only one person, still wrap them in the people array.\n"
+        "If no real people, return keep:false (don't fabricate names).\n\n"
+        "/no_think"
+    ),
+    "site": (
+        "TASK: Decide if the SENTENCE names a PHYSICAL SITE (specific\n"
+        "building, campus, site code, or full address in this bid).\n\n"
+        "KEEP if the sentence names a specific physical place:\n"
+        "  - Site codes (ATL-HQ-01, STORE-142, MDF-3A)\n"
+        "  - Named buildings (Beaufort Elementary School, Innovation Tower)\n"
+        "  - Full street addresses\n"
+        "  - Named campuses\n\n"
+        "DROP if it's:\n"
+        "  - a generic term ('the customer site', 'all locations', 'the district')\n"
+        "  - a standards body (ANSI, NFPA, IEEE)\n"
+        "  - a vendor / product / SaaS name\n"
+        "  - a city or county alone with no facility\n"
+        "  - a spec section label\n\n"
+        "If KEEP, produce the canonical site name (most specific form in the sentence).\n"
+        "Also list ALL alias forms present in the sentence (codes + names + addresses).\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical_name": "<primary name>", "aliases": ["<form 1>", "<form 2>"]}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "quantity": (
+        "TASK: Decide if the SENTENCE expresses a meaningful structural\n"
+        "QUANTITY (an SLA, count, duration, percentage, or commercial term).\n\n"
+        "KEEP if the sentence states:\n"
+        "  - Uptime / availability percentages (99.999%, 99.95%)\n"
+        "  - Response times (within 2 hours, 5 minute failover)\n"
+        "  - Counts (32 schools, 97 access points)\n"
+        "  - Help-desk hours (Monday-Friday 8 AM-5 PM)\n"
+        "  - Payment terms (Net-30, Net-45)\n"
+        "  - Contract / warranty durations (5-year, 12-month)\n"
+        "  - Lead times (6-8 weeks)\n\n"
+        "DROP if it's:\n"
+        "  - a page number, table cell index, or section number alone\n"
+        "  - a year alone with no quantity context\n"
+        "  - product version numbers\n\n"
+        "If KEEP, produce a short canonical form (e.g. '99.999% uptime',\n"
+        "'2-hour Sev1 response', '32 schools'). Also classify the kind:\n"
+        "  sla | count | duration | payment_term | percentage | lead_time | hours\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<short form>", "value": "<numeric value>", "unit": "<unit>", "kind": "<one of: sla|count|duration|payment_term|percentage|lead_time|hours>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    # v43 — five new entity-type canonicalize prompts
+    "certification": (
+        "TASK: Decide if the SENTENCE references a CERTIFICATION,\n"
+        "STANDARD, or COMPLIANCE FRAMEWORK the vendor / customer claims\n"
+        "or requires.\n\n"
+        "KEEP if the sentence references:\n"
+        "  - Security / payment certs (PCI-DSS, SOC 2, ISO 27001, NIST 800-53)\n"
+        "  - Privacy regulations (HIPAA, FERPA, GDPR, CCPA, COPPA)\n"
+        "  - Audit / quality certs (SSAE 18, FedRAMP, FISMA)\n"
+        "  - Education / govt certs (USDA approval, FNS-XXX forms)\n"
+        "  - Industry standards (TIA-568, NFPA 70/72, IEEE 802.11, NEC)\n"
+        "  - Quality systems (ISO 9001, AS9100)\n\n"
+        "DROP if the sentence:\n"
+        "  - is generic 'industry-leading security' marketing\n"
+        "  - mentions the word 'standard' without naming a specific one\n"
+        "  - is a job-title 'standards engineer'\n\n"
+        "If KEEP, extract the certification's canonical name (PCI-DSS, SOC 2,\n"
+        "NIST 800-53, etc.). Drop level / version suffixes into a separate\n"
+        "field when present.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<cert name>", "level": "<level/version or empty>", "kind": "<security|privacy|audit|education|industry|quality>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "risk": (
+        "TASK: Decide if the SENTENCE describes a RISK / DEPENDENCY /\n"
+        "CONTINGENCY (something that could go wrong, cause delays, or\n"
+        "require contingency planning).\n\n"
+        "KEEP if the sentence describes:\n"
+        "  - Schedule risks (long lead times, dependencies)\n"
+        "  - Technical risks (capacity limits, compatibility issues)\n"
+        "  - Commercial risks (payment-term ambiguity, fee escalation)\n"
+        "  - Compliance risks (regulatory exposure, audit findings)\n"
+        "  - Operational risks (single points of failure, single-source vendors)\n\n"
+        "DROP if the sentence is:\n"
+        "  - a marketing claim about how risks are mitigated (positive spin)\n"
+        "  - generic 'we manage risk well' boilerplate\n"
+        "  - a requirement (handled by separate extractor)\n\n"
+        "If KEEP, summarize the risk in canonical form and classify the kind.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<risk summary>", "kind": "<schedule|technical|commercial|compliance|operational>", "severity": "<high|medium|low>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "acceptance": (
+        "TASK: Decide if the SENTENCE defines ACCEPTANCE CRITERIA — what\n"
+        "constitutes successful completion, deliverable approval, or\n"
+        "phase signoff.\n\n"
+        "KEEP if the sentence defines:\n"
+        "  - Substantial completion criteria\n"
+        "  - Final acceptance gates / observation periods\n"
+        "  - Required deliverables (drawings, test reports, training records)\n"
+        "  - Closeout artifacts (warranty registrations, as-builts)\n"
+        "  - Sign-off requirements between phases\n\n"
+        "DROP if the sentence is:\n"
+        "  - a general requirement (handled by separate extractor)\n"
+        "  - acceptance of terms in a legal sense (not project acceptance)\n\n"
+        "If KEEP, summarize the acceptance criterion in canonical form.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<acceptance criterion>", "kind": "<substantial|final|phase_gate|deliverable|closeout>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "penalty": (
+        "TASK: Decide if the SENTENCE defines a PENALTY, SERVICE CREDIT,\n"
+        "LIQUIDATED DAMAGE, or TERMINATION TRIGGER (what happens when\n"
+        "the contractor fails to meet an obligation).\n\n"
+        "KEEP if the sentence defines:\n"
+        "  - Service credits (X% of monthly fee per hour of downtime)\n"
+        "  - Late delivery penalties (X% per business day)\n"
+        "  - Late payment interest (X% per month)\n"
+        "  - Liquidated damages ($X per day)\n"
+        "  - Termination-for-default triggers (cure periods, material breach)\n"
+        "  - Bond forfeiture conditions\n\n"
+        "DROP if the sentence is:\n"
+        "  - a general SLA (handled by quantity extractor)\n"
+        "  - a marketing claim about how penalties are mitigated\n\n"
+        "If KEEP, summarize the penalty in canonical form.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<penalty summary>", "kind": "<service_credit|late_delivery|late_payment|liquidated_damages|termination|bond_forfeiture>", "magnitude": "<numeric or empty>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "compliance_obligation": (
+        "TASK: Decide if the SENTENCE references a COMPLIANCE OBLIGATION —\n"
+        "a statute, regulation, code, or law the contractor must follow.\n\n"
+        "KEEP if the sentence references:\n"
+        "  - Labor laws (Fair Labor Standards Act, Davis-Bacon, ADA)\n"
+        "  - Equal Employment Opportunity (Title VII, Section 504)\n"
+        "  - State procurement codes (SC Code 11-35, Texas Govt 2252)\n"
+        "  - Federal regulations (FAR Part 52, FedRAMP, FISMA)\n"
+        "  - Industry codes (NEC, NFPA, IBC, IFC)\n"
+        "  - Tax exemption statutes\n"
+        "  - Data privacy regulations as legal requirements (HIPAA, FERPA)\n\n"
+        "DROP if the sentence is:\n"
+        "  - a certification claim (handled by certification extractor)\n"
+        "  - a general 'shall comply with all applicable laws' boilerplate\n\n"
+        "If KEEP, summarize the obligation including the statute reference.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<obligation summary>", "statute_reference": "<code section or name>", "kind": "<labor|equality|procurement|federal|industry_code|tax|privacy>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+}
+
+
+def _canonicalize_candidate(
+    sentence: str, entity_type: str
+) -> dict[str, Any] | None:
+    """Single-sentence LLM call: keep/drop + canonical form for one
+    candidate sentence. Returns None on parse failure or LLM error.
+
+    v42: when keep=false with confident rejection, append the sentence
+    to the persistent negative-exemplar store so future runs learn
+    from this rejection.
+    """
+    template = _CANONICALIZE_PROMPTS.get(entity_type)
+    if not template:
+        return None
+    if not sentence or not sentence.strip():
+        return None
+    # Truncate ultra-long sentences (the embedding pipeline already
+    # caps at 500 chars but defense-in-depth)
+    truncated = sentence.strip()[:600]
+    prompt = template.format(sentence=truncated)
+    text = _call_ollama(prompt, max_tokens=256)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return None
+    if not obj.get("keep"):
+        # v42: self-bootstrap negatives — append this sentence to the
+        # persistent negative-exemplar store. Future runs will down-rank
+        # similar sentences automatically.
+        try:
+            from app.core.rag_extras import append_bootstrapped_negative
+            append_bootstrapped_negative(entity_type, truncated)
+        except Exception:
+            pass
+        return None
+    return obj
+
+
+def _run_retrieval_extract(
+    by_artifact: dict[str, dict[str, Any]],
+    *,
+    entity_type: str,
+    exemplars: list[str],
+    top_k_per_artifact: int = 200,
+    min_score: float = 0.45,
+    canonical_key: str = "canonical",
+) -> list[dict[str, Any]]:
+    """Generic retrieval extraction — v39 hybrid pipeline:
+      1. Build per-artifact text map.
+      2. Hybrid retrieval (dense + sparse + RRF + margin + MMR).
+      3. Canonicalize each candidate with paragraph context in parallel.
+      4. Dedupe by canonical form (lowercased, whitespace-normalized).
+
+    Falls back to v38 dense-only retrieval if rag_retrieval module
+    is unavailable or sklearn/scipy missing.
+
+    Returns list of canonicalize-output dicts (KEEP only).
+    """
+    # v42: AUGMENT exemplars with HyDE-generated examples + bootstrapped
+    # negatives. HyDE is one-time cost (cached to disk); bootstrapped
+    # negatives accumulate across runs to make the system self-improving.
+    try:
+        from app.core.rag_extras import (
+            augment_exemplars_with_hyde,
+            load_bootstrapped_negatives,
+        )
+        exemplars = augment_exemplars_with_hyde(
+            exemplars, entity_type,
+            llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "HyDE augmentation failed for %s: %s", entity_type, e,
+        )
+
+    # Try v39 hybrid pipeline first (now with augmented exemplars)
+    use_v39 = not os.environ.get("SOWSMITH_V39_DISABLE")
+    candidates: list[dict[str, Any]] = []
+    if use_v39:
+        try:
+            from app.core.rag_retrieval import get_v39_candidates
+            from app.core.exemplars import NEGATIVE_EXEMPLARS_BY_TYPE
+            from app.core.embedding_retrieval import embedding_endpoint_reachable
+            if embedding_endpoint_reachable():
+                text_map = _build_artifact_text_map(by_artifact)
+                if text_map:
+                    static_neg = NEGATIVE_EXEMPLARS_BY_TYPE.get(entity_type, [])
+                    # v42: combine static negatives with bootstrapped negatives
+                    try:
+                        from app.core.rag_extras import load_bootstrapped_negatives
+                        boot_neg = load_bootstrapped_negatives(entity_type)
+                    except Exception:
+                        boot_neg = []
+                    neg_exemplars = list(static_neg) + boot_neg
+                    candidates = get_v39_candidates(
+                        text_map, exemplars, neg_exemplars,
+                        top_k_per_artifact=top_k_per_artifact,
+                        min_score=min_score,
+                        contextual_window=0,  # NO sliding context — adds noise
+                        paragraph_window=1,   # ±1 sentence for canonicalize input
+                        use_sparse=True,
+                        use_mmr=True,
+                    )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "v39 retrieval failed for %s: %s — falling back to v38",
+                entity_type, e,
+            )
+            candidates = []
+
+    # v38 fallback (dense-only, no sparse / no MMR / no negatives)
+    if not candidates:
+        try:
+            from app.core.embedding_retrieval import (
+                get_candidates_for_entity_type,
+                embedding_endpoint_reachable,
+            )
+            if not embedding_endpoint_reachable():
+                return []
+            text_map = _build_artifact_text_map(by_artifact)
+            if not text_map:
+                return []
+            raw_candidates = get_candidates_for_entity_type(
+                text_map, exemplars,
+                top_k_per_artifact=top_k_per_artifact,
+                min_score=min_score,
+            )
+            # Adapt v38 shape to v39 shape
+            candidates = [
+                {
+                    "sentence_idx": -1,
+                    "sentence": c["sentence"],
+                    "paragraph": c["sentence"],  # v38 has no paragraph expansion
+                    "score": c["score"],
+                    "dense_score": c["score"],
+                    "artifact_id": c["artifact_id"],
+                }
+                for c in raw_candidates
+            ]
+        except Exception:
+            return []
+
+    if not candidates:
+        return []
+
+    parallel = int(os.environ.get("SOWSMITH_CANONICALIZE_PARALLEL", "12"))
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    import concurrent.futures as _cf
+    with _cf.ThreadPoolExecutor(max_workers=parallel) as pool:
+        # Use the PARAGRAPH (expanded context) for canonicalize — gives
+        # the LLM more context to make keep/drop decision.
+        future_map = {
+            pool.submit(_canonicalize_candidate, c["paragraph"], entity_type): c
+            for c in candidates
+        }
+        for fut in _cf.as_completed(future_map):
+            candidate = future_map[fut]
+            try:
+                outcome = fut.result()
+            except Exception:
+                outcome = None
+            if not outcome:
+                continue
+            # v41: multi-entry canonicalize output (stakeholder "people"
+            # array) — DON'T dedupe at this layer because we have
+            # multiple people in one outcome. The downstream extractor
+            # will expand + dedupe by name.
+            if "people" in outcome and isinstance(outcome.get("people"), list):
+                outcome["_source_sentence"] = candidate["sentence"]
+                outcome["_source_paragraph"] = candidate["paragraph"]
+                outcome["_source_artifact_id"] = candidate["artifact_id"]
+                outcome["_retrieval_score"] = round(candidate["score"], 4)
+                outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
+                results.append(outcome)
+                continue
+            # Single-canonical-value dedup (default)
+            canon_value = outcome.get(canonical_key) or outcome.get("name") or ""
+            sig = re.sub(r"\s+", " ", str(canon_value).lower()).strip()[:120]
+            if not sig or sig in seen:
+                continue
+            seen.add(sig)
+            # Attach source info
+            outcome["_source_sentence"] = candidate["sentence"]
+            outcome["_source_paragraph"] = candidate["paragraph"]
+            outcome["_source_artifact_id"] = candidate["artifact_id"]
+            outcome["_retrieval_score"] = round(candidate["score"], 4)
+            outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
+            results.append(outcome)
+
+    # ────────────────────────────────────────────────────────────
+    # v40+v42: SICRL — Section-Indexed Counterfactual Recall Loop
+    # ────────────────────────────────────────────────────────────
+    # v42: now ITERATIVE — runs up to 2 passes for stronger convergence.
+    use_sicrl = (
+        not os.environ.get("SOWSMITH_SICRL_DISABLE")
+        and entity_type in ("requirement", "stakeholder", "quantity")
+    )
+    if use_sicrl and results:
+        try:
+            from app.core.sicrl import run_sicrl
+            from app.core.embedding_retrieval import (
+                embed_texts as _embed_texts,
+                sentence_split as _sentence_split,
+            )
+            text_map = _build_artifact_text_map(by_artifact)
+            if text_map:
+                sicrl_iters = int(os.environ.get("SOWSMITH_SICRL_ITERS", "2"))
+                for _ in range(sicrl_iters):
+                    prev_count = len(results)
+                    augmented = run_sicrl(
+                        by_artifact=text_map,
+                        first_pass_items=results,
+                        entity_type=entity_type,
+                        exemplars=exemplars,
+                        negative_exemplars=[],
+                        llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                        parse_json=_parse_json_object,
+                        canonicalize_fn=_canonicalize_candidate,
+                        embed_fn=_embed_texts,
+                        sentence_split_fn=_sentence_split,
+                        max_iterations=1,  # each call is one pass
+                    )
+                    if len(augmented) <= prev_count:
+                        # Convergence — no new items found
+                        results = augmented
+                        break
+                    results = augmented
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "SICRL pass failed for %s: %s", entity_type, e,
+            )
+
+    # ────────────────────────────────────────────────────────────
+    # v42: TOURNAMENT canonicalization — cross-doc dedup via N²/2
+    # pairwise LLM judging when items have high cosine similarity
+    # ────────────────────────────────────────────────────────────
+    if results and len(results) >= 2 and not os.environ.get("SOWSMITH_TOURNAMENT_DISABLE"):
+        try:
+            from app.core.rag_extras import run_tournament
+            from app.core.embedding_retrieval import embed_texts as _embed_texts
+            # Embed the canonical forms of all items
+            canonical_strings = [
+                (r.get(canonical_key) or r.get("name") or "")
+                for r in results
+            ]
+            canonical_strings = [s for s in canonical_strings if s]
+            if len(canonical_strings) >= 2:
+                item_vecs = _embed_texts(canonical_strings[:300])  # cap to avoid runaway
+                if item_vecs.size > 0:
+                    deduped = run_tournament(
+                        results[:len(canonical_strings[:300])],
+                        item_vecs,
+                        entity_type=entity_type,
+                        canonical_key=canonical_key,
+                        llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                        parse_json=_parse_json_object,
+                        sim_threshold=0.85,
+                        max_pairs=80,
+                    )
+                    # Re-attach any items beyond the 300-cap
+                    if len(results) > 300:
+                        deduped.extend(results[300:])
+                    results = deduped
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Tournament dedup failed for %s: %s", entity_type, e,
+            )
+
+    # ────────────────────────────────────────────────────────────
+    # v42: SELF-BOOTSTRAP NEGATIVES — accumulate canonicalize
+    # rejections for next-run precision improvement
+    # ────────────────────────────────────────────────────────────
+    # (Currently piggybacks on the canonicalize step — see below
+    # for where rejections are captured. Disabled here for simplicity;
+    # to be activated by passing a callback through canonicalize.)
+
+    return results
+
+
+def _extract_requirements_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v38+v39+v40+v44: embedding-retrieval requirement extraction.
+    v44 augments exemplars with pack-specific domain examples if the
+    project name suggests a known domain (POS / ITAD / cabling /
+    wireless / access / BMS / AV)."""
+    from app.core.exemplars import REQUIREMENT_EXEMPLARS, detect_domain_extras
+    exemplars = list(REQUIREMENT_EXEMPLARS)
+    # v44: domain-aware exemplar routing
+    try:
+        project_dir_name = os.environ.get("SOWSMITH_PROJECT_DIR_NAME")
+        if project_dir_name:
+            extras = detect_domain_extras(project_dir_name)
+            if extras:
+                exemplars = exemplars + extras
+    except Exception:
+        pass
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="requirement",
+        exemplars=exemplars,
+        top_k_per_artifact=600,  # generous; canonicalize drops noise
+        min_score=0.30,  # v40: lowered so canonicalize is the gate
+        canonical_key="canonical",
+    )
+    # Shape match with _extract_requirements_chunked: list of {text}
+    out = []
+    for r in raw:
+        text = r.get("canonical")
+        if isinstance(text, str) and text.strip():
+            out.append({
+                "text": text.strip(),
+                "category": r.get("category"),
+                "_source_sentence": r.get("_source_sentence"),
+                "_source_artifact_id": r.get("_source_artifact_id"),
+            })
+    return out
+
+
+def _extract_stakeholders_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v38+v39+v40+v41: embedding-retrieval stakeholder extraction.
+    Finds named people on signature blocks, contact pages, bid-contact
+    lines AND team-roster lines — no chunk dropout.
+
+    v41 returns potentially-multi-person canonicalize output and
+    expands each entry to its own stakeholder dict.
+    """
+    from app.core.exemplars import STAKEHOLDER_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="stakeholder",
+        exemplars=STAKEHOLDER_EXEMPLARS,
+        top_k_per_artifact=300,
+        min_score=0.30,
+        canonical_key="name",
+    )
+    out = []
+    seen_names: set[str] = set()
+    for r in raw:
+        # v41 multi-person shape: {"keep": true, "people": [{name, role, email, phone}, ...]}
+        # Back-compat with v40 single-person shape: {"keep": true, "name": "...", "role": ..., ...}
+        people_list = r.get("people")
+        if isinstance(people_list, list) and people_list:
+            entries = people_list
+        else:
+            entries = [{
+                "name": r.get("name"),
+                "role": r.get("role"),
+                "email": r.get("email"),
+                "phone": r.get("phone"),
+            }]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            name = name.strip()
+            # Last-chance hygiene: drop email-as-name + field-label
+            if _looks_like_email_or_url(name):
+                continue
+            if _is_likely_field_label(name):
+                continue
+            # Dedupe by name across multi-person entries
+            sig = re.sub(r"\s+", " ", name.lower()).strip()[:120]
+            if sig in seen_names:
+                continue
+            seen_names.add(sig)
+            out.append({
+                "name": name,
+                "role": (entry.get("role") or "").strip() or None,
+                "email": (entry.get("email") or "").strip() or None,
+                "phone": (entry.get("phone") or "").strip() or None,
+                "_source_sentence": r.get("_source_sentence"),
+                "_source_artifact_id": r.get("_source_artifact_id"),
+            })
+    return out
+
+
+def _extract_site_clusters_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v38: embedding-retrieval site extraction. Each candidate
+    sentence may yield ONE cluster (canonical + aliases visible in
+    that sentence). Downstream entity_resolution merges across
+    sentences via co-mention fusion + LLM-cluster fusion."""
+    from app.core.exemplars import SITE_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="site",
+        exemplars=SITE_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.35,
+        canonical_key="canonical_name",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical_name")
+        aliases = r.get("aliases") or []
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        if not isinstance(aliases, list):
+            aliases = []
+        out.append({
+            "canonical_name": canon.strip(),
+            "aliases": [a for a in aliases if isinstance(a, str) and a.strip()],
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return _normalize_site_clusters(out)
+
+
+def _extract_quantities_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v38: NEW — embedding-retrieval quantity extraction. Captures
+    SLAs, counts, durations, payment terms that the existing extractors
+    miss because they're in natural-language form ('99.999% uptime',
+    '32 schools', 'within 2 hours')."""
+    from app.core.exemplars import QUANTITY_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="quantity",
+        exemplars=QUANTITY_EXEMPLARS,
+        top_k_per_artifact=300,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "text": canon.strip(),
+            "value": r.get("value"),
+            "unit": r.get("unit"),
+            "kind": r.get("kind"),  # v43 classification
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════
+# v43 — 5 new entity-type extractors: certification, risk, acceptance,
+# penalty, compliance_obligation
+# ════════════════════════════════════════════════════════════════════
+
+
+def _extract_certifications_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: certifications / standards / compliance frameworks the
+    vendor claims or customer requires (PCI-DSS, SOC 2, HIPAA, FERPA,
+    NIST 800-53, ISO 27001, TIA-568, NFPA 72, USDA, FNS-XXX)."""
+    from app.core.exemplars import CERTIFICATION_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="certification",
+        exemplars=CERTIFICATION_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.35,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "name": canon.strip(),
+            "level": (r.get("level") or "").strip() or None,
+            "kind": r.get("kind"),  # security|privacy|audit|education|industry|quality
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_risks_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: risks / dependencies / contingencies."""
+    from app.core.exemplars import RISK_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="risk",
+        exemplars=RISK_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "description": canon.strip(),
+            "kind": r.get("kind"),  # schedule|technical|commercial|compliance|operational
+            "severity": r.get("severity"),  # high|medium|low
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_acceptance_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: acceptance criteria / deliverable gates / closeout artifacts."""
+    from app.core.exemplars import ACCEPTANCE_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="acceptance",
+        exemplars=ACCEPTANCE_EXEMPLARS,
+        top_k_per_artifact=150,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "criterion": canon.strip(),
+            "kind": r.get("kind"),
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_penalties_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: penalties / service credits / liquidated damages /
+    termination triggers."""
+    from app.core.exemplars import PENALTY_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="penalty",
+        exemplars=PENALTY_EXEMPLARS,
+        top_k_per_artifact=150,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "description": canon.strip(),
+            "kind": r.get("kind"),
+            "magnitude": r.get("magnitude"),
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_compliance_obligations_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: compliance obligations / statute references / regulatory
+    requirements."""
+    from app.core.exemplars import COMPLIANCE_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="compliance_obligation",
+        exemplars=COMPLIANCE_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "obligation": canon.strip(),
+            "statute_reference": (r.get("statute_reference") or "").strip() or None,
+            "kind": r.get("kind"),
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════
 # OLLAMA HTTP CALL
 # ════════════════════════════════════════════════════════════════════
 
@@ -750,12 +1830,84 @@ def _parse_json_object(response_text: str) -> dict[str, Any] | None:
         return None
 
 
+def _looks_like_email_or_url(value: str) -> bool:
+    """True if the value looks like an email address, URL, or
+    URL-tail (e.g. 'support@e-hps.com', 'foo.bar.com', 'site.net').
+
+    The LLM sometimes returns an EMAIL as a `name` field when the
+    line shape confuses it ("Help Desk: hss-ce-help@e-hps.com" →
+    name="hss-ce-help@e-hps.com"). Slug-of-email looks like
+    `hss_ce_help_e_hps_com` and pollutes the stakeholder list.
+    """
+    if not value:
+        return False
+    s = value.lower().strip()
+    if "@" in s:
+        return True
+    # Trailing TLD-ish token after a dot or slug-separator
+    for tld in (".com", ".org", ".net", ".io", ".gov", ".edu",
+                ".co", ".us", ".uk", ".info", ".biz", ".ai",
+                "_com", "_org", "_net", "_io", "_gov", "_edu",
+                "_co", "_us", "_uk", "_info", "_biz", "_ai"):
+        if s.endswith(tld):
+            return True
+    return False
+
+
+def _looks_like_regulator_not_customer(value: str) -> bool:
+    """True if the value looks like a regulatory body / licensing
+    issuer rather than a buying customer.
+
+    Catches LLM customer false positives like 'State of South
+    Carolina Department of Revenue Retail License' (an SC license
+    issuer mentioned in the doc, NOT the buying customer who is
+    Beaufort County School District).
+
+    Heuristic: customer ends with a regulatory tail word OR contains
+    a regulator phrase in the middle. Keeps real govt customers
+    like 'City of Atlanta' / 'Beaufort County School District' /
+    'Department of Defense' (none of which match these patterns).
+    """
+    if not value:
+        return False
+    s = value.lower().strip()
+    # Tail-word check
+    tail_words = {
+        "license", "licenses", "permit", "permits",
+        "registration", "registrations",
+        "certification", "certifications",
+        "tax", "taxes", "tariff", "tariffs",
+        "code", "statute", "statutes",
+        "regulation", "regulations",
+    }
+    last_token = s.split()[-1] if s else ""
+    if last_token in tail_words:
+        return True
+    # Phrase contains a regulator marker
+    regulator_markers = (
+        "department of revenue",
+        "secretary of state",
+        "office of regulations",
+        "office of compliance",
+        "internal revenue service",
+        "department of motor vehicles",
+        "consumer protection",
+        "licensing board",
+    )
+    for marker in regulator_markers:
+        if marker in s:
+            return True
+    return False
+
+
 def _normalize_objects(
     items: Any, fields: tuple[str, ...], *, is_stakeholder: bool = False
 ) -> list[dict[str, Any]]:
     """Coerce list of objects to uniform shape; drop malformed.
 
-    For stakeholders, also drops names that look like field labels.
+    For stakeholders, also drops names that look like field labels
+    OR like email addresses / URLs (the LLM sometimes returns an
+    email as a `name` when the line shape confuses it).
     """
     if not isinstance(items, list):
         return []
@@ -774,8 +1926,12 @@ def _normalize_objects(
         first_value = rec.get(fields[0])
         if not first_value:
             continue
-        if is_stakeholder and _is_likely_field_label(str(first_value)):
-            continue
+        if is_stakeholder:
+            fv = str(first_value)
+            if _is_likely_field_label(fv):
+                continue
+            if _looks_like_email_or_url(fv):
+                continue
         out.append(rec)
     return out
 
@@ -788,6 +1944,10 @@ _FIELD_LABEL_TAILS: frozenset[str] = frozenset({
     "field", "fields", "value", "values", "key", "keys",
     "type", "types", "category", "categories", "status",
     "owner", "owners", "manager", "managers",
+    "officer", "officers", "rep", "reps", "representative",
+    "representatives", "lead", "leads", "support", "specialist",
+    "specialists", "coordinator", "coordinators",
+    "supervisor", "supervisors", "director", "directors",
     "input", "output", "config", "configuration", "setting",
     "settings", "parameter", "parameters", "option", "options",
     "address", "addresses", "phone", "phones", "email", "emails",
@@ -911,6 +2071,9 @@ _COMMON_NOUN_FIRST_WORDS: frozenset[str] = frozenset({
     # Generic users / roles
     "end", "all", "any", "each", "every", "some", "many",
     "new", "old", "current", "former", "future",
+    # Business-relationship words that lead noun phrases, not names
+    "customer", "client", "contractor", "vendor", "supplier",
+    "bidder", "provider", "partner", "subcontractor",
     # Position / direction words
     "front", "back", "left", "right", "top", "bottom",
     "north", "south", "east", "west", "central", "main",

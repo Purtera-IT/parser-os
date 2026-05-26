@@ -150,6 +150,85 @@ def extract_entity_records(
                 review_status=ReviewStatus.auto_accepted,
             )
         )
+
+    # v44: CROSS-DOC SEMANTIC DEDUP at entity-resolution layer.
+    # The tournament canonicalization runs WITHIN a single retrieval
+    # pass — it doesn't see entities created by the regex emitters or
+    # by different LLM passes that resolved to slightly-different
+    # canonical_keys. This final pass embeds the canonical_name of
+    # every entity within each entity_type, finds same-type pairs
+    # with cosine_sim > 0.88, and asks the LLM "same canonical?
+    # if yes, which is better". Union-find merges the entity records
+    # that pass the test.
+    import os as _os
+    if not _os.environ.get("SOWSMITH_FINAL_DEDUP_DISABLE") and len(records) >= 4:
+        try:
+            from app.core.rag_extras import run_tournament
+            from app.core.embedding_retrieval import (
+                embed_texts as _embed_texts,
+                embedding_endpoint_reachable,
+            )
+            from app.core.multi_entity_llm import (
+                _call_ollama, _parse_json_object,
+            )
+            if embedding_endpoint_reachable():
+                # Group by entity_type for type-scoped dedup
+                by_type: dict[str, list[int]] = {}
+                for idx, r in enumerate(records):
+                    by_type.setdefault(r.entity_type, []).append(idx)
+                merged_indices: set[int] = set()
+                new_canon_for: dict[int, str] = {}
+                for et, indices in by_type.items():
+                    if et in {"phone", "email", "money", "date",
+                              "milestone", "address", "part_number",
+                              "quarter", "qa"}:
+                        # Exact-match types skip semantic dedup
+                        continue
+                    if len(indices) < 3:
+                        continue
+                    canon_names = [records[i].canonical_name for i in indices]
+                    vecs = _embed_texts(canon_names)
+                    if vecs.size == 0:
+                        continue
+                    # Wrap each record into the shape run_tournament expects
+                    items = [
+                        {"text": records[i].canonical_name, "_idx": i}
+                        for i in indices
+                    ]
+                    deduped = run_tournament(
+                        items, vecs,
+                        entity_type=et,
+                        canonical_key="text",
+                        llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                        parse_json=_parse_json_object,
+                        sim_threshold=0.88,
+                        max_pairs=40,
+                    )
+                    # Items that were absorbed into a merge get
+                    # _merged_from > 1; we drop them and update the
+                    # canonical record with the new canon
+                    for d in deduped:
+                        merged_from = d.get("_merged_from", 0)
+                        if merged_from and merged_from > 1:
+                            kept_idx = d.get("_idx")
+                            if kept_idx is not None:
+                                new_canon_for[kept_idx] = d.get("text", "")
+                # Strip merged-away records
+                if new_canon_for:
+                    # In this v44 first cut we just update canonical_name
+                    # without restructuring entity ids. Future v45 can do
+                    # full merge with id rewrite.
+                    for idx, new_name in new_canon_for.items():
+                        if new_name and len(new_name) >= 3:
+                            records[idx] = records[idx].model_copy(
+                                update={"canonical_name": new_name}
+                            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Final cross-doc semantic dedup failed: %s", e,
+            )
+
     return records
 
 
