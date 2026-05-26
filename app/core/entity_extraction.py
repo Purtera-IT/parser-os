@@ -3451,6 +3451,7 @@ def _is_likely_person_label(name: str) -> bool:
         "Industries", "International", "Global", "Worldwide",
         "Consulting", "Consultants", "Associates", "Advisors",
         "Communications", "Networks", "Engineering",
+        "Ventures", "Capital", "Investments",
         # Functions / labels
         "Public", "Private", "Team",
         "Purchasing", "Procurement", "Operations", "Maintenance",
@@ -3459,6 +3460,16 @@ def _is_likely_person_label(name: str) -> bool:
         "Coordinator", "Specialist", "Foreman", "Inspector",
         # Other
         "Postal", "USA", "US", "USPS", "FedEx", "UPS",
+        # Street-suffix words — when a "name" ends in these it's an
+        # address fragment, not a person. Catches "Miller Rd",
+        # "Swartz Creek" (city name), "Heck Ave", "Corlies Avenue".
+        "Rd", "Road", "Ave", "Avenue", "Blvd", "Boulevard",
+        "St", "Street", "Ln", "Lane", "Ct", "Court", "Pl", "Place",
+        "Dr", "Drive", "Hwy", "Highway", "Pkwy", "Parkway",
+        "Cir", "Circle", "Trl", "Trail", "Way", "Terr", "Terrace",
+        "Creek", "Brook", "River", "Lake", "Hill", "Valley",
+        "Park", "Bay", "Beach", "Heights", "Springs", "Falls",
+        "Crossing", "Junction", "Center", "Square", "Plaza",
     }
     tail = name.split()[-1] if " " in name else name
     if tail in bad_tails:
