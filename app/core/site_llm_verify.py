@@ -228,6 +228,28 @@ def _parse_sites_list(response_text: str) -> set[str]:
 # the prompt instructions. These are form-field labels, generic
 # nouns, table-header words, calendar months, and common SaaS/POS
 # vendor brand names. Set-membership check — not regex.
+_SUB_SPACE_PREFIXES: tuple[str, ...] = (
+    "room", "rooms", "rm", "sector", "zone", "wing", "floor",
+    "level", "area", "suite", "ste", "office", "bay", "cube",
+    "bldg suite", "bldg ste",
+)
+
+_SUB_SPACE_FRAGMENTS: tuple[str, ...] = (
+    "conference room", "meeting room", "training room",
+    "computer lab", "classroom", "boardroom",
+)
+
+_SPEC_LABEL_TOKENS: tuple[str, ...] = (
+    "mandatory pre proposal", "mandatory pre-proposal",
+    "pre bid meeting", "pre-bid meeting", "pre bid conference",
+    "bidder", "bidders", "proposer", "proposers",
+    "request for proposal", "request for quote",
+    "specification section", "section ",
+    "bid opening", "bid submission",
+    "performance bond", "general conditions",
+)
+
+
 _OBVIOUS_NON_SITES: frozenset[str] = frozenset({
     # Form / table / spec labels
     "back", "save", "request", "certification", "date", "march",
@@ -303,18 +325,82 @@ _OBVIOUS_NON_SITES: frozenset[str] = frozenset({
     "ajax imaging", "concept design studio",
     # Project-noise specific to Muskegon / others
     "a muskegon area intermediate school district",
+    # v18 leakers — generic / fragment / vendor-like phrases
+    "city center", "city centre", "town center", "town centre",
+    "performing arts", "student trans", "transition student trans",
+    "conference room", "meeting room", "training room",
+    "building o", "building a", "building b", "building c",
+    "building d", "building e",  # too generic — sub-buildings need
+                                  # MORE context to be sites
+    "excelsior medical", "excelsior medical corporation",
+    "treatment pavilion", "new jersey the neptune high school",
+    "potential emergency shelter hours neptune municipal building",
+    # Pleasanton acronym fragments
+    "osc lpfd classroom", "osc lpfd training center",
+    "osc pd", "osc lpfd", "osc osc pd", "osc ppd", "osc pw",
+    "library one", "the library",  # duplicate forms of "library"
+    "library", "training center",  # too generic alone
+    # Los Medanos sub-spaces and fragments
+    "fishbowl area of the college complex",
+    "equipment plant bas upgrade los medanos college",
+    "mandatory pre proposal information building o conference room",
+    # DASNY duplicates - keep canonical form
+    "28 liberty", "albany ny 12207", "new york ny 10005",
+    "dasny 515 broadway",
+    # Hood
+    "hood county",  # alone — without facility
+    # Neptune fragments
+    "the almerth m battle homes", "the ntam project", "the neptune",
+    "neptune annex 143 col 4 2", "604 gables elementary school 734",
+    "gables elementary school address", "neptune middle school address",
+    "brookdale community college address", "aquatic center address",
+    "the n tam", "ntam project",
+    # Common bidding-context proper nouns picked up by regex
+    "owner architect", "engineer architect", "owner-architect",
+    "owner engineer", "construction manager",
+    # Pottsville generics
+    "academic center", "alumni field", "notes high school",
+    "high school", "middle school", "elementary school",
+    # Manhattan Beach generics
+    "school district", "manhattan beach", "central administration",
+    "central office",
+    # v20 leakers — universal patterns
+    "beach school district",  # fragment of "Solana Beach School District"
+    "district the district", "the district",
+    "power school", "powerschool",  # SaaS product
+    "public works maintenance",
+    "ctc classroom",  # sub-space
+    "support center", "analysis center",
+    "contractor district",
+    "pos terminal", "point of sale terminal",
+    "back office", "front office",
+    "security intelligence operations center",
+    "pre bid", "post bid", "non mandatory",
+    "level 1", "level 2", "level 3", "level i", "level ii", "level iii",
+    "site walk", "site visit", "site survey",
+    "performance location",
+    "ongoing support structure", "work breakdown structure",
+    "letter fields", "letter field",
+    "fns 742",
+    "minority business assistance office",
+    "state fiscal accountability authority",
+    "united states",
+    "albany headquarters",
 })
 
 
 def _is_obvious_non_site(normalized: str) -> bool:
     """Hygiene check: drop obvious non-sites the LLM may have included.
 
-    Four checks:
-      1. Pure-numeric (table cell index leaked through)
-      2. Denylist of known form-field / vendor / generic words
-      3. Tiny single-word fragments (e.g., "apac", "back", "rock")
-      4. Vendor-brand-pattern: multi-word with software/payment
-         suggestive tokens AND no facility-anchor noun
+    Pipeline (return True = drop):
+      1. Pure-numeric (table cell index)
+      2. Explicit denylist (form fields, generic nouns, vendors)
+      3. Tiny single-word fragments (apac, back, rock)
+      4. Vendor-brand pattern (vendor-signal tokens + no anchor)
+      5. Sub-space pattern ("Room 114", "Sector 4")
+      6. Spec-label pattern ("Mandatory Pre-Proposal", "Bidder", …)
+      7. POSITIVE-SIGNAL gate — drop everything lacking any
+         facility anchor, institutional descriptor, or digit.
     """
     # Pure numeric — table cell index
     if normalized.replace(" ", "").replace("-", "").replace("_", "").isdigit():
@@ -329,6 +415,103 @@ def _is_obvious_non_site(normalized: str) -> bool:
             return True
     # Vendor-brand-pattern detector
     if _looks_like_vendor_brand(normalized):
+        return True
+    # Sub-space pattern: phrases that START with a sub-space prefix
+    # ("Room 114", "Sector 4", "Wing N", "Suite 1") are rooms /
+    # sub-spaces, not sites. Drop them.
+    if _is_sub_space_only(normalized):
+        return True
+    # Spec-label sentence-fragment pattern: phrase contains a known
+    # bid spec / form heading token. The site name is a fragment
+    # of the spec section, not the project site.
+    if _has_spec_label_token(normalized):
+        return True
+    # Universal positive-signal gate: drop anything that has no
+    # facility anchor, no institutional descriptor, no digit.
+    if not _has_positive_site_signal(normalized):
+        return True
+    return False
+
+
+def _is_sub_space_only(normalized: str) -> bool:
+    """Detect phrases that are room/sector/zone references, NOT sites.
+
+    Phrase starts with a sub-space prefix word, OR consists entirely
+    of sub-space fragments + numbers.
+    """
+    words = normalized.split()
+    if not words:
+        return False
+    first = words[0]
+    # Starts with "room", "rooms", "sector", "zone", "wing", etc.
+    if first in {"room", "rooms", "rm", "sector", "zone",
+                 "wing", "floor", "level", "area", "suite", "ste",
+                 "bay", "cube", "lab"}:
+        return True
+    # Generic sub-space fragments alone or with trailing numbers
+    for frag in _SUB_SPACE_FRAGMENTS:
+        if normalized == frag:
+            return True
+        # "conference room" alone or "conference room 1" — sub-space
+        if normalized.startswith(frag + " ") and all(
+            w.isdigit() or w in {"and", "or", "no", "no.", "#"}
+            for w in normalized[len(frag) + 1:].split()
+        ):
+            return True
+    return False
+
+
+def _has_spec_label_token(normalized: str) -> bool:
+    """Detect phrases that contain a known bid/spec-section label.
+
+    These are sentence fragments captured from form headings, not
+    project sites ("Mandatory Pre-Proposal Information Building O
+    Conference Room", "Bidder shall provide…").
+    """
+    for label in _SPEC_LABEL_TOKENS:
+        if label in normalized:
+            return True
+    return False
+
+
+def _has_positive_site_signal(normalized: str) -> bool:
+    """Return True iff phrase has at least one signal of being a
+    real site.
+
+    Strong anchor (elementary school, hospital, pavilion, …) → KEEP
+    Institutional descriptor (district, county, USD, …)      → KEEP
+    Digit + ≥2 meaningful words (address/site code)          → KEEP
+    Weak anchor + ≥3 distinct meaningful words OR descriptor → KEEP
+    """
+    # STRONG anchor — definitive facility, always keep
+    for anchor in _STRONG_FACILITY_ANCHORS:
+        if anchor in normalized:
+            return True
+    # Institutional descriptor anywhere
+    for desc in _INSTITUTIONAL_DESCRIPTORS:
+        if desc in normalized:
+            return True
+    # Meaningful (≥3 char) word count — split on whitespace AND
+    # hyphens so "atl-west-01" counts as {"atl","west"} (digit
+    # tokens are also kept for site-code recognition).
+    word_tokens = [w for w in re.split(r"[\s\-]+", normalized) if w]
+    meaningful_words = [w for w in word_tokens if len(w) >= 3]
+    distinct_meaningful = set(meaningful_words)
+    # Digit — accept only when paired with ≥2 distinct meaningful
+    # words (so "fns 742" / "level 1" don't pass on digit alone).
+    # Site codes like "atl-west-01" have 2 meaningful tokens so
+    # they pass.
+    has_digit = any(c.isdigit() for c in normalized)
+    if has_digit and len(distinct_meaningful) >= 2:
+        return True
+    # WEAK anchor — accept only with extra context (≥3 distinct
+    # meaningful words)
+    weak_match = False
+    for anchor in _WEAK_FACILITY_ANCHORS:
+        if anchor in normalized:
+            weak_match = True
+            break
+    if weak_match and len(distinct_meaningful) >= 3:
         return True
     return False
 
@@ -350,23 +533,75 @@ _VENDOR_SIGNAL_TOKENS: frozenset[str] = frozenset({
     "corporation", "co",
 })
 
-# Anchor nouns that, if present, signal this IS a real facility name
-# even when vendor-signal tokens also appear ("Heartland Brewery
-# Headquarters" would be a legitimate site).
-_FACILITY_ANCHOR_TOKENS: frozenset[str] = frozenset({
-    "school", "schools", "academy", "academies", "college", "university",
-    "elementary", "middle", "high", "primary", "preschool",
-    "hospital", "clinic", "medical center", "medical",
-    "library", "auditorium", "stadium", "gymnasium", "fieldhouse",
-    "courthouse", "city hall", "town hall", "police", "fire",
-    "warehouse", "depot", "terminal", "datacenter", "data center",
-    "headquarters", "hq", "pavilion", "annex", "complex",
-    "office building", "campus", "facility", "plant", "station",
-    "reservoir", "substation", "tower", "building",
-    "center", "centre",
-    # Government-facility anchors
-    "courthouse", "emergency operations center", "fire station",
-    "police station", "public works",
+# STRONG facility anchors — a 2-word phrase ending here is
+# definitively a site even without other signal. These nouns
+# are unambiguous building types. SaaS products that masquerade
+# as schools ("PowerSchool", "MySchoolBucks") are caught by the
+# explicit denylist BEFORE the anchor check fires.
+_STRONG_FACILITY_ANCHORS: frozenset[str] = frozenset({
+    "school", "schools",  # "Wesley School" / "Atrisco Heritage Academy"
+    "elementary school", "middle school", "high school",
+    "primary school", "preschool",
+    "elementary", "academy", "academies",
+    "college", "university",
+    "hospital", "clinic",
+    "medical center", "medical centre", "health center",
+    "library",
+    "auditorium", "stadium", "gymnasium", "fieldhouse",
+    "courthouse", "city hall", "town hall",
+    "fire station", "police station",
+    "emergency operations center",
+    "warehouse", "depot",
+    "datacenter", "data center",
+    "headquarters",
+    "pavilion",
+    "campus",
+    "central plant", "main plant", "utility plant",
+    "reservoir", "substation",
+    "tower",
+    "pump station", "supply station", "lift station",
+    "municipal building",
+})
+
+# WEAK facility anchors — these alone are too generic. They count
+# as positive signal only when:
+#   - phrase has ≥3 distinct words OR
+#   - phrase has an institutional descriptor (district/county/…) OR
+#   - phrase has a digit
+# This prevents "support center", "back office", "power school"
+# (PowerSchool, the SaaS) from passing on the anchor alone.
+_WEAK_FACILITY_ANCHORS: frozenset[str] = frozenset({
+    "center", "centre", "complex",
+    "office", "facility", "facilities",
+    "building", "room", "area", "zone", "wing", "floor",
+    "annex", "suite",
+    "plaza", "square",
+    "terminal",  # POS terminal is NOT a site
+    "station",   # "weather station" not a site; "fire station" is (strong)
+    "public works",  # generic dept; longer forms with department / yard OK
+})
+
+# Public alias kept for back-compat — union of strong + weak
+_FACILITY_ANCHOR_TOKENS: frozenset[str] = (
+    _STRONG_FACILITY_ANCHORS | _WEAK_FACILITY_ANCHORS
+)
+
+
+# Institutional descriptors that mark a customer-name phrase as a
+# real site (school district, ISD, USD, county school system, etc.)
+# even without a facility anchor noun.
+_INSTITUTIONAL_DESCRIPTORS: frozenset[str] = frozenset({
+    "district", "isd", "usd", "system", "systems",
+    "county schools", "city schools", "public schools",
+    "intermediate school district", "unified school district",
+    "school district", "school system",
+    "city of", "town of", "village of", "township of",
+    "county of", "borough of", "municipality of",
+    "police department", "fire department", "fire & rescue",
+    "department of public works", "department of transportation",
+    "transit authority", "housing authority",
+    "community college district", "regional school",
+    "auditor", "purchasing dept", "purchasing department",
 })
 
 
@@ -378,10 +613,16 @@ def _looks_like_vendor_brand(normalized: str) -> bool:
     Catches things like "Link Technologies WebSmartt", "Comalex
     CAF Enterprise", "Mealviewer Digital Menus", "Heartland
     Payment Systems LLC" that the LLM may include.
+
+    Tokens are split on both whitespace AND hyphens so phrases
+    like "link technologies-websmartt" (where the vendor parser
+    embedded a hyphen) still match the vendor signal.
     """
-    if " " not in normalized:
+    if " " not in normalized and "-" not in normalized:
         return False
-    tokens = set(normalized.split())
+    # Split on both whitespace AND hyphens so embedded hyphens
+    # don't hide the vendor signal token
+    tokens = set(re.split(r"[\s\-]+", normalized))
     if not tokens & _VENDOR_SIGNAL_TOKENS:
         return False
     # Check for facility anchor — including 2-word anchors

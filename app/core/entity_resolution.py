@@ -285,6 +285,31 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                 group.add(bare)
             all_groups.append(group)
 
+    # ─── HYGIENE PASS ON ALIAS GROUPS ───
+    # Drop any site:* key that fails hygiene before grouping is
+    # finalized. Otherwise the proper-noun regex span scan in
+    # _emit_site_aliases_from_text can introduce junk keys like
+    # "site:pre_bid_meeting_location" into a group of real sites,
+    # and _pick_canonical may then promote the junk key to be the
+    # canonical of the merged entity.
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site
+    except Exception:
+        _is_obvious_non_site = None  # type: ignore
+    if _is_obvious_non_site is not None:
+        cleaned: list[set[str]] = []
+        for group in all_groups:
+            kept = set()
+            for k in group:
+                if k.startswith("site:"):
+                    phrase = k[len("site:"):].replace("_", " ")
+                    if _is_obvious_non_site(phrase):
+                        continue
+                kept.add(k)
+            if len(kept) >= 2:
+                cleaned.append(kept)
+        all_groups = cleaned
+
     return _coalesce_alias_groups(all_groups)
 
 

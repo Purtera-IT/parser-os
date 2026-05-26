@@ -3336,31 +3336,48 @@ def extract_keys(
     # actually matches mechanical equipment), ``block_909`` from
     # the numbered-site regex (parcel numbers), or generic
     # ``elementary_school`` from the proper-noun runner.
-    if authoritative_sites:
-        from app.core.site_detection import phrase_is_in_catalog, _looks_like_site_phrase
-        site_keys_kept: set[str] = set()
-        for k in list(keys):
-            if not k.startswith("site:"):
-                continue
-            slug = k[len("site:"):]
-            # Convert slug back to space-separated for catalog
-            # matching (catalog stores normalized space-separated
-            # phrases). Underscores become spaces.
-            phrase = slug.replace("_", " ")
-            # Drop sentence-fragment site keys whose phrase shape
-            # has header-glue / non-site tail words / spec-sheet
-            # tokens — even if the phrase HAPPENS to share a
-            # suffix with a legitimate catalog entry. This kills
-            # ``consumption_annual_energy_costs_neptune_municipal
-            # _building`` (suffix-matches "neptune municipal
-            # building" but the leading "consumption" tokens make
-            # it a sentence fragment, not a name).
-            if not _looks_like_site_phrase(phrase):
-                continue
-            if phrase_is_in_catalog(phrase, authoritative_sites):
-                site_keys_kept.add(k)
-        # Drop site keys that didn't pass the gate
-        keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
+    # Site key gate. Runs ALWAYS — when the catalog is empty (e.g.
+    # LLM extract returned 0 AND regex catalog is empty), this gate
+    # still drops obvious junk via the hygiene filter so atom-level
+    # regex emissions don't slip through ungated.
+    #
+    # Pipeline:
+    #   1. Phrase must pass site_detection._looks_like_site_phrase
+    #      (drops sentence fragments, headers, etc.)
+    #   2. Phrase must pass site_llm_verify._is_obvious_non_site
+    #      (drops vendor brands, generic nouns, form labels)
+    #   3. If catalog is non-empty, phrase must match the catalog
+    #      via phrase_is_in_catalog (prefix/suffix/exact match)
+    from app.core.site_detection import (
+        phrase_is_in_catalog,
+        _looks_like_site_phrase,
+    )
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site
+    except Exception:
+        _is_obvious_non_site = None  # type: ignore
+    site_keys_kept: set[str] = set()
+    for k in list(keys):
+        if not k.startswith("site:"):
+            continue
+        slug = k[len("site:"):]
+        # Convert slug back to space-separated for matching
+        phrase = slug.replace("_", " ")
+        # Drop sentence-fragment / header-glue site keys
+        if not _looks_like_site_phrase(phrase):
+            continue
+        # Drop hygiene-blocked phrases (vendor brands, form labels,
+        # generic nouns, sub-spaces, etc.)
+        if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
+            continue
+        # If a catalog exists, require catalog membership too
+        if authoritative_sites and not phrase_is_in_catalog(
+            phrase, authoritative_sites
+        ):
+            continue
+        site_keys_kept.add(k)
+    # Drop site keys that didn't pass the gate
+    keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
     keys |= _emit_part_numbers(text)
     keys |= _emit_quantity_keys(value or {}, text)
     keys |= _emit_qa_markers(text)
@@ -3590,6 +3607,34 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     atom.entity_keys = merged_keys
                     atoms_enriched += 1
                     total_keys_added += len(to_add)
+
+    # ─── FINAL HYGIENE PASS ───
+    # Universal safety net: walk every atom's entity_keys and drop
+    # any site:* key whose phrase form fails hygiene. This catches
+    # site keys that bypassed the extract_keys gate (parser-supplied
+    # keys, LLM-injection additions, legacy emit paths) — ensuring
+    # the obvious junk doesn't reach final entities regardless of
+    # source.
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site
+    except Exception:
+        _is_obvious_non_site = None  # type: ignore
+    if _is_obvious_non_site is not None:
+        for atom in atom_list:
+            current = atom.entity_keys or []
+            if not current:
+                continue
+            kept = []
+            dropped_any = False
+            for k in current:
+                if k.startswith("site:"):
+                    phrase = k[len("site:"):].replace("_", " ")
+                    if _is_obvious_non_site(phrase):
+                        dropped_any = True
+                        continue
+                kept.append(k)
+            if dropped_any:
+                atom.entity_keys = kept
 
     return atoms_enriched, total_keys_added
 
