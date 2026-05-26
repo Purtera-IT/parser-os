@@ -292,10 +292,116 @@ def find_visual_pages_from_atoms(atoms: list[Any]) -> list[tuple[str, int]]:
     return pages
 
 
+# ────────────────────────────────────────────────────────────────────
+# v44 — OCR pre-pass for scanned-only PDF pages
+# ────────────────────────────────────────────────────────────────────
+
+# Pages with less than this many extractable text chars are likely
+# scanned-only (image with no text layer) and need OCR via vision-LLM.
+_OCR_TEXT_DENSITY_THRESHOLD = 50  # chars per page
+
+_OCR_PROMPT = """You are reading a single page from a bid / RFP / vendor-
+response PDF. The page is a SCAN or IMAGE-ONLY page with no extractable
+text. Read the entire page and transcribe ALL visible text.
+
+Include:
+- Every line of body text
+- Headers, footers, and page numbers
+- Form labels and form-field values
+- Table cell content (preserve row/column structure as best you can)
+- Signature blocks and handwritten content (transcribe handwriting if legible)
+- Stamps and watermarks
+
+OUTPUT plain transcribed text only. No JSON, no markdown.
+Preserve line breaks for tables and forms.
+
+/no_think
+"""
+
+
+def find_scanned_pages(pdf_path: str) -> list[int]:
+    """Identify PDF pages that have less than _OCR_TEXT_DENSITY_THRESHOLD
+    chars of extractable text. These pages likely need OCR via vision-LLM.
+
+    Returns list of 0-indexed page numbers.
+    """
+    try:
+        import fitz
+    except ImportError:
+        return []
+    out: list[int] = []
+    try:
+        doc = fitz.open(pdf_path)
+        for i in range(len(doc)):
+            page = doc.load_page(i)
+            text = (page.get_text() or "").strip()
+            if len(text) < _OCR_TEXT_DENSITY_THRESHOLD:
+                # Skip blank pages (no text AND no images)
+                if page.get_images():
+                    out.append(i)
+        doc.close()
+    except Exception as e:
+        logger.warning("scan-detection failed for %s: %s", pdf_path, e)
+    return out
+
+
+def ocr_scanned_page(pdf_path: str, page_num: int) -> str:
+    """OCR a single scanned page via qwen2.5vl:7b vision LLM. Returns
+    plain transcribed text (or empty string on failure)."""
+    if os.environ.get("SOWSMITH_OCR_DISABLE"):
+        return ""
+    img = render_pdf_page(pdf_path, page_num, dpi=200)
+    if not img:
+        return ""
+    text = call_vision_llm(img, _OCR_PROMPT, max_tokens=3000)
+    return text.strip() if text else ""
+
+
+def ocr_all_scanned_pages(
+    pdf_paths: list[str],
+    *,
+    max_parallel: int = 2,
+    max_pages_per_pdf: int = 50,
+) -> dict[str, dict[int, str]]:
+    """Find + OCR all scanned pages across all PDFs.
+    Returns {pdf_path: {page_num: transcribed_text}}.
+
+    Throttled to avoid saturating the vision-LLM endpoint.
+    """
+    if os.environ.get("SOWSMITH_OCR_DISABLE"):
+        return {}
+    if not vision_endpoint_reachable():
+        return {}
+    out: dict[str, dict[int, str]] = {}
+    for pdf in pdf_paths:
+        pages = find_scanned_pages(pdf)
+        if not pages:
+            continue
+        pages = pages[:max_pages_per_pdf]
+        logger.info("OCR: %s has %d scanned pages", Path(pdf).name, len(pages))
+        page_map: dict[int, str] = {}
+        with ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = {pool.submit(ocr_scanned_page, pdf, p): p for p in pages}
+            for fut in as_completed(futures):
+                p = futures[fut]
+                try:
+                    text = fut.result()
+                except Exception:
+                    text = ""
+                if text:
+                    page_map[p] = text
+        if page_map:
+            out[pdf] = page_map
+    return out
+
+
 __all__ = [
     "call_vision_llm",
     "vision_endpoint_reachable",
     "render_pdf_page",
     "extract_visual_pages",
     "find_visual_pages_from_atoms",
+    "find_scanned_pages",
+    "ocr_scanned_page",
+    "ocr_all_scanned_pages",
 ]

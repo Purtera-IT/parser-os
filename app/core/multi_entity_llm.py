@@ -1438,16 +1438,25 @@ def _run_retrieval_extract(
 def _extract_requirements_retrieved(
     by_artifact: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """v38+v39+v40: embedding-retrieval requirement extraction.
-    Replaces the chunked path's ~10% recall with 95%+ on requirement-
-    heavy bids (Pack 18 Beaufort POS, Pack 19 Hood, Pack 12 BMS).
-    Falls back to empty list if embedding endpoint unreachable; caller
-    should then invoke the chunked path."""
-    from app.core.exemplars import REQUIREMENT_EXEMPLARS
+    """v38+v39+v40+v44: embedding-retrieval requirement extraction.
+    v44 augments exemplars with pack-specific domain examples if the
+    project name suggests a known domain (POS / ITAD / cabling /
+    wireless / access / BMS / AV)."""
+    from app.core.exemplars import REQUIREMENT_EXEMPLARS, detect_domain_extras
+    exemplars = list(REQUIREMENT_EXEMPLARS)
+    # v44: domain-aware exemplar routing
+    try:
+        project_dir_name = os.environ.get("SOWSMITH_PROJECT_DIR_NAME")
+        if project_dir_name:
+            extras = detect_domain_extras(project_dir_name)
+            if extras:
+                exemplars = exemplars + extras
+    except Exception:
+        pass
     raw = _run_retrieval_extract(
         by_artifact,
         entity_type="requirement",
-        exemplars=REQUIREMENT_EXEMPLARS,
+        exemplars=exemplars,
         top_k_per_artifact=600,  # generous; canonicalize drops noise
         min_score=0.30,  # v40: lowered so canonicalize is the gate
         canonical_key="canonical",

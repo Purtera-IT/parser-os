@@ -269,6 +269,12 @@ def compile_project(
         raise FileNotFoundError(f"Project path does not exist: {project_dir}")
 
     resolved_project_id = project_id or project_dir.name
+
+    # v44: expose project_dir name to per-pack domain extractors via env.
+    # Used by app.core.exemplars.detect_domain_extras() to add domain-
+    # specific exemplars (POS / ITAD / cabling / wireless / etc.).
+    import os as _os
+    _os.environ["SOWSMITH_PROJECT_DIR_NAME"] = project_dir.name
     if isinstance(domain_pack, DomainPack):
         # Pre-loaded pack from caller wins outright (e.g. tests)
         resolved_domain_pack = domain_pack

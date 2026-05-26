@@ -56,6 +56,19 @@ REQUIREMENT_EXEMPLARS: list[str] = [
     # Procedural
     "Prior to commencement of the work, the contractor shall furnish a schedule.",
     "Contractor agrees to notify the district within seven business days of any filing.",
+    # v44 — IMPLICIT obligations (declarative form, no shall/must verb)
+    "All work conforms to the most current edition of the National Electrical Code.",
+    "Conformance to South Carolina Code Section 11-35 is required for procurement.",
+    "Compliance with FERPA student-records confidentiality is mandatory.",
+    "Adherence to TIA-568-C.2 Category 6A standards is expected for all cabling.",
+    "Equal Employment Opportunity provisions apply to all hiring decisions.",
+    "PCI-DSS Level 1 certification governs all payment processing.",
+    "Davis-Bacon prevailing wage rates apply to all federally-funded labor.",
+    "FedRAMP Moderate authorization applies to all cloud-hosted components.",
+    "All systems are subject to SSAE 18 SOC 1 annual audit.",
+    "Federal Acquisition Regulation Part 52 clauses are incorporated by reference.",
+    "Section 504 of the Rehabilitation Act prohibits disability discrimination.",
+    "All hardware carries a three-year manufacturer warranty.",
 ]
 
 
@@ -473,6 +486,155 @@ NEGATIVE_EXEMPLARS_BY_TYPE: dict[str, list[str]] = {
     "money": MONEY_NEGATIVE_EXEMPLARS,
     "date": DATE_NEGATIVE_EXEMPLARS,
 }
+
+
+# ════════════════════════════════════════════════════════════════════
+# v44 — PER-PACK DOMAIN EXEMPLARS
+# ════════════════════════════════════════════════════════════════════
+#
+# Universal exemplars catch the universal patterns (insurance,
+# indemnification, termination). Domain-specific exemplars catch
+# the technical-capability requirements unique to each bid type:
+#
+#   - POS: card reader specs, meal pricing, USDA reports
+#   - ITAD: data destruction standards, asset classes, certificates
+#   - CABLING: cable category, termination scheme, jacket rating
+#   - WIRELESS: AP density, RF survey, controller topology
+#   - SECURITY/ACCESS: controller, REX, DPS, lock hardware
+#   - BMS: control logic, BACnet, sensors, sequences
+#   - AV: room counts, DSP, codec, control system
+#   - PAGING: zone counts, head-end, NOAA, override priorities
+#   - ELECTRICAL: voltage, phase, PoE budget, panel schedule
+#   - FIRE/LIFE_SAFETY: NFPA 72, addressable devices, monitoring
+#   - NETWORKING: switch model, VLAN, routing, uptime
+
+POS_DOMAIN_EXEMPLARS: list[str] = [
+    "The POS terminal shall accept EMV chip and magnetic stripe cards.",
+    "Card reader must support contactless / NFC payments.",
+    "Cash drawer interfacing is required for all checkout lanes.",
+    "Receipt printer auto-cuts after each transaction.",
+    "The software must integrate with the district's PowerSchool student information system.",
+    "Per-meal pricing of $3.50 applies for elementary lunches.",
+    "Manager workstations support back-office reporting and inventory.",
+    "Free and reduced meal application processing per USDA FNS-742 form is required.",
+    "Daily reconciliation reports are generated for each site.",
+    "PCI-DSS Level 1 certified payment processing throughout.",
+]
+
+ITAD_DOMAIN_EXEMPLARS: list[str] = [
+    "Data destruction shall meet NIST SP 800-88 Rev. 1 Purge standards.",
+    "DoD 5220.22-M three-pass overwrite is required for magnetic media.",
+    "Asset class includes desktops, laptops, monitors, mobile devices, and servers.",
+    "Certificate of destruction is provided per serial number.",
+    "R2 or e-Stewards certified recycler must handle disposition.",
+    "Environmental compliance with EPA hazardous waste regulations is mandatory.",
+    "Resale, refurbish, and recycle streams are tracked separately.",
+    "Chain of custody documentation begins at asset pickup.",
+    "Audit trail includes asset tag, serial number, and disposal method.",
+    "Hard drives are physically destroyed via shredding.",
+]
+
+CABLING_DOMAIN_EXEMPLARS: list[str] = [
+    "Cabling shall meet TIA-568-C.2 Category 6A standards.",
+    "All terminations use T568B wiring scheme uniformly.",
+    "Plenum-rated CMP jacket cable is required for all return-air spaces.",
+    "Patch panels are 48-port Category 6A loaded.",
+    "Service loop length of 10 feet at jack and 15 feet at patch.",
+    "Cable management uses vertical and horizontal cable managers.",
+    "Pathway includes J-hooks every 4 feet along the cable run.",
+    "Fire-stopping at every wall penetration meets UL 1479.",
+    "Test reports for all links include length, NEXT, return loss, and ACR.",
+    "As-built drawings are provided in DWG and PDF formats.",
+]
+
+WIRELESS_DOMAIN_EXEMPLARS: list[str] = [
+    "Wi-Fi 6E (IEEE 802.11ax) access points are required throughout.",
+    "Predictive RF survey using Ekahau is required before AP order.",
+    "AP density of 1 per 25 students in classroom areas.",
+    "PoE+ (802.3at) power budget per AP is 30 watts at full radio load.",
+    "Wireless LAN controllers operate in N+1 redundancy mode.",
+    "Captive portal authentication is integrated with district AD.",
+    "RADIUS-based 802.1X is enforced for staff SSID.",
+    "Guest SSID is rate-limited at 5 Mbps per client.",
+    "DNA Spaces analytics opt-in is verbally agreed.",
+    "Heatmaps validate -67 dBm coverage at the edge of every room.",
+]
+
+ACCESS_CONTROL_DOMAIN_EXEMPLARS: list[str] = [
+    "Door controllers are LenelS2 NetBox or equivalent.",
+    "REX (Request-to-Exit) sensors are PIR-based.",
+    "DPS (Door Position Sensor) is mounted on every controlled opening.",
+    "Lock hardware includes electric strikes and electrified mortise locks.",
+    "Battery backup provides 4 hours of operation per panel.",
+    "Card reader is HID multiCLASS SE.",
+    "Cardholder credentials are issued via the access management system.",
+    "Anti-passback is enabled at all primary entries.",
+    "Fault monitoring reports door-forced and door-held-open events.",
+    "Power supply is 12V DC at the panel, 24V where electrified locks require.",
+]
+
+BMS_DOMAIN_EXEMPLARS: list[str] = [
+    "BACnet/IP communication is required across all controllers.",
+    "Niagara N4 framework runs the supervisory layer.",
+    "VAV sequences follow ASHRAE Guideline 36 recommendations.",
+    "Chilled-water reset is enabled based on outdoor air temperature.",
+    "Demand-controlled ventilation responds to CO2 sensors.",
+    "Graphical user interface meets WCAG 2.1 AA accessibility.",
+    "Alarm priorities are color-coded red/yellow/green.",
+    "Trend data is retained for two years at 15-minute intervals.",
+    "Field controllers are powered from local panels with backup.",
+    "Commissioning includes point-by-point verification of all I/O.",
+]
+
+AV_DOMAIN_EXEMPLARS: list[str] = [
+    "Display is 75-inch 4K UHD LED with HDMI 2.1 input.",
+    "Audio DSP includes echo cancellation and feedback suppression.",
+    "Video codec supports H.264 and H.265 for low-bandwidth sites.",
+    "Control system uses Crestron 4-Series or Q-SYS.",
+    "Wireless presentation includes AirPlay, Miracast, and Google Cast.",
+    "Camera is PTZ with 12x optical zoom and auto-tracking.",
+    "Microphones are ceiling-mounted beamforming arrays.",
+    "Programming hours include site-specific GUI customization.",
+    "Commissioning includes acceptance testing per AVIXA standards.",
+    "Confidence monitors are 24-inch at each lectern.",
+]
+
+
+DOMAIN_EXEMPLARS_BY_PACK: dict[str, list[str]] = {
+    # Pack-folder-name patterns (lowercase substring matching)
+    "pos": POS_DOMAIN_EXEMPLARS,
+    "itad": ITAD_DOMAIN_EXEMPLARS,
+    "copper": CABLING_DOMAIN_EXEMPLARS,
+    "cabling": CABLING_DOMAIN_EXEMPLARS,
+    "fiber": CABLING_DOMAIN_EXEMPLARS,
+    "structured": CABLING_DOMAIN_EXEMPLARS,
+    "wireless": WIRELESS_DOMAIN_EXEMPLARS,
+    "wifi": WIRELESS_DOMAIN_EXEMPLARS,
+    "access": ACCESS_CONTROL_DOMAIN_EXEMPLARS,
+    "physical_access": ACCESS_CONTROL_DOMAIN_EXEMPLARS,
+    "bms": BMS_DOMAIN_EXEMPLARS,
+    "bas": BMS_DOMAIN_EXEMPLARS,
+    "av": AV_DOMAIN_EXEMPLARS,
+    "audio_visual": AV_DOMAIN_EXEMPLARS,
+}
+
+
+def detect_domain_extras(project_dir_name: str | None) -> list[str]:
+    """Given a pack-dir name like '18_pos_beaufort' or
+    '03_wireless_wifi_pottsville', return domain-specific exemplars
+    that should AUGMENT the universal requirement exemplars."""
+    if not project_dir_name:
+        return []
+    name = project_dir_name.lower()
+    extras: list[str] = []
+    seen_ids: set[int] = set()
+    for keyword, exemplars in DOMAIN_EXEMPLARS_BY_PACK.items():
+        if keyword in name:
+            if id(exemplars) in seen_ids:
+                continue
+            seen_ids.add(id(exemplars))
+            extras.extend(exemplars)
+    return extras
 
 
 __all__ = [
