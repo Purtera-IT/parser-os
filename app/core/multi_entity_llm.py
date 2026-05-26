@@ -782,23 +782,26 @@ _CANONICALIZE_PROMPTS: dict[str, str] = {
         "/no_think"
     ),
     "stakeholder": (
-        "TASK: Decide if the SENTENCE names a real human STAKEHOLDER (a\n"
-        "specific person involved in this bid) and extract their name.\n\n"
-        "KEEP if the sentence names a real person:\n"
-        "  - Has a first name + last name (e.g. 'Kaylee Yinger')\n"
-        "  - May have a role title ('Project Manager: Glenn Tilleman')\n"
-        "  - May appear in an email signature or contact block\n\n"
-        "DROP if it's:\n"
+        "TASK: Find ALL real human STAKEHOLDERS named in the SENTENCE.\n"
+        "Team rosters / signature blocks often list multiple people on\n"
+        "one line — extract EVERY person you find.\n\n"
+        "KEEP a person if their name appears with:\n"
+        "  - A first name + last name (e.g. 'Kaylee Yinger')\n"
+        "  - May have a role title attached ('Lisa Brock/Implementation PM')\n"
+        "  - May appear in a roster ('Front of the House: A/Role, B/Role, C/Role')\n\n"
+        "DROP if the candidate is:\n"
         "  - an organization, company, or department name\n"
         "  - a job title alone with no person name\n"
         "  - a generic noun phrase ('end users', 'customer support', 'mosaic front')\n"
-        "  - an email address as the 'name'\n"
-        "  - a product / service name\n\n"
-        "If KEEP, also extract role and any email/phone visible in the sentence.\n\n"
+        "  - an email address used as a 'name'\n"
+        "  - a product / service / SaaS name\n\n"
+        "For each kept person, extract role + email/phone if visible.\n\n"
         "SENTENCE: {sentence}\n\n"
         "OUTPUT exactly one JSON object on one line:\n"
-        '  {{"keep": true, "name": "First Last", "role": "<role or empty>", "email": "<email or empty>", "phone": "<phone or empty>"}}\n'
+        '  {{"keep": true, "people": [{{"name": "First Last", "role": "...", "email": "...", "phone": "..."}}, ...]}}\n'
         "  or {{\"keep\": false}}\n\n"
+        "If only one person, still wrap them in the people array.\n"
+        "If no real people, return keep:false (don't fabricate names).\n\n"
         "/no_think"
     ),
     "site": (
@@ -977,7 +980,19 @@ def _run_retrieval_extract(
                 outcome = None
             if not outcome:
                 continue
-            # Dedupe by canonical form (case-insensitive, whitespace-normalized)
+            # v41: multi-entry canonicalize output (stakeholder "people"
+            # array) — DON'T dedupe at this layer because we have
+            # multiple people in one outcome. The downstream extractor
+            # will expand + dedupe by name.
+            if "people" in outcome and isinstance(outcome.get("people"), list):
+                outcome["_source_sentence"] = candidate["sentence"]
+                outcome["_source_paragraph"] = candidate["paragraph"]
+                outcome["_source_artifact_id"] = candidate["artifact_id"]
+                outcome["_retrieval_score"] = round(candidate["score"], 4)
+                outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
+                results.append(outcome)
+                continue
+            # Single-canonical-value dedup (default)
             canon_value = outcome.get(canonical_key) or outcome.get("name") or ""
             sig = re.sub(r"\s+", " ", str(canon_value).lower()).strip()[:120]
             if not sig or sig in seen:
@@ -1067,9 +1082,13 @@ def _extract_requirements_retrieved(
 def _extract_stakeholders_retrieved(
     by_artifact: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """v38+v39+v40: embedding-retrieval stakeholder extraction.
+    """v38+v39+v40+v41: embedding-retrieval stakeholder extraction.
     Finds named people on signature blocks, contact pages, bid-contact
-    lines — no chunk dropout."""
+    lines AND team-roster lines — no chunk dropout.
+
+    v41 returns potentially-multi-person canonicalize output and
+    expands each entry to its own stakeholder dict.
+    """
     from app.core.exemplars import STAKEHOLDER_EXEMPLARS
     raw = _run_retrieval_extract(
         by_artifact,
@@ -1080,23 +1099,45 @@ def _extract_stakeholders_retrieved(
         canonical_key="name",
     )
     out = []
+    seen_names: set[str] = set()
     for r in raw:
-        name = r.get("name")
-        if not isinstance(name, str) or not name.strip():
-            continue
-        # Last-chance hygiene: drop email-as-name + field-label
-        if _looks_like_email_or_url(name):
-            continue
-        if _is_likely_field_label(name):
-            continue
-        out.append({
-            "name": name.strip(),
-            "role": (r.get("role") or "").strip() or None,
-            "email": (r.get("email") or "").strip() or None,
-            "phone": (r.get("phone") or "").strip() or None,
-            "_source_sentence": r.get("_source_sentence"),
-            "_source_artifact_id": r.get("_source_artifact_id"),
-        })
+        # v41 multi-person shape: {"keep": true, "people": [{name, role, email, phone}, ...]}
+        # Back-compat with v40 single-person shape: {"keep": true, "name": "...", "role": ..., ...}
+        people_list = r.get("people")
+        if isinstance(people_list, list) and people_list:
+            entries = people_list
+        else:
+            entries = [{
+                "name": r.get("name"),
+                "role": r.get("role"),
+                "email": r.get("email"),
+                "phone": r.get("phone"),
+            }]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            name = name.strip()
+            # Last-chance hygiene: drop email-as-name + field-label
+            if _looks_like_email_or_url(name):
+                continue
+            if _is_likely_field_label(name):
+                continue
+            # Dedupe by name across multi-person entries
+            sig = re.sub(r"\s+", " ", name.lower()).strip()[:120]
+            if sig in seen_names:
+                continue
+            seen_names.add(sig)
+            out.append({
+                "name": name,
+                "role": (entry.get("role") or "").strip() or None,
+                "email": (entry.get("email") or "").strip() or None,
+                "phone": (entry.get("phone") or "").strip() or None,
+                "_source_sentence": r.get("_source_sentence"),
+                "_source_artifact_id": r.get("_source_artifact_id"),
+            })
     return out
 
 

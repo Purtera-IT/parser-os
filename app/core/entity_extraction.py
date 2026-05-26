@@ -3972,18 +3972,22 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     except Exception:
         _looks_like_regulator_not_customer = None  # type: ignore
 
-    # v41: per-pack institutional/jargon org-name customer denylist.
-    # When the LLM has identified a primary buying customer, ALL
-    # other "customer:" slugs that aren't an alias of it AND look
-    # like a regulator / committee / standards body get dropped
-    # universally.
-    llm_customer = None
+    # v41+: customer hygiene
+    # ------------------------------------------------------------------
+    # When the LLM identified a primary customer in this pack, that
+    # customer is the buyer. ALL other "customer:" slugs are regex
+    # co-mention noise (org names mentioned in the doc that aren't the
+    # buyer). Drop them aggressively, except aliases / extensions of
+    # the LLM customer (e.g. "BCSD" vs "Beaufort County School
+    # District" — both should survive if both are emitted).
+    _llm_customer_slug = None
     try:
-        from app.core.multi_entity_llm import extract_all_entities_with_llm
-        # ... already in scope as multi_result if enrich_atoms called
-        # extraction; we read it from the closure where available.
+        if isinstance(multi_result, dict):
+            _llm_customer_name = multi_result.get("customer")
+            if isinstance(_llm_customer_name, str) and _llm_customer_name.strip():
+                _llm_customer_slug = _slug(_llm_customer_name)
     except Exception:
-        pass
+        _llm_customer_slug = None
 
     # _CUSTOMER_NOISE_TAILS: when a customer slug ends in any of these,
     # it's structurally noise (regex-emitted from co-mentions), NOT a
@@ -3994,6 +3998,15 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         "council", "commission", "committee", "board",
         "department", "agency", "authority", "bureau",
         "office", "court",
+    }
+
+    # Known product / SaaS names that get false-positive promoted to
+    # "customer:" because their slug ends in an institutional tail
+    # (school / district / etc.). These are universally not buyers.
+    _KNOWN_PRODUCT_DENYLIST = {
+        "power_school", "powerschool", "mosaic", "mosaic_cloud",
+        "myschoolbucks", "mealviewer", "websmartt", "msa", "msasupport",
+        "scolaris", "infinite_campus", "skyward", "tyler",
     }
 
     for atom in atom_list:
@@ -4013,27 +4026,39 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 if _is_likely_field_label(phrase):
                     dropped_any = True
                     continue
-            # v41: customer hygiene — drop regulator-looking customer
-            # keys universally
-            if k.startswith("customer:") and _looks_like_regulator_not_customer is not None:
-                phrase = k[len("customer:"):].replace("_", " ")
-                if _looks_like_regulator_not_customer(phrase):
+            # v41: customer hygiene
+            if k.startswith("customer:"):
+                slug = k[len("customer:"):]
+                phrase = slug.replace("_", " ")
+                # (a) Drop known SaaS / product names (universally not
+                #     a buying customer)
+                if slug in _KNOWN_PRODUCT_DENYLIST:
                     dropped_any = True
                     continue
-                # Also drop institutional-noise tails (council, commission,
-                # committee, department, agency, etc.) when MULTIPLE
-                # customer keys exist — these are regex co-mentions, not
-                # the real buyer. The LLM customer survives because it
-                # gets re-injected post-drop.
+                # (b) Drop regulator-looking names
+                if _looks_like_regulator_not_customer is not None and \
+                        _looks_like_regulator_not_customer(phrase):
+                    dropped_any = True
+                    continue
+                # (c) Drop institutional-noise tails (council, commission,
+                #     committee, department, agency, etc.) — regex
+                #     co-mentions, not real buyers
                 tail = phrase.split()[-1] if phrase else ""
                 if tail in _CUSTOMER_NOISE_TAILS:
-                    # Cheap, universal: drop. The LLM's chosen customer
-                    # has already been injected and survives because it
-                    # has a different tail (district / inc / llc /
-                    # corp / etc.) OR because it doesn't share a slug
-                    # with the noise.
                     dropped_any = True
                     continue
+                # (d) If the LLM identified a primary customer, drop
+                #     any OTHER customer slug that isn't a prefix /
+                #     superprefix of the LLM customer slug (i.e. not
+                #     an alias of the same buyer). Aggressive but
+                #     correct — LLM has read the full doc and chose
+                #     the buyer.
+                if _llm_customer_slug:
+                    if (slug != _llm_customer_slug
+                            and not slug.startswith(_llm_customer_slug + "_")
+                            and not _llm_customer_slug.startswith(slug + "_")):
+                        dropped_any = True
+                        continue
             kept.append(k)
         if dropped_any:
             atom.entity_keys = kept
