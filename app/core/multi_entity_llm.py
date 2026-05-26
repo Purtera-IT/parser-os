@@ -47,8 +47,8 @@ from typing import Any, Callable
 
 DEFAULT_HOST = "http://100.114.102.122:11434"
 DEFAULT_MODEL = "qwen3:14b"
-DEFAULT_TIMEOUT = 240
-DEFAULT_PARALLEL = 5
+DEFAULT_TIMEOUT = 360  # v44.4: bumped from 240s — ollama on Mac queues
+DEFAULT_PARALLEL = 3   # v44.4: was 5 — Mac ollama 1-4 concurrent ceiling
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1304,7 +1304,10 @@ def _run_retrieval_extract(
     if not candidates:
         return []
 
-    parallel = int(os.environ.get("SOWSMITH_CANONICALIZE_PARALLEL", "12"))
+    # v44.4: was 12, lowered to 6 to avoid ollama saturation on Mac
+    # (3 extractors x 6 canon = 18 max concurrent LLM calls, vs old
+    # 5 x 12 = 60).
+    parallel = int(os.environ.get("SOWSMITH_CANONICALIZE_PARALLEL", "6"))
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
 
