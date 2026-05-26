@@ -4389,11 +4389,14 @@ def _inject_multi_entity_keys(
     for c in certifications:
         name = c.get("name")
         if isinstance(name, str) and name.strip():
-            words = [w for w in re.split(r"\W+", name) if len(w) >= 3][:6]
-            if not words:
-                continue
-            match_phrase = " ".join(words)
-            cert_entries.append((match_phrase, _slug(name[:80])))
+            # v44.3 — for SHORT certification names (TIA-568, PCI-DSS,
+            # USAC, FNS-742, E-Rate) the word-filtered match-phrase
+            # approach loses the hyphens/dots that PDFs actually
+            # contain. Use the RAW name as match phrase so
+            # _phrase_in_atom's substring fallback (which kicks in
+            # when no word is ≥4 chars) does case-insensitive
+            # substring search against the original form.
+            cert_entries.append((name.strip(), _slug(name[:80])))
 
     risks = multi.get("risks") or []
     risk_entries: list[tuple[str, str]] = []
