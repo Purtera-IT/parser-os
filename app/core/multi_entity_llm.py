@@ -219,18 +219,78 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             )
 
     # ────────────────────────────────────────────────────────────
-    # v42: MULTI-DOCUMENT GRAPH RAG — co-occurrence graph for future
-    # sparse-entity expansion. Stashed in results for downstream use.
+    # v42+v43: MULTI-DOCUMENT GRAPH RAG with sparse-entity expansion.
+    # Builds co-occurrence graph, then for under-populated entity
+    # types (sites, milestones), expands via graph neighbors of the
+    # well-populated anchors (customer, stakeholders).
     # ────────────────────────────────────────────────────────────
     if not os.environ.get("SOWSMITH_GRAPHRAG_DISABLE"):
         try:
-            from app.core.rag_extras import build_cooccurrence_graph
+            from app.core.rag_extras import (
+                build_cooccurrence_graph,
+                graph_expand_seeds,
+            )
             graph = build_cooccurrence_graph(atoms)
-            # Stash a compact summary (full graph is too big for envelope)
             results["_cooccurrence_summary"] = {
                 "node_count": len(graph),
                 "edge_count": sum(len(v) for v in graph.values()) // 2,
             }
+
+            # v43: Graph-expand sparse entity types
+            # Find anchor keys (customer + stakeholder keys actually in graph)
+            anchor_keys: set[str] = set()
+            for k in graph:
+                if k.startswith("customer:") or k.startswith("stakeholder:"):
+                    anchor_keys.add(k)
+
+            # If sites are sparse (≤3), expand via graph neighbors
+            site_keys_extracted = {
+                f"site:{re.sub(r'[^a-z0-9]+', '_', (c.get('canonical_name') or '').lower()).strip('_')}"
+                for c in (results.get("site_clusters") or [])
+                if isinstance(c, dict)
+            }
+            if anchor_keys and len(site_keys_extracted) <= 3:
+                expanded_sites = graph_expand_seeds(
+                    anchor_keys, graph,
+                    target_prefix="site:",
+                    max_expansion=20,
+                )
+                new_sites = expanded_sites - site_keys_extracted
+                if new_sites:
+                    # Add as additional clusters (single-alias each)
+                    current = results.get("site_clusters") or []
+                    for site_key in new_sites:
+                        slug = site_key[len("site:"):]
+                        name = slug.replace("_", " ").title()
+                        current.append({
+                            "canonical_name": name,
+                            "aliases": [name],
+                            "_via": "graph_expansion",
+                        })
+                    results["site_clusters"] = current
+
+            # If milestones are sparse, same treatment
+            ms_extracted = len(results.get("milestones") or [])
+            if anchor_keys and ms_extracted <= 2:
+                expanded_ms = graph_expand_seeds(
+                    anchor_keys, graph,
+                    target_prefix="milestone:",
+                    max_expansion=15,
+                )
+                if expanded_ms:
+                    current = results.get("milestones") or []
+                    existing_slugs = {
+                        re.sub(r"[^a-z0-9]+", "_", (m.get("name") or "").lower()).strip("_")
+                        for m in current if isinstance(m, dict)
+                    }
+                    for ms_key in expanded_ms:
+                        slug = ms_key[len("milestone:"):]
+                        if slug not in existing_slugs:
+                            current.append({
+                                "name": slug.replace("_", " "),
+                                "_via": "graph_expansion",
+                            })
+                    results["milestones"] = current
         except Exception:
             pass
 
