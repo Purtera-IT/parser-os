@@ -990,13 +990,53 @@ def _run_retrieval_extract(
             outcome["_retrieval_score"] = round(candidate["score"], 4)
             outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
             results.append(outcome)
+
+    # ────────────────────────────────────────────────────────────
+    # v40: SICRL — Section-Indexed Counterfactual Recall Loop
+    # ────────────────────────────────────────────────────────────
+    # Augments first-pass items by predicting what SHOULD be in
+    # under-covered sections and retrieving the gaps. NOVEL technique
+    # — see app/core/sicrl.py docstring for design.
+    use_sicrl = (
+        not os.environ.get("SOWSMITH_SICRL_DISABLE")
+        and entity_type in ("requirement", "stakeholder", "quantity")
+    )
+    if use_sicrl and results:
+        try:
+            from app.core.sicrl import run_sicrl
+            from app.core.embedding_retrieval import (
+                embed_texts as _embed_texts,
+                sentence_split as _sentence_split,
+            )
+            text_map = _build_artifact_text_map(by_artifact)
+            if text_map:
+                augmented = run_sicrl(
+                    by_artifact=text_map,
+                    first_pass_items=results,
+                    entity_type=entity_type,
+                    exemplars=exemplars,
+                    negative_exemplars=[],
+                    llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                    parse_json=_parse_json_object,
+                    canonicalize_fn=_canonicalize_candidate,
+                    embed_fn=_embed_texts,
+                    sentence_split_fn=_sentence_split,
+                    max_iterations=1,  # one pass for now; loop later
+                )
+                results = augmented
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "SICRL pass failed for %s: %s", entity_type, e,
+            )
+
     return results
 
 
 def _extract_requirements_retrieved(
     by_artifact: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """v38: embedding-retrieval requirement extraction.
+    """v38+v39+v40: embedding-retrieval requirement extraction.
     Replaces the chunked path's ~10% recall with 95%+ on requirement-
     heavy bids (Pack 18 Beaufort POS, Pack 19 Hood, Pack 12 BMS).
     Falls back to empty list if embedding endpoint unreachable; caller
@@ -1006,8 +1046,8 @@ def _extract_requirements_retrieved(
         by_artifact,
         entity_type="requirement",
         exemplars=REQUIREMENT_EXEMPLARS,
-        top_k_per_artifact=400,  # generous; canonicalize drops noise
-        min_score=0.45,
+        top_k_per_artifact=600,  # generous; canonicalize drops noise
+        min_score=0.30,  # v40: lowered so canonicalize is the gate
         canonical_key="canonical",
     )
     # Shape match with _extract_requirements_chunked: list of {text}
@@ -1027,16 +1067,16 @@ def _extract_requirements_retrieved(
 def _extract_stakeholders_retrieved(
     by_artifact: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """v38: embedding-retrieval stakeholder extraction. Finds named
-    people on signature blocks, contact pages, bid-contact lines —
-    no chunk dropout."""
+    """v38+v39+v40: embedding-retrieval stakeholder extraction.
+    Finds named people on signature blocks, contact pages, bid-contact
+    lines — no chunk dropout."""
     from app.core.exemplars import STAKEHOLDER_EXEMPLARS
     raw = _run_retrieval_extract(
         by_artifact,
         entity_type="stakeholder",
         exemplars=STAKEHOLDER_EXEMPLARS,
-        top_k_per_artifact=120,
-        min_score=0.48,
+        top_k_per_artifact=200,
+        min_score=0.35,
         canonical_key="name",
     )
     out = []
@@ -1072,8 +1112,8 @@ def _extract_site_clusters_retrieved(
         by_artifact,
         entity_type="site",
         exemplars=SITE_EXEMPLARS,
-        top_k_per_artifact=120,
-        min_score=0.46,
+        top_k_per_artifact=200,
+        min_score=0.35,
         canonical_key="canonical_name",
     )
     out = []
@@ -1105,8 +1145,8 @@ def _extract_quantities_retrieved(
         by_artifact,
         entity_type="quantity",
         exemplars=QUANTITY_EXEMPLARS,
-        top_k_per_artifact=200,
-        min_score=0.46,
+        top_k_per_artifact=300,
+        min_score=0.32,
         canonical_key="canonical",
     )
     out = []
