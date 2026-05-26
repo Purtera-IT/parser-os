@@ -76,23 +76,33 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
 
     excerpts = {
         "customer": _build_excerpt_for_customer(by_artifact),
-        "stakeholders": _build_excerpt_for_stakeholders(by_artifact),
         "milestones": _build_excerpt_for_milestones(by_artifact),
-        "site_clusters": _build_excerpt_for_site_clusters(by_artifact),
     }
 
-    # Dispatch the 4 single-excerpt calls + 1 chunked-per-doc call in
-    # parallel. Requirements uses the chunked path because real bid
-    # docs (Pack 18 Beaufort 196 clauses, Pack 19 Hood 38 clauses)
-    # blow past a single 30K-char budget; per-doc extraction recovers
-    # the missing 80% of shall/must clauses.
+    # Three categories get the chunked-per-doc path (one LLM call per
+    # artifact, union + dedupe):
+    #   - requirements:  Pack 18 Beaufort has 196 shall/must clauses;
+    #                    single 30K-char excerpt loses 80%+.
+    #   - stakeholders:  big vendor PDFs bury contacts on page 100+;
+    #                    chunked recovers names from signature blocks
+    #                    + contact pages outside the first 30K chars.
+    #   - site_clusters: roster sheets / multi-site PDFs (Albuquerque
+    #                    Public Schools, Muskegon Paging) list dozens
+    #                    of buildings — single excerpt sees the first
+    #                    few only.
+    #
+    # Two categories keep single-call extraction (their target volume
+    # per pack is bounded so a 1-shot excerpt is sufficient):
+    #   - customer:      1 canonical per pack; cover-page-heavy.
+    #   - milestones:    typically 0-25; LLM finds them in any
+    #                    moderate-sized excerpt.
     parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
     calls: dict[str, Callable[[], Any]] = {
         "customer": lambda: _extract_customer(excerpts["customer"]),
-        "stakeholders": lambda: _extract_stakeholders(excerpts["stakeholders"]),
+        "stakeholders": lambda: _extract_stakeholders_chunked(by_artifact),
         "milestones": lambda: _extract_milestones(excerpts["milestones"]),
         "requirements": lambda: _extract_requirements_chunked(by_artifact),
-        "site_clusters": lambda: _extract_site_clusters(excerpts["site_clusters"]),
+        "site_clusters": lambda: _extract_site_clusters_chunked(by_artifact),
     }
 
     results: dict[str, Any] = _empty_result()
@@ -284,10 +294,8 @@ If unclear or no customer is named, return: {{"customer": null}}
     return None
 
 
-def _extract_stakeholders(docs_excerpt: str) -> list[dict[str, Any]]:
-    if not docs_excerpt:
-        return []
-    prompt = f"""Identify PEOPLE (named human stakeholders) in this bid package.
+def _build_stakeholders_prompt(docs_excerpt: str) -> str:
+    return f"""Identify PEOPLE (named human stakeholders) in this bid package.
 
 🚨 HIGHEST PRIORITY: always include the BID-CONTACT person — the
 named individual the docs say to contact about the RFP/RFB/RFQ.
@@ -336,6 +344,15 @@ If genuinely no named humans appear in the docs, return: {{"stakeholders": []}}
 But if you see ANY email with an associated name, or any "contact <Name>" line, that person MUST appear in your output.
 
 /no_think"""
+
+
+def _extract_stakeholders(docs_excerpt: str) -> list[dict[str, Any]]:
+    """Single-call extraction — kept for back-compat. The chunked
+    variant ``_extract_stakeholders_chunked`` is what the parallel
+    runner actually uses now."""
+    if not docs_excerpt:
+        return []
+    prompt = _build_stakeholders_prompt(docs_excerpt)
     text = _call_ollama(prompt, max_tokens=1024)
     obj = _parse_json_object(text)
     if not isinstance(obj, dict):
@@ -451,55 +468,143 @@ If no real requirements found, return: {{"requirements": []}}
 /no_think"""
 
 
-def _extract_requirements_chunked(
+_CHUNK_CHARS = 40000  # ~10K tokens per LLM call — well under qwen3:14b's 40K context
+_MAX_CHUNKS_PER_ARTIFACT = 8  # safety cap (~320K chars/doc max)
+
+
+def _split_artifact_into_chunks(
+    slot: dict[str, Any], *, chunk_chars: int = _CHUNK_CHARS
+) -> list[str]:
+    """Split one artifact's body text into ``chunk_chars``-sized
+    chunks, each prefixed with the filename + section headings so
+    the LLM has context even for chunk N>0.
+
+    Real bid PDFs run 100-300 pages (Heartland Beaufort response =
+    177 pages ≈ 200K chars). A single chunked-per-doc call sees
+    ~12.5% of a 200K doc. Chunking within the artifact recovers
+    the rest.
+    """
+    body = " ".join(slot["bodies"])
+    if not body:
+        return []
+    headings_part = ""
+    if slot["headings"]:
+        headings_text = " | ".join(sorted(slot["headings"]))[:1200]
+        headings_part = f"[HEADINGS] {headings_text}\n\n"
+    filename = slot.get("filename") or "?"
+    chunks: list[str] = []
+    n = max(1, (len(body) + chunk_chars - 1) // chunk_chars)
+    n = min(n, _MAX_CHUNKS_PER_ARTIFACT)
+    for i in range(n):
+        start = i * chunk_chars
+        piece = body[start:start + chunk_chars]
+        label = f"--- {filename} [chunk {i + 1}/{n}] ---"
+        chunks.append(f"{label}\n{headings_part}{piece}")
+    return chunks
+
+
+def _extract_with_chunked_dispatch(
     by_artifact: dict[str, dict[str, Any]],
+    *,
+    build_prompt: Callable[[str], str],
+    output_key: str,
+    fields: tuple[str, ...],
+    max_tokens: int = 2048,
+    is_stakeholder: bool = False,
 ) -> list[dict[str, Any]]:
-    """Multi-call requirement extraction — one LLM call per artifact,
-    union the results, dedupe by text similarity.
+    """Generic per-artifact-per-chunk LLM dispatcher with dedup.
 
-    Real bid packages can have 100-200+ shall/must clauses scattered
-    across multiple docs (Pack 18 Beaufort POS source has 196). A
-    single 30K-char excerpt only sees ~15% of a 200K-char doc set,
-    losing 80%+ of the requirements. Per-doc extraction fixes that.
-
-    Each artifact gets its own LLM call with its own ~25K-char
-    budget. Results are unioned then deduplicated by normalizing
-    the requirement text (lowercase + collapse whitespace + take
-    first 100 chars) so multi-doc reposts of the same clause don't
-    duplicate.
+    Splits each artifact into ``_CHUNK_CHARS``-sized chunks, fires
+    one LLM call per chunk, unions results, dedupes by first 100
+    chars of normalized output text (or name).
     """
     if not by_artifact:
         return []
-    seen_signatures: set[str] = set()
+    seen: set[str] = set()
     out: list[dict[str, Any]] = []
+    sig_field = fields[0]
     for aid in sorted(by_artifact.keys()):
         slot = by_artifact[aid]
-        # Single artifact excerpt — generous per-doc budget so we
-        # don't truncate body text. qwen3:14b context is 40K tokens
-        # (~160K chars); 25K leaves headroom for the prompt frame.
-        excerpt = _format_artifact_section(slot, max_chars=25000)
-        if not excerpt:
-            continue
-        prompt = _build_requirements_prompt(excerpt)
-        text = _call_ollama(prompt, max_tokens=2048)
-        obj = _parse_json_object(text)
-        if not isinstance(obj, dict):
-            continue
-        for rec in _normalize_objects(
-            obj.get("requirements"), ("text", "category")
-        ):
-            text_val = rec.get("text") or ""
-            sig = re.sub(r"\s+", " ", text_val.lower()).strip()[:100]
-            if sig and sig not in seen_signatures:
-                seen_signatures.add(sig)
-                out.append(rec)
+        for chunk in _split_artifact_into_chunks(slot):
+            if not chunk:
+                continue
+            prompt = build_prompt(chunk)
+            text = _call_ollama(prompt, max_tokens=max_tokens)
+            obj = _parse_json_object(text)
+            if not isinstance(obj, dict):
+                continue
+            items = obj.get(output_key)
+            for rec in _normalize_objects(
+                items, fields, is_stakeholder=is_stakeholder
+            ):
+                v = rec.get(sig_field) or ""
+                sig = re.sub(r"\s+", " ", str(v).lower()).strip()[:100]
+                if sig and sig not in seen:
+                    seen.add(sig)
+                    out.append(rec)
     return out
 
 
-def _extract_site_clusters(docs_excerpt: str) -> list[dict[str, Any]]:
-    if not docs_excerpt:
-        return []
-    prompt = f"""Identify PHYSICAL SITES grouped into clusters.
+def _extract_requirements_chunked(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Multi-chunk requirement extraction — splits each artifact into
+    ~40K-char chunks, fires one LLM call per chunk, unions + dedupes.
+
+    Recovers 80%+ of requirement clauses on big PDFs (Pack 18
+    Beaufort POS source 196 clauses, Pack 19 Hood, Pack 12 BMS).
+    """
+    return _extract_with_chunked_dispatch(
+        by_artifact,
+        build_prompt=_build_requirements_prompt,
+        output_key="requirements",
+        fields=("text", "category"),
+        max_tokens=2048,
+    )
+
+
+def _extract_stakeholders_chunked(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Multi-chunk stakeholder extraction — catches names buried in
+    signature blocks / contact pages on page 100+ that the single-
+    excerpt path misses."""
+    return _extract_with_chunked_dispatch(
+        by_artifact,
+        build_prompt=_build_stakeholders_prompt,
+        output_key="stakeholders",
+        fields=("name", "role", "email", "phone"),
+        max_tokens=1024,
+        is_stakeholder=True,
+    )
+
+
+def _extract_site_clusters_chunked(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Multi-chunk site-cluster extraction — catches roster tables /
+    school lists buried later in big PDFs (Albuquerque Public Schools,
+    Muskegon Paging, etc.)."""
+    out_raw = _extract_with_chunked_dispatch(
+        by_artifact,
+        build_prompt=_build_site_clusters_prompt,
+        output_key="site_clusters",
+        fields=("canonical_name", "aliases"),
+        max_tokens=2048,
+    )
+    # The dispatcher returns plain dicts; normalize through the
+    # cluster-validator to merge aliases properly.
+    raw_list: list[Any] = []
+    for r in out_raw:
+        raw_list.append({
+            "canonical_name": r.get("canonical_name"),
+            "aliases": r.get("aliases") or [],
+        })
+    return _normalize_site_clusters(raw_list)
+
+
+def _build_site_clusters_prompt(docs_excerpt: str) -> str:
+    return f"""Identify PHYSICAL SITES grouped into clusters.
 
 Each cluster represents ONE physical building/site and lists every
 surface form (site codes, friendly names, addresses) that refer to
@@ -538,6 +643,15 @@ OUTPUT (array of cluster objects):
 If no real sites, return: {{"site_clusters": []}}
 
 /no_think"""
+
+
+def _extract_site_clusters(docs_excerpt: str) -> list[dict[str, Any]]:
+    """Single-call extraction — kept for back-compat. The chunked
+    variant ``_extract_site_clusters_chunked`` is what the parallel
+    runner uses now."""
+    if not docs_excerpt:
+        return []
+    prompt = _build_site_clusters_prompt(docs_excerpt)
     text = _call_ollama(prompt, max_tokens=2048)
     obj = _parse_json_object(text)
     if not isinstance(obj, dict):
