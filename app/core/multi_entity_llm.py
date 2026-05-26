@@ -132,6 +132,12 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             "requirements": _retrieved_or_chunked_requirements,
             "site_clusters": _retrieved_or_chunked_sites,
             "quantities": lambda: _extract_quantities_retrieved(by_artifact),
+            # v43 — 5 new entity-type extractors
+            "certifications": lambda: _extract_certifications_retrieved(by_artifact),
+            "risks": lambda: _extract_risks_retrieved(by_artifact),
+            "acceptance_criteria": lambda: _extract_acceptance_retrieved(by_artifact),
+            "penalties": lambda: _extract_penalties_retrieved(by_artifact),
+            "compliance_obligations": lambda: _extract_compliance_obligations_retrieved(by_artifact),
         }
     else:
         calls = {
@@ -228,6 +234,46 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
         except Exception:
             pass
 
+    # ────────────────────────────────────────────────────────────
+    # v43: VISION-LLM extraction for pages flagged as visual-only.
+    # Calls qwen2.5vl:7b on each PDF page where the text parser
+    # reported "visual / table / diagram evidence not fully extracted".
+    # Extracts structured rows (BOM lines, contact rosters, schedule
+    # cells, etc.) and tags them with entity_type kind. Stashed under
+    # `vision_rows` for downstream injection.
+    # ────────────────────────────────────────────────────────────
+    if not os.environ.get("SOWSMITH_VISION_DISABLE"):
+        try:
+            from app.core.vision_extraction import (
+                find_visual_pages_from_atoms,
+                extract_visual_pages,
+                vision_endpoint_reachable,
+            )
+            if vision_endpoint_reachable():
+                visual_pages = find_visual_pages_from_atoms(atoms)
+                if visual_pages:
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "v43 vision: %d visual pages identified",
+                        len(visual_pages),
+                    )
+                    vision_results = extract_visual_pages(
+                        visual_pages,
+                        max_parallel=int(
+                            os.environ.get("SOWSMITH_VISION_PARALLEL", "3")
+                        ),
+                        max_pages=int(
+                            os.environ.get("SOWSMITH_VISION_MAX_PAGES", "30")
+                        ),
+                    )
+                    if vision_results:
+                        results["vision_rows"] = vision_results
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "vision-LLM pass failed: %s", e,
+            )
+
     return results
 
 
@@ -239,6 +285,12 @@ def _empty_result() -> dict[str, Any]:
         "requirements": [],
         "site_clusters": [],
         "quantities": [],
+        # v43 — 5 new entity types
+        "certifications": [],
+        "risks": [],
+        "acceptance_criteria": [],
+        "penalties": [],
+        "compliance_obligations": [],
     }
 
 
@@ -846,10 +898,18 @@ _CANONICALIZE_PROMPTS: dict[str, str] = {
         "  - already obvious noise (table cell fragments, etc.)\n\n"
         "If KEEP, also produce a canonical form (drop the leading\n"
         "'The contractor shall' / 'Vendor must' prefix when obvious;\n"
-        "keep the meaningful verb and object; max 120 chars).\n\n"
+        "keep the meaningful verb and object; max 120 chars). Also\n"
+        "classify the kind:\n"
+        "  technical    — software / hardware / integration capability\n"
+        "  commercial   — pricing, payment terms, commercial conduct\n"
+        "  legal        — indemnification, termination, governing law\n"
+        "  operational  — staffing, conduct, training, hours\n"
+        "  compliance   — regulatory, certification, audit requirements\n"
+        "  insurance    — coverage limits, bonds, deductibles\n\n"
         "SENTENCE: {sentence}\n\n"
         "OUTPUT exactly one JSON object on one line:\n"
-        '  {{"keep": true, "canonical": "<canonical form>"}} or {{"keep": false}}\n\n'
+        '  {{"keep": true, "canonical": "<canonical form>", "kind": "<one of: technical|commercial|legal|operational|compliance|insurance>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
         "/no_think"
     ),
     "stakeholder": (
@@ -913,10 +973,119 @@ _CANONICALIZE_PROMPTS: dict[str, str] = {
         "  - a year alone with no quantity context\n"
         "  - product version numbers\n\n"
         "If KEEP, produce a short canonical form (e.g. '99.999% uptime',\n"
-        "'2-hour Sev1 response', '32 schools').\n\n"
+        "'2-hour Sev1 response', '32 schools'). Also classify the kind:\n"
+        "  sla | count | duration | payment_term | percentage | lead_time | hours\n\n"
         "SENTENCE: {sentence}\n\n"
         "OUTPUT exactly one JSON object on one line:\n"
-        '  {{"keep": true, "canonical": "<short form>", "value": "<numeric value>", "unit": "<unit if applicable>"}}\n'
+        '  {{"keep": true, "canonical": "<short form>", "value": "<numeric value>", "unit": "<unit>", "kind": "<one of: sla|count|duration|payment_term|percentage|lead_time|hours>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    # v43 — five new entity-type canonicalize prompts
+    "certification": (
+        "TASK: Decide if the SENTENCE references a CERTIFICATION,\n"
+        "STANDARD, or COMPLIANCE FRAMEWORK the vendor / customer claims\n"
+        "or requires.\n\n"
+        "KEEP if the sentence references:\n"
+        "  - Security / payment certs (PCI-DSS, SOC 2, ISO 27001, NIST 800-53)\n"
+        "  - Privacy regulations (HIPAA, FERPA, GDPR, CCPA, COPPA)\n"
+        "  - Audit / quality certs (SSAE 18, FedRAMP, FISMA)\n"
+        "  - Education / govt certs (USDA approval, FNS-XXX forms)\n"
+        "  - Industry standards (TIA-568, NFPA 70/72, IEEE 802.11, NEC)\n"
+        "  - Quality systems (ISO 9001, AS9100)\n\n"
+        "DROP if the sentence:\n"
+        "  - is generic 'industry-leading security' marketing\n"
+        "  - mentions the word 'standard' without naming a specific one\n"
+        "  - is a job-title 'standards engineer'\n\n"
+        "If KEEP, extract the certification's canonical name (PCI-DSS, SOC 2,\n"
+        "NIST 800-53, etc.). Drop level / version suffixes into a separate\n"
+        "field when present.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<cert name>", "level": "<level/version or empty>", "kind": "<security|privacy|audit|education|industry|quality>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "risk": (
+        "TASK: Decide if the SENTENCE describes a RISK / DEPENDENCY /\n"
+        "CONTINGENCY (something that could go wrong, cause delays, or\n"
+        "require contingency planning).\n\n"
+        "KEEP if the sentence describes:\n"
+        "  - Schedule risks (long lead times, dependencies)\n"
+        "  - Technical risks (capacity limits, compatibility issues)\n"
+        "  - Commercial risks (payment-term ambiguity, fee escalation)\n"
+        "  - Compliance risks (regulatory exposure, audit findings)\n"
+        "  - Operational risks (single points of failure, single-source vendors)\n\n"
+        "DROP if the sentence is:\n"
+        "  - a marketing claim about how risks are mitigated (positive spin)\n"
+        "  - generic 'we manage risk well' boilerplate\n"
+        "  - a requirement (handled by separate extractor)\n\n"
+        "If KEEP, summarize the risk in canonical form and classify the kind.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<risk summary>", "kind": "<schedule|technical|commercial|compliance|operational>", "severity": "<high|medium|low>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "acceptance": (
+        "TASK: Decide if the SENTENCE defines ACCEPTANCE CRITERIA — what\n"
+        "constitutes successful completion, deliverable approval, or\n"
+        "phase signoff.\n\n"
+        "KEEP if the sentence defines:\n"
+        "  - Substantial completion criteria\n"
+        "  - Final acceptance gates / observation periods\n"
+        "  - Required deliverables (drawings, test reports, training records)\n"
+        "  - Closeout artifacts (warranty registrations, as-builts)\n"
+        "  - Sign-off requirements between phases\n\n"
+        "DROP if the sentence is:\n"
+        "  - a general requirement (handled by separate extractor)\n"
+        "  - acceptance of terms in a legal sense (not project acceptance)\n\n"
+        "If KEEP, summarize the acceptance criterion in canonical form.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<acceptance criterion>", "kind": "<substantial|final|phase_gate|deliverable|closeout>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "penalty": (
+        "TASK: Decide if the SENTENCE defines a PENALTY, SERVICE CREDIT,\n"
+        "LIQUIDATED DAMAGE, or TERMINATION TRIGGER (what happens when\n"
+        "the contractor fails to meet an obligation).\n\n"
+        "KEEP if the sentence defines:\n"
+        "  - Service credits (X% of monthly fee per hour of downtime)\n"
+        "  - Late delivery penalties (X% per business day)\n"
+        "  - Late payment interest (X% per month)\n"
+        "  - Liquidated damages ($X per day)\n"
+        "  - Termination-for-default triggers (cure periods, material breach)\n"
+        "  - Bond forfeiture conditions\n\n"
+        "DROP if the sentence is:\n"
+        "  - a general SLA (handled by quantity extractor)\n"
+        "  - a marketing claim about how penalties are mitigated\n\n"
+        "If KEEP, summarize the penalty in canonical form.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<penalty summary>", "kind": "<service_credit|late_delivery|late_payment|liquidated_damages|termination|bond_forfeiture>", "magnitude": "<numeric or empty>"}}\n'
+        "  or {{\"keep\": false}}\n\n"
+        "/no_think"
+    ),
+    "compliance_obligation": (
+        "TASK: Decide if the SENTENCE references a COMPLIANCE OBLIGATION —\n"
+        "a statute, regulation, code, or law the contractor must follow.\n\n"
+        "KEEP if the sentence references:\n"
+        "  - Labor laws (Fair Labor Standards Act, Davis-Bacon, ADA)\n"
+        "  - Equal Employment Opportunity (Title VII, Section 504)\n"
+        "  - State procurement codes (SC Code 11-35, Texas Govt 2252)\n"
+        "  - Federal regulations (FAR Part 52, FedRAMP, FISMA)\n"
+        "  - Industry codes (NEC, NFPA, IBC, IFC)\n"
+        "  - Tax exemption statutes\n"
+        "  - Data privacy regulations as legal requirements (HIPAA, FERPA)\n\n"
+        "DROP if the sentence is:\n"
+        "  - a certification claim (handled by certification extractor)\n"
+        "  - a general 'shall comply with all applicable laws' boilerplate\n\n"
+        "If KEEP, summarize the obligation including the statute reference.\n\n"
+        "SENTENCE: {sentence}\n\n"
+        "OUTPUT exactly one JSON object on one line:\n"
+        '  {{"keep": true, "canonical": "<obligation summary>", "statute_reference": "<code section or name>", "kind": "<labor|equality|procurement|federal|industry_code|tax|privacy>"}}\n'
         "  or {{\"keep\": false}}\n\n"
         "/no_think"
     ),
@@ -1357,6 +1526,156 @@ def _extract_quantities_retrieved(
             "text": canon.strip(),
             "value": r.get("value"),
             "unit": r.get("unit"),
+            "kind": r.get("kind"),  # v43 classification
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════
+# v43 — 5 new entity-type extractors: certification, risk, acceptance,
+# penalty, compliance_obligation
+# ════════════════════════════════════════════════════════════════════
+
+
+def _extract_certifications_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: certifications / standards / compliance frameworks the
+    vendor claims or customer requires (PCI-DSS, SOC 2, HIPAA, FERPA,
+    NIST 800-53, ISO 27001, TIA-568, NFPA 72, USDA, FNS-XXX)."""
+    from app.core.exemplars import CERTIFICATION_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="certification",
+        exemplars=CERTIFICATION_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.35,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "name": canon.strip(),
+            "level": (r.get("level") or "").strip() or None,
+            "kind": r.get("kind"),  # security|privacy|audit|education|industry|quality
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_risks_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: risks / dependencies / contingencies."""
+    from app.core.exemplars import RISK_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="risk",
+        exemplars=RISK_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "description": canon.strip(),
+            "kind": r.get("kind"),  # schedule|technical|commercial|compliance|operational
+            "severity": r.get("severity"),  # high|medium|low
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_acceptance_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: acceptance criteria / deliverable gates / closeout artifacts."""
+    from app.core.exemplars import ACCEPTANCE_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="acceptance",
+        exemplars=ACCEPTANCE_EXEMPLARS,
+        top_k_per_artifact=150,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "criterion": canon.strip(),
+            "kind": r.get("kind"),
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_penalties_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: penalties / service credits / liquidated damages /
+    termination triggers."""
+    from app.core.exemplars import PENALTY_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="penalty",
+        exemplars=PENALTY_EXEMPLARS,
+        top_k_per_artifact=150,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "description": canon.strip(),
+            "kind": r.get("kind"),
+            "magnitude": r.get("magnitude"),
+            "_source_sentence": r.get("_source_sentence"),
+            "_source_artifact_id": r.get("_source_artifact_id"),
+        })
+    return out
+
+
+def _extract_compliance_obligations_retrieved(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v43: compliance obligations / statute references / regulatory
+    requirements."""
+    from app.core.exemplars import COMPLIANCE_EXEMPLARS
+    raw = _run_retrieval_extract(
+        by_artifact,
+        entity_type="compliance_obligation",
+        exemplars=COMPLIANCE_EXEMPLARS,
+        top_k_per_artifact=200,
+        min_score=0.32,
+        canonical_key="canonical",
+    )
+    out = []
+    for r in raw:
+        canon = r.get("canonical")
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        out.append({
+            "obligation": canon.strip(),
+            "statute_reference": (r.get("statute_reference") or "").strip() or None,
+            "kind": r.get("kind"),
             "_source_sentence": r.get("_source_sentence"),
             "_source_artifact_id": r.get("_source_artifact_id"),
         })

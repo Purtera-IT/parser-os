@@ -367,6 +367,88 @@ DATE_NEGATIVE_EXEMPLARS: list[str] = [
 # REGISTRY — by entity type name
 # ════════════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════════════
+# v43 NEW ENTITY TYPES — certifications / acceptance / penalties /
+# compliance obligations (risks already defined above).
+# ════════════════════════════════════════════════════════════════════
+
+CERTIFICATION_EXEMPLARS: list[str] = [
+    # Payment / security certs
+    "Heartland is certified to PCI-DSS Level 1 at the Service Provider tier.",
+    "The vendor maintains SOC 2 Type II certification.",
+    "All systems comply with HIPAA Privacy and Security Rules.",
+    "FedRAMP Moderate authorization is required for the cloud platform.",
+    # Quality / process certs
+    "The platform is ISO 27001:2013 certified for information security management.",
+    "Operations are audited annually for SSAE 18 SOC 1 compliance.",
+    "NIST 800-53 controls are implemented across the production environment.",
+    # Education / govt certs
+    "USDA approves the menu-planning module for nutrient analysis compliance.",
+    "The submission includes a signed FNS-742 application form.",
+    "FERPA student-records confidentiality applies to all integration data.",
+    # Privacy regulations
+    "GDPR data-subject rights are honored for EU resident records.",
+    "CCPA opt-out workflows are implemented for California residents.",
+    # Industry standards
+    "All cabling shall comply with TIA-568-C.2 Category 6A standards.",
+    "Wireless deployments meet IEEE 802.11ax (Wi-Fi 6) specifications.",
+    "Fire systems are certified to NFPA 72 requirements.",
+]
+
+ACCEPTANCE_EXEMPLARS: list[str] = [
+    # Acceptance gates
+    "Substantial completion is achieved when all sites pass functional testing.",
+    "Final acceptance occurs after the 30-day post-go-live observation period.",
+    "Customer acceptance of the design package is a prerequisite to procurement.",
+    # Deliverables
+    "As-built drawings shall be provided within 30 days of project closure.",
+    "Test reports for all CAT6A links shall be submitted prior to acceptance.",
+    "Training records and user acceptance signoffs are required before go-live.",
+    # Quality gates
+    "All deliverables must pass third-party penetration testing before acceptance.",
+    "Each phase requires customer sign-off before the next phase begins.",
+    "Acceptance testing covers functional, performance, and security criteria.",
+    # Closeout
+    "Closeout documentation includes warranty registrations and maintenance contacts.",
+    "Final invoice may be issued only after written acceptance is received.",
+]
+
+PENALTY_EXEMPLARS: list[str] = [
+    # Service credit / SLA penalties
+    "Service credits of 10% of monthly fee apply per hour of unplanned downtime beyond 99.9% uptime.",
+    "Late delivery penalty is 1% of contract value per business day overdue.",
+    "Failure to meet response-time SLA results in proportional service credits.",
+    # Late payment / termination triggers
+    "Interest of 1.5% per month accrues on unpaid invoices beyond 30 days.",
+    "The District may terminate for default if the cure period of 19 days lapses.",
+    "Liquidated damages of $500 per day apply for delays past the agreed milestone.",
+    # Material breach
+    "Material breach by the contractor entitles the District to immediate termination.",
+    "Repeated SLA failures within a quarter trigger contract review.",
+    "Any data breach incurs notification within 72 hours and remediation costs.",
+    # Bond forfeiture
+    "Performance bond may be forfeited upon failure to complete the work.",
+    "Bid security is forfeited if the awarded bidder declines the contract.",
+]
+
+COMPLIANCE_EXEMPLARS: list[str] = [
+    # Regulatory references (not always "shall" but mandatory)
+    "All workplace conditions adhere to the Fair Labor Standards Act.",
+    "The contractor complies with applicable provisions of the Americans with Disabilities Act.",
+    "Equal Employment Opportunity laws apply to all hiring decisions.",
+    "Davis-Bacon wage rates apply for all federally-funded labor.",
+    # Statute / code references
+    "Conformance to South Carolina Code Section 11-35 is required for procurement.",
+    "Federal Acquisition Regulation Part 52 clauses are incorporated by reference.",
+    "Section 504 of the Rehabilitation Act prohibits discrimination on the basis of disability.",
+    "All work conforms to the most current edition of the National Electrical Code.",
+    # State-specific
+    "South Carolina sales tax exemption applies under SC Code Section 12-36.",
+    "California Education Code Section 49073 governs student data privacy.",
+    "Texas Government Code 2252 applies to all state-procurement contracts.",
+]
+
+
 EXEMPLARS_BY_TYPE: dict[str, list[str]] = {
     "requirement": REQUIREMENT_EXEMPLARS,
     "quantity": QUANTITY_EXEMPLARS,
@@ -376,6 +458,11 @@ EXEMPLARS_BY_TYPE: dict[str, list[str]] = {
     "date": DATE_EXEMPLARS,
     "milestone": MILESTONE_EXEMPLARS,
     "risk": RISK_EXEMPLARS,
+    # v43 new
+    "certification": CERTIFICATION_EXEMPLARS,
+    "acceptance": ACCEPTANCE_EXEMPLARS,
+    "penalty": PENALTY_EXEMPLARS,
+    "compliance_obligation": COMPLIANCE_EXEMPLARS,
 }
 
 NEGATIVE_EXEMPLARS_BY_TYPE: dict[str, list[str]] = {
