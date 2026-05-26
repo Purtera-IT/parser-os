@@ -788,6 +788,10 @@ _FIELD_LABEL_TAILS: frozenset[str] = frozenset({
     "field", "fields", "value", "values", "key", "keys",
     "type", "types", "category", "categories", "status",
     "owner", "owners", "manager", "managers",
+    "officer", "officers", "rep", "reps", "representative",
+    "representatives", "lead", "leads", "support", "specialist",
+    "specialists", "coordinator", "coordinators",
+    "supervisor", "supervisors", "director", "directors",
     "input", "output", "config", "configuration", "setting",
     "settings", "parameter", "parameters", "option", "options",
     "address", "addresses", "phone", "phones", "email", "emails",
@@ -911,6 +915,9 @@ _COMMON_NOUN_FIRST_WORDS: frozenset[str] = frozenset({
     # Generic users / roles
     "end", "all", "any", "each", "every", "some", "many",
     "new", "old", "current", "former", "future",
+    # Business-relationship words that lead noun phrases, not names
+    "customer", "client", "contractor", "vendor", "supplier",
+    "bidder", "provider", "partner", "subcontractor",
     # Position / direction words
     "front", "back", "left", "right", "top", "bottom",
     "north", "south", "east", "west", "central", "main",

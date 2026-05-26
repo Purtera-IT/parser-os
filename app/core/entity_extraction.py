@@ -3420,6 +3420,29 @@ def _emit_person_from_contact(text: str) -> set[str]:
          no name in front. Skips role-shaped local-parts (info,
          support, noreply, etc.) via _EMAIL_LOCAL_DENY.
     """
+    # Pull the common-noun-first-word + tail-word + org-keyword
+    # filter that the LLM stakeholder path already uses. The
+    # contact-anchor back-scan can pull "Mosaic Front" / "End Users" /
+    # "Power School" off lines like "Mosaic Front | support@..." or
+    # "End Users may contact support@..." — those phrases pass the
+    # name-shape check and pass _is_likely_person_label (which only
+    # checks org-suffix tails) but should NEVER survive as people.
+    # Single source of truth for "is this a real person name?" lives
+    # in _is_likely_field_label.
+    try:
+        from app.core.multi_entity_llm import _is_likely_field_label
+    except Exception:
+        _is_likely_field_label = None  # type: ignore
+
+    def _looks_like_real_person(name: str) -> bool:
+        if not name:
+            return False
+        if _is_likely_person_label(name):
+            return False
+        if _is_likely_field_label is not None and _is_likely_field_label(name):
+            return False
+        return True
+
     keys: set[str] = set()
     # Email-anchored back-scan
     bad_starts = ("At ", "By ", "For ", "From ", "To ", "Of ",
@@ -3434,7 +3457,7 @@ def _emit_person_from_contact(text: str) -> set[str]:
                 if name.startswith(bs):
                     name = name[len(bs):].strip()
             slug = _slug_simple(name)
-            if slug and "_" in slug and not _is_likely_person_label(name):
+            if slug and "_" in slug and _looks_like_real_person(name):
                 keys.add(f"stakeholder:{slug}")
                 any_name_found = True
         # Fallback 3 — derive name from email local-part if no
@@ -3454,7 +3477,7 @@ def _emit_person_from_contact(text: str) -> set[str]:
                     name_parts = [p.capitalize() for p in parts]
                     name = " ".join(name_parts)
                     slug = _slug_simple(name)
-                    if slug and "_" in slug and not _is_likely_person_label(name):
+                    if slug and "_" in slug and _looks_like_real_person(name):
                         keys.add(f"stakeholder:{slug}")
     # Contact-line
     for m in _PERSON_CONTACT_LINE.finditer(text):
@@ -3463,7 +3486,7 @@ def _emit_person_from_contact(text: str) -> set[str]:
             if name.startswith(bs):
                 name = name[len(bs):].strip()
         slug = _slug_simple(name)
-        if slug and "_" in slug and not _is_likely_person_label(name):
+        if slug and "_" in slug and _looks_like_real_person(name):
             keys.add(f"stakeholder:{slug}")
     return keys
 
@@ -3508,6 +3531,8 @@ def _is_likely_person_label(name: str) -> bool:
         "Manager", "Agent", "Director", "Supervisor",
         "Sponsor", "Lead", "Owner", "Engineer", "Architect",
         "Coordinator", "Specialist", "Foreman", "Inspector",
+        "Officer", "Officers", "Support", "Rep", "Representative",
+        "Reps", "Representatives", "Leads", "Specialists",
         # Other
         "Postal", "USA", "US", "USPS", "FedEx", "UPS",
         # Street-suffix words — when a "name" ends in these it's an
@@ -3962,12 +3987,30 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # customer:beaufort_county_school_district), the site key is a
     # FRAGMENT of the customer name and shouldn't be a separate
     # site entity. Drop it.
+    #
+    # Two sources of customer slugs:
+    #   (a) customer:* keys actually injected on atoms (via
+    #       _inject_multi_entity_keys' _phrase_in_atom matching).
+    #   (b) the LLM-emitted multi_result["customer"] string —
+    #       used as a fallback so we still drop fragments even
+    #       when the customer phrase didn't appear verbatim on
+    #       any single atom. Critical for Pack 18 Beaufort POS
+    #       where atoms reference "BCSD" / "the District" more
+    #       often than the full "Beaufort County School District"
+    #       phrase that _phrase_in_atom requires.
     customer_slugs = {
         k[len("customer:"):]
         for atom in atom_list
         for k in (atom.entity_keys or [])
         if k.startswith("customer:")
     }
+    llm_customer_name = (
+        multi_result.get("customer")
+        if isinstance(multi_result, dict)
+        else None
+    )
+    if isinstance(llm_customer_name, str) and llm_customer_name.strip():
+        customer_slugs.add(_slug(llm_customer_name))
     if customer_slugs:
         for atom in atom_list:
             keys = atom.entity_keys or []
@@ -4004,6 +4047,18 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # successfully. Walk every atom one more time and re-emit those
     # keys. Catches Glenn Tilleman, Shaun Tozer, John Foster, Matthew
     # Brener even when LLM extract returned a different / no person.
+    #
+    # Belt and suspenders: even though _emit_person_from_contact now
+    # filters noun-fragments internally via _is_likely_field_label,
+    # we run the same filter here so any future caller that bypasses
+    # the internal filter still gets sanitized output. Also applies
+    # _is_obvious_non_site to any site:* sneaking in.
+    try:
+        from app.core.multi_entity_llm import (
+            _is_likely_field_label as _ilfl_recovery,
+        )
+    except Exception:
+        _ilfl_recovery = None  # type: ignore
     for atom in atom_list:
         raw = getattr(atom, "raw_text", "") or ""
         if not raw:
@@ -4011,6 +4066,19 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         contact_keys = _emit_person_from_contact(raw)
         contact_keys |= _emit_email_keys(raw)
         contact_keys |= _emit_phone_keys(raw)
+        # Filter noun-fragment stakeholders out of the recovery
+        # contribution. These shouldn't make it past
+        # _emit_person_from_contact now, but if they do, drop them
+        # before merging onto atoms.
+        if _ilfl_recovery is not None:
+            sanitized: set[str] = set()
+            for k in contact_keys:
+                if k.startswith("stakeholder:"):
+                    phrase = k[len("stakeholder:"):].replace("_", " ")
+                    if _ilfl_recovery(phrase):
+                        continue
+                sanitized.add(k)
+            contact_keys = sanitized
         if not contact_keys:
             continue
         existing = set(atom.entity_keys or [])
