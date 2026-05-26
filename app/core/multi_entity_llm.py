@@ -295,6 +295,227 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             pass
 
     # ────────────────────────────────────────────────────────────
+    # v45: ZERO-MISS PASS — three stacked techniques on top of v44.5:
+    #   1. PM-critical vocabulary sweep — 60+ hardcoded terms
+    #      (insurance, bond, indemnify, terminate, sla, etc.) checked
+    #      against raw text; if ≥3 mentions but no entity covers them,
+    #      force-inject via canonicalize.
+    #   2. Per-page coverage gauge — flag pages with high sentence
+    #      count but low entity yield as "missed content" candidates.
+    #   3. PLIR (Page-Level Iterative Recall) — for each low-coverage
+    #      page, ask LLM "what did we miss on this page" with current
+    #      extractions shown. Catches content buried in pages without
+    #      section headings.
+    # All gated by SOWSMITH_ZERO_MISS_DISABLE.
+    # ────────────────────────────────────────────────────────────
+    if not os.environ.get("SOWSMITH_ZERO_MISS_DISABLE"):
+        try:
+            from app.core.zero_miss import (
+                pm_vocab_sweep,
+                compute_page_coverage,
+                find_low_coverage_pages,
+                page_level_iterative_recall,
+            )
+            # Build raw_text_by_artifact + by_page for downstream use
+            raw_by_artifact: dict[str, str] = {}
+            raw_by_page: dict[tuple[str, int], str] = {}
+            for atom in atoms:
+                aid = getattr(atom, "artifact_id", None) or ""
+                raw = getattr(atom, "raw_text", "") or ""
+                if aid and raw:
+                    raw_by_artifact[aid] = raw_by_artifact.get(aid, "") + "\n\n" + raw
+                try:
+                    refs = getattr(atom, "source_refs", None) or []
+                    if refs:
+                        ref = refs[0]
+                        fname = getattr(ref, "filename", None) or ""
+                        loc = getattr(ref, "locator", None) or {}
+                        page = loc.get("page", 0) if isinstance(loc, dict) else 0
+                        if fname:
+                            raw_by_page[(fname, page)] = \
+                                raw_by_page.get((fname, page), "") + "\n\n" + raw
+                except Exception:
+                    pass
+
+            # 1. PM-critical vocab sweep
+            try:
+                all_raw = "\n\n".join(raw_by_artifact.values())
+                missed_pm = pm_vocab_sweep(
+                    all_raw, atoms, results,
+                    canonicalize_fn=_canonicalize_candidate,
+                    mention_threshold=3,
+                )
+                if missed_pm:
+                    import logging as _lg
+                    _lg.getLogger(__name__).info(
+                        "v45 PM-vocab sweep: %d force-injected items",
+                        len(missed_pm),
+                    )
+                    # Inject into results by kind
+                    for item in missed_pm:
+                        kind = item.get("kind")
+                        outcome = item.get("outcome", {})
+                        if not kind or not outcome:
+                            continue
+                        # Map entity type to multi_result key
+                        result_key = {
+                            "requirement": "requirements",
+                            "stakeholder": "stakeholders",
+                            "milestone": "milestones",
+                            "site": "site_clusters",
+                            "quantity": "quantities",
+                            "certification": "certifications",
+                            "risk": "risks",
+                            "acceptance_criteria": "acceptance_criteria",
+                            "penalty": "penalties",
+                            "compliance_obligation": "compliance_obligations",
+                        }.get(kind)
+                        if not result_key or result_key not in results:
+                            continue
+                        # Build the right shape per entity type
+                        if kind == "requirement":
+                            entry = {"text": outcome.get("canonical", ""),
+                                     "kind": outcome.get("kind"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "stakeholder":
+                            entry = {"name": outcome.get("name", ""),
+                                     "role": outcome.get("role"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "site":
+                            entry = {"canonical_name": outcome.get("canonical_name", ""),
+                                     "aliases": [outcome.get("canonical_name", "")],
+                                     "_via": outcome.get("_via")}
+                        elif kind == "milestone":
+                            entry = {"name": outcome.get("canonical", ""),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "quantity":
+                            entry = {"text": outcome.get("canonical", ""),
+                                     "kind": outcome.get("kind"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "certification":
+                            entry = {"name": outcome.get("canonical", ""),
+                                     "level": outcome.get("level"),
+                                     "kind": outcome.get("kind"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "risk":
+                            entry = {"description": outcome.get("canonical", ""),
+                                     "kind": outcome.get("kind"),
+                                     "severity": outcome.get("severity"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "acceptance_criteria":
+                            entry = {"criterion": outcome.get("canonical", ""),
+                                     "kind": outcome.get("kind"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "penalty":
+                            entry = {"description": outcome.get("canonical", ""),
+                                     "kind": outcome.get("kind"),
+                                     "magnitude": outcome.get("magnitude"),
+                                     "_via": outcome.get("_via")}
+                        elif kind == "compliance_obligation":
+                            entry = {"obligation": outcome.get("canonical", ""),
+                                     "statute_reference": outcome.get("statute_reference"),
+                                     "kind": outcome.get("kind"),
+                                     "_via": outcome.get("_via")}
+                        else:
+                            continue
+                        results[result_key].append(entry)
+            except Exception as e:
+                import logging as _lg
+                _lg.getLogger(__name__).warning("pm_vocab_sweep failed: %s", e)
+
+            # 2 + 3. Per-page coverage + PLIR
+            try:
+                coverage = compute_page_coverage(atoms, raw_by_page)
+                low_cov = find_low_coverage_pages(
+                    coverage, min_sentences=10, max_ratio=0.05,
+                )
+                if low_cov:
+                    import logging as _lg
+                    _lg.getLogger(__name__).info(
+                        "v45 coverage: %d low-coverage pages flagged for PLIR",
+                        len(low_cov),
+                    )
+                    # Build prior_extractions per page (best-effort)
+                    # — we don't track exact page provenance for each
+                    # extracted item, so prior_items will be empty
+                    # for most pages. PLIR can still find new content.
+                    page_extractions: dict[tuple[str, int], list] = {}
+                    plir_added = page_level_iterative_recall(
+                        raw_by_page, coverage, page_extractions,
+                        llm_call=lambda p, mt: _call_ollama(p, max_tokens=mt),
+                        parse_json=_parse_json_object,
+                        max_pages=20,
+                        parallel=3,
+                    )
+                    if plir_added:
+                        _lg.getLogger(__name__).info(
+                            "v45 PLIR: %d new items recovered",
+                            len(plir_added),
+                        )
+                        # Inject PLIR finds into results (basic shape)
+                        for item in plir_added:
+                            kind = item.get("kind", "").lower()
+                            text = item.get("text", "")
+                            if not text:
+                                continue
+                            result_key = {
+                                "requirement": "requirements",
+                                "stakeholder": "stakeholders",
+                                "milestone": "milestones",
+                                "site": "site_clusters",
+                                "quantity": "quantities",
+                                "money": None,  # money is regex-emitted
+                                "date": None,
+                                "certification": "certifications",
+                                "risk": "risks",
+                                "acceptance_criteria": "acceptance_criteria",
+                                "penalty": "penalties",
+                                "compliance_obligation": "compliance_obligations",
+                            }.get(kind)
+                            if not result_key or result_key not in results:
+                                continue
+                            # Use sensible shape per type
+                            if kind == "requirement":
+                                results[result_key].append(
+                                    {"text": text, "_via": "plir"})
+                            elif kind == "stakeholder":
+                                results[result_key].append(
+                                    {"name": text, "_via": "plir"})
+                            elif kind == "site":
+                                results[result_key].append(
+                                    {"canonical_name": text,
+                                     "aliases": [text], "_via": "plir"})
+                            elif kind == "milestone":
+                                results[result_key].append(
+                                    {"name": text, "_via": "plir"})
+                            elif kind == "certification":
+                                results[result_key].append(
+                                    {"name": text, "_via": "plir"})
+                            elif kind == "risk":
+                                results[result_key].append(
+                                    {"description": text, "_via": "plir"})
+                            elif kind == "acceptance_criteria":
+                                results[result_key].append(
+                                    {"criterion": text, "_via": "plir"})
+                            elif kind == "penalty":
+                                results[result_key].append(
+                                    {"description": text, "_via": "plir"})
+                            elif kind == "compliance_obligation":
+                                results[result_key].append(
+                                    {"obligation": text, "_via": "plir"})
+                            elif kind == "quantity":
+                                results[result_key].append(
+                                    {"text": text, "_via": "plir"})
+            except Exception as e:
+                import logging as _lg
+                _lg.getLogger(__name__).warning(
+                    "v45 PLIR / coverage pass failed: %s", e,
+                )
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger(__name__).warning("zero_miss import failed: %s", e)
+
+    # ────────────────────────────────────────────────────────────
     # v43: VISION-LLM extraction for pages flagged as visual-only.
     # Calls qwen2.5vl:7b on each PDF page where the text parser
     # reported "visual / table / diagram evidence not fully extracted".
