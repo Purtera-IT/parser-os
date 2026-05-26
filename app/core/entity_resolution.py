@@ -290,6 +290,40 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                 group.add(bare)
             all_groups.append(group)
 
+    # ─── LLM SITE-CLUSTER FUSION (v35) ───
+    # Pick up the LLM's site_clusters output from the session cache
+    # (stashed by extract_all_entities_with_llm during enrich_atoms).
+    # Each cluster is {canonical_name, aliases[]} — convert to a
+    # frozenset of site:<slug> keys so fuse_alias_groups collapses
+    # the surface forms into one canonical EntityRecord.
+    #
+    # Real-world impact: OPTBOT goes from 13 site entities (one per
+    # surface form: code + friendly name + 3 addresses × 4 sites)
+    # to 5 canonical entities (one per physical place). The LLM
+    # already knows which surface forms are the same place; this
+    # just plumbs that knowledge into the fusion stage.
+    try:
+        from app.core.multi_entity_llm import get_session_site_clusters
+        llm_clusters = get_session_site_clusters(atoms)
+    except Exception:
+        llm_clusters = []
+    if llm_clusters:
+        for cluster in llm_clusters:
+            aliases = cluster.get("aliases") or []
+            site_keys = set()
+            for alias in aliases:
+                if isinstance(alias, str) and alias.strip():
+                    slug = _re.sub(r"[^a-z0-9]+", "_", alias.lower()).strip("_")
+                    if slug:
+                        site_keys.add(f"site:{slug}")
+            canon = cluster.get("canonical_name")
+            if isinstance(canon, str) and canon.strip():
+                slug = _re.sub(r"[^a-z0-9]+", "_", canon.lower()).strip("_")
+                if slug:
+                    site_keys.add(f"site:{slug}")
+            if len(site_keys) >= 2:
+                all_groups.append(site_keys)
+
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
     # Drop any site:* key that fails hygiene before grouping is
     # finalized. Otherwise the proper-noun regex span scan in

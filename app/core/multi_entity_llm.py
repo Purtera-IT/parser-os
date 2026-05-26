@@ -115,6 +115,11 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             except Exception:
                 # Individual extractor failure: keep zero-value.
                 pass
+    # Stash site_clusters for entity_resolution to pick up without a
+    # second LLM call. Used by collect_site_alias_groups to feed
+    # canonical-name fusion alongside the regex co-mention patterns.
+    if results.get("site_clusters"):
+        _stash_session_site_clusters(atoms, results["site_clusters"])
     return results
 
 
@@ -469,7 +474,14 @@ If no real requirements found, return: {{"requirements": []}}
 
 
 _CHUNK_CHARS = 40000  # ~10K tokens per LLM call — well under qwen3:14b's 40K context
-_MAX_CHUNKS_PER_ARTIFACT = 8  # safety cap (~320K chars/doc max)
+# Safety cap on chunks per artifact. Original cap of 8 (~320K chars)
+# missed late content on 500+ page bid PDFs. 32 chunks = ~1.28MB of
+# body text per doc, comfortably covering everything we've seen in
+# real-world bid packs. Configurable via env so Azure can dial it
+# down for cost / up for huge docs.
+_MAX_CHUNKS_PER_ARTIFACT = int(
+    os.environ.get("SOWSMITH_LLM_MAX_CHUNKS_PER_ARTIFACT", "32")
+)
 
 
 def _split_artifact_into_chunks(
@@ -839,16 +851,22 @@ _ORG_TOKENS: frozenset[str] = frozenset({
 
 def _is_likely_field_label(name: str) -> bool:
     """True if name looks like a field label / column header / org
-    name, NOT a real person.
+    name / generic noun-phrase, NOT a real person.
 
     Pipeline:
       1. Strip leading articles ("the ", "a ", "an "), repeated.
-      2. Exact phrase match against the denylist.
+      2. Exact phrase match against denylist (specific known junk).
       3. Single-word matching the tail-word denylist.
-      4. Trailing-word matching the tail-word denylist (catches
-         "Liability Insurance", "Purchase Order", etc.).
+      4. Trailing-word matching the tail-word denylist (e.g.
+         "Liability Insurance", "Purchase Order").
       5. ANY org-keyword token present (catches "Hood County
-         Emergency", "County Commissioners", "U.S. Postal", etc.).
+         Emergency", "U.S. Postal Service").
+      6. FIRST-WORD-IS-COMMON-NOUN gate (NEW v35): when the leading
+         word is a generic noun like "End", "Mosaic", "Joint",
+         "Front", "Back", etc., the phrase is a noun fragment
+         ("End Users", "Mosaic Front", "Joint Ventures", "Back
+         Office"), NOT a person. Real people very rarely have
+         these as first names.
     """
     norm = re.sub(r"\s+", " ", name.lower().strip())
     # Strip leading articles (handle "the the" too)
@@ -874,13 +892,50 @@ def _is_likely_field_label(name: str) -> bool:
     # "Hood County", "Purchase Order")
     if tokens[-1] in _FIELD_LABEL_TAILS:
         return True
-    # ANY org-keyword present → not a person. Catches "Hood County
-    # Emergency", "County Commissioners", "U.S. Postal Service".
-    # Accept the rare false positive (a real person named "Sherry
-    # Court") to keep org names out of the stakeholder list.
+    # ANY org-keyword present → not a person.
     if any(t in _ORG_TOKENS for t in tokens):
         return True
+    # FIRST-WORD common-noun gate: drops noun-fragment "people" like
+    # "End Users", "Mosaic Front", "Joint Ventures", "Back Office",
+    # "Front Desk", "Help Desk", "Power School" misread as people.
+    if tokens[0] in _COMMON_NOUN_FIRST_WORDS:
+        return True
     return False
+
+
+# Common nouns that real human first names almost never use as the
+# leading token. When the LLM or regex returns a 2-3 word capitalized
+# phrase starting with one of these, it's a noun fragment, not a
+# person. Curated from real false positives across 19+ packs.
+_COMMON_NOUN_FIRST_WORDS: frozenset[str] = frozenset({
+    # Generic users / roles
+    "end", "all", "any", "each", "every", "some", "many",
+    "new", "old", "current", "former", "future",
+    # Position / direction words
+    "front", "back", "left", "right", "top", "bottom",
+    "north", "south", "east", "west", "central", "main",
+    "primary", "secondary", "tertiary", "first", "second", "third",
+    "upper", "lower", "inner", "outer",
+    # Composite-noun starters
+    "joint", "shared", "common", "general", "special", "regular",
+    "standard", "custom", "default", "auto", "manual",
+    # Product / system family words
+    "mosaic", "modular", "smart", "digital", "analog",
+    "remote", "local", "global", "regional", "national",
+    # Verb-ish / action starters
+    "support", "help", "service", "process", "manage",
+    "view", "edit", "send", "receive", "request", "report",
+    # Common deal-doc lead-ins
+    "section", "exhibit", "appendix", "attachment", "schedule",
+    "chapter", "page", "form", "table", "figure",
+    # Software / SaaS product family starters (drop "Power School",
+    # "Information Technology", "Building Management" misread as
+    # people)
+    "power", "information", "building", "facility", "security",
+    "network", "system", "data", "cloud", "web", "mobile",
+    "enterprise", "premium", "basic", "advanced", "professional",
+    "open", "closed", "public", "private",
+})
 
 
 def _normalize_site_clusters(items: Any) -> list[dict[str, Any]]:
@@ -923,4 +978,53 @@ __all__ = [
     "extract_all_entities_with_llm",
     "extract_multi_entities_with_llm",  # back-compat
     "_is_likely_field_label",            # used by entity_extraction's hygiene pass
+    "session_key_for_atoms",
+    "get_session_site_clusters",
 ]
+
+
+# ════════════════════════════════════════════════════════════════════
+# SESSION CACHE for site_clusters — lets entity_resolution pick up
+# the LLM's cluster output from enrich_atoms without a second LLM call.
+# ════════════════════════════════════════════════════════════════════
+
+_SESSION_SITE_CLUSTERS: dict[str, list[dict[str, Any]]] = {}
+_SESSION_CACHE_MAX = 16
+
+
+def session_key_for_atoms(atoms: list[Any]) -> str:
+    """Deterministic key derived from the first 5 atom IDs (or all
+    if fewer). Stable across the same compile session, distinct
+    across different projects.
+    """
+    if not atoms:
+        return "empty"
+    ids = sorted([getattr(a, "id", "") for a in atoms if getattr(a, "id", "")])
+    if not ids:
+        return "no-ids"
+    sample = ids[:5]
+    return "_".join(sample)
+
+
+def _stash_session_site_clusters(
+    atoms: list[Any], clusters: list[dict[str, Any]]
+) -> None:
+    """Cache LLM site_clusters keyed by an atom-set fingerprint.
+    Capped at _SESSION_CACHE_MAX entries (LRU-evict on overflow).
+    """
+    if not clusters:
+        return
+    key = session_key_for_atoms(atoms)
+    if key in _SESSION_SITE_CLUSTERS:
+        del _SESSION_SITE_CLUSTERS[key]  # re-insert at end
+    _SESSION_SITE_CLUSTERS[key] = clusters
+    while len(_SESSION_SITE_CLUSTERS) > _SESSION_CACHE_MAX:
+        oldest = next(iter(_SESSION_SITE_CLUSTERS))
+        del _SESSION_SITE_CLUSTERS[oldest]
+
+
+def get_session_site_clusters(atoms: list[Any]) -> list[dict[str, Any]]:
+    """Read the cached LLM site_clusters for this atom set. Returns
+    empty list if no cache hit (e.g., LLM disabled or call failed).
+    """
+    return _SESSION_SITE_CLUSTERS.get(session_key_for_atoms(atoms), [])
