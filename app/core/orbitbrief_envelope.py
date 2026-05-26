@@ -103,6 +103,7 @@ from app.parsers.structured_projection import (
 ENVELOPE_SCHEMA_VERSION = "orbitbrief.input.v2"
 ENVELOPE_FILENAME = "orbitbrief.input.json"
 ENVELOPE_MARKDOWN_FILENAME = "orbitbrief.input.md"
+PARSER_MANIFEST_SIDECAR = ".parser_manifest.json"
 
 
 # ────────────────────────── public API ───────────────────────────────────
@@ -186,6 +187,9 @@ def build_orbitbrief_envelope(
         entities=entities,
         edges=edges,
     )
+    crm = _load_manifest_crm(project_dir)
+    if crm:
+        summary["crm"] = crm
     indexes = _build_indexes(atoms=atoms, entities=entities, edges=edges)
     drawings = _build_drawings_section(
         atoms=atoms,
@@ -244,7 +248,29 @@ def build_orbitbrief_envelope(
     # the envelope shape stays byte-identical for the existing test grid.
     if drawings["artifacts"]:
         envelope["drawings"] = drawings
+    # CRM context (when the parser-manifest sidecar carries it) is
+    # exposed at the top of the envelope so downstream consumers can
+    # render deal name / opportunity ID / amount without re-reading
+    # the manifest blob.
+    if crm:
+        envelope["crm"] = crm
     return envelope
+
+
+def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
+    """Read ``context.crm`` from the parser manifest sidecar when present."""
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        ctx = manifest.get("context")
+        if not isinstance(ctx, dict):
+            return None
+        crm = ctx.get("crm")
+        return dict(crm) if isinstance(crm, dict) else None
+    except (json.JSONDecodeError, OSError, TypeError):
+        return None
 
 
 def write_orbitbrief_envelope(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from openpyxl import Workbook
 
 from app.core.schemas import AtomType
-from app.parsers.xlsx_parser import XlsxParser
+from app.parsers.xlsx_parser import ARTIFACT_PARSE_ERROR_PREFIX, XlsxParser
 
 
 def test_xlsx_parser_emits_atoms_with_provenance(tmp_path) -> None:
@@ -229,3 +229,15 @@ def test_every_atom_has_source_ref_and_parser_version(tmp_path) -> None:
             assert "columns" in ref.locator
             assert "row" in ref.locator
             assert "sheet" in ref.locator
+
+
+def test_corrupt_xlsx_emits_parse_error_warning(tmp_path) -> None:
+    path = tmp_path / "broken.xlsx"
+    path.write_bytes(b"PK\x03\x04not-a-real-xlsx")
+
+    out = XlsxParser().parse_artifact_full(project_id="proj", artifact_id="art_bad", path=path)
+    assert out.atoms == []
+    assert out.warnings
+    assert any(w.startswith(f"{ARTIFACT_PARSE_ERROR_PREFIX}art_bad:corrupt_xlsx:") for w in out.warnings)
+    structured = out.derived_files[0].content_json
+    assert any(str(m).startswith("parse_error: corrupt_xlsx:") for m in structured["document"]["metadata"])

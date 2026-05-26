@@ -1380,8 +1380,41 @@ def _emit_vendors(text_lower: str) -> set[str]:
     return keys
 
 
+_SITE_CODE_RE = re.compile(r"\b([A-Z]{2,6}-[A-Z0-9]{2,8})\b")
+_SITE_SLUG_CODE_RE = re.compile(r"^[a-z]{2,6}_[a-z0-9]{2,8}$")
+_SITE_BOILERPLATE_SUBSTRINGS = (
+    "hubspot",
+    "mock",
+    "orbitbrief",
+    "parser",
+    "azure",
+    "procurement_packet",
+    "integration_notes",
+    "dev_deal",
+    "confidential",
+    "purpulse",
+    "test_deal",
+    "synthetic",
+)
+
+
+def is_site_boilerplate_slug(slug: str) -> bool:
+    """Drop integration-doc / test phrasing masquerading as site entities."""
+    s = slug.lower().strip()
+    if not s:
+        return True
+    if _SITE_SLUG_CODE_RE.match(s):
+        return False
+    return any(token in s for token in _SITE_BOILERPLATE_SUBSTRINGS)
+
+
 def _emit_sites(text: str) -> set[str]:
     keys: set[str] = set()
+
+    for match in _SITE_CODE_RE.finditer(text):
+        code = match.group(1).strip()
+        if code:
+            keys.add(f"site:{code.lower().replace('-', '_')}")
 
     # Suffix-based capture (e.g. "Perry Street Parking Deck")
     for regex in _SITE_SUFFIX_REGEXES:

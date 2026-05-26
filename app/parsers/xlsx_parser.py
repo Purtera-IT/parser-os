@@ -38,6 +38,9 @@ from app.domain.schemas import DomainPack
 
 parser_name = "xlsx"
 parser_version = "xlsx_parser_v2_1"
+
+# Consumed by parser-os-service `_attachments_status` after compile.
+ARTIFACT_PARSE_ERROR_PREFIX = "artifact_parse_error:"
 STRUCTURED_SCHEMA_XLSX = "orbitbrief.xlsx.structured.v1"
 STRUCTURED_SCHEMA_CSV = "orbitbrief.csv.structured.v1"
 
@@ -865,11 +868,15 @@ class XlsxParser(BaseParser):
         del domain_pack
         suffix = path.suffix.lower()
         if suffix == ".csv":
-            atoms, sheets = self._parse_csv(project_id=project_id, artifact_id=artifact_id, path=path)
+            atoms, sheets, parse_error = self._parse_csv(
+                project_id=project_id, artifact_id=artifact_id, path=path
+            )
             schema = STRUCTURED_SCHEMA_CSV
             artifact_type = ArtifactType.csv
         else:
-            atoms, sheets = self._parse_xlsx(project_id=project_id, artifact_id=artifact_id, path=path)
+            atoms, sheets, parse_error = self._parse_xlsx(
+                project_id=project_id, artifact_id=artifact_id, path=path
+            )
             schema = STRUCTURED_SCHEMA_XLSX
             artifact_type = ArtifactType.xlsx
 
@@ -878,20 +885,36 @@ class XlsxParser(BaseParser):
             artifact_type=artifact_type,
             filename=path.name,
             sheets=sheets,
+            parse_error=parse_error,
         )
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        warnings: list[str] = []
+        if parse_error:
+            warnings.append(f"{ARTIFACT_PARSE_ERROR_PREFIX}{artifact_id}:{parse_error}")
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+            warnings=warnings,
         )
+
+    @staticmethod
+    def _tabular_read_error_code(exc: BaseException, *, tabular: Literal["xlsx", "csv"]) -> str:
+        name = type(exc).__name__
+        msg = str(exc).lower()
+        if tabular == "xlsx" and (name == "BadZipFile" or "zip" in msg or "central directory" in msg):
+            return "corrupt_xlsx"
+        if tabular == "csv":
+            return "corrupt_csv"
+        return f"{tabular}_read_error"
 
     def _parse_xlsx(
         self, project_id: str, artifact_id: str, path: Path
-    ) -> tuple[list[EvidenceAtom], list[dict[str, Any]]]:
+    ) -> tuple[list[EvidenceAtom], list[dict[str, Any]], str | None]:
         try:
             workbook = load_workbook(path, read_only=True, data_only=True)
-        except Exception:
-            return [], []
+        except Exception as exc:
+            code = self._tabular_read_error_code(exc, tabular="xlsx")
+            return [], [], f"{code}:{type(exc).__name__}:{exc}"
         atoms: list[EvidenceAtom] = []
         sheets: list[dict[str, Any]] = []
         for sheet in workbook.worksheets:
@@ -907,17 +930,18 @@ class XlsxParser(BaseParser):
                 )
             )
             sheets.append({"name": sheet.title, "rows": rows})
-        return atoms, sheets
+        return atoms, sheets, None
 
     def _parse_csv(
         self, project_id: str, artifact_id: str, path: Path
-    ) -> tuple[list[EvidenceAtom], list[dict[str, Any]]]:
+    ) -> tuple[list[EvidenceAtom], list[dict[str, Any]], str | None]:
         try:
             with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
                 reader = csv.reader(handle)
                 rows = [list(row) for row in reader]
-        except Exception:
-            return [], []
+        except Exception as exc:
+            code = self._tabular_read_error_code(exc, tabular="csv")
+            return [], [], f"{code}:{type(exc).__name__}:{exc}"
         sheet_atoms = self._parse_sheet_rows(
             project_id=project_id,
             artifact_id=artifact_id,
@@ -926,7 +950,7 @@ class XlsxParser(BaseParser):
             sheet_name="csv",
             rows=rows,
         )
-        return sheet_atoms, [{"name": "csv", "rows": rows}]
+        return sheet_atoms, [{"name": "csv", "rows": rows}], None
 
     def _build_structured_doc(
         self,
@@ -935,6 +959,7 @@ class XlsxParser(BaseParser):
         artifact_type: ArtifactType,
         filename: str,
         sheets: list[dict[str, Any]],
+        parse_error: str | None = None,
     ) -> dict[str, Any]:
         """Render every sheet as a page with one section that contains the
         full table.  Empty / structureless sheets become a tiny note so
@@ -1000,12 +1025,15 @@ class XlsxParser(BaseParser):
                     sections=[section],
                 )
             )
+        metadata = [f"sheet: {s['name']}" for s in sheets]
+        if parse_error:
+            metadata.append(f"parse_error: {parse_error}")
         return make_structured_document(
             schema_version=schema,
             filename=filename,
             artifact_type=artifact_type.value,
             title=filename,
-            metadata=[f"sheet: {s['name']}" for s in sheets],
+            metadata=metadata,
             pages=pages,
         )
 

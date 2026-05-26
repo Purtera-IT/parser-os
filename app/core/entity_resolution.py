@@ -8,6 +8,7 @@ from app.core.entity_extraction import (
     _emit_site_aliases_from_text,
 )
 from app.core.ids import stable_id
+from app.core.entity_extraction import is_site_boilerplate_slug
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.core.schemas import EntityRecord, EvidenceAtom, ReviewStatus
 from app.domain import get_active_domain_pack
@@ -132,6 +133,10 @@ def extract_entity_records(
     records: list[EntityRecord] = []
     for canonical_key in sorted(grouped):
         info = grouped[canonical_key]
+        if info["entity_type"] == "site":
+            slug = canonical_key.split(":", 1)[-1]
+            if is_site_boilerplate_slug(slug):
+                continue
         records.append(
             EntityRecord(
                 id=stable_id("ent", project_id, canonical_key),
