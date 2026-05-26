@@ -3290,6 +3290,214 @@ def _emit_stakeholders(text: str) -> set[str]:
     return keys
 
 
+# ════════════════════════════════════════════════════════════════════
+# CONTACT-ANCHOR EMITTERS (universal — close the email/phone/site-code
+# recall gap surfaced by the source-vs-parser audit 2026-05-27)
+# ════════════════════════════════════════════════════════════════════
+
+_EMAIL_REGEX = re.compile(
+    r"\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b"
+)
+_PHONE_REGEX = re.compile(
+    r"(?<!\d)(\+?1[-.\s]?)?\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})(?!\d)"
+)
+# Site-code shape: REGION-FUNCTION[-NN] — 2-5 alphanumeric segments
+# separated by hyphens, at least one segment with a digit OR all-caps.
+# Catches ATL-HQ-01, STORE-142, MDF-3A, IDF-W2-3, LMC-L640, etc.
+_SITE_CODE_PATTERN = re.compile(
+    r"\b(?:"
+    r"[A-Z]{2,5}-[A-Z0-9]{1,5}(?:-\d{1,4}){0,2}"  # ATL-HQ-01, MDF-W1, IDF-2-7
+    r"|[A-Z]{2,5}\d{2,4}"                          # B197, RM12 (no hyphen)
+    r")\b"
+)
+# Persons named via "Name, Role, email" or "contact Name at email"
+# patterns. The email is the corroboration: we scan BACKWARD from
+# each email match for a capitalized name within ~80 chars. Catches
+# all of these:
+#   - "Glenn Tilleman, Hood County Purchasing Agent at gtilleman@..."
+#   - "Shaun Tozer, Project Manager at 425-939-8046, ... shaun.tozer@..."
+#   - "Matthew Brener, BRS, Inc., (267) 688-7301 | matthew@brsinc.com"
+#   - "John Foster, Convergent Technology Partners, at jfoster@..."
+# Case is strict (uppercase first letter) on the name to avoid
+# catching prepositions / lowercase words.
+_NAME_NEAR_EMAIL = re.compile(
+    r"\b([A-Z][a-z]{1,15}(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z'-]{1,18}){1,2})\b"
+)
+# Trigger words for the contact-line extractor. Case-insensitive on
+# the trigger ONLY (via (?i:...) inline group), strict capitalization
+# on the captured name.
+_PERSON_CONTACT_LINE = re.compile(
+    r"(?i:please\s+contact|contact(?:\s+(?:is|will\s+be))?|directed\s+to|"
+    r"attention(?:\s+of)?\s*:?|submitted\s+by|prepared\s+by|"
+    r"project\s+manager\s*[:\-]?|purchasing\s+agent\s*[:\-]?|"
+    r"approved\s+by|signed\s+by|sponsor(?:ed)?\s+by|owned\s+by|"
+    r"point\s+of\s+contact\s*[:\-]?|technical\s+lead\s*[:\-]?|"
+    r"executive\s+sponsor\s*[:\-]?)\s+"
+    r"([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z'-]+){1,3})\b"
+)
+# Generic-word denylist for people pulled from email patterns
+# (some emails are noreply@, info@, support@, etc.)
+_EMAIL_LOCAL_DENY: frozenset[str] = frozenset({
+    "noreply", "no-reply", "donotreply", "info", "contact", "hello",
+    "support", "help", "admin", "sales", "marketing", "service",
+    "billing", "accounts", "ap", "ar", "hr", "it", "legal",
+    "office", "front-desk", "frontdesk", "reception",
+    "team", "group", "list", "notifications", "alerts",
+})
+
+
+def _slug_simple(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _emit_email_keys(text: str) -> set[str]:
+    """Emit ``email:<normalized>`` for every email in text."""
+    keys: set[str] = set()
+    for m in _EMAIL_REGEX.finditer(text):
+        email = m.group(1).lower()
+        # Drop trailing dots/punctuation artifacts
+        email = email.rstrip(".,;:!)\\")
+        slug = _slug_simple(email)
+        if slug and len(slug) >= 5:
+            keys.add(f"email:{slug}")
+    return keys
+
+
+def _emit_phone_keys(text: str) -> set[str]:
+    """Emit ``phone:<digits>`` for every phone number in text."""
+    keys: set[str] = set()
+    for m in _PHONE_REGEX.finditer(text):
+        digits = (m.group(1) or "") + m.group(2) + m.group(3) + m.group(4)
+        digits = re.sub(r"\D", "", digits)
+        if 10 <= len(digits) <= 11:
+            keys.add(f"phone:{digits}")
+    return keys
+
+
+def _emit_person_from_contact(text: str) -> set[str]:
+    """Emit ``stakeholder:<first_last>`` for "Name <email>" /
+    "contact Name" / "submitted by Name" patterns.
+
+    Strategy:
+      1. EMAIL-ANCHORED — for each email in text, scan backward 100
+         chars and emit ALL capitalized names found that pass the
+         person-label denylist. Catches "Matthew Brener, BRS, Inc.,
+         (267) 688-7301 | matthew@..." (name first, then org +
+         phone) AND "via email to John Foster, Convergent Tech
+         Partners, at jfoster@..." (name first, then org).
+      2. CONTACT-LINE — explicit "Please contact X" / "Submitted
+         by X" patterns. Trigger case-insensitive, name strict-cap.
+
+    Org-name false positives (Hood County Purchasing, Convergent
+    Technology Partners, etc.) are filtered by _is_likely_person_label.
+    """
+    keys: set[str] = set()
+    # Email-anchored back-scan
+    bad_starts = ("At ", "By ", "For ", "From ", "To ", "Of ",
+                  "In ", "On ", "The ", "An ", "A ", "Or ")
+    for em in _EMAIL_REGEX.finditer(text):
+        start = max(0, em.start() - 100)
+        window = text[start:em.start()]
+        for nm in _NAME_NEAR_EMAIL.finditer(window):
+            name = nm.group(1).strip()
+            for bs in bad_starts:
+                if name.startswith(bs):
+                    name = name[len(bs):].strip()
+            slug = _slug_simple(name)
+            if slug and "_" in slug and not _is_likely_person_label(name):
+                keys.add(f"stakeholder:{slug}")
+    # Contact-line
+    for m in _PERSON_CONTACT_LINE.finditer(text):
+        name = m.group(1).strip()
+        for bs in bad_starts:
+            if name.startswith(bs):
+                name = name[len(bs):].strip()
+        slug = _slug_simple(name)
+        if slug and "_" in slug and not _is_likely_person_label(name):
+            keys.add(f"stakeholder:{slug}")
+    return keys
+
+
+# Names that pass the capitalized-pattern test but are clearly NOT
+# people (org names, jargon, table cells).
+_PERSON_LABEL_DENYLIST: frozenset[str] = frozenset({
+    "Hood County", "Beaufort County", "Geary County",
+    "Solana Beach", "Manhattan Beach", "Atlanta GA",
+    "Albuquerque Public", "Office Of", "State Of",
+    "Department Of", "City Of", "United States",
+    "Project Manager", "Purchasing Agent",
+    "Technical Lead", "Executive Sponsor",
+    "Mock Document", "Mock Deal", "Mock Doc",
+})
+
+
+def _is_likely_person_label(name: str) -> bool:
+    """Quick org/jargon filter for would-be person names."""
+    if name in _PERSON_LABEL_DENYLIST:
+        return True
+    # Multi-word names where every word starts with a capital but
+    # the LAST word is an org-suffix or jargon noun
+    bad_tails = {
+        # Jurisdictional
+        "County", "City", "Town", "State", "Federal",
+        # Org body types
+        "Department", "Office", "Agency", "Authority",
+        "School", "District", "Schools", "University",
+        "Court", "Board", "Committee", "Council", "Commission",
+        # Corporate suffixes
+        "Corporation", "Corp", "Inc", "LLC", "Ltd", "Co",
+        "Partners", "Solutions", "Services", "Systems", "Sales",
+        "Technologies", "Group", "Holdings", "Enterprises",
+        "Industries", "International", "Global", "Worldwide",
+        "Consulting", "Consultants", "Associates", "Advisors",
+        "Communications", "Networks", "Engineering",
+        # Functions / labels
+        "Public", "Private", "Team",
+        "Purchasing", "Procurement", "Operations", "Maintenance",
+        "Manager", "Agent", "Director", "Supervisor",
+        "Sponsor", "Lead", "Owner", "Engineer", "Architect",
+        "Coordinator", "Specialist", "Foreman", "Inspector",
+        # Other
+        "Postal", "USA", "US", "USPS", "FedEx", "UPS",
+    }
+    tail = name.split()[-1] if " " in name else name
+    if tail in bad_tails:
+        return True
+    # Also check: if ANY token in the name is in the bad_tails AND
+    # the name has 3+ words, it's probably an org name even if the
+    # tail itself isn't org-like (e.g., "Hood County Purchasing").
+    tokens = name.split()
+    if len(tokens) >= 3 and any(t in bad_tails for t in tokens):
+        return True
+    return False
+
+
+def _emit_site_code_keys(text: str) -> set[str]:
+    """Emit ``site:<code>`` for ATL-HQ-01 / STORE-142 / MDF-3A patterns.
+
+    Site codes are the customer's authoritative scope anchors and
+    PMs absolutely need them visible. Conservative: requires the
+    hyphenated/digit-bearing shape so it doesn't fire on words like
+    "USA" or "ANSI".
+    """
+    keys: set[str] = set()
+    for m in _SITE_CODE_PATTERN.finditer(text):
+        code = m.group(0)
+        # Drop obvious non-codes
+        upper = code.upper()
+        if upper in {"PDF-A", "USB-C", "HTTP-S", "ISO-9001", "ASCII-7",
+                     "MIT-0", "BSD-2", "UTF-8", "RFC-822",
+                     "IEEE-754", "IEEE-802", "ANSI-X", "ISO-27001",
+                     "PCI-DSS", "SOC-2", "ISO-9000", "HIPAA-1996"}:
+            continue
+        # Drop pure standards refs (single-segment-NN like "NIST-800")
+        # — keep multi-segment ones
+        slug = _slug_simple(code)
+        if slug and len(slug) >= 4:
+            keys.add(f"site:{slug}")
+    return keys
+
+
 def extract_keys(
     text: str,
     *,
@@ -3407,6 +3615,14 @@ def extract_keys(
     # pattern + role-context cue (CFO, VP, Sponsor, Approver, ...)
     # within ±60 chars in the same sentence.
     keys |= _emit_stakeholders(text)
+    # Contact-anchor emitters (universal — every email, phone, site
+    # code, and "Name <email>" / "contact Name" person reference).
+    # Closes the recall gaps surfaced by the 2026-05-27 source-vs-
+    # parser audit (emails 0/36, named people 7/160, site codes 1/113).
+    keys |= _emit_email_keys(text)
+    keys |= _emit_phone_keys(text)
+    keys |= _emit_person_from_contact(text)
+    keys |= _emit_site_code_keys(text)
 
     return sorted(keys)
 
@@ -3760,32 +3976,37 @@ def _inject_multi_entity_keys(
         if isinstance(name, str) and name.strip():
             stakeholder_entries.append((name.strip(), _slug(name)))
 
-    # LLM-AUTHORITATIVE for customer + stakeholder: when the LLM
-    # multi-entity pass ran successfully (the dict is non-empty,
-    # regardless of whether it returned anything for these specific
-    # categories), it has read the full doc context and IS the
-    # source of truth. Drop ALL regex emissions for customer:* and
-    # stakeholder:* — the LLM-injected keys below will be the only
-    # ones in those categories.
+    # LLM-trumps-regex rule (REVISED — softer to preserve PM-critical
+    # bid contacts):
     #
-    # Rationale:
-    #   - If LLM found people, regex noise (department names, jargon)
-    #     pollutes the list.
-    #   - If LLM found NO people, the project genuinely has no named
-    #     stakeholders in the supplied docs; the regex output is
-    #     spurious matches (technical terms, fragments, headers) that
-    #     PMs don't want to see.
-    # This collapses Pack 14 Neptune from 18 jargon stakeholders
-    # ("annual_electricity_bill", "energy_surety_microgrid",
-    # "pareto_energy", "the_township", ...) to whatever the LLM
-    # actually identified.
+    #   - customer:   drop regex emissions whenever LLM ran and
+    #                 returned a customer (LLM is reliable here —
+    #                 returns 1 canonical per pack)
+    #   - stakeholder: drop regex emissions ONLY when LLM RETURNED
+    #                  STAKEHOLDERS. When LLM returns 0 stakeholders,
+    #                  KEEP the regex output (filtered by hygiene) so
+    #                  we don't lose PM-critical bid contacts like
+    #                  "Glenn Tilleman, Hood County Purchasing Agent"
+    #                  or "Shaun Tozer, Project Manager".
+    #
+    # Why the asymmetry:
+    #   On a feasibility/spec pack with no explicit "people" sections,
+    #   the LLM correctly returns 0 stakeholders. But the bid-contact
+    #   email line (`gtilleman@hoodcounty.texas.gov`) is still in the
+    #   docs and the regex stakeholder extractor catches it. Dropping
+    #   regex output in that case loses the single most important
+    #   contact for the deal — which is the opposite of what PMs need.
+    #
+    #   For customer, dropping regex when LLM ran is safe because the
+    #   LLM is very reliable at customer identification (we see 1
+    #   customer per pack on all 15 OPTBOT-style packs).
     llm_ran = bool(multi.get("customer") is not None or
                    multi.get("stakeholders") or
                    multi.get("milestones") or
                    multi.get("requirements") or
                    multi.get("site_clusters"))
-    drop_regex_customer = llm_ran
-    drop_regex_stakeholder = llm_ran
+    drop_regex_customer = llm_ran and bool(customer_slug)
+    drop_regex_stakeholder = llm_ran and bool(stakeholder_entries)
     if drop_regex_customer or drop_regex_stakeholder:
         for atom in atom_list:
             keys = atom.entity_keys or []

@@ -285,24 +285,38 @@ If unclear or no customer is named, return: {{"customer": null}}
 def _extract_stakeholders(docs_excerpt: str) -> list[dict[str, Any]]:
     if not docs_excerpt:
         return []
-    prompt = f"""Identify PEOPLE (stakeholders) named in this bid package.
+    prompt = f"""Identify PEOPLE (named human stakeholders) in this bid package.
 
-Include both customer-side and vendor-side individuals: project
-managers, technical leads, approvers, escort owners, signatories,
-points of contact, etc.
+🚨 HIGHEST PRIORITY: always include the BID-CONTACT person — the
+named individual the docs say to contact about the RFP/RFB/RFQ.
+Look especially for:
+  - "Please contact <Name>, <Role>, at <email>"
+  - "Direct all questions to <Name>"
+  - "Questions regarding this RFP should be directed to <Name>"
+  - "<Name>, <Role>, at <phone> or <email>"
+  - Signature blocks with a typed name + title
+  - "Submitted by <Name>"
+  - "Project Manager: <Name>"
+  - "Purchasing Agent: <Name>"
+The bid-contact person is the SINGLE MOST IMPORTANT person for the
+PM running this deal — never omit them if a name is in the docs.
 
-INCLUDE:
-- Real human names with optional role / email / phone
-- Customer's project sponsor, PM, technical lead
-- Vendor's PM, account exec, technical lead
+Also include:
+- Customer-side: project sponsor, PM, technical lead, signatories,
+  named approvers
+- Vendor-side (if named): account exec, PM, technical lead
+- Anyone with a name + role + (email OR phone)
 
 EXCLUDE (these are NOT people):
 - Field labels / column headers ("Access Constraint", "Ending Number",
   "Upload Destination", "Tag Prefix", "Asset Type", "Owner")
 - Role-only mentions with no name ("the PM", "the architect", "the bidder")
-- Department names ("IT Department", "Procurement Office")
+- Department / agency names ("IT Department", "Procurement Office",
+  "Purchasing Dept", "Commissioners' Court")
 - Job titles alone with no person attached
 - Generic terms ("contractor", "vendor", "customer", "the team")
+- Organizational entities ("Hood County", "School District")
+- Insurance / legal jargon ("Liability Insurance", "Bodily Injury")
 
 {_OUTPUT_RULES}
 
@@ -312,11 +326,12 @@ DOCUMENTS:
 
 OUTPUT (array of objects):
 {{"stakeholders": [
-  {{"name": "<Full Name>", "role": "<role or null>", "email": "<email or null>", "phone": "<phone or null>"}},
+  {{"name": "<Full Name as written in docs>", "role": "<role or null>", "email": "<email or null>", "phone": "<phone or null>"}},
   ...
 ]}}
 
-If no real people are named, return: {{"stakeholders": []}}
+If genuinely no named humans appear in the docs, return: {{"stakeholders": []}}
+But if you see ANY email with an associated name, or any "contact <Name>" line, that person MUST appear in your output.
 
 /no_think"""
     text = _call_ollama(prompt, max_tokens=1024)
