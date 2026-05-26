@@ -23,6 +23,7 @@ Design principles:
 from __future__ import annotations
 
 import functools
+import os
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -3608,35 +3609,233 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     atoms_enriched += 1
                     total_keys_added += len(to_add)
 
+    # ─── MULTI-ENTITY LLM PASS ───
+    # ONE LLM call returns customer, stakeholders, milestones,
+    # requirements, and site canonical clusters. Each item gets
+    # injected onto the atoms that mention it (same loose-match
+    # heuristic as the site injection above). Lifts the B+/A-
+    # extractors (stakeholders, milestones, requirements, customer
+    # fusion, site dedup) to A+ universally.
+    try:
+        from app.core.multi_entity_llm import extract_multi_entities_with_llm
+        from app.core.site_llm_verify import ollama_reachable
+        do_multi = (
+            not os.environ.get("SOWSMITH_MULTI_ENTITY_DISABLE")
+            and ollama_reachable()
+        )
+    except Exception:
+        do_multi = False
+        extract_multi_entities_with_llm = None  # type: ignore
+    multi_result: dict[str, Any] = {}
+    if do_multi and extract_multi_entities_with_llm is not None:
+        try:
+            multi_result = extract_multi_entities_with_llm(atom_list) or {}
+        except Exception:
+            multi_result = {}
+
+    if multi_result:
+        injected, key_count = _inject_multi_entity_keys(
+            atom_list, multi_result
+        )
+        atoms_enriched += injected
+        total_keys_added += key_count
+
     # ─── FINAL HYGIENE PASS ───
-    # Universal safety net: walk every atom's entity_keys and drop
-    # any site:* key whose phrase form fails hygiene. This catches
-    # site keys that bypassed the extract_keys gate (parser-supplied
-    # keys, LLM-injection additions, legacy emit paths) — ensuring
-    # the obvious junk doesn't reach final entities regardless of
-    # source.
+    # Universal safety net: walk every atom's entity_keys and drop:
+    #   - site:* keys that fail site hygiene
+    #   - stakeholder:* keys that look like field labels (column
+    #     headers, form fields, table column names) rather than
+    #     real people names
+    # This catches noise that bypassed earlier gates regardless of
+    # which emitter produced the key (parser-supplied, regex
+    # _emit_stakeholders, LLM-injected, etc.).
     try:
         from app.core.site_llm_verify import _is_obvious_non_site
     except Exception:
         _is_obvious_non_site = None  # type: ignore
-    if _is_obvious_non_site is not None:
-        for atom in atom_list:
-            current = atom.entity_keys or []
-            if not current:
-                continue
-            kept = []
-            dropped_any = False
-            for k in current:
-                if k.startswith("site:"):
-                    phrase = k[len("site:"):].replace("_", " ")
-                    if _is_obvious_non_site(phrase):
-                        dropped_any = True
-                        continue
-                kept.append(k)
-            if dropped_any:
-                atom.entity_keys = kept
+    try:
+        from app.core.multi_entity_llm import _is_likely_field_label
+    except Exception:
+        _is_likely_field_label = None  # type: ignore
+
+    for atom in atom_list:
+        current = atom.entity_keys or []
+        if not current:
+            continue
+        kept = []
+        dropped_any = False
+        for k in current:
+            if k.startswith("site:") and _is_obvious_non_site is not None:
+                phrase = k[len("site:"):].replace("_", " ")
+                if _is_obvious_non_site(phrase):
+                    dropped_any = True
+                    continue
+            if k.startswith("stakeholder:") and _is_likely_field_label is not None:
+                phrase = k[len("stakeholder:"):].replace("_", " ")
+                if _is_likely_field_label(phrase):
+                    dropped_any = True
+                    continue
+            kept.append(k)
+        if dropped_any:
+            atom.entity_keys = kept
 
     return atoms_enriched, total_keys_added
+
+
+def _slug(text: str) -> str:
+    """Lowercase + non-alphanumeric → underscore + strip edges."""
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _atom_full_text(atom: Any) -> str:
+    """Atom body + section_path headings, lowercased — for matching."""
+    parts: list[str] = []
+    raw = getattr(atom, "raw_text", None) or ""
+    if isinstance(raw, str):
+        parts.append(raw)
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        if refs:
+            loc = getattr(refs[0], "locator", None) or {}
+            if isinstance(loc, dict):
+                sp = loc.get("section_path")
+                if isinstance(sp, list):
+                    for h in sp:
+                        if isinstance(h, str):
+                            parts.append(h)
+                for k in ("section", "heading", "title"):
+                    v = loc.get(k)
+                    if isinstance(v, str):
+                        parts.append(v)
+    except Exception:
+        pass
+    return " ".join(parts).lower()
+
+
+def _phrase_in_atom(phrase: str, atom_text: str) -> bool:
+    """Match LLM-emitted phrase against atom text using a tolerant
+    rule: phrase's distinguishing word (longest ≥4-char word) must
+    appear AND at least 2 of the phrase's meaningful tokens must
+    appear in the atom text.
+    """
+    if not phrase or not atom_text:
+        return False
+    words = [w for w in re.split(r"\W+", phrase.lower()) if len(w) >= 4]
+    if not words:
+        # Fallback: substring match for short phrases (e.g., "USD 475")
+        return phrase.lower() in atom_text
+    longest = max(words, key=len)
+    if longest not in atom_text:
+        return False
+    hits = sum(1 for w in words if w in atom_text)
+    return hits >= min(2, len(words))
+
+
+def _inject_multi_entity_keys(
+    atom_list: list[Any], multi: dict[str, Any]
+) -> tuple[int, int]:
+    """Walk atoms; inject customer / stakeholder / milestone /
+    requirement / site keys from the LLM multi-entity result onto
+    atoms whose text mentions the entity.
+
+    Returns (atoms_modified, keys_added).
+    """
+    atoms_modified = 0
+    keys_added = 0
+
+    # Pre-compute slugs for each entity
+    customer = multi.get("customer")
+    customer_slug = _slug(customer) if isinstance(customer, str) and customer else None
+
+    stakeholders = multi.get("stakeholders") or []
+    stakeholder_entries: list[tuple[str, str]] = []  # (phrase, slug)
+    for s in stakeholders:
+        name = s.get("name")
+        if isinstance(name, str) and name.strip():
+            stakeholder_entries.append((name.strip(), _slug(name)))
+
+    milestones = multi.get("milestones") or []
+    milestone_entries: list[tuple[str, str]] = []
+    for m in milestones:
+        name = m.get("name")
+        if isinstance(name, str) and name.strip():
+            milestone_entries.append((name.strip(), _slug(name)))
+
+    requirements = multi.get("requirements") or []
+    requirement_entries: list[tuple[str, str]] = []
+    for r in requirements:
+        text = r.get("text")
+        if isinstance(text, str) and text.strip():
+            # Use first 6 distinctive words as the matching phrase
+            words = [w for w in re.split(r"\W+", text) if len(w) >= 4][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            requirement_entries.append((match_phrase, _slug(text[:80])))
+
+    site_clusters = multi.get("site_clusters") or []
+    # cluster_lookups: list of (canonical_slug, list_of_alias_phrases)
+    cluster_lookups: list[tuple[str, list[str]]] = []
+    for c in site_clusters:
+        canon = c.get("canonical_name")
+        aliases = c.get("aliases") or []
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        canon_slug = _slug(canon)
+        alias_phrases = [a for a in aliases if isinstance(a, str) and a.strip()]
+        if not alias_phrases:
+            continue
+        cluster_lookups.append((canon_slug, alias_phrases))
+
+    for atom in atom_list:
+        full = _atom_full_text(atom)
+        if not full:
+            continue
+        to_add: list[str] = []
+
+        # Customer — inject on EVERY atom that mentions the customer
+        # name. This is OK because the customer is genuinely the
+        # subject of every document in their bid package.
+        if customer_slug and customer:
+            if _phrase_in_atom(customer, full):
+                to_add.append(f"customer:{customer_slug}")
+
+        # Stakeholders
+        for name, slug in stakeholder_entries:
+            if _phrase_in_atom(name, full):
+                to_add.append(f"stakeholder:{slug}")
+
+        # Milestones — match by name OR by ISO date if present
+        for name, slug in milestone_entries:
+            if _phrase_in_atom(name, full):
+                to_add.append(f"milestone:{slug}")
+
+        # Requirements
+        for match_phrase, slug in requirement_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"requirement:{slug}")
+
+        # Sites — emit the CANONICAL site key for each cluster whose
+        # alias phrase appears in this atom. This force-merges all
+        # surface forms onto the canonical key.
+        for canon_slug, alias_phrases in cluster_lookups:
+            matched = False
+            for alias in alias_phrases:
+                if _phrase_in_atom(alias, full):
+                    matched = True
+                    break
+            if matched:
+                to_add.append(f"site:{canon_slug}")
+
+        if to_add:
+            existing_keys = set(atom.entity_keys or [])
+            new_keys = [k for k in to_add if k not in existing_keys]
+            if new_keys:
+                atom.entity_keys = sorted(existing_keys | set(new_keys))
+                atoms_modified += 1
+                keys_added += len(new_keys)
+
+    return atoms_modified, keys_added
 
 
 __all__ = ["extract_keys", "enrich_atoms"]
