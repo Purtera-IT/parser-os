@@ -3981,6 +3981,24 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         atoms_enriched += injected
         total_keys_added += key_count
 
+        # v44.5: inject vision-extracted rows AS atom entity_keys so
+        # BOM line items, contact rosters, schedule phases, etc. that
+        # only exist in PDF tables become first-class entities (money,
+        # phone, email, stakeholder, milestone, site, etc.) instead
+        # of stranded in multi_result["vision_rows"].
+        vision_rows = multi_result.get("vision_rows") or []
+        if vision_rows:
+            try:
+                from app.core.vision_extraction import inject_vision_rows_as_entities
+                vmod, vkeys = inject_vision_rows_as_entities(atom_list, vision_rows)
+                atoms_enriched += vmod
+                total_keys_added += vkeys
+            except Exception as e:
+                import logging as _lg
+                _lg.getLogger(__name__).warning(
+                    "vision-row injection failed: %s", e,
+                )
+
     # ─── FINAL HYGIENE PASS ───
     # Universal safety net: walk every atom's entity_keys and drop:
     #   - site:* keys that fail site hygiene
