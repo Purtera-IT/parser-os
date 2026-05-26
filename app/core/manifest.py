@@ -46,8 +46,38 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.pdf
     if suffix in {".eml"}:
         return ArtifactType.email
-    if suffix in {".txt", ".md", ".vtt", ".srt", ".json"}:
+    # A1 doc-type coverage: .vtt / .srt are always transcripts —
+    # the extension is the signal, not the filename. .txt / .md /
+    # .json still need the keyword check because those are
+    # ambiguous (could be config, README, ...).
+    if suffix in {".vtt", ".srt"}:
+        return ArtifactType.transcript
+    if suffix in {".txt", ".md", ".json"}:
         return ArtifactType.transcript if "transcript" in path.name.lower() else ArtifactType.txt
+    if suffix == ".pptx":
+        return ArtifactType.pptx
+    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
+        return ArtifactType.image
+    if suffix in {".html", ".htm", ".xhtml"}:
+        return ArtifactType.html
+    if suffix == ".mbox":
+        return ArtifactType.mbox
+    if suffix == ".rtf":
+        return ArtifactType.rtf
+    if suffix in {".ics", ".ical"}:
+        return ArtifactType.ics
+    if suffix == ".zip":
+        return ArtifactType.zip_archive
+    if suffix == ".msg":
+        return ArtifactType.msg
+    if suffix == ".odt":
+        return ArtifactType.odt
+    if suffix == ".ods":
+        return ArtifactType.ods
+    if suffix in {".vsdx", ".vsd"}:
+        return ArtifactType.vsdx
+    if suffix == ".mpp":
+        return ArtifactType.mpp
     return ArtifactType.txt
 
 

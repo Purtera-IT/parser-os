@@ -5,7 +5,21 @@ import os
 import re
 from dataclasses import dataclass
 
-ALLOWED_EXTENSIONS = {".xlsx", ".csv", ".txt", ".md", ".eml", ".docx", ".vtt", ".srt", ".json", ".pdf"}
+ALLOWED_EXTENSIONS = {
+    ".xlsx", ".csv", ".txt", ".md", ".eml", ".docx", ".vtt", ".srt", ".json", ".pdf",
+    # Universality extensions
+    ".pptx",
+    ".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp",
+    ".html", ".htm", ".xhtml",   # Confluence / wiki / customer static docs
+    ".mbox",                       # Gmail / Thunderbird email archive
+    ".rtf",                        # Rich Text Format (legacy SOW templates)
+    ".ics", ".ical",               # iCalendar invites
+    ".zip",                        # ZIP container; contents listed via parser
+    ".msg",                        # Outlook native email
+    ".odt", ".ods",                # OpenDocument writer / spreadsheet
+    ".vsdx", ".vsd",               # Visio diagrams
+    ".mpp",                        # Microsoft Project schedule
+}
 DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 

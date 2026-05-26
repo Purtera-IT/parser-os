@@ -28,9 +28,79 @@ def normalize_entity(value: str) -> str:
     return value
 
 
+_GENERIC_SITE_PSEUDO_VALUES: frozenset[str] = frozenset({
+    "",
+    "-",
+    "—",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "tbd",
+    "tba",
+    "tbc",
+    "all",
+    "any",
+    "various",
+    "multiple",
+    "site",
+    "location",
+    "address",
+    "see above",
+    "see below",
+    "see notes",
+    "see attached",
+    "as noted",
+    "unknown",
+    # Column-header / row-label noise that gets surfaced as a "site"
+    # when prose mentions the column name (e.g. "Site ID Facility"
+    # is a header row caught by the proper-noun matcher).
+    "site id",
+    "site id facility",
+    "site code",
+    "site number",
+    "facility name",
+    "access window",
+    "escort owner",
+    "mdf",
+    "idf",
+    "mdf idf",
+    # Telecom-closet identifiers that aren't physical sites —
+    # they're rooms WITHIN a site (already captured via mdf_idf on
+    # the physical_site atom). The bare slug shouldn't surface as
+    # its own site entity.
+    "mdf 1", "mdf 2", "mdf 3", "mdf 4", "mdf 5", "mdf 6",
+    "mdf a", "mdf b", "mdf c", "mdf d", "mdf w", "mdf w1", "mdf w2",
+    "mdf cp", "mdf e",
+    "idf 1", "idf 2", "idf 3", "idf 4", "idf 5",
+    "idf a", "idf b", "idf w", "idf w1", "idf w2",
+    "warehouse rf",
+    "n terminal",
+    "ic 001", "ic 002", "ic 003",
+    "am 3", "am 4", "am 5",
+    "atlanta ga", "atlanta",
+    # Bare ATL- prefixes that survived without their numbered suffix
+    # (the full forms atl_hq_01 / atl_west_02 / atl_air_03 are
+    # already canonical via the site-code regex).
+    "atl hq", "atl west", "atl air", "atl cp", "atl 047",
+    # Building / closet identifiers
+    "building c", "building d", "building e",
+})
+
+
 def normalize_entity_key(entity_type: str, value: str) -> str:
     normalized = normalize_text(value)
     if entity_type == "site":
+        # Generic pseudo-values like "ALL" / "N/A" / "Various" should not
+        # produce site entities — they show up in xlsx allocation tables
+        # to mean "applies everywhere", not "site named ALL".
+        if normalized in _GENERIC_SITE_PSEUDO_VALUES:
+            return ""
+        # Also reject the underscore-slug form ("site_id_facility",
+        # "n_terminal", "mdf_w1"). The slug form is what shows up in
+        # canonical_keys after entity_resolution.
+        if normalized.replace("_", " ") in _GENERIC_SITE_PSEUDO_VALUES:
+            return ""
         site_aliases = {
             "west-wing": "west wing",
             "bldg a west": "west wing",
@@ -96,11 +166,13 @@ def parse_timestamp(line: str) -> str | None:
 def detect_speaker(line: str) -> str | None:
     line = line.strip()
     # [00:00:01] Speaker: text
-    match = re.match(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*([^:]{2,80}):\s*.+$", line)
+    match = re.match(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*([A-Za-zÀ-ÿ][^:]{1,79}):\s*.+$", line)
     if match:
         return match.group(1).strip()
-    # Speaker: text
-    match = re.match(r"^([^:]{2,80}):\s*.+$", line)
+    # Speaker: text — anchor on a letter to avoid matching a leading
+    # bracketed timestamp like ``[00:00:01] Welcome everyone.`` which
+    # otherwise yielded speaker="[00" and crashed the segment splitter.
+    match = re.match(r"^([A-Za-zÀ-ÿ][^:]{1,79}):\s*.+$", line)
     if match:
         key = match.group(1).strip()
         if key.lower() not in {"decision", "decisions", "action items", "open questions", "ai"}:
@@ -137,9 +209,18 @@ def split_transcript_segments(text: str) -> list[dict[str, Any]]:
         if speaker:
             # remove timestamp prefix and speaker label from content
             content = re.sub(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*", "", content)
-            content = content.split(":", 1)[1].strip()
+            # Defensive: a future regex change could yield a "speaker"
+            # whose label isn't followed by ``:`` in the line. Skip the
+            # split rather than crashing — keep the full line as content.
+            if ":" in content:
+                content = content.split(":", 1)[1].strip()
         elif stripped.startswith("- "):
             content = stripped[2:].strip()
+        else:
+            # Bracketed-timestamp leader (``[00:00:01] body``) with no
+            # speaker label: strip the timestamp so the body reads
+            # cleanly downstream.
+            content = re.sub(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*", "", content)
 
         segments.append(
             {
@@ -164,7 +245,9 @@ def extract_meeting_entities(text: str) -> list[str]:
 
     for match in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(Campus|Wing|Building|Store|Site))\b", text):
         phrase = match.group(1)
-        entity_keys.add(normalize_entity_key("site", phrase))
+        site_key = normalize_entity_key("site", phrase)
+        if site_key:
+            entity_keys.add(site_key)
 
     if "main campus" in lowered:
         entity_keys.add("site:main_campus")

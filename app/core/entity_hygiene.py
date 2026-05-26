@@ -47,7 +47,29 @@ _SITE_NEGATIVE_RE = re.compile(
     # etc. from being miscategorized as physical sites.
     r"security center|command center|operations center|"
     r"synergis|streamvault|omnicast|palo alto networks|"
-    r"axis communications|cisco systems"
+    r"axis communications|cisco systems|"
+    # Standards bodies + industry associations. These appear in spec
+    # references ("per ANSI/TIA-568") and section-bibliography lists
+    # ("Aluminum Association | American Concrete Institute | …") and
+    # would otherwise emit a "site:american_concrete_institute" key
+    # for every standards reference in a BMS/cabling spec sheet.
+    r"institute|association|society|standards|specification|"
+    r"council|federation|consortium|alliance|organization|"
+    r"ansi|ashrae|asme|astm|ieee|iec|iso|tia|eia|cisa|"
+    r"underwriters laboratories|\bul\b|fcc|osha|epa|"
+    # Equipment nomenclature commonly written with leading caps in
+    # control / BMS / mechanical spec sheets. These are CMMS equipment
+    # tags or system-component names, not buildings.
+    r"\bahu[-_ ]?\d*|air handling unit|air handling units|"
+    r"\bvav[-_ ]?\d*|variable air volume|fan coil unit|"
+    r"chilled water plant|hot water plant|chilled water system|"
+    r"chiller|boiler plant|cooling tower|condensing unit|"
+    r"\brtu[-_ ]?\d*|rooftop unit|heat pump|"
+    r"\bvfd[-_ ]?\d*|variable frequency drive|"
+    r"bacnet|modbus|lonworks|interoperability building blocks|"
+    # Section / bid-mechanical headings that surface as proper nouns
+    r"agreement the district|bid the district|bidder d bids|"
+    r"section \d|division \d|appendix [a-z]\b|exhibit [a-z]\b"
     r")\b",
     re.I,
 )
@@ -98,6 +120,24 @@ def filter_entity_keys_with_audit(
     return _filter_with_audit(atom, keys, blob=_atom_text_blob(atom))
 
 
+# Structured enterprise site-code shape — when the SITE KEY ITSELF
+# matches this pattern (region-function-N / region-NN / store-N /
+# bldg-N), it's intrinsically a site identifier and the candidate's
+# structure IS the positive evidence. Bypass the negative-blob test
+# so site IDs aren't dropped just because the surrounding atom text
+# also happens to mention "contract" / "license" / a vendor name.
+_STRUCTURED_SITE_KEY_RE = re.compile(
+    r"^(?:"
+    r"[a-z]{2,5}_[a-z0-9]{1,8}(?:_[a-z0-9]{1,6}){0,3}"  # atl_hq_01, nyc_dc_12
+    r"|s\d{2,4}|site_?\d{1,4}"                          # s001, site_12
+    r"|store_?\d{1,4}|loc_?\d{1,4}"                     # store_142
+    r"|bldg_?[a-z0-9]{1,4}|b\d{1,4}"                    # bldg_12
+    r"|mdc_?\d{1,4}|idc_?\d{1,4}|dc\d{1,4}"             # mdc_01
+    r")$",
+    re.IGNORECASE,
+)
+
+
 def _filter_with_audit(
     atom: Any, keys: Iterable[str], *, blob: str
 ) -> tuple[list[str], list[dict[str, Any]]]:
@@ -105,14 +145,50 @@ def _filter_with_audit(
     dropped: list[dict[str, Any]] = []
     atom_id = getattr(atom, "id", None)
 
-    for key in keys:
+    # Person-vs-place conflict resolution: when the SAME slug appears
+    # both under ``stakeholder:`` and ``site:`` in this atom, the
+    # stakeholder reading always wins. A row with "Lisa Park" + an
+    # email is a person whose last name happens to be a place-noun.
+    keys_list = list(keys)
+    stakeholder_slugs = {
+        k[len("stakeholder:"):]
+        for k in keys_list
+        if isinstance(k, str) and k.startswith("stakeholder:")
+    }
+
+    for key in keys_list:
         if not isinstance(key, str):
             continue
         if not key.startswith("site:"):
             kept.append(key)
             continue
 
-        candidate = key.replace("site:", "").replace("_", " ")
+        slug = key[len("site:"):]
+        candidate = slug.replace("_", " ")
+
+        # Person-overrides-place: drop site:X when stakeholder:X also
+        # present on the same atom.
+        if slug in stakeholder_slugs:
+            dropped.append(
+                {
+                    "atom_id": atom_id,
+                    "dropped_site_candidate": key,
+                    "reason": "person_overrides_place",
+                    "negative_terms": ["stakeholder:" + slug],
+                    "positive_terms": [],
+                    "source_atom_id": atom_id,
+                }
+            )
+            continue
+
+        # Structured site IDs (atl_hq_01, store_142, bldg_a2, ...) ARE
+        # the positive evidence. Bypass the negative-blob test so a
+        # canonical site code isn't dropped just because the same
+        # sentence mentions "contract" / "license" / a vendor name.
+        if _STRUCTURED_SITE_KEY_RE.match(slug):
+            kept.append(key)
+            continue
+
         cand_neg = bool(_SITE_NEGATIVE_RE.search(candidate))
         cand_pos = bool(_SITE_POSITIVE_RE.search(candidate))
 

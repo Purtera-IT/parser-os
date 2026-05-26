@@ -1,0 +1,11 @@
+{
+  "case_id": "SCHEMATIC_ELECTRICAL_ONELINE",
+  "service_line": "electrical",
+  "recommended_domain_pack": "electrical",
+  "bundle_summary": "Synthetic electrical one-line with panel / transformer / disconnect / receptacles.",
+  "expected_legend_entries_min": 4,
+  "expected_detection_targets_include": [
+    "electrical_panel"
+  ],
+  "expected_all_detections_have_bbox": true
+}

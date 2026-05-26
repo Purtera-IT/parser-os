@@ -57,7 +57,16 @@ INSTRUCTION_PATTERNS = [
     r"\bgo ahead\b",
     r"\bhold off\b",
     r"\bplease include\b",
+    r"\breduce\s+\w+\s+(?:count\s+)?(?:from|to)\b",
+    r"\bchange order\b",
+    r"\brevised scope\b",
+    r"\bcancel(?:\s+the)?\b",
+    r"\badd(?:ed)?\s+\d+\s+(?:more|additional)\b",
 ]
+CHANGE_DELTA_PATTERN = re.compile(
+    r"\b(?:from|reduce(?:d)?\s+(?:from)?)\s+(\d{1,5})\s+to\s+(\d{1,5})\b",
+    re.IGNORECASE,
+)
 CONSTRAINT_PATTERNS = [
     r"\baccess only\b",
     r"\bescort access\b",
@@ -117,6 +126,24 @@ class EmailParser(BaseParser):
             elif " wrote:" in text:
                 confidence = 0.83
                 reasons.append("email_thread_marker")
+            else:
+                # Headerless body fallback: short .txt files whose content
+                # reads as customer correspondence (instruction / exclusion
+                # / constraint keywords) still need an extractor. Take a
+                # low-confidence claim so other parsers can override but
+                # the file isn't silently dropped.
+                email_hits = sum(
+                    1
+                    for needle in (
+                        "please add", "please remove", "please include",
+                        "approved to proceed", "hold off", "go ahead",
+                        "badge required", "escort required",
+                    )
+                    if needle in text
+                )
+                if email_hits >= 1:
+                    confidence = 0.55
+                    reasons.append(f"email_keyword_heuristic({email_hits})")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,
@@ -391,15 +418,43 @@ class EmailParser(BaseParser):
                 atom_types.append(AtomType.exclusion)
             if any(re.search(pattern, lowered) for pattern in instruction_patterns):
                 atom_types.append(AtomType.customer_instruction)
+            # Change-delta presence ("from 48 to 36" anywhere in line)
+            # is a strong customer_instruction signal — the email writer
+            # is changing the scope by a specific delta.
+            if CHANGE_DELTA_PATTERN.search(cleaned) and AtomType.customer_instruction not in atom_types:
+                atom_types.append(AtomType.customer_instruction)
             if any(re.search(pattern, lowered) for pattern in constraint_patterns) or TIME_RANGE_RE.search(cleaned):
                 atom_types.append(AtomType.constraint)
             if cleaned.endswith("?") or re.match(r"^(who|what|when|where|why|how|can|could|should)\b", lowered):
                 atom_types.append(AtomType.open_question)
 
+            # Pre-compute change_delta once per line so customer
+            # instructions with "from X to Y" carry structured deltas.
+            delta_payload = None
+            delta_match = CHANGE_DELTA_PATTERN.search(cleaned)
+            if delta_match:
+                try:
+                    from_v = int(delta_match.group(1))
+                    to_v = int(delta_match.group(2))
+                    delta_payload = {
+                        "from": from_v,
+                        "to": to_v,
+                        "delta": to_v - from_v,
+                    }
+                except (ValueError, IndexError):
+                    delta_payload = None
+
             for atom_type in atom_types:
                 review_status = ReviewStatus.auto_accepted
                 if atom_type == AtomType.open_question:
                     review_status = ReviewStatus.needs_review
+                atom_value = {
+                    "text": cleaned,
+                    "message_index": block["message_index"],
+                    "quoted": block["quoted"],
+                }
+                if delta_payload and atom_type == AtomType.customer_instruction:
+                    atom_value["change_delta"] = delta_payload
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id(
@@ -416,11 +471,7 @@ class EmailParser(BaseParser):
                         atom_type=atom_type,
                         raw_text=cleaned,
                         normalized_text=normalize_text(cleaned),
-                        value={
-                            "text": cleaned,
-                            "message_index": block["message_index"],
-                            "quoted": block["quoted"],
-                        },
+                        value=atom_value,
                         entity_keys=entity_keys,
                         source_refs=[source_ref],
                         authority_class=authority,

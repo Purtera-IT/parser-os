@@ -14,7 +14,13 @@ from app.core.cache import (
 from app.core.candidate_adjudicator import adjudicate_candidates
 from app.core.candidates import summarize_candidate_outcomes
 from app.core.entity_extraction import enrich_atoms as enrich_entity_keys
-from app.core.entity_resolution import extract_entity_records, resolve_aliases
+from app.core.entity_resolution import (
+    collect_site_alias_groups,
+    collect_stakeholder_alias_groups,
+    extract_entity_records,
+    fuse_alias_groups,
+    resolve_aliases,
+)
 from app.core.quality_metrics import compute_quality
 from app.core.graph_builder import build_edges
 from app.core.ids import stable_id
@@ -334,12 +340,32 @@ def compile_project(
                         "reasons": match.reasons,
                         "cache_hit": False,
                         "matches": [row.model_dump(mode="json") for row in all_matches],
+                        # A6 graceful degradation: per-file outcome
+                        # status. Defaults to pending; overwritten below
+                        # when the parse succeeds, is skipped, or fails.
+                        # PM_HANDOFF readers (and the systems engineer
+                        # diffing successful vs failed files) depend on
+                        # this being present on every routing entry.
+                        "outcome": {
+                            "status": "pending",
+                            "atom_count": 0,
+                            "warning_count": 0,
+                        },
                     }
                 )
                 parser_key = parser_name
                 if parser is None:
                     warning = f"WARNING: No parser matched artifact {relative_name}; skipping file"
                     parse_warnings.append(warning)
+                    parser_routing[-1]["outcome"] = {
+                        "status": "skipped_no_parser",
+                        "reason": (
+                            f"no parser matched (best candidate: {parser_name} "
+                            f"@ confidence={match.confidence:.2f})"
+                        ),
+                        "atom_count": 0,
+                        "warning_count": 0,
+                    }
                 else:
                     cached = None
                     if use_cache:
@@ -400,10 +426,33 @@ def compile_project(
                     parse_warnings.extend(per_artifact_warnings)
                     atoms.extend(parsed_atoms)
                     parser_atom_counts[parser_key] += len(parsed_atoms)
+                    if parser_routing:
+                        # Successful parse — record concrete outcome.
+                        # Use ``ok`` when the parser produced ≥1 atom;
+                        # ``ok_empty`` when it ran but produced none
+                        # (e.g. an image-only PDF the parser skipped
+                        # without erroring). PM_HANDOFF distinguishes
+                        # so reviewers know whether a 0-atom file means
+                        # "parser is healthy, just no content" vs "parser
+                        # silently failed."
+                        status = "ok" if len(parsed_atoms) > 0 else "ok_empty"
+                        parser_routing[-1]["outcome"] = {
+                            "status": status,
+                            "atom_count": len(parsed_atoms),
+                            "warning_count": len(per_artifact_warnings),
+                            "cache_hit": cache_hit,
+                        }
             except Exception as exc:  # pragma: no cover
                 message = f"Failed parsing {artifact.name} ({parser_key}): {exc}"
                 parse_warnings.append(message)
                 parse_errors.append(message)
+                if parser_routing:
+                    parser_routing[-1]["outcome"] = {
+                        "status": "failed_parse",
+                        "reason": f"{type(exc).__name__}: {str(exc)[:280]}",
+                        "atom_count": 0,
+                        "warning_count": len(per_artifact_warnings),
+                    }
                 cache_misses += 1
             fingerprints.append(
                 build_artifact_fingerprint(
@@ -493,6 +542,22 @@ def compile_project(
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
+        )
+        # Cross-mention alias fusion: collapse `site:atl_hq +
+        # site:atlanta_headquarters + site:innovation_tower` (three
+        # surface names for one physical place) into a single
+        # EntityRecord whose `aliases` field carries all three keys.
+        # Detected via co-mention patterns in atom raw_text (copular
+        # "is the", em-dash, slash, parenthetical aliasing, ...).
+        site_alias_groups = collect_site_alias_groups(atoms)
+        # D3: collapse multiple surface forms of the same person
+        # (``stakeholder:watkins`` + ``stakeholder:r_watkins`` →
+        # ``stakeholder:renee_watkins``) using the same fusion
+        # mechanism. Key-shape based, so no false positives across
+        # documents.
+        stakeholder_alias_groups = collect_stakeholder_alias_groups(atoms)
+        entities = fuse_alias_groups(
+            entities, site_alias_groups + stakeholder_alias_groups
         )
         telemetry.end_stage(stage, output_count=len(entities))
 

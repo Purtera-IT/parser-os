@@ -1,0 +1,24 @@
+# Normalize line endings to LF in the repo. Working trees on Windows
+# are checked out as CRLF by default; this file keeps that conversion
+# behind the scenes and stops every commit from spamming
+# "LF will be replaced by CRLF" warnings.
+*               text=auto eol=lf
+
+# Explicit binary types — never normalize these.
+*.pdf           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.zip           binary
+*.db            binary
+*.onnx          binary
+*.pyfrag        binary
+
+# Per-language text rules.
+*.py            text eol=lf diff=python
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.json          text eol=lf
+*.md            text eol=lf
+*.toml          text eol=lf
+*.txt           text eol=lf

@@ -24,10 +24,18 @@ def _ensure_defaults() -> None:
         return
     from app.parsers.docx_parser import DocxParser
     from app.parsers.email_parser import EmailParser
+    from app.parsers.image_parser import ImageParser
     from app.parsers.markdown_parser import MarkdownParser
     from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
+    from app.parsers.pptx_parser import PptxParser
     from app.parsers.quote_parser import QuoteParser
     from app.parsers.transcript_parser import TranscriptParser
+    from app.parsers.universal_parsers import (
+        HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
+    )
+    from app.parsers._universal_extras import (
+        MsgParser, OdtParser, OdsParser, VsdxParser, MppParser,
+    )
     from app.parsers.xlsx_parser import XlsxParser
 
     for parser in [
@@ -37,6 +45,18 @@ def _ensure_defaults() -> None:
         EmailParser(),
         TranscriptParser(),
         DocxParser(),
+        PptxParser(),
+        ImageParser(),
+        HtmlParser(),
+        MboxParser(),
+        RtfParser(),
+        IcsParser(),
+        ZipParser(),
+        MsgParser(),
+        OdtParser(),
+        OdsParser(),
+        VsdxParser(),
+        MppParser(),
         OrbitBriefPdfParser(),
     ]:
         register_parser(parser)
@@ -62,6 +82,30 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.transcript
     if suffix == ".pdf":
         return ArtifactType.pdf
+    if suffix == ".pptx":
+        return ArtifactType.pptx
+    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
+        return ArtifactType.image
+    if suffix in {".html", ".htm", ".xhtml"}:
+        return ArtifactType.html
+    if suffix == ".mbox":
+        return ArtifactType.mbox
+    if suffix == ".rtf":
+        return ArtifactType.rtf
+    if suffix in {".ics", ".ical"}:
+        return ArtifactType.ics
+    if suffix == ".zip":
+        return ArtifactType.zip_archive
+    if suffix == ".msg":
+        return ArtifactType.msg
+    if suffix == ".odt":
+        return ArtifactType.odt
+    if suffix == ".ods":
+        return ArtifactType.ods
+    if suffix in {".vsdx", ".vsd"}:
+        return ArtifactType.vsdx
+    if suffix == ".mpp":
+        return ArtifactType.mpp
     return ArtifactType.txt
 
 

@@ -22,7 +22,10 @@ Design principles:
 
 from __future__ import annotations
 
+import functools
+import os
 import re
+import unicodedata
 from collections.abc import Iterable
 from typing import Any
 
@@ -132,7 +135,13 @@ _CROSS_PACK_VENDORS: dict[str, list[str]] = {
     "alc": ["automated logic", "alc"],
     "distech": ["distech", "distech controls"],
     "trane": ["trane"],
-    "carrier": ["carrier"],
+    # NOTE: Carrier Corporation (HVAC manufacturer) is intentionally
+    # matched only via context-rich surfaces, never bare "carrier".
+    # The bare word too easily matches generic English usage —
+    # "telecom carrier", "common carrier", "carrier wave", "package
+    # carrier" — and would produce ``vendor:carrier`` false positives.
+    # Real Carrier brand mentions typically include qualifying context.
+    "carrier_corporation": ["carrier corporation", "carrier hvac", "carrier brand"],
     "edwards_est": ["edwards est", "est", "edwards"],
     "mircom": ["mircom"],
     # IP intercom
@@ -204,18 +213,414 @@ _SITE_SUFFIX_PATTERNS = [
 _SITE_SUFFIX_REGEXES = [re.compile(p) for p in _SITE_SUFFIX_PATTERNS]
 
 
+# A4 universal naming: "Building 13" / "Site 7" / "Branch 42" /
+# "Edificio 4" / "Bâtiment 12" / "Gebäude 5" / "棟3". These appear in
+# enterprise floor plans and international deals where every site
+# has the same brand name and is distinguished only by a number.
+# Numbers can be roman ("Building III"), with optional letter
+# suffix ("Building 13A"), or unicode-digit. We deliberately
+# require the building-word + space + number form so that a bare
+# number elsewhere in text never becomes a site.
+_NUMBERED_SITE_REGEX = re.compile(
+    r"\b("
+    r"(?:Building|Bldg|Site|Branch|Office|Facility|Warehouse|"
+    r"Annex|Block|Wing|Tower|Plant|Depot|Hub|Floor|Fl|Lvl|Level|"
+    # A7 non-English building words
+    r"Edificio|Edif|Edifício|"           # Spanish, Portuguese
+    r"Bâtiment|Bat|Immeuble|"            # French
+    r"Gebäude|Geb|Gebaeude|"             # German (+ ASCII fallback)
+    r"Palazzo|Edificio|"                 # Italian
+    r"Здание|"                            # Russian
+    r"棟|楠|建物|建筑物|建筑|建築物|"      # CJK
+    r"건물|동"                            # Korean
+    r")\s+"
+    r"([0-9A-Z]+(?:[\-/][0-9A-Z]+)?|[IVXLCDM]+)"
+    r"\b)",
+    re.UNICODE,
+)
+
+
+
 # Street address pattern — captures something like "1700 Pratt Drive" or
 # "4700 Crest Drive" or "60 East Van Buren Street".  Conservative: we
 # require a number, then capitalized word(s), then a street suffix.
 _STREET_SUFFIXES = (
+    # Standard street suffixes
     "Street|Str|St|Ave|Avenue|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|"
-    "Court|Ct|Place|Pl|Highway|Hwy|Parkway|Pkwy|Trail|Trl|Circle|Cir"
+    "Court|Ct|Place|Pl|Highway|Hwy|Parkway|Pkwy|Trail|Trl|Circle|Cir|"
+    # Less-common but real street suffixes seen in commercial deals
+    "Connector|Corridor|Gateway|Crossing|Terrace|Loop|Run|Pike|Turnpike|"
+    "Bypass|Expressway|Expwy|Freeway|Fwy|Route|Rte|Spur|Branch|"
+    "Plaza|Square|Sq|Crescent|Cres|Mews|Walk|Promenade|Esplanade|"
+    "Alley|Aly|Mall|Path|Bridge|Brg|Causeway|Cswy|Junction|Jct|"
+    "Row|Greenway|Greenwy|Walkway"
 )
 _STREET_ADDRESS_REGEX = re.compile(
     r"\b(\d+(?:\-\d+)?)\s+([A-Z][A-Za-z0-9'.\-]*(?:\s+[A-Za-z0-9'.\-]+){0,4})\s+("
     + _STREET_SUFFIXES
     + r")\.?\b"
 )
+
+
+# Site-code pattern: ATL-HQ / ATL-WEST / ATL-AIR / NYC-DC1 / SFO-HQ /
+# CHI-MAIN-EAST / HOUSTON-WAREHOUSE style first-class site identifiers.
+#
+# First segment: 3–10 uppercase letters (covers 3-letter airport codes
+#   like ATL/SFO/LAX, 4-letter city codes like CHGO, and full city
+#   names like HOUSTON/DALLAS/BERLIN).
+# Trailing segments: must start with a letter, 1–10 alphanumerics.
+#   Up to 4 trailing segments (handles CHI-MAIN-EAST-1).
+#
+# Acceptance is gated by a positive suffix-allowlist (see
+# ``_SITE_CODE_SUFFIX_ALLOWLIST`` and ``_SITE_CODE_SUFFIX_PATTERN``)
+# so unknown junk codes (MOCK-OPTBOT-ATL, DEV-ATL, MSA-2026-001) can't
+# leak through — the absence of a recognized site-function suffix is
+# itself the filter.
+_SITE_CODE_REGEX = re.compile(
+    # Head: 2-10 uppercase letters (was 3-10; tighter is too restrictive
+    # for shorter region prefixes like "SF" or "AT").
+    # Continuation: 1-5 segments, each either alphanumeric starting with
+    # a letter (HQ, DC1, WEST) OR pure digits 1-3 chars (01, 12, 100).
+    # The trailing digit segment is required to capture "ATL-HQ-01" style
+    # IDs where the row number lives in its own segment.
+    r"\b([A-Z]{2,10}(?:-(?:[A-Z][A-Z0-9]{0,9}|\d{1,3})){1,5})\b"
+)
+# Known non-site hyphenated all-caps codes that look site-shaped but
+# aren't — connectors, network specs, manufacturer abbreviations, etc.
+_SITE_CODE_DENYLIST: frozenset[str] = frozenset({
+    # connector / cable types
+    "RJ-45", "RJ-11", "RJ-48", "BNC-F", "USB-C", "USB-A", "USB-B",
+    "POE-PLUS",
+    # wireless / network specs
+    "WI-FI", "WIFI", "BT-LE", "BLE-5", "BT-5",
+    # power / building services
+    "PV-DC", "DC-POWER", "AC-POWER", "VFD-3", "VRF-1",
+    # document / form codes
+    "P-O", "PO-1", "RFQ-1", "RFP-1",
+    # generic
+    "TBD-1", "NTS-1",
+})
+
+# First-segment denylist for hyphen-separated codes. When `_SITE_CODE_REGEX`
+# matches something like `MOCK-OPTBOT-ATL` or `DEV-ATL` or `MSA-2026`, the
+# first segment is the discriminator — if it is a known non-site token
+# (test data marker, contract type, cloud platform, ID prefix), the whole
+# match is rejected even if the trailing segments look airport-shaped.
+# Without this OPTBOT-style mock deal text leaks `site:mock_optbot_atl`,
+# `site:dev_atl`, `site:mock_msa`.
+_SITE_CODE_HEAD_DENYLIST: frozenset[str] = frozenset({
+    # test / mock / dev data prefixes
+    "MOCK", "DEV", "TEST", "TESTS", "DEMO", "FAKE", "DUMMY",
+    "SAMPLE", "EXAMPLE", "STUB", "DRAFT", "TMP", "TEMP",
+    "PROTO", "POC",
+    # contract / document type prefixes
+    "MSA", "NDA", "SOW", "MOU", "LOI", "DPA", "BAA", "SLA",
+    "EULA", "RFP", "RFQ", "RFI", "PO", "WO", "INV", "TKT",
+    "TASK", "PROJ", "DEAL", "CASE", "REQ", "REQS", "QUO", "QUOTE",
+    "ORDER", "ORD",
+    # CRM / system ID prefixes
+    "HS", "SF", "SFDC", "HUBSPOT", "ZEN", "ZENDESK",
+    # cloud / SaaS platform prefixes
+    "AZURE", "AWS", "GCP", "ARM", "EC2", "GKE", "AKS",
+    "INTUNE", "OKTA", "ENTRA", "DUO",
+    # API / protocol prefixes
+    "API", "REST", "GRPC", "JSON", "XML", "YAML", "CSV",
+    # identifier-type prefixes
+    "ID", "IDS", "REF", "SKU", "UPC", "EAN", "ISBN", "GUID", "UUID",
+    "TAG", "TYPE",
+    # log / severity prefixes
+    "ERR", "WRN", "INF", "DBG", "FATAL",
+    # role / org prefixes that can look 3-letter site-shaped
+    "USR", "ADM", "MGR", "EMP", "STAFF",
+})
+
+
+# Positive suffix allowlist for hyphenated site codes. A code only
+# becomes a site when its LAST segment matches one of these tokens
+# (closed list) or matches ``_SITE_CODE_SUFFIX_PATTERN`` (open shape
+# for numbered floors/buildings/data-centers/wings).
+#
+# This is the load-bearing universal gate: instead of trying to
+# enumerate every possible junk word in a head/middle position, we
+# require the trailing token to carry a known site-function meaning
+# (direction, facility type, datacenter number, floor number, wing).
+# Anything that doesn't end in a recognized site suffix fails the
+# gate, no matter what its head or middle segments look like.
+_SITE_CODE_SUFFIX_ALLOWLIST: frozenset[str] = frozenset({
+    # === Cardinal directions ===
+    "N", "S", "E", "W", "NE", "NW", "SE", "SW",
+    "NORTH", "SOUTH", "EAST", "WEST", "CENTRAL",
+    "NORTHEAST", "NORTHWEST", "SOUTHEAST", "SOUTHWEST",
+    # === Function labels ===
+    "HQ", "MAIN", "PRIMARY", "SECONDARY", "BACKUP", "FAILOVER",
+    "AIR", "AIRPORT", "ANNEX", "CAMPUS", "FACILITY",
+    "LAB", "LABS", "OFFICE", "OFFICES",
+    "PLANT", "FACTORY", "WAREHOUSE", "WH", "STORAGE",
+    "OPS", "OPERATIONS", "OPCENTER",
+    "HUB", "DEPOT", "TERMINAL", "GATEWAY",
+    "BRANCH", "STORE", "SHOP", "SHOWROOM",
+    "DEALER", "DEALERSHIP",
+    "CENTER", "CENTRE", "CTR",
+    "BLDG", "BLD", "BLOCK", "WING",
+    "FLOOR", "FL", "LEVEL", "LVL",
+    "RACK", "ROOM",
+    # === Datacenter / cabinet shorthand (bare suffix forms) ===
+    "DC", "MDC", "IDC", "POP", "POE",
+    # === Distribution / utility ===
+    "DIST", "DISTRIBUTION", "FULFILLMENT", "LOGISTICS",
+})
+
+# Open-shape suffix pattern — accepts numbered facility / wing /
+# datacenter / floor / building codes (DC1, FL3, B12, T5, BLDG2, WING7).
+_SITE_CODE_SUFFIX_PATTERN = re.compile(
+    r"^(?:"
+    r"DC\d{1,3}"       # DC1, DC15, DC100
+    r"|MDC\d{1,3}"     # MDC1
+    r"|IDC\d{1,3}"     # IDC1
+    r"|FL\d{1,3}"      # FL3
+    r"|FLOOR\d{1,3}"   # FLOOR12
+    r"|LVL\d{1,3}"     # LVL3
+    r"|LEVEL\d{1,3}"   # LEVEL3
+    r"|BLDG\d{1,3}"    # BLDG2
+    r"|BLD\d{1,3}"     # BLD2
+    r"|B\d{1,3}"       # B12
+    r"|T\d{1,3}"       # T5  (tower 5)
+    r"|H\d{1,3}"       # H1
+    r"|W\d{1,3}"       # W3  (wing 3)
+    r"|WING\d{1,3}"    # WING7
+    r"|BLOCK\d{1,3}"   # BLOCK2
+    r"|RACK\d{1,3}"    # RACK19
+    r"|ROOM\d{1,3}"    # ROOM101
+    r"|R\d{1,3}"       # R101 (room 101)
+    r"|POP\d{1,3}"     # POP2
+    r"|SITE\d{1,3}"    # SITE3
+    r"|STORE\d{1,3}"   # STORE142
+    r"|BRANCH\d{1,3}"  # BRANCH7
+    r")$"
+)
+
+
+def _site_code_suffix_ok(last_segment: str, *, prev_segment: str | None = None) -> bool:
+    """Universal gate: does this last segment carry site-function meaning?
+
+    Accepts three shapes:
+      1. ``last`` is in the curated allowlist (HQ, MAIN, WEST, ...).
+      2. ``last`` matches the open-shape pattern (DC1, FL3, BLDG2, ...).
+      3. ``last`` is 1-3 digits AND ``prev_segment`` is a recognized
+         site-function token. Pattern ``<region>-<function>-<NN>`` is
+         the most common enterprise site-ID shape (``ATL-HQ-01``,
+         ``NYC-DC-12``, ``SFO-WEST-05``). Without this, every numbered
+         site instance of the form gets silently dropped.
+    """
+    if last_segment in _SITE_CODE_SUFFIX_ALLOWLIST:
+        return True
+    if _SITE_CODE_SUFFIX_PATTERN.match(last_segment):
+        return True
+    if (
+        prev_segment is not None
+        and last_segment.isdigit()
+        and 1 <= len(last_segment) <= 3
+        and (
+            prev_segment in _SITE_CODE_SUFFIX_ALLOWLIST
+            or _SITE_CODE_SUFFIX_PATTERN.match(prev_segment)
+            or (prev_segment.isalnum() and any(c.isalpha() for c in prev_segment) and 2 <= len(prev_segment) <= 5)
+            or (prev_segment.isdigit() and 1 <= len(prev_segment) <= 4)
+        )
+    ):
+        # Accepts ``<region>-<function>-<NN>`` AND ``<region>-<NNN>-<NN>``.
+        # The street-number-as-function case (``ATL-047-04`` for
+        # "OPTBOT Brady Training, 047 Brady Ave NW") is real in
+        # enterprise rosters and would otherwise be silently dropped.
+        return True
+    return False
+
+
+# Site-context regex — when a Capitalized-run is immediately adjacent
+# (within ~40 chars in the same sentence) to one of these UNAMBIGUOUS
+# cues, we treat the run as having positive site signal even if its
+# tail isn't a recognized place-noun.
+#
+# We deliberately use multi-word phrasing ("located at", "site visit:",
+# "based in") rather than bare nouns ("site", "location") because bare
+# nouns appear too often in unrelated contexts ("Three Site
+# Modernization") and would create false corroboration.
+#
+# The phrases below all have an unambiguous syntactic frame that
+# indicates "the noun phrase NEAR this cue refers to a physical place."
+_SITE_CONTEXT_REGEX = re.compile(
+    r"(?:"
+    # Prepositional/state-of-being cues (require explicit preposition)
+    r"\bbased\s+(?:at|in|out\s+of)\b"
+    r"|\blocated\s+(?:at|in|near|on|adjacent\s+to)\b"
+    r"|\bheadquartered(?:\s+(?:at|in))?\b"
+    r"|\bsituated\s+(?:at|in|on|near)\b"
+    r"|\bhoused\s+(?:at|in)\b"
+    r"|\boperat(?:es|ing|ed)\s+(?:out\s+of|from)\b"
+    # Site-activity cues
+    r"|\bsite\s+(?:visit|tour|survey|walk(?:-?through)?|walkthrough)\b"
+    r"|\bon(?:-|\s+)site\s+(?:at|in)\b"
+    r"|\bdeployed\s+(?:at|in|to)\b"
+    r"|\binstalled\s+(?:at|in)\b"
+    r"|\bvisit\s+(?:to|at)\b"
+    r"|\btour\s+(?:of|at)\b"
+    # Field-label cues (colon-separated)
+    r"|\b(?:site|location|address|facility|building|premises|venue)\s*[:=]"
+    # Coordinate-style cues
+    r"|\baddress(?:es)?\s+(?:is|are|of)\b"
+    r"|\bfacilit(?:y|ies)\s+(?:at|in|located|known)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+# Adjacent-window size in characters for corroboration. Tight enough
+# that a cue elsewhere in a long sentence ("Three Site Modernization"
+# 80 chars away) doesn't create false corroboration, wide enough that
+# "Site visit: Aurora Operations Hub on June 10" still corroborates.
+_SITE_CORROBORATION_WINDOW = 40
+
+
+# Hard-disqualify tokens — when ANY of these appears anywhere in a
+# Capitalized-run, the run is NEVER a site, even if its tail is an
+# otherwise-valid place-noun like "Tower" or "Center".
+#
+# Rationale: "Mock Atlanta Tower" / "Test Innovation Lab" / "Sample
+# Site Headquarters" — these are descriptive scaffolding around a
+# place noun, not real site names. The presence of a test-data marker
+# is itself disqualifying.
+#
+# This is narrower than ``_NON_SITE_PHRASE_TAIL_NOUNS`` (which kills
+# the phrase only when it appears in the TAIL or as an inner token
+# while the tail is non-place). Hard disqualify overrides the
+# place-tail bypass entirely.
+_HARD_DISQUALIFY_PHRASE_TOKENS: frozenset[str] = frozenset({
+    "mock", "mocks", "mocked",
+    "fictional", "fictitious",
+    "fake", "fakes",
+    "dummy", "dummies",
+    "demo", "demos",
+    "test", "tests",
+    "sample", "samples",
+    "example", "examples",
+    "placeholder", "placeholders",
+    "stub", "stubs",
+    "synthetic", "simulated",
+    "scratch",
+    "tbd", "tba", "tbc",
+})
+
+
+# Tail nouns that turn an otherwise-capitalized phrase into NON-site
+# content. When the LAST non-stopword token is one of these, the whole
+# phrase is dropped from site emission — these tail nouns mean the
+# phrase describes a person, a document, a system, or a process, not
+# a place.
+#
+# Role tails (person, not place): "Regional Facilities Manager",
+#   "VP Workplace Operations", "Security Architecture Lead".
+# Document tails (artifact, not place): "Executive Deal Brief",
+#   "Site Surveys DOCX", "Procurement Packet PDF".
+# Pipeline / system tails (system, not place): "HubSpot Dev Deal",
+#   "Azure Dev Storage", "OrbitBrief Workspace".
+# Concept / process tails: "Three Site Modernization",
+#   "Target Close Date", "Total Mock Amount".
+_ROLE_INNER_MARKERS: frozenset[str] = frozenset({
+    "manager", "managers", "director", "directors", "sponsor", "sponsors",
+    "officer", "officers", "supervisor", "supervisors",
+    "coordinator", "coordinators", "administrator", "administrators",
+    "lead", "leads", "owner", "owners", "approver", "approvers",
+})
+
+
+_NON_SITE_PHRASE_TAIL_NOUNS: frozenset[str] = frozenset({
+    # === role / person tails ===
+    "manager", "managers", "lead", "leads", "director", "directors",
+    "sponsor", "sponsors", "engineer", "engineers", "architect",
+    "architects", "analyst", "analysts", "coordinator", "coordinators",
+    "admin", "administrator", "administrators", "owner", "owners",
+    "executive", "executives", "expert", "experts", "specialist",
+    "specialists", "rep", "representative", "consultant", "consultants",
+    "supervisor", "supervisors", "head", "heads", "chief", "officer",
+    "officers", "principal", "principals", "operator", "operators",
+    "stakeholder", "stakeholders", "approver", "approvers",
+    "respondent", "respondents", "assistant", "assistants",
+    "lieutenant", "captain", "designee", "delegate",
+    # Role-shaped initialisms / shorthand
+    "pm", "po", "ceo", "cto", "cio", "ciso", "cfo", "coo", "vp", "svp", "evp",
+    "exec", "mgr", "sup", "supt",
+    # Role-shaped activity / function tails
+    "operations", "operation", "ops", "ops.", "team", "teams",
+    "staff", "personnel", "crew", "crews", "worker", "workers",
+    "force", "leadership",
+    # === document / artifact tails ===
+    "document", "documents", "brief", "briefs", "packet", "packets",
+    "notes", "note", "memo", "memos", "plan", "plans", "report",
+    "reports", "deck", "decks", "list", "lists", "policy", "policies",
+    "guideline", "guidelines", "manual", "manuals", "presentation",
+    "presentations", "slides", "slide", "schedule", "schedules",
+    "worksheet", "worksheets", "spreadsheet", "spreadsheets",
+    "workbook", "workbooks", "draft", "drafts", "version", "versions",
+    "edition", "editions", "revision", "revisions",
+    "xlsx", "docx", "pdf", "csv", "json", "yaml",
+    # === pipeline / system / cloud-resource tails ===
+    "storage", "workspace", "workspaces", "deal", "deals",
+    "checkpoint", "checkpoints", "batch", "batches", "pipeline",
+    "pipelines", "workflow", "workflows", "job", "jobs",
+    "instance", "instances", "cluster", "clusters", "container",
+    "containers", "bucket", "buckets", "environment", "environments",
+    "env", "tenant", "tenants", "account", "accounts",
+    "subscription", "subscriptions", "repository", "repositories",
+    "repo", "repos", "endpoint", "endpoints", "queue", "queues",
+    "topic", "topics", "service", "services", "module", "modules",
+    "library", "libraries", "framework", "frameworks",
+    "platform", "platforms", "tool", "tools", "system", "systems",
+    "connector", "connectors", "adapter", "adapters",
+    # === concept / process tails (in addition to existing stopwords) ===
+    "modernization", "transformation", "migration", "deployment",
+    "deployments", "implementation", "implementations", "upgrade",
+    "upgrades", "refresh", "refreshes", "rollout", "rollouts",
+    "cutover", "cutovers", "amount", "amounts", "total", "subtotal",
+    "value", "values", "approval", "approvals", "controls", "control",
+    "use", "usage",
+    # === measurement / metric tails ===
+    "baseline", "baselines", "benchmark", "benchmarks",
+    "metric", "metrics", "kpi", "kpis", "target", "targets",
+    "threshold", "thresholds", "estimate", "estimates",
+    "forecast", "forecasts", "projection", "projections",
+    # === temporal tails ===
+    "date", "dates", "deadline", "deadlines", "milestone",
+    "milestones", "window", "windows", "timeline", "timelines",
+    "timeframe", "timeframes", "period", "periods",
+    "quarter", "quarters", "phase", "phases", "stage", "stages",
+    # === test / mock / demo tokens (any position kills the phrase) ===
+    "mock", "mocks", "mocked", "fictional", "fake", "fakes",
+    "dummy", "dummies", "demo", "demos", "test", "tests",
+    "sample", "samples", "example", "examples", "placeholder",
+    "stub", "stubs", "draft", "drafts", "preliminary", "tentative",
+    "synthetic", "simulated", "scratch",
+    # === classification / sensitivity tokens (not place names) ===
+    "confidential", "proprietary", "restricted", "classified",
+    "internal", "private", "public", "sensitive",
+    # === demonstratives / vague references that bleed into runs ===
+    "this", "that", "these", "those",
+})
+
+# Phrases that should never be treated as sites, regardless of shape.
+# These show up in enterprise deal docs as section labels / boilerplate.
+_SITE_PHRASE_BLOCKLIST: frozenset[str] = frozenset({
+    "three site modernization",
+    "three site modernization hubspot deal",
+    "scope of work",
+    "site surveys docx",
+    "site surveys",
+    "site survey",
+    "all sites",
+    "all locations",
+    "every site",
+    "every location",
+    "executive deal brief",
+    "executive deal brief mock document",
+})
 
 
 # Part-number / SKU pattern.  Cisco-style (CW9166I-B, AIR-DNA-E-T-5Y),
@@ -240,6 +645,48 @@ _PART_NUMBER_REGEX = re.compile(
 #   "Qty: 136", "Quantity: 500", "Quantity = 500", "QTY 136"
 _QUANTITY_REGEX = re.compile(
     r"\b(?:qty|quantity|quantities|count)\s*[:=]?\s*([0-9]+(?:,[0-9]{3})*)\b",
+    re.IGNORECASE,
+)
+
+# Noun-anchored quantity pattern: matches "<NUMBER> <unit-or-device-noun>"
+# so prose statements like "Install 50 access points", "60 wireless
+# devices", "5 distribution switches", "12 SFP modules", "75 power
+# cords", "8 spools of cable" produce quantity entities. The trailing
+# noun must be from the install-vocabulary list (extensible) so this
+# does not match prices ("50 dollars"), dates ("2026 March"), or
+# generic prose ("50 reasons").
+_QUANTITY_NOUN_REGEX = re.compile(
+    r"\b([0-9]+(?:,[0-9]{3})*)\s+"
+    # Allow common qualifier prefixes that precede the device noun:
+    # "24 IP cameras", "50 wireless access points", "5 PoE+ switches",
+    # "12 mesh APs", "8 dome cameras". Each prefix is optional and
+    # consumed silently — the noun list below remains the anchor.
+    r"(?:(?:wireless|ip|poe\+?\+?|core|access|distribution|mesh|"
+    r"managed|layer\s*[23]|mgig|multi[-\s]?gig|2\.5g|5g|10g|"
+    r"dome|bullet|ptz|fixed|thermal|fisheye|panoramic|"
+    r"hd|high\s+density|indoor|outdoor|hardened|"
+    r"prox|badge|card|hid|mobile|multi[-\s]?format|"
+    r"smoke|heat|motion|pir|dual\s+tech|"
+    r"ceiling|wall|pendant|paging|horn|sound\s+mask|"
+    r"rack|server|blade|hyperconverged|1u|2u|"
+    r"thin|chrome|"
+    r"sd[-\s]?wan|edge|next[-\s]?gen|ngfw|utm)\s+)*"
+    r"(?:access\s+points?|aps?|waps?|wireless\s+access\s+points?|wireless\s+devices?|"
+    r"switches?|firewalls?|fws?|routers?|cameras?|cams?|sensors?|"
+    r"sfp(?:\+|s)?\s*modules?|sfp(?:\+|s)?|modules?|"
+    r"patch\s+panels?|patch\s+cords?|panels?|"
+    r"jacks?|outlets?|drops?|ports?|"
+    r"cables?|cords?|spools?(?:\s+of\s+\w+)?|"
+    r"licenses?|seats?|users?|endpoints?|"
+    r"servers?|appliances?|chassis|chasses|"
+    r"workstations?|laptops?|desktops?|"
+    r"installations?|sites?|locations?|facilities|facility|"
+    r"readers?|controllers?|displays?|monitors?|projectors?|"
+    r"speakers?|microphones?|mics?|"
+    r"upses?|racks?|cabinets?|"
+    r"strikes?|maglocks?|"
+    r"detectors?|pull\s+stations?|horn\s+strobes?|"
+    r"units?|devices?|pieces?|each)\b",
     re.IGNORECASE,
 )
 
@@ -562,7 +1009,125 @@ _FORM_FIELD_MARKERS = _FORM_FIELD_STRONG_MARKERS + _FORM_FIELD_WEAK_MARKERS
 
 
 def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    """ASCII-folded snake_case slug for entity keys.
+
+    Folds Unicode accents (Bâtiment → Batiment, Gebäude → Gebaude,
+    Edificio → Edificio) via NFKD normalization before stripping
+    to ASCII so international site names produce readable slugs
+    instead of "b_timent_12" / "geb_ude_5".
+
+    For non-Latin scripts that don't decompose to ASCII (CJK
+    Japanese / Chinese / Korean), the chars are preserved in
+    casefolded form so a deterministic slug still emits — the
+    raw CJK glyph IS the slug.
+    """
+    if not value:
+        return ""
+    # NFKD splits combining marks from base letters; the encode/decode
+    # drops the marks but leaves base ASCII letters intact. Non-ASCII
+    # scripts (CJK, Cyrillic, etc.) round-trip via ``replace`` so the
+    # slug still contains the original glyph and the entity is keyed
+    # consistently — albeit not Latin-readable.
+    folded = unicodedata.normalize("NFKD", value)
+    ascii_folded = folded.encode("ascii", "ignore").decode("ascii")
+    # If folding ate everything (e.g. a pure-CJK string), fall back to
+    # the casefolded original so the entity isn't silently dropped.
+    base = ascii_folded if ascii_folded.strip() else value
+    return re.sub(r"[^a-z0-9]+", "_", base.lower()).strip("_")
+
+
+_UNIVERSAL_DEVICE_BASELINE: dict[str, tuple[str, ...]] = {
+    "ip_camera": (
+        "ip camera", "ip cameras", "camera", "cameras", "cctv camera",
+        "security camera", "surveillance camera", "ip cam", "ip cams",
+        "dome camera", "bullet camera", "ptz camera", "ptz",
+        "fixed camera", "thermal camera", "fisheye camera",
+    ),
+    "access_point": (
+        "access point", "access points", "wireless access point",
+        "ap", "aps", "wap", "waps", "wifi ap", "wi-fi ap",
+        "wifi access point", "indoor ap", "outdoor ap",
+    ),
+    "switch": (
+        "switch", "switches", "poe switch", "poe+ switch", "poe++ switch",
+        "core switch", "access switch", "distribution switch",
+        "managed switch", "layer 2 switch", "layer 3 switch",
+        "mgig switch", "multi-gig switch",
+    ),
+    "router": (
+        "router", "routers", "edge router", "core router",
+        "sd-wan", "sdwan", "sd-wan appliance",
+    ),
+    "firewall": (
+        "firewall", "firewalls", "fw", "ngfw", "next-gen firewall",
+        "utm", "utm appliance",
+    ),
+    "card_reader": (
+        "card reader", "card readers", "prox reader", "badge reader",
+        "access reader", "reader", "readers", "hid reader", "mobile reader",
+    ),
+    "controller": (
+        "controller", "controllers", "access controller", "door controller",
+        "access control panel",
+    ),
+    "electric_strike": (
+        "electric strike", "strike", "mag lock", "maglock",
+        "magnetic lock", "electric lock",
+    ),
+    "motion_sensor": ("motion sensor", "motion detector", "pir", "pir sensor"),
+    "smoke_detector": (
+        "smoke detector", "smoke detectors", "smoke sensor",
+        "heat detector", "heat detectors",
+    ),
+    "pull_station": ("pull station", "pull stations", "manual pull station", "fire pull"),
+    "horn_strobe": ("horn strobe", "horn/strobe", "notification appliance"),
+    "fire_panel": ("fire panel", "facp", "fire alarm control panel", "fire alarm panel"),
+    "speaker": ("speaker", "speakers", "ceiling speaker", "pendant speaker"),
+    "microphone": ("microphone", "microphones", "mic", "mics"),
+    "display": ("display", "displays", "tv", "monitor", "monitors", "video wall", "touchscreen"),
+    "projector": ("projector", "projectors", "laser projector"),
+    "videoconferencing_codec": ("codec", "vc codec", "room kit", "video bar"),
+    "ups": ("ups", "battery backup", "rack ups"),
+    "rack": ("rack", "racks", "cabinet", "server rack"),
+    "workstation": (
+        "workstation", "workstations", "pc", "pcs", "desktop", "desktops",
+        "laptop", "laptops", "computer", "computers", "chromebook", "chromebooks",
+        "notebook", "notebooks", "thin client", "thin clients",
+        "all-in-one", "all in one", "aio",
+        # Common consumer / enterprise model series referenced in
+        # ITAD bid sheets ("Dell Latitude 3120 2 in 1", "Dell 3120
+        # computers", "HP EliteBook 840", "Lenovo ThinkPad T14").
+        # These act as device markers so a row that lists 245 units
+        # of a specific model still emits ``device:workstation``.
+        "dell latitude", "dell optiplex", "dell precision",
+        "hp elitebook", "hp probook", "hp envy", "hp pavilion",
+        "lenovo thinkpad", "lenovo thinkcentre", "lenovo ideapad",
+        "macbook", "macbook pro", "macbook air", "imac",
+        "microsoft surface", "surface pro", "surface laptop",
+    ),
+    "server": ("server", "servers", "rack server", "blade server"),
+    "tablet": (
+        "tablet", "tablets", "ipad", "ipads",
+        "android tablet", "windows tablet", "2 in 1", "2-in-1",
+    ),
+    "monitor": (
+        "monitor", "monitors", "lcd monitor", "led monitor",
+        "computer monitor", "desktop monitor",
+    ),
+    "storage": (
+        "ssd", "ssds", "hard drive", "hard drives", "hdd", "hdds",
+        "nvme", "external drive", "external hard drive",
+        "usb drive", "thumb drive", "flash drive",
+    ),
+    "printer": (
+        "printer", "printers", "mfp", "multifunction printer",
+        "laser printer", "inkjet printer", "label printer",
+    ),
+}
+
+
+_DEVICE_INDEX_CACHE: dict[int, dict[str, str]] = {}
+_TYPED_INDEX_CACHE: dict[int, dict[str, dict[str, str]]] = {}
 
 
 def _device_alias_index(pack: DomainPack) -> dict[str, str]:
@@ -571,50 +1136,156 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     The canonical is the YAML key (e.g. ``ip_camera``).  We add a
     word-boundary entry for every alias so we don't match
     ``"camera"`` inside ``"cameramen"``.
+
+    Auto-plural: when an alias is singular and ends in a plural-safe
+    suffix (consonant + non-'s'/'x'/'z') we also register its English
+    plural form. So a pack that only lists ``switch`` will still
+    match ``switches`` in prose. This avoids forcing every pack to
+    list every plural variant.
+
+    Universal baseline: the routed pack may be narrow (e.g.
+    ``wireless`` only covers APs/switches). When a doc mentions
+    devices outside the pack's vocabulary ("24 cameras" in a
+    wireless-routed bundle), the device atom would be dropped. We
+    layer a small UNIVERSAL_DEVICE_BASELINE on top so cross-pack
+    devices still surface. The routed pack still wins on conflicts.
+
+    Cached by ``id(pack)`` so subsequent calls inside a compile
+    hit the cache instead of rebuilding the index per atom.
     """
+    cached = _DEVICE_INDEX_CACHE.get(id(pack))
+    if cached is not None:
+        return cached
     index: dict[str, str] = {}
+
+    def _add(form: str, canonical: str) -> None:
+        norm = normalize_text(form)
+        if norm:
+            index.setdefault(norm, canonical)
+        # Auto-plural for short device nouns. Skip if the alias ends in
+        # a non-pluralizable suffix or already looks plural.
+        if norm and " " not in norm and len(norm) >= 4 and not norm.endswith(("s", "x", "z", "ay", "ey", "iy", "oy", "uy")):
+            if norm.endswith(("ch", "sh", "ss")):
+                index.setdefault(norm + "es", canonical)
+            elif norm.endswith("y") and len(norm) >= 2 and norm[-2] not in "aeiou":
+                index.setdefault(norm[:-1] + "ies", canonical)
+            else:
+                index.setdefault(norm + "s", canonical)
+
     for canonical, aliases in (pack.device_aliases or {}).items():
-        canonical_norm = normalize_text(canonical.replace("_", " "))
-        if canonical_norm:
-            index.setdefault(canonical_norm, canonical)
+        _add(canonical.replace("_", " "), canonical)
         for alias in aliases or []:
-            alias_norm = normalize_text(alias)
-            if alias_norm:
-                index.setdefault(alias_norm, canonical)
+            _add(alias, canonical)
+    # Universal baseline — only adds entries that aren't already
+    # bound to a different canonical (setdefault preserves pack winner).
+    for canonical, aliases in _UNIVERSAL_DEVICE_BASELINE.items():
+        _add(canonical.replace("_", " "), canonical)
+        for alias in aliases:
+            _add(alias, canonical)
+    _DEVICE_INDEX_CACHE[id(pack)] = index
     return index
 
 
-def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
-    """Build ``{entity_type: {alias_norm: example_or_alias}}`` so we can
-    detect typed entities (room, site, vendor, etc.) generically.
+_GENERIC_TYPED_ALIAS_SENTINEL = "__generic__"
 
-    The returned ``example_or_alias`` is what we'll slugify for the
-    canonical key — preferring rich examples over bare aliases.
+
+def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
+    """Build ``{entity_type: {alias_norm: example_or_sentinel}}`` so we
+    can detect typed entities (room, site, vendor, etc.) generically.
+
+    Aliases come from two pack sources:
+      * ``entity.aliases`` — GENERIC synonyms for the type
+        ("tenant"/"client"/"owner" for customer; "closet"/"rm"/"mdf"
+        for room; "carrier"/"oem"/"reseller" for vendor). These are
+        mapped to the ``_GENERIC_TYPED_ALIAS_SENTINEL`` so callers
+        can detect them as generic-noun matches that should NOT
+        produce real entity keys.
+      * ``entity.examples`` — SPECIFIC named instances ("West Region
+        District" for customer, "Acme Cabling Co" for vendor). These
+        are mapped to the example string itself so they emit a real
+        entity key.
+
+    The sentinel is what fixes ``customer:customer`` / ``room:room`` /
+    ``vendor:carrier`` from leaking into the entity records: the
+    pack defines "tenant" / "closet" / "carrier" as generic synonyms,
+    but matching them as entities just because the text contains the
+    bare word produces tautological / meaningless keys.
+
+    Cached by ``id(pack)``.
     """
+    cached = _TYPED_INDEX_CACHE.get(id(pack))
+    if cached is not None:
+        return cached
     out: dict[str, dict[str, str]] = {}
     for entity in pack.entity_types or []:
         slot = out.setdefault(entity.name, {})
         for alias in entity.aliases or []:
             alias_norm = normalize_text(alias)
             if alias_norm:
-                slot.setdefault(alias_norm, alias)
+                slot.setdefault(alias_norm, _GENERIC_TYPED_ALIAS_SENTINEL)
         for example in entity.examples or []:
             example_norm = normalize_text(example)
             if example_norm:
                 slot.setdefault(example_norm, example)
+    _TYPED_INDEX_CACHE[id(pack)] = out
     return out
+
+
+@functools.lru_cache(maxsize=4096)
+def _compiled_word_pattern(alias_lower: str) -> "re.Pattern[str]":
+    """Cache compiled word-boundary patterns per alias. The pack
+    vocabulary is tiny relative to the atom count — a 4k LRU more
+    than covers every alias we'll ever see, with O(1) lookup."""
+    return re.compile(r"(?<![a-z0-9])" + re.escape(alias_lower) + r"(?![a-z0-9])")
 
 
 def _word_match(text_lower: str, alias_lower: str) -> bool:
     """Word-boundary match for an alias inside a pre-lowercased text."""
     if not alias_lower:
         return False
-    pattern = r"(?<![a-z0-9])" + re.escape(alias_lower) + r"(?![a-z0-9])"
-    return re.search(pattern, text_lower) is not None
+    return _compiled_word_pattern(alias_lower).search(text_lower) is not None
 
 
-def _emit_devices(text_lower: str, alias_index: dict[str, str]) -> set[str]:
+# Pre-built per-pack matcher: a single union regex over all device
+# aliases. Reduces _emit_devices from O(aliases) regex compiles per
+# atom to O(1) — one search, one canonical lookup per match.
+_DEVICE_UNION_CACHE: dict[int, tuple["re.Pattern[str]", dict[str, str]]] = {}
+
+
+def _device_union_for_pack(pack: DomainPack, alias_index: dict[str, str]) -> tuple["re.Pattern[str]", dict[str, str]]:
+    key = id(pack)
+    cached = _DEVICE_UNION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if not alias_index:
+        pattern = re.compile(r"(?!.*)")  # never matches
+        _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
+        return _DEVICE_UNION_CACHE[key]
+    # Sort longest-first so longer aliases win when nested
+    # ("access point" before "point").
+    aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
+    body = "|".join(re.escape(a) for a in aliases_sorted)
+    pattern = re.compile(r"(?<![a-z0-9])(" + body + r")(?![a-z0-9])")
+    _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
+    return _DEVICE_UNION_CACHE[key]
+
+
+def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack | None = None) -> set[str]:
+    """Emit ``device:<canonical>`` keys for every alias in
+    ``alias_index`` that word-matches ``text_lower``.
+
+    Fast path: when ``pack`` is supplied we use the cached union regex
+    (single sweep, O(matches) work). Legacy path: iterate aliases.
+    """
     keys: set[str] = set()
+    if pack is not None:
+        pattern, _ = _device_union_for_pack(pack, alias_index)
+        for match in pattern.finditer(text_lower):
+            alias = match.group(1)
+            canonical = alias_index.get(alias)
+            if canonical:
+                keys.add(f"device:{_slugify(canonical)}")
+        return keys
     for alias_norm, canonical in alias_index.items():
         if _word_match(text_lower, alias_norm):
             keys.add(f"device:{_slugify(canonical)}")
@@ -647,6 +1318,17 @@ def _emit_typed(text_lower: str, typed_index: dict[str, dict[str, str]]) -> set[
                 continue
             if alias_norm in _BARE_TYPED_ALIAS_STOPLIST:
                 continue
+            # Skip generic-type aliases tagged by ``_typed_alias_index``
+            # with ``_GENERIC_TYPED_ALIAS_SENTINEL``. These are the
+            # ``entity.aliases`` entries from the pack — generic
+            # synonyms for the type ("tenant"/"client" for customer,
+            # "closet"/"rm" for room, "carrier"/"oem" for vendor) —
+            # which would otherwise emit tautological entity keys.
+            # Specific named instances (``entity.examples``) still
+            # emit because their slot value is the example string,
+            # not the sentinel.
+            if original == _GENERIC_TYPED_ALIAS_SENTINEL:
+                continue
             if _word_match(text_lower, alias_norm):
                 keys.add(normalize_entity_key(entity_type, original))
     return keys
@@ -659,33 +1341,31 @@ def _emit_typed(text_lower: str, typed_index: dict[str, dict[str, str]]) -> set[
 # alias entries, so this stoplist only kills the bare-word emission.
 _BARE_TYPED_ALIAS_STOPLIST: frozenset[str] = frozenset(
     {
-        "school",
-        "schools",
-        "campus",
-        "building",
-        "buildings",
-        "floor",
-        "floors",
-        "level",
-        "levels",
-        "warehouse",
-        "warehouses",
-        "hospital",
-        "hospitals",
-        "clinic",
-        "clinics",
-        "office",
-        "offices",
-        "branch",
-        "branches",
-        "store",
-        "stores",
-        "facility",
-        "facilities",
-        "site",
-        "sites",
-        "room",
-        "rooms",
+        # Place / facility generics — already caught by site / room
+        # extraction with real names
+        "school", "schools", "campus", "building", "buildings",
+        "floor", "floors", "level", "levels", "warehouse",
+        "warehouses", "hospital", "hospitals", "clinic", "clinics",
+        "office", "offices", "branch", "branches", "store", "stores",
+        "facility", "facilities", "site", "sites", "room", "rooms",
+        "lab", "labs", "laboratory", "laboratories", "suite", "suites",
+        # Business-role generics — pack aliases name "customer" /
+        # "vendor" / "owner" / "client" as canonical members, which
+        # leads to junk entity keys like `customer:customer` and
+        # `vendor:vendor` whenever the bare word appears in prose.
+        # Real customer / vendor names get caught by the cross-pack
+        # vendor matcher and the institutional-suffix customer
+        # promoter.
+        "customer", "customers", "client", "clients",
+        "vendor", "vendors", "subcontractor", "subcontractors",
+        "sub", "subs", "contractor", "contractors",
+        "owner", "owners", "partner", "partners",
+        "carrier", "carriers", "supplier", "suppliers",
+        "distributor", "distributors", "reseller", "resellers",
+        "manufacturer", "manufacturers", "oem", "oems",
+        "integrator", "integrators",
+        "operator", "operators",
+        "end user", "end-user", "endpoint", "endpoints",
     }
 )
 
@@ -755,6 +1435,54 @@ def _emit_sites(text: str) -> set[str]:
             if slug and slug not in {"_"}:
                 keys.add(f"site:{slug}")
 
+    # A4 universal naming: "Building 13" / "Site 7" / "Bâtiment 12" /
+    # "Edificio 4" / "Gebäude 5" / "棟3". These are generic-shape
+    # site names used in enterprise floor plans and international
+    # deals where every facility is identified only by a number
+    # within a brand chain. We slug the full match so different
+    # numbers produce different sites.
+    for match in _NUMBERED_SITE_REGEX.finditer(text):
+        full = match.group(1).strip()
+        if not full:
+            continue
+        slug = _slugify(full)
+        if slug and slug not in {"_"}:
+            keys.add(f"site:{slug}")
+
+    # First-class site-code capture: ATL-HQ / ATL-WEST / ATL-AIR /
+    # NYC-DC1 / SFO-HQ / CHI-MAIN. These are the load-bearing site
+    # identifiers on most enterprise deals and bypass the proper-
+    # noun multi-word matcher because they're single tokens. Without
+    # this branch, ATL-WEST is invisible to the entity extractor
+    # even though the BOM allocation row literally cites it.
+    for match in _SITE_CODE_REGEX.finditer(text):
+        code = match.group(1)
+        if code in _SITE_CODE_DENYLIST:
+            continue
+        segments = code.split("-")
+        first = segments[0]
+        last = segments[-1]
+        prev = segments[-2] if len(segments) >= 2 else None
+        # Universal POSITIVE gate: the last segment must carry recognized
+        # site-function meaning (direction, facility type, datacenter /
+        # floor / building / wing number).  This is the load-bearing
+        # robustness check — anything that doesn't end in a known
+        # site-suffix fails the gate, regardless of head or middle
+        # segments. Catches unknown junk codes like MOCK-OPTBOT-ATL,
+        # ALPHA-FOOBAR, GAMMA-FOO-2026 without needing to enumerate
+        # every possible junk word.
+        if not _site_code_suffix_ok(last, prev_segment=prev):
+            continue
+        # Head denylist — belt-and-suspenders for codes whose tail
+        # happens to look site-shaped but the head is a known test /
+        # contract-id marker.  Catches e.g. "DEV-WEST" where WEST is
+        # in the suffix allowlist but the whole code is a dev marker.
+        if first in _SITE_CODE_HEAD_DENYLIST:
+            continue
+        slug = _slugify(code)
+        if slug:
+            keys.add(f"site:{slug}")
+
     # Street addresses → produce both an address: and (if combinable) a site:
     for match in _STREET_ADDRESS_REGEX.finditer(text):
         number, street, suffix = match.group(1), match.group(2), match.group(3)
@@ -788,20 +1516,36 @@ def _looks_like_form_field(text: str) -> bool:
     return False
 
 
-def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
+def _emit_proper_nouns(
+    text: str,
+    vendor_keys: set[str],
+    *,
+    authoritative_sites: set[str] | None = None,
+) -> set[str]:
     """Capture multi-word proper-noun runs as candidate sites/customers.
 
-    Conservative: only emits when the run is ≥3 words, its lowercased
-    form isn't in the stoplist, doesn't overlap a vendor we already
-    detected, and doesn't end on a known field label.  Tagged
-    ``site:`` so the domain pack's alias resolver can promote it
-    to its canonical type later.
+    When ``authoritative_sites`` is provided AND non-empty, this
+    function is GATED: a phrase is emitted as ``site:*`` only if its
+    normalized form matches the catalog (Option D — document-structure
+    aware site detection). Phrases outside the catalog are dropped,
+    which kills the long tail of false-positive sites (standards
+    bodies, random landmarks, header fragments, sentence pieces)
+    that the regex was previously emitting.
+
+    When the catalog is None (no catalog built yet) OR empty (the
+    artifact has no Locations section and no address signals), the
+    function falls back to its prior conservative regex behavior:
+    ≥3-word run, stoplist + blocklist filters, sentence-window
+    corroboration, etc.
 
     If the surrounding text looks like a form-field template
     (``FULL LEGAL NAME (PRINT)``, ``id#``, ``col_N:``), we skip
     proper-noun extraction entirely to avoid emitting form labels
     as fake sites.
     """
+    # Lazy import to avoid circular dependency at module load time
+    from app.core.site_detection import phrase_is_in_catalog
+    catalog_active = bool(authoritative_sites)
     if _looks_like_form_field(text):
         return set()
 
@@ -829,6 +1573,28 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
         for match in _PROPER_NOUN_RUN.finditer(sentence):
             phrase = match.group(1).strip()
             tokens = phrase.split()
+
+            # Whole-phrase block: a phrase whose final non-trivial
+            # token is a role / document / pipeline / process noun is
+            # NOT a site — it's a person, an artifact, or a system.
+            # We check this BEFORE trim-and-keep so phrases like
+            # "Regional Facilities Manager" or "Executive Deal Brief
+            # Mock Document" disappear entirely instead of being
+            # trimmed to "Regional Facilities" / "Executive Deal
+            # Brief Mock" and still emitted as sites.
+            final = tokens[-1].lower().rstrip(":,.") if tokens else ""
+            if final in _NON_SITE_PHRASE_TAIL_NOUNS:
+                continue
+            # Inner role-marker block: phrases like "Site Manager Main
+            # Campus" or "Network Director West Wing" describe a ROLE
+            # (Manager/Director/Sponsor/Officer/Lead) responsible for a
+            # location — they're role+site composites that should NOT
+            # become a fake site key. If a strong role marker appears
+            # ANYWHERE in the phrase (not just the tail), reject.
+            inner_lc = {t.lower().rstrip(":,.") for t in tokens}
+            if inner_lc & _ROLE_INNER_MARKERS:
+                continue
+
             # Strip trailing field-label words like "Vendor", "Description"
             while tokens and tokens[-1].lower().rstrip(":,.") in _PROPER_NOUN_TRAILING_STOPWORDS:
                 tokens.pop()
@@ -839,23 +1605,64 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
             # instead of recovering the real proper noun.
             while tokens and tokens[0].lower() in _LEADING_ARTICLES:
                 tokens.pop(0)
+
+            # Re-check the new final token after trimming — if trimming
+            # exposed a non-site tail noun, drop the phrase entirely.
+            if tokens:
+                final_after = tokens[-1].lower().rstrip(":,.")
+                if final_after in _NON_SITE_PHRASE_TAIL_NOUNS:
+                    continue
+
             # Two-word special case: a Capitalized + capitalized
             # organization name like "Virginia Tech" / "Boston College"
             # / "Cleveland Clinic" / "Houston ISD".  We accept these
-            # when the trailing word matches a well-known organization
-            # suffix even though the standard ≥3-word minimum would
-            # otherwise drop them.  Without this VT_CAM never emits
-            # ``site:virginia_tech`` because the customer name is
-            # exactly two words.
+            # when (a) the trailing word matches a well-known
+            # organization suffix, (b) the tail is a known place-noun,
+            # or (c) explicit site-context / address corroborates the
+            # phrase nearby. Without this 2-word real sites like
+            # "Innovation Tower" or "Birchwood Atelier" (with address)
+            # would be dropped by the ≥3-word minimum.
             if len(tokens) == 2:
                 trail = tokens[-1].lower().rstrip(":,.")
-                if trail not in _ORG_SUFFIX_TWO_WORD:
+                two_word_org   = trail in _ORG_SUFFIX_TWO_WORD
+                two_word_place = trail in _SITE_TAIL_NOUNS
+                two_word_corr  = _has_site_corroboration(
+                    sentence, match.start(), match.end()
+                )
+                if not (two_word_org or two_word_place or two_word_corr):
                     continue
             elif len(tokens) < 3:
                 continue
             phrase = " ".join(tokens)
             norm = normalize_text(phrase)
             if norm in _PROPER_NOUN_STOPLIST:
+                continue
+            # Explicit phrase blocklist — common deal-doc section
+            # labels that look site-shaped but never refer to a place.
+            if norm in _SITE_PHRASE_BLOCKLIST:
+                continue
+            # If ANY token in the phrase is a tail noun, the phrase
+            # is more likely to be a description than a site.
+            # Bypass when (a) the trailing token is a recognized org
+            # or place suffix ("Atlanta Headquarters", "Innovation
+            # Tower"), OR (b) explicit site-context / address
+            # corroborates the phrase nearby ("Located at Aurora
+            # Operations Hub").
+            phrase_tokens_lower = {t.lower().rstrip(":,.") for t in tokens}
+            tail = tokens[-1].lower().rstrip(":,.")
+            is_org_tail = tail in _ORG_SUFFIX_TWO_WORD or tail in _SITE_TAIL_NOUNS
+            has_corroboration = _has_site_corroboration(
+                sentence, match.start(), match.end()
+            )
+            if (not (is_org_tail or has_corroboration)
+                and (phrase_tokens_lower & _NON_SITE_PHRASE_TAIL_NOUNS)):
+                continue
+            # Hard-disqualify: certain tokens (mock/test/demo/fake/...)
+            # are NEVER part of a real site name, even when paired with
+            # a valid place-tail. "Mock Atlanta Tower" / "Test Innovation
+            # Lab" — the test-marker token is itself disqualifying.
+            # This OVERRIDES the is_org_tail bypass above.
+            if phrase_tokens_lower & _HARD_DISQUALIFY_PHRASE_TOKENS:
                 continue
             # Skip if this run is dominated by a known vendor
             if any(surface in norm for surface in vendor_surfaces if surface and len(surface) >= 4):
@@ -867,10 +1674,512 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
                 non_stop = [w for w in norm.split() if w not in {"of", "and", "the", "for", "to", "in", "on", "at"}]
                 if len(non_stop) < 2:
                     continue
+            # UNIVERSAL POSITIVE STRUCTURAL GATE: emit a site key only
+            # when the run has at least one positive site signal:
+            #   (a) tail is a known place-noun (Tower, Building, Annex,
+            #       Headquarters, Plaza, Campus, ...)
+            #   (b) tail is a known org suffix (Tech, College, Hospital,
+            #       ISD, District, ...)
+            #   (c) the same sentence contains a street address — the
+            #       address corroborates that the phrase refers to a
+            #       physical place
+            #   (d) an explicit site-context cue ("site visit", "located
+            #       at", "based in", "address:", "Facility:", ...)
+            #       appears within ~80 chars of the phrase
+            # Without one of these positive signals, the phrase is
+            # dropped. This is universal: a brand-new junk phrase
+            # ("Brilliant Strategic Initiative", "Advanced Process
+            # Framework") cannot leak because the absence of positive
+            # signal is itself the filter — no enumeration of every
+            # possible junk word is required.
+            has_place_tail = tail in _SITE_TAIL_NOUNS
+            has_org_tail   = tail in _ORG_SUFFIX_TWO_WORD
+            if not (has_place_tail or has_org_tail or _has_site_corroboration(sentence, match.start(), match.end())):
+                continue
             slug = _slugify(phrase)
             if slug and len(slug) >= 6:
+                # Option D gate: when an authoritative-site catalog
+                # exists for this project, the phrase MUST match the
+                # catalog before we emit a site:* key. Phrases outside
+                # the catalog are dropped — they're standards bodies,
+                # random landmarks, or header fragments that look
+                # site-shaped but aren't real project sites.
+                if catalog_active and not phrase_is_in_catalog(phrase, authoritative_sites):
+                    continue
                 keys.add(f"site:{slug}")
     return keys
+
+
+# Copular / explicit-aliasing markers — fire alias fusion across
+# ALL site keys in the sentence regardless of shape.
+_COPULAR_ALIAS_REGEX = re.compile(
+    r"(?:"
+    r"\b(?:is|are|was|were)\s+(?:the|an?|our|its|their)\s+\w"
+    r"|\balso\s+known\s+as\b"
+    r"|\ba\.?k\.?a\.?\b"
+    r"|\balias(?:es)?\b"
+    r"|\bknown\s+as\b"
+    r"|\b(?:officially|formerly|previously)\s+(?:called|named|known\s+as)\b"
+    r"|\b(?:called|named|designated|labeled|tagged)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Separator-based markers — only count as alias markers when the
+# sentence contains a MIX of site-code shapes (ATL-HQ) and proper-noun
+# names (Atlanta Headquarters). Pure lists ("ATL-HQ; ATL-WEST; ATL-AIR"
+# are NOT aliases — they're a list of 3 different places).
+_SEPARATOR_ALIAS_REGEX = re.compile(
+    r"(?:"
+    r"\s+\|\s+"           # pipe with whitespace (table-row text)
+    r"|\s+[—–]\s+"        # em-dash or en-dash
+    r"|\s+--\s+"          # double hyphen as separator
+    r"|\s+/\s+"           # slash with whitespace
+    r"|\s+-\s+"           # single hyphen with whitespace
+    r")",
+)
+
+# Parenthetical-aliasing — "Atlanta Headquarters (ATL-HQ)" or
+# "ATL-HQ (Atlanta Headquarters)" → alias.
+_PAREN_ALIAS_REGEX = re.compile(
+    r"\(\s*[A-Z][A-Z0-9\-]{1,}\s*\)"      # "(ATL-HQ)" / "(NYC-DC1)"
+    r"|\(\s*[A-Z][A-Za-z\s]{2,40}\)",     # "(Atlanta Headquarters)"
+)
+
+# Colon-bridge — "ATL-HQ: Atlanta Headquarters" or "Site:
+# Innovation Tower". Used in tables and definition lists.
+_COLON_ALIAS_REGEX = re.compile(
+    r"\b[A-Z][A-Z0-9\-]{2,}:\s+[A-Z][a-zA-Z]"
+    r"|\b(?:site|location|facility|building|address)\s*:\s+[A-Z]",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_site_code_key(site_key: str) -> bool:
+    """Heuristic: does this `site:*` key look like a short alphanumeric
+    code (ATL-HQ, NYC-DC1) versus a multi-word name (Atlanta
+    Headquarters)?
+
+    Used by the alias-fusion logic to distinguish lists-of-distinct-
+    sites ("ATL-HQ; ATL-WEST; ATL-AIR" — all code-shaped, so NOT
+    aliases) from real alias pairs ("ATL-HQ | Atlanta Headquarters"
+    — mixed shapes, so aliases).
+    """
+    slug = site_key.removeprefix("site:")
+    if not slug:
+        return False
+    tokens = slug.split("_")
+    if not tokens or len(tokens) > 4:
+        return False
+    # All tokens short AND none looks like a recognizable English word
+    return all(len(t) <= 5 for t in tokens)
+
+
+# Between-key inspection — patterns we examine in the text that
+# falls between two adjacent site-key spans within a sentence.
+#
+# Aliasing patterns assert "the two keys are the same place":
+_BETWEEN_COPULAR = re.compile(
+    r"^\s*(?:[—–\-,]\s*)?"
+    r"(?:is|are|was|were)\s+(?:the|an?|our|its|their|also)?\s*"
+    r"(?:also\s+)?(?:known\s+as|called|named|designated)?",
+    re.IGNORECASE,
+)
+_BETWEEN_AKA = re.compile(
+    r"\b(?:a\.?k\.?a\.?|also\s+known\s+as|alias(?:es)?\s+(?:is|of|for)?|"
+    r"known\s+as|called|named|formerly|previously|officially)\b",
+    re.IGNORECASE,
+)
+_BETWEEN_PAREN_ALIAS = re.compile(r"^\s*[—–\-,]?\s*\(")
+_BETWEEN_COLON_BRIDGE = re.compile(r"^\s*:\s*$")
+# Separator-only patterns — pipe / em-dash / en-dash / slash / double-dash /
+# hyphenated with spaces. These are AMBIGUOUS without more info.
+_BETWEEN_SEPARATOR_ONLY = re.compile(
+    r"^\s*(?:\|\s*|[—–]\s*|--\s*|\s+/\s+|-\s+)$"
+)
+# List patterns — commas, semicolons, "and"/"or" with optional articles.
+# These are NOT alias markers; they separate distinct items.
+_BETWEEN_LIST = re.compile(
+    r"^\s*(?:,|;|\s+and\s+|\s+or\s+|,\s*and\s+|,\s*or\s+)\s*(?:the\s+)?$",
+    re.IGNORECASE,
+)
+
+
+def _find_site_key_spans(
+    sentence: str,
+) -> list[tuple[str, int, int]]:
+    """Locate every `site:*` key occurrence in the sentence with its
+    char span.
+
+    Sorted by start offset so callers can iterate adjacent pairs.
+    Returns a list of (canonical_key, start, end) tuples. The spans
+    are derived from the raw matches in the text (site code regex
+    matches + proper-noun runs that pass the structural gate), not
+    from the slugified keys, so we can examine the EXACT char window
+    between two adjacent key surface forms.
+    """
+    spans: list[tuple[str, int, int]] = []
+
+    # Site-code occurrences (ATL-HQ, NYC-DC1, ...)
+    for match in _SITE_CODE_REGEX.finditer(sentence):
+        code = match.group(1)
+        if code in _SITE_CODE_DENYLIST:
+            continue
+        segments = code.split("-")
+        first = segments[0]
+        last = segments[-1]
+        prev = segments[-2] if len(segments) >= 2 else None
+        if not _site_code_suffix_ok(last, prev_segment=prev):
+            continue
+        if first in _SITE_CODE_HEAD_DENYLIST:
+            continue
+        slug = _slugify(code)
+        if slug:
+            spans.append((f"site:{slug}", match.start(), match.end()))
+
+    # Proper-noun runs that pass the same structural gate _emit_proper_nouns
+    # applies. We can't easily call that function because it returns
+    # only the keys (no spans), so duplicate the acceptance logic here
+    # with span tracking.
+    for sub_sentence_match in re.finditer(r"[^;:?!\n]+", sentence):
+        sub = sub_sentence_match.group(0)
+        sub_offset = sub_sentence_match.start()
+        for match in _PROPER_NOUN_RUN.finditer(sub):
+            phrase = match.group(1).strip()
+            tokens = phrase.split()
+            if not tokens:
+                continue
+            final = tokens[-1].lower().rstrip(":,.")
+            if final in _NON_SITE_PHRASE_TAIL_NOUNS:
+                continue
+            while tokens and tokens[-1].lower().rstrip(":,.") in _PROPER_NOUN_TRAILING_STOPWORDS:
+                tokens.pop()
+            while tokens and tokens[0].lower() in _LEADING_ARTICLES:
+                tokens.pop(0)
+            if tokens:
+                final_after = tokens[-1].lower().rstrip(":,.")
+                if final_after in _NON_SITE_PHRASE_TAIL_NOUNS:
+                    continue
+            if len(tokens) == 2:
+                trail = tokens[-1].lower().rstrip(":,.")
+                two_org   = trail in _ORG_SUFFIX_TWO_WORD
+                two_place = trail in _SITE_TAIL_NOUNS
+                two_corr  = _has_site_corroboration(sub, match.start(), match.end())
+                if not (two_org or two_place or two_corr):
+                    continue
+            elif len(tokens) < 3:
+                continue
+            phrase_norm = " ".join(tokens)
+            norm = normalize_text(phrase_norm)
+            if norm in _PROPER_NOUN_STOPLIST:
+                continue
+            if norm in _SITE_PHRASE_BLOCKLIST:
+                continue
+            phrase_tokens_lower = {t.lower().rstrip(":,.") for t in tokens}
+            tail = tokens[-1].lower().rstrip(":,.")
+            is_org_tail = tail in _ORG_SUFFIX_TWO_WORD or tail in _SITE_TAIL_NOUNS
+            has_corroboration = _has_site_corroboration(sub, match.start(), match.end())
+            if (not (is_org_tail or has_corroboration)
+                and (phrase_tokens_lower & _NON_SITE_PHRASE_TAIL_NOUNS)):
+                continue
+            if phrase_tokens_lower & _HARD_DISQUALIFY_PHRASE_TOKENS:
+                continue
+            if len(tokens) >= 3:
+                non_stop = [w for w in norm.split() if w not in {"of", "and", "the", "for", "to", "in", "on", "at"}]
+                if len(non_stop) < 2:
+                    continue
+            has_place_tail = tail in _SITE_TAIL_NOUNS
+            has_org_tail   = tail in _ORG_SUFFIX_TWO_WORD
+            if not (has_place_tail or has_org_tail or _has_site_corroboration(sub, match.start(), match.end())):
+                continue
+            slug = _slugify(phrase_norm)
+            if slug and len(slug) >= 6:
+                spans.append((
+                    f"site:{slug}",
+                    sub_offset + match.start(),
+                    sub_offset + match.end(),
+                ))
+
+    spans.sort(key=lambda s: (s[1], s[2]))
+    # De-dupe overlaps: if two spans share a substring (e.g. proper-noun
+    # capture overlapped a site-code capture), keep the longer one.
+    dedup: list[tuple[str, int, int]] = []
+    for span in spans:
+        if dedup and span[1] < dedup[-1][2]:
+            # overlaps with previous — keep whichever is wider
+            if (span[2] - span[1]) > (dedup[-1][2] - dedup[-1][1]):
+                dedup[-1] = span
+            continue
+        dedup.append(span)
+    return dedup
+
+
+def _classify_pair(
+    between_text: str,
+    key_a: str,
+    key_b: str,
+    sentence: str,
+    end_a: int,
+    start_b: int,
+) -> bool:
+    """Return True if the text *between* two adjacent site-key spans
+    indicates the two keys refer to the same physical place.
+
+    The check is pairwise so mixed-shape LISTS don't over-fuse:
+    "Sites: ATL-HQ, Atlanta Headquarters, ATL-WEST, Westside Operations
+    Center" — the comma between ``Atlanta Headquarters`` and ``ATL-WEST``
+    is a list separator, so those two keys do NOT fuse; meanwhile
+    the immediate adjacency ``ATL-HQ , Atlanta Headquarters`` is also
+    a comma (also non-alias). Only the ``ATL-WEST | Westside Operations
+    Center`` pair (if present) would fuse.
+
+    Aliasing patterns (in priority order):
+      1. Explicit AKA / "also known as" / "called" / "designated"
+      2. Copular "is the" / "are the"
+      3. Parenthetical "(key_b)" immediately after key_a
+      4. Colon-bridge "key_a: key_b"
+      5. Separator + mixed shape (pipe/em-dash/slash/hyphen) between
+         a code-shaped key and a name-shaped key
+      6. Em-dash / slash between two name-shaped keys when they are
+         the ONLY two keys in the sentence (no list ambiguity)
+
+    NOT aliasing:
+      - comma / semicolon / "and" / "or" → list separator
+    """
+    if _BETWEEN_AKA.search(between_text):
+        return True
+    if _BETWEEN_COPULAR.search(between_text):
+        return True
+    if _BETWEEN_PAREN_ALIAS.search(between_text):
+        # Verify the paren actually closes between or at key_b
+        paren_close = sentence.find(")", end_a)
+        if paren_close != -1 and paren_close >= start_b - 1:
+            return True
+    if _BETWEEN_COLON_BRIDGE.search(between_text):
+        return True
+    # Strict list separator → never alias
+    if _BETWEEN_LIST.search(between_text):
+        return False
+    # Separator-only between two adjacent keys — alias when:
+    #   (a) mixed shape (code + name) with any common separator
+    #       (pipe / em-dash / slash / hyphen-with-spaces)
+    #   (b) same shape with em-dash, slash, or hyphen-with-spaces
+    #       (these patterns almost never delimit list items —
+    #       lists use commas, semicolons, "and", or "or")
+    # The pipe `|` between SAME-SHAPED keys is treated as a table
+    # column separator, NOT an alias — because pipes typically delimit
+    # different fields. If two adjacent keys of the same shape sit on
+    # either side of a pipe, they're likely two distinct items in a
+    # multi-column row, not aliases.
+    if _BETWEEN_SEPARATOR_ONLY.search(between_text):
+        a_is_code = _looks_like_site_code_key(key_a)
+        b_is_code = _looks_like_site_code_key(key_b)
+        if a_is_code != b_is_code:
+            # Mixed shape with any separator → alias
+            # (e.g. ATL-HQ | Atlanta Headquarters,
+            #       ATL-HQ — Atlanta Headquarters,
+            #       Atlanta Headquarters - ATL-HQ)
+            return True
+        # Same shape — em-dash, en-dash, slash, or hyphen-with-spaces
+        # almost always means alias when between two adjacent
+        # proper-noun phrases. Pipes don't (they're column separators).
+        if re.search(r"[—–]|/|\s-\s|\s--\s", between_text):
+            return True
+    return False
+
+
+def _emit_site_aliases_from_text(text: str) -> list[frozenset[str]]:
+    """Return groups of site keys that refer to the same physical place.
+
+    Detection is PAIRWISE: for each adjacent pair of site-key spans in
+    a sentence, examine the text between them and decide whether the
+    two keys are aliases. Pairs marked as aliases feed into a union-
+    find that groups transitive aliases.
+
+    This is more accurate than a sentence-level "any marker → fuse all
+    keys" approach. The whole-sentence rule incorrectly fuses lists
+    like "Sites: ATL-HQ, Atlanta Headquarters, ATL-WEST, Westside Ops
+    Center" because they have mixed shape AND comma separators. The
+    pairwise check sees commas between distinct pairs and only fuses
+    pairs that have a real alias marker between them.
+
+    See ``_classify_pair`` for the patterns that count as aliasing
+    (copular, AKA, parenthetical, colon-bridge, separator + mixed
+    shape, em-dash/slash between two names).
+    """
+    if not text:
+        return []
+    pairs: list[tuple[str, str]] = []
+    for sentence in re.split(r"(?:[?!\n]|\.\s+|\.$)", text):
+        s = sentence.strip()
+        if not s:
+            continue
+        spans = _find_site_key_spans(s)
+        if len(spans) < 2:
+            continue
+        # Inspect each adjacent pair of distinct keys.
+        pair_aliases_this_sentence: list[tuple[str, str]] = []
+        for i in range(len(spans) - 1):
+            key_a, _, end_a = spans[i]
+            key_b, start_b, _ = spans[i + 1]
+            if key_a == key_b:
+                continue
+            between = s[end_a:start_b]
+            if _classify_pair(between, key_a, key_b, s, end_a, start_b):
+                pair_aliases_this_sentence.append((key_a, key_b))
+        pairs.extend(pair_aliases_this_sentence)
+        # Row-level rule: in a pipe-separated row whose ONLY distinct
+        # site code is the row's leading identifier, every site key
+        # in subsequent cells refers to that row's site (named
+        # building, address-cell city, etc.).
+        #
+        # Concrete: `ATL-AIR | Airport Logistics Annex | 4200 Global
+        # Gateway Connector, Building C, College Park | 148 users`
+        # — ATL-AIR is the code, Airport Logistics Annex is the
+        # named alias, College Park is the city inside the address
+        # cell. All three refer to the same physical place.
+        #
+        # Guards against over-fusion:
+        #   - Row must contain "|" (it's a pipe-separated row)
+        #   - Row must already have at least one explicit alias pair
+        #     (so we know it's an alias-bearing row, not a list-row)
+        #   - Row must have AT MOST one distinct site code (rows like
+        #     "ATL-HQ | ATL-WEST | ATL-AIR" would have 3 codes and
+        #     fall back to pairwise — which correctly doesn't fuse
+        #     them since pipe + same-shape isn't an alias)
+        if pair_aliases_this_sentence and "|" in s:
+            codes_in_row = {
+                span[0] for span in spans
+                if _looks_like_site_code_key(span[0])
+            }
+            if len(codes_in_row) <= 1:
+                row_keys = [span[0] for span in spans]
+                for i in range(len(row_keys) - 1):
+                    if row_keys[i] != row_keys[i + 1]:
+                        pairs.append((row_keys[i], row_keys[i + 1]))
+    # Promote pairs to groups via union-find.
+    if not pairs:
+        return []
+    groups: list[set[str]] = []
+    for a, b in pairs:
+        target: set[str] | None = None
+        for g in groups:
+            if a in g or b in g:
+                if target is None:
+                    target = g
+                    target.add(a)
+                    target.add(b)
+                else:
+                    target.update(g)
+                    groups.remove(g)
+        if target is None:
+            groups.append({a, b})
+    return _coalesce_alias_groups(groups)
+
+
+def _coalesce_alias_groups(groups: list[set[str]]) -> list[frozenset[str]]:
+    """Union-find: merge any sets that share at least one key.
+
+    Iterates until no overlaps remain so transitive aliases fuse
+    correctly (A↔B in one sentence, B↔C in another → {A,B,C}).
+    """
+    if not groups:
+        return []
+    merged: list[set[str]] = []
+    for g in groups:
+        target: set[str] | None = None
+        for m in merged:
+            if g & m:
+                if target is None:
+                    target = m
+                    target.update(g)
+                else:
+                    # g overlaps with multiple existing groups — fuse them.
+                    target.update(m)
+                    merged.remove(m)
+        if target is None:
+            merged.append(set(g))
+    # Re-pass until stable (single-pass might miss chained overlaps).
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(merged):
+            j = i + 1
+            while j < len(merged):
+                if merged[i] & merged[j]:
+                    merged[i].update(merged[j])
+                    del merged[j]
+                    changed = True
+                else:
+                    j += 1
+            i += 1
+    # Deterministic sort: groups by smallest key, keys within group sorted.
+    return sorted((frozenset(g) for g in merged), key=lambda fs: sorted(fs)[0])
+
+
+def _has_site_corroboration(sentence: str, span_start: int, span_end: int) -> bool:
+    """Return True if a street address or explicit site-context cue
+    appears within ~80 chars of the matched span in this sentence.
+
+    This is the structural corroboration check that supplements the
+    place-tail / org-tail allowlists in _emit_proper_nouns. It lets
+    legitimate sites without a recognized tail (e.g. "Magnolia
+    Crossing 4500 Oak Ridge Parkway" or "Site visit: West Annex")
+    still surface as sites without opening the door to junk phrases.
+    """
+    # Same-sentence window of ±_SITE_CORROBORATION_WINDOW chars
+    # around the span. Tight enough that an unrelated cue elsewhere
+    # in a long sentence doesn't create false corroboration.
+    pre = sentence[max(0, span_start - _SITE_CORROBORATION_WINDOW):span_start]
+    post = sentence[span_end:min(len(sentence), span_end + _SITE_CORROBORATION_WINDOW)]
+    # Address pattern in either window — corroborates that the phrase
+    # refers to a physical place.
+    if _STREET_ADDRESS_REGEX.search(pre) or _STREET_ADDRESS_REGEX.search(post):
+        return True
+    # Explicit site-context cue near the phrase.
+    if _SITE_CONTEXT_REGEX.search(pre) or _SITE_CONTEXT_REGEX.search(post):
+        return True
+    return False
+
+
+# Place-noun tails: when a multi-word proper-noun run ends with one of
+# these, the phrase IS genuinely site-shaped even when intermediate
+# tokens might overlap the non-site tail list.  This guards against
+# the new non-site filter dropping real sites like
+# "Innovation Tower" / "Atlanta Headquarters".
+_SITE_TAIL_NOUNS: frozenset[str] = frozenset({
+    "building", "tower", "campus", "headquarters", "hq", "office",
+    "branch", "center", "centre", "facility", "annex", "warehouse",
+    "garage", "deck", "structure", "lot", "boardroom", "datacenter",
+    "data", "school", "college", "university", "academy", "hospital",
+    "clinic", "plant", "factory", "store", "mall", "complex",
+    "park", "plaza", "terminal", "concourse", "depot", "yard",
+    "airport", "station", "site", "location", "premises",
+    # Expanded place-tails for universal coverage
+    "hub", "pavilion", "pavillion", "atelier", "studio", "studios",
+    "lab", "labs", "laboratory", "laboratories", "workshop", "workshops",
+    "hall", "halls", "auditorium", "arena", "stadium", "amphitheater",
+    "gymnasium", "fieldhouse",
+    "commons", "court", "courtyard", "square", "plaza",
+    "annexe", "wing", "wings", "block", "blocks",
+    "pavilion", "rotunda", "atrium",
+    "tower", "highrise", "skyrise",
+    "compound", "estate", "manor", "mansion",
+    "dormitory", "dorm", "dorms", "residence", "residences",
+    "library", "libraries", "museum", "museums", "gallery", "galleries",
+    "theater", "theatre", "theaters", "theatres", "cinema", "cinemas",
+    "church", "chapel", "cathedral", "synagogue", "mosque", "temple",
+    "fort", "barracks", "armory", "armoury", "garrison",
+    "harbor", "harbour", "wharf", "pier", "marina", "dock", "docks",
+    "lighthouse", "lookout", "watchtower",
+    "field", "fields", "track", "tracks", "course", "courses",
+    "ranch", "farm", "vineyard", "orchard",
+    "shed", "barn", "silo", "bunker",
+    "kiosk", "stall", "booth",
+    "village", "neighborhood", "district",
+    "metroplex", "townhouse",
+})
 
 
 # Articles / demonstratives that can prefix a proper-noun run; we strip
@@ -949,10 +2258,57 @@ def _emit_part_numbers(text: str) -> set[str]:
         # Skip 2-letter prefixes that are too short to be a SKU
         if len(sku) < 5:
             continue
+        # Reuse the site-code HEAD denylist: the same test / contract /
+        # CRM / cloud-platform prefixes that masquerade as site codes
+        # (HS-DEAL-..., MOCK-MSA-..., PO-..., DEV-...) also masquerade
+        # as part numbers because they share the hyphen-separated
+        # uppercase-alphanumeric shape. Manufacturer SKUs (CW9166I-B,
+        # AIR-DNA-E-T-5Y, J9145A) never start with these tokens, so
+        # the denylist drops contract/project IDs cleanly.
+        first_segment = re.split(r"[-/]", sku, 1)[0]
+        if first_segment in _SITE_CODE_HEAD_DENYLIST:
+            continue
+        # Also reject codes whose FIRST segment is a 3-letter airport
+        # / city code (ATL, NYC, SFO, ...) — these are project / batch
+        # prefixes when followed by digits ("ATL-047", "NYC-001"), not
+        # manufacturer SKUs. Real Cisco AIR-* products start with AIR
+        # (4 chars) not a 3-letter geo code.
+        if (len(first_segment) == 3
+            and first_segment.isalpha()
+            and first_segment in _AIRPORT_CITY_PREFIXES):
+            continue
         slug = _slugify(sku)
         if slug:
             keys.add(f"part_number:{slug}")
     return keys
+
+
+# 3-letter airport / city / region codes that appear in project IDs
+# and batch numbers but never in manufacturer SKUs. Used by
+# ``_emit_part_numbers`` to reject codes like ``ATL-047`` /
+# ``NYC-2026`` / ``SFO-001`` which would otherwise leak as
+# ``part_number:atl_047``.
+_AIRPORT_CITY_PREFIXES: frozenset[str] = frozenset({
+    # Major US airports
+    "ATL", "LAX", "ORD", "DFW", "DEN", "JFK", "SFO", "SEA", "LAS", "MCO",
+    "MIA", "PHX", "IAH", "BOS", "MSP", "FLL", "DTW", "PHL", "LGA", "CLT",
+    "BWI", "SAN", "TPA", "DCA", "IAD", "MDW", "SLC", "PDX", "STL", "HOU",
+    "BNA", "AUS", "RDU", "MCI", "OAK", "MSY", "SJC", "SMF", "SNA", "PIT",
+    "CVG", "IND", "CMH", "CLE", "MEM", "JAX", "RIC", "OMA", "ABQ", "ELP",
+    "OKC", "TUL", "ICT", "BUF", "SYR", "ROC", "ALB", "PVD", "MHT", "PWM",
+    "BTV", "BHM", "MOB", "HSV", "JAN", "BTR", "SHV", "LIT", "AMA", "LBB",
+    "MAF", "SAT", "CRP", "BRO", "HRL", "MFE", "LRD", "BPT", "ABE", "AVL",
+    # Major international hubs
+    "LHR", "LGW", "STN", "CDG", "ORY", "FRA", "MUC", "TXL", "BER", "AMS",
+    "MAD", "BCN", "FCO", "MXP", "VIE", "ZRH", "DUB", "CPH", "ARN", "OSL",
+    "HEL", "WAW", "PRG", "BUD", "ATH", "IST", "DXB", "DOH", "AUH",
+    "NRT", "HND", "KIX", "ICN", "PEK", "PVG", "HKG", "SIN", "BKK", "KUL",
+    "SYD", "MEL", "AKL", "YYZ", "YVR", "YUL", "GRU", "EZE", "SCL",
+    # Common US city abbreviations (not airport codes but used as
+    # project prefixes)
+    "NYC", "CHI", "PHL", "LAX", "SFO", "DAL", "HOU", "ATL", "BOS", "SEA",
+    "DEN", "MIA", "PHX", "DET", "MIN", "TOR", "MTL", "VAN",
+})
 
 
 # Week 6 P6.4 — institutional / customer suffixes.  When a proper-noun
@@ -1128,6 +2484,21 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
             continue
         keys.add(f"quantity:{n}")
 
+    # Noun-anchored quantities: "Install 50 access points",
+    # "60 wireless devices", "5 distribution switches", etc.
+    for match in _QUANTITY_NOUN_REGEX.finditer(text):
+        raw = match.group(1).replace(",", "")
+        try:
+            n = int(raw)
+        except ValueError:
+            continue
+        # Skip implausibly small ("0 cables") or implausibly large
+        # ("1000000 each") values that are almost always not real
+        # quantities.
+        if n <= 0 or n > 100_000:
+            continue
+        keys.add(f"quantity:{n}")
+
     return keys
 
 
@@ -1155,16 +2526,1028 @@ def _emit_csi_sections(text: str) -> set[str]:
     return keys
 
 
+# ─── Customer extraction from explicit "Company: X" / "Customer: X" labels ───
+
+# Corporate / institutional suffixes that signal a customer name.
+# Order matters: regex alternation is left-to-right, so the LONGER
+# alternative must come first ("Corporation" before "Corp"; otherwise
+# "Wonka Corporation" matches "Corp" then truncates at "oration").
+_CORPORATE_SUFFIXES = (
+    r"Corporation|Corp\.?|"
+    r"Limited|Ltd\.?|"
+    r"Incorporated|Inc\.?|"
+    r"Company|Co\.?|"
+    r"L\.L\.C\.|LLC|"
+    r"L\.L\.P\.|LLP|"
+    # International corporate suffixes (universal coverage)
+    r"GmbH|"                              # Germany
+    r"AG|"                                # Germany/Switzerland (after GmbH)
+    r"SE|"                                # EU Societas Europaea (BASF, SAP)
+    r"K\.K\.|KK|"                         # Japan (Kabushiki Kaisha)
+    r"Oyj|Oy|"                            # Finland
+    r"ApS|"                               # Denmark (must precede AS)
+    r"AS|"                                # Denmark/Norway
+    r"AB|"                                # Sweden
+    r"Pty\s+Ltd|Pty\.?|"                  # Australia
+    r"Pvt\s+Ltd|Pvt\.?|"                  # India
+    r"OAO|ZAO|PAO|OOO|"                   # Russia
+    r"S\.?A\.?\s*de\s*C\.?V\.?|"          # Mexico
+    r"Sdn\.?\s*Bhd\.?|"                   # Malaysia
+    r"S\.?A\.?|S\.?p\.?A\.?|N\.?V\.?|B\.?V\.?|"   # Spain/Italy/Netherlands
+    r"PLC|P\.?C\.?|P\.?A\.?|PBC|"
+    r"Holdings|Group|Partners|Enterprises|Industries|Solutions|"
+    r"Systems|Technologies|Services|"
+    r"Trust|Foundation|Institute|Association|Society|"
+    r"University|College|School District|Hospital|Health System|Medical Center"
+)
+
+# Detects labels like "Company: OPTBOT, Inc." / "Customer: Acme Corp" /
+# "Client: Globex LLC" / "Account: Initech, Inc." — followed by a
+# Capitalized phrase that ends in a corporate / institutional suffix.
+_COMPANY_LABEL_REGEX = re.compile(
+    r"\b(?:Company|Customer|Client|Account|Buyer|End[\s\-]Client|"
+    r"End[\s\-]Customer|Organization|Org)\s*[:=]\s*"
+    r"([A-Z][A-Za-z0-9'.\-]*(?:[\s,]+[A-Z][A-Za-z0-9'.\-]*){0,5}\s*[,]?\s*"
+    r"(?:" + _CORPORATE_SUFFIXES + r")\.?)",
+)
+
+
+def _emit_customer_from_label(text: str) -> set[str]:
+    """Extract customer entities from explicit "Company: X" / "Customer: X"
+    field labels.
+
+    Pattern: a label word ("Company"/"Customer"/"Client"/...) followed
+    by ``:`` or ``=`` and then a Capitalized phrase ending in a
+    recognized corporate or institutional suffix
+    (``Inc``, ``LLC``, ``Corp``, ``Company``, ``Holdings``, ``Group``,
+    ``University``, ``Hospital``, ...).
+
+    This catches "Company: OPTBOT, Inc." → ``customer:optbot_inc`` /
+    "Customer: Acme Corp" → ``customer:acme_corp`` /
+    "Client: Globex LLC" → ``customer:globex_llc``.
+    """
+    keys: set[str] = set()
+    for match in _COMPANY_LABEL_REGEX.finditer(text):
+        raw_value = match.group(1).strip().rstrip(",")
+        # Strip a trailing period after the suffix ("OPTBOT, Inc.")
+        raw_value = raw_value.rstrip(".")
+        slug = _slugify(raw_value)
+        if slug and len(slug) >= 3:
+            keys.add(f"customer:{slug}")
+    return keys
+
+
+# ─── Money / currency entity extraction ───
+
+# Matches dollar amounts: $1,847,250 / $1.8M / $250K / USD 1,500,000 /
+# 1,500,000 USD / $1,015,626.00. Captures the numeric portion and any
+# K/M/B suffix so we can normalize.
+# Universal multi-currency money pattern. Captures:
+#   - $-prefixed dollar amounts (USD assumed)
+#   - €-prefixed Euros
+#   - £-prefixed Pounds
+#   - ¥-prefixed Yen
+#   - ISO-coded prefixed amounts (USD/EUR/GBP/JPY/CHF/CAD/AUD/...)
+#   - ISO-coded suffixed amounts (... USD / ... EUR / ...)
+#   - K/M/B/T shorthand multipliers (case-insensitive)
+#
+# The slug carries no currency code (just the absolute numeric amount)
+# because cross-currency normalization without exchange rates would
+# introduce non-determinism. Downstream consumers can recover currency
+# context from atom raw_text if needed.
+_MONEY_REGEX = re.compile(
+    r"(?:"
+    # Symbol-prefixed: $ € £ ¥ amounts with optional K/M/B/T suffix
+    r"[\$€£¥]\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMBT])?\b"
+    r"|"
+    # ISO-code-prefixed: USD 1,500,000 / EUR 250K / GBP 1.5M
+    r"\b(?:USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|HKD|SGD|CNY|INR|MXN|BRL|ZAR|"
+    r"DKK|NOK|SEK|PLN|CZK|HUF|TRY|RUB|KRW|TWD|THB|MYR|IDR|PHP|VND|AED|SAR|ILS|EGP|NGN|KES)\s+"
+    r"([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*([KMBT])?\b"
+    r"|"
+    # ISO-code-suffixed: 1,500,000 USD / 250000 EUR / 500000 EUR
+    r"\b([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s+"
+    r"(?:USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|HKD|SGD|CNY|INR|MXN|BRL|ZAR|"
+    r"DKK|NOK|SEK|PLN|CZK|HUF|TRY|RUB|KRW|TWD|THB|MYR|IDR|PHP|VND|AED|SAR|ILS|EGP|NGN|KES)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _emit_money_keys(text: str) -> set[str]:
+    """Extract monetary amounts as ``money:<normalized>`` entities.
+
+    Normalizes K/M/B suffixes to absolute amounts:
+      ``$1.5M``    → ``money:1500000``
+      ``$250K``    → ``money:250000``
+      ``$1,847,250`` → ``money:1847250``
+      ``USD 100``  → ``money:100``
+
+    The OrbitBrief Core scorecard's "pricing structure" blocker depends
+    on having structured monetary entities to anchor against, not just
+    raw text mentions.
+    """
+    keys: set[str] = set()
+    for match in _MONEY_REGEX.finditer(text):
+        # Grab whichever capture group fired
+        num_str = match.group(1) or match.group(3) or match.group(5)
+        suffix = match.group(2) or match.group(4)
+        if not num_str:
+            continue
+        try:
+            num = float(num_str.replace(",", ""))
+        except ValueError:
+            continue
+        if suffix:
+            multiplier = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(
+                suffix.upper(), 1
+            )
+            num = num * multiplier
+        # Drop fractional cents — money entities are unit dollars.
+        amount = int(num) if num == int(num) else round(num, 2)
+        # Skip implausibly small amounts (likely false positives —
+        # "5K users" / "$1.99" line noise). Real deal money is ≥ $100.
+        if amount < 100:
+            continue
+        # Skip implausibly large amounts (regex catastrophe / OCR garbage).
+        if amount > 1_000_000_000_000:  # > $1T
+            continue
+        keys.add(f"money:{int(amount) if amount == int(amount) else amount}")
+    return keys
+
+
+# ─── Date / milestone entity extraction ───
+
+# ISO date: 2026-07-31 (the format used in OPTBOT and most modern deals).
+_ISO_DATE_REGEX = re.compile(r"\b(20[2-9][0-9])-([01][0-9])-([0-3][0-9])\b")
+
+# US-format date: 07/31/2026 or 7/31/26
+_US_DATE_REGEX = re.compile(
+    r"\b([01]?[0-9])/([0-3]?[0-9])/(20[2-9][0-9]|[2-9][0-9])\b"
+)
+
+# Long-format date: July 31, 2026 or Jul 31 2026
+_LONG_DATE_REGEX = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December|"
+    r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"\s+([0-3]?[0-9])(?:st|nd|rd|th)?[,]?\s+(20[2-9][0-9])\b"
+)
+
+# Day-Month-Year: 15-Jun-2026 / 5-Jul-26 / 15 Jun 2026
+_DMY_DATE_REGEX = re.compile(
+    r"\b([0-3]?[0-9])[\s\-/]"
+    r"(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December|"
+    r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"[\s\-/](20[2-9][0-9]|[2-9][0-9])\b",
+    re.IGNORECASE,
+)
+
+# Quarter notation: Q3 2026 / Q3-2026 / Q3 FY26 / 3Q26
+_QUARTER_REGEX = re.compile(
+    r"\b(?:Q([1-4])[\s\-/]?(?:FY)?\s*(20[2-9][0-9]|[2-9][0-9])"
+    r"|([1-4])Q[\s\-/]?(20[2-9][0-9]|[2-9][0-9]))\b"
+)
+
+# Fiscal year notation: FY26 / FY2026 / FY-26 / Fiscal Year 2026
+_FY_REGEX = re.compile(
+    r"\b(?:FY[\s\-]?(20[2-9][0-9]|[2-9][0-9])"
+    r"|fiscal\s+year\s+(20[2-9][0-9]))\b",
+    re.IGNORECASE,
+)
+
+_MONTH_TO_NUM = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2,
+    "march": 3, "mar": 3, "april": 4, "apr": 4,
+    "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
+# Milestone-context cues — labels that identify a date as a project
+# milestone rather than just an incidental date mention.
+_MILESTONE_CONTEXT_REGEX = re.compile(
+    r"\b("
+    r"close\s+date|closing\s+date|"
+    r"start\s+date|kickoff(?:\s+date)?|kick[\s\-]off(?:\s+date)?|"
+    r"end\s+date|completion(?:\s+date)?|due\s+date|deadline|"
+    r"target\s+(?:date|close|completion)|"
+    r"mobilization(?:\s+date|\s+start)?|"
+    r"cutover(?:\s+date|\s+begins?|\s+complete)?|"
+    r"go[\s\-]live(?:\s+date)?|"
+    r"implementation\s+(?:start|end|window|complete)|"
+    r"blackout(?:\s+window|\s+period)?|"
+    r"hypercare(?:\s+start|\s+end|\s+window)?|"
+    r"acceptance(?:\s+date)?|"
+    r"sign[\s\-]off|signoff|"
+    r"effective(?:\s+date)?|"
+    r"expir(?:y|es|ation)|"
+    r"milestone|deliverable\s+date|"
+    r"phase\s+\d+(?:\s+start|\s+end|\s+complete)?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _emit_date_keys(text: str) -> set[str]:
+    """Extract dates as ``date:YYYY-MM-DD`` entities, and additionally
+    as ``milestone:YYYY-MM-DD`` when a milestone-context cue (close
+    date, cutover, blackout, hypercare, kickoff, ...) appears within
+    50 chars of the date.
+
+    Captures three date formats:
+      ISO:     ``2026-07-31``
+      US:      ``07/31/2026`` / ``7/31/26``
+      Long:    ``July 31, 2026`` / ``Jul 31 2026``
+
+    All emitted in normalized ISO form (``date:2026-07-31``) so
+    downstream consumers can sort, compare, and join on them
+    deterministically regardless of input style.
+    """
+    keys: set[str] = set()
+    matches: list[tuple[int, int, str]] = []
+    # ISO format
+    for m in _ISO_DATE_REGEX.finditer(text):
+        try:
+            year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    # US format
+    for m in _US_DATE_REGEX.finditer(text):
+        try:
+            month, day, year_raw = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if year_raw < 100:
+                year = 2000 + year_raw
+            else:
+                year = year_raw
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    # Long format
+    for m in _LONG_DATE_REGEX.finditer(text):
+        try:
+            month_name = m.group(1).lower()
+            day = int(m.group(2))
+            year = int(m.group(3))
+            month = _MONTH_TO_NUM.get(month_name)
+            if month is None or not (1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    # Day-Month-Year format: 15-Jun-2026 / 5 Jul 2026 / 15-Jun-26
+    for m in _DMY_DATE_REGEX.finditer(text):
+        try:
+            day = int(m.group(1))
+            month_name = m.group(2).lower()
+            year_raw = int(m.group(3))
+            year = 2000 + year_raw if year_raw < 100 else year_raw
+            month = _MONTH_TO_NUM.get(month_name)
+            if month is None or not (1 <= day <= 31):
+                continue
+            iso = f"{year:04d}-{month:02d}-{day:02d}"
+        except ValueError:
+            continue
+        matches.append((m.start(), m.end(), iso))
+    for start, end, iso in matches:
+        keys.add(f"date:{iso}")
+        # Look ±50 chars for a milestone-context cue
+        pre = text[max(0, start - 50):start]
+        post = text[end:min(len(text), end + 50)]
+        if _MILESTONE_CONTEXT_REGEX.search(pre) or _MILESTONE_CONTEXT_REGEX.search(post):
+            keys.add(f"milestone:{iso}")
+    # Quarter notation — emit as quarter:YYYY-Qn (always treated as a
+    # milestone since quarters are inherently project timeline markers)
+    for m in _QUARTER_REGEX.finditer(text):
+        q_num = m.group(1) or m.group(3)
+        year_raw = m.group(2) or m.group(4)
+        if not q_num or not year_raw:
+            continue
+        year = int(year_raw)
+        if year < 100:
+            year = 2000 + year
+        quarter = f"{year:04d}-Q{q_num}"
+        keys.add(f"quarter:{quarter}")
+        keys.add(f"milestone:{quarter}")
+    # Fiscal year notation — emit as fiscal_year:FYYY
+    for m in _FY_REGEX.finditer(text):
+        year_raw = m.group(1) or m.group(2)
+        if not year_raw:
+            continue
+        year = int(year_raw)
+        if year < 100:
+            year = 2000 + year
+        keys.add(f"fiscal_year:fy{year:04d}")
+    return keys
+
+
+# ─── Stakeholder / person entity extraction ───
+
+# Role / title tokens that, when adjacent to a Capitalized name, mark
+# that name as a stakeholder/approver. Limited to the actually-load-
+# bearing roles in commercial deal documents; common-noun titles
+# ("manager"/"engineer") would over-fire without a discriminator.
+_STAKEHOLDER_ROLE_PATTERNS = re.compile(
+    r"\b("
+    # C-suite
+    r"CEO|Chief\s+Executive\s+Officer|"
+    r"CFO|Chief\s+Financial\s+Officer|"
+    r"CTO|Chief\s+Technology\s+Officer|"
+    r"CIO|Chief\s+Information\s+Officer|"
+    r"CISO|Chief\s+Information\s+Security\s+Officer|"
+    r"COO|Chief\s+Operating\s+Officer|"
+    # VP / SVP / EVP
+    r"VP|Vice\s+President|SVP|Senior\s+Vice\s+President|"
+    r"EVP|Executive\s+Vice\s+President|"
+    # Director / Manager — only when paired with a domain word
+    r"Director\s+of\s+[A-Z][\w\s]{2,30}|"
+    r"Senior\s+Director|Managing\s+Director|"
+    # Approval / sponsorship roles
+    r"Sponsor|Executive\s+Sponsor|Project\s+Sponsor|Business\s+Sponsor|"
+    r"Owner|Project\s+Owner|Product\s+Owner|Budget\s+Owner|"
+    r"Approver|Decision\s+Maker|Stakeholder|"
+    # Delegated authority
+    r"Delegate|CFO\s+Delegate|Approving\s+Authority|"
+    # Project roles
+    r"PM|Project\s+Manager|Program\s+Manager|"
+    # Workplace / technical leads
+    r"VP\s+Workplace\s+Operations|"
+    r"Head\s+of\s+[A-Z][\w\s]{2,30}|"
+    r"Lead\s+[A-Z][\w]+|"
+    # Generic "X Manager" — any 1-3 word prefix followed by Manager
+    # (catches "Regional Facilities Manager", "Senior Procurement Manager",
+    # "IT Operations Manager"). The prefix words must be Capitalized.
+    r"(?:[A-Z][a-z]+\s+){1,3}Manager|"
+    # Approval / decision VERBS — when a person name is the subject
+    # of an approval verb, the name itself is a stakeholder.
+    # "Priya Narang approves..." / "Camila Brooks: Approved..."
+    r"approves?|approved|approving|"
+    r"accepts?|accepted|accepting|"
+    r"signs?\s+off|signed\s+off|sign[\s\-]off|signoff|"
+    # Ownership — "owns", "owned", "owns the", "owned by"
+    r"owns?|owned|"
+    r"escalates?|escalated|"
+    r"reviews?\s+and\s+(?:approves?|approved)|"
+    r"authorized\s+by|approved\s+by|signed\s+by|"
+    r"is\s+the\s+(?:owner|sponsor|approver|delegate)|"
+    r"responsible\s+for|accountable\s+for|"
+    # A7 multi-language role cues (Spanish / French / German /
+    # Portuguese / Italian). Same intent — the word marks the
+    # nearby capitalized noun as a stakeholder.
+    # Spanish — approval verbs (present + past), titles
+    r"Director\s+de\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Gerente|Jefe\s+de\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Responsable\s+de|Aprobado\s+por|Firmado\s+por|"
+    r"aprobó|aprueba|aprobaron|firmó|firma|firmaron|"
+    r"autoriza|autorizó|autoriz[oó]\s+por|"
+    # French — approval verbs + titles
+    r"Directeur\s+(?:de|des|du)\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Chef\s+de\s+(?:projet|service|département)|"
+    r"Responsable|Approuvé\s+par|Signé\s+par|"
+    r"approuve|approuvé|approuvent|signe|signé|signent|autorise|autorisé|"
+    # German — approval verbs + titles
+    r"Geschäftsführer|Leiter\s+(?:der|des)\s+[A-ZÀ-ÿ][\w\s]{2,30}|"
+    r"Abteilungsleiter|Projektleiter|Genehmigt\s+(?:von|durch)|"
+    r"Unterzeichnet\s+(?:von|durch)|"
+    r"genehmigt|genehmigen|unterzeichnet|unterschreibt|freigibt|freigegeben|"
+    # Portuguese / Italian — verbs + titles
+    r"Diretor|Direttore|Aprovado\s+por|Approvato\s+da|"
+    r"Gerente\s+de|Responsabile|"
+    r"aprovou|aprova|aprovaram|approva|approvato|approvano|firmato"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# Honorifics that prefix a name. We strip these before slugifying so
+# "Dr. Sara Chen" becomes ``stakeholder:sara_chen`` not
+# ``stakeholder:dr_sara_chen``.
+#
+# A7: multilingual honorifics — Spanish (Sr/Sra/Srta/Dn/Dña),
+# French (M/Mme/Mlle), German (Herr/Frau), Italian (Sig/Sig.ra/Sig.na),
+# Portuguese (Sr/Sra/Srta).
+_HONORIFIC_REGEX = re.compile(
+    r"^(?:Dr|Mr|Mrs|Ms|Mx|Prof|Professor|Sir|Dame|Hon|Rev|Fr|"
+    r"Sr|Sra|Srta|Sr\.|Sra\.|Srta\.|Dn|D[oñ]a|Don|Doña|"
+    r"M|Mme|Mlle|Madame|Monsieur|Mademoiselle|"
+    r"Herr|Frau|Fräulein|"
+    r"Sig|Sig\.ra|Sig\.na|Signor|Signora|Signorina"
+    r")"
+    r"\.?\s+",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# Name suffixes (Jr/Sr/II/III/IV/V) that may follow a name and break
+# the regex if treated as part of the name. We accept them as optional
+# and strip when slugifying.
+_NAME_SUFFIX = r"(?:\s+(?:Jr|Sr|II|III|IV|V|PhD|Ph\.D\.|MD|M\.D\.|Esq))\.?"
+
+# Pattern: "First Last" / "First Middle Last" / "First M. Last" with
+# optional honorific prefix and optional name suffix.
+#
+# Three forms (alternation, longest first):
+#   3-word: First Middle Last      ("Mary Anne Smith")
+#   2-word + middle initial: First M. Last  ("Sara G. Chen")
+#   2-word: First Last             ("Jordan Ames")
+#
+# Each token allows hyphens and apostrophes for compound surnames
+# ("O'Brien", "Smith-Jones").
+# A single "name token" — either a standard capitalized word
+# ("Smith" / "MacDonald"), a compound name with hyphen or apostrophe
+# ("Smith-Jones" / "O'Brien"), or a single-letter + compound
+# ("O'Brien" where O alone is the first cluster).
+#
+# Critically, each token must contain at least one LOWERCASE letter
+# overall (either in the main word or in the compound tail). This
+# rejects Roman numerals (II, III, IV, V) and all-caps acronyms from
+# being parsed as name tokens.
+# A7 multi-language: explicit case-aware Latin uppercase / lowercase
+# character classes so names with accents (García / Müller / André /
+# José / Søren) match _NAME_TOKEN while staying STRICT on case
+# (first char uppercase, rest lowercase) so the regex doesn't grab
+# lowercase prose like "de servicios" as a name.
+# Python's ``re`` doesn't support ``\p{Lu}`` / ``\p{Ll}``, so we
+# enumerate Latin-1 supplement (À-Ö, Ø-Þ uppercase; à-ö, ø-ÿ lowercase).
+# Slugification (A4) folds the accents to ASCII downstream.
+_UPPER = r"[A-ZÀ-ÖØ-Þ]"
+_LOWER = r"[a-zà-öø-ÿ]"
+_NAME_TOKEN = (
+    r"(?:"
+    + _UPPER + _LOWER + r"+(?:[\-']" + _UPPER + _LOWER + r"+)?"  # García / Smith-Jones
+    + r"|" + _UPPER + r"[\-']" + _UPPER + _LOWER + r"+"          # O'Brien / D'Souza
+    + r")"
+)
+
+_PERSON_NAME_REGEX = re.compile(
+    r"\b("
+    # A7 multilingual honorifics (optional)
+    r"(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr|"
+    r"Sr|Sra|Srta|Dn|Don|D[oñ]a|"
+    r"M|Mme|Mlle|Madame|Monsieur|Mademoiselle|"
+    r"Herr|Frau|Fräulein|"
+    r"Sig|Signor|Signora|Signorina"
+    r")\.?\s+"
+    r")?"
+    r"("
+    # 3-word name: First Middle Last
+    + _NAME_TOKEN + r"\s+" + _NAME_TOKEN + r"\s+" + _NAME_TOKEN +
+    r"|"
+    # Initial-style: First M. Last
+    + _NAME_TOKEN + r"\s+[A-Z]\.\s+" + _NAME_TOKEN +
+    r"|"
+    # 2-word name: First Last
+    + _NAME_TOKEN + r"\s+" + _NAME_TOKEN +
+    r")"
+    # Optional Roman / Jr / Sr suffix (captured but stripped downstream)
+    r"(?:\s+(?:Jr|Sr|II|III|IV|V)\.?)?",
+    re.UNICODE,
+)
+
+# Honorific + single name ("Dr. Smith", "Mr. Lee", "Mrs. Park").
+# Standalone regex because the main pattern requires ≥2 name tokens.
+# The negative lookahead ``(?!\s+`` _NAME_TOKEN `` )`` ensures we DON'T
+# fire when a full "Honorific First Last" name is present — the main
+# regex catches that. This single-name path is only for honorific +
+# surname like "Dr. Smith".
+_HONORIFIC_SINGLE_NAME_REGEX = re.compile(
+    r"\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame|Hon|Rev|Fr|"
+    # A7 multilingual honorifics
+    r"Sr|Sra|Srta|Dn|Don|D[oñ]a|"
+    r"M|Mme|Mlle|Madame|Monsieur|Mademoiselle|"
+    r"Herr|Frau|Fräulein|"
+    r"Sig|Signor|Signora|Signorina"
+    r")\.?\s+"
+    r"(" + _NAME_TOKEN + r")"
+    r"(?!\s+" + _NAME_TOKEN + r")\b",
+    re.UNICODE,
+)
+
+# D3: Initial + Last form — ``R. Watkins`` / ``J Ames`` / ``J.A. Smith``.
+# Captures a single uppercase letter (optionally followed by a period
+# and another initial) plus a surname token. The downstream fuser in
+# ``entity_resolution.collect_stakeholder_alias_groups`` collapses
+# ``stakeholder:r_watkins`` into ``stakeholder:renee_watkins`` when
+# the surname uniquely identifies a full-name stakeholder elsewhere
+# in the project.
+_INITIAL_LAST_NAME_REGEX = re.compile(
+    r"\b([A-Z](?:\.[A-Z])?)\.?\s+(" + _NAME_TOKEN + r")\b"
+)
+
+# Inverted form: "Smith, John" — last-name-first. Used in formal
+# author / stakeholder lists. We require an explicit FIELD label
+# ("Name:", "Author:", "Approver:", "Sponsor:", "Owner:", ...)
+# immediately before the inverted pair so we don't misinterpret
+# comma-separated lists of full names ("Jordan Ames, Priya Narang,
+# Camila Brooks") as a series of last-name-first records.
+_INVERTED_NAME_REGEX = re.compile(
+    r"(?:Name|Author|Approver|Sponsor|Owner|Contact|Stakeholder|PM|"
+    r"Manager|Delegate|Reviewer|Signatory)"
+    r"\s*[:=]\s*"
+    r"([A-Z][a-z]+(?:[\-'][A-Z][a-z]+)?)\s*,\s+"
+    r"([A-Z][a-z]+(?:\s+[A-Z]\.?)?)\b",
+    re.IGNORECASE,
+)
+
+# Names that look proper-noun-shaped but aren't actually people.
+# Conservative — when in doubt, leave it out (a name we miss is recoverable
+# downstream; a false-positive stakeholder is noise that hurts trust).
+_NON_PERSON_NAME_PREFIXES: frozenset[str] = frozenset({
+    # Place-shape leads
+    "atlanta", "houston", "dallas", "berlin", "tokyo", "seattle",
+    "phoenix", "chicago", "boston", "denver", "miami", "austin",
+    "north", "south", "east", "west", "central",
+    # Vendor / org-shape leads
+    "axis", "cisco", "genetec", "lenel", "honeywell", "siemens",
+    "schneider", "trane", "carrier", "philips", "dell", "hpe",
+    "microsoft", "google", "amazon", "azure", "aws", "gcp",
+    "hubspot", "optbot", "orbitbrief", "purpulse",
+    # Generic
+    "mock", "test", "demo", "fake", "dummy", "sample", "example",
+    "fictional", "synthetic",
+    # A7 multilingual honorifics that match _NAME_TOKEN but
+    # shouldn't fuse with the name into a stakeholder key. They
+    # appear as the first word of an "Honorific Name" pair when
+    # the main regex backtracks past the optional-honorific group.
+    "mme", "mlle", "monsieur", "madame", "mademoiselle",
+    "herr", "frau", "fraulein", "fräulein",
+    "sig", "signor", "signora", "signorina",
+    "sra", "srta", "doña", "dona", "don",
+})
+
+
+def _emit_stakeholders(text: str) -> set[str]:
+    """Extract named approvers / stakeholders as ``stakeholder:first_last``
+    entities.
+
+    Strategy: find every "First Last" capitalized name, then accept it
+    only when a role/title cue (CFO, VP, Sponsor, Director, Approver,
+    Owner, PM, Delegate, …) appears within ±60 chars in the same
+    sentence. This is the "person + role context" pattern.
+
+    The role context is the disambiguator — a bare "Jordan Ames" might
+    be anything, but "Jordan Ames, VP Workplace Operations" or
+    "Approved by Jordan Ames" is structurally a stakeholder mention.
+    """
+    keys: set[str] = set()
+    # Sentence splitter that does NOT break at mid-word periods.
+    # Pre-protect periods inside honorifics, name suffixes, initials,
+    # and common abbreviations by swapping them for a sentinel
+    # ``<DOT>``, split on real sentence boundaries, then restore.
+    text_safe = re.sub(
+        r"\b(Mr|Mrs|Ms|Mx|Dr|Prof|Sir|Dame|Hon|Rev|Fr|"
+        r"Jr|Sr|Ph|Ph\.D|MD|M\.D|Esq|"
+        r"Inc|Corp|Co|Ltd|LLC|PLC|GmbH|"
+        r"St|Ave|Blvd|Rd|Hwy|Pkwy|"
+        r"U|S|N|E|W|"
+        # A7 multilingual honorifics — protect their periods from
+        # the sentence splitter so "Sig. Rossi" / "Sra. García" /
+        # "Sgt. Smith" stay one sentence.
+        r"Sig|Sra|Srta|Dn|Sgt"
+        r")\.",
+        r"\1<DOT>",
+        text,
+    )
+    # Single-letter initial followed by space + capital: "Sara G. Chen"
+    text_safe = re.sub(r"\b([A-Z])\.\s+(?=[A-Z][a-z])", r"\1<DOT> ", text_safe)
+    # Split on real sentence boundaries (period + space + capital,
+    # terminal punctuation, newline) AND on semicolon when followed
+    # by a name-shaped token. We previously also split on colon, but
+    # that broke "Org — Role: Name" signature lines by separating
+    # the role context from the name. Colons inside signature lines
+    # are FIELD separators, not sentence ends — keep them in the
+    # same sentence so the role-context proximity check fires.
+    for sentence in re.split(
+        r"(?:\.\s+(?=[A-Z])|[?!\n]+|;\s+(?=[A-Z][a-z]+\s+[A-Z]))",
+        text_safe,
+    ):
+        sentence = sentence.replace("<DOT>", ".").strip()
+        if not sentence:
+            continue
+        # Skip sentences without a role cue — saves work
+        if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
+            continue
+        # D3: Initial + Last form ("R. Watkins", "J Ames").
+        # Like the honorific-single-name path, we require a role
+        # cue within ±60 chars to avoid grabbing every "T. Rex" /
+        # "V. Important" capitalization in the corpus.
+        for il_match in _INITIAL_LAST_NAME_REGEX.finditer(sentence):
+            initial = il_match.group(1).strip().rstrip(".")
+            last = il_match.group(2).strip()
+            if len(last) < 3 or last.lower() in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # Role-context proximity check, same disambiguator.
+            pre = sentence[max(0, il_match.start() - 60):il_match.start()]
+            post = sentence[il_match.end():min(len(sentence), il_match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            slug = _slugify(f"{initial} {last}")
+            if slug and len(slug) >= 3:
+                keys.add(f"stakeholder:{slug}")
+        # Honorific + single-name ("Dr. Smith", "Ms. Park"). Single
+        # capitalized word after an honorific is enough — the
+        # honorific is itself a strong stakeholder signal.
+        for h_match in _HONORIFIC_SINGLE_NAME_REGEX.finditer(sentence):
+            single_name = h_match.group(1).strip()
+            if len(single_name) < 3:
+                continue
+            if single_name.lower() in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # Role-context proximity check, same as the main path
+            pre = sentence[max(0, h_match.start() - 60):h_match.start()]
+            post = sentence[h_match.end():min(len(sentence), h_match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            slug = _slugify(single_name)
+            if slug and len(slug) >= 3:
+                keys.add(f"stakeholder:{slug}")
+        # Inverted "Smith, John" form — find these first and add them
+        # directly. The regex below would miss inverted names because
+        # the comma breaks the "First Last" pattern.
+        for inv_match in _INVERTED_NAME_REGEX.finditer(sentence):
+            last_name = inv_match.group(1).strip()
+            first_part = inv_match.group(2).strip()
+            # Only emit if a role cue is within ±60 chars of the match
+            pre = sentence[max(0, inv_match.start() - 60):inv_match.start()]
+            post = sentence[inv_match.end():min(len(sentence), inv_match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            # Re-order to "First Last" for canonical slug
+            reordered = f"{first_part} {last_name}"
+            first_lower = first_part.split()[0].lower()
+            if first_lower in _NON_PERSON_NAME_PREFIXES:
+                continue
+            slug = _slugify(reordered)
+            if slug and len(slug) >= 5:
+                keys.add(f"stakeholder:{slug}")
+        # Standard "First Last" / "First Middle Last" form
+        for match in _PERSON_NAME_REGEX.finditer(sentence):
+            # group(2) is the name proper (after stripping optional
+            # honorific in group(1)).
+            name = (match.group(2) or "").strip()
+            if not name:
+                continue
+            # Strip trailing name-suffix tokens (Jr, Sr, II, III, IV, V)
+            # that may have been pulled into the 3-word-name alternative.
+            # "Robert Brown Jr" → "Robert Brown".
+            tokens = name.split()
+            while tokens and tokens[-1].rstrip(".").upper() in {
+                "JR", "SR", "II", "III", "IV", "V",
+                "PHD", "MD", "ESQ",
+            }:
+                tokens.pop()
+            if not tokens:
+                continue
+            name = " ".join(tokens)
+            if not tokens:
+                continue
+            first_lower = tokens[0].lower()
+            if first_lower in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # Reject if the name's tail token is a CORPORATE suffix
+            # ("Acme Corp" / "OPTBOT Inc"). Place suffixes (park,
+            # tower, building, plaza, ...) are deliberately omitted
+            # here because they collide with real surnames ("Linda
+            # Park", "Jenna Hill", "Sam Cross"). The role-context
+            # check is the discriminator for those — "Cedar Park"
+            # without an approver verb nearby won't trigger anyway.
+            tail_lower = tokens[-1].lower().rstrip(",.:")
+            if tail_lower in {
+                "inc", "incorporated", "llc", "corp", "corporation",
+                "company", "co", "ltd", "limited", "plc", "gmbh",
+                "holdings", "group", "partners", "enterprises",
+            }:
+                continue
+            # Reject if a role token appears WITHIN the name itself
+            # ("Director Jane Doe" — capture "Jane Doe" not "Director Jane")
+            tokens_lower = {t.lower().rstrip(",.:") for t in tokens}
+            role_tokens = {
+                "director", "manager", "lead", "officer", "engineer",
+                "architect", "analyst", "ceo", "cfo", "cto", "cio", "ciso",
+                "coo", "vp", "svp", "evp", "sponsor", "approver", "delegate",
+                "owner", "stakeholder", "executive", "head", "senior",
+                "junior", "principal", "associate", "assistant",
+                "specialist", "coordinator", "supervisor",
+            }
+            if tokens_lower & role_tokens:
+                continue
+            # Reject if EITHER token is a department / function name
+            # (Workplace Operations, Marketing Department, ...). These
+            # match the two-word capitalized shape but aren't people.
+            non_person_tokens = {
+                # Department / function names
+                "workplace", "operations", "operation", "ops",
+                "marketing", "sales", "engineering", "finance",
+                "procurement", "security", "technology", "legal",
+                "design", "research", "development", "support",
+                "administration", "compliance", "audit", "infrastructure",
+                "platform", "product", "program", "project", "portfolio",
+                "delivery", "implementation", "deployment", "integration",
+                "facilities", "logistics", "warehouse",
+                "communications", "training", "education", "hr",
+                "workforce", "personnel", "talent", "resources",
+                "department", "team", "group", "division", "unit",
+                "organization", "function",
+                # Checklist / template / heading words
+                "checklist", "item", "items", "task", "tasks", "type",
+                "types", "category", "categories", "step", "steps",
+                "phase", "phases", "stage", "stages",
+                "due", "start", "end", "date", "dates", "deadline",
+                "milestone", "milestones", "duration", "schedule",
+                "evidence", "criteria", "criterion", "output", "outputs",
+                "input", "inputs", "result", "results",
+                "expected", "required", "actual", "estimated", "planned",
+                "exit", "entry", "review", "cadence", "frequency",
+                "help", "desk", "service",
+                "field", "fields", "column", "row", "rows",
+                "summary", "overview", "detail", "details",
+                "note", "notes", "comment", "comments",
+                "section", "subsection", "appendix", "attachment",
+                "exhibit", "schedule", "addendum",
+                # Status / quality words
+                "status", "priority", "severity", "impact", "risk",
+                "ready", "complete", "pending", "open", "closed",
+                "approved", "rejected", "draft", "final", "active",
+                "blocked", "blocker", "warning", "info",
+                # Generic objects
+                "table", "list", "form", "template", "report", "page",
+                "header", "footer", "title", "subtitle",
+                "version", "revision", "edition",
+                # Action verbs / common imperatives (sometimes
+                # capitalized at start of bullets)
+                "confirm", "verify", "validate", "check", "test",
+                "review", "approve", "submit", "publish", "send",
+                "create", "update", "delete", "remove", "add",
+                "attach", "run", "execute", "deploy", "install",
+                "configure", "setup", "enable", "disable", "start",
+                "stop", "schedule", "complete", "finalize",
+                # Hub / network terms
+                "hub", "node", "endpoint", "gateway", "proxy",
+                "instance", "cluster", "tenant", "region", "zone",
+            }
+            if tokens_lower & non_person_tokens:
+                # A7 fallback: if a 3-token match starts with a
+                # non-person word ("Finance Jordan Ames"), retry
+                # the trailing 2 tokens as a 2-word name. The role
+                # context check below still gates emission.
+                if len(tokens) == 3 and tokens[0].lower() in (
+                    non_person_tokens | role_tokens
+                ):
+                    tokens = tokens[1:]
+                    name = " ".join(tokens)
+                    tokens_lower = {t.lower().rstrip(",.:") for t in tokens}
+                    if tokens_lower & non_person_tokens:
+                        continue
+                else:
+                    continue
+            # Role-context proximity check (±60 chars in this sentence)
+            pre = sentence[max(0, match.start() - 60):match.start()]
+            post = sentence[match.end():min(len(sentence), match.end() + 60)]
+            if not (_STAKEHOLDER_ROLE_PATTERNS.search(pre)
+                    or _STAKEHOLDER_ROLE_PATTERNS.search(post)):
+                continue
+            slug = _slugify(name)
+            if slug and len(slug) >= 5:
+                keys.add(f"stakeholder:{slug}")
+    return keys
+
+
+# ════════════════════════════════════════════════════════════════════
+# CONTACT-ANCHOR EMITTERS (universal — close the email/phone/site-code
+# recall gap surfaced by the source-vs-parser audit 2026-05-27)
+# ════════════════════════════════════════════════════════════════════
+
+_EMAIL_REGEX = re.compile(
+    r"\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b"
+)
+_PHONE_REGEX = re.compile(
+    r"(?<!\d)(\+?1[-.\s]?)?\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})(?!\d)"
+)
+# Site-code shape: REGION-FUNCTION[-NN] — 2-5 alphanumeric segments
+# separated by hyphens, at least one segment with a digit OR all-caps.
+# Catches ATL-HQ-01, STORE-142, MDF-3A, IDF-W2-3, LMC-L640, etc.
+_SITE_CODE_PATTERN = re.compile(
+    r"\b(?:"
+    r"[A-Z]{2,5}-[A-Z0-9]{1,5}(?:-\d{1,4}){0,2}"  # ATL-HQ-01, MDF-W1, IDF-2-7
+    r"|[A-Z]{2,5}\d{2,4}"                          # B197, RM12 (no hyphen)
+    r")\b"
+)
+# Persons named via "Name, Role, email" or "contact Name at email"
+# patterns. The email is the corroboration: we scan BACKWARD from
+# each email match for a capitalized name within ~80 chars. Catches
+# all of these:
+#   - "Glenn Tilleman, Hood County Purchasing Agent at gtilleman@..."
+#   - "Shaun Tozer, Project Manager at 425-939-8046, ... shaun.tozer@..."
+#   - "Matthew Brener, BRS, Inc., (267) 688-7301 | matthew@brsinc.com"
+#   - "John Foster, Convergent Technology Partners, at jfoster@..."
+# Case is strict (uppercase first letter) on the name to avoid
+# catching prepositions / lowercase words.
+_NAME_NEAR_EMAIL = re.compile(
+    r"\b([A-Z][a-z]{1,15}(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z'-]{1,18}){1,2})\b"
+)
+# Trigger words for the contact-line extractor. Case-insensitive on
+# the trigger ONLY (via (?i:...) inline group), strict capitalization
+# on the captured name.
+_PERSON_CONTACT_LINE = re.compile(
+    r"(?i:please\s+contact|contact(?:\s+(?:is|will\s+be))?|directed\s+to|"
+    r"attention(?:\s+of)?\s*:?|submitted\s+by|prepared\s+by|"
+    r"project\s+manager\s*[:\-]?|purchasing\s+agent\s*[:\-]?|"
+    r"approved\s+by|signed\s+by|sponsor(?:ed)?\s+by|owned\s+by|"
+    r"point\s+of\s+contact\s*[:\-]?|technical\s+lead\s*[:\-]?|"
+    r"executive\s+sponsor\s*[:\-]?)\s+"
+    r"([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z'-]+){1,3})\b"
+)
+# Generic-word denylist for people pulled from email patterns
+# (some emails are noreply@, info@, support@, etc.)
+_EMAIL_LOCAL_DENY: frozenset[str] = frozenset({
+    "noreply", "no-reply", "donotreply", "info", "contact", "hello",
+    "support", "help", "admin", "sales", "marketing", "service",
+    "billing", "accounts", "ap", "ar", "hr", "it", "legal",
+    "office", "front-desk", "frontdesk", "reception",
+    "team", "group", "list", "notifications", "alerts",
+})
+
+
+def _slug_simple(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _emit_email_keys(text: str) -> set[str]:
+    """Emit ``email:<normalized>`` for every email in text."""
+    keys: set[str] = set()
+    for m in _EMAIL_REGEX.finditer(text):
+        email = m.group(1).lower()
+        # Drop trailing dots/punctuation artifacts
+        email = email.rstrip(".,;:!)\\")
+        slug = _slug_simple(email)
+        if slug and len(slug) >= 5:
+            keys.add(f"email:{slug}")
+    return keys
+
+
+def _emit_phone_keys(text: str) -> set[str]:
+    """Emit ``phone:<digits>`` for every phone number in text."""
+    keys: set[str] = set()
+    for m in _PHONE_REGEX.finditer(text):
+        digits = (m.group(1) or "") + m.group(2) + m.group(3) + m.group(4)
+        digits = re.sub(r"\D", "", digits)
+        if 10 <= len(digits) <= 11:
+            keys.add(f"phone:{digits}")
+    return keys
+
+
+def _emit_person_from_contact(text: str) -> set[str]:
+    """Emit ``stakeholder:<first_last>`` for "Name <email>" /
+    "contact Name" / "submitted by Name" patterns.
+
+    Strategy:
+      1. EMAIL-ANCHORED — for each email in text, scan backward 100
+         chars and emit ALL capitalized names found that pass the
+         person-label denylist. Catches "Matthew Brener, BRS, Inc.,
+         (267) 688-7301 | matthew@..." (name first, then org +
+         phone) AND "via email to John Foster, Convergent Tech
+         Partners, at jfoster@..." (name first, then org).
+      2. CONTACT-LINE — explicit "Please contact X" / "Submitted
+         by X" patterns. Trigger case-insensitive, name strict-cap.
+
+    Org-name false positives (Hood County Purchasing, Convergent
+    Technology Partners, etc.) are filtered by _is_likely_person_label.
+    """
+    keys: set[str] = set()
+    # Email-anchored back-scan
+    bad_starts = ("At ", "By ", "For ", "From ", "To ", "Of ",
+                  "In ", "On ", "The ", "An ", "A ", "Or ")
+    for em in _EMAIL_REGEX.finditer(text):
+        start = max(0, em.start() - 100)
+        window = text[start:em.start()]
+        for nm in _NAME_NEAR_EMAIL.finditer(window):
+            name = nm.group(1).strip()
+            for bs in bad_starts:
+                if name.startswith(bs):
+                    name = name[len(bs):].strip()
+            slug = _slug_simple(name)
+            if slug and "_" in slug and not _is_likely_person_label(name):
+                keys.add(f"stakeholder:{slug}")
+    # Contact-line
+    for m in _PERSON_CONTACT_LINE.finditer(text):
+        name = m.group(1).strip()
+        for bs in bad_starts:
+            if name.startswith(bs):
+                name = name[len(bs):].strip()
+        slug = _slug_simple(name)
+        if slug and "_" in slug and not _is_likely_person_label(name):
+            keys.add(f"stakeholder:{slug}")
+    return keys
+
+
+# Names that pass the capitalized-pattern test but are clearly NOT
+# people (org names, jargon, table cells).
+_PERSON_LABEL_DENYLIST: frozenset[str] = frozenset({
+    "Hood County", "Beaufort County", "Geary County",
+    "Solana Beach", "Manhattan Beach", "Atlanta GA",
+    "Albuquerque Public", "Office Of", "State Of",
+    "Department Of", "City Of", "United States",
+    "Project Manager", "Purchasing Agent",
+    "Technical Lead", "Executive Sponsor",
+    "Mock Document", "Mock Deal", "Mock Doc",
+})
+
+
+def _is_likely_person_label(name: str) -> bool:
+    """Quick org/jargon filter for would-be person names."""
+    if name in _PERSON_LABEL_DENYLIST:
+        return True
+    # Multi-word names where every word starts with a capital but
+    # the LAST word is an org-suffix or jargon noun
+    bad_tails = {
+        # Jurisdictional
+        "County", "City", "Town", "State", "Federal",
+        # Org body types
+        "Department", "Office", "Agency", "Authority",
+        "School", "District", "Schools", "University",
+        "Court", "Board", "Committee", "Council", "Commission",
+        # Corporate suffixes
+        "Corporation", "Corp", "Inc", "LLC", "Ltd", "Co",
+        "Partners", "Solutions", "Services", "Systems", "Sales",
+        "Technologies", "Group", "Holdings", "Enterprises",
+        "Industries", "International", "Global", "Worldwide",
+        "Consulting", "Consultants", "Associates", "Advisors",
+        "Communications", "Networks", "Engineering",
+        # Functions / labels
+        "Public", "Private", "Team",
+        "Purchasing", "Procurement", "Operations", "Maintenance",
+        "Manager", "Agent", "Director", "Supervisor",
+        "Sponsor", "Lead", "Owner", "Engineer", "Architect",
+        "Coordinator", "Specialist", "Foreman", "Inspector",
+        # Other
+        "Postal", "USA", "US", "USPS", "FedEx", "UPS",
+    }
+    tail = name.split()[-1] if " " in name else name
+    if tail in bad_tails:
+        return True
+    # Also check: if ANY token in the name is in the bad_tails AND
+    # the name has 3+ words, it's probably an org name even if the
+    # tail itself isn't org-like (e.g., "Hood County Purchasing").
+    tokens = name.split()
+    if len(tokens) >= 3 and any(t in bad_tails for t in tokens):
+        return True
+    return False
+
+
+def _emit_site_code_keys(text: str) -> set[str]:
+    """Emit ``site:<code>`` for ATL-HQ-01 / STORE-142 / MDF-3A patterns.
+
+    Site codes are the customer's authoritative scope anchors and
+    PMs absolutely need them visible. Conservative: requires the
+    hyphenated/digit-bearing shape so it doesn't fire on words like
+    "USA" or "ANSI".
+    """
+    keys: set[str] = set()
+    for m in _SITE_CODE_PATTERN.finditer(text):
+        code = m.group(0)
+        # Drop obvious non-codes
+        upper = code.upper()
+        if upper in {"PDF-A", "USB-C", "HTTP-S", "ISO-9001", "ASCII-7",
+                     "MIT-0", "BSD-2", "UTF-8", "RFC-822",
+                     "IEEE-754", "IEEE-802", "ANSI-X", "ISO-27001",
+                     "PCI-DSS", "SOC-2", "ISO-9000", "HIPAA-1996"}:
+            continue
+        # Drop pure standards refs (single-segment-NN like "NIST-800")
+        # — keep multi-segment ones
+        slug = _slug_simple(code)
+        if slug and len(slug) >= 4:
+            keys.add(f"site:{slug}")
+    return keys
+
+
 def extract_keys(
     text: str,
     *,
     pack: DomainPack,
     value: Any | None = None,
+    authoritative_sites: set[str] | None = None,
 ) -> list[str]:
     """Return entity_keys for ``text`` using ``pack``'s vocabulary.
 
     Pure function — no I/O, no global state.  ``value`` is the atom's
     structured ``value`` payload if any (e.g. xlsx table_row).
+
+    ``authoritative_sites`` is the project-wide site catalog built by
+    ``app.core.site_detection.find_authoritative_site_phrases``. When
+    non-empty, the proper-noun emitter ONLY emits ``site:`` keys whose
+    normalized form is in the catalog. When None or empty, the
+    emitter falls back to its strict regex behavior.
     """
     if not text:
         return []
@@ -1173,7 +3556,7 @@ def extract_keys(
     typed_idx = _typed_alias_index(pack)
 
     keys: set[str] = set()
-    keys |= _emit_devices(text_lower, device_idx)
+    keys |= _emit_devices(text_lower, device_idx, pack=pack)
     keys |= _emit_typed(text_lower, typed_idx)
     vendor_keys = _emit_vendors(text_lower)
     keys |= vendor_keys
@@ -1181,8 +3564,62 @@ def extract_keys(
     # Proper-noun fallback runs LAST so it can deduplicate against
     # vendor matches (avoids "site:genetec_security_center" when we
     # already have "vendor:genetec").
-    proper_noun_keys = _emit_proper_nouns(text, vendor_keys)
+    proper_noun_keys = _emit_proper_nouns(
+        text, vendor_keys, authoritative_sites=authoritative_sites,
+    )
     keys |= proper_noun_keys
+    # Option D — final centralized site catalog gate. When the
+    # project has an authoritative site catalog (built from
+    # Locations sections + address-anchored phrases + strong
+    # facility-tail patterns), ALL site:* candidates from EVERY
+    # emitter must clear it. This catches false positives that
+    # slipped through individual emitters — e.g. ``ahu_7`` from
+    # ``_emit_sites`` (a BMS pack's site_alias_pattern that
+    # actually matches mechanical equipment), ``block_909`` from
+    # the numbered-site regex (parcel numbers), or generic
+    # ``elementary_school`` from the proper-noun runner.
+    # Site key gate. Runs ALWAYS — when the catalog is empty (e.g.
+    # LLM extract returned 0 AND regex catalog is empty), this gate
+    # still drops obvious junk via the hygiene filter so atom-level
+    # regex emissions don't slip through ungated.
+    #
+    # Pipeline:
+    #   1. Phrase must pass site_detection._looks_like_site_phrase
+    #      (drops sentence fragments, headers, etc.)
+    #   2. Phrase must pass site_llm_verify._is_obvious_non_site
+    #      (drops vendor brands, generic nouns, form labels)
+    #   3. If catalog is non-empty, phrase must match the catalog
+    #      via phrase_is_in_catalog (prefix/suffix/exact match)
+    from app.core.site_detection import (
+        phrase_is_in_catalog,
+        _looks_like_site_phrase,
+    )
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site
+    except Exception:
+        _is_obvious_non_site = None  # type: ignore
+    site_keys_kept: set[str] = set()
+    for k in list(keys):
+        if not k.startswith("site:"):
+            continue
+        slug = k[len("site:"):]
+        # Convert slug back to space-separated for matching
+        phrase = slug.replace("_", " ")
+        # Drop sentence-fragment / header-glue site keys
+        if not _looks_like_site_phrase(phrase):
+            continue
+        # Drop hygiene-blocked phrases (vendor brands, form labels,
+        # generic nouns, sub-spaces, etc.)
+        if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
+            continue
+        # If a catalog exists, require catalog membership too
+        if authoritative_sites and not phrase_is_in_catalog(
+            phrase, authoritative_sites
+        ):
+            continue
+        site_keys_kept.add(k)
+    # Drop site keys that didn't pass the gate
+    keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
     keys |= _emit_part_numbers(text)
     keys |= _emit_quantity_keys(value or {}, text)
     keys |= _emit_qa_markers(text)
@@ -1194,38 +3631,535 @@ def extract_keys(
     # already-detected proper-noun runs.
     keys |= _emit_customer_keys(text, proper_noun_keys)
     keys |= _emit_requirement_keys(text)
+    # Direct customer-from-label extraction (Company: X / Customer: X)
+    # for cases where the customer is named explicitly with a corporate
+    # suffix but doesn't trigger the institutional-suffix promotion.
+    keys |= _emit_customer_from_label(text)
+    # Money / currency entities (dollar amounts, USD-prefixed, K/M/B
+    # shorthand). Unblocks downstream pricing-structure validation.
+    keys |= _emit_money_keys(text)
+    # Date and milestone entities. Every detected ISO/US/Long-format
+    # date becomes a ``date:YYYY-MM-DD`` key; dates adjacent to a
+    # milestone-context cue (close date, cutover, hypercare, blackout,
+    # ...) ALSO emit a ``milestone:YYYY-MM-DD`` key for timeline
+    # reasoning.
+    keys |= _emit_date_keys(text)
+    # Named stakeholders / approvers. Detected via "First Last" name
+    # pattern + role-context cue (CFO, VP, Sponsor, Approver, ...)
+    # within ±60 chars in the same sentence.
+    keys |= _emit_stakeholders(text)
+    # Contact-anchor emitters (universal — every email, phone, site
+    # code, and "Name <email>" / "contact Name" person reference).
+    # Closes the recall gaps surfaced by the 2026-05-27 source-vs-
+    # parser audit (emails 0/36, named people 7/160, site codes 1/113).
+    keys |= _emit_email_keys(text)
+    keys |= _emit_phone_keys(text)
+    keys |= _emit_person_from_contact(text)
+    keys |= _emit_site_code_keys(text)
 
     return sorted(keys)
 
 
+# Entity-key prefixes that the text extractor can SAFELY add even
+# when the parser already supplied other keys. Parser-supplied keys
+# remain authoritative for their own type; these prefixes are
+# typically textual-pattern matches (sites, dates, money, etc.) that
+# parsers don't always carry per-row.
+_AUGMENT_ALWAYS_PREFIXES: tuple[str, ...] = (
+    "site:",
+    "address:",
+    "date:",
+    "milestone:",
+    "quarter:",
+    "money:",
+    "stakeholder:",
+    "phone:",
+    "email:",
+    "zip:",
+    "customer:",
+    "vendor:",
+)
+
+
+def _section_path_context(atom: Any) -> str:
+    """Return the atom's section-path text appended for entity scanning.
+
+    A PDF parser often slices an institutional-name heading
+    ("Geary County Schools USD 475") into a structured-doc subsection
+    rather than a body paragraph. The atoms under that section then
+    have rich body text but no site mention. Scanning section_path
+    alongside the body text lets the universal extractor pick up the
+    site / customer / institution name and tag every child atom with
+    it — exactly what an LLM consumer would expect.
+    """
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        if not refs:
+            return ""
+        locator = getattr(refs[0], "locator", None) or {}
+        if not isinstance(locator, dict):
+            return ""
+        section_path = locator.get("section_path")
+        if isinstance(section_path, list) and section_path:
+            return " ".join(str(x) for x in section_path if x)
+        # Title / heading fallback
+        for k in ("section", "heading", "title", "subsection"):
+            v = locator.get(k)
+            if isinstance(v, str) and v:
+                return v
+    except Exception:
+        return ""
+    return ""
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
-    """Mutate ``atoms`` in place: populate ``entity_keys`` for any atom
-    whose list is currently empty.
+    """Mutate ``atoms`` in place: populate ``entity_keys``.
+
+    Two passes per atom:
+      1. If the atom has no entity_keys, run ``extract_keys`` on its
+         raw_text + section_path context + value.
+      2. If the atom already has entity_keys (parser-supplied), STILL
+         run ``extract_keys`` to add textual-pattern keys (``site:``,
+         ``date:``, ``money:``, ``stakeholder:``, …) the parser
+         doesn't typically emit. Parser-supplied keys for the same
+         prefix family are preserved; only NEW prefixes get merged.
 
     Returns ``(atoms_enriched, total_keys_added)`` for telemetry.
-    Atoms that already have ``entity_keys`` are left untouched —
-    parser-supplied keys are authoritative.
     """
     atoms_enriched = 0
     total_keys_added = 0
-    for atom in atoms:
-        if getattr(atom, "entity_keys", None):
-            # Even pre-populated keys go through hygiene so a parser
-            # that mints a fake ``site:belden_cat6`` gets cleaned up.
-            cleaned = filter_entity_keys_for_atom(atom, atom.entity_keys)
-            if cleaned != list(atom.entity_keys):
-                atom.entity_keys = cleaned
-            continue
+    # Build the project-wide authoritative-site catalog ONCE per
+    # enrichment pass. Option D — document-structure aware site
+    # detection: only phrases that appear in a Locations section,
+    # near a US address, or match a strong-facility-tail pattern
+    # become valid site:* candidates. Everything else (random
+    # landmarks, standards bodies, header fragments) gets dropped.
+    from app.core.site_detection import find_authoritative_site_phrases
+    atom_list = list(atoms)
+    authoritative_sites = find_authoritative_site_phrases(atom_list)
+
+    # When the catalog contains LLM-discovered sites that NO atom's
+    # raw_text would naturally emit (e.g. "Geary County Schools USD
+    # 475" lives in a PDF cover-page heading, not in any body block),
+    # we explicitly inject ``site:<slug>`` keys onto atoms that
+    # mention the site in their body OR section_path. Without this
+    # step the LLM's discoveries never reach atom.entity_keys and
+    # downstream EntityRecord fusion has nothing to fuse.
+    def _slug_for_site(phrase: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", phrase.lower()).strip("_")
+
+    _SITE_INJECTION_KEYS: dict[str, str] = {
+        _slug_for_site(p): p for p in authoritative_sites
+    }
+
+    for atom in atom_list:
+        existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
         value = getattr(atom, "value", None)
-        new_keys = extract_keys(text, pack=pack, value=value)
-        if new_keys:
-            new_keys = filter_entity_keys_for_atom(atom, new_keys)
+        # Concatenate section-path context so institutional names that
+        # live in headings (not body) still emit ``site:`` / ``customer:``
+        # keys onto child atoms.
+        section_ctx = _section_path_context(atom)
+        scan_text = f"{text} {section_ctx}".strip() if section_ctx else text
+
+        if not existing:
+            new_keys = extract_keys(
+                scan_text, pack=pack, value=value,
+                authoritative_sites=authoritative_sites,
+            )
             if new_keys:
-                atom.entity_keys = new_keys
+                new_keys = filter_entity_keys_for_atom(atom, new_keys)
+                if new_keys:
+                    atom.entity_keys = new_keys
+                    atoms_enriched += 1
+                    total_keys_added += len(new_keys)
+            continue
+
+        # Parser already populated keys. Run hygiene first.
+        cleaned = filter_entity_keys_for_atom(atom, existing)
+        # Augment with textual-pattern keys the parser doesn't emit
+        # per-row (sites, dates, money, stakeholders).
+        textual_keys = extract_keys(
+            scan_text, pack=pack, value=value,
+            authoritative_sites=authoritative_sites,
+        )
+        existing_prefixes = {
+            k.split(":", 1)[0] + ":" if ":" in k else k
+            for k in cleaned
+        }
+        augment: list[str] = []
+        for k in textual_keys:
+            if ":" not in k:
+                continue
+            prefix = k.split(":", 1)[0] + ":"
+            if prefix not in _AUGMENT_ALWAYS_PREFIXES:
+                continue
+            # Preserve parser-supplied keys for the same prefix —
+            # parser knows the structured source better. Only add
+            # NEW prefix families.
+            if prefix in existing_prefixes:
+                continue
+            augment.append(k)
+        if augment:
+            merged = sorted(set(cleaned) | set(augment))
+            merged = filter_entity_keys_for_atom(atom, merged)
+            if merged != list(cleaned):
+                atom.entity_keys = merged
                 atoms_enriched += 1
-                total_keys_added += len(new_keys)
+                total_keys_added += len(augment)
+        elif cleaned != list(getattr(atom, "entity_keys", [])):
+            atom.entity_keys = cleaned
+
+    # ─── LLM-DISCOVERED SITE INJECTION ───
+    # For each site in the authoritative catalog that no atom's
+    # entity_keys currently carries, walk atoms looking for atoms
+    # whose text mentions the site, and inject a ``site:<slug>``
+    # key. This propagates LLM-found sites (especially those in
+    # PDF cover-page headings) onto the atoms that reference them
+    # so EntityRecord fusion has something to bind to.
+    if _SITE_INJECTION_KEYS:
+        already_emitted_site_slugs: set[str] = set()
+        for atom in atom_list:
+            for k in atom.entity_keys or []:
+                if k.startswith("site:"):
+                    already_emitted_site_slugs.add(k[len("site:"):])
+        missing_sites = {
+            slug: phrase
+            for slug, phrase in _SITE_INJECTION_KEYS.items()
+            if slug and slug not in already_emitted_site_slugs
+        }
+        if missing_sites:
+            for atom in atom_list:
+                text = getattr(atom, "raw_text", "") or ""
+                section_ctx = _section_path_context(atom)
+                full = f"{text} {section_ctx}".lower()
+                if not full.strip():
+                    continue
+                to_add: list[str] = []
+                for slug, phrase in missing_sites.items():
+                    # Match the phrase loosely (word boundary on
+                    # first word + at least one shared meaningful
+                    # token). Avoid over-injecting by requiring the
+                    # phrase's longest word to be present.
+                    words = [w for w in phrase.split() if len(w) >= 4]
+                    if not words:
+                        continue
+                    # Trigger if the longest word + at least one
+                    # other meaningful word from the phrase are
+                    # both present in the atom text+headings.
+                    longest = max(words, key=len)
+                    if longest in full:
+                        hits = sum(1 for w in words if w in full)
+                        if hits >= min(2, len(words)):
+                            to_add.append(f"site:{slug}")
+                if to_add:
+                    merged_keys = sorted(set(atom.entity_keys or []) | set(to_add))
+                    atom.entity_keys = merged_keys
+                    atoms_enriched += 1
+                    total_keys_added += len(to_add)
+
+    # ─── MULTI-ENTITY LLM PASS ───
+    # ONE LLM call returns customer, stakeholders, milestones,
+    # requirements, and site canonical clusters. Each item gets
+    # injected onto the atoms that mention it (same loose-match
+    # heuristic as the site injection above). Lifts the B+/A-
+    # extractors (stakeholders, milestones, requirements, customer
+    # fusion, site dedup) to A+ universally.
+    try:
+        from app.core.multi_entity_llm import extract_multi_entities_with_llm
+        from app.core.site_llm_verify import ollama_reachable
+        do_multi = (
+            not os.environ.get("SOWSMITH_MULTI_ENTITY_DISABLE")
+            and ollama_reachable()
+        )
+    except Exception:
+        do_multi = False
+        extract_multi_entities_with_llm = None  # type: ignore
+    multi_result: dict[str, Any] = {}
+    if do_multi and extract_multi_entities_with_llm is not None:
+        try:
+            multi_result = extract_multi_entities_with_llm(atom_list) or {}
+        except Exception:
+            multi_result = {}
+
+    if multi_result:
+        injected, key_count = _inject_multi_entity_keys(
+            atom_list, multi_result
+        )
+        atoms_enriched += injected
+        total_keys_added += key_count
+
+    # ─── FINAL HYGIENE PASS ───
+    # Universal safety net: walk every atom's entity_keys and drop:
+    #   - site:* keys that fail site hygiene
+    #   - stakeholder:* keys that look like field labels (column
+    #     headers, form fields, table column names) rather than
+    #     real people names
+    # This catches noise that bypassed earlier gates regardless of
+    # which emitter produced the key (parser-supplied, regex
+    # _emit_stakeholders, LLM-injected, etc.).
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site
+    except Exception:
+        _is_obvious_non_site = None  # type: ignore
+    try:
+        from app.core.multi_entity_llm import _is_likely_field_label
+    except Exception:
+        _is_likely_field_label = None  # type: ignore
+
+    for atom in atom_list:
+        current = atom.entity_keys or []
+        if not current:
+            continue
+        kept = []
+        dropped_any = False
+        for k in current:
+            if k.startswith("site:") and _is_obvious_non_site is not None:
+                phrase = k[len("site:"):].replace("_", " ")
+                if _is_obvious_non_site(phrase):
+                    dropped_any = True
+                    continue
+            if k.startswith("stakeholder:") and _is_likely_field_label is not None:
+                phrase = k[len("stakeholder:"):].replace("_", " ")
+                if _is_likely_field_label(phrase):
+                    dropped_any = True
+                    continue
+            kept.append(k)
+        if dropped_any:
+            atom.entity_keys = kept
+
+    # ─── FINAL PASS: contact-anchor stakeholder recovery ───
+    # The noisy regex _emit_stakeholders may have been dropped by the
+    # LLM-trumps-regex rule above (or by hygiene). The contact-anchor
+    # extractor (_emit_person_from_contact) is the LOW-FALSE-POSITIVE
+    # path — it requires an email or explicit "contact <Name>" /
+    # "Project Manager: <Name>" trigger, so its output is PM-critical
+    # signal that should NEVER be dropped just because the LLM ran
+    # successfully. Walk every atom one more time and re-emit those
+    # keys. Catches Glenn Tilleman, Shaun Tozer, John Foster, Matthew
+    # Brener even when LLM extract returned a different / no person.
+    for atom in atom_list:
+        raw = getattr(atom, "raw_text", "") or ""
+        if not raw:
+            continue
+        contact_keys = _emit_person_from_contact(raw)
+        contact_keys |= _emit_email_keys(raw)
+        contact_keys |= _emit_phone_keys(raw)
+        if not contact_keys:
+            continue
+        existing = set(atom.entity_keys or [])
+        new_keys = contact_keys - existing
+        if new_keys:
+            atom.entity_keys = sorted(existing | new_keys)
+            atoms_enriched += 1
+            total_keys_added += len(new_keys)
+
     return atoms_enriched, total_keys_added
+
+
+def _slug(text: str) -> str:
+    """Lowercase + non-alphanumeric → underscore + strip edges."""
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _atom_full_text(atom: Any) -> str:
+    """Atom body + section_path headings, lowercased — for matching."""
+    parts: list[str] = []
+    raw = getattr(atom, "raw_text", None) or ""
+    if isinstance(raw, str):
+        parts.append(raw)
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        if refs:
+            loc = getattr(refs[0], "locator", None) or {}
+            if isinstance(loc, dict):
+                sp = loc.get("section_path")
+                if isinstance(sp, list):
+                    for h in sp:
+                        if isinstance(h, str):
+                            parts.append(h)
+                for k in ("section", "heading", "title"):
+                    v = loc.get(k)
+                    if isinstance(v, str):
+                        parts.append(v)
+    except Exception:
+        pass
+    return " ".join(parts).lower()
+
+
+def _phrase_in_atom(phrase: str, atom_text: str) -> bool:
+    """Match LLM-emitted phrase against atom text using a tolerant
+    rule: phrase's distinguishing word (longest ≥4-char word) must
+    appear AND at least 2 of the phrase's meaningful tokens must
+    appear in the atom text.
+    """
+    if not phrase or not atom_text:
+        return False
+    words = [w for w in re.split(r"\W+", phrase.lower()) if len(w) >= 4]
+    if not words:
+        # Fallback: substring match for short phrases (e.g., "USD 475")
+        return phrase.lower() in atom_text
+    longest = max(words, key=len)
+    if longest not in atom_text:
+        return False
+    hits = sum(1 for w in words if w in atom_text)
+    return hits >= min(2, len(words))
+
+
+def _inject_multi_entity_keys(
+    atom_list: list[Any], multi: dict[str, Any]
+) -> tuple[int, int]:
+    """Walk atoms; inject customer / stakeholder / milestone /
+    requirement / site keys from the LLM multi-entity result onto
+    atoms whose text mentions the entity.
+
+    Returns (atoms_modified, keys_added).
+
+    When the LLM provided customer or stakeholder data, ALL pre-
+    existing regex-emitted customer:/stakeholder: keys are dropped
+    first (the LLM read the full doc context and is the source of
+    truth for those categories). The injection then re-populates
+    with clean LLM-derived keys.
+    """
+    atoms_modified = 0
+    keys_added = 0
+
+    # Pre-compute slugs for each entity
+    customer = multi.get("customer")
+    customer_slug = _slug(customer) if isinstance(customer, str) and customer else None
+
+    stakeholders = multi.get("stakeholders") or []
+    stakeholder_entries: list[tuple[str, str]] = []  # (phrase, slug)
+    for s in stakeholders:
+        name = s.get("name")
+        if isinstance(name, str) and name.strip():
+            stakeholder_entries.append((name.strip(), _slug(name)))
+
+    # LLM-AUTHORITATIVE for customer + stakeholder when the LLM ran
+    # successfully (returned ANY output for any category):
+    #
+    #   - customer:    drop regex emissions; the LLM's single
+    #                  canonical customer is the truth.
+    #   - stakeholder: drop ALL regex _emit_stakeholders emissions
+    #                  (these include jargon-y false positives like
+    #                  "annual_electricity_bill" on Pack 14 Neptune
+    #                  because the regex catches any "First Last"
+    #                  + role-context pattern). The new contact-
+    #                  anchor emitter (_emit_person_from_contact)
+    #                  RUNS AGAIN at the end of enrich_atoms to
+    #                  recover PM-critical names like Glenn Tilleman,
+    #                  Shaun Tozer, John Foster, Matthew Brener.
+    #                  Contact-anchor requires email/phone or
+    #                  explicit trigger ("contact <Name>") so its
+    #                  false-positive rate is much lower than the
+    #                  noisy regex.
+    llm_ran = bool(multi.get("customer") is not None or
+                   multi.get("stakeholders") or
+                   multi.get("milestones") or
+                   multi.get("requirements") or
+                   multi.get("site_clusters"))
+    drop_regex_customer = llm_ran and bool(customer_slug)
+    drop_regex_stakeholder = llm_ran
+    if drop_regex_customer or drop_regex_stakeholder:
+        for atom in atom_list:
+            keys = atom.entity_keys or []
+            if not keys:
+                continue
+            filtered = []
+            changed = False
+            for k in keys:
+                if drop_regex_customer and k.startswith("customer:"):
+                    changed = True
+                    continue
+                if drop_regex_stakeholder and k.startswith("stakeholder:"):
+                    changed = True
+                    continue
+                filtered.append(k)
+            if changed:
+                atom.entity_keys = filtered
+
+    milestones = multi.get("milestones") or []
+    milestone_entries: list[tuple[str, str]] = []
+    for m in milestones:
+        name = m.get("name")
+        if isinstance(name, str) and name.strip():
+            milestone_entries.append((name.strip(), _slug(name)))
+
+    requirements = multi.get("requirements") or []
+    requirement_entries: list[tuple[str, str]] = []
+    for r in requirements:
+        text = r.get("text")
+        if isinstance(text, str) and text.strip():
+            # Use first 6 distinctive words as the matching phrase
+            words = [w for w in re.split(r"\W+", text) if len(w) >= 4][:6]
+            if not words:
+                continue
+            match_phrase = " ".join(words)
+            requirement_entries.append((match_phrase, _slug(text[:80])))
+
+    site_clusters = multi.get("site_clusters") or []
+    # cluster_lookups: list of (canonical_slug, list_of_alias_phrases)
+    cluster_lookups: list[tuple[str, list[str]]] = []
+    for c in site_clusters:
+        canon = c.get("canonical_name")
+        aliases = c.get("aliases") or []
+        if not isinstance(canon, str) or not canon.strip():
+            continue
+        canon_slug = _slug(canon)
+        alias_phrases = [a for a in aliases if isinstance(a, str) and a.strip()]
+        if not alias_phrases:
+            continue
+        cluster_lookups.append((canon_slug, alias_phrases))
+
+    for atom in atom_list:
+        full = _atom_full_text(atom)
+        if not full:
+            continue
+        to_add: list[str] = []
+
+        # Customer — inject on EVERY atom that mentions the customer
+        # name. This is OK because the customer is genuinely the
+        # subject of every document in their bid package.
+        if customer_slug and customer:
+            if _phrase_in_atom(customer, full):
+                to_add.append(f"customer:{customer_slug}")
+
+        # Stakeholders
+        for name, slug in stakeholder_entries:
+            if _phrase_in_atom(name, full):
+                to_add.append(f"stakeholder:{slug}")
+
+        # Milestones — match by name OR by ISO date if present
+        for name, slug in milestone_entries:
+            if _phrase_in_atom(name, full):
+                to_add.append(f"milestone:{slug}")
+
+        # Requirements
+        for match_phrase, slug in requirement_entries:
+            if _phrase_in_atom(match_phrase, full):
+                to_add.append(f"requirement:{slug}")
+
+        # Sites — emit the CANONICAL site key for each cluster whose
+        # alias phrase appears in this atom. This force-merges all
+        # surface forms onto the canonical key.
+        for canon_slug, alias_phrases in cluster_lookups:
+            matched = False
+            for alias in alias_phrases:
+                if _phrase_in_atom(alias, full):
+                    matched = True
+                    break
+            if matched:
+                to_add.append(f"site:{canon_slug}")
+
+        if to_add:
+            existing_keys = set(atom.entity_keys or [])
+            new_keys = [k for k in to_add if k not in existing_keys]
+            if new_keys:
+                atom.entity_keys = sorted(existing_keys | set(new_keys))
+                atoms_modified += 1
+                keys_added += len(new_keys)
+
+    return atoms_modified, keys_added
 
 
 __all__ = ["extract_keys", "enrich_atoms"]

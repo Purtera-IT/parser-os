@@ -4,6 +4,18 @@
   "name": "Copper Cabling / Low Voltage Evidence Domain Pack",
   "status": "generated_reference_pack",
   "description": "Large deterministic alias, authority, packet, and risk reference for Purtera Evidence Compiler copper/low-voltage hardening.",
+  "detection_targets": [
+    {"key": "copper_mdf", "entity_key": "room:mdf", "completeness": "load_bearing", "modalities": ["text_tag", "glyph_template"], "aliases": ["MDF", "main distribution frame"]},
+    {"key": "copper_idf", "entity_key": "room:idf", "completeness": "load_bearing", "modalities": ["text_tag", "glyph_template"], "aliases": ["IDF", "intermediate distribution frame", "TR", "telecom room"]},
+    {"key": "copper_data_drop", "entity_key": "device:data_drop", "completeness": "load_bearing", "modalities": ["text_tag", "glyph_template"], "aliases": ["data drop", "data jack", "rj45", "voice drop", "tv drop", "wap drop", "POS drop"]},
+    {"key": "copper_jack", "entity_key": "device:rj45_jack", "completeness": "load_bearing", "modalities": ["text_tag", "glyph_template"], "aliases": ["jack", "outlet", "modular jack", "keystone"]},
+    {"key": "copper_cable_run", "entity_key": "device:cable_run", "completeness": "load_bearing", "modalities": ["line_run"], "aliases": ["cable run", "category 6", "cat6", "cat6a", "horizontal run"]},
+    {"key": "copper_patch_panel", "entity_key": "device:patch_panel", "completeness": "load_bearing", "modalities": ["text_tag", "glyph_template"], "aliases": ["patch panel", "24-port panel", "48-port panel"]},
+    {"key": "copper_rack", "entity_key": "device:rack", "completeness": "informational", "modalities": ["text_tag", "glyph_template"], "aliases": ["rack", "cabinet"]},
+    {"key": "copper_j_hook", "entity_key": "device:j_hook", "completeness": "informational", "modalities": ["text_tag", "glyph_template"], "aliases": ["j-hook", "j hook", "cable hook"]},
+    {"key": "copper_conduit", "entity_key": "device:conduit", "completeness": "informational", "modalities": ["line_run", "vector_shape"], "aliases": ["conduit", "emt", "pathway"]},
+    {"key": "copper_run_footage", "entity_key": "measure:cable_footage", "completeness": "informational", "modalities": ["text_tag"], "aliases": ["lf", "linear feet", "footage"]}
+  ],
   "artifact_role_patterns": {
     "approved_site_roster": {
       "filename_contains": [

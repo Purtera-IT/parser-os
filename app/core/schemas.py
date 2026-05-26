@@ -21,6 +21,19 @@ class ArtifactType(str, Enum):
     po = "po"
     txt = "txt"
     pdf = "pdf"
+    # New universality artifact types
+    pptx = "pptx"      # PowerPoint slide decks
+    image = "image"    # HEIC / PNG / JPG site survey photos, network diagrams
+    html = "html"      # Confluence / wiki / customer static-docs exports
+    mbox = "mbox"      # Gmail / Thunderbird email archive (multi-message)
+    rtf = "rtf"        # Rich Text Format (legacy SOW / contract templates)
+    ics = "ics"        # iCalendar invites (kickoff meetings, etc.)
+    zip_archive = "zip" # ZIP containers; auto-listed contents
+    msg = "msg"        # Outlook native email format
+    odt = "odt"        # OpenDocument Text (LibreOffice / OpenOffice writer)
+    ods = "ods"        # OpenDocument Spreadsheet
+    vsdx = "vsdx"      # Microsoft Visio diagrams
+    mpp = "mpp"        # Microsoft Project schedule files
 
 
 class AtomType(str, Enum):
@@ -78,6 +91,38 @@ class AtomType(str, Enum):
     # regulation rather than a project-internal rule.  Maps to the
     # ``compliance_clause`` packet family.
     compliance = "compliance"
+    # Schematic / drawing atoms (PR1 of the schematic intelligence
+    # upgrade). A schematic page is read legend-first: the parser
+    # locates and parses the legend, declares a detection target set
+    # for the page (intersected with the active domain pack), detects
+    # each instance of every target symbol on the drawing body, and
+    # emits warnings for missing legends, orphans, and unknowns. Every
+    # schematic atom carries a SourceRef whose locator has page + bbox
+    # in pdf_points so source_replay can re-render and crop-hash
+    # verify it.
+    schematic_legend = "schematic_legend"
+    schematic_detection_target_set = "schematic_detection_target_set"
+    schematic_symbol_detection = "schematic_symbol_detection"
+    schematic_warning = "schematic_warning"
+    # Title-block field set parsed off a drawing sheet (sheet number,
+    # sheet title, scale, issue date, revision, project name, designer).
+    # One per drawing page that carries an extractable title block.
+    schematic_sheet_metadata = "schematic_sheet_metadata"
+    # Room / zone label on a floor plan. Each ``schematic_symbol_detection``
+    # near a room atom carries a ``located_in_room_id`` so downstream
+    # consumers can group counts by room.
+    schematic_room = "schematic_room"
+    # A numbered keyed-note row and its resolved body callout(s).
+    schematic_keyed_note = "schematic_keyed_note"
+    schematic_note_callout = "schematic_note_callout"
+    # One row from a construction schedule table (camera/door/
+    # equipment/fixture/panel schedule). Joined to symbol detections
+    # via the shared tag (CR-101 schedule row joins to CR-101 detection).
+    schematic_schedule_row = "schematic_schedule_row"
+    # A line run on the drawing: conduit, cable, riser, home-run.
+    # Each atom carries the polyline endpoints and (when snapping
+    # succeeds) the device / panel atoms it connects.
+    schematic_line_run = "schematic_line_run"
 
 
 class AuthorityClass(str, Enum):

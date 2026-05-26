@@ -1,0 +1,15 @@
+{
+  "case_id": "SCHEMATIC_SECURITY_RISER",
+  "service_line": "security_camera",
+  "recommended_domain_pack": "security_camera",
+  "bundle_summary": "Synthetic security riser: PTZ + dome + card reader across one sheet.",
+  "expected_legend_entries_min": 3,
+  "expected_detection_targets_include": [
+    "ptz_camera"
+  ],
+  "expected_symbol_counts": {
+    "ptz_camera": 2,
+    "fixed_dome_camera": 4
+  },
+  "expected_all_detections_have_bbox": true
+}

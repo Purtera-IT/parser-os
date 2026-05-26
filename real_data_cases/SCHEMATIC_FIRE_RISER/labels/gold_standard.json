@@ -1,0 +1,12 @@
+{
+  "case_id": "SCHEMATIC_FIRE_RISER",
+  "service_line": "fire_safety",
+  "recommended_domain_pack": "fire_safety",
+  "bundle_summary": "Synthetic fire-alarm riser with smoke / heat / pull / horn-strobe.",
+  "expected_legend_entries_min": 4,
+  "expected_detection_targets_include": [
+    "smoke_detector",
+    "heat_detector"
+  ],
+  "expected_all_detections_have_bbox": true
+}

@@ -324,6 +324,33 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
                     full_row,
                 )
 
+    # Constraint-keyword fallback: xlsx parser emits synthetic atoms
+    # like "After-hours access constraint" / "Site access constraint"
+    # whose canonical phrase doesn't appear in any cell. Verify by
+    # matching the atom's value.constraint_type against keyword
+    # signals in the actual row text. This keeps receipts honest
+    # (the row contains "after-hours" → after_hours constraint) while
+    # not failing verification on parser-synthesized headlines.
+    if full_row and isinstance(atom.value, dict):
+        ctype = atom.value.get("constraint_type")
+        if isinstance(ctype, str) and ctype:
+            ctype_signals = {
+                "after_hours": ("after-hours", "after hours", "nights only", "weekends only"),
+                "access": ("badge", "escort", "ceiling access"),
+                "lift": ("lift required", "elevator", "customer provides lift"),
+                "certification": ("certification required", "certify", "test standard"),
+            }
+            keywords = ctype_signals.get(ctype, ())
+            full_norm = _replay_norm(full_row)
+            if any(_replay_norm(kw) in full_norm for kw in keywords):
+                return _receipt(
+                    atom,
+                    source_ref,
+                    "verified",
+                    f"Spreadsheet row verified via constraint_type={ctype!r}",
+                    full_row,
+                )
+
     return _receipt(
         atom,
         source_ref,
@@ -398,11 +425,29 @@ def _verify_pdf_block(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> 
     or ``bullet_path`` for bullets) inside that doc and check that the
     atom's text actually came from there.  This makes PDF receipts
     first-class — same status as XLSX rows and DOCX paragraphs.
+
+    Schematic atoms (legend / detection / warning) instead point at a
+    bbox region of the page.  The locator carries ``page``, ``bbox``,
+    ``bbox_units="pdf_points"``, and ``crop_sha256``; we re-render the
+    page at a fixed DPI, crop the bbox, and hash the pixels to confirm
+    nothing has drifted.  This path is taken whenever the locator has
+    no ``block_id`` but does have a bbox + crop hash.
     """
     locator = source_ref.locator
     block_id = locator.get("block_id")
-    if not block_id:
+    has_bbox = _locator_is_bbox_crop(locator)
+    if not block_id and has_bbox:
+        return _verify_pdf_bbox_crop(atom, source_ref, path)
+    if not block_id and not has_bbox:
         return _receipt(atom, source_ref, "unsupported", "PDF locator missing block_id")
+    # Both block_id and a bbox+crop_sha256 are present. Both must
+    # verify; if either fails, the receipt fails so the locator's
+    # over-broad provenance can't quietly half-verify.
+    if block_id and has_bbox:
+        bbox_receipt = _verify_pdf_bbox_crop(atom, source_ref, path)
+        if bbox_receipt.replay_status != "verified":
+            return bbox_receipt
+        # fall through to block_id check below
     structured = _load_structured_doc(path)
     if structured is None:
         return _receipt(
@@ -502,6 +547,108 @@ def _bullet_at_path(items: list[dict[str, Any]], path: list[int]) -> dict[str, A
             return None
         current = node.get("children", []) or []
     return node
+
+
+def _locator_is_bbox_crop(locator: dict[str, Any]) -> bool:
+    bbox = locator.get("bbox")
+    if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+        return False
+    if locator.get("bbox_units") != "pdf_points":
+        return False
+    return bool(locator.get("crop_sha256"))
+
+
+def _verify_pdf_bbox_crop(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
+    """Verify a schematic PDF atom by re-rendering its bbox and hashing pixels.
+
+    Deterministic by construction: fixed DPI, fixed PyMuPDF render
+    parameters, and the hash is namespaced with ``crop_sha256_of_pixels``
+    so dimension differences cannot collide.  Returns ``verified`` only
+    when the recomputed hash equals the stored ``crop_sha256``.
+    """
+    from app.parsers.schematic_models import SCHEMATIC_REPLAY_DPI, crop_sha256_of_pixels
+
+    locator = source_ref.locator
+    page_index = locator.get("page")
+    if not isinstance(page_index, int) or page_index < 0:
+        return _receipt(atom, source_ref, "failed", "Schematic locator missing valid page index")
+    bbox = locator.get("bbox")
+    if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+        return _receipt(atom, source_ref, "failed", "Schematic locator missing valid bbox")
+    try:
+        x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (TypeError, ValueError):
+        return _receipt(atom, source_ref, "failed", "Schematic locator bbox is not numeric")
+    if not (x1 > x0 and y1 > y0):
+        return _receipt(atom, source_ref, "failed", "Schematic locator bbox is not strictly positive")
+    expected_hash = str(locator.get("crop_sha256") or "")
+    if not expected_hash:
+        return _receipt(atom, source_ref, "failed", "Schematic locator missing crop_sha256")
+
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except ImportError:  # pragma: no cover — pymupdf is in pyproject deps
+        return _receipt(atom, source_ref, "unsupported", "PyMuPDF unavailable for schematic replay")
+
+    try:
+        doc = fitz.open(str(path))
+    except Exception as exc:  # pragma: no cover
+        return _receipt(atom, source_ref, "failed", f"Could not open PDF for replay: {exc}")
+    try:
+        if page_index >= doc.page_count:
+            return _receipt(
+                atom,
+                source_ref,
+                "failed",
+                f"Page index {page_index} out of range (page_count={doc.page_count})",
+            )
+        page = doc.load_page(page_index)
+        # Clamp bbox to page bounds so a malformed-but-positive locator
+        # (e.g. coordinates that drift outside the page after rounding,
+        # or a legend bbox that grew past the page edge) cannot throw
+        # inside ``get_pixmap``. We only clamp when the entire bbox
+        # intersects the page; an entirely off-page bbox stays an
+        # explicit failure.
+        page_rect = page.rect
+        px0 = max(float(page_rect.x0), min(x0, float(page_rect.x1)))
+        py0 = max(float(page_rect.y0), min(y0, float(page_rect.y1)))
+        px1 = max(float(page_rect.x0), min(x1, float(page_rect.x1)))
+        py1 = max(float(page_rect.y0), min(y1, float(page_rect.y1)))
+        if not (px1 > px0 and py1 > py0):
+            return _receipt(
+                atom,
+                source_ref,
+                "failed",
+                "Schematic bbox is entirely outside the page rectangle",
+            )
+        clip = fitz.Rect(px0, py0, px1, py1)
+        zoom = SCHEMATIC_REPLAY_DPI / 72.0
+        matrix = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False, colorspace=fitz.csRGB)
+        actual_hash = crop_sha256_of_pixels(pix.samples, pix.width, pix.height, pix.n)
+    except Exception as exc:  # pragma: no cover
+        return _receipt(atom, source_ref, "failed", f"Crop render failed: {exc}")
+    finally:
+        try:
+            doc.close()
+        except Exception:  # pragma: no cover
+            pass
+
+    if actual_hash == expected_hash:
+        return _receipt(
+            atom,
+            source_ref,
+            "verified",
+            "Schematic bbox crop hash verified",
+            extracted_snippet=f"crop_sha256={actual_hash}",
+        )
+    return _receipt(
+        atom,
+        source_ref,
+        "failed",
+        f"Schematic bbox crop hash mismatch (expected {expected_hash[:12]}…, got {actual_hash[:12]}…)",
+        extracted_snippet=f"crop_sha256={actual_hash}",
+    )
 
 
 def _flatten_bullets(items: list[dict[str, Any]]) -> list[str]:

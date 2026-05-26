@@ -51,7 +51,24 @@ _BULLET_RE = re.compile(r"^\s*[-*+]\s+(?P<text>.+?)\s*$")
 _NUMBERED_RE = re.compile(r"^\s*\d+[.)]\s+(?P<text>.+?)\s*$")
 
 _EXCLUSION_RE = re.compile(
-    r"\b(exclud(?:e|ed|es|ing)|out of scope|not included|not in scope|by others|nic)\b",
+    r"\b(exclud(?:e|ed|es|ing)|out of scope|not included|not in scope|by others|nic|"
+    r"remove from scope|please remove|removed?\s+from\s+the\s+scope|"
+    r"cancel(?:led|ling|s)?(?:\s+the)?|cancellation|"
+    r"do not include|drop\s+(?:the|from)|deletion?|"
+    r"hold off|on hold|defer(?:red)?\s+from|postpone(?:d)?)\b",
+    re.I,
+)
+_CHANGE_ORDER_RE = re.compile(
+    r"\b(change\s+order|reduce\s+(?:scope|count|the\s+\w+)\s+(?:from|to)?|"
+    r"revised\s+scope|approve(?:d)?\s+the\s+revised|"
+    r"reduce\s+\w+\s+count\s+from\s+\d+\s+to\s+\d+|"
+    r"add(?:ed)?\s+\d+\s+(?:more|additional)|"
+    r"increase\s+(?:scope|count)|expand(?:ed)?\s+scope|"
+    r"scope\s+(?:reduction|change|update))\b",
+    re.I,
+)
+_CHANGE_DELTA_RE = re.compile(
+    r"\b(?:from|reduce(?:d)?\s+(?:from)?)\s+(\d{1,5})\s+to\s+(\d{1,5})\b",
     re.I,
 )
 _ASSUMPTION_RE = re.compile(
@@ -59,7 +76,11 @@ _ASSUMPTION_RE = re.compile(
     re.I,
 )
 _OPEN_Q_RE = re.compile(
-    r"\?|\b(tbd|to be confirmed|unknown|pending|clarify|confirm)\b",
+    r"\?"
+    r"|\b(tbd|to\s+be\s+confirmed|to\s+be\s+determined|unknown|"
+    r"open\s+question|please\s+confirm|need(?:s)?\s+confirmation|"
+    r"awaiting\s+confirmation|still\s+(?:tbd|pending|outstanding)|"
+    r"to\s+clarify|need(?:s)?\s+clarification|pending\s+(?:answer|response))\b",
     re.I,
 )
 _CONSTRAINT_RE = re.compile(
@@ -181,6 +202,140 @@ class MarkdownParser(BaseParser):
             )
         return ParserOutput(atoms=atoms)
 
+    @staticmethod
+    def _split_into_qty_sentences(text: str) -> list[tuple[str, int]]:
+        """Return ``[(sentence_text, offset)]`` when ``text`` has 2+
+        sentences that each carry their own ``_QTY_RE`` match.
+
+        Otherwise return ``[]`` so the caller keeps the original block
+        intact. Sentences are split on ``.``/``?``/``!`` followed by
+        whitespace + uppercase. Empty list means "don't split".
+        """
+        if not text or len(text) < 30:
+            return []
+        # Sentence-end pattern: punctuation then space-and-capital.
+        boundaries = list(re.finditer(r"[.?!]\s+(?=[A-Z])", text))
+        if not boundaries:
+            return []
+        sentences: list[tuple[str, int]] = []
+        start = 0
+        for b in boundaries:
+            end = b.end()
+            sentences.append((text[start:end].strip(), start))
+            start = end
+        if start < len(text):
+            sentences.append((text[start:].strip(), start))
+        # Only return when 2+ sentences AND at least 2 carry either a
+        # qty match OR a clear scope-impacting signal (exclusion,
+        # change order, delta). Single-signal paragraphs stay merged.
+        if len(sentences) < 2:
+            return []
+        def _is_scope_impacting(s: str) -> bool:
+            if _QTY_RE.search(s):
+                return True
+            if _EXCLUSION_RE.search(s):
+                return True
+            if _CHANGE_ORDER_RE.search(s):
+                return True
+            if _CHANGE_DELTA_RE.search(s):
+                return True
+            return False
+        if sum(1 for s, _ in sentences if _is_scope_impacting(s)) < 2:
+            return []
+        return sentences
+
+    def _emit_atoms_for_sentence(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        sub_block: MarkdownBlock,
+        block_index: int,
+        sentence_index: int,
+    ) -> list[EvidenceAtom]:
+        atom_types = _classify_block(
+            sub_block.text,
+            sub_block.section_path,
+            block_kind=sub_block.block_kind,
+        )
+        if not atom_types:
+            atom_types = [AtomType.scope_item]
+        locator = {
+            "line_start": sub_block.line_start,
+            "line_end": sub_block.line_end,
+            "section_path": list(sub_block.section_path),
+            "block_kind": sub_block.block_kind,
+            "block_index": block_index,
+            "sentence_index": sentence_index,
+        }
+        source_ref = SourceRef(
+            id=stable_id(
+                "src", artifact_id, "md", sub_block.line_start, sub_block.line_end, block_index, sentence_index
+            ),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.txt,
+            filename=filename,
+            locator=locator,
+            extraction_method="markdown_sentence_split",
+            parser_version=self.parser_version,
+        )
+        entity_keys = _entity_keys_from_text(sub_block.text)
+        authority_class = _authority_for_block(sub_block.text, sub_block.section_path)
+        out: list[EvidenceAtom] = []
+        for atom_type in atom_types:
+            value: dict[str, Any] = {
+                "text": sub_block.text,
+                "section_path": list(sub_block.section_path),
+                "block_kind": sub_block.block_kind,
+                "sentence_index": sentence_index,
+            }
+            qty_match = _QTY_RE.search(sub_block.text)
+            if atom_type is AtomType.quantity and qty_match:
+                value["quantity"] = parse_quantity(qty_match.group("qty"))
+                value["unit"] = qty_match.group("unit").lower()
+            if atom_type is AtomType.constraint:
+                sla = _extract_sla_value(sub_block.text)
+                if sla:
+                    value["sla"] = sla
+            if atom_type is AtomType.customer_instruction:
+                delta_match = _CHANGE_DELTA_RE.search(sub_block.text)
+                if delta_match:
+                    try:
+                        from_v = int(delta_match.group(1))
+                        to_v = int(delta_match.group(2))
+                        value["change_delta"] = {
+                            "from": from_v,
+                            "to": to_v,
+                            "delta": to_v - from_v,
+                        }
+                    except (ValueError, IndexError):
+                        pass
+            out.append(
+                EvidenceAtom(
+                    id=stable_id(
+                        "atm", project_id, artifact_id, "markdown",
+                        atom_type.value, sub_block.line_start, sub_block.line_end,
+                        sentence_index, sub_block.text,
+                    ),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=sub_block.text,
+                    normalized_text=normalize_text(sub_block.text),
+                    value=value,
+                    entity_keys=entity_keys,
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=authority_class,
+                    confidence=0.91,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
+
     def _emit_atoms_for_block(
         self,
         *,
@@ -197,6 +352,34 @@ class MarkdownParser(BaseParser):
         )
         if not atom_types:
             atom_types = [AtomType.scope_item]
+
+        # Self-contradiction unlock: when a paragraph block contains
+        # MULTIPLE sentences and each sentence carries its own quantity
+        # match, split the block into one atom per sentence. This lets
+        # the cross-doc binding fire intra-doc edges when the same
+        # device is mentioned with conflicting counts ("24 cameras...
+        # 30 cameras... 28 cameras."). Tables / bullets are untouched.
+        if block.block_kind == "paragraph":
+            sentences = self._split_into_qty_sentences(block.text)
+            if len(sentences) >= 2:
+                out: list[EvidenceAtom] = []
+                for s_idx, (s_text, s_offset) in enumerate(sentences):
+                    sub_block = MarkdownBlock(
+                        text=s_text,
+                        line_start=block.line_start,
+                        line_end=block.line_end,
+                        section_path=block.section_path,
+                        block_kind="paragraph",
+                    )
+                    out.extend(self._emit_atoms_for_sentence(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=filename,
+                        sub_block=sub_block,
+                        block_index=block_index,
+                        sentence_index=s_idx,
+                    ))
+                return out
 
         locator = {
             "line_start": block.line_start,
@@ -233,6 +416,72 @@ class MarkdownParser(BaseParser):
                 value["quantity"] = parse_quantity(qty_match.group("qty"))
                 value["unit"] = qty_match.group("unit").lower()
 
+            # SLA structured payload — uptime, response/resolution
+            # times, service credits, support coverage hours. Attached
+            # to constraint atoms so a PM can render an SLA tab
+            # directly without re-parsing the raw text.
+            if atom_type is AtomType.constraint:
+                sla = _extract_sla_value(block.text)
+                if sla:
+                    value["sla"] = sla
+
+            # Change-order delta payload — "reduce 24 to 18" /
+            # "from 12 to 8" surfaces as {from: 24, to: 18, delta: -6}
+            # on the customer_instruction atom so a PM rollup can show
+            # scope changes with explicit deltas.
+            if atom_type is AtomType.customer_instruction:
+                delta_match = _CHANGE_DELTA_RE.search(block.text)
+                if delta_match:
+                    try:
+                        from_v = int(delta_match.group(1))
+                        to_v = int(delta_match.group(2))
+                        value["change_delta"] = {
+                            "from": from_v,
+                            "to": to_v,
+                            "delta": to_v - from_v,
+                        }
+                    except (ValueError, IndexError):
+                        pass
+
+            # Stakeholder-row payload. When a markdown table row
+            # carries a name + (email or phone) — the unmistakable
+            # contact-row shape — parse the cells, write structured
+            # role/email/phone into the value, and emit a
+            # ``stakeholder:<slug>`` entity_key so the downstream PM
+            # rollup can group risks/actions/decisions by the owner.
+            if block.block_kind == "table_row":
+                section_blob_lower = " / ".join(block.section_path).lower()
+                if _looks_like_stakeholder_row(block.text, section_blob_lower, block.block_kind):
+                    cells = [c.strip() for c in block.text.strip("|").split("|")]
+                    value["table_cells"] = cells
+                    name_cell = next((c for c in cells if _looks_like_person_name(c)), None)
+                    email_cell = next((c for c in cells if _EMAIL_RE.search(c)), None)
+                    phone_cell = next((c for c in cells if _PHONE_RE.search(c)), None)
+                    role_cell = next(
+                        (c for c in cells if c and c != name_cell and c != email_cell and c != phone_cell),
+                        None,
+                    )
+                    if name_cell:
+                        value["name"] = name_cell
+                        slug = re.sub(r"[^a-z0-9]+", "_", name_cell.lower()).strip("_")
+                        if slug:
+                            stakeholder_key = f"stakeholder:{slug}"
+                            if stakeholder_key not in entity_keys:
+                                entity_keys = sorted(set(entity_keys) | {stakeholder_key})
+                    if role_cell:
+                        value["role"] = role_cell
+                    if email_cell:
+                        m = _EMAIL_RE.search(email_cell)
+                        if m:
+                            value["email"] = m.group(0)
+                            email_key = f"email:{m.group(0).lower()}"
+                            if email_key not in entity_keys:
+                                entity_keys = sorted(set(entity_keys) | {email_key})
+                    if phone_cell:
+                        m = _PHONE_RE.search(phone_cell)
+                        if m:
+                            value["phone"] = m.group(0)
+
             # PR4 — risk-row payload. When a markdown table row gets
             # typed as risk, parse the | … | … | cells so downstream
             # consumers can read severity / impact / mitigation
@@ -246,7 +495,24 @@ class MarkdownParser(BaseParser):
                     value["risk_summary"] = cells[1]
                     value["severity"] = cells[2]
                 if len(cells) >= 4:
-                    value["impact_or_probability"] = cells[3]
+                    # Risk register layouts:
+                    #   | ID | Risk | Severity | Owner | Mitigation |
+                    # so cells[3] is the Owner. Promote to a
+                    # structured ``owner`` field and emit a
+                    # stakeholder entity_key so the downstream PM
+                    # rollup can group risks by responsible party.
+                    raw_owner = cells[3].strip()
+                    if raw_owner and not _looks_like_severity_or_probability(raw_owner):
+                        value["owner"] = raw_owner
+                        slug = re.sub(r"[^a-z0-9]+", "_", raw_owner.lower()).strip("_")
+                        if slug and slug not in {"owner", "tbd", "unknown", "n_a"}:
+                            stakeholder_key = f"stakeholder:{slug}"
+                            if stakeholder_key not in entity_keys:
+                                entity_keys = sorted(set(entity_keys) | {stakeholder_key})
+                    else:
+                        value["impact_or_probability"] = cells[3]
+                if len(cells) >= 5:
+                    value["mitigation"] = cells[4]
 
             out.append(
                 EvidenceAtom(
@@ -354,6 +620,99 @@ def _iter_markdown_blocks(text: str):
 # ────────────────────────────── classifiers ────────────────────────────
 
 
+_SLA_UPTIME_RE = re.compile(r"\b(?:uptime|availability)\s*(?:sla)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%", re.IGNORECASE)
+_SLA_RESPONSE_RE = re.compile(r"\b(?:response\s+time|response)\s*[:=]?\s*(\d+)\s*(hour|hr|min|minute|day)s?", re.IGNORECASE)
+_SLA_RESOLUTION_RE = re.compile(r"\b(?:resolution|mttr|mean\s+time\s+to\s+(?:repair|resolve))\s*[:=]?\s*[<>]?\s*(\d+)\s*(hour|hr|min|minute|day)s?", re.IGNORECASE)
+_SLA_CREDIT_RE = re.compile(r"\b(?:service\s+credit|credit)s?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%", re.IGNORECASE)
+_SLA_COVERAGE_RE = re.compile(r"\b(\d{1,2})\s*x\s*(\d{1,2})\b", re.IGNORECASE)
+
+
+def _extract_sla_value(text: str) -> dict:
+    """Return structured SLA fields parsed from constraint text."""
+    out: dict = {}
+    m = _SLA_UPTIME_RE.search(text)
+    if m:
+        out["uptime_pct"] = float(m.group(1))
+    m = _SLA_RESPONSE_RE.search(text)
+    if m:
+        out["response_time"] = f"{m.group(1)} {m.group(2).lower()}s"
+    m = _SLA_RESOLUTION_RE.search(text)
+    if m:
+        out["resolution_time"] = f"{m.group(1)} {m.group(2).lower()}s"
+    m = _SLA_CREDIT_RE.search(text)
+    if m:
+        out["service_credit_pct"] = float(m.group(1))
+    m = _SLA_COVERAGE_RE.search(text)
+    if m:
+        out["coverage_hours_per_week"] = f"{m.group(1)}x{m.group(2)}"
+    return out
+
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_PHONE_RE = re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b")
+_NAME_RE = re.compile(r"^\s*[A-Z][a-zA-Z'\-]+(?:\s+[A-Z][a-zA-Z'\-]+){1,3}\s*$")
+_STAKEHOLDER_SECTION_RE = re.compile(
+    r"\b(stakeholder|contact|directory|roster|team|attendee|distribution)s?\b",
+    re.IGNORECASE,
+)
+_ROLE_TITLE_TOKENS = frozenset({
+    "manager", "managers", "director", "directors", "sponsor", "sponsors",
+    "officer", "officers", "supervisor", "supervisors", "lead", "leads",
+    "coordinator", "coordinators", "administrator", "administrators",
+    "owner", "owners", "approver", "approvers", "engineer", "engineers",
+    "architect", "architects", "analyst", "analysts", "consultant", "consultants",
+    "specialist", "specialists", "head", "chief", "principal", "principals",
+    "pm", "po", "vp", "ceo", "cto", "cio", "ciso", "cfo", "coo", "svp", "evp",
+    "site", "network", "project", "technical", "security", "vendor", "customer",
+})
+
+
+def _looks_like_person_name(cell: str) -> bool:
+    """True when ``cell`` looks like an actual person's name (not a
+    role title or compound role/site phrase)."""
+    if not _NAME_RE.match(cell):
+        return False
+    tokens = cell.strip().split()
+    if not tokens or len(tokens) > 4:
+        return False
+    lowered = {t.lower() for t in tokens}
+    # If any token is a role/title word, it's a role phrase not a name.
+    if lowered & _ROLE_TITLE_TOKENS:
+        return False
+    return True
+
+
+def _looks_like_stakeholder_row(text: str, section_blob: str, block_kind: str) -> bool:
+    """True when a markdown table row looks like a stakeholder
+    directory entry (role / name / email / phone columns)."""
+    if block_kind != "table_row":
+        return False
+    cells = [c.strip() for c in text.strip("|").split("|")]
+    if len(cells) < 2:
+        return False
+    has_email = any(_EMAIL_RE.search(c) for c in cells)
+    has_phone = any(_PHONE_RE.search(c) for c in cells)
+    has_name = any(_looks_like_person_name(c) for c in cells)
+    in_stakeholder_section = bool(_STAKEHOLDER_SECTION_RE.search(section_blob))
+    # Stakeholder row signals: name + (email OR phone) anywhere
+    # OR we're inside a Stakeholders section with a name.
+    return (has_name and (has_email or has_phone)) or (in_stakeholder_section and has_name)
+
+
+_SEVERITY_PROB_TOKEN = re.compile(
+    r"^\s*(?:critical|high|medium|med|low|info|"
+    r"very\s+high|very\s+low|"
+    r"\d{1,3}\s*%|"
+    r"likely|unlikely|certain|possible|rare|frequent"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_severity_or_probability(text: str) -> bool:
+    return bool(_SEVERITY_PROB_TOKEN.match(text or ""))
+
+
 def _looks_like_markdown_risk_row(
     text: str, section_blob: str, block_kind: str
 ) -> bool:
@@ -402,6 +761,14 @@ def _classify_block(
         types.append(AtomType.vendor_line_item)
     if "customer responsibility" in blob or "owner responsibility" in blob:
         types.append(AtomType.customer_instruction)
+    # Change-order signal: when the section path includes "change
+    # order" or the text matches a delta phrase ("reduce 24 to 18",
+    # "approved revised scope of 18", "added 2 since SOW"), emit a
+    # customer_instruction atom so the packetizer routes this to the
+    # change-order packet family.
+    if _CHANGE_ORDER_RE.search(blob) or "change order" in section_blob or _CHANGE_DELTA_RE.search(text):
+        if AtomType.customer_instruction not in types:
+            types.append(AtomType.customer_instruction)
     return list(dict.fromkeys(types))
 
 
@@ -430,5 +797,21 @@ def _entity_keys_from_text(text: str) -> list[str]:
         text,
     )
     if site_match:
-        keys.append(normalize_entity_key("site", site_match.group(1)))
+        phrase = site_match.group(1)
+        # Role-marker guard: "Site Manager Main Campus" / "Network
+        # Director West Wing" describe a ROLE responsible for a place,
+        # not a site name. Skip when the phrase contains a strong role
+        # marker (Manager, Director, Sponsor, Officer, Lead, ...).
+        phrase_lower_tokens = {t.lower() for t in phrase.split()}
+        role_markers = {
+            "manager", "managers", "director", "directors", "sponsor", "sponsors",
+            "officer", "officers", "supervisor", "supervisors", "lead", "leads",
+            "coordinator", "coordinators", "administrator", "administrators",
+            "owner", "owners", "approver", "approvers", "engineer", "engineers",
+            "architect", "architects", "analyst", "analysts",
+        }
+        if not (phrase_lower_tokens & role_markers):
+            site_key = normalize_entity_key("site", phrase)
+            if site_key:
+                keys.append(site_key)
     return sorted(set(keys))

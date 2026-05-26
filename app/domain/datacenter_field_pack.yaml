@@ -48,3 +48,78 @@ risk_defaults:
   unpriced_scope_default: 5000
 packet_family_hints:
   site_access: ["escort", "badge"]
+
+detection_targets:
+  - key: dc_rack
+    entity_key: device:rack
+    aliases_from:
+      - device_aliases.server_rack
+    aliases:
+      - 'rack'
+      - 'cabinet'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:rack
+      - device:datacenter_device
+  - key: rack_pdu
+    entity_key: device:rack_pdu
+    aliases_from:
+      - device_aliases.rack_pdu
+    aliases:
+      - 'pdu'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:pdu
+      - device:datacenter_device
+  - key: tor_switch
+    entity_key: device:tor_switch
+    aliases_from:
+      - device_aliases.tor_switch
+    aliases:
+      - 'tor'
+      - 'top of rack'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:switch
+      - device:datacenter_device
+  - key: dc_patch_panel
+    entity_key: device:patch_panel
+    aliases:
+      - 'patch panel'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: cable_tray
+    entity_key: device:cable_tray
+    aliases:
+      - 'cable tray'
+      - 'ladder rack'
+    completeness: informational
+    modalities:
+      - line_run
+      - vector_shape
+  - key: dc_floor_tile
+    entity_key: marker:floor_tile
+    aliases:
+      - 'floor tile'
+      - 'row marker'
+    completeness: informational
+    modalities:
+      - text_tag
+  - key: power_whip
+    entity_key: device:power_whip
+    aliases:
+      - 'power whip'
+    completeness: informational
+    modalities:
+      - line_run

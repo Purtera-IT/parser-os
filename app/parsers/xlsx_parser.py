@@ -173,6 +173,42 @@ _OPERATIONAL_SHEET_PROFILES: dict[str, _OperationalSheetProfile] = {
 }
 
 
+# Service-line classifier — when a BOM line item description matches
+# one of these tokens (case-insensitive substring match), the line is
+# routed to `service:` instead of `device:`. Real device names rarely
+# include these tokens; service line items almost always do.
+_SERVICE_LINE_TOKENS: tuple[str, ...] = (
+    "labor", "labour", "hours", "hour", "after-hours", "after hours",
+    "support", "supports", "supported",
+    "training", "trainings", "adoption",
+    "workshop", "workshops", "discovery",
+    "design", "designs", "engineering services",
+    "professional services", "managed services",
+    "consulting", "consultancy", "advisory",
+    "hypercare", "warranty", "warrantee",
+    "project management", "program management", "pmo",
+    "governance", "oversight",
+    "implementation", "installation services", "deployment",
+    "commissioning", "decommissioning",
+    "migration", "cutover", "go-live",
+    "documentation services", "as-built", "as built",
+    "testing services", "validation", "uat", "acceptance",
+    "rfp response", "proposal preparation",
+)
+
+
+def _looks_like_service_line(value: str) -> bool:
+    """Return True if a BOM line-item description is a service rather
+    than a physical device.
+
+    Routes labor / support / training / hypercare / governance /
+    consulting / project-management line items to `service:<slug>`
+    instead of `device:<slug>` so the device namespace stays clean.
+    """
+    lower = value.lower()
+    return any(token in lower for token in _SERVICE_LINE_TOKENS)
+
+
 def _norm_op_sheet(sheet_name: str) -> str:
     return normalize_text(sheet_name).replace("_", " ").strip()
 
@@ -1020,6 +1056,158 @@ class XlsxParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    def _maybe_emit_site_roster_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+    ) -> list[EvidenceAtom]:
+        """Emit ``physical_site`` entity atoms when the sheet shape
+        matches a site roster (header row with Site ID / Facility /
+        Address / MDF / Escort + structured site-shaped IDs in data
+        rows). Returns [] when this sheet is not a roster.
+        """
+        try:
+            from app.parsers.site_roster_extractor import (
+                extract_site_roster,
+                looks_like_site_roster,
+            )
+        except Exception:  # pragma: no cover
+            return []
+        if not rows:
+            return []
+        # Skip blank leading rows
+        first_data_row = 0
+        for i, r in enumerate(rows):
+            if any(str(c or "").strip() for c in (r or ())):
+                first_data_row = i
+                break
+        body = rows[first_data_row:]
+        if len(body) < 2:
+            return []
+        header_raw = [str(c or "").strip() for c in (body[0] or ())]
+        data_rows: list[dict[str, Any]] = []
+        for r in body[1:]:
+            cells: dict[str, Any] = {}
+            for i, v in enumerate(r or ()):
+                col = header_raw[i] if i < len(header_raw) and header_raw[i] else f"col_{i}"
+                cells[col] = "" if v is None else str(v)
+            if any(v for v in cells.values()):
+                data_rows.append(cells)
+        if not data_rows:
+            return []
+        try:
+            if not looks_like_site_roster(
+                columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
+            ):
+                return []
+            # Stricter gate for XLSX (where site_id columns appear in
+            # BOMs, decisions sheets, port maps, etc.): require at least
+            # one additional roster-specific column beyond site_id.
+            # Avoids treating a "Site ID | Decision | Approved By"
+            # sheet as a roster.
+            from app.parsers.site_roster_extractor import map_columns_to_fields
+            field_map = map_columns_to_fields(header_raw)
+            roster_specific = {
+                "facility_name", "street_address", "mdf_idf",
+                "access_window", "escort_owner", "city_state",
+            }
+            if not (set(field_map.values()) & roster_specific):
+                return []
+            roster_rows = extract_site_roster(
+                columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
+            )
+        except Exception:  # pragma: no cover
+            return []
+        if not roster_rows:
+            return []
+        out: list[EvidenceAtom] = []
+        for site_row in roster_rows:
+            sid = (site_row.site_id or "").strip()
+            canon_id = sid or site_row.facility_name or ""
+            if not canon_id:
+                continue
+            row_index = first_data_row + 1 + site_row.row_index
+            atom_id = stable_id(
+                "atm", artifact_id, sheet_name, row_index, "physical_site", canon_id
+            )
+            text_parts = []
+            for label, val in [
+                ("site_id", sid or site_row.site_id),
+                ("facility", site_row.facility_name),
+                ("address", site_row.street_address),
+                ("mdf_idf", site_row.mdf_idf),
+                ("access", site_row.access_window),
+                ("escort", site_row.escort_owner),
+                ("contact", site_row.contact),
+                ("phone", site_row.phone),
+                ("email", site_row.email),
+            ]:
+                if val:
+                    text_parts.append(f"{label}: {val}")
+            row_text = " | ".join(text_parts) or canon_id
+            source_ref = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                locator={
+                    "sheet": sheet_name,
+                    "row": row_index,
+                    "extraction": "xlsx_site_roster_v1",
+                },
+                extraction_method="xlsx_site_roster_v1",
+                parser_version=self.parser_version,
+            )
+            entity_keys: list[str] = []
+            if sid:
+                slug = re.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+                if slug:
+                    entity_keys.append(f"site:{slug}")
+            out.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.entity,
+                    raw_text=row_text,
+                    normalized_text=row_text.lower(),
+                    value={
+                        "kind": "physical_site",
+                        "site_id": sid or site_row.site_id,
+                        "facility_name": site_row.facility_name,
+                        "street_address": site_row.street_address,
+                        "mdf_idf": site_row.mdf_idf,
+                        "access_window": site_row.access_window,
+                        "escort_owner": site_row.escort_owner,
+                        "contact": site_row.contact,
+                        "phone": site_row.phone,
+                        "email": site_row.email,
+                        "city_state": site_row.city_state,
+                        "zip": site_row.zip,
+                        "sqft": site_row.sqft,
+                        "occupancy": site_row.occupancy,
+                        "notes": site_row.notes,
+                        "extras": dict(site_row.extra_fields),
+                    },
+                    entity_keys=sorted(set(entity_keys)),
+                    source_refs=[source_ref],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=site_row.confidence,
+                    confidence_raw=site_row.confidence,
+                    calibrated_confidence=site_row.confidence,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
+
     def _parse_sheet_rows(
         self,
         project_id: str,
@@ -1031,6 +1219,22 @@ class XlsxParser(BaseParser):
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
+
+        # Site-roster fast path: when this sheet's first non-empty row
+        # looks like site_roster headers (Site ID / Facility / Address /
+        # MDF / Access / Escort), route the rows through the same
+        # extractor the PDF parser uses so XLSX-shipped rosters produce
+        # structured ``physical_site`` atoms (not just generic row atoms).
+        roster_atoms = self._maybe_emit_site_roster_atoms(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            sheet_name=sheet_name,
+            rows=rows,
+        )
+        if roster_atoms:
+            return roster_atoms
 
         # PR2 (post-v3 review) — operational-workbook sheet profiles.
         # If the sheet name matches one of the well-known ops sheets
@@ -1166,6 +1370,21 @@ class XlsxParser(BaseParser):
                         label_indices=label_indices,
                     )
                 )
+
+        # Universal fallback: when the header-mapped path emitted
+        # nothing (sheet had headers but they didn't match any
+        # canonical extractor profile — Pricing sheets, summary
+        # tables, etc.), fall back to the generic row emitter so the
+        # rows aren't silently dropped.
+        if not atoms:
+            return self._emit_generic_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+            )
         return atoms
 
     @staticmethod
@@ -1378,7 +1597,9 @@ class XlsxParser(BaseParser):
         keys: list[str] = []
         for field in ("site_name", "site", "location"):
             if cells.get(field):
-                keys.append(normalize_entity_key("site", cells[field]))
+                key = normalize_entity_key("site", cells[field])
+                if key:
+                    keys.append(key)
         for field in ("mdf", "idf"):
             if cells.get(field):
                 keys.append(normalize_entity_key(field, cells[field]))
@@ -2069,12 +2290,24 @@ class XlsxParser(BaseParser):
             ("drop_id", "location"),
             ("mdf", "mdf"),
             ("idf", "idf"),
-            ("device", "device"),
         ]
         for field, etype in mapping:
             v = extracted.get(field, "").strip()
             if v:
-                keys.append(normalize_entity_key(etype, v))
+                key = normalize_entity_key(etype, v)
+                if key:
+                    keys.append(key)
+        # Device vs service classification — BOM rows describing labor,
+        # training, hypercare, project management, etc. are SERVICE line
+        # items, not devices. Routing them to `service:` instead of
+        # `device:` keeps the device namespace clean (only physical
+        # hardware ends up under `device:`).
+        device_value = extracted.get("device", "").strip()
+        if device_value:
+            etype = "service" if _looks_like_service_line(device_value) else "device"
+            key = normalize_entity_key(etype, device_value)
+            if key:
+                keys.append(key)
         return keys
 
     def _emit_subtotal_row(

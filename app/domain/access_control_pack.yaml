@@ -279,3 +279,99 @@ packet_family_hints:
     - osdp
     - mobile credential
     - integration
+
+detection_targets:
+  - key: card_reader
+    entity_key: device:card_reader
+    aliases_from:
+      - device_aliases.card_reader
+    aliases:
+      - 'card reader'
+      - 'prox reader'
+      - 'keypad reader'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:reader
+      - device:access_device
+  - key: ac_controller
+    entity_key: device:ac_controller
+    aliases_from:
+      - device_aliases.controller
+    aliases:
+      - 'controller'
+      - 'access panel'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:controller
+      - device:access_device
+  - key: rex_device
+    entity_key: device:rex
+    aliases_from:
+      - device_aliases.rex_button
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:rex
+      - device:access_device
+  - key: door_contact
+    entity_key: device:door_contact
+    aliases_from:
+      - device_aliases.door_contact
+    aliases:
+      - 'dps'
+      - 'door position switch'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:contact
+      - device:access_device
+  - key: electric_strike
+    entity_key: device:electric_strike
+    aliases_from:
+      - device_aliases.electric_strike
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:lock_hardware
+      - device:access_device
+  - key: mag_lock
+    entity_key: device:mag_lock
+    aliases_from:
+      - device_aliases.mag_lock
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:lock_hardware
+      - device:access_device
+  - key: ac_power_supply
+    entity_key: device:power_supply
+    aliases:
+      - 'power supply'
+      - 'psu'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: ac_junction
+    entity_key: device:junction_box
+    aliases:
+      - 'junction box'
+      - 'jb'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template

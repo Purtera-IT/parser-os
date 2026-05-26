@@ -27,8 +27,23 @@ EDGE_FAMILY_EXCLUSION_APPLIES = "exclusion_application"
 EDGE_FAMILY_CONSTRAINT_REQUIRES = "constraint_requirement"
 EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH = "device_aggregate_mismatch"
 EDGE_FAMILY_MATERIAL_AGGREGATE_MISMATCH = "material_aggregate_mismatch"
+# Cross-artifact device-only quantity conflict — BOM/quote/spec atom
+# vs SOW/scope atom that share a device key (device:access_point,
+# device:switch, ...) and quantity entity keys but have no shared
+# part_number to anchor against. False-positive guards are strict:
+#   - cross-artifact required (same-file diffs are normal table rows)
+#   - same site (or both site-free) required
+#   - different authority classes preferred (BOM vs SOW signal)
+#   - excludes generic device:unknown
+#   - quantity must be >= 5 (single-digit qtys are often template fields)
+EDGE_FAMILY_DEVICE_QUANTITY_CROSS_DOC = "device_quantity_cross_doc"
 EDGE_FAMILY_CROSS_ARTIFACT_REINFORCEMENT = "cross_artifact_co_mention"
 EDGE_FAMILY_SEMANTIC_LINK = "semantic_link"
+# Schematic same-sheet quantity contradiction (PR7) — pairs an aggregated
+# detected count with a legend-declared count on the same drawing. Both
+# atoms carry bbox provenance so the packetizer's narrow exception can
+# certify them despite being from the same artifact / same authority.
+EDGE_FAMILY_SCHEMATIC_QUANTITY_CONTRADICTION = "schematic_quantity_contradiction"
 
 # An entity_key that matches more atoms than this threshold is treated as
 # too generic to use as a join point (e.g. ``site:campus`` would otherwise
@@ -48,12 +63,137 @@ NOISY_ENTITY_KEY_BUCKET_FLOOR = 20
 # order so deterministic output is preserved up to the cap.
 MAX_CANDIDATE_PAIRS = 250_000
 
+# Per-atom edge density cap. With very large corpora (10k+ atoms),
+# even the sqrt-bucket cap can produce 25 edges per atom which is
+# both noisy for consumers and expensive to construct. This caps
+# pairs at ``MAX_PAIRS_PER_ATOM`` * N so per-atom edge density stays
+# bounded sub-linearly.
+MAX_PAIRS_PER_ATOM = 12
+
 # Part-number entities are the strongest signal for quantity contradictions.
 # When two atoms share the same ``part_number:*`` key but report different
 # ``Qty: N`` values (or different ``quantity:*`` entity keys), that's a
 # real-world cost-proposal mismatch (cf. Natomas CW9166I-B 500 vs 136).
 _PART_NUMBER_PREFIX = "part_number:"
 _QUANTITY_PREFIX = "quantity:"
+
+
+# Noun-anchored qty extraction for atoms that carry multiple device
+# keys. "Install 50 access points and 5 switches" should bind 50 to
+# access_point and 5 to switch so cross-doc binding can compare the
+# right quantities per device.
+_DEVICE_NOUN_PATTERNS: dict[str, tuple[str, ...]] = {
+    "access_point": (r"access\s+points?", r"\baps?\b", r"wireless\s+access\s+points?", r"waps?"),
+    "switch": (r"switches?(?:\b|\s)", r"poe\s+switches?", r"core\s+switches?", r"access\s+switches?"),
+    "router": (r"routers?", r"edge\s+routers?", r"core\s+routers?"),
+    "firewall": (r"firewalls?", r"ngfws?", r"\butms?\b"),
+    "ip_camera": (r"ip\s+cameras?", r"cameras?", r"ptz(?:\s+cameras?)?", r"dome\s+cameras?", r"bullet\s+cameras?"),
+    "card_reader": (r"card\s+readers?", r"badge\s+readers?", r"\breaders?\b"),
+    "controller": (r"controllers?", r"access\s+controllers?", r"door\s+controllers?"),
+    "ups": (r"\bupses?\b", r"battery\s+backup"),
+    "rack": (r"racks?", r"cabinets?", r"server\s+racks?"),
+    "display": (r"displays?", r"monitors?", r"video\s+walls?", r"touchscreens?"),
+    "speaker": (r"speakers?", r"ceiling\s+speakers?"),
+    "microphone": (r"microphones?", r"\bmics?\b"),
+}
+
+# Compile once.
+_DEVICE_NOUN_REGEXES: dict[str, list[re.Pattern[str]]] = {
+    canonical: [re.compile(pat, re.IGNORECASE) for pat in patterns]
+    for canonical, patterns in _DEVICE_NOUN_PATTERNS.items()
+}
+
+
+def _noun_anchored_quantity(text: str, device_canonical: str) -> int | None:
+    r"""Return the integer quantity that occurs nearest to a device noun.
+
+    ``device_canonical`` is the YAML key (e.g. ``access_point``,
+    ``switch``). We look for ``\b\d+\b`` tokens within a 30-char
+    window BEFORE the noun (or 15-char window AFTER) in the same
+    clause. Sentence boundaries (``.`` ``;`` newline) terminate the
+    window so "Install 12 APs. We will install 4 switches" doesn't
+    bind 12 to switches. Returns None when no noun match or no
+    nearby integer in the same clause.
+    """
+    if not text:
+        return None
+    patterns = _DEVICE_NOUN_REGEXES.get(device_canonical)
+    if not patterns:
+        return None
+    best_qty: int | None = None
+    best_dist = 10**9
+    # Split text into clauses on strong boundaries: ``.``, ``;``, newline.
+    # Each clause is processed independently so numbers in one clause
+    # can't bind to nouns in another.
+    clause_offsets: list[tuple[int, int]] = []  # (start, end)
+    cursor = 0
+    for sep_match in re.finditer(r"[.;\n]", text):
+        clause_offsets.append((cursor, sep_match.end()))
+        cursor = sep_match.end()
+    if cursor < len(text):
+        clause_offsets.append((cursor, len(text)))
+    for clause_start, clause_end in clause_offsets:
+        clause = text[clause_start:clause_end]
+        for pat in patterns:
+            for noun_match in pat.finditer(clause):
+                n_start = noun_match.start()
+                for num_match in re.finditer(r"\b(\d{1,5})\b", clause):
+                    raw = num_match.group(1)
+                    try:
+                        val = int(raw)
+                    except ValueError:
+                        continue
+                    # Noun-anchored has a strong signal (the integer
+                    # is right next to the device noun), so we accept
+                    # qty:2..4 here even though the broader cross-doc
+                    # binding drops them. Real bids do say "4
+                    # switches" / "2 firewalls".
+                    if val < 2:
+                        continue
+                    num_pos = num_match.start()
+                    before = num_pos < n_start
+                    dist = abs(n_start - num_pos)
+                    # Tighter windows: 30 chars before the noun
+                    # ("Install 50 access points") or 15 chars after
+                    # ("access points: 50"). Anything farther is
+                    # almost certainly an unrelated number.
+                    if before and dist > 30:
+                        continue
+                    if (not before) and dist > 15:
+                        continue
+                    # Numbers BEFORE the noun get a strong bonus.
+                    effective = dist - (10 if before else 0)
+                    if effective < best_dist:
+                        best_dist = effective
+                        best_qty = val
+    return best_qty
+
+
+def _atoms_are_distinct_positions(a: EvidenceAtom, b: EvidenceAtom) -> bool:
+    """True when two same-artifact atoms came from clearly different
+    positions in the source doc.
+
+    Compares ``sentence_index`` (set by the markdown sentence splitter
+    and other multi-emission parsers), then line numbers in
+    ``source_refs[0].locator``, then ``value.row`` / ``value.line``
+    fallbacks. Returns False when both atoms came from the same line
+    + same sentence (same template row).
+    """
+    if a.id == b.id:
+        return False
+    a_val = a.value if isinstance(a.value, dict) else {}
+    b_val = b.value if isinstance(b.value, dict) else {}
+    a_sent = a_val.get("sentence_index")
+    b_sent = b_val.get("sentence_index")
+    if a_sent is not None and b_sent is not None and a_sent != b_sent:
+        return True
+    a_loc = (a.source_refs[0].locator if a.source_refs else {}) or {}
+    b_loc = (b.source_refs[0].locator if b.source_refs else {}) or {}
+    a_line = a_loc.get("line_start") or a_loc.get("row") or a_loc.get("page") or a_val.get("line")
+    b_line = b_loc.get("line_start") or b_loc.get("row") or b_loc.get("page") or b_val.get("line")
+    if a_line is not None and b_line is not None and a_line != b_line:
+        return True
+    return False
 
 
 def _is_unknown_entity_key(key: str) -> bool:
@@ -411,6 +551,88 @@ def _edge_id(project_id: str, edge_type: EdgeType, from_id: str, to_id: str, rea
     return stable_id("edge", project_id, edge_type.value, from_id, to_id, reason)
 
 
+def _is_schematic_quantity_atom(atom: EvidenceAtom) -> bool:
+    if atom.atom_type != AtomType.quantity:
+        return False
+    value = atom.value if isinstance(atom.value, dict) else {}
+    return bool(value.get("schematic_target_key")) and bool(value.get("schematic_role"))
+
+
+def _schematic_quantity_signature(atom: EvidenceAtom) -> tuple[Any, ...]:
+    """Pairing key for schematic detected/declared quantity atoms.
+
+    Intentionally *does not* include the sheet number: in a normal
+    drawing set, the declared count lives on the global legend sheet
+    (e.g. T0.01) while the detected count lives on a floor-plan sheet
+    (e.g. E1.01). Pairing only by (artifact, target_key) lets the
+    same legend govern many drawing pages — which is the whole point
+    of the cross-sheet resolver. The edge's reason string still names
+    both sheets for the reviewer.
+    """
+    value = atom.value if isinstance(atom.value, dict) else {}
+    return (
+        atom.artifact_id,
+        value.get("schematic_target_key"),
+    )
+
+
+def _build_schematic_quantity_edges(
+    project_id: str, atoms: list[EvidenceAtom]
+) -> list[EvidenceEdge]:
+    """Pair detected/declared schematic quantity atoms and emit edges.
+
+    Two schematic quantity atoms contradict when they share the same
+    artifact, the same sheet, and the same target key, and one is
+    marked ``schematic_role="detected"`` while the other is
+    ``schematic_role="declared"``. The numeric quantities must
+    disagree by at least 1 to qualify (drawings often round
+    rough-in callouts so an exact-match pass is too sensitive in
+    other directions but a difference of <1 is rarely meaningful).
+    """
+    by_sig: dict[tuple[Any, ...], dict[str, list[EvidenceAtom]]] = {}
+    for atom in atoms:
+        if not _is_schematic_quantity_atom(atom):
+            continue
+        sig = _schematic_quantity_signature(atom)
+        role = str(atom.value.get("schematic_role"))
+        by_sig.setdefault(sig, {}).setdefault(role, []).append(atom)
+    edges: list[EvidenceEdge] = []
+    for sig, by_role in by_sig.items():
+        detected = sorted(by_role.get("detected", []), key=lambda a: a.id)
+        declared = sorted(by_role.get("declared", []), key=lambda a: a.id)
+        if not detected or not declared:
+            continue
+        # One-to-one pairing in deterministic ID order.
+        for det, dec in zip(detected, declared):
+            det_qty = det.value.get("quantity")
+            dec_qty = dec.value.get("quantity")
+            try:
+                if det_qty is None or dec_qty is None:
+                    continue
+                if abs(float(det_qty) - float(dec_qty)) < 1.0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            det_sheet = det.value.get("schematic_sheet_number")
+            dec_sheet = dec.value.get("schematic_sheet_number")
+            edges.append(
+                _build_edge(
+                    project_id,
+                    EdgeType.contradicts,
+                    det,
+                    dec,
+                    (
+                        f"Schematic quantity contradiction target {sig[1]}: "
+                        f"detected={det_qty} on sheet {det_sheet or '?'} vs "
+                        f"declared={dec_qty} on sheet {dec_sheet or '?'}"
+                    ),
+                    0.9,
+                    edge_family=EDGE_FAMILY_SCHEMATIC_QUANTITY_CONTRADICTION,
+                )
+            )
+    return edges
+
+
 def _build_edge(
     project_id: str,
     edge_type: EdgeType,
@@ -522,6 +744,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     # processed once (by sorted (i, j) tuple) regardless of how many keys
     # it shares.  Process keys in ascending bucket size so the pairs we
     # cap-out have the biggest noisy buckets, not the precise ones.
+    #
+    # Scale governor: cap pairs at ``min(MAX_CANDIDATE_PAIRS,
+    # N * MAX_PAIRS_PER_ATOM)`` so a 10k-row BOM doesn't generate
+    # 250k pairs (which would otherwise produce 25 edges per atom).
+    pair_cap = min(MAX_CANDIDATE_PAIRS, len(ordered) * MAX_PAIRS_PER_ATOM)
     candidate_pairs: set[tuple[int, int]] = set()
     keys_by_bucket_size = sorted(
         informative_keys, key=lambda k: (len(key_to_indices.get(k, [])), k)
@@ -531,11 +758,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         if len(indices) < 2:
             continue
         for ii in range(len(indices)):
-            if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+            if len(candidate_pairs) >= pair_cap:
                 break
             i = indices[ii]
             for jj in range(ii + 1, len(indices)):
-                if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+                if len(candidate_pairs) >= pair_cap:
                     break
                 j = indices[jj]
                 if i == j:
@@ -549,7 +776,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                     candidate_pairs.add((i, j))
                 else:
                     candidate_pairs.add((j, i))
-        if len(candidate_pairs) >= MAX_CANDIDATE_PAIRS:
+        if len(candidate_pairs) >= pair_cap:
             break
 
     for i, j in sorted(candidate_pairs):
@@ -698,6 +925,13 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         )
                     )
 
+    # Schematic same-sheet quantity contradiction (PR7) — pairs an
+    # aggregated detected count with a legend-declared count on the
+    # same drawing. Both atoms carry bbox provenance so the
+    # packetizer's narrow same-artifact exception can certify them.
+    for edge in _build_schematic_quantity_edges(project_id, ordered):
+        push(edge)
+
     # excludes: exclusion atom mentions entity key in another atom.
     # Uses the entity-key index so we only iterate atoms that actually
     # share an entity_key with the exclusion (was O(exclusions × atoms)).
@@ -829,6 +1063,186 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 edge_family=EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH,
             )
         )
+
+    # ─── Cross-artifact device-only quantity conflict ────────────────
+    # Catches the universal managed-services failure mode where:
+    #
+    #   BOM PDF says:  "50 wireless access points"  (vendor_quote)
+    #   SOW PDF says:  "60 access points across three sites" (contractual_scope)
+    #
+    # No shared part_number, so PART_NUMBER_QUANTITY_CONFLICT can't fire;
+    # the atoms are scope_item / vendor_line_item, so the strict
+    # DEVICE_AGGREGATE_MISMATCH (which only pairs approved_site_roster
+    # vs vendor_quote on atom_type=quantity) can't fire either.
+    #
+    # Strict false-positive guards:
+    #   - cross-artifact (same-file diff is normal table rows)
+    #   - no shared part_number (PART_NUMBER_QUANTITY_CONFLICT handles those)
+    #   - excludes device:unknown
+    #   - excludes single-digit quantities (qty 1-4 is often template
+    #     "1 each" or generic count, not a deal-level scope value)
+    #   - excludes when atoms reference different sites (site-scoped
+    #     counts are independent)
+    #   - excludes when both atoms are exclusion / boilerplate / risk
+    for_device_pairs_seen: set[tuple[str, str, str]] = set()
+    by_device: dict[str, list] = {}
+    for atom in ordered:
+        # Walk every device key on every atom (any atom that carries
+        # a quantity:* + device:* combo is a candidate, regardless of
+        # whether atom_type is quantity / scope_item / vendor_line_item).
+        qty_keys = {k for k in atom.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+        if not qty_keys:
+            continue
+        if any(k.startswith(_PART_NUMBER_PREFIX) for k in atom.entity_keys):
+            # If THIS atom has a part_number, leave it to the part-number
+            # path — only emit device-only conflicts when at least one
+            # side has no part_number anchor.
+            pass
+        for dk in _device_keys(atom):
+            if not dk or dk == "device:unknown":
+                continue
+            by_device.setdefault(dk, []).append(atom)
+
+    # Scale cap: when a single device shows up in too many atoms (e.g.
+    # a 10k-row BOM where every row mentions "switch"), the N^2 pair
+    # check explodes. Limit per-device candidates so the inner loop
+    # stays linear-ish. Aggregate rows / governing atoms keep priority.
+    DEVICE_QTY_BUCKET_CAP = 200
+    for device_key, atoms_for_device in by_device.items():
+        if len(atoms_for_device) < 2:
+            continue
+        # Filter atoms whose authority/atom_type suggests they're NOT
+        # a real scope statement (exclusion text, boilerplate prose).
+        candidates = [
+            a for a in atoms_for_device
+            if a.atom_type.value not in {"exclusion", "compliance", "risk", "open_question"}
+        ]
+        if len(candidates) < 2:
+            continue
+        # Bucket cap: when a device appears in too many atoms (e.g. a
+        # 10k-row BOM where every row mentions "switch"), prefer atoms
+        # that look like roster aggregates / governing claims and cap
+        # the bucket to ``DEVICE_QTY_BUCKET_CAP``. This keeps the
+        # contradiction surface honest without doing 50M pair checks.
+        if len(candidates) > DEVICE_QTY_BUCKET_CAP:
+            def _priority(a: EvidenceAtom) -> tuple[int, str]:
+                ac = a.authority_class.value if hasattr(a.authority_class, "value") else str(a.authority_class)
+                # approved_site_roster / contractual_scope first;
+                # vendor_quote / customer_email next; everything else last.
+                tier = 0 if ac in {"approved_site_roster", "contractual_scope", "customer_current_authored"} else (
+                    1 if ac in {"vendor_quote", "formal_sow", "current_addendum"} else 2
+                )
+                return (tier, a.id)
+            candidates = sorted(candidates, key=_priority)[:DEVICE_QTY_BUCKET_CAP]
+        # Build pairs that satisfy the cross-doc / different-qty /
+        # no-shared-part-number / same-site-context guards.
+        for i, a in enumerate(candidates):
+            for b in candidates[i + 1:]:
+                if a.artifact_id == b.artifact_id:
+                    # Same artifact — allow ONLY when the two atoms
+                    # come from clearly different positions in the
+                    # source doc (different line OR different
+                    # sentence_index). Same-row table cells with the
+                    # same qty get filtered out by the value-set
+                    # intersection check below, so we don't need extra
+                    # guards here. This unlocks intra-doc self-
+                    # contradictions ("24 cameras... 30 cameras...")
+                    # while keeping the original cross-doc behavior.
+                    if not _atoms_are_distinct_positions(a, b):
+                        continue
+                # Multi-device atoms now bind quantities to specific
+                # device nouns via ``_noun_anchored_quantity``. If both
+                # atoms can pin a specific qty to ``device_key`` via
+                # noun proximity, treat those pinned values as the
+                # single qty for the comparison below. Otherwise fall
+                # back to the original "single device + single qty"
+                # ambiguity guard.
+                a_devices = {k for k in a.entity_keys if k.startswith("device:") and k != "device:unknown"}
+                b_devices = {k for k in b.entity_keys if k.startswith("device:") and k != "device:unknown"}
+                a_qty_keys = {k for k in a.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+                b_qty_keys = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
+                if not a_qty_keys or not b_qty_keys:
+                    continue
+                device_canonical = device_key.split(":", 1)[1]
+                pinned_a: int | None = None
+                pinned_b: int | None = None
+                if len(a_devices) > 1 or len(b_devices) > 1 or len(a_qty_keys) > 1 or len(b_qty_keys) > 1:
+                    pinned_a = _noun_anchored_quantity(a.raw_text or "", device_canonical)
+                    pinned_b = _noun_anchored_quantity(b.raw_text or "", device_canonical)
+                    if pinned_a is None or pinned_b is None:
+                        # Couldn't disambiguate — preserve the old
+                        # safety guards. Multi-device or multi-qty
+                        # without a noun-anchor stays skipped.
+                        continue
+                    # Substitute the pinned values into the
+                    # comparison sets so the downstream logic uses
+                    # the device-specific qty for each side.
+                    a_qty_keys = {f"quantity:{pinned_a}"}
+                    b_qty_keys = {f"quantity:{pinned_b}"}
+                a_parts = {k for k in a.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
+                b_parts = {k for k in b.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
+                # Skip when a shared part_number exists — that's the
+                # part-number conflict path.
+                if a_parts and b_parts and a_parts.intersection(b_parts):
+                    continue
+                # Site-scope guard: if BOTH atoms reference sites and
+                # the site sets are disjoint, they're talking about
+                # different deployments.
+                sites_a = _site_keys(a)
+                sites_b = _site_keys(b)
+                if sites_a and sites_b and not sites_a.intersection(sites_b):
+                    continue
+                # Compute candidate (a_qty, b_qty) pairs — the smallest
+                # informative pair (avoid spamming N*M for one device).
+                def _qty_val(k: str) -> int | None:
+                    try:
+                        return int(k.split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        return None
+                a_vals = sorted({v for v in (_qty_val(k) for k in a_qty_keys) if v is not None})
+                b_vals = sorted({v for v in (_qty_val(k) for k in b_qty_keys) if v is not None})
+                # Single-digit guard. When binding came from a
+                # noun-anchored pin (pinned_a/pinned_b set above), the
+                # signal is strong enough to keep qty:2..4. Otherwise
+                # the template-row noise risk is real and we keep
+                # qty>=5.
+                min_qty = 2 if (pinned_a is not None or pinned_b is not None) else 5
+                a_vals = [v for v in a_vals if v >= min_qty]
+                b_vals = [v for v in b_vals if v >= min_qty]
+                if not a_vals or not b_vals:
+                    continue
+                # The conflict fires when there is NO common value AND
+                # the difference between the closest pair is non-trivial.
+                if set(a_vals).intersection(b_vals):
+                    continue
+                # Closest cross-set pair:
+                pair = min(
+                    ((av, bv) for av in a_vals for bv in b_vals),
+                    key=lambda p: abs(p[0] - p[1]),
+                )
+                av, bv = pair
+                dedup_key = (device_key, a.id, b.id)
+                if dedup_key in for_device_pairs_seen:
+                    continue
+                for_device_pairs_seen.add(dedup_key)
+                # Pick deterministic from/to (lex by atom id)
+                from_atom, to_atom = (a, b) if a.id < b.id else (b, a)
+                is_intra_doc = a.artifact_id == b.artifact_id
+                scope_label = "intra-doc" if is_intra_doc else "Cross-artifact"
+                reason = (
+                    f"{scope_label} quantity mismatch for {device_key}: {av} vs {bv}"
+                )
+                push(
+                    _build_edge(
+                        project_id,
+                        EdgeType.contradicts,
+                        from_atom,
+                        to_atom,
+                        reason,
+                        0.78,
+                        edge_family=EDGE_FAMILY_DEVICE_QUANTITY_CROSS_DOC,
+                    )
+                )
 
     # Material / line-item identity: governing approved_site_roster vs vendor_quote (normalized_item).
     # Roster aggregate row (when present) defines scope quantity; vendor is summed per identity; never reversed.

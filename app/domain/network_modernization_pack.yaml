@@ -47,3 +47,53 @@ risk_defaults:
   unpriced_scope_default: 5000
 packet_family_hints:
   quantity_conflict: ["switch count", "router mismatch"]
+
+detection_targets:
+  - key: nm_switch
+    entity_key: device:switch
+    aliases_from:
+      - device_aliases.l2_switch
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:switch
+      - device:network_device
+  - key: nm_router
+    entity_key: device:router
+    aliases_from:
+      - device_aliases.branch_router
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:router
+      - device:network_device
+  - key: nm_firewall
+    entity_key: device:firewall
+    aliases:
+      - 'firewall'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:firewall
+      - device:network_device
+  - key: nm_rack
+    entity_key: device:rack
+    aliases:
+      - 'rack'
+    completeness: informational
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: nm_uplink
+    entity_key: device:uplink
+    aliases:
+      - 'uplink'
+    completeness: informational
+    modalities:
+      - line_run

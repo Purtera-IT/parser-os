@@ -26,6 +26,10 @@ def _entity_type(atom: EvidenceAtom) -> str | None:
 
 
 def _device_alias_canonicals(text: str, pack: DomainPack) -> set[str]:
+    """Legacy single-call variant. Use ``_build_alias_lookup`` +
+    ``_device_alias_canonicals_cached`` in hot loops — they pre-normalize
+    the pack once and skip O(N*M) regex work per pair.
+    """
     lowered = normalize_text(text)
     matched: set[str] = set()
     for canonical, aliases in pack.device_aliases.items():
@@ -34,6 +38,38 @@ def _device_alias_canonicals(text: str, pack: DomainPack) -> set[str]:
             if token and token in lowered:
                 matched.add(canonical)
                 break
+    return matched
+
+
+def _build_alias_lookup(pack: DomainPack) -> list[tuple[str, str]]:
+    """Pre-normalize pack.device_aliases into a flat ``[(token, canonical)]``
+    list so the per-pair hot path only does substring tests, never regex
+    normalization. Sorted by token length descending so longer aliases
+    (more specific) win the early-exit per canonical.
+    """
+    out: list[tuple[str, str]] = []
+    for canonical, aliases in pack.device_aliases.items():
+        canonical_token = normalize_text(canonical.replace("_", " "))
+        if canonical_token:
+            out.append((canonical_token, canonical))
+        for alias in aliases or []:
+            token = normalize_text(alias)
+            if token:
+                out.append((token, canonical))
+    out.sort(key=lambda kv: -len(kv[0]))
+    return out
+
+
+def _device_alias_canonicals_cached(lowered: str, lookup: list[tuple[str, str]]) -> set[str]:
+    """Hot-path companion to ``_build_alias_lookup``. ``lowered`` must
+    already be the normalize_text result. Iterates the flat list once
+    with substring tests."""
+    matched: set[str] = set()
+    for token, canonical in lookup:
+        if canonical in matched:
+            continue
+        if token in lowered:
+            matched.add(canonical)
     return matched
 
 
@@ -59,6 +95,9 @@ def _atom_by_id(atoms: Iterable[EvidenceAtom]) -> dict[str, EvidenceAtom]:
 
 
 def _adjust_similarity_for_aliases(score: float, left: EvidenceAtom, right: EvidenceAtom, pack: DomainPack) -> float:
+    """Legacy per-pair entrypoint kept for tests / external callers.
+    The fast path in ``propose_semantic_link_candidates`` uses the
+    cached per-atom alias sets instead."""
     left_keys = {key for key in left.entity_keys if key.startswith("device:")}
     right_keys = {key for key in right.entity_keys if key.startswith("device:")}
     if left_keys and left_keys.intersection(right_keys):
@@ -77,11 +116,38 @@ def propose_semantic_link_candidates(
 ) -> list[SemanticLinkCandidate]:
     if not atoms:
         return []
+    # Scale guard: at very large atom counts, the linker's N^2
+    # similarity matrix dominates both memory and compute (50M entries
+    # at N=10k). For S++ scale, skip the linker entirely above this
+    # threshold — its findings on near-identical template rows in a
+    # huge BOM are low-value and the cost is prohibitive.
+    _LINKER_MAX_ATOMS = 2000
+    if len(atoms) > _LINKER_MAX_ATOMS:
+        return []
     ordered = sorted(atoms, key=lambda atom: atom.id)
     texts = [atom_representation(atom, domain_pack=domain_pack) for atom in ordered]
     similarity_matrix, method = best_effort_similarity(texts)
     pack = domain_pack or get_active_domain_pack()
     candidates: list[SemanticLinkCandidate] = []
+
+    # Pre-compute per-atom data ONCE so the inner N^2 pair loop only does
+    # set intersections + numeric comparisons.
+    #
+    # Before this optimization, ``_device_alias_canonicals`` ran inside
+    # the inner loop and re-normalized every device alias for every
+    # candidate pair — on OPTBOT (286 atoms, ~40k pairs) it accounted
+    # for 12.8s of 32.7s total compile time. After precompute it drops
+    # to roughly O(N) work.
+    alias_lookup = _build_alias_lookup(pack)
+    atom_device_keys: list[set[str]] = []
+    atom_alias_sets: list[set[str]] = []
+    atom_entity_types: list[str | None] = []
+    for atom in ordered:
+        atom_device_keys.append({k for k in atom.entity_keys if k.startswith("device:")})
+        atom_alias_sets.append(
+            _device_alias_canonicals_cached(normalize_text(atom.raw_text or ""), alias_lookup)
+        )
+        atom_entity_types.append(_entity_type(atom))
 
     for i in range(len(ordered)):
         for j in range(i + 1, len(ordered)):
@@ -94,12 +160,20 @@ def propose_semantic_link_candidates(
                 continue
             edge_type, from_id, to_id = pair
             score = float(similarity_matrix[i][j])
-            score = _adjust_similarity_for_aliases(score, left, right, pack)
+            # Inline alias adjustment using precomputed sets.
+            if atom_device_keys[i] and atom_device_keys[i].intersection(atom_device_keys[j]):
+                score = max(score, 0.99)
+            elif (
+                atom_alias_sets[i]
+                and atom_alias_sets[i].intersection(atom_alias_sets[j])
+            ):
+                score = max(score, 0.96)
             if score < REVIEW_THRESHOLD:
                 continue
 
             status = "needs_review"
-            entity_match = _entity_type(left) is not None and _entity_type(left) == _entity_type(right)
+            left_et = atom_entity_types[i]
+            entity_match = left_et is not None and left_et == atom_entity_types[j]
             if score >= ACCEPTED_THRESHOLD:
                 if edge_type in {EdgeType.same_as, EdgeType.supports}:
                     status = "accepted" if entity_match else "needs_review"

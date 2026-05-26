@@ -20,6 +20,7 @@ prompt.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -209,7 +210,20 @@ def _looks_like_form_field(text: str) -> bool:
 # as both a footer and a redundant header band) and contribute pure
 # noise — they're the same string with only the page number changing,
 # so they pollute the atom set with N copies per N-page PDF.
-_PAGE_NUMBER_PATTERN = re.compile(r"\bpage\s+\d+\s+of\s+\d+\b", re.IGNORECASE)
+_PAGE_NUMBER_PATTERN = re.compile(
+    # Match real "Page 3 of 12" AND the unrendered template version
+    # "Page X of Y" / "Page X of N" (reportlab footers sometimes leave
+    # placeholders unresolved when the doc is generated quickly).
+    r"\bpage\s+(?:\d+|[xn])\s+of\s+(?:\d+|[xny])\b",
+    re.IGNORECASE,
+)
+# Standalone "Page N" / "Page X" without "of" — only counts as a
+# footer when corroborated by other footer hints in the same line.
+_PAGE_NUMBER_LOOSE_PATTERN = re.compile(r"\bpage\s+(?:\d+|[xn])\b", re.IGNORECASE)
+# Copyright line shape: "(c) 2026 ORG", "© 2026 ORG", "Copyright 2026 ORG"
+_COPYRIGHT_PATTERN = re.compile(
+    r"(?:\(c\)|©|copyright)\s*(?:19|20)\d{2}", re.IGNORECASE
+)
 _PAGE_FOOTER_HINTS = (
     "rfp ",
     "rfp#",
@@ -224,6 +238,10 @@ _PAGE_FOOTER_HINTS = (
     "copyright",
     "confidential",
     "proprietary",
+    "do not redistribute",
+    "do not distribute",
+    "internal use only",
+    "internal only",
 )
 
 
@@ -246,10 +264,10 @@ def _looks_like_page_footer(text: str) -> bool:
         return False  # Real footers are short; long blocks are scope.
     if _PAGE_NUMBER_PATTERN.search(text):
         return True
+    text_lower = text.lower()
     # "Page 17" alone (no "of M") on a short line that also carries an
     # RFP/footer hint is also a footer.
-    if re.search(r"\bpage\s+\d+\b", text, re.IGNORECASE):
-        text_lower = text.lower()
+    if _PAGE_NUMBER_LOOSE_PATTERN.search(text):
         if any(hint in text_lower for hint in _PAGE_FOOTER_HINTS):
             # Make sure it doesn't carry quantitative info that scope
             # atoms care about.
@@ -257,6 +275,18 @@ def _looks_like_page_footer(text: str) -> bool:
             has_qty = bool(re.search(r"\b\d+(?:,\d{3})*\s*(?:cameras?|aps?|drops?|outlets?|jacks?|users?|licenses?|installations?)\b", text, re.IGNORECASE))
             if not (has_money or has_qty):
                 return True
+    # Copyright + confidentiality marker on a short pipe-separated line
+    # is universally a footer band (every page repeats it).
+    if _COPYRIGHT_PATTERN.search(text):
+        hint_count = sum(1 for hint in _PAGE_FOOTER_HINTS if hint in text_lower)
+        if hint_count >= 1:
+            return True
+    # Two-or-more footer hints in a single short line — pipe-separated
+    # bands like "Confidential | Page X of Y | (c) 2026 X | DO NOT
+    # REDISTRIBUTE" are universally footer furniture.
+    hint_count = sum(1 for hint in _PAGE_FOOTER_HINTS if hint in text_lower)
+    if hint_count >= 2 and len(text) <= 200:
+        return True
     return False
 
 
@@ -451,7 +481,6 @@ class OrbitBriefPdfParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> ParserOutput:
-        del domain_pack
         structured_doc = build_structured_document(path)
         write_structured_doc(path, structured_doc)
         write_structured_markdown(path, structured_doc)
@@ -464,6 +493,24 @@ class OrbitBriefPdfParser(BaseParser):
                 parser_version=self.parser_version,
             )
         )
+        # Universal OCR fallback: for text-poor pages where the
+        # structured pipeline produced no atoms, try Tesseract OCR
+        # and emit scope_item atoms from recovered words. Handles
+        # phone-photographed contracts, scan-only PDFs, and image-
+        # only marketing PDFs. No-op when Tesseract isn't installed
+        # or every page already has body text.
+        try:
+            atoms.extend(
+                _ocr_fallback_atoms(
+                    path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                    already_emitted=atoms,
+                )
+            )
+        except Exception:  # pragma: no cover - never fail the parse
+            pass
         # PR7 — checkbox states, NOC/SOC workflow steps, and review
         # markers for low-text visual pages. These are extracted from
         # raw PDF text in a single fitz pass; opening fitz here avoids
@@ -479,30 +526,592 @@ class OrbitBriefPdfParser(BaseParser):
             )
         except Exception:  # pragma: no cover — never fail the parse
             pass
+        # Schematic legend-first pre-pass (PR5).  Only fires when a
+        # legend is actually parsed in the document or when the
+        # domain pack declares detection targets; otherwise leaves
+        # the output stream untouched so RFP-only PDFs are unchanged.
+        #
+        # We no longer swallow exceptions silently. Failures here
+        # used to be invisible: legacy tests stayed green while every
+        # schematic atom quietly disappeared. Instead, route any
+        # exception into a structured schematic_warning so the
+        # operator can see what went wrong and fix it.
+        schematic_atoms: list[EvidenceAtom] = []
+        schematic_derived: list[dict[str, Any]] = []
+        try:
+            schematic_atoms, schematic_derived = _run_schematic_pre_pass(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                path=path,
+                parser_version=self.parser_version,
+                domain_pack=domain_pack,
+            )
+        except Exception as exc:
+            import traceback as _tb
+
+            schematic_atoms = [
+                _build_schematic_prepass_failure_atom(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    path=path,
+                    parser_version=self.parser_version,
+                    exception=exc,
+                    traceback=_tb.format_exc(),
+                )
+            ]
+            schematic_derived = []
+        if schematic_atoms:
+            atoms.extend(schematic_atoms)
+
+        # Site-roster fitz fallback: when the structured-doc pipeline
+        # didn't expose any site-roster tables (e.g. reportlab-rendered
+        # PDFs whose cells the column-heuristic doesn't recognize),
+        # call fitz.find_tables() directly. Any table that smells like
+        # a site roster gets fed through site_roster_extractor and
+        # emitted as physical_site atoms. This is additive — it does
+        # not deduplicate against the structured path because we want
+        # at-least-one path to fire.
+        try:
+            existing_site_ids = {
+                (a.value or {}).get("site_id")
+                for a in atoms
+                if isinstance(a.value, dict) and a.value.get("kind") == "physical_site"
+            }
+            existing_site_ids.discard(None)
+            atoms.extend(
+                _fitz_site_roster_fallback(
+                    pdf_path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                    already_emitted=existing_site_ids,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
+
+        # Generic table fallback: when the structured pipeline did NOT
+        # emit any tables but fitz can find them (reportlab-generated
+        # tables, scanned-then-OCR'd grids, etc.), emit one
+        # table_row atom per row so part_numbers / quantities /
+        # money inside cells are captured. No-op when the structured
+        # pipeline already surfaced tables.
+        try:
+            atoms.extend(
+                _fitz_generic_table_fallback(
+                    pdf_path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                    structured_doc=structured_doc,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
+
         # Surface the derived artifacts in the parser output so the
         # compiler-level cache captures them and replays them on every
         # cache hit.  This guarantees ``<stem>.derived/structured.json``
         # and ``structured.md`` are always present after a compile, even
         # for cache-hot artifacts.
         derived = derived_dir_for(path)
+        derived_files: list[dict[str, Any]] = [
+            {
+                "relative_path": f"{derived.name}/{STRUCTURED_FILENAME}",
+                "content_kind": "json",
+                "content_json": structured_doc,
+            },
+            {
+                "relative_path": f"{derived.name}/{STRUCTURED_MARKDOWN_FILENAME}",
+                "content_kind": "markdown",
+                "content_text": structured_doc_to_markdown(structured_doc),
+            },
+        ]
+        derived_files.extend(schematic_derived)
         return ParserOutput(
             atoms=atoms,
-            derived_files=[
-                {
-                    "relative_path": f"{derived.name}/{STRUCTURED_FILENAME}",
-                    "content_kind": "json",
-                    "content_json": structured_doc,
-                },
-                {
-                    "relative_path": f"{derived.name}/{STRUCTURED_MARKDOWN_FILENAME}",
-                    "content_kind": "markdown",
-                    "content_text": structured_doc_to_markdown(structured_doc),
-                },
-            ],
+            derived_files=derived_files,
         )
 
 
 # ──────────────────────── public helpers ─────────────────────────────────
+
+
+def _ocr_fallback_atoms(
+    *,
+    path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    already_emitted: list[EvidenceAtom],
+) -> list[EvidenceAtom]:
+    """For each page that produced ZERO atoms via the structured
+    pipeline AND is text-poor (likely a scanned image), run OCR and
+    emit one scope_item atom per recovered text block.
+
+    Returns [] when Tesseract isn't installed or every page already
+    contributed atoms.
+    """
+    try:
+        from orbitbrief_page_os.segmentation.schematic.ocr import is_available
+        from orbitbrief_page_os.segmentation.schematic.raster import (
+            is_text_poor_page,
+            render_page_to_ndarray,
+        )
+    except Exception:
+        return []
+    if not is_available():
+        return []
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    try:
+        from orbitbrief_page_os.segmentation.schematic.ocr import ocr_words
+    except Exception:
+        return []
+
+    # Pages that already have atoms
+    pages_with_atoms: set[int] = set()
+    for a in already_emitted:
+        if not a.source_refs:
+            continue
+        loc = a.source_refs[0].locator if a.source_refs[0] else {}
+        if isinstance(loc, dict) and loc.get("page") is not None:
+            try:
+                pages_with_atoms.add(int(loc["page"]))
+            except (TypeError, ValueError):
+                continue
+
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(path))
+    except Exception:
+        return []
+    try:
+        for page_index in range(doc.page_count):
+            if page_index in pages_with_atoms:
+                continue
+            try:
+                page = doc.load_page(page_index)
+            except Exception:
+                continue
+            try:
+                if not is_text_poor_page(page):
+                    continue
+            except Exception:
+                continue
+            try:
+                arr = render_page_to_ndarray(page, dpi=200)
+            except Exception:
+                arr = None
+            if arr is None:
+                continue
+            try:
+                words = ocr_words(arr)
+            except Exception:
+                words = []
+            if not words:
+                continue
+            # Group OCR words into lines by y-coordinate buckets.
+            lines: dict[int, list] = {}
+            for w in words:
+                y_bucket = round(w.bbox[1] / 12.0) * 12
+                lines.setdefault(y_bucket, []).append(w)
+            recovered_text_blocks: list[str] = []
+            for y in sorted(lines):
+                sorted_words = sorted(lines[y], key=lambda w: w.bbox[0])
+                line_text = " ".join(w.text for w in sorted_words).strip()
+                if len(line_text) >= 6:
+                    recovered_text_blocks.append(line_text)
+            if not recovered_text_blocks:
+                continue
+            page_text = " ".join(recovered_text_blocks)
+            atom_id = stable_id(
+                "atm", project_id, artifact_id, "ocr_fallback",
+                page_index, page_text
+            )
+            src = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.pdf,
+                filename=path.name,
+                locator={
+                    "page": page_index,
+                    "block_kind": "ocr_fallback",
+                    "extraction": "pdf_ocr_fallback_v1",
+                    "word_count": len(words),
+                },
+                extraction_method="pdf_ocr_fallback_v1",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.scope_item,
+                    raw_text=page_text[:2000],
+                    normalized_text=page_text[:2000].lower(),
+                    value={
+                        "kind": "ocr_recovered",
+                        "page": page_index,
+                        "word_count": len(words),
+                        "lines": len(recovered_text_blocks),
+                    },
+                    entity_keys=[],
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.60,
+                    confidence_raw=0.60,
+                    calibrated_confidence=0.60,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["ocr_recovered"],
+                    parser_version=parser_version,
+                )
+            )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
+
+
+def _fitz_site_roster_fallback(
+    *,
+    pdf_path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    already_emitted: set[str | None] | None = None,
+) -> list[EvidenceAtom]:
+    """Use ``fitz.find_tables()`` to catch site rosters the structured
+    pipeline missed.
+
+    Returns a list of structured ``physical_site`` entity atoms. Never
+    raises — on any error (fitz unavailable, PDF unreadable, no tables)
+    returns an empty list.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    try:
+        from app.parsers.site_roster_extractor import (
+            extract_site_roster,
+            looks_like_site_roster,
+        )
+    except Exception:
+        return []
+
+    already_emitted = already_emitted or set()
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+    try:
+        # Pull the document-level surrounding text once so the
+        # extractor can spot ``kind=physical_site`` declarations.
+        page_texts: list[str] = []
+        try:
+            for p in doc:
+                try:
+                    page_texts.append(p.get_text() or "")
+                except Exception:
+                    continue
+        except Exception:
+            page_texts = []
+        document_text = "\n".join(page_texts)
+
+        for page_index, page in enumerate(doc):
+            try:
+                tables_finder = page.find_tables()
+            except Exception:
+                continue
+            tables = list(getattr(tables_finder, "tables", []) or [])
+            if not tables:
+                continue
+            for table_index, table in enumerate(tables):
+                try:
+                    extracted = table.extract()
+                except Exception:
+                    continue
+                if not extracted or len(extracted) < 2:
+                    continue
+                header = [(c or "") for c in extracted[0]]
+                body = extracted[1:]
+                rows: list[dict[str, Any]] = []
+                for r in body:
+                    if not r:
+                        continue
+                    rows.append({
+                        header[i] if i < len(header) and header[i] else f"col_{i}": (
+                            # Collapse internal whitespace in cell values so a
+                            # word that wrapped across two display lines (e.g.
+                            # "ATL-WEST-0\n2") renders as a single token.
+                            " ".join((c or "").split())
+                        )
+                        for i, c in enumerate(r)
+                    })
+                if not rows:
+                    continue
+                # Build column header list, then route through
+                # site_roster_extractor.
+                columns = [
+                    header[i] if i < len(header) and header[i] else f"col_{i}"
+                    for i in range(len(header) if header else (len(rows[0]) if rows else 0))
+                ]
+                try:
+                    is_roster = looks_like_site_roster(
+                        columns=columns, rows=rows, surrounding_text=document_text
+                    )
+                except Exception:
+                    is_roster = False
+                if not is_roster:
+                    continue
+                try:
+                    roster_rows = extract_site_roster(
+                        columns=columns, rows=rows, surrounding_text=document_text
+                    )
+                except Exception:
+                    roster_rows = []
+                # Bbox from fitz table -> base locator
+                try:
+                    bbox = table.bbox
+                    locator_base = {
+                        "page": int(page_index),
+                        "block_kind": "table",
+                        "bbox": list(bbox),
+                        "extraction": "site_roster_fitz_fallback_v1",
+                    }
+                except Exception:
+                    locator_base = {"page": int(page_index), "extraction": "site_roster_fitz_fallback_v1"}
+                for site_row in roster_rows:
+                    sid = (site_row.site_id or "").strip()
+                    # Normalize whitespace inside the ID (PDF wrap
+                    # artifacts: "ATL-WEST-0 2" -> "ATL-WEST-02")
+                    if sid and " " in sid:
+                        compact = re.sub(r"\s+", "", sid)
+                        # Only collapse when the compact form still
+                        # looks like a site ID — keeps "Building C"
+                        # type values from getting smushed.
+                        from app.parsers.site_roster_extractor import _SITE_ID_SHAPE_RE
+                        if _SITE_ID_SHAPE_RE.match(compact):
+                            sid = compact
+                    if sid in already_emitted:
+                        continue
+                    already_emitted.add(sid)
+                    canon_id = sid or site_row.facility_name or ""
+                    if not canon_id:
+                        continue
+                    site_text = " | ".join(
+                        f"{k}: {v}"
+                        for k, v in [
+                            ("site_id", sid or site_row.site_id),
+                            ("facility", site_row.facility_name),
+                            ("address", site_row.street_address),
+                            ("mdf_idf", site_row.mdf_idf),
+                            ("access", site_row.access_window),
+                            ("escort", site_row.escort_owner),
+                            ("contact", site_row.contact),
+                            ("phone", site_row.phone),
+                            ("email", site_row.email),
+                            ("notes", site_row.notes),
+                        ]
+                        if v
+                    )
+                    locator = {
+                        **locator_base,
+                        "row_index": site_row.row_index,
+                        "table_index": table_index,
+                    }
+                    out.append(
+                        _make_atom(
+                            text=site_text or canon_id,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=pdf_path.name,
+                            parser_version=parser_version,
+                            atom_type=AtomType.entity,
+                            authority_class=AuthorityClass.contractual_scope,
+                            confidence=site_row.confidence,
+                            locator=locator,
+                            value={
+                                "kind": "physical_site",
+                                "site_id": sid or site_row.site_id,
+                                "facility_name": site_row.facility_name,
+                                "street_address": site_row.street_address,
+                                "mdf_idf": site_row.mdf_idf,
+                                "access_window": site_row.access_window,
+                                "escort_owner": site_row.escort_owner,
+                                "contact": site_row.contact,
+                                "phone": site_row.phone,
+                                "email": site_row.email,
+                                "city_state": site_row.city_state,
+                                "sqft": site_row.sqft,
+                                "occupancy": site_row.occupancy,
+                                "notes": site_row.notes,
+                                "extras": dict(site_row.extra_fields),
+                            },
+                        )
+                    )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
+
+
+def _structured_doc_has_tables(structured_doc: dict[str, Any]) -> bool:
+    """True iff any section/subsection contains a block of kind='table'."""
+    for page in structured_doc.get("pages") or []:
+        for section in page.get("sections") or []:
+            stack: list[dict[str, Any]] = [section]
+            while stack:
+                cur = stack.pop()
+                for b in cur.get("blocks") or []:
+                    if isinstance(b, dict) and b.get("kind") == "table":
+                        return True
+                for sub in cur.get("subsections") or []:
+                    stack.append(sub)
+    return False
+
+
+def _fitz_generic_table_fallback(
+    *,
+    pdf_path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    structured_doc: dict[str, Any],
+) -> list[EvidenceAtom]:
+    """Recover ANY tabular content fitz.find_tables sees that the
+    structured pipeline didn't surface.
+
+    The structured extractor's heuristic table detector misses
+    reportlab-generated tables and some scanned/CSV-converted PDFs.
+    fitz's vector-based table finder catches those. We emit one
+    table_row-shaped atom per row so enrich_entities can pull
+    part_numbers / quantities / money out of the cells.
+
+    Skipped entirely when the structured pipeline already exposed
+    at least one table — that path is more accurate and we don't
+    want to double-emit.
+    """
+    if _structured_doc_has_tables(structured_doc):
+        return []
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+    try:
+        for page_index, page in enumerate(doc):
+            try:
+                tables_finder = page.find_tables()
+            except Exception:
+                continue
+            tables = list(getattr(tables_finder, "tables", []) or [])
+            if not tables:
+                continue
+            for table_index, table in enumerate(tables):
+                try:
+                    extracted = table.extract()
+                except Exception:
+                    continue
+                if not extracted or len(extracted) < 2:
+                    continue
+                header = [(c or "").strip() for c in extracted[0]]
+                body = extracted[1:]
+                # Build columns list (use col_N for blank headers)
+                columns = [
+                    header[i] if i < len(header) and header[i] else f"col_{i}"
+                    for i in range(len(header) if header else (len(body[0]) if body else 0))
+                ]
+                # Classify the table once (pricing vs scope)
+                sample_cells: list[str] = []
+                for r in body[:5]:
+                    for c in r or ():
+                        if c is None:
+                            continue
+                        s = " ".join(str(c).split()).strip()
+                        if s:
+                            sample_cells.append(s)
+                try:
+                    atom_type, authority = _classify_table(
+                        section_path=[],
+                        columns=columns,
+                        sample_cells=sample_cells,
+                    )
+                except Exception:
+                    atom_type, authority = AtomType.scope_item, AuthorityClass.contractual_scope
+                # Bbox for locator
+                try:
+                    bbox = table.bbox
+                    locator_base = {
+                        "page": int(page_index),
+                        "block_kind": "table",
+                        "bbox": list(bbox),
+                        "extraction": "fitz_generic_table_fallback_v1",
+                        "table_index": table_index,
+                    }
+                except Exception:
+                    locator_base = {
+                        "page": int(page_index),
+                        "block_kind": "table",
+                        "extraction": "fitz_generic_table_fallback_v1",
+                        "table_index": table_index,
+                    }
+                for row_index, row in enumerate(body):
+                    if not row:
+                        continue
+                    cells: dict[str, str] = {}
+                    cell_strs: list[str] = []
+                    for i, c in enumerate(row):
+                        col_name = columns[i] if i < len(columns) else f"col_{i}"
+                        val = " ".join(str(c or "").split()).strip()
+                        if val:
+                            cells[col_name] = val
+                            cell_strs.append(f"{col_name}: {val}")
+                    if not cells:
+                        continue
+                    row_text = " | ".join(cell_strs)
+                    # Skip rows whose text is a form-field / page-footer
+                    if _looks_like_form_field(row_text) or _looks_like_page_footer(row_text):
+                        continue
+                    out.append(
+                        _make_atom(
+                            text=row_text,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=pdf_path.name,
+                            parser_version=parser_version,
+                            atom_type=atom_type,
+                            authority_class=authority,
+                            confidence=TABLE_ROW_CONFIDENCE,
+                            locator={**locator_base, "row_index": row_index},
+                            value={
+                                "kind": "table_row",
+                                "columns": columns,
+                                "cells": cells,
+                                "fallback": "fitz_generic_table",
+                            },
+                        )
+                    )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
 
 
 def build_structured_document(pdf_path: Path) -> dict[str, Any]:
@@ -558,6 +1167,33 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     document_metadata: list[str] = []
     seen_metadata: set[str] = set()
 
+    # A2 large-PDF safety net: when a PDF is bigger than the soft
+    # cap, process only the first ``MAX_PAGES_LARGE_PDF`` pages and
+    # add a warning to the metadata so the PM sees the partial-
+    # parse explicitly. Prevents OOM on 500MB+ scanned dumps while
+    # still surfacing actionable evidence from the first chunk.
+    # Tunable via env vars so on H100/large-RAM hosts the caller
+    # can lift the limits.
+    import os as _os
+    LARGE_PDF_SOFT_CAP_MB = float(_os.environ.get("PARSER_OS_PDF_SOFT_CAP_MB", "50"))
+    MAX_PAGES_LARGE_PDF = int(_os.environ.get("PARSER_OS_PDF_MAX_PAGES", "200"))
+    try:
+        pdf_size_mb = pdf_path.stat().st_size / (1024 * 1024)
+    except OSError:
+        pdf_size_mb = 0.0
+    is_large_pdf = pdf_size_mb > LARGE_PDF_SOFT_CAP_MB
+    if is_large_pdf:
+        warning = (
+            f"[A2 large-PDF guard] {pdf_path.name} is "
+            f"{pdf_size_mb:.0f} MB > {LARGE_PDF_SOFT_CAP_MB:.0f} MB; "
+            f"processing only the first {MAX_PAGES_LARGE_PDF} pages. "
+            f"Set PARSER_OS_PDF_MAX_PAGES or PARSER_OS_PDF_SOFT_CAP_MB "
+            f"to lift this limit."
+        )
+        if warning not in seen_metadata:
+            seen_metadata.add(warning)
+            document_metadata.append(warning)
+
     # P2.1: pre-scan the PDF for per-page text length so we can fast-path
     # low-text pages (scanned drawings, image-only floor plans) without
     # running the heavyweight layout-detection pipeline on them.
@@ -567,7 +1203,48 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     page_text_lengths: list[int] = []
     page_texts: list[str] = []
     with fitz.open(str(pdf_path)) as doc:
-        page_count = len(doc)
+        # Encrypted PDF detection — explicit signal for PM_HANDOFF so
+        # the file gets routed to manual unlock rather than silently
+        # producing 0 atoms. ``doc.needs_pass`` is True when the PDF
+        # is password-protected and the open call didn't supply one.
+        if getattr(doc, "needs_pass", False) or getattr(doc, "is_encrypted", False):
+            encrypt_msg = (
+                f"[Encrypted PDF — {pdf_path.name} is password-protected. "
+                f"Manual unlock required: open in Acrobat / Preview, supply "
+                f"the password, save as an unencrypted copy, then re-attach "
+                f"to the intake. parser-os marks this file as needs_review "
+                f"and emits 0 evidence atoms until unlocked.]"
+            )
+            document_metadata.append(encrypt_msg)
+            # Skip the rest of the parse — return an empty page list
+            # so the rest of the pipeline degrades gracefully via A6.
+            return {
+                "schema_version": STRUCTURED_SCHEMA_VERSION,
+                "source": {
+                    "filename": pdf_path.name,
+                    "page_count": 0,
+                    "encrypted": True,
+                },
+                "document": {"title": None, "metadata": document_metadata},
+                "pages": [],
+            }
+        full_page_count = len(doc)
+        # A2: cap the working page_count for large PDFs but
+        # remember the original so the metadata can report it.
+        page_count = (
+            min(full_page_count, MAX_PAGES_LARGE_PDF)
+            if is_large_pdf
+            else full_page_count
+        )
+        if is_large_pdf and full_page_count > MAX_PAGES_LARGE_PDF:
+            skipped_msg = (
+                f"[A2 large-PDF guard] truncated {full_page_count} pages "
+                f"→ first {MAX_PAGES_LARGE_PDF}; "
+                f"{full_page_count - MAX_PAGES_LARGE_PDF} pages skipped."
+            )
+            if skipped_msg not in seen_metadata:
+                seen_metadata.add(skipped_msg)
+                document_metadata.append(skipped_msg)
         for page_idx in range(page_count):
             try:
                 page_text = doc[page_idx].get_text("text") or ""
@@ -584,12 +1261,46 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     TEXT_RICH_PAGE_THRESHOLD = 1200
 
     def _build_low_text_page(page_index: int) -> dict[str, Any]:
+        # Low-text page = likely scanned. Try the OCR chain
+        # (PyMuPDF Tesseract → pytesseract → easyocr → Ollama vision).
+        # If any backend recovers text, treat the page as text-rich.
+        # If nothing fires, keep the marker so PM_HANDOFF surfaces it
+        # under "Files requiring manual review".
+        try:
+            from app.parsers._ocr_chain import ocr_pdf_page
+            # Re-open the doc inside the OCR scope to keep fitz state
+            # isolated from the outer page-loop. PyMuPDF docs / pages
+            # are not thread-safe.
+            with fitz.open(str(pdf_path)) as _doc:
+                ocr_result = ocr_pdf_page(_doc[page_index])
+        except Exception as exc:
+            ocr_result = {
+                "text": "",
+                "backend": "",
+                "notes": [f"ocr_chain crashed: {type(exc).__name__}"],
+            }
+        if (ocr_result.get("text") or "").strip():
+            # Promote the page through the text-rich path using the
+            # OCR'd text. Stash the page text in our cache so any
+            # downstream consumer that re-reads ``page_texts`` sees
+            # the OCR result.
+            page_texts[page_index] = ocr_result["text"]
+            page_text_lengths[page_index] = len(ocr_result["text"].strip())
+            page_dict = _build_text_rich_page(page_index)
+            page_dict.setdefault("metadata", []).insert(
+                0,
+                f"[OCR-recovered via {ocr_result.get('backend','')} — "
+                f"text layer was missing; treat as scanned-source evidence]",
+            )
+            return page_dict
         return {
             "page": page_index,
             "title": None,
             "metadata": [
                 f"[low-text page (≤{LOW_TEXT_PAGE_THRESHOLD} chars) "
-                "— likely scanned image; layout pipeline skipped for perf]"
+                "— likely scanned image; OCR chain "
+                f"({', '.join(ocr_result.get('notes', []) or ['no backend reachable'])}) "
+                "produced no text. PM_HANDOFF will surface this page for manual review.]"
             ],
             "outline": [],
             "sections": [],
@@ -808,8 +1519,9 @@ def atoms_from_structured_doc(
     """
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
+        sections = page.get("sections", []) or []
         yield from _atoms_for_sections(
-            sections=page.get("sections", []) or [],
+            sections=sections,
             section_path=[],
             page_index=page_index,
             project_id=project_id,
@@ -817,6 +1529,46 @@ def atoms_from_structured_doc(
             filename=filename,
             parser_version=parser_version,
         )
+        # Metadata-fallback path: when the structured extractor was
+        # unable to assemble any sections from the page (heading
+        # classifier misfired on short-paragraph PDFs, weak heading
+        # styling, scanned/rasterized documents), the page's body
+        # content ends up classified as ``metadata`` and is otherwise
+        # silently dropped. Emit one scope_item atom per metadata
+        # line as a fallback so content like a date roster or a
+        # one-paragraph SLA isn't completely invisible to the
+        # downstream compiler.
+        if not sections:
+            page_metadata = page.get("metadata") or []
+            for meta_index, meta_text in enumerate(page_metadata):
+                text = (str(meta_text or "")).strip()
+                if not text or len(text) < 6:
+                    continue
+                if _looks_like_form_field(text) or _looks_like_page_footer(text):
+                    continue
+                # Apply the same text-pattern classifier the normal
+                # paragraph path uses — without it, SLA / decision /
+                # constraint / risk shapes that arrive via the
+                # fallback all get the default scope_item label.
+                atom_type, authority = _classify_text_block(
+                    text=text, section_path=[], kind="paragraph"
+                )
+                yield _make_atom(
+                    text=text,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=atom_type,
+                    authority_class=authority,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={
+                        "page": page_index,
+                        "block_kind": "metadata_fallback",
+                        "meta_index": meta_index,
+                    },
+                    value={"kind": "paragraph", "fallback": "page_metadata"},
+                )
 
 
 def _atoms_for_sections(
@@ -991,6 +1743,97 @@ def _atoms_for_block(
             columns=columns,
             sample_cells=sample_cells,
         )
+
+        # Site-roster fast path: when the table looks like a list of
+        # physical sites (column headers like Site ID / Facility Name
+        # / Street Address, OR surrounding prose declares
+        # kind=physical_site), emit one structured ``site`` atom per
+        # row carrying all the canonical fields. This bypasses the
+        # row-as-prose path that was shattering rosters into junk
+        # entity fragments ("site id", "n terminal", "building c").
+        try:
+            from app.parsers.site_roster_extractor import (
+                extract_site_roster,
+                looks_like_site_roster,
+            )
+        except Exception:  # pragma: no cover
+            extract_site_roster = None  # type: ignore[assignment]
+            looks_like_site_roster = None  # type: ignore[assignment]
+        if extract_site_roster is not None and looks_like_site_roster is not None:
+            surrounding = " ".join(str(s) for s in (section_path or []))
+            try:
+                is_roster = looks_like_site_roster(
+                    columns=columns, rows=rows, surrounding_text=surrounding
+                )
+            except Exception:  # pragma: no cover
+                is_roster = False
+            if is_roster:
+                try:
+                    roster_rows = extract_site_roster(
+                        columns=columns, rows=rows, surrounding_text=surrounding
+                    )
+                except Exception:  # pragma: no cover
+                    roster_rows = []
+                for site_row in roster_rows:
+                    # The site_id is the canonical key. When absent,
+                    # fall back to a slug of the facility_name.
+                    canon_id = site_row.site_id or site_row.facility_name or ""
+                    if not canon_id:
+                        continue
+                    site_text = " | ".join(
+                        f"{k}: {v}"
+                        for k, v in [
+                            ("site_id", site_row.site_id),
+                            ("facility", site_row.facility_name),
+                            ("address", site_row.street_address),
+                            ("mdf_idf", site_row.mdf_idf),
+                            ("access", site_row.access_window),
+                            ("escort", site_row.escort_owner),
+                            ("contact", site_row.contact),
+                            ("phone", site_row.phone),
+                            ("email", site_row.email),
+                            ("notes", site_row.notes),
+                        ]
+                        if v
+                    )
+                    yield _make_atom(
+                        text=site_text or canon_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=filename,
+                        parser_version=parser_version,
+                        atom_type=AtomType.entity,
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=site_row.confidence,
+                        locator={
+                            **base_locator,
+                            "row_index": site_row.row_index,
+                            "extraction": "site_roster_v1",
+                        },
+                        value={
+                            "kind": "physical_site",
+                            "site_id": site_row.site_id,
+                            "facility_name": site_row.facility_name,
+                            "street_address": site_row.street_address,
+                            "mdf_idf": site_row.mdf_idf,
+                            "access_window": site_row.access_window,
+                            "escort_owner": site_row.escort_owner,
+                            "contact": site_row.contact,
+                            "phone": site_row.phone,
+                            "email": site_row.email,
+                            "city_state": site_row.city_state,
+                            "sqft": site_row.sqft,
+                            "occupancy": site_row.occupancy,
+                            "notes": site_row.notes,
+                            "extras": dict(site_row.extra_fields),
+                        },
+                    )
+                # Site-roster rows are emitted as structured ``entity``
+                # atoms above; the legacy table-as-prose path is
+                # skipped for this block. We return here to prevent
+                # duplicate scope_item atoms covering the same cells.
+                return
+
         for row_index, row in enumerate(rows):
             row_text = _row_to_text(row)
             if not row_text:
@@ -1386,6 +2229,19 @@ _TEXT_OVERRIDES: list[tuple[re.Pattern[str], AtomType]] = [
     # Constraint shapes — modal verbs at the start of a clause.
     (re.compile(r"^\s*(must|shall|required to|is required to|will be required to)\b", re.I), AtomType.constraint),
     (re.compile(r"\b(must\s+(?:comply|conform|support|meet|include)|is\s+required|shall\s+comply)\b", re.I), AtomType.constraint),
+    # SLA / managed-services constraint shapes — response/resolution
+    # times, uptime percentages, service credits. These appear in
+    # every managed-service contract and were previously falling
+    # through to scope_item, hiding the operational commitments.
+    (re.compile(r"\b(?:response|resolution|repair|restoration|acknowledg(?:e|ement))\s+(?:time\s+)?(?:within|of|<|≤|in)\s+\d+\s*(?:business\s+)?(?:hours?|days?|minutes?)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bpriority\s+\d\b.*\b(?:response|resolution)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bp[1-4]\b.*\b(?:response|resolution|hours?|days?)\b", re.I), AtomType.constraint),
+    (re.compile(r"\b(?:uptime|availability)\b.*?\d+(?:\.\d+)?\s*%", re.I), AtomType.constraint),
+    (re.compile(r"\b\d+(?:\.\d+)?\s*%\s+(?:uptime|availability|sla)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bservice\s+credits?\s+(?:apply|granted|owed|due)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bservice\s+level\s+(?:agreement|objective|commitment)\b", re.I), AtomType.constraint),
+    (re.compile(r"\bmean\s+time\s+(?:to|between)\s+(?:repair|restore|failure|recovery)\b", re.I), AtomType.constraint),
+    (re.compile(r"\b(?:mttr|mtbf|rpo|rto)\s*[:=]?\s*\d+\s*(?:hours?|days?|minutes?)\b", re.I), AtomType.constraint),
     # Decision shapes — "will be", "is to be", "centralized at",
     # "decided to", "approved to".  These are the meeting-decision
     # cues that used to fall through to scope_item.
@@ -3393,6 +4249,1625 @@ def _group_form_option_atoms_from_text(
                 )
             )
     return out
+
+
+def _build_schematic_prepass_failure_atom(
+    *,
+    project_id: str,
+    artifact_id: str,
+    path: Path,
+    parser_version: str,
+    exception: Exception,
+    traceback: str,
+) -> EvidenceAtom:
+    """Surface a schematic pre-pass crash as a single warning atom.
+
+    Without this, legacy tests stayed green even when the schematic
+    pre-pass blew up — the broad ``except`` simply dropped every
+    schematic atom. Boss-review fix: failures now ship as a
+    ``schematic_warning`` with the truncated traceback in
+    ``value['traceback']`` so the operator can see what happened.
+    """
+    from app.parsers.schematic_atom_emitters import emit_warning_atom
+    from app.parsers.schematic_models import SchematicWarning
+
+    detail = f"{type(exception).__name__}: {exception}"
+    truncated = traceback[-1500:] if len(traceback) > 1500 else traceback
+    warning = SchematicWarning.make(
+        warning_type="prepass_failure",
+        page_index=0,
+        sheet_number=None,
+        detail=f"Schematic pre-pass raised {detail}",
+        extras={"failure": detail, "traceback_tail": truncated},
+    )
+    return emit_warning_atom(
+        warning=warning,
+        project_id=project_id,
+        artifact_id=artifact_id,
+        filename=path.name,
+        parser_version=parser_version,
+        page=None,
+    )
+
+
+# Filter list for "orphan token" harvesting — common column-header
+# words and English filler that shouldn't be treated as symbols.
+_LEGEND_TOKEN_BLOCKLIST: frozenset[str] = frozenset({
+    "ABOVE", "AFF", "ARCH", "BACK", "CABLE", "CAT6", "CEILING",
+    "CLOSET", "CMP", "COAX", "COMPONENT", "COMPONENTS", "CONDUIT",
+    "CONTROL", "COOPER", "COPPER", "COUNT", "COUNTER", "COVER",
+    "DESCRIPTION", "DEVICE", "DOCK", "DOOR", "DRAWING", "DRAWINGS",
+    "ELECTRICAL", "ENTRY", "EQUIP", "ETC", "FINISH", "FLUSH",
+    "FRAME", "FROM", "GROUP", "HARDWARE", "HEIGHT", "INSERT",
+    "INSTALLATION", "JACK", "LIST", "LOAD", "LOWER", "MANUFACTURERS",
+    "MOUNT", "MOUNTED", "MOUNTING", "MUD", "NIC", "NOT", "NOTE",
+    "NOTES", "N/A", "NA", "NORMAL", "NUMBER", "OUTLET", "OWNER",
+    "PANEL", "PART", "PATCH", "PER", "PLANS", "POE", "PORT",
+    "POWER", "PROVIDE", "READER", "REFER", "REMARKS", "REQUIREMENT",
+    "REQUIREMENTS", "RING", "RISER", "ROOM", "ROOMS", "ROUGH",
+    "ROUGH-IN", "SCHEDULE", "SECONDARY", "SECURITY", "SEE",
+    "SHIELDED", "SHOWN", "SIZE", "SPACE", "STANDARD", "STRANDED",
+    "STUB", "SUITE", "SYMBOL", "SYMBOLS", "SYSTEM", "TERMINATION",
+    "TYPE", "TYPES", "TYPICAL", "TYPICALLY", "UNDER", "UNLESS",
+    "UPS", "USE", "USED", "VAULT", "VERIFY", "WALL", "WAREHOUSE",
+    "WIRE", "WITH", "WORK", "ZONE",
+    "AND", "OR", "FOR", "THE", "ARE", "WAS", "WERE", "ALL", "ANY",
+    "PER", "VERIFY", "TBD",
+    "A", "B", "C", "D", "E", "F", "G",
+    # ----- column letters used as grid coordinates -----
+    "A#", "A #",
+})
+
+
+def _augment_legend_with_orphan_tokens(
+    *,
+    legend: Any,
+    per_page_legend_bbox: dict[int, tuple[float, float, float, float]],
+    per_page_blocks: dict[int, list[Any]],
+) -> Any:
+    """Harvest short uppercase tokens from a legend's bbox region.
+
+    The row-parser pairs blocks into (symbol, description) rows but
+    occasionally misses the symbol token (multi-column legends with
+    wide gaps, columns of nothing-but-icon swatches, etc.). For each
+    legend, scan its bbox for short standalone uppercase tokens that
+    don't already appear as ``normalized_symbol_text`` in the legend
+    entries, and append a synthetic ParsedLegendEntry for each.
+
+    Filtered by ``_LEGEND_TOKEN_BLOCKLIST`` to keep English filler /
+    column-header words out of the symbol vocabulary.
+    """
+    from app.parsers.schematic_models import ParsedLegend, ParsedLegendEntry
+    import re
+
+    legend_bbox = per_page_legend_bbox.get(legend.page_index)
+    if legend_bbox is None:
+        return legend
+    blocks = per_page_blocks.get(legend.page_index) or []
+    if not blocks:
+        return legend
+
+    have: set[str] = set()
+    for e in legend.entries:
+        s = (e.normalized_symbol_text or "").strip().upper()
+        if s:
+            have.add(s)
+    new_entries: list[ParsedLegendEntry] = list(legend.entries)
+    seen_new: set[str] = set()
+    # Pattern: short uppercase alphanum tokens, optionally with -, /, or digits
+    pat = re.compile(r"^[A-Z][A-Z0-9/\-]{0,5}$")
+    for b in blocks:
+        bbox = getattr(b, "bbox", None)
+        if not bbox or len(bbox) != 4:
+            continue
+        # Must lie inside the legend bbox
+        if not (
+            legend_bbox[0] <= bbox[0]
+            and bbox[2] <= legend_bbox[2]
+            and legend_bbox[1] <= bbox[1]
+            and bbox[3] <= legend_bbox[3]
+        ):
+            continue
+        text = (getattr(b, "text", "") or "").strip()
+        if not text or len(text) > 6:
+            continue
+        upper = text.upper()
+        if upper in have or upper in seen_new:
+            continue
+        if upper in _LEGEND_TOKEN_BLOCKLIST:
+            continue
+        if not pat.match(upper):
+            continue
+        # Looks like a real legend symbol — synthesize an entry.
+        try:
+            entry = ParsedLegendEntry.make(
+                page_index=legend.page_index,
+                label_text=upper,
+                normalized_label=upper.lower(),
+                raw_symbol_text=upper,
+                normalized_symbol_text=upper,
+                symbol_bbox_pdf=tuple(float(x) for x in bbox),
+                confidence=0.6,
+            )
+        except (TypeError, ValueError):
+            continue
+        new_entries.append(entry)
+        seen_new.add(upper)
+
+    if not seen_new:
+        return legend
+    # Rebuild the ParsedLegend with the new entry tuple. Use make() so
+    # legend_id rolls forward to reflect the new entry set.
+    return ParsedLegend.make(
+        page_index=legend.page_index,
+        sheet_number=legend.sheet_number,
+        title=legend.title,
+        scope=legend.scope,
+        entries=tuple(new_entries),
+        continuation_refs=legend.continuation_refs,
+        source_ref_locator=dict(legend.source_ref_locator),
+        confidence=legend.confidence,
+        warnings=legend.warnings,
+    )
+
+
+def _run_schematic_pre_pass(
+    *,
+    project_id: str,
+    artifact_id: str,
+    path: Path,
+    parser_version: str,
+    domain_pack: DomainPack | None,
+) -> tuple[list[EvidenceAtom], list[dict[str, Any]]]:
+    """Legend-first schematic pre-pass for a PDF (PR5).
+
+    Returns ``(atoms, derived_files)``.  ``atoms`` is a deterministic
+    list of ``schematic_*`` atoms; ``derived_files`` is a list of
+    ``ParserDerivedFile`` dicts to attach to ``ParserOutput``.
+
+    Behavior is conservative — if no legend is parsed anywhere in the
+    document AND the active domain pack declares no detection
+    targets, the pre-pass returns empty results so non-schematic PDFs
+    are untouched (preserves the determinism + provenance contracts
+    for the existing test grid).
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover
+        return [], []
+    from app.parsers.schematic_atom_emitters import (
+        collect_all,
+        emit_detection_atom,
+        emit_keyed_note_atom,
+        emit_legend_atom,
+        emit_line_run_atom,
+        emit_room_atom,
+        emit_schedule_row_atom,
+        emit_sheet_metadata_atom,
+        emit_target_set_atom,
+        emit_warning_atom,
+        intersect_with_pack,
+    )
+    from app.parsers.schematic_models import DetectionTarget, DetectionTargetSet, SchematicWarning
+    from orbitbrief_page_os.segmentation.schematic.legend_locator import (
+        locate_legend_candidates,
+        page_text_blocks,
+    )
+    from orbitbrief_page_os.segmentation.schematic.legend_parser import parse_legend
+    from orbitbrief_page_os.segmentation.schematic.legend_resolver import (
+        LegendResolver,
+        extract_sheet_number,
+    )
+    from orbitbrief_page_os.segmentation.schematic.symbol_detector import detect_symbols
+    from orbitbrief_page_os.segmentation.schematic.raster import is_text_poor_page
+    from orbitbrief_page_os.segmentation.schematic import ocr as schematic_ocr
+    from orbitbrief_page_os.segmentation.schematic.page_kind_classifier import (
+        LEGEND_TABLE,
+        SCHEDULE_BOM,
+        SPEC_PROSE,
+        SCHEMATIC_DRAWING,
+        UNKNOWN as PAGE_UNKNOWN,
+        classify_page_kind,
+    )
+
+    try:
+        doc = fitz.open(str(path))
+    except Exception:  # pragma: no cover
+        return [], []
+
+    resolver = LegendResolver()
+    per_page_blocks: dict[int, list[Any]] = {}
+    per_page_legend_bbox: dict[int, tuple[float, float, float, float]] = {}
+    parsed_legends: list[Any] = []
+
+    atoms: list[EvidenceAtom] = []
+    legend_records: list[dict[str, Any]] = []
+    target_records: list[dict[str, Any]] = []
+    detection_records: list[dict[str, Any]] = []
+
+    declared_emitted: set[tuple[str, str]] = set()
+    legend_gap_emitted: set[tuple[str, str]] = set()
+    pack_has_targets_for_warning = bool(domain_pack and domain_pack.detection_targets)
+    try:
+        for page_index in range(doc.page_count):
+            try:
+                page_obj = doc.load_page(page_index)
+                blocks = page_text_blocks(page_obj)
+            except Exception:
+                blocks = []
+                page_obj = None
+            per_page_blocks[page_index] = blocks
+            # Raster fallback: if the page has effectively no text layer
+            # AND the active pack expects schematic content, try local
+            # OCR to recover legend rows. When OCR is unavailable, emit
+            # an ``ocr_unavailable`` warning so the page doesn't silently
+            # parse as blank. When OCR IS available, convert recognized
+            # words into TextBlocks in PDF-point space and feed them to
+            # the rest of the legend pipeline.
+            if (
+                page_obj is not None
+                and pack_has_targets_for_warning
+                and not blocks
+                and is_text_poor_page(page_obj)
+            ):
+                if not schematic_ocr.is_available():
+                    atoms.append(
+                        emit_warning_atom(
+                            warning=schematic_ocr.status_warning(
+                                page_index=page_index, sheet_number=None
+                            ),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                            page=page_obj,
+                        )
+                    )
+                else:
+                    from orbitbrief_page_os.segmentation.schematic.raster import (
+                        render_page_to_ndarray,
+                    )
+                    from app.parsers.schematic_models import SCHEMATIC_REPLAY_DPI
+
+                    arr = render_page_to_ndarray(page_obj, dpi=SCHEMATIC_REPLAY_DPI)
+                    if arr is not None:
+                        words = schematic_ocr.ocr_words(arr)
+                        ocr_blocks = schematic_ocr.words_to_textblocks(
+                            words, page_dpi=SCHEMATIC_REPLAY_DPI
+                        )
+                        if ocr_blocks:
+                            blocks = ocr_blocks
+                            per_page_blocks[page_index] = ocr_blocks
+                            atoms.append(
+                                emit_warning_atom(
+                                    warning=SchematicWarning.make(
+                                        warning_type="ocr_recovered",
+                                        page_index=page_index,
+                                        sheet_number=None,
+                                        detail=(
+                                            f"Raster page parsed via OCR "
+                                            f"({len(ocr_blocks)} text rows recovered)."
+                                        ),
+                                        extras={
+                                            "ocr_word_count": len(words),
+                                            "ocr_block_count": len(ocr_blocks),
+                                        },
+                                    ),
+                                    project_id=project_id,
+                                    artifact_id=artifact_id,
+                                    filename=path.name,
+                                    parser_version=parser_version,
+                                    page=page_obj,
+                                )
+                            )
+            # ── Page-kind routing (PR: Marriott multi-legend fix) ──
+            # Classify the page so we (a) skip prose/schedule pages
+            # and (b) extract MULTIPLE legends from legend-table
+            # pages instead of bailing on the first match.
+            classification = classify_page_kind(
+                page_index=page_index, page=page_obj, blocks=blocks
+            )
+            page_kind = classification.kind
+
+            # SPEC_PROSE + SCHEDULE_BOM pages have no schematic content;
+            # skip the entire legend/symbol flow. The generic PDF parser
+            # (table/text extraction) handles these pages.
+            if page_kind in (SPEC_PROSE, SCHEDULE_BOM):
+                # Still ingest into resolver so cross-doc state is
+                # consistent (it just produces no legends/targets).
+                page_bbox_for_ingest_skip: tuple[float, float, float, float] | None = None
+                if page_obj is not None:
+                    try:
+                        r = page_obj.rect
+                        page_bbox_for_ingest_skip = (
+                            float(r.x0), float(r.y0), float(r.x1), float(r.y1)
+                        )
+                    except Exception:  # pragma: no cover
+                        page_bbox_for_ingest_skip = None
+                resolver.ingest_page(
+                    page_index=page_index,
+                    blocks=blocks,
+                    legend=None,
+                    page_bbox=page_bbox_for_ingest_skip,
+                )
+                continue
+
+            legend = None
+            candidates = locate_legend_candidates(page_index=page_index, blocks=blocks)
+            ordered = sorted(
+                (c for c in candidates if c.score >= 0.45),
+                key=lambda c: (-c.score, c.page_index, c.bbox[1], c.bbox[0]),
+            )
+            chosen_bbox: tuple[float, float, float, float] | None = None
+            sheet = extract_sheet_number(blocks)
+
+            # LEGEND_TABLE pages contain MULTIPLE legends (Marriott
+            # T0.01 = Structured Cabling + Intrusion + Access Control
+            # + CCTV). Extract every non-bogus candidate; promote
+            # scope to ``global`` since the legend applies to all
+            # subsequent drawing pages with the same domain.
+            if page_kind == LEGEND_TABLE:
+                page_legends: list[Any] = []
+                seen_legend_ids: set[str] = set()
+                seen_bbox_centers: list[tuple[float, float]] = []
+                # Marriott T0.01 has FOUR legend tables (STRUCTURED
+                # CABLING + INTRUSION DETECTION + ACCESS CONTROL +
+                # CCTV) — the locator normalizes their headers to the
+                # same string ("symbol legend"), so deduping by header
+                # text used to collapse all four into one. Instead,
+                # dedupe by the parsed legend_id (entry-set hash) and
+                # by bbox-center proximity so distinct legends survive.
+                BBOX_DUPE_PT = 36.0
+                for cand in ordered:
+                    cx = (cand.bbox[0] + cand.bbox[2]) / 2.0
+                    cy = (cand.bbox[1] + cand.bbox[3]) / 2.0
+                    if any(
+                        abs(cx - sc[0]) <= BBOX_DUPE_PT and abs(cy - sc[1]) <= BBOX_DUPE_PT
+                        for sc in seen_bbox_centers
+                    ):
+                        continue
+                    parsed = parse_legend(
+                        candidate=cand,
+                        page_blocks=blocks,
+                        sheet_number=sheet,
+                        scope="global",
+                    )
+                    if parsed is None:
+                        continue
+                    if parsed.legend_id in seen_legend_ids:
+                        continue
+                    seen_legend_ids.add(parsed.legend_id)
+                    seen_bbox_centers.append((cx, cy))
+                    page_legends.append(parsed)
+                    if chosen_bbox is None:
+                        chosen_bbox = cand.bbox
+
+                # Promote the in-loop ``legend`` to the first parsed
+                # (for the ``if legend is not None`` block below); the
+                # rest get appended directly to parsed_legends.
+                if page_legends:
+                    legend = page_legends[0]
+                    parsed_legends.extend(page_legends[1:])
+            else:
+                # SCHEMATIC_DRAWING / COVER_TITLE / UNKNOWN — keep
+                # current "first non-empty candidate wins" behavior.
+                for cand in ordered:
+                    scope = "global" if (cand.header_text and "symbols & legends" in cand.header_text) else "page"
+                    legend = parse_legend(
+                        candidate=cand,
+                        page_blocks=blocks,
+                        sheet_number=sheet,
+                        scope=scope,  # type: ignore[arg-type]
+                    )
+                    if legend is not None:
+                        chosen_bbox = cand.bbox
+                        break
+            page_bbox_for_ingest: tuple[float, float, float, float] | None = None
+            if page_obj is not None:
+                try:
+                    r = page_obj.rect
+                    page_bbox_for_ingest = (float(r.x0), float(r.y0), float(r.x1), float(r.y1))
+                except Exception:  # pragma: no cover
+                    page_bbox_for_ingest = None
+            resolver.ingest_page(
+                page_index=page_index,
+                blocks=blocks,
+                legend=legend,
+                page_bbox=page_bbox_for_ingest,
+            )
+            if legend is not None:
+                parsed_legends.append(legend)
+                if chosen_bbox is not None:
+                    per_page_legend_bbox[page_index] = chosen_bbox
+
+        pack_has_targets = bool(domain_pack and domain_pack.detection_targets)
+        if not parsed_legends and not pack_has_targets:
+            return [], []
+
+        # Vision-LLM symbol detection bootstrap. Extract legend symbol
+        # crops once per document so they can be reused across every
+        # SCHEMATIC_DRAWING page during the per-page detection loop.
+        # Opt-in via PARSER_OS_VISION_DETECT=1 so default compiles stay
+        # byte-stable for the existing test grid.
+        vision_legend_crops: list[Any] = []
+        vision_enabled = os.environ.get("PARSER_OS_VISION_DETECT") == "1"
+        vision_cache_path: Path | None = None
+        if vision_enabled and parsed_legends:
+            try:
+                from orbitbrief_page_os.segmentation.schematic.legend_symbol_crops import (
+                    extract_legend_symbol_crops,
+                )
+                from orbitbrief_page_os.segmentation.schematic.vision_symbol_detector import (
+                    is_vision_endpoint_reachable,
+                )
+            except Exception:  # pragma: no cover
+                extract_legend_symbol_crops = None  # type: ignore[assignment]
+                is_vision_endpoint_reachable = None  # type: ignore[assignment]
+            if extract_legend_symbol_crops is not None and is_vision_endpoint_reachable is not None:
+                if is_vision_endpoint_reachable():
+                    crops_out_dir = derived_dir_for(path)
+                    try:
+                        crops_out_dir.mkdir(parents=True, exist_ok=True)
+                    except OSError:  # pragma: no cover
+                        pass
+                    try:
+                        vision_legend_crops = extract_legend_symbol_crops(
+                            legends=parsed_legends,
+                            pdf_path=path,
+                            out_dir=crops_out_dir,
+                        )
+                    except Exception:  # pragma: no cover
+                        vision_legend_crops = []
+                    vision_cache_path = path.parent / ".orbitbrief_vision_detect_cache.jsonl"
+
+        for legend in parsed_legends:
+            try:
+                legend_page = doc.load_page(legend.page_index)
+            except Exception:  # pragma: no cover
+                legend_page = None
+            atoms.append(
+                emit_legend_atom(
+                    legend=legend,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                    page=legend_page,
+                )
+            )
+            legend_records.append(
+                {
+                    "legend_id": legend.legend_id,
+                    "page": legend.page_index,
+                    "sheet_number": legend.sheet_number,
+                    "scope": legend.scope,
+                    "entries": [
+                        {
+                            "entry_id": e.entry_id,
+                            "symbol": e.raw_symbol_text,
+                            "label": e.label_text,
+                            "normalized_label": e.normalized_label,
+                            "count_column": e.count_column,
+                        }
+                        for e in legend.entries
+                    ],
+                }
+            )
+
+        # Per-page resolution + target-set emission. Pages without a sheet
+        # number AND without a parsed legend on them are skipped: this
+        # is the discriminator that prevents non-drawing PDFs from being
+        # spammed with ``missing_legend`` warnings.
+        for page_index in sorted(per_page_blocks):
+            blocks = per_page_blocks[page_index]
+            sheet = extract_sheet_number(blocks)
+            own_legend = any(l.page_index == page_index for l in parsed_legends)
+            # The pack-with-targets case: even if a drawing-like page has
+            # no extractable sheet number, the active domain pack
+            # expects schematic context. Routing it through the resolver
+            # surfaces a ``missing_legend`` warning instead of silently
+            # dropping the page (boss-review fix).
+            pack_expects_schematic = bool(domain_pack and domain_pack.detection_targets)
+            page_text_density = sum(len((b.text or "").strip()) for b in blocks)
+            # Image-only drawing detection: if the page has effectively no
+            # text BUT the document has parsed legends from other pages
+            # AND the active pack expects schematic content, we still want
+            # to run the glyph-template matcher against the raster page so
+            # symbol counts come back instead of vanishing silently.
+            raster_only_page = (
+                pack_expects_schematic
+                and parsed_legends
+                and not blocks
+            )
+            if sheet is None and not own_legend and not (
+                pack_expects_schematic and page_text_density >= 40
+            ) and not raster_only_page:
+                continue
+            try:
+                page = doc.load_page(page_index)
+            except Exception:  # pragma: no cover
+                page = None
+            resolved = resolver.resolve_for_page(page_index)
+            for warning in resolved.warnings:
+                atoms.append(
+                    emit_warning_atom(
+                        warning=warning,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+            if resolved.legend is None:
+                continue
+            if domain_pack is not None:
+                targets, gaps = intersect_with_pack(
+                    legend=resolved.legend, pack=domain_pack
+                )
+                pack_id_for_set = domain_pack.pack_id
+            else:
+                targets, gaps = [], []
+                pack_id_for_set = "legend_only"
+
+            # When the active pack doesn't intersect the legend (e.g.
+            # fiber pack vs telecom legend), synthesize one target per
+            # legend entry so the text-tag + vision detectors have
+            # something to look for. This keeps the parser universal:
+            # a real DD with WN/CR/TV symbols produces detections
+            # regardless of which domain pack is loaded.
+            if not targets:
+                # Augment the legend with orphan symbol tokens.
+                # Real legends have one column of short symbol tokens
+                # (WN / CR / ZN / DC / FACP-2 / MATV / etc.) but the
+                # row-parser occasionally fails to pair a token with
+                # its description, so the resulting entry list omits
+                # the symbol. Scan the legend bbox for standalone
+                # uppercase tokens and synthesize entries for any
+                # that aren't already represented.
+                augmented_legend = _augment_legend_with_orphan_tokens(
+                    legend=resolved.legend,
+                    per_page_legend_bbox=per_page_legend_bbox,
+                    per_page_blocks=per_page_blocks,
+                )
+                synthesized: list[DetectionTarget] = []
+                for entry in augmented_legend.entries:
+                    key_seed = (
+                        entry.normalized_symbol_text
+                        or entry.normalized_label
+                        or entry.entry_id
+                    )
+                    if not key_seed:
+                        continue
+                    tk = key_seed.lower().strip()
+                    ek = f"device:{tk}".replace(" ", "_")
+                    try:
+                        synthesized.append(
+                            DetectionTarget(
+                                target_key=tk,
+                                entity_key=ek,
+                                completeness="informational",
+                                expected_modalities=("text_tag", "vision_llm"),
+                                legend_entry_id=entry.entry_id,
+                                aliases=tuple(
+                                    a for a in (
+                                        entry.raw_symbol_text or "",
+                                        entry.normalized_symbol_text or "",
+                                        entry.label_text or "",
+                                        entry.normalized_label or "",
+                                    ) if a
+                                ),
+                            )
+                        )
+                    except ValueError:
+                        continue
+                targets = synthesized
+                pack_id_for_set = "legend_only"
+                # Replace resolved.legend with the augmented copy so
+                # downstream code (symbol detector, atom emitters)
+                # see the harvested entries too.
+                import dataclasses as _dc
+                try:
+                    resolved = _dc.replace(resolved, legend=augmented_legend)
+                except (TypeError, ValueError):  # pragma: no cover
+                    pass
+
+            target_set = DetectionTargetSet.make(
+                page_index=page_index,
+                sheet_number=sheet,
+                pack_id=pack_id_for_set,
+                legend_id=resolved.legend.legend_id,
+                targets=tuple(targets),
+                legend_gap_target_keys=tuple(gaps),
+            )
+            page_bbox: tuple[float, float, float, float] | None = None
+            if page is not None:
+                try:
+                    rect = page.rect
+                    page_bbox = (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
+                except Exception:  # pragma: no cover
+                    page_bbox = None
+            atoms.append(
+                emit_target_set_atom(
+                    target_set=target_set,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                    page=page,
+                    page_bbox=page_bbox,
+                )
+            )
+            target_records.append(
+                {
+                    "page": page_index,
+                    "sheet_number": sheet,
+                    "legend_id": resolved.legend.legend_id,
+                    "rationale": resolved.rationale,
+                    "priority": resolved.priority,
+                    "targets": [t.target_key for t in targets],
+                    "legend_gap_target_keys": list(gaps),
+                }
+            )
+            # legend_gap warnings: pack declared the target as
+            # load-bearing but the resolved legend doesn't mention it.
+            # Attach the legend's bbox so source_replay still verifies
+            # the receipt against pixels (rather than emitting a
+            # locator with only a page index).
+            legend_bbox_for_gap = per_page_legend_bbox.get(resolved.legend.page_index)
+            legend_page_for_gap = None
+            try:
+                legend_page_for_gap = doc.load_page(resolved.legend.page_index)
+            except Exception:  # pragma: no cover
+                pass
+            for gap_key in gaps:
+                # Dedupe: emit each (legend_id, target_key) gap once
+                # regardless of how many drawing pages resolve to the
+                # same legend.
+                dedup = (resolved.legend.legend_id, gap_key)
+                if dedup in legend_gap_emitted:
+                    continue
+                legend_gap_emitted.add(dedup)
+                atoms.append(
+                    emit_warning_atom(
+                        warning=SchematicWarning.make(
+                            warning_type="legend_gap",
+                            page_index=resolved.legend.page_index,
+                            sheet_number=resolved.legend.sheet_number,
+                            detail=f"Pack '{domain_pack.pack_id}' declares load-bearing target '{gap_key}' but legend has no matching entry",
+                            target_key=gap_key,
+                            legend_id=resolved.legend.legend_id,
+                            bbox_pdf=legend_bbox_for_gap,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=legend_page_for_gap,
+                    )
+                )
+
+            # Symbol detection (PR6) — run when we have a resolved
+            # legend AND either:
+            #   (a) a non-empty pack target set, OR
+            #   (b) vision-LLM detection is enabled + crops exist
+            #
+            # The original guard only allowed pack-matched targets,
+            # which silenced vision detection whenever the domain
+            # pack didn't match the legend vocabulary (e.g. running
+            # the fiber pack against a security/telecom legend). The
+            # vision detector matches directly against legend
+            # entries, so it can fire even when no pack target
+            # intersects.
+            vision_can_run = bool(vision_enabled and vision_legend_crops)
+            if page is None or (not target_set.targets and not vision_can_run):
+                continue
+            try:
+                legend_page = doc.load_page(resolved.legend.page_index)
+            except Exception:  # pragma: no cover
+                continue
+            excluded: list[tuple[float, float, float, float]] = []
+            if resolved.legend.page_index in per_page_legend_bbox:
+                if resolved.legend.page_index == page_index:
+                    excluded.append(per_page_legend_bbox[resolved.legend.page_index])
+            # Additional exclusion zones — title block, drawing index,
+            # keyed notes, and schedules. Without these, a "PTZ" inside
+            # "PTZ ROOM" or a schedule cell gets counted as a detection.
+            from orbitbrief_page_os.segmentation.schematic.exclusion_zones import (
+                detect_exclusion_zones,
+            )
+            from orbitbrief_page_os.segmentation.schematic.sheet_metadata import (
+                parse_sheet_metadata,
+            )
+            from orbitbrief_page_os.segmentation.schematic.rooms import (
+                Room,
+                assign_detections_to_rooms,
+                detect_rooms,
+            )
+            from orbitbrief_page_os.segmentation.schematic.keyed_notes import (
+                detect_keyed_notes,
+            )
+
+            zones = detect_exclusion_zones(blocks, page_bbox=page_bbox)
+            for zone in zones:
+                excluded.append(zone.bbox)
+
+            # Sheet metadata atom — one per drawing page that carries
+            # an extractable title block.
+            title_block_bbox = next(
+                (z.bbox for z in zones if z.label == "title_block"),
+                None,
+            )
+            try:
+                sheet_meta = parse_sheet_metadata(
+                    page_index=page_index,
+                    blocks=blocks,
+                    sheet_number=sheet,
+                    title_block_bbox=title_block_bbox,
+                )
+            except Exception:  # pragma: no cover
+                sheet_meta = None
+            if sheet_meta is not None:
+                # Suppress fieldless sheet_metadata atoms: a sheet
+                # number alone is already captured elsewhere
+                # (target_set, legend, detections). Only emit when
+                # at least one substantive title-block field was
+                # parsed.
+                substantive = any([
+                    sheet_meta.sheet_title,
+                    sheet_meta.project_name,
+                    sheet_meta.scale,
+                    sheet_meta.issue_date,
+                    sheet_meta.revision,
+                    sheet_meta.drafter,
+                    sheet_meta.checker,
+                    sheet_meta.approver,
+                    sheet_meta.client,
+                ])
+                if substantive:
+                    atoms.append(
+                        emit_sheet_metadata_atom(
+                            metadata=sheet_meta,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                            page=page,
+                        )
+                    )
+
+            # Room / zone atoms — pulled from blocks outside the
+            # excluded zones so we don't pick up schedule-row room IDs.
+            try:
+                rooms_on_page: list[Room] = detect_rooms(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    blocks=blocks,
+                    excluded_bboxes=tuple(excluded),
+                )
+            except Exception:  # pragma: no cover
+                rooms_on_page = []
+            for room in rooms_on_page:
+                atoms.append(
+                    emit_room_atom(
+                        room=room,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
+            # Keyed-notes atoms — both the note rows and their resolved
+            # body callouts. The exclusion-zone pass already keeps the
+            # block out of symbol detection; this turns the contents
+            # into reviewable atoms.
+            try:
+                keyed_notes_on_page = detect_keyed_notes(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    blocks=blocks,
+                )
+            except Exception:  # pragma: no cover
+                keyed_notes_on_page = []
+            for note in keyed_notes_on_page:
+                atoms.append(
+                    emit_keyed_note_atom(
+                        note=note,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
+            # Construction schedule rows — door / camera / equipment /
+            # fixture / panel schedules.  Each row joins to a detection
+            # by tag downstream (after detect_symbols runs).
+            from orbitbrief_page_os.segmentation.schematic.schedules import (
+                detect_schedules,
+                join_schedule_rows_to_detections,
+            )
+
+            try:
+                schedule_rows_on_page = detect_schedules(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    blocks=blocks,
+                )
+            except Exception:  # pragma: no cover
+                schedule_rows_on_page = []
+            for row in schedule_rows_on_page:
+                atoms.append(
+                    emit_schedule_row_atom(
+                        row=row,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
+            # Prose-with-symbol suppression: any text block whose text
+            # contains a legend symbol but ISN'T a standalone label
+            # (e.g. "PTZ ROOM", "Card Reader Suite") must be added to
+            # the exclusion set so the glyph_template matcher does
+            # not catch the symbol's pixels inside the prose word.
+            # The text-tag matcher already filters via
+            # _block_text_is_standalone_symbol; glyph_template needs
+            # the bboxes excluded explicitly because it operates on
+            # rendered pixels.
+            from orbitbrief_page_os.segmentation.schematic.symbol_detector import (
+                _block_text_is_standalone_symbol,
+            )
+
+            legend_symbol_tokens: dict[str, Any] = {
+                (e.normalized_symbol_text or "").upper(): e
+                for e in resolved.legend.entries
+                if e.normalized_symbol_text
+            }
+            for blk in blocks:
+                text = (blk.text or "").strip()
+                if not text:
+                    continue
+                upper = text.upper()
+                if not any(
+                    sym in upper.split() or sym + " " in upper or " " + sym in upper or upper == sym
+                    for sym in legend_symbol_tokens
+                ):
+                    continue
+                if not _block_text_is_standalone_symbol(text, legend_symbol_tokens):
+                    excluded.append(blk.bbox)
+            detections = detect_symbols(
+                page=page,
+                page_index=page_index,
+                sheet_number=sheet,
+                blocks=blocks,
+                target_set=target_set,
+                legend=resolved.legend,
+                legend_page=legend_page,
+                excluded_bboxes=tuple(excluded),
+            )
+            # Vision-LLM augmentation for SCHEMATIC_DRAWING pages.
+            # On real schematics the symbol IS an icon, not text — the
+            # text-tag detector returns 0 hits. Vision detector finds
+            # icons via region proposals + qwen2.5vl match against the
+            # legend symbol crops. Only runs when the endpoint is
+            # reachable + at least one legend crop was extracted.
+            classification_for_page = classify_page_kind(
+                page_index=page_index, page=page, blocks=blocks
+            ) if page is not None else None
+            page_kind_for_vision = (
+                classification_for_page.kind if classification_for_page else PAGE_UNKNOWN
+            )
+            if (
+                vision_enabled
+                and vision_legend_crops
+                and page_kind_for_vision in (SCHEMATIC_DRAWING, PAGE_UNKNOWN)
+                and page is not None
+            ):
+                try:
+                    from orbitbrief_page_os.segmentation.schematic.region_proposals import (
+                        propose_regions,
+                    )
+                    from orbitbrief_page_os.segmentation.schematic.vision_symbol_detector import (
+                        detect_symbols_via_vision,
+                    )
+                except Exception:  # pragma: no cover
+                    propose_regions = None  # type: ignore[assignment]
+                    detect_symbols_via_vision = None  # type: ignore[assignment]
+                if propose_regions is not None and detect_symbols_via_vision is not None:
+                    try:
+                        proposals = propose_regions(page=page, page_index=page_index)
+                    except Exception:  # pragma: no cover
+                        proposals = []
+                    if proposals:
+                        try:
+                            vision_dets = detect_symbols_via_vision(
+                                page=page,
+                                page_index=page_index,
+                                region_proposals=proposals,
+                                legend_crops=vision_legend_crops,
+                                cache_path=vision_cache_path,
+                            )
+                        except Exception:  # pragma: no cover
+                            vision_dets = []
+                        # Convert VisionDetection → SymbolDetection so the
+                        # downstream emit pipeline treats them uniformly
+                        # with the text_tag detections.
+                        from app.parsers.schematic_models import SymbolDetection as _SymbolDetection
+                        entry_by_id = {
+                            e.entry_id: e
+                            for l in parsed_legends
+                            for e in l.entries
+                        }
+                        target_by_entry_id: dict[str, Any] = {}
+                        for t in target_set.targets:
+                            if t.legend_entry_id:
+                                target_by_entry_id[t.legend_entry_id] = t
+                        for vd in vision_dets:
+                            entry = entry_by_id.get(vd.matched_entry_id)
+                            if entry is None:
+                                continue
+                            target = target_by_entry_id.get(vd.matched_entry_id)
+                            # When the active pack doesn't intersect the
+                            # legend (e.g. running the fiber pack on a
+                            # security/telecom legend), synthesize a
+                            # target_key from the entry itself so the
+                            # vision detection isn't dropped.
+                            if target is not None:
+                                target_key = target.target_key
+                                entity_key = target.target_key
+                            else:
+                                target_key = (
+                                    entry.normalized_label
+                                    or (entry.normalized_symbol_text or "")
+                                    or entry.entry_id
+                                )
+                                entity_key = f"device:{target_key}".lower().replace(" ", "_")
+                            try:
+                                sd = _SymbolDetection.make(
+                                    page_index=page_index,
+                                    sheet_number=sheet,
+                                    target_key=target_key,
+                                    entity_key=entity_key,
+                                    legend_entry_id=entry.entry_id,
+                                    bbox_pdf=vd.bbox_pdf,
+                                    crop_sha256="",
+                                    modality="vision_llm",
+                                    confidence=vd.confidence,
+                                    nearby_text=vd.matched_label_text,
+                                )
+                            except (TypeError, ValueError):
+                                continue
+                            detections.append(sd)
+            # Assign each detection to its nearest room (when rooms
+            # were detected on this page). The mapping is recorded
+            # on the detection atom's value so downstream consumers
+            # can group counts by room without re-running geometry.
+            detection_room_map: dict[str, str] = {}
+            if rooms_on_page:
+                try:
+                    detection_room_map = assign_detections_to_rooms(
+                        detections, rooms_on_page
+                    )
+                except Exception:  # pragma: no cover
+                    detection_room_map = {}
+
+            # Mounting-height callouts — attach the nearest one to each
+            # detection so a CR atom carries "48 AFF" without the
+            # reviewer opening the PDF.
+            from orbitbrief_page_os.segmentation.schematic.callouts import (
+                attach_callouts_to_detections,
+                detect_callouts,
+            )
+
+            try:
+                callouts_on_page = detect_callouts(blocks, excluded_bboxes=tuple(excluded))
+                detection_callout_map = attach_callouts_to_detections(
+                    detections, callouts_on_page
+                )
+            except Exception:  # pragma: no cover
+                detection_callout_map = {}
+
+            # Mounting-height inheritance chain (PM-critical):
+            #   1. nearest inline callout (set above)
+            #   2. schedule row's "mounting" / "mounting_height" field
+            #   3. legend entry's MOUNTING / MOUNTING HEIGHT attribute
+            #   4. keyed-note default ("All devices mounted at X AFF
+            #      unless noted") — derived once per page
+            import re as _re
+
+            keyed_note_default_height: str | None = None
+            for note in keyed_notes_on_page:
+                m = _re.search(
+                    r"(?:mounted|mounting)\s+(?:at|height)?\s*"
+                    r"([0-9]+(?:\.[0-9]+)?\s*(?:\"|in|inches)?\s*"
+                    r"a\.?f\.?f\.?|"
+                    r"[0-9]+\s*'\s*-\s*[0-9]+(?:\s*[0-9]+/[0-9]+)?\s*\"|"
+                    r"ceiling|"
+                    r"verify\s+w/?\s*arch)",
+                    note.text,
+                    _re.IGNORECASE,
+                )
+                if m:
+                    keyed_note_default_height = m.group(1).strip()
+                    break
+
+            legend_mounting_by_entry: dict[str, str] = {}
+            legend_responsibility_by_entry: dict[str, str] = {}
+            legend_remarks_by_entry: dict[str, str] = {}
+            for entry in resolved.legend.entries:
+                attrs = dict(entry.attributes)
+                m_val = (
+                    attrs.get("mounting_height")
+                    or attrs.get("mounting")
+                )
+                if m_val:
+                    legend_mounting_by_entry[entry.entry_id] = m_val
+                # Responsibility / by-others markers — explicit
+                # ``responsibility`` column wins; otherwise scan
+                # the remarks column for the conventional phrases.
+                resp_val: str | None = attrs.get("responsibility")
+                remarks_text = attrs.get("remarks") or ""
+                if not resp_val and remarks_text:
+                    upper = remarks_text.upper()
+                    for marker in ("NIC", "BY OWNER", "BY GC", "BY OTHERS", "NOT IN CONTRACT"):
+                        if marker in upper:
+                            resp_val = marker
+                            break
+                if resp_val:
+                    legend_responsibility_by_entry[entry.entry_id] = resp_val
+                if remarks_text:
+                    legend_remarks_by_entry[entry.entry_id] = remarks_text
+
+            # Schedule-row joins — pass 1 is nearby_text tag match,
+            # pass 2 is spatial join when a TAG block sits within
+            # ~2 inches of the detection center.
+            try:
+                detection_schedule_map = join_schedule_rows_to_detections(
+                    schedule_rows_on_page,
+                    detections,
+                    blocks=blocks,
+                )
+            except Exception:  # pragma: no cover
+                detection_schedule_map = {}
+
+            # Line runs — conduit / cable / riser polylines, snapped
+            # to nearby detections. Emitted AFTER detections so the
+            # snap targets are deterministic.
+            from orbitbrief_page_os.segmentation.schematic.line_runs import (
+                detect_line_runs,
+            )
+
+            try:
+                line_runs_on_page = detect_line_runs(
+                    page=page,
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    detections=detections,
+                    excluded_bboxes=tuple(excluded),
+                )
+            except Exception:  # pragma: no cover
+                line_runs_on_page = []
+            for line_run in line_runs_on_page:
+                atoms.append(
+                    emit_line_run_atom(
+                        line_run=line_run,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=page,
+                    )
+                )
+
+            for det in detections:
+                room_id = detection_room_map.get(det.detection_id)
+                callout = detection_callout_map.get(det.detection_id)
+                schedule_row = detection_schedule_map.get(det.detection_id)
+                atom = emit_detection_atom(
+                    detection=det,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+                updates: dict[str, Any] = {}
+                new_value = dict(atom.value)
+                new_entity_keys = list(atom.entity_keys)
+                if room_id:
+                    new_value["located_in_room_id"] = room_id
+                    # Look up the room's human-readable label/number
+                    # so downstream consumers don't have to join on
+                    # the opaque room hash.
+                    room_obj = next(
+                        (r for r in rooms_on_page if r.room_id == room_id),
+                        None,
+                    )
+                    if room_obj is not None:
+                        new_value["located_in_room_label"] = room_obj.label
+                        if room_obj.number:
+                            new_value["located_in_room_number"] = room_obj.number
+                            new_value["located_in_room_display"] = (
+                                f"{room_obj.label} {room_obj.number}"
+                            )
+                        else:
+                            new_value["located_in_room_display"] = room_obj.label
+                    new_entity_keys.append(f"room:{room_id}")
+                # Mounting-height inheritance chain.
+                resolved_height: str | None = None
+                height_source: str | None = None
+                if callout is not None:
+                    resolved_height = callout.text
+                    height_source = "inline_callout"
+                    new_value["callout_bbox"] = list(callout.bbox)
+                if schedule_row is not None:
+                    new_value["schedule_row_id"] = schedule_row.row_id
+                    new_value["schedule_tag"] = schedule_row.tag
+                    new_value["schedule_kind"] = schedule_row.schedule_kind
+                    new_value["schedule_fields"] = dict(schedule_row.fields)
+                    new_entity_keys.append(f"schedule_tag:{schedule_row.tag}")
+                    if resolved_height is None:
+                        sched_height = (
+                            schedule_row.fields_dict().get("mounting_height")
+                            or schedule_row.fields_dict().get("mounting")
+                        )
+                        if sched_height:
+                            resolved_height = sched_height
+                            height_source = "schedule"
+                # Legend column fallback.
+                if resolved_height is None and det.legend_entry_id:
+                    legend_height = legend_mounting_by_entry.get(det.legend_entry_id)
+                    if legend_height:
+                        resolved_height = legend_height
+                        height_source = "legend_column"
+                # Keyed-note default fallback ("X AFF unless noted").
+                if resolved_height is None and keyed_note_default_height:
+                    resolved_height = keyed_note_default_height
+                    height_source = "keyed_note_default"
+                if resolved_height is not None:
+                    new_value["mounting_height"] = resolved_height
+                    new_value["mounting_height_source"] = height_source
+
+                # Responsibility / NIC markers (PM-critical for scope).
+                if det.legend_entry_id:
+                    resp_val = legend_responsibility_by_entry.get(det.legend_entry_id)
+                    if resp_val:
+                        new_value["responsibility"] = resp_val
+                        new_entity_keys.append(
+                            f"responsibility:{resp_val.lower().replace(' ', '_')}"
+                        )
+                    remarks_val = legend_remarks_by_entry.get(det.legend_entry_id)
+                    if remarks_val:
+                        new_value["legend_remarks"] = remarks_val
+                # Trigger the update when ANY field was added or
+                # ANY new entity_key was appended.  The earlier code
+                # only checked the room/callout/schedule trio, which
+                # silently dropped keyed-note-default heights,
+                # legend-column heights, and responsibility markers
+                # on detections with no room/callout/schedule.
+                if new_value != atom.value or new_entity_keys != list(atom.entity_keys):
+                    updates["value"] = new_value
+                    updates["entity_keys"] = sorted(set(new_entity_keys))
+                if updates:
+                    atom = atom.model_copy(update=updates)
+                atoms.append(atom)
+                detection_records.append(
+                    {
+                        "detection_id": det.detection_id,
+                        "page": det.page_index,
+                        "target_key": det.target_key,
+                        "modality": det.modality,
+                        "bbox": list(det.bbox_pdf),
+                        "crop_sha256": det.crop_sha256,
+                        "confidence": det.confidence,
+                        "located_in_room_id": room_id,
+                        "mounting_height": callout.text if callout else None,
+                        "schedule_row_id": schedule_row.row_id if schedule_row else None,
+                        "schedule_tag": schedule_row.tag if schedule_row else None,
+                    }
+                )
+
+            # Schematic quantity aggregation (PR7) — turn detection
+            # counts into ``AtomType.quantity`` atoms and emit a
+            # declared-count atom from any legend row that has a
+            # count_column. Same-sheet conflicts are paired by
+            # ``_build_schematic_quantity_edges`` in the graph builder.
+            from app.parsers.schematic_atom_emitters import (
+                emit_declared_count_atom,
+                emit_detected_count_atom,
+            )
+
+            counts_by_target: dict[str, list] = {}
+            for det in detections:
+                counts_by_target.setdefault(det.target_key, []).append(det)
+            for target in target_set.targets:
+                hits = counts_by_target.get(target.target_key, [])
+                detected_atom = emit_detected_count_atom(
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    target=target,
+                    detections=hits,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                )
+                if detected_atom is not None:
+                    atoms.append(detected_atom)
+
+                # legend_orphan: load-bearing target declared by the
+                # legend but zero detections on this drawing body.
+                # Boss-review fix — previously declared but never emitted.
+                if (
+                    not hits
+                    and target.completeness == "load_bearing"
+                    and target.legend_entry_id is not None
+                ):
+                    orphan_entry = next(
+                        (e for e in resolved.legend.entries if e.entry_id == target.legend_entry_id),
+                        None,
+                    )
+                    orphan_bbox = orphan_entry.symbol_bbox_pdf if orphan_entry else None
+                    atoms.append(
+                        emit_warning_atom(
+                            warning=SchematicWarning.make(
+                                warning_type="legend_orphan",
+                                page_index=page_index,
+                                sheet_number=sheet,
+                                detail=(
+                                    f"Legend entry for load-bearing target "
+                                    f"'{target.target_key}' produced zero detections on this page."
+                                ),
+                                target_key=target.target_key,
+                                legend_id=resolved.legend.legend_id,
+                                legend_entry_id=target.legend_entry_id,
+                                bbox_pdf=orphan_bbox,
+                            ),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            parser_version=parser_version,
+                            page=legend_page,
+                        )
+                    )
+
+                if target.legend_entry_id is None:
+                    continue
+                # Walk the legend for the declared count for this entry.
+                # Emit the declared atom only once per (target, legend_entry)
+                # pair — without this guard the same declared count would
+                # be re-emitted for every drawing page that resolves to
+                # the same legend.
+                dedup_key = (target.target_key, target.legend_entry_id)
+                if dedup_key in declared_emitted:
+                    continue
+                for entry in resolved.legend.entries:
+                    if entry.entry_id != target.legend_entry_id:
+                        continue
+                    if entry.count_column is None:
+                        continue
+                    declared = emit_declared_count_atom(
+                        page_index=resolved.legend.page_index,
+                        sheet_number=resolved.legend.sheet_number,
+                        target=target,
+                        declared_count=entry.count_column,
+                        entry=entry,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        parser_version=parser_version,
+                        page=legend_page,
+                    )
+                    if declared is not None:
+                        atoms.append(declared)
+                        declared_emitted.add(dedup_key)
+                    else:
+                        # Provenance gate refused (no symbol bbox or no
+                        # crop hash available). Emit a low-confidence
+                        # warning so the count isn't silently lost.
+                        atoms.append(
+                            emit_warning_atom(
+                                warning=SchematicWarning.make(
+                                    warning_type="weak_declared_count_provenance",
+                                    page_index=resolved.legend.page_index,
+                                    sheet_number=resolved.legend.sheet_number,
+                                    detail=(
+                                        f"Legend declared count={entry.count_column} for target "
+                                        f"'{target.target_key}' but the row had no replayable bbox; "
+                                        f"declared-count atom suppressed."
+                                    ),
+                                    target_key=target.target_key,
+                                    legend_id=resolved.legend.legend_id,
+                                    legend_entry_id=target.legend_entry_id,
+                                ),
+                                project_id=project_id,
+                                artifact_id=artifact_id,
+                                filename=path.name,
+                                parser_version=parser_version,
+                                page=legend_page,
+                            )
+                        )
+                    break
+
+            # ``unknown_symbol`` warnings: tokens that look like
+            # legend-style symbol tags but matched no legend entry.
+            atoms.extend(
+                _unknown_symbol_warnings(
+                    blocks=blocks,
+                    page_index=page_index,
+                    sheet=sheet,
+                    legend=resolved.legend,
+                    excluded_bboxes=excluded,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    parser_version=parser_version,
+                    page=page,
+                )
+            )
+    finally:
+        try:
+            doc.close()
+        except Exception:  # pragma: no cover
+            pass
+
+    derived_relative = derived_dir_for(path).name
+    derived_files: list[dict[str, Any]] = [
+        {
+            "relative_path": f"{derived_relative}/schematic_legends.json",
+            "content_kind": "json",
+            "content_json": {"schema_version": "schematic.legends.v1", "legends": legend_records},
+        },
+        {
+            "relative_path": f"{derived_relative}/schematic_targets.json",
+            "content_kind": "json",
+            "content_json": {"schema_version": "schematic.targets.v1", "pages": target_records},
+        },
+        {
+            "relative_path": f"{derived_relative}/schematic_detections.json",
+            "content_kind": "json",
+            "content_json": {"schema_version": "schematic.detections.v1", "detections": detection_records},
+        },
+    ]
+    # Optional debug-overlay sidecars. The flag is opt-in via the
+    # ``PARSER_OS_SCHEMATIC_OVERLAYS`` env var so default compiles
+    # still produce byte-identical output. When set, one PNG per
+    # drawing page is written under ``<stem>.derived/overlays/`` and
+    # an ``schematic_overlays.json`` manifest is added so downstream
+    # consumers (OrbitBrief envelope renderer, debug viewer) can
+    # find them deterministically.
+    if os.environ.get("PARSER_OS_SCHEMATIC_OVERLAYS") == "1" and parsed_legends:
+        try:
+            from orbitbrief_page_os.segmentation.schematic.debug_overlay import render_overlay
+        except Exception:
+            render_overlay = None  # type: ignore[assignment]
+        if render_overlay is not None:
+            try:
+                overlay_doc = fitz.open(str(path))
+            except Exception:  # pragma: no cover
+                overlay_doc = None
+            overlay_manifest: list[dict[str, Any]] = []
+            target_pages = sorted({rec["page"] for rec in target_records})
+            if overlay_doc is not None:
+                try:
+                    for page_index in target_pages:
+                        try:
+                            overlay_page = overlay_doc.load_page(page_index)
+                        except Exception:  # pragma: no cover
+                            continue
+                        page_detections = [
+                            d for d in detection_records if d.get("page") == page_index
+                        ]
+                        legends_here = [
+                            l for l in parsed_legends if l.page_index == page_index
+                        ]
+                        # debug_overlay.render_overlay expects SymbolDetection
+                        # records, not raw dicts — rebuild lightweight stand-ins.
+                        from app.parsers.schematic_models import SymbolDetection
+
+                        dets: list[SymbolDetection] = []
+                        for d in page_detections:
+                            bbox = d.get("bbox") or [0, 0, 1, 1]
+                            try:
+                                dets.append(
+                                    SymbolDetection.make(
+                                        page_index=int(d.get("page", page_index)),
+                                        sheet_number=None,
+                                        target_key=str(d.get("target_key", "")),
+                                        entity_key=str(d.get("target_key", "")),
+                                        legend_entry_id=None,
+                                        bbox_pdf=(
+                                            float(bbox[0]),
+                                            float(bbox[1]),
+                                            float(bbox[2]),
+                                            float(bbox[3]),
+                                        ),
+                                        crop_sha256=str(d.get("crop_sha256") or ""),
+                                        modality=d.get("modality") or "text_tag",
+                                        confidence=float(d.get("confidence") or 0.0),
+                                    )
+                                )
+                            except ValueError:
+                                continue
+                        out_rel = f"{derived_relative}/overlays/page_{page_index:04d}.png"
+                        out_path = path.parent / out_rel.replace("/", os.sep)
+                        result = render_overlay(
+                            page=overlay_page,
+                            legends_on_page=legends_here,
+                            detections=dets,
+                            out_path=out_path,
+                        )
+                        if result is not None:
+                            overlay_manifest.append(
+                                {
+                                    "page": page_index,
+                                    "relative_path": out_rel,
+                                    "legend_count": result.legend_count,
+                                    "detection_count": result.detection_count,
+                                    "width": result.width,
+                                    "height": result.height,
+                                }
+                            )
+                finally:
+                    try:
+                        overlay_doc.close()
+                    except Exception:  # pragma: no cover
+                        pass
+            derived_files.append(
+                {
+                    "relative_path": f"{derived_relative}/schematic_overlays.json",
+                    "content_kind": "json",
+                    "content_json": {
+                        "schema_version": "schematic.overlays.v1",
+                        "overlays": overlay_manifest,
+                    },
+                }
+            )
+    return collect_all(atoms), derived_files
+
+
+# Tokens that look symbol-shaped but are conventionally noise on
+# construction drawings — column-grid bubbles (single letters), simple
+# integer keyed-note numbers (handled separately by the keyed-notes
+# pass when present), the page's own sheet number, and a small set of
+# common page metadata tokens.  Boss-review fix: previously every
+# repeated short ALL-CAPS token became an unknown_symbol.
+_UNKNOWN_TOKEN_IGNORES = {
+    "NIC",
+    "NTS",
+    "NA",
+    "TBD",
+    "REF",
+    "REV",
+    "SEE",
+    "MAX",
+    "MIN",
+    "TYP",
+    "EQ",
+    "AFF",
+    "OC",
+    "DWG",
+    "SHT",
+    "GC",
+    "EC",
+    "MC",
+    "PC",
+    "AV",
+    "FA",
+    "AC",
+    "SC",
+    "BMS",
+    "AHU",
+    "VAV",
+    "PDU",
+    "UPS",
+    "ATS",
+    "MDF",
+    "IDF",
+    "TR",
+    "ER",
+    "MEP",
+}
+
+
+def _unknown_symbol_warnings(
+    *,
+    blocks: list[Any],
+    page_index: int,
+    sheet: str | None,
+    legend: Any,
+    excluded_bboxes: list[tuple[float, float, float, float]],
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+    page: Any | None = None,
+) -> list[EvidenceAtom]:
+    """Emit ``unknown_symbol`` warnings for legend-style tokens with no match.
+
+    Conservative: only short ALL-CAPS tokens (length 2-5) that appear
+    repeatedly on the page.  The boss review caught that the previous
+    implementation flagged ordinary drawing furniture — sheet numbers,
+    grid bubbles, keyed-note integers, common drawing abbreviations —
+    as unknown symbols, drowning the real warnings.  This version
+    suppresses each of those classes.
+    """
+    import re as _re
+
+    from app.parsers.schematic_atom_emitters import emit_warning_atom
+    from app.parsers.schematic_models import SchematicWarning
+
+    known: set[str] = {
+        (e.normalized_symbol_text or "").upper()
+        for e in legend.entries
+        if e.normalized_symbol_text
+    }
+    sheet_token = (sheet or "").upper()
+
+    def _looks_like_grid_bubble(tok: str) -> bool:
+        # A single letter or single digit is a grid label, not a symbol.
+        return len(tok) == 1
+
+    def _looks_like_keyed_note_integer(tok: str) -> bool:
+        # Bare 1-3 digit integers are typically keyed-note markers.
+        return tok.isdigit() and 1 <= len(tok) <= 3
+
+    def _looks_like_sheet_number(tok: str) -> bool:
+        # The page's own sheet number repeats in the title block / index.
+        return tok == sheet_token or _re.match(r"^[A-Z]{1,3}\d+(?:\.\d+)?$", tok) is not None
+
+    counts: dict[str, int] = {}
+    first_bbox: dict[str, tuple[float, float, float, float]] = {}
+    for blk in blocks:
+        if any(_bbox_intersects(blk.bbox, ex) for ex in excluded_bboxes):
+            continue
+        for m in _re.finditer(r"\b[A-Z0-9][A-Z0-9\-]{1,4}\b", blk.text):
+            tok = m.group(0).upper()
+            if tok in known:
+                continue
+            if tok in _UNKNOWN_TOKEN_IGNORES:
+                continue
+            if _looks_like_grid_bubble(tok):
+                continue
+            if _looks_like_keyed_note_integer(tok):
+                continue
+            if _looks_like_sheet_number(tok):
+                continue
+            counts[tok] = counts.get(tok, 0) + 1
+            first_bbox.setdefault(tok, blk.bbox)
+    out: list[EvidenceAtom] = []
+    for tok, n in sorted(counts.items()):
+        if n < 3:  # ignore noise — only flag clearly repeated tokens
+            continue
+        out.append(
+            emit_warning_atom(
+                warning=SchematicWarning.make(
+                    warning_type="unknown_symbol",
+                    page_index=page_index,
+                    sheet_number=sheet,
+                    detail=f"Token {tok!r} appears {n} times on page but is not in the resolved legend.",
+                    bbox_pdf=first_bbox[tok],
+                    extras={"token": tok, "count": n},
+                ),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=filename,
+                parser_version=parser_version,
+                page=page,
+            )
+        )
+    return out
+
+
+def _bbox_intersects(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
 def _scan_pdf_for_extras(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,17 +12,36 @@ _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+@functools.lru_cache(maxsize=8192)
+def _norm_cached(text: str) -> str:
+    t = text.lower()
+    t = t.replace("rj-45", "rj45").replace("cat 6a", "cat6a").replace("cat-6a", "cat6a")
+    t = t.replace("cat 6", "cat6").replace("cat-6", "cat6")
+    t = t.replace("category 6a", "cat6a").replace("category 6", "cat6")
+    t = _NON_ALNUM_RE.sub(" ", t)
+    return _WHITESPACE_RE.sub(" ", t).strip()
+
+
 def _norm(value: Any) -> str:
-    text = str(value or "").lower()
-    text = text.replace("rj-45", "rj45").replace("cat 6a", "cat6a").replace("cat-6a", "cat6a")
-    text = text.replace("cat 6", "cat6").replace("cat-6", "cat6")
-    text = text.replace("category 6a", "cat6a").replace("category 6", "cat6")
-    text = _NON_ALNUM_RE.sub(" ", text)
-    return _WHITESPACE_RE.sub(" ", text).strip()
+    """Cached cable-normalization for identity matching. The same atom
+    text is normalized once per identity spec (28+ specs per atom in the
+    inner loop) — without caching this was 8k function calls per
+    average-size project. Cached: ~1 call per unique text."""
+    if not value:
+        return ""
+    return _norm_cached(str(value))
+
+
+@functools.lru_cache(maxsize=8192)
+def _tokens_cached(text: str) -> frozenset[str]:
+    return frozenset(_WORD_RE.findall(_norm_cached(text)))
 
 
 def _tokens(value: Any) -> set[str]:
-    return set(_WORD_RE.findall(_norm(value)))
+    if not value:
+        return set()
+    # set() conversion of frozenset is cheap; caller may mutate.
+    return set(_tokens_cached(str(value)))
 
 
 @dataclass(frozen=True)

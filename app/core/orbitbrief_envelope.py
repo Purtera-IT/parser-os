@@ -1,5 +1,20 @@
 """OrbitBrief project envelope — the "perfect compressible" LLM input.
 
+DEPRECATED LOCATION — this module has moved to Orbitbrief-Core at
+``orbitbrief_core.envelope``. The copy in parser-os remains for
+back-compat with existing callers (app/cli.py, app/core/production_report.py,
+several scripts, several tests) and stays functionally identical.
+
+The brief-layer surfaces (pm_dashboard, scope_truth, project_vitals,
+etc.) have always been Orbitbrief concerns; parser-os will keep this
+shim during a deprecation window, then drop it. New code should
+import from ``orbitbrief_core.envelope`` directly.
+
+See: https://github.com/Purtera-IT/Orbitbrief-Core
+PR:  feat/envelope-migration-from-parser-os
+
+
+
 A single ``orbitbrief.input.v1`` envelope packages every artifact in a
 project into one self-contained payload an open-source LLM (Llama-3.1
 70B, Qwen-2.5 72B, Mistral-Large, etc.) can consume in a single prompt.
@@ -60,6 +75,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.orbitbrief_core import (
+    build_change_order_timeline,
+    build_pm_dashboard,
+    build_project_vitals,
+    build_scope_truth,
+    build_site_readiness,
+    build_sow_readiness_scorecard,
+    build_srl_missing_checklist,
+    build_stakeholder_load,
+)
 from app.core.schemas import (
     ArtifactType,
     CompileResult,
@@ -108,6 +133,20 @@ def build_orbitbrief_envelope(
     for atom in atoms:
         atoms_by_artifact[atom.artifact_id].append(atom)
 
+    # A6 graceful degradation: build a per-file outcome index from the
+    # manifest's parser_routing so each document carries its own
+    # status (ok / ok_empty / skipped_no_parser / failed_parse).
+    # PM_HANDOFF builders read this to render a "Files processed"
+    # table and avoid the silent failure where a parse error left the
+    # file count looking normal but produced 0 evidence.
+    outcome_by_artifact: dict[str, dict[str, Any]] = {}
+    if manifest is not None:
+        for routing_entry in (manifest.parser_routing or []):
+            aid = routing_entry.get("artifact_id")
+            outcome = routing_entry.get("outcome")
+            if aid and isinstance(outcome, dict):
+                outcome_by_artifact[aid] = outcome
+
     documents: list[dict[str, Any]] = []
     artifact_iter = manifest.artifact_fingerprints if manifest is not None else []
     for fp in artifact_iter:
@@ -130,6 +169,14 @@ def build_orbitbrief_envelope(
                 "parser_version": fp.parser_version,
                 "structured": structured_projection,
                 "atom_ids": sorted(a.id for a in artifact_atoms),
+                # A6 graceful degradation: per-file parse outcome.
+                # ``status`` is one of ok / ok_empty / skipped_no_parser
+                # / failed_parse. PM_HANDOFF reads this to surface
+                # files that the engineer should manually inspect.
+                "parse_outcome": outcome_by_artifact.get(
+                    fp.artifact_id,
+                    {"status": "unknown", "atom_count": len(artifact_atoms), "warning_count": 0},
+                ),
             }
         )
 
@@ -144,6 +191,13 @@ def build_orbitbrief_envelope(
     if crm:
         summary["crm"] = crm
     indexes = _build_indexes(atoms=atoms, entities=entities, edges=edges)
+    drawings = _build_drawings_section(
+        atoms=atoms,
+        packets=packets,
+        edges=edges,
+        atoms_by_artifact=atoms_by_artifact,
+        documents=documents,
+    )
 
     envelope: dict[str, Any] = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
@@ -158,6 +212,46 @@ def build_orbitbrief_envelope(
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
     }
+    # OrbitBrief-Core deliverables — deterministic pre-aggregations so
+    # the downstream LLM synthesis layer (and the PM cockpit) can render
+    # the Monday-morning view, the SOW-readiness scorecard, and the
+    # required-fields checklist directly without re-scanning atoms.
+    envelope["pm_dashboard"] = build_pm_dashboard(
+        atoms=atoms, packets=packets, edges=edges, entities=entities,
+    )
+    envelope["sow_readiness_scorecard"] = build_sow_readiness_scorecard(
+        atoms=atoms, packets=packets, edges=edges, entities=entities,
+    )
+    envelope["srl_missing_checklist"] = build_srl_missing_checklist(
+        atoms=atoms, documents=documents,
+    )
+    # S+++++ cockpit surfaces — authority-weighted scope truth,
+    # chronological change-order audit, per-site readiness rollup,
+    # per-stakeholder workload matrix, and a single 0-100 project
+    # vitals number that blends every signal above into one
+    # auditable cockpit-header score.
+    envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
+    envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
+    envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
+    envelope["project_vitals"] = build_project_vitals(
+        atoms=atoms,
+        edges=edges,
+        packets=packets,
+        scorecard=envelope["sow_readiness_scorecard"],
+        checklist=envelope["srl_missing_checklist"],
+        site_readiness=envelope["site_readiness"],
+        stakeholder_load=envelope["stakeholder_load"],
+        scope_truth=envelope["scope_truth"],
+    )
+    # Drawings section is omitted entirely on non-schematic projects so
+    # the envelope shape stays byte-identical for the existing test grid.
+    if drawings["artifacts"]:
+        envelope["drawings"] = drawings
+    # CRM context (when the parser-manifest sidecar carries it) is
+    # exposed at the top of the envelope so downstream consumers can
+    # render deal name / opportunity ID / amount without re-reading
+    # the manifest blob.
     if crm:
         envelope["crm"] = crm
     return envelope
@@ -184,12 +278,27 @@ def write_orbitbrief_envelope(
     project_dir: Path,
     envelope: dict[str, Any],
     out_dir: Path | None = None,
-) -> tuple[Path, Path]:
-    """Write the envelope as both JSON and markdown.
+) -> tuple[Path, Path, Path | None]:
+    """Write the envelope JSON, markdown, and (if SowSmith is installed) the SOW.
 
-    Returns ``(json_path, markdown_path)``.  Defaults to writing under
-    ``<project_dir>/.orbitbrief/`` so consumers know exactly where to
-    look.  Pass ``out_dir`` to override.
+    Returns ``(json_path, markdown_path, sow_path_or_None)``. Defaults
+    to writing under ``<project_dir>/.orbitbrief/``. Pass ``out_dir``
+    to override.
+
+    The ``sow.md`` file is rendered by the standalone ``sowsmith``
+    package (https://github.com/Purtera-IT/SowSmith) if it's
+    installed. If SowSmith isn't on the path, ``sow_path`` is
+    returned as ``None`` and only the envelope JSON + markdown are
+    written. This keeps parser-os usable with or without the
+    downstream SOW generator on the same machine.
+
+    Install SowSmith to enable in-process SOW rendering::
+
+        pip install -e path/to/SowSmith
+
+    Or render after the fact::
+
+        sowsmith render <project>/.orbitbrief/orbitbrief.input.json
     """
     out_dir = Path(out_dir) if out_dir is not None else (Path(project_dir) / ".orbitbrief")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +306,16 @@ def write_orbitbrief_envelope(
     md_path = out_dir / ENVELOPE_MARKDOWN_FILENAME
     json_path.write_text(json.dumps(envelope, indent=2, ensure_ascii=False), encoding="utf-8")
     md_path.write_text(envelope_to_markdown(envelope), encoding="utf-8")
-    return json_path, md_path
+
+    sow_path: Path | None = None
+    try:
+        from sowsmith import build_sow_markdown  # type: ignore[import-not-found]
+    except ImportError:
+        build_sow_markdown = None  # type: ignore[assignment]
+    if build_sow_markdown is not None:
+        sow_path = out_dir / "sow.md"
+        sow_path.write_text(build_sow_markdown(envelope), encoding="utf-8")
+    return json_path, md_path, sow_path
 
 
 def envelope_to_markdown(envelope: dict[str, Any]) -> str:
@@ -233,6 +351,11 @@ def envelope_to_markdown(envelope: dict[str, Any]) -> str:
             for atom_type, count in sorted(by_type.items(), key=lambda kv: -kv[1]):
                 lines.append(f"- {atom_type}: {count}")
             lines.append("")
+
+    # OrbitBrief-Core cockpit surfaces — rendered as markdown sections
+    # so an LLM consuming the markdown form sees the pre-aggregated
+    # signals (not just raw atoms / packets).
+    lines.extend(_render_cockpit_surfaces_md(envelope))
 
     for doc in envelope.get("documents", []) or []:
         artifact_id = doc.get("artifact_id", "")
@@ -293,10 +416,292 @@ def envelope_to_markdown(envelope: dict[str, Any]) -> str:
             )
         lines.append("")
 
+    drawings = envelope.get("drawings") or {}
+    artifacts = drawings.get("artifacts") or []
+    if artifacts:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Drawings")
+        lines.append("")
+        idx = drawings.get("indexes") or {}
+        det_counts = idx.get("detections_by_target_key") or {}
+        if det_counts:
+            lines.append("**Detection counts across all drawings**")
+            for target_key, count in sorted(det_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                lines.append(f"- {target_key}: {count}")
+            lines.append("")
+        warn_counts = idx.get("warnings_by_type") or {}
+        if warn_counts:
+            lines.append("**Warnings across all drawings**")
+            for wt, count in sorted(warn_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                lines.append(f"- {wt}: {count}")
+            lines.append("")
+        for art in artifacts:
+            lines.append(f"### {art.get('filename') or art.get('artifact_id') or 'drawing'}")
+            lines.append("")
+            qc_ids = art.get("quantity_conflict_packet_ids") or []
+            if qc_ids:
+                lines.append(
+                    f"_{len(qc_ids)} quantity_conflict packet(s): "
+                    + ", ".join(qc_ids)
+                    + "_"
+                )
+                lines.append("")
+            for page in art.get("pages", []) or []:
+                p = page.get("page")
+                sn = page.get("sheet_number") or "?"
+                lines.append(f"#### Page {p} — Sheet {sn}")
+                meta = page.get("sheet_metadata") or {}
+                if meta:
+                    parts: list[str] = []
+                    for k in ("sheet_title", "project_name", "scale", "issue_date", "revision"):
+                        v = meta.get(k)
+                        if v:
+                            parts.append(f"{k}={v}")
+                    if parts:
+                        lines.append("- " + " • ".join(parts))
+                target_counts = page.get("target_counts") or {}
+                if target_counts:
+                    lines.append("- Target counts: " + ", ".join(
+                        f"{k}={v}" for k, v in sorted(target_counts.items())
+                    ))
+                rooms = page.get("rooms") or []
+                if rooms:
+                    lines.append(
+                        "- Rooms: "
+                        + ", ".join(
+                            f"{r.get('label')}{(' ' + r['number']) if r.get('number') else ''}"
+                            for r in rooms
+                        )
+                    )
+                notes = page.get("keyed_notes") or []
+                if notes:
+                    lines.append(f"- Keyed notes: {len(notes)}")
+                schedules = page.get("schedule_rows") or []
+                if schedules:
+                    lines.append(f"- Schedule rows: {len(schedules)}")
+                warnings = page.get("warnings") or []
+                if warnings:
+                    types = sorted({w.get("warning_type") for w in warnings if w.get("warning_type")})
+                    lines.append("- Warnings: " + ", ".join(types))
+                lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
 # ────────────────────────── internals ────────────────────────────────────
+
+
+def _render_cockpit_surfaces_md(envelope: dict[str, Any]) -> list[str]:
+    """Render the OrbitBrief-Core cockpit fields as markdown sections.
+
+    Surfaces rendered:
+      * project_vitals          — header score with component breakdown
+      * pm_dashboard            — blockers / contradictions / open Qs
+      * sow_readiness_scorecard — dimension table + grade
+      * srl_missing_checklist   — coverage + missing field list
+      * scope_truth             — canonical scope table + contested
+      * change_order_timeline   — chronological change order audit
+      * site_readiness          — per-site rollup table
+      * stakeholder_load        — workload + bottleneck matrix
+
+    Missing surfaces are silently skipped — older compile results
+    without OrbitBrief-Core fields still render their atoms section.
+    """
+    lines: list[str] = []
+
+    vitals = envelope.get("project_vitals") or {}
+    if vitals:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Project Vitals")
+        lines.append("")
+        lines.append(
+            f"**Score:** {vitals.get('score_100', '—')} / 100  ·  "
+            f"**Band:** `{vitals.get('band', '—')}`  ·  "
+            f"**Top drivers:** {', '.join(vitals.get('top_drivers') or []) or '—'}  ·  "
+            f"**Top detractors:** {', '.join(vitals.get('top_detractors') or []) or '—'}"
+        )
+        lines.append("")
+        components = vitals.get("components") or []
+        if components:
+            lines.append("| Component | Weight | Score | Contribution |")
+            lines.append("|---|---|---|---|")
+            for c in components:
+                lines.append(
+                    f"| {c.get('name', '—')} | {c.get('weight', 0):.2f} | "
+                    f"{c.get('raw_score', 0):.2f} | {c.get('contribution', 0):.3f} |"
+                )
+            lines.append("")
+
+    dash = envelope.get("pm_dashboard") or {}
+    if dash:
+        lines.append("---")
+        lines.append("")
+        lines.append("## PM Dashboard")
+        lines.append("")
+        bl = dash.get("blockers") or []
+        if bl:
+            lines.append(f"**Blockers ({len(bl)})**")
+            for b in bl[:15]:
+                lines.append(f"- [{b.get('kind', '—')}] {(b.get('summary', '') or '')[:200]}")
+            lines.append("")
+        cd = dash.get("cross_doc_contradictions") or []
+        if cd:
+            lines.append(f"**Cross-doc contradictions ({len(cd)})**")
+            for c in cd[:10]:
+                lines.append(f"- {(c.get('reason') or '')[:200]}")
+            lines.append("")
+        co = dash.get("change_orders") or []
+        if co:
+            lines.append(f"**Change orders ({len(co)})**")
+            for c in co[:10]:
+                delta = c.get("change_delta")
+                delta_str = f" ({delta.get('from')}→{delta.get('to')}, Δ{delta.get('delta'):+d})" if delta else ""
+                lines.append(f"- {(c.get('text') or '')[:200]}{delta_str}")
+            lines.append("")
+        oq = dash.get("open_questions") or []
+        if oq:
+            lines.append(f"**Open questions ({len(oq)})**")
+            for q in oq[:10]:
+                lines.append(f"- {(q.get('text') or '')[:200]}")
+            lines.append("")
+        sla = dash.get("sla_summary") or []
+        if sla:
+            lines.append(f"**SLA targets ({len(sla)})**")
+            for s in sla[:10]:
+                targets = s.get("sla") or {}
+                target_str = ", ".join(f"{k}={v}" for k, v in targets.items())
+                lines.append(f"- {target_str}  ({(s.get('text') or '')[:80]})")
+            lines.append("")
+        money = dash.get("money_summary") or {}
+        if money.get("total"):
+            lines.append(f"**Commercial total:** ${money['total']:,.2f} ({len(money.get('atoms', []))} atoms)")
+            lines.append("")
+
+    sc = envelope.get("sow_readiness_scorecard") or {}
+    if sc:
+        lines.append("---")
+        lines.append("")
+        lines.append("## SOW Readiness Scorecard")
+        lines.append("")
+        lines.append(
+            f"**Overall:** {sc.get('readiness_score', 0):.2f} / 1.00  ·  "
+            f"**Grade:** `{sc.get('grade', '—')}`"
+        )
+        lines.append("")
+        lines.append("| Dimension | Score |")
+        lines.append("|---|---|")
+        for dim, d in (sc.get("dimensions") or {}).items():
+            lines.append(f"| {dim} | {d.get('score', 0):.2f} |")
+        lines.append("")
+
+    ck = envelope.get("srl_missing_checklist") or {}
+    if ck:
+        lines.append("---")
+        lines.append("")
+        lines.append("## SRL Coverage")
+        lines.append("")
+        lines.append(
+            f"**Coverage:** {ck.get('present_count', 0)} / {ck.get('field_count', 0)} fields "
+            f"({(ck.get('coverage', 0) or 0) * 100:.0f}%)"
+        )
+        lines.append("")
+        by_cat = ck.get("by_category") or {}
+        if by_cat:
+            lines.append("| Category | Present / Total | Coverage |")
+            lines.append("|---|---|---|")
+            for cat, stats in sorted(by_cat.items()):
+                lines.append(
+                    f"| {cat} | {stats.get('present', 0)} / {stats.get('total', 0)} | "
+                    f"{(stats.get('coverage', 0) or 0) * 100:.0f}% |"
+                )
+            lines.append("")
+        missing = ck.get("missing") or []
+        if missing:
+            lines.append(f"**Missing fields ({len(missing)})**")
+            for m in missing:
+                lines.append(f"- `{m.get('field_id')}` — {m.get('label')}")
+            lines.append("")
+
+    st = envelope.get("scope_truth") or {}
+    if st.get("devices"):
+        lines.append("---")
+        lines.append("")
+        lines.append("## Scope Truth")
+        lines.append("")
+        lines.append(
+            f"**{st.get('device_count', 0)}** devices across **{st.get('site_count', 0)}** sites  ·  "
+            f"**{st.get('contested_count', 0)}** contested"
+        )
+        lines.append("")
+        lines.append("| Device | Site | Quantity | Governing | Status |")
+        lines.append("|---|---|---|---|---|")
+        for d in st["devices"]:
+            status = "⚠ contested" if d.get("is_contested") else "✓"
+            lines.append(
+                f"| {d.get('device', '—')} | {d.get('site', '—')} | "
+                f"**{d.get('canonical_quantity', '—')}** | "
+                f"`{d.get('governing_authority', '—')}` | {status} |"
+            )
+        lines.append("")
+
+    ct = envelope.get("change_order_timeline") or {}
+    if ct.get("entries"):
+        lines.append("---")
+        lines.append("")
+        lines.append(f"## Change Order Timeline ({ct.get('entry_count', 0)} entries)")
+        lines.append("")
+        lines.append("| Kind | Delta | Approved | Text |")
+        lines.append("|---|---|---|---|")
+        for e in ct["entries"][:20]:
+            delta = e.get("change_delta") or {}
+            if delta:
+                delta_str = f"{delta.get('from')}→{delta.get('to')} ({delta.get('delta'):+d})"
+            else:
+                delta_str = "—"
+            approval = "✓" if e.get("approval_signal") else "—"
+            text = (e.get("text") or "").replace("|", "\\|").replace("\n", " ")[:160]
+            lines.append(f"| {e.get('kind', '—')} | {delta_str} | {approval} | {text} |")
+        lines.append("")
+
+    sr = envelope.get("site_readiness") or {}
+    if sr.get("sites"):
+        lines.append("---")
+        lines.append("")
+        lines.append(
+            f"## Site Readiness ({sr.get('site_count', 0)} sites, avg {sr.get('avg_readiness', 0):.2f})"
+        )
+        lines.append("")
+        lines.append("| Site | Readiness | Devices | Stakeholders | Constraints | Contradictions |")
+        lines.append("|---|---|---|---|---|---|")
+        for s in sr["sites"]:
+            lines.append(
+                f"| `{s.get('site', '—')}` | {s.get('readiness', 0):.2f} | "
+                f"{s.get('device_count', 0)} | {s.get('stakeholder_count', 0)} | "
+                f"{s.get('constraint_count', 0)} | {s.get('contradiction_count', 0)} |"
+            )
+        lines.append("")
+
+    sl = envelope.get("stakeholder_load") or {}
+    if sl.get("stakeholders"):
+        lines.append("---")
+        lines.append("")
+        lines.append(f"## Stakeholder Load ({sl.get('stakeholder_count', 0)} stakeholders)")
+        lines.append("")
+        if sl.get("bottlenecks"):
+            lines.append(f"⚠ **Bottlenecks:** {', '.join(sl['bottlenecks'])}")
+            lines.append("")
+        lines.append("| Stakeholder | Risks | Critical | High | Actions | Severity Load |")
+        lines.append("|---|---|---|---|---|---|")
+        for s in sl["stakeholders"]:
+            lines.append(
+                f"| {s.get('slug', '—')} | {s.get('risk_count', 0)} | "
+                f"{s.get('critical_risk_count', 0)} | {s.get('high_risk_count', 0)} | "
+                f"{s.get('action_item_count', 0)} | {s.get('risk_severity_load', 0)} |"
+            )
+        lines.append("")
+
+    return lines
 
 
 def _resolve_artifact_path(project_dir: Path, filename: str) -> Path:
@@ -421,6 +826,194 @@ def _atom_to_block_kind(atom: EvidenceAtom) -> str:
     return "text"
 
 
+def _build_drawings_section(
+    *,
+    atoms: list[EvidenceAtom],
+    packets: list[Any],
+    edges: list[Any],
+    atoms_by_artifact: dict[str, list[EvidenceAtom]],
+    documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the schematic ``drawings`` envelope section.
+
+    Groups every schematic_* atom by (artifact, page), surfaces the
+    parsed legend, the per-page target counts, the resolved schedule
+    rows, the keyed notes, the rooms, the warnings, and any
+    quantity_conflict packets that came out of schematic atoms.
+
+    Empty by design when the project has no schematic atoms — the
+    envelope's caller drops the section in that case so non-schematic
+    projects produce byte-identical output.
+    """
+    schematic_atom_types = {
+        "schematic_sheet_metadata",
+        "schematic_legend",
+        "schematic_room",
+        "schematic_keyed_note",
+        "schematic_note_callout",
+        "schematic_schedule_row",
+        "schematic_detection_target_set",
+        "schematic_symbol_detection",
+        "schematic_warning",
+    }
+    schematic_atoms = [a for a in atoms if a.atom_type.value in schematic_atom_types]
+    if not schematic_atoms:
+        return {"artifacts": [], "indexes": {}}
+
+    artifact_filenames = {d["artifact_id"]: d.get("filename") for d in documents}
+
+    by_art: dict[str, list[EvidenceAtom]] = defaultdict(list)
+    for a in schematic_atoms:
+        by_art[a.artifact_id].append(a)
+
+    artifacts_out: list[dict[str, Any]] = []
+    drawings_by_sheet: dict[str, list[str]] = defaultdict(list)
+    detections_by_target: dict[str, int] = defaultdict(int)
+    warnings_by_type: dict[str, int] = defaultdict(int)
+
+    for artifact_id in sorted(by_art):
+        art_atoms = by_art[artifact_id]
+        per_page: dict[int, dict[str, Any]] = defaultdict(
+            lambda: {
+                "sheet_number": None,
+                "sheet_metadata": None,
+                "legend_id": None,
+                "target_counts": defaultdict(int),
+                "warnings": [],
+                "rooms": [],
+                "keyed_notes": [],
+                "schedule_rows": [],
+                "atom_ids": [],
+            }
+        )
+        legends_out: list[dict[str, Any]] = []
+        for atom in art_atoms:
+            value = atom.value if isinstance(atom.value, dict) else {}
+            page = value.get("page")
+            if isinstance(page, int):
+                per_page[page]["atom_ids"].append(atom.id)
+            atom_kind = atom.atom_type.value
+            if atom_kind == "schematic_sheet_metadata":
+                if isinstance(page, int):
+                    per_page[page]["sheet_metadata"] = {
+                        k: v for k, v in value.items() if k != "page"
+                    }
+                    per_page[page]["sheet_number"] = value.get("sheet_number")
+                    sn = value.get("sheet_number")
+                    if isinstance(sn, str) and sn:
+                        drawings_by_sheet[sn].append(atom.id)
+            elif atom_kind == "schematic_legend":
+                legends_out.append(
+                    {
+                        "legend_id": value.get("legend_id"),
+                        "page": value.get("page"),
+                        "sheet_number": value.get("sheet_number"),
+                        "scope": value.get("scope"),
+                        "entry_count": value.get("entry_count"),
+                    }
+                )
+            elif atom_kind == "schematic_detection_target_set":
+                if isinstance(page, int):
+                    per_page[page]["legend_id"] = value.get("legend_id")
+            elif atom_kind == "schematic_symbol_detection":
+                tk = value.get("target_key")
+                if isinstance(page, int) and isinstance(tk, str):
+                    per_page[page]["target_counts"][tk] += 1
+                    detections_by_target[tk] += 1
+            elif atom_kind == "schematic_warning":
+                wt = value.get("warning_type")
+                if isinstance(page, int):
+                    per_page[page]["warnings"].append(
+                        {
+                            "warning_type": wt,
+                            "detail": value.get("detail"),
+                            "target_key": value.get("target_key"),
+                        }
+                    )
+                if isinstance(wt, str):
+                    warnings_by_type[wt] += 1
+            elif atom_kind == "schematic_room":
+                if isinstance(page, int):
+                    per_page[page]["rooms"].append(
+                        {
+                            "room_id": value.get("room_id"),
+                            "label": value.get("label"),
+                            "number": value.get("number"),
+                        }
+                    )
+            elif atom_kind == "schematic_keyed_note":
+                if isinstance(page, int):
+                    per_page[page]["keyed_notes"].append(
+                        {
+                            "number": value.get("number"),
+                            "text": value.get("text"),
+                            "callout_count": value.get("callout_count", 0),
+                        }
+                    )
+            elif atom_kind == "schematic_schedule_row":
+                if isinstance(page, int):
+                    per_page[page]["schedule_rows"].append(
+                        {
+                            "row_id": value.get("row_id"),
+                            "schedule_kind": value.get("schedule_kind"),
+                            "tag": value.get("tag"),
+                            "fields": value.get("fields", {}),
+                        }
+                    )
+
+        # Schematic quantity conflicts on this artifact.
+        artifact_packet_ids: list[str] = []
+        artifact_atom_ids = {a.id for a in art_atoms}
+        for p in packets:
+            if p.family.value != "quantity_conflict":
+                continue
+            packet_atom_ids = set(
+                (p.contradicting_atom_ids or []) + (p.governing_atom_ids or [])
+            )
+            if packet_atom_ids & artifact_atom_ids:
+                artifact_packet_ids.append(p.id)
+
+        # Stabilize per_page payloads (dict -> dict).
+        pages_out = []
+        for page_index in sorted(per_page):
+            entry = per_page[page_index]
+            pages_out.append(
+                {
+                    "page": page_index,
+                    "sheet_number": entry["sheet_number"],
+                    "legend_id": entry["legend_id"],
+                    "sheet_metadata": entry["sheet_metadata"],
+                    "target_counts": dict(sorted(entry["target_counts"].items())),
+                    "warnings": entry["warnings"],
+                    "rooms": entry["rooms"],
+                    "keyed_notes": entry["keyed_notes"],
+                    "schedule_rows": entry["schedule_rows"],
+                    "atom_ids": sorted(entry["atom_ids"]),
+                }
+            )
+
+        artifacts_out.append(
+            {
+                "artifact_id": artifact_id,
+                "filename": artifact_filenames.get(artifact_id),
+                "pages": pages_out,
+                "legends": sorted(legends_out, key=lambda l: (l.get("page") or 0, l.get("legend_id") or "")),
+                "quantity_conflict_packet_ids": sorted(artifact_packet_ids),
+            }
+        )
+
+    return {
+        "artifacts": artifacts_out,
+        "indexes": {
+            "drawings_by_sheet_number": {
+                k: sorted(v) for k, v in sorted(drawings_by_sheet.items())
+            },
+            "detections_by_target_key": dict(sorted(detections_by_target.items())),
+            "warnings_by_type": dict(sorted(warnings_by_type.items())),
+        },
+    }
+
+
 def _build_summary(
     *,
     atoms: list[EvidenceAtom],
@@ -442,6 +1035,21 @@ def _build_summary(
         structured = doc.get("structured") or {}
         if isinstance(structured, dict):
             page_count += len(structured.get("pages") or [])
+    # A6 graceful degradation: roll up per-file parse_outcome into a
+    # summary counter + an explicit degraded-files list. PM_HANDOFF
+    # uses this to render a "Files requiring manual review" callout.
+    parse_outcomes_counter: Counter[str] = Counter()
+    degraded_files: list[dict[str, str]] = []
+    for doc in documents:
+        outcome = doc.get("parse_outcome") or {}
+        status = outcome.get("status") or "unknown"
+        parse_outcomes_counter[status] += 1
+        if status in {"failed_parse", "skipped_no_parser", "ok_empty"}:
+            degraded_files.append({
+                "filename": str(doc.get("filename", "")),
+                "status": status,
+                "reason": str(outcome.get("reason", ""))[:300],
+            })
     return {
         "artifact_count": len(documents),
         "page_count": page_count,
@@ -455,6 +1063,8 @@ def _build_summary(
         "by_authority_class": dict(by_authority),
         "by_edge_type": dict(by_edge_type),
         "by_entity_type": dict(by_entity_type),
+        "parse_outcomes": dict(parse_outcomes_counter),
+        "degraded_files": degraded_files,
     }
 
 
@@ -471,6 +1081,9 @@ def _build_indexes(
     by_authority: dict[str, list[str]] = defaultdict(list)
     by_artifact: dict[str, list[str]] = defaultdict(list)
     by_entity_key: dict[str, list[str]] = defaultdict(list)
+    by_stakeholder: dict[str, list[str]] = defaultdict(list)
+    by_device: dict[str, list[str]] = defaultdict(list)
+    by_site: dict[str, list[str]] = defaultdict(list)
     for atom in atoms:
         section_key = " > ".join(_atom_section_path(atom)) or "(root)"
         by_section[section_key].append(atom.id)
@@ -479,6 +1092,17 @@ def _build_indexes(
         by_artifact[atom.artifact_id].append(atom.id)
         for key in atom.entity_keys:
             by_entity_key[key].append(atom.id)
+            # Per-entity-prefix specialized indexes: O(1) lookup of
+            # "every fact about this stakeholder / device / site"
+            # without re-scanning atoms_by_entity_key. Downstream
+            # consumers (SOWSmith.scope_clause, PM cockpit) hit these
+            # constantly.
+            if key.startswith("stakeholder:"):
+                by_stakeholder[key[len("stakeholder:"):]].append(atom.id)
+            elif key.startswith("device:"):
+                by_device[key[len("device:"):]].append(atom.id)
+            elif key.startswith("site:"):
+                by_site[key[len("site:"):]].append(atom.id)
     edges_by_atom: dict[str, list[str]] = defaultdict(list)
     for edge in edges:
         edges_by_atom[edge.from_atom_id].append(edge.id)
@@ -490,6 +1114,9 @@ def _build_indexes(
         "atoms_by_authority": {k: sorted(v) for k, v in sorted(by_authority.items())},
         "atoms_by_artifact": {k: sorted(v) for k, v in sorted(by_artifact.items())},
         "atoms_by_entity_key": {k: sorted(v) for k, v in sorted(by_entity_key.items())},
+        "atoms_by_stakeholder_slug": {k: sorted(v) for k, v in sorted(by_stakeholder.items())},
+        "atoms_by_device_slug": {k: sorted(v) for k, v in sorted(by_device.items())},
+        "atoms_by_site_slug": {k: sorted(v) for k, v in sorted(by_site.items())},
         "edges_by_atom": {k: sorted(v) for k, v in sorted(edges_by_atom.items())},
         "entity_id_by_canonical_key": dict(sorted(entities_by_key.items())),
     }
@@ -507,6 +1134,15 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         "section_path": _atom_section_path(atom),
         "locator": dict(primary_ref.locator) if primary_ref is not None else {},
         "verified": _atom_verification_state(atom),
+        # A5 cross-doc reconciliation needs entity_keys + structured
+        # values on every atom so consumers can group atoms touching
+        # the same logical entity (e.g. total_contract_value) and
+        # flag value contradictions across documents. Previously the
+        # compact projection dropped both, forcing PM_HANDOFF to
+        # regex over raw_text. Same data unlocks B2 (risk register),
+        # B6 (per-site pricing rollup), etc.
+        "entity_keys": list(atom.entity_keys),
+        "structured": dict(atom.value) if atom.value else {},
     }
 
 
@@ -562,7 +1198,7 @@ def _compact_edge(edge: EvidenceEdge) -> dict[str, Any]:
 
 
 def _compact_packet(packet: EvidencePacket) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "id": packet.id,
         "family": packet.family.value,
         "anchor_type": packet.anchor_type,
@@ -574,6 +1210,24 @@ def _compact_packet(packet: EvidencePacket) -> dict[str, Any]:
         "contradicting_atom_ids": list(packet.contradicting_atom_ids),
         "reason": packet.reason,
     }
+    # Preserve the PacketCertificate so downstream consumers
+    # (SOWSmith.scope_clause, OrbitBrief.scope_truth, RunbookGen.site_steps,
+    # AtlasDispatch.site_readiness, VisionQC.photo_requirements) see the
+    # cert's blast_radius declaration through the envelope.
+    cert = getattr(packet, "certificate", None)
+    if cert is not None:
+        try:
+            out["certificate"] = cert.model_dump()
+        except Exception:  # pragma: no cover
+            try:
+                out["certificate"] = dict(cert)
+            except Exception:
+                out["certificate"] = None
+        if out.get("certificate") and isinstance(out["certificate"], dict):
+            br = out["certificate"].get("blast_radius") or []
+            if br:
+                out["blast_radius"] = list(br)
+    return out
 
 
 def _render_generic_structured_md(structured: dict[str, Any]) -> str:

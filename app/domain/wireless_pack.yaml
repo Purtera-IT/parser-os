@@ -248,3 +248,68 @@ packet_family_hints:
     - survey
     - license
     - controller
+
+detection_targets:
+  - key: wireless_ap
+    entity_key: device:wireless_ap
+    ontology_key: wireless_access_point
+    aliases_from:
+      - device_aliases.access_point
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:access_point
+      - device:wireless_device
+  - key: wireless_antenna
+    entity_key: device:antenna
+    aliases_from:
+      - device_aliases.antenna
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:antenna
+      - device:wireless_device
+  - key: wireless_controller
+    entity_key: device:wlc
+    aliases_from:
+      - device_aliases.controller
+    aliases:
+      - 'wlc'
+      - 'wireless controller'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:wlc
+      - device:wireless_device
+  - key: wireless_switch
+    entity_key: device:poe_switch
+    aliases_from:
+      - device_aliases.switch
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: wireless_heatmap_zone
+    entity_key: zone:wireless_coverage
+    aliases:
+      - 'heat map'
+      - 'heatmap'
+      - 'coverage zone'
+    completeness: informational
+    modalities:
+      - zone
+  - key: wireless_uplink
+    entity_key: device:uplink_drop
+    aliases:
+      - 'uplink'
+      - 'drop'
+    completeness: informational
+    modalities:
+      - line_run
+      - vector_shape

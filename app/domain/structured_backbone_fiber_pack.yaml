@@ -54,3 +54,64 @@ risk_defaults:
   unpriced_scope_default: 5000
 packet_family_hints:
   quantity_conflict: ["strand count", "fiber count mismatch"]
+
+detection_targets:
+  - key: mdf
+    entity_key: room:mdf
+    aliases:
+      - 'mdf'
+      - 'main distribution frame'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: idf
+    entity_key: room:idf
+    aliases:
+      - 'idf'
+      - 'intermediate distribution frame'
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+  - key: fiber_trunk
+    entity_key: device:fiber_trunk
+    aliases_from:
+      - device_aliases.fiber_trunk
+    aliases:
+      - 'fiber trunk'
+      - 'backbone'
+    completeness: load_bearing
+    modalities:
+      - line_run
+    parent_entity_keys:
+      - device:cable
+      - device:cabling_device
+  - key: fiber_patch_panel
+    entity_key: device:patch_panel
+    aliases_from:
+      - device_aliases.fiber_patch_panel
+    completeness: load_bearing
+    modalities:
+      - text_tag
+      - glyph_template
+    parent_entity_keys:
+      - device:patch_panel
+      - device:cabling_device
+  - key: fiber_riser
+    entity_key: device:fiber_riser
+    aliases:
+      - 'riser'
+      - 'backbone riser'
+    completeness: load_bearing
+    modalities:
+      - line_run
+  - key: fiber_strand_count
+    entity_key: device:strand_count
+    aliases:
+      - 'strands'
+      - 'sm'
+      - 'om'
+    completeness: informational
+    modalities:
+      - text_tag

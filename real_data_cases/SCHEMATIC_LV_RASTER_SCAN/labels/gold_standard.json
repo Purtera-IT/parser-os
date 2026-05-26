@@ -1,0 +1,8 @@
+{
+  "case_id": "SCHEMATIC_LV_RASTER_SCAN",
+  "service_line": "security_camera",
+  "recommended_domain_pack": "security_camera",
+  "bundle_summary": "Synthetic raster-only drawing: legend on text page, image-only floor plan.",
+  "expected_legend_entries_min": 1,
+  "expected_all_schematic_atoms_carry_locator": true
+}

@@ -58,6 +58,43 @@ def _best_device_key(atoms: list[EvidenceAtom]) -> str:
     return device_keys[0] if device_keys else "device:unknown"
 
 
+# Fallback priority chain when neither a `site:` nor a `device:` key is
+# present on the governing atoms. These secondary entity types still
+# anchor a packet to something actionable (a named approver, a dollar
+# threshold, a milestone date) rather than the meaningless
+# ``site:unknown`` / ``device:unknown`` sentinels.
+_FALLBACK_ANCHOR_PREFIXES: tuple[str, ...] = (
+    "customer:",
+    "vendor:",
+    "stakeholder:",
+    "milestone:",
+    "money:",
+    "part_number:",
+    "address:",
+    "spec_section:",
+    "qa:",
+    "requirement:",
+    "date:",
+)
+
+
+def _fallback_anchor(atoms: list[EvidenceAtom]) -> tuple[str, str] | None:
+    """Return ``(anchor_type, canonical_key)`` from the fallback chain,
+    or ``None`` if no secondary entity key exists either.
+
+    This is called by anchor-selection paths when the primary site /
+    device key resolved to ``:unknown``. Using a customer / stakeholder
+    / milestone / money key as the anchor preserves the packet's link
+    to a real entity downstream consumers can act on.
+    """
+    all_keys = sorted({key for atom in atoms for key in (atom.entity_keys or [])})
+    for prefix in _FALLBACK_ANCHOR_PREFIXES:
+        for k in all_keys:
+            if k.startswith(prefix):
+                return prefix.rstrip(":"), k
+    return None
+
+
 def _first_atom_by_type(atoms: list[EvidenceAtom], atom_types: set[AtomType]) -> EvidenceAtom | None:
     filtered = [atom for atom in atoms if atom.atom_type in atom_types]
     if not filtered:
@@ -94,19 +131,36 @@ def make_anchor_signature(
         entity_keys = [canonical_key]
     elif family == PacketFamily.scope_exclusion:
         site_key = _best_site_key(atoms, prioritize_exclusion_text=True)
-        canonical_key = site_key
-        if material_identity:
-            canonical_key = f"{site_key}|{material_identity}"
-        anchor_type = "site"
-        normalized_topic = site_key.split(":", 1)[1] if ":" in site_key else site_key
-        scope_dimension = "exclusion"
-        entity_keys = sorted({site_key, material_identity} if material_identity else {site_key})
+        if site_key == "site:unknown" and (fb := _fallback_anchor(atoms)):
+            fb_type, fb_key = fb
+            canonical_key = fb_key
+            anchor_type = fb_type
+            normalized_topic = fb_key.split(":", 1)[1] if ":" in fb_key else fb_key
+            scope_dimension = "exclusion"
+            entity_keys = sorted({fb_key, material_identity} if material_identity else {fb_key})
+        else:
+            canonical_key = site_key
+            if material_identity:
+                canonical_key = f"{site_key}|{material_identity}"
+            anchor_type = "site"
+            normalized_topic = site_key.split(":", 1)[1] if ":" in site_key else site_key
+            scope_dimension = "exclusion"
+            entity_keys = sorted({site_key, material_identity} if material_identity else {site_key})
     elif family == PacketFamily.site_access:
-        canonical_key = _best_site_key(atoms)
-        anchor_type = "site"
-        normalized_topic = canonical_key.split(":", 1)[1]
-        scope_dimension = "access"
-        entity_keys = [canonical_key]
+        site_key = _best_site_key(atoms)
+        if site_key == "site:unknown" and (fb := _fallback_anchor(atoms)):
+            fb_type, fb_key = fb
+            canonical_key = fb_key
+            anchor_type = fb_type
+            normalized_topic = fb_key.split(":", 1)[1] if ":" in fb_key else fb_key
+            scope_dimension = "access"
+            entity_keys = [fb_key]
+        else:
+            canonical_key = site_key
+            anchor_type = "site"
+            normalized_topic = canonical_key.split(":", 1)[1]
+            scope_dimension = "access"
+            entity_keys = [canonical_key]
     elif family == PacketFamily.action_item:
         action_atom = _first_atom_by_type(atoms, {AtomType.action_item})
         action_text = action_atom.raw_text if action_atom else "unknown_action"
@@ -154,7 +208,16 @@ def make_anchor_signature(
         entity_keys = [canonical_key]
     else:
         site_key = _best_site_key(atoms)
-        canonical_key = site_key if site_key != "site:unknown" else _best_device_key(atoms)
+        if site_key != "site:unknown":
+            canonical_key = site_key
+        else:
+            device_key = _best_device_key(atoms)
+            if device_key != "device:unknown":
+                canonical_key = device_key
+            elif (fb := _fallback_anchor(atoms)):
+                canonical_key = fb[1]
+            else:
+                canonical_key = site_key  # final fallback: site:unknown
         anchor_type = canonical_key.split(":", 1)[0] if ":" in canonical_key else "entity"
         normalized_topic = canonical_key.split(":", 1)[1] if ":" in canonical_key else canonical_key
         scope_dimension = None
