@@ -85,6 +85,21 @@ REQUIREMENT_EXEMPLARS: list[str] = [
     "Equal employment opportunity and affirmative action plans are required.",
     "The contractor agrees to comply with all federal and state laws.",
     "Solution offered shall meet all functional and technical specifications.",
+    # v45.1 — Attachment / Exhibit / Form references (cost form,
+    # certification form, statement-of-work attachment, etc.)
+    "Proposers must complete Attachment C — Cost Response Form.",
+    "Bidder shall submit the Statement of Work in Attachment A.",
+    "Submission must include Exhibit B pricing schedule.",
+    "The cost form is included as Appendix D and must be returned signed.",
+    "All required attachments must accompany the proposal.",
+    "Failure to complete the Bid Form will result in rejection.",
+    # v45.1 — Submission / opening / award procedural requirements
+    "Sealed proposals shall be received by the procurement office.",
+    "Bid opening is public and held at the District procurement office.",
+    "Award is anticipated within 30 days of bid opening.",
+    "Late proposals will not be considered.",
+    "Modifications to proposals must be in writing.",
+    "Proposers may withdraw their proposal prior to opening.",
 ]
 
 
@@ -115,6 +130,20 @@ QUANTITY_EXEMPLARS: list[str] = [
     # Performance numbers
     "Cisco C9166D1 access points have a 6-8 week lead time at quoted volume.",
     "TSA badging adds 5 to 7 business days lead time per technician.",
+    # v45.1 — Network / bandwidth / fiber specs
+    "The circuit shall provide 10 Gbps committed information rate.",
+    "Each lit-fiber service delivers 1 Gbps minimum throughput.",
+    "Bandwidth growth of 15% annually is anticipated over the contract term.",
+    "Service is 100 Mbps to each elementary school.",
+    "Fiber strand count of 12 strands per cable run is required.",
+    "Each route uses 24-count single-mode OS2 fiber.",
+    "Restoration time after a fiber cut shall not exceed 4 hours.",
+    "MTTR for Severity 1 outages is under 2 hours.",
+    "Service includes 100 Gbps backbone connectivity between data centers.",
+    # E-Rate / Education specific quantities
+    "Discount rate of 80% applies per E-Rate Category 1 funding.",
+    "5% resident contractor preference points are awarded per state code.",
+    "10% in-state veteran resident preference applies.",
 ]
 
 
@@ -245,6 +274,17 @@ MILESTONE_EXEMPLARS: list[str] = [
     "Submission of the implementation plan is due within 10 days of award.",
     "Training materials must be delivered prior to user acceptance testing.",
     "As-built drawings shall be provided within 30 days of project closure.",
+    # v45.1 — bid timeline milestones (PMs need to know dates from RFP)
+    "Pre-proposal meeting is scheduled for December 9, 2016 at 10 AM at District offices.",
+    "Pre-bid conference will be held on the date specified in the RFP.",
+    "Proposals are due no later than February 15, 2017 at 3:00 PM EST.",
+    "Sealed proposals must be received by the District by the deadline.",
+    "Contract award is anticipated approximately 30 days after bid opening.",
+    "Notice to proceed will be issued within 14 days of contract execution.",
+    "Question deadline for written clarifications is December 9, 2016.",
+    "Award date will be communicated via written notice from procurement.",
+    "Bid opening occurs at the public meeting on November 30, 2016.",
+    "RFP issue date: October 25, 2016. RFP responses due February 15, 2017.",
 ]
 
 

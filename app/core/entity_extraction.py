@@ -2679,11 +2679,11 @@ def _emit_money_keys(text: str) -> set[str]:
 # ─── Date / milestone entity extraction ───
 
 # ISO date: 2026-07-31 (the format used in OPTBOT and most modern deals).
-_ISO_DATE_REGEX = re.compile(r"\b(20[2-9][0-9])-([01][0-9])-([0-3][0-9])\b")
+_ISO_DATE_REGEX = re.compile(r"\b((?:19|20)[0-9][0-9])-([01][0-9])-([0-3][0-9])\b")
 
 # US-format date: 07/31/2026 or 7/31/26
 _US_DATE_REGEX = re.compile(
-    r"\b([01]?[0-9])/([0-3]?[0-9])/(20[2-9][0-9]|[2-9][0-9])\b"
+    r"\b([01]?[0-9])/([0-3]?[0-9])/((?:19|20)[0-9][0-9]|[2-9][0-9])\b"
 )
 
 # Long-format date: July 31, 2026 or Jul 31 2026
@@ -2691,7 +2691,7 @@ _LONG_DATE_REGEX = re.compile(
     r"\b(January|February|March|April|May|June|July|August|September|"
     r"October|November|December|"
     r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
-    r"\s+([0-3]?[0-9])(?:st|nd|rd|th)?[,]?\s+(20[2-9][0-9])\b"
+    r"\s+([0-3]?[0-9])(?:st|nd|rd|th)?[,]?\s+((?:19|20)[0-9][0-9])\b"
 )
 
 # Day-Month-Year: 15-Jun-2026 / 5-Jul-26 / 15 Jun 2026
@@ -2700,20 +2700,20 @@ _DMY_DATE_REGEX = re.compile(
     r"(January|February|March|April|May|June|July|August|September|"
     r"October|November|December|"
     r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
-    r"[\s\-/](20[2-9][0-9]|[2-9][0-9])\b",
+    r"[\s\-/]((?:19|20)[0-9][0-9]|[2-9][0-9])\b",
     re.IGNORECASE,
 )
 
 # Quarter notation: Q3 2026 / Q3-2026 / Q3 FY26 / 3Q26
 _QUARTER_REGEX = re.compile(
-    r"\b(?:Q([1-4])[\s\-/]?(?:FY)?\s*(20[2-9][0-9]|[2-9][0-9])"
-    r"|([1-4])Q[\s\-/]?(20[2-9][0-9]|[2-9][0-9]))\b"
+    r"\b(?:Q([1-4])[\s\-/]?(?:FY)?\s*((?:19|20)[0-9][0-9]|[2-9][0-9])"
+    r"|([1-4])Q[\s\-/]?((?:19|20)[0-9][0-9]|[2-9][0-9]))\b"
 )
 
 # Fiscal year notation: FY26 / FY2026 / FY-26 / Fiscal Year 2026
 _FY_REGEX = re.compile(
-    r"\b(?:FY[\s\-]?(20[2-9][0-9]|[2-9][0-9])"
-    r"|fiscal\s+year\s+(20[2-9][0-9]))\b",
+    r"\b(?:FY[\s\-]?((?:19|20)[0-9][0-9]|[2-9][0-9])"
+    r"|fiscal\s+year\s+((?:19|20)[0-9][0-9]))\b",
     re.IGNORECASE,
 )
 

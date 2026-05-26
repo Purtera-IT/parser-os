@@ -769,6 +769,78 @@ def find_visual_pages_from_atoms(atoms: list[Any]) -> list[tuple[str, int]]:
     return pages
 
 
+def find_table_pages_via_pymupdf(
+    pdf_paths: list[str],
+    *,
+    max_pages_per_pdf: int = 40,
+) -> list[tuple[str, int]]:
+    """v45.1 — find pages with detected TABLES via pymupdf's
+    find_tables() API. Catches pages with table structure that the
+    parser didn't flag as 'visual evidence missing' because they
+    have SOME extracted text — but the table structure itself is
+    lost in flat-text extraction.
+
+    Use this in addition to find_visual_pages_from_atoms — combined
+    coverage finds every table page in the doc.
+
+    Returns list of (pdf_path, page_num) 0-indexed.
+    """
+    try:
+        import fitz
+    except ImportError:
+        return []
+    out: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for pdf_path in pdf_paths:
+        try:
+            doc = fitz.open(pdf_path)
+            for i in range(min(len(doc), max_pages_per_pdf)):
+                page = doc.load_page(i)
+                try:
+                    tabs = page.find_tables()
+                    n_tables = len(tabs.tables) if tabs else 0
+                except Exception:
+                    n_tables = 0
+                if n_tables > 0:
+                    key = (pdf_path, i)
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(key)
+            doc.close()
+        except Exception as e:
+            logger.warning("find_table_pages failed for %s: %s", pdf_path, e)
+    return out
+
+
+def find_all_pages_needing_vision(atoms: list[Any]) -> list[tuple[str, int]]:
+    """v45.1 — union of (parser-flagged visual pages) +
+    (pymupdf-detected table pages). Ensures vision-LLM fires on
+    EVERY page with structured visual content, not just pages the
+    text parser couldn't read.
+    """
+    parser_flagged = find_visual_pages_from_atoms(atoms)
+    # Collect all unique PDF paths from atoms
+    pdf_paths: set[str] = set()
+    for atom in atoms:
+        try:
+            refs = getattr(atom, "source_refs", None) or []
+            for ref in refs:
+                fname = getattr(ref, "filename", None) or ""
+                if fname and fname.lower().endswith(".pdf"):
+                    pdf_paths.add(fname)
+        except Exception:
+            continue
+    table_pages = find_table_pages_via_pymupdf(list(pdf_paths))
+    # Union
+    seen: set[tuple[str, int]] = set()
+    out: list[tuple[str, int]] = []
+    for p in parser_flagged + table_pages:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
 # ────────────────────────────────────────────────────────────────────
 # v44 — OCR pre-pass for scanned-only PDF pages
 # ────────────────────────────────────────────────────────────────────

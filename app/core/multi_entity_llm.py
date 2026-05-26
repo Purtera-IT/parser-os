@@ -526,12 +526,16 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     if not os.environ.get("SOWSMITH_VISION_DISABLE"):
         try:
             from app.core.vision_extraction import (
-                find_visual_pages_from_atoms,
+                find_all_pages_needing_vision,
                 extract_visual_pages,
                 vision_endpoint_reachable,
             )
             if vision_endpoint_reachable():
-                visual_pages = find_visual_pages_from_atoms(atoms)
+                # v45.1: union of parser-flagged visual pages +
+                # pymupdf-detected table pages. Ensures vision-LLM
+                # fires on EVERY page with structured visual content,
+                # not just pages the text parser couldn't read.
+                visual_pages = find_all_pages_needing_vision(atoms)
                 if visual_pages:
                     import logging
                     logging.getLogger(__name__).info(
