@@ -47,7 +47,29 @@ _SITE_NEGATIVE_RE = re.compile(
     # etc. from being miscategorized as physical sites.
     r"security center|command center|operations center|"
     r"synergis|streamvault|omnicast|palo alto networks|"
-    r"axis communications|cisco systems"
+    r"axis communications|cisco systems|"
+    # Standards bodies + industry associations. These appear in spec
+    # references ("per ANSI/TIA-568") and section-bibliography lists
+    # ("Aluminum Association | American Concrete Institute | …") and
+    # would otherwise emit a "site:american_concrete_institute" key
+    # for every standards reference in a BMS/cabling spec sheet.
+    r"institute|association|society|standards|specification|"
+    r"council|federation|consortium|alliance|organization|"
+    r"ansi|ashrae|asme|astm|ieee|iec|iso|tia|eia|cisa|"
+    r"underwriters laboratories|\bul\b|fcc|osha|epa|"
+    # Equipment nomenclature commonly written with leading caps in
+    # control / BMS / mechanical spec sheets. These are CMMS equipment
+    # tags or system-component names, not buildings.
+    r"\bahu[-_ ]?\d*|air handling unit|air handling units|"
+    r"\bvav[-_ ]?\d*|variable air volume|fan coil unit|"
+    r"chilled water plant|hot water plant|chilled water system|"
+    r"chiller|boiler plant|cooling tower|condensing unit|"
+    r"\brtu[-_ ]?\d*|rooftop unit|heat pump|"
+    r"\bvfd[-_ ]?\d*|variable frequency drive|"
+    r"bacnet|modbus|lonworks|interoperability building blocks|"
+    # Section / bid-mechanical headings that surface as proper nouns
+    r"agreement the district|bid the district|bidder d bids|"
+    r"section \d|division \d|appendix [a-z]\b|exhibit [a-z]\b"
     r")\b",
     re.I,
 )

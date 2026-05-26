@@ -1088,8 +1088,40 @@ _UNIVERSAL_DEVICE_BASELINE: dict[str, tuple[str, ...]] = {
     "videoconferencing_codec": ("codec", "vc codec", "room kit", "video bar"),
     "ups": ("ups", "battery backup", "rack ups"),
     "rack": ("rack", "racks", "cabinet", "server rack"),
-    "workstation": ("workstation", "workstations", "pc", "desktop", "laptop"),
+    "workstation": (
+        "workstation", "workstations", "pc", "pcs", "desktop", "desktops",
+        "laptop", "laptops", "computer", "computers", "chromebook", "chromebooks",
+        "notebook", "notebooks", "thin client", "thin clients",
+        "all-in-one", "all in one", "aio",
+        # Common consumer / enterprise model series referenced in
+        # ITAD bid sheets ("Dell Latitude 3120 2 in 1", "Dell 3120
+        # computers", "HP EliteBook 840", "Lenovo ThinkPad T14").
+        # These act as device markers so a row that lists 245 units
+        # of a specific model still emits ``device:workstation``.
+        "dell latitude", "dell optiplex", "dell precision",
+        "hp elitebook", "hp probook", "hp envy", "hp pavilion",
+        "lenovo thinkpad", "lenovo thinkcentre", "lenovo ideapad",
+        "macbook", "macbook pro", "macbook air", "imac",
+        "microsoft surface", "surface pro", "surface laptop",
+    ),
     "server": ("server", "servers", "rack server", "blade server"),
+    "tablet": (
+        "tablet", "tablets", "ipad", "ipads",
+        "android tablet", "windows tablet", "2 in 1", "2-in-1",
+    ),
+    "monitor": (
+        "monitor", "monitors", "lcd monitor", "led monitor",
+        "computer monitor", "desktop monitor",
+    ),
+    "storage": (
+        "ssd", "ssds", "hard drive", "hard drives", "hdd", "hdds",
+        "nvme", "external drive", "external hard drive",
+        "usb drive", "thumb drive", "flash drive",
+    ),
+    "printer": (
+        "printer", "printers", "mfp", "multifunction printer",
+        "laser printer", "inkjet printer", "label printer",
+    ),
 }
 
 
@@ -3314,12 +3346,43 @@ _AUGMENT_ALWAYS_PREFIXES: tuple[str, ...] = (
 )
 
 
+def _section_path_context(atom: Any) -> str:
+    """Return the atom's section-path text appended for entity scanning.
+
+    A PDF parser often slices an institutional-name heading
+    ("Geary County Schools USD 475") into a structured-doc subsection
+    rather than a body paragraph. The atoms under that section then
+    have rich body text but no site mention. Scanning section_path
+    alongside the body text lets the universal extractor pick up the
+    site / customer / institution name and tag every child atom with
+    it — exactly what an LLM consumer would expect.
+    """
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        if not refs:
+            return ""
+        locator = getattr(refs[0], "locator", None) or {}
+        if not isinstance(locator, dict):
+            return ""
+        section_path = locator.get("section_path")
+        if isinstance(section_path, list) and section_path:
+            return " ".join(str(x) for x in section_path if x)
+        # Title / heading fallback
+        for k in ("section", "heading", "title", "subsection"):
+            v = locator.get(k)
+            if isinstance(v, str) and v:
+                return v
+    except Exception:
+        return ""
+    return ""
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     """Mutate ``atoms`` in place: populate ``entity_keys``.
 
     Two passes per atom:
       1. If the atom has no entity_keys, run ``extract_keys`` on its
-         raw_text and value.
+         raw_text + section_path context + value.
       2. If the atom already has entity_keys (parser-supplied), STILL
          run ``extract_keys`` to add textual-pattern keys (``site:``,
          ``date:``, ``money:``, ``stakeholder:``, …) the parser
@@ -3334,9 +3397,14 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
         value = getattr(atom, "value", None)
+        # Concatenate section-path context so institutional names that
+        # live in headings (not body) still emit ``site:`` / ``customer:``
+        # keys onto child atoms.
+        section_ctx = _section_path_context(atom)
+        scan_text = f"{text} {section_ctx}".strip() if section_ctx else text
 
         if not existing:
-            new_keys = extract_keys(text, pack=pack, value=value)
+            new_keys = extract_keys(scan_text, pack=pack, value=value)
             if new_keys:
                 new_keys = filter_entity_keys_for_atom(atom, new_keys)
                 if new_keys:
@@ -3349,7 +3417,7 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         cleaned = filter_entity_keys_for_atom(atom, existing)
         # Augment with textual-pattern keys the parser doesn't emit
         # per-row (sites, dates, money, stakeholders).
-        textual_keys = extract_keys(text, pack=pack, value=value)
+        textual_keys = extract_keys(scan_text, pack=pack, value=value)
         existing_prefixes = {
             k.split(":", 1)[0] + ":" if ":" in k else k
             for k in cleaned
