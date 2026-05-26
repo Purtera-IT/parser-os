@@ -3470,6 +3470,21 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     from app.core.site_detection import find_authoritative_site_phrases
     atom_list = list(atoms)
     authoritative_sites = find_authoritative_site_phrases(atom_list)
+
+    # When the catalog contains LLM-discovered sites that NO atom's
+    # raw_text would naturally emit (e.g. "Geary County Schools USD
+    # 475" lives in a PDF cover-page heading, not in any body block),
+    # we explicitly inject ``site:<slug>`` keys onto atoms that
+    # mention the site in their body OR section_path. Without this
+    # step the LLM's discoveries never reach atom.entity_keys and
+    # downstream EntityRecord fusion has nothing to fuse.
+    def _slug_for_site(phrase: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", phrase.lower()).strip("_")
+
+    _SITE_INJECTION_KEYS: dict[str, str] = {
+        _slug_for_site(p): p for p in authoritative_sites
+    }
+
     for atom in atom_list:
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
@@ -3527,6 +3542,55 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 total_keys_added += len(augment)
         elif cleaned != list(getattr(atom, "entity_keys", [])):
             atom.entity_keys = cleaned
+
+    # ─── LLM-DISCOVERED SITE INJECTION ───
+    # For each site in the authoritative catalog that no atom's
+    # entity_keys currently carries, walk atoms looking for atoms
+    # whose text mentions the site, and inject a ``site:<slug>``
+    # key. This propagates LLM-found sites (especially those in
+    # PDF cover-page headings) onto the atoms that reference them
+    # so EntityRecord fusion has something to bind to.
+    if _SITE_INJECTION_KEYS:
+        already_emitted_site_slugs: set[str] = set()
+        for atom in atom_list:
+            for k in atom.entity_keys or []:
+                if k.startswith("site:"):
+                    already_emitted_site_slugs.add(k[len("site:"):])
+        missing_sites = {
+            slug: phrase
+            for slug, phrase in _SITE_INJECTION_KEYS.items()
+            if slug and slug not in already_emitted_site_slugs
+        }
+        if missing_sites:
+            for atom in atom_list:
+                text = getattr(atom, "raw_text", "") or ""
+                section_ctx = _section_path_context(atom)
+                full = f"{text} {section_ctx}".lower()
+                if not full.strip():
+                    continue
+                to_add: list[str] = []
+                for slug, phrase in missing_sites.items():
+                    # Match the phrase loosely (word boundary on
+                    # first word + at least one shared meaningful
+                    # token). Avoid over-injecting by requiring the
+                    # phrase's longest word to be present.
+                    words = [w for w in phrase.split() if len(w) >= 4]
+                    if not words:
+                        continue
+                    # Trigger if the longest word + at least one
+                    # other meaningful word from the phrase are
+                    # both present in the atom text+headings.
+                    longest = max(words, key=len)
+                    if longest in full:
+                        hits = sum(1 for w in words if w in full)
+                        if hits >= min(2, len(words)):
+                            to_add.append(f"site:{slug}")
+                if to_add:
+                    merged_keys = sorted(set(atom.entity_keys or []) | set(to_add))
+                    atom.entity_keys = merged_keys
+                    atoms_enriched += 1
+                    total_keys_added += len(to_add)
+
     return atoms_enriched, total_keys_added
 
 

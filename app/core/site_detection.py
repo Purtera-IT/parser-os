@@ -548,23 +548,75 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             catalog.add(phrase)
         # else: drop (single mention, only Tier 3 — the weak case)
 
-    # ─────────── LLM VERIFICATION (Phase B — opt-in) ───────────
-    # When OLLAMA_HOST + OLLAMA_MODEL env vars are set, send the
-    # catalog through a small LLM to clean residual false positives
-    # that survived cross-doc (e.g. "Chrysler Building" mentioned
-    # in 2 docs as boilerplate spec example, still NOT a project
-    # site). The verifier is a separate module so it can be
-    # disabled by default — substrate consumers don't need a model
-    # running to use parser-os.
+    # ─────────── LLM EXTRACTION (Phase B — default-on) ───────────
+    # The LLM reads the actual doc content (including section_path
+    # HEADINGS so cover-page institutional names like "Geary County
+    # Schools USD 475" reach the model) and produces the canonical
+    # site list.
+    #
+    # The LLM-extracted set is the SOURCE OF TRUTH when available —
+    # we do NOT merge with the regex catalog, because that introduces
+    # false positives (table fragments, vendor names, etc.) that
+    # the verify pass doesn't always catch.
+    #
+    # Behavior:
+    #   default — try LLM (Ollama on tailnet), fall back to regex
+    #             catalog if not reachable
+    #   SOWSMITH_SITE_LLM_DISABLE=1 — force regex-only (air-gapped /
+    #                                  test environments)
+    #   SOWSMITH_SITE_LLM_VERIFY=1 — legacy alias that still enables
+    #                                  the LLM path; kept for back-compat
+    #
+    # The structural 6-tier regex catalog is the deterministic
+    # fallback for when the LLM is unreachable or returns nothing.
     import os
-    if os.environ.get("SOWSMITH_SITE_LLM_VERIFY"):
+    llm_disabled = bool(os.environ.get("SOWSMITH_SITE_LLM_DISABLE"))
+    hygiene_fn = None
+    if not llm_disabled:
         try:
-            from app.core.site_llm_verify import verify_sites_with_llm
-            catalog = verify_sites_with_llm(catalog, atom_list)
+            from app.core.site_llm_verify import (
+                extract_sites_with_llm,
+                verify_sites_with_llm,
+                ollama_reachable,
+                apply_site_hygiene,
+            )
+            hygiene_fn = apply_site_hygiene
+            # Quick reachability probe so offline environments don't
+            # burn a 180-second request timeout per compile.
+            if ollama_reachable():
+                # Primary path: LLM reads the docs and tells us the
+                # sites directly. No regex involvement.
+                llm_extracted = extract_sites_with_llm(atom_list)
+                if llm_extracted:
+                    # LLM extract is the source of truth. No merge with
+                    # the regex catalog — merging contaminates the result
+                    # with false positives the verify pass doesn't always
+                    # catch (SaaS vendor names misread as buildings,
+                    # table-header fragments, etc.). The LLM read the
+                    # actual doc content; trust its answer.
+                    catalog = llm_extracted
+                elif catalog:
+                    # Extract returned nothing — try verify on the
+                    # structural regex catalog as a fallback polish.
+                    verified = verify_sites_with_llm(catalog, atom_list)
+                    if verified:
+                        catalog = verified
         except Exception:
-            # LLM verifier is best-effort; if it crashes or times
-            # out, fall back to the deterministic catalog.
+            # Any LLM failure: keep the deterministic catalog.
             pass
+
+    # Always apply hygiene to the final catalog. Even when LLM is
+    # disabled / unreachable, this drops obvious form-field words,
+    # generic nouns, and vendor brand names from the regex catalog
+    # before returning.
+    if hygiene_fn is None:
+        try:
+            from app.core.site_llm_verify import apply_site_hygiene as _hyg
+            catalog = _hyg(catalog)
+        except Exception:
+            pass
+    else:
+        catalog = hygiene_fn(catalog)
 
     return catalog
 
