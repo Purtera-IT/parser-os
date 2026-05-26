@@ -1,5 +1,14 @@
 """OrbitBrief-Core: deterministic PM-ready aggregations over the envelope.
 
+DEPRECATED LOCATION — this module has moved to Orbitbrief-Core at
+``orbitbrief_core.envelope_builders``. The copy in parser-os remains
+for back-compat with the parser-os shim envelope and direct callers.
+New code should import from ``orbitbrief_core.envelope_builders``
+directly.
+
+See: https://github.com/Purtera-IT/Orbitbrief-Core
+PR:  feat/envelope-migration-from-parser-os
+
 The envelope (orbitbrief.input.v2) carries atoms, edges, packets, and
 indexes — everything an LLM needs to reason about the project, but
 nothing pre-aggregated for the operator running the show.

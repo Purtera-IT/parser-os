@@ -1,5 +1,20 @@
 """OrbitBrief project envelope — the "perfect compressible" LLM input.
 
+DEPRECATED LOCATION — this module has moved to Orbitbrief-Core at
+``orbitbrief_core.envelope``. The copy in parser-os remains for
+back-compat with existing callers (app/cli.py, app/core/production_report.py,
+several scripts, several tests) and stays functionally identical.
+
+The brief-layer surfaces (pm_dashboard, scope_truth, project_vitals,
+etc.) have always been Orbitbrief concerns; parser-os will keep this
+shim during a deprecation window, then drop it. New code should
+import from ``orbitbrief_core.envelope`` directly.
+
+See: https://github.com/Purtera-IT/Orbitbrief-Core
+PR:  feat/envelope-migration-from-parser-os
+
+
+
 A single ``orbitbrief.input.v1`` envelope packages every artifact in a
 project into one self-contained payload an open-source LLM (Llama-3.1
 70B, Qwen-2.5 72B, Mistral-Large, etc.) can consume in a single prompt.
