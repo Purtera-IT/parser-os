@@ -325,8 +325,37 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
         (?:are|include|covered|listed))?\\s*[:—-]?`` — the next
         paragraph / list is the site list.
     """
-    catalog: set[str] = set()
+    # Track which artifact(s) and which tier(s) discovered each phrase.
+    # ``evidence[phrase] = {"artifacts": {a1, a2}, "tiers": {1, 4, 5}, "mentions": int}``
+    # Final filter (cross-doc validation): keep a phrase iff
+    # (a) any structural tier {1, 4, 5, 6} fired for it, OR
+    # (b) it was mentioned in ≥2 distinct artifacts, OR
+    # (c) it was mentioned ≥3 times even in a single artifact.
+    # This kills the long tail of "Chrysler Building" / "Yeon Building"
+    # type singletons that pass the regex tiers but are spec
+    # references rather than real project sites.
+    evidence: dict[str, dict[str, Any]] = {}
+
+    def _record(phrase: str, atom: Any, tier: int) -> None:
+        if not _looks_like_site_phrase(phrase):
+            return
+        norm = _normalize(phrase)
+        if not norm:
+            return
+        e = evidence.setdefault(norm, {"artifacts": set(), "tiers": set(), "mentions": 0})
+        e["mentions"] += 1
+        e["tiers"].add(tier)
+        aid = getattr(atom, "artifact_id", None) if atom is not None else None
+        if aid:
+            e["artifacts"].add(aid)
+
     atom_list = list(atoms) if not isinstance(atoms, list) else atoms
+
+    # Track corpus-wide artifact count so we can tune the cross-doc
+    # threshold (a single-doc pack can't require 2-artifact evidence).
+    artifact_ids = {getattr(a, "artifact_id", None) for a in atom_list}
+    artifact_ids.discard(None)
+    artifact_count = len(artifact_ids)
 
     # Tier 1: every atom in a Locations section contributes its
     # raw_text as a candidate site list. We split on commas / newlines
@@ -347,8 +376,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
         for piece in re.split(r"[,;\n\r]+|\s{3,}", raw):
             piece = piece.strip(" .-•*\t")
             if 4 <= len(piece) <= 120 and any(c.isupper() for c in piece):
-                if _looks_like_site_phrase(piece):
-                    catalog.add(_normalize(piece))
+                _record(piece, atom, 1)
 
     # Tier 2: address-anchored phrases. For every atom containing a
     # US street address, capture proper-noun phrases within 120 chars
@@ -368,8 +396,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             for window in (pre_window, post_window):
                 for m in proper_run.finditer(window):
                     phrase = m.group(1)
-                    if _looks_like_site_phrase(phrase):
-                        catalog.add(_normalize(phrase))
+                    _record(phrase, atom, 2)
 
     # Tier 3: phrases ending with strong facility tails — high
     # precision even without structural anchor. We require the
@@ -394,8 +421,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
         for regex in (strong_tail_re, medical_re, station_re):
             for m in regex.finditer(raw):
                 phrase = m.group(1)
-                if _looks_like_site_phrase(phrase):
-                    catalog.add(_normalize(phrase))
+                _record(phrase, atom, 3)
 
     # Tier 4: SECTION HEADING IS THE SITE NAME
     # Real spec docs are often organized one-section-per-site, with
@@ -435,8 +461,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
                     continue
                 last = heading.split()[-1].lower().rstrip(":,.")
                 if last in _STRONG_HEADING_TAILS:
-                    if _looks_like_site_phrase(heading):
-                        catalog.add(_normalize(heading))
+                    _record(heading, atom, 4)
         except Exception:
             continue
 
@@ -463,8 +488,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             for piece in re.split(r"[,;\n\r]+|\s{3,}|\bAND\b|\band\b", list_text):
                 piece = piece.strip(" .-•*\t()[]")
                 if 4 <= len(piece) <= 120 and any(c.isupper() for c in piece):
-                    if _looks_like_site_phrase(piece):
-                        catalog.add(_normalize(piece))
+                    _record(piece, atom, 5)
 
     # Tier 6: "THE FOLLOWING X" SEMANTIC PATTERN
     # Body text like "the following sites are included: ...",
@@ -489,16 +513,58 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             for piece in re.split(r"[,;\n\r]+|\s{3,}|\bAND\b|\band\b", list_text):
                 piece = piece.strip(" .-•*\t()[]")
                 if 4 <= len(piece) <= 120 and any(c.isupper() for c in piece):
-                    if _looks_like_site_phrase(piece):
-                        catalog.add(_normalize(piece))
+                    _record(piece, atom, 6)
 
-    # Cross-doc validation: when the corpus has 2+ atoms (i.e. a
-    # real project), require a candidate site to appear with strong
-    # signal in at least one tier. Singleton mentions from spec
-    # references / boilerplate get filtered. (This is already
-    # implicit — Tiers 1-6 all require some structural anchor —
-    # but we keep the catalog as-is; downstream filters handle the
-    # rest.)
+    # ─────────── CROSS-DOC VALIDATION (Phase A) ───────────
+    # A candidate site survives iff ANY of:
+    #   (a) it was discovered via a HIGH-PRECISION tier:
+    #         Tier 1 — Locations-section atom
+    #         Tier 2 — Address-anchored (has a real address ±120 chars)
+    #         Tier 4 — Section heading IS the site name
+    #         Tier 5 — Explicit "Sites:" / "Locations:" label list
+    #         Tier 6 — "The following sites are…" semantic pattern
+    #   (b) it was mentioned in ≥2 distinct artifacts — real
+    #       project sites appear in multiple docs (SOW + BOM +
+    #       schedule, etc.) whereas spec references / random
+    #       landmarks appear in only one
+    #   (c) it was mentioned ≥2 times even in a single artifact
+    #       (so a doc that lists the site once in body + once in a
+    #       table footer still survives)
+    # Drop iff ONLY discovered via Tier 3 (strong facility tail)
+    # AND seen exactly once. Tier 3 alone is the weakest signal
+    # because a phrase like "Chrysler Building" matches the tail
+    # regex but isn't anchored to anything project-specific.
+    _HIGH_PRECISION_TIERS: set[int] = {1, 2, 4, 5, 6}
+    catalog: set[str] = set()
+    for phrase, ev in evidence.items():
+        tiers = ev["tiers"]
+        n_arts = len(ev["artifacts"])
+        n_mentions = ev["mentions"]
+        if tiers & _HIGH_PRECISION_TIERS:
+            catalog.add(phrase)
+        elif n_arts >= 2:
+            catalog.add(phrase)
+        elif n_mentions >= 2:
+            catalog.add(phrase)
+        # else: drop (single mention, only Tier 3 — the weak case)
+
+    # ─────────── LLM VERIFICATION (Phase B — opt-in) ───────────
+    # When OLLAMA_HOST + OLLAMA_MODEL env vars are set, send the
+    # catalog through a small LLM to clean residual false positives
+    # that survived cross-doc (e.g. "Chrysler Building" mentioned
+    # in 2 docs as boilerplate spec example, still NOT a project
+    # site). The verifier is a separate module so it can be
+    # disabled by default — substrate consumers don't need a model
+    # running to use parser-os.
+    import os
+    if os.environ.get("SOWSMITH_SITE_LLM_VERIFY"):
+        try:
+            from app.core.site_llm_verify import verify_sites_with_llm
+            catalog = verify_sites_with_llm(catalog, atom_list)
+        except Exception:
+            # LLM verifier is best-effort; if it crashes or times
+            # out, fall back to the deterministic catalog.
+            pass
 
     return catalog
 
