@@ -1482,20 +1482,36 @@ def _looks_like_form_field(text: str) -> bool:
     return False
 
 
-def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
+def _emit_proper_nouns(
+    text: str,
+    vendor_keys: set[str],
+    *,
+    authoritative_sites: set[str] | None = None,
+) -> set[str]:
     """Capture multi-word proper-noun runs as candidate sites/customers.
 
-    Conservative: only emits when the run is ≥3 words, its lowercased
-    form isn't in the stoplist, doesn't overlap a vendor we already
-    detected, and doesn't end on a known field label.  Tagged
-    ``site:`` so the domain pack's alias resolver can promote it
-    to its canonical type later.
+    When ``authoritative_sites`` is provided AND non-empty, this
+    function is GATED: a phrase is emitted as ``site:*`` only if its
+    normalized form matches the catalog (Option D — document-structure
+    aware site detection). Phrases outside the catalog are dropped,
+    which kills the long tail of false-positive sites (standards
+    bodies, random landmarks, header fragments, sentence pieces)
+    that the regex was previously emitting.
+
+    When the catalog is None (no catalog built yet) OR empty (the
+    artifact has no Locations section and no address signals), the
+    function falls back to its prior conservative regex behavior:
+    ≥3-word run, stoplist + blocklist filters, sentence-window
+    corroboration, etc.
 
     If the surrounding text looks like a form-field template
     (``FULL LEGAL NAME (PRINT)``, ``id#``, ``col_N:``), we skip
     proper-noun extraction entirely to avoid emitting form labels
     as fake sites.
     """
+    # Lazy import to avoid circular dependency at module load time
+    from app.core.site_detection import phrase_is_in_catalog
+    catalog_active = bool(authoritative_sites)
     if _looks_like_form_field(text):
         return set()
 
@@ -1648,6 +1664,14 @@ def _emit_proper_nouns(text: str, vendor_keys: set[str]) -> set[str]:
                 continue
             slug = _slugify(phrase)
             if slug and len(slug) >= 6:
+                # Option D gate: when an authoritative-site catalog
+                # exists for this project, the phrase MUST match the
+                # catalog before we emit a site:* key. Phrases outside
+                # the catalog are dropped — they're standards bodies,
+                # random landmarks, or header fragments that look
+                # site-shaped but aren't real project sites.
+                if catalog_active and not phrase_is_in_catalog(phrase, authoritative_sites):
+                    continue
                 keys.add(f"site:{slug}")
     return keys
 
@@ -3270,11 +3294,18 @@ def extract_keys(
     *,
     pack: DomainPack,
     value: Any | None = None,
+    authoritative_sites: set[str] | None = None,
 ) -> list[str]:
     """Return entity_keys for ``text`` using ``pack``'s vocabulary.
 
     Pure function — no I/O, no global state.  ``value`` is the atom's
     structured ``value`` payload if any (e.g. xlsx table_row).
+
+    ``authoritative_sites`` is the project-wide site catalog built by
+    ``app.core.site_detection.find_authoritative_site_phrases``. When
+    non-empty, the proper-noun emitter ONLY emits ``site:`` keys whose
+    normalized form is in the catalog. When None or empty, the
+    emitter falls back to its strict regex behavior.
     """
     if not text:
         return []
@@ -3291,8 +3322,45 @@ def extract_keys(
     # Proper-noun fallback runs LAST so it can deduplicate against
     # vendor matches (avoids "site:genetec_security_center" when we
     # already have "vendor:genetec").
-    proper_noun_keys = _emit_proper_nouns(text, vendor_keys)
+    proper_noun_keys = _emit_proper_nouns(
+        text, vendor_keys, authoritative_sites=authoritative_sites,
+    )
     keys |= proper_noun_keys
+    # Option D — final centralized site catalog gate. When the
+    # project has an authoritative site catalog (built from
+    # Locations sections + address-anchored phrases + strong
+    # facility-tail patterns), ALL site:* candidates from EVERY
+    # emitter must clear it. This catches false positives that
+    # slipped through individual emitters — e.g. ``ahu_7`` from
+    # ``_emit_sites`` (a BMS pack's site_alias_pattern that
+    # actually matches mechanical equipment), ``block_909`` from
+    # the numbered-site regex (parcel numbers), or generic
+    # ``elementary_school`` from the proper-noun runner.
+    if authoritative_sites:
+        from app.core.site_detection import phrase_is_in_catalog, _looks_like_site_phrase
+        site_keys_kept: set[str] = set()
+        for k in list(keys):
+            if not k.startswith("site:"):
+                continue
+            slug = k[len("site:"):]
+            # Convert slug back to space-separated for catalog
+            # matching (catalog stores normalized space-separated
+            # phrases). Underscores become spaces.
+            phrase = slug.replace("_", " ")
+            # Drop sentence-fragment site keys whose phrase shape
+            # has header-glue / non-site tail words / spec-sheet
+            # tokens — even if the phrase HAPPENS to share a
+            # suffix with a legitimate catalog entry. This kills
+            # ``consumption_annual_energy_costs_neptune_municipal
+            # _building`` (suffix-matches "neptune municipal
+            # building" but the leading "consumption" tokens make
+            # it a sentence fragment, not a name).
+            if not _looks_like_site_phrase(phrase):
+                continue
+            if phrase_is_in_catalog(phrase, authoritative_sites):
+                site_keys_kept.add(k)
+        # Drop site keys that didn't pass the gate
+        keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
     keys |= _emit_part_numbers(text)
     keys |= _emit_quantity_keys(value or {}, text)
     keys |= _emit_qa_markers(text)
@@ -3393,7 +3461,16 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     """
     atoms_enriched = 0
     total_keys_added = 0
-    for atom in atoms:
+    # Build the project-wide authoritative-site catalog ONCE per
+    # enrichment pass. Option D — document-structure aware site
+    # detection: only phrases that appear in a Locations section,
+    # near a US address, or match a strong-facility-tail pattern
+    # become valid site:* candidates. Everything else (random
+    # landmarks, standards bodies, header fragments) gets dropped.
+    from app.core.site_detection import find_authoritative_site_phrases
+    atom_list = list(atoms)
+    authoritative_sites = find_authoritative_site_phrases(atom_list)
+    for atom in atom_list:
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
         value = getattr(atom, "value", None)
@@ -3404,7 +3481,10 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         scan_text = f"{text} {section_ctx}".strip() if section_ctx else text
 
         if not existing:
-            new_keys = extract_keys(scan_text, pack=pack, value=value)
+            new_keys = extract_keys(
+                scan_text, pack=pack, value=value,
+                authoritative_sites=authoritative_sites,
+            )
             if new_keys:
                 new_keys = filter_entity_keys_for_atom(atom, new_keys)
                 if new_keys:
@@ -3417,7 +3497,10 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         cleaned = filter_entity_keys_for_atom(atom, existing)
         # Augment with textual-pattern keys the parser doesn't emit
         # per-row (sites, dates, money, stakeholders).
-        textual_keys = extract_keys(scan_text, pack=pack, value=value)
+        textual_keys = extract_keys(
+            scan_text, pack=pack, value=value,
+            authoritative_sites=authoritative_sites,
+        )
         existing_prefixes = {
             k.split(":", 1)[0] + ":" if ":" in k else k
             for k in cleaned
