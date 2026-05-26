@@ -295,31 +295,44 @@ def _looks_like_site_phrase(phrase: str) -> bool:
 def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     """Build the project-wide authoritative-site catalog.
 
-    Returns a set of normalized phrases. The proper-noun emitter
-    consults this set: a capitalized phrase becomes a ``site:*`` key
-    only if its normalized form is IN this set.
+    Six independent structural signals contribute. Each is a high-
+    precision pattern real bid docs use to declare sites. A phrase
+    in ANY tier joins the catalog.
 
-    Three signals contribute to inclusion:
-
-      Tier 1 — atom is in a section whose path contains a Locations
-               heading (most authoritative)
-      Tier 2 — atom's raw_text has a US street address; capitalized
-               phrases within 120 chars of the address are sites
-      Tier 3 — phrase ends with a strong facility-tail noun
-               (Wesley Elementary School, Memorial Hospital, Fire
-               Station 4); high-precision pattern that matches
-               named institutions
-
-    All three tiers contribute to the same catalog. An atom can be
-    in multiple tiers.
+      Tier 1 — LOCATIONS SECTION HEADING IN PATH
+        atom.section_path contains a Locations / Site List /
+        Facility Schedule / Exhibit B — Locations heading; atom
+        text is parsed as site declarations
+      Tier 2 — ADDRESS-ANCHORED PROPER NOUN
+        atom has a US street address; capitalized phrases within
+        120 chars are sites
+      Tier 3 — STRONG FACILITY-TAIL PATTERN
+        "X Elementary/Middle/High School", "X Medical Center / Hospital",
+        "Fire Station N", "X Library"
+      Tier 4 — SECTION HEADING IS THE SITE NAME (NEW)
+        Section headings in ALL CAPS that contain a strong facility
+        tail ("WESLEY SCHOOL", "CRAIG CAMPUS", "MEMORIAL HOSPITAL"
+        as standalone headings) are themselves site declarations.
+        Real spec docs structure with one section per site.
+      Tier 5 — EXPLICIT LABEL "SITES: A, B, C" (NEW)
+        Body text matching ``(?:Sites?|Locations?|Buildings?|
+        Facilities|Schools?|Stores?|Branches?|Premises?)\\s*[:—-]\\s*``
+        followed by a comma/semicolon/newline-separated list of
+        proper-noun phrases. Each list item becomes a site.
+      Tier 6 — "THE FOLLOWING X" SEMANTIC PATTERN (NEW)
+        Body text matching ``(?:the following|these|listed)\\s+
+        (?:sites|locations|buildings|facilities|schools)(?:\\s+
+        (?:are|include|covered|listed))?\\s*[:—-]?`` — the next
+        paragraph / list is the site list.
     """
     catalog: set[str] = set()
+    atom_list = list(atoms) if not isinstance(atoms, list) else atoms
 
     # Tier 1: every atom in a Locations section contributes its
     # raw_text as a candidate site list. We split on commas / newlines
     # / semicolons since these sections often list sites comma-
     # separated or one-per-line.
-    for atom in atoms:
+    for atom in atom_list:
         if not _atom_is_in_locations_section(atom):
             continue
         raw = (getattr(atom, "raw_text", None) or "").strip()
@@ -343,7 +356,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     proper_run = re.compile(
         r"\b([A-Z][A-Za-z0-9'.\-]+(?:\s+[A-Z][A-Za-z0-9'.\-]+){0,6})\b"
     )
-    for atom in atoms:
+    for atom in atom_list:
         raw = getattr(atom, "raw_text", None) or ""
         if not raw:
             continue
@@ -374,7 +387,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
         r"\b((?:Fire|Police|Emergency|Power)\s+Station\s*(?:No\.?\s*)?\d{0,3}|"
         r"[A-Z][A-Za-z0-9'.\-]+(?:\s+[A-Z][A-Za-z0-9'.\-]+){0,3}\s+Library)\b"
     )
-    for atom in atoms:
+    for atom in atom_list:
         raw = getattr(atom, "raw_text", None) or ""
         if not raw:
             continue
@@ -383,6 +396,109 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
                 phrase = m.group(1)
                 if _looks_like_site_phrase(phrase):
                     catalog.add(_normalize(phrase))
+
+    # Tier 4: SECTION HEADING IS THE SITE NAME
+    # Real spec docs are often organized one-section-per-site, with
+    # the section heading being the building name in caps (e.g.
+    # "WESLEY SCHOOL", "DISTRICT WIDE CRAIG CAMPUS", "MEMORIAL
+    # HOSPITAL"). Walk every atom's section_path tokens: if any
+    # token ends with a strong facility tail, it's a site declaration.
+    _STRONG_HEADING_TAILS = {
+        "school", "elementary", "middle", "high", "primary", "academy",
+        "campus", "hospital", "clinic", "library", "warehouse",
+        "headquarters", "pavilion", "annex", "complex", "wing",
+        "fieldhouse", "stadium", "auditorium", "gymnasium",
+        "courthouse", "auditorium", "stadium",
+    }
+    for atom in atom_list:
+        try:
+            refs = getattr(atom, "source_refs", None) or []
+            if not refs:
+                continue
+            locator = getattr(refs[0], "locator", None) or {}
+            if not isinstance(locator, dict):
+                continue
+            section_path = locator.get("section_path")
+            if not isinstance(section_path, list):
+                continue
+            for raw_heading in section_path:
+                if not isinstance(raw_heading, str):
+                    continue
+                heading = raw_heading.strip()
+                if not (2 <= len(heading.split()) <= 7):
+                    continue
+                # Skip headings that are mostly punctuation or
+                # section numbers ("1.1 GENERAL", "SECTION 00 11 13")
+                if re.match(r"^[\d.\-\s]+$", heading):
+                    continue
+                if heading.lower().startswith(("section ", "division ", "article ", "part ", "appendix ", "exhibit ", "attachment ", "schedule ", "chapter ")):
+                    continue
+                last = heading.split()[-1].lower().rstrip(":,.")
+                if last in _STRONG_HEADING_TAILS:
+                    if _looks_like_site_phrase(heading):
+                        catalog.add(_normalize(heading))
+        except Exception:
+            continue
+
+    # Tier 5: EXPLICIT "SITES:" / "LOCATIONS:" LABEL
+    # Body text like "Sites: Wesley School, Career Tech Center,
+    # Lakeshore Learning Center" or "Buildings: A, B, C" — parse
+    # the post-colon list as sites.
+    _LABEL_LIST_RE = re.compile(
+        r"\b(?:sites?|locations?|buildings?|facilities|facility list|"
+        r"schools?|premises|properties|stores?|branches?|campuses)\s*"
+        r"[:—\-]\s*(.{4,600})",
+        re.IGNORECASE,
+    )
+    for atom in atom_list:
+        raw = getattr(atom, "raw_text", None) or ""
+        if not raw or len(raw) < 12:
+            continue
+        for m in _LABEL_LIST_RE.finditer(raw):
+            list_text = m.group(1)
+            # Cut off at the next likely paragraph break
+            stop = re.search(r"\n\s*\n|\. [A-Z]|;\s*[A-Z][a-z]+\s", list_text)
+            if stop:
+                list_text = list_text[:stop.start()]
+            for piece in re.split(r"[,;\n\r]+|\s{3,}|\bAND\b|\band\b", list_text):
+                piece = piece.strip(" .-•*\t()[]")
+                if 4 <= len(piece) <= 120 and any(c.isupper() for c in piece):
+                    if _looks_like_site_phrase(piece):
+                        catalog.add(_normalize(piece))
+
+    # Tier 6: "THE FOLLOWING X" SEMANTIC PATTERN
+    # Body text like "the following sites are included: ...",
+    # "covers these locations:", "listed buildings include:".
+    _SEMANTIC_LIST_RE = re.compile(
+        r"\b(?:the following|these|listed|including)\s+"
+        r"(?:sites?|locations?|buildings?|facilities|schools?|stores?|"
+        r"premises|properties|campuses|branches?)"
+        r"(?:\s+(?:are|include|listed|covered|served))?"
+        r"\s*[:—\-]?\s*(.{4,800})",
+        re.IGNORECASE,
+    )
+    for atom in atom_list:
+        raw = getattr(atom, "raw_text", None) or ""
+        if not raw or len(raw) < 20:
+            continue
+        for m in _SEMANTIC_LIST_RE.finditer(raw):
+            list_text = m.group(1)
+            stop = re.search(r"\n\s*\n|\. [A-Z]|;\s*[A-Z][a-z]+\s", list_text)
+            if stop:
+                list_text = list_text[:stop.start()]
+            for piece in re.split(r"[,;\n\r]+|\s{3,}|\bAND\b|\band\b", list_text):
+                piece = piece.strip(" .-•*\t()[]")
+                if 4 <= len(piece) <= 120 and any(c.isupper() for c in piece):
+                    if _looks_like_site_phrase(piece):
+                        catalog.add(_normalize(piece))
+
+    # Cross-doc validation: when the corpus has 2+ atoms (i.e. a
+    # real project), require a candidate site to appear with strong
+    # signal in at least one tier. Singleton mentions from spec
+    # references / boilerplate get filtered. (This is already
+    # implicit — Tiers 1-6 all require some structural anchor —
+    # but we keep the catalog as-is; downstream filters handle the
+    # rest.)
 
     return catalog
 
