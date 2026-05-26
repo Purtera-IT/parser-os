@@ -345,9 +345,13 @@ _OBVIOUS_NON_SITES: frozenset[str] = frozenset({
     "excelsior medical", "excelsior medical corporation",
     "treatment pavilion", "new jersey the neptune high school",
     "potential emergency shelter hours neptune municipal building",
-    # Pleasanton acronym fragments
+    # Pleasanton sub-space fragments (rooms inside a building).
+    # Bare codes "osc pd" / "osc lpfd" / "osc pw" are KEPT now —
+    # they're real Operations Service Center sub-buildings used as
+    # scope anchors. Only the longer "OSC LPFD <room-type>" forms
+    # remain denylisted as sub-spaces.
     "osc lpfd classroom", "osc lpfd training center",
-    "osc pd", "osc lpfd", "osc osc pd", "osc ppd", "osc pw",
+    "osc osc pd", "osc ppd",  # truncations / repeats
     "library one", "the library",  # duplicate forms of "library"
     "library", "training center",  # too generic alone
     # Los Medanos sub-spaces and fragments
@@ -488,10 +492,14 @@ def _has_positive_site_signal(normalized: str) -> bool:
     """Return True iff phrase has at least one signal of being a
     real site.
 
-    Strong anchor (elementary school, hospital, pavilion, …) → KEEP
-    Institutional descriptor (district, county, USD, …)      → KEEP
-    Digit + ≥2 meaningful words (address/site code)          → KEEP
-    Weak anchor + ≥3 distinct meaningful words OR descriptor → KEEP
+    Strong anchor (elementary school, hospital, pavilion, …)  → KEEP
+    Institutional descriptor (district, county, USD, …)       → KEEP
+    Digit + ≥2 meaningful words (address/site code)           → KEEP
+    SITE-CODE SHAPE: 2-3 hyphen-separated short tokens, all in
+       the original form looking like uppercase or digit, no
+       known equipment/standards prefix (TIA-, NFPA-, IEEE-, …)
+       — keeps OSC-LPFD, ATL-HQ-01, STORE-142, MDF-3A.       → KEEP
+    Weak anchor + ≥3 distinct meaningful words OR descriptor  → KEEP
     """
     # STRONG anchor — definitive facility, always keep
     for anchor in _STRONG_FACILITY_ANCHORS:
@@ -507,12 +515,35 @@ def _has_positive_site_signal(normalized: str) -> bool:
     word_tokens = [w for w in re.split(r"[\s\-]+", normalized) if w]
     meaningful_words = [w for w in word_tokens if len(w) >= 3]
     distinct_meaningful = set(meaningful_words)
+    # Code-shape FIRST (before digit rule). If the first hyphen/
+    # space-separated token is a known equipment/standards-body
+    # prefix (TIA, NFPA, IEEE, VAV, AHU, NJ, FNS, …), this phrase
+    # is NOT a site code regardless of digits. Catches TIA-568,
+    # NFPA-72, IEEE-1547, VAV-SOC-1, NJ-33 before they slip past
+    # the digit rule.
+    if word_tokens:
+        first = word_tokens[0].lower()
+        if first in _CODE_SHAPE_PREFIX_DENYLIST:
+            # Equipment/standards code — drop regardless of digit
+            # or meaningful-word count. Only override if the
+            # phrase ALSO contains a real facility anchor / desc
+            # (those branches were checked above and didn't fire,
+            # so this is safe).
+            return False
     # Digit — accept only when paired with ≥2 distinct meaningful
     # words (so "fns 742" / "level 1" don't pass on digit alone).
     # Site codes like "atl-west-01" have 2 meaningful tokens so
     # they pass.
     has_digit = any(c.isdigit() for c in normalized)
     if has_digit and len(distinct_meaningful) >= 2:
+        return True
+    # SITE-CODE shape — 2-3 short tokens (≤6 chars each) separated
+    # only by hyphens/underscores/spaces. Catches OSC-LPFD, OSC-PD,
+    # ATL-HQ, MDF-3A even without digit (equipment-prefix check
+    # already happened above).
+    if 2 <= len(word_tokens) <= 3 and all(
+        1 <= len(t) <= 6 for t in word_tokens
+    ):
         return True
     # WEAK anchor — accept only with extra context (≥3 distinct
     # meaningful words)
@@ -524,6 +555,29 @@ def _has_positive_site_signal(normalized: str) -> bool:
     if weak_match and len(distinct_meaningful) >= 3:
         return True
     return False
+
+
+# Leading tokens that indicate the hyphenated phrase is NOT a site
+# code (standards body, equipment family, network protocol, etc.).
+_CODE_SHAPE_PREFIX_DENYLIST: frozenset[str] = frozenset({
+    # Standards bodies
+    "tia", "nfpa", "ieee", "ansi", "iso", "ul", "nist", "ashrae",
+    "nec", "asme", "astm", "epa", "osha", "iec",
+    # Equipment families / network protocols
+    "vav", "ahu", "rtu", "hwrtb", "hwstb", "chw", "psu", "lldp",
+    "lacp", "nbase", "tri", "btn", "mic", "lens", "mdns", "ipsws",
+    "ds", "io", "cx", "sv", "se", "lsh", "xs", "slv", "ds-mb",
+    "tri-band", "io-usb", "cx-q",
+    # Highway designations
+    "nj", "ca", "ny", "tx", "fl", "il", "pa", "ga",
+    # Form / acronym prefixes
+    "fns", "fs", "afl", "cd", "dp", "mil", "mra", "sa", "ts",
+    "der", "lgb", "msk", "ii", "ch", "hw", "ds", "ac",
+    # Document control / pdf
+    "pdf", "usb", "http", "https", "rfc", "ascii", "utf",
+    # Misc noise
+    "covid", "multi", "re", "built", "m", "dbe",
+})
 
 
 # Tokens that strongly suggest a software / SaaS / payment / vendor

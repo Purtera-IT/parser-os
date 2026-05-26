@@ -3397,12 +3397,22 @@ def _emit_email_keys(text: str) -> set[str]:
 
 
 def _emit_phone_keys(text: str) -> set[str]:
-    """Emit ``phone:<digits>`` for every phone number in text."""
+    """Emit ``phone:<digits>`` for every phone number in text.
+
+    Normalizes US numbers to a canonical 10-digit form by stripping
+    the leading country-code "1" when present — so "1-800-256-8224"
+    and "800-256-8224" both emit ``phone:8002568224`` (one entity,
+    not two). This is the source-vs-parser audit's expected shape.
+    """
     keys: set[str] = set()
     for m in _PHONE_REGEX.finditer(text):
         digits = (m.group(1) or "") + m.group(2) + m.group(3) + m.group(4)
         digits = re.sub(r"\D", "", digits)
-        if 10 <= len(digits) <= 11:
+        # Strip the US country-code prefix so 11-digit "1XXXXXXXXXX"
+        # collapses to canonical 10-digit "XXXXXXXXXX".
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        if len(digits) == 10:
             keys.add(f"phone:{digits}")
     return keys
 
