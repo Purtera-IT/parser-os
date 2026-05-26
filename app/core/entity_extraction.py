@@ -3369,7 +3369,13 @@ def _emit_phone_keys(text: str) -> set[str]:
     Normalizes US numbers to a canonical 10-digit form by stripping
     the leading country-code "1" when present — so "1-800-256-8224"
     and "800-256-8224" both emit ``phone:8002568224`` (one entity,
-    not two). This is the source-vs-parser audit's expected shape.
+    not two).
+
+    Rejects 10-digit sequences that can't be valid US phones:
+      - leading 0 (real US area codes never start with 0)
+      - leading 1 (after country-code strip — N-1-X area codes don't
+        exist; this catches lot numbers / doc IDs that got picked
+        up by the digits-only pattern)
     """
     keys: set[str] = set()
     for m in _PHONE_REGEX.finditer(text):
@@ -3379,8 +3385,17 @@ def _emit_phone_keys(text: str) -> set[str]:
         # collapses to canonical 10-digit "XXXXXXXXXX".
         if len(digits) == 11 and digits.startswith("1"):
             digits = digits[1:]
-        if len(digits) == 10:
-            keys.add(f"phone:{digits}")
+        if len(digits) != 10:
+            continue
+        # Real US area codes start with 2-9. Leading 0 or 1 = lot
+        # number / document ID misread as a phone.
+        if digits[0] in {"0", "1"}:
+            continue
+        # Real US central-office codes (digits 4-6) also start with
+        # 2-9. Drops "8001234567" patterns where digit 4 is 0 or 1.
+        if digits[3] in {"0", "1"}:
+            continue
+        keys.add(f"phone:{digits}")
     return keys
 
 
@@ -3388,18 +3403,22 @@ def _emit_person_from_contact(text: str) -> set[str]:
     """Emit ``stakeholder:<first_last>`` for "Name <email>" /
     "contact Name" / "submitted by Name" patterns.
 
-    Strategy:
-      1. EMAIL-ANCHORED — for each email in text, scan backward 100
-         chars and emit ALL capitalized names found that pass the
-         person-label denylist. Catches "Matthew Brener, BRS, Inc.,
-         (267) 688-7301 | matthew@..." (name first, then org +
-         phone) AND "via email to John Foster, Convergent Tech
-         Partners, at jfoster@..." (name first, then org).
+    Strategy (3 fallbacks):
+      1. EMAIL-ANCHORED back-scan — for each email in text, scan
+         100 chars backward for capitalized names. Catches "Matthew
+         Brener, BRS, Inc., (267) 688-7301 | matthew@..." and
+         "via email to John Foster, Convergent Tech Partners,
+         at jfoster@...".
       2. CONTACT-LINE — explicit "Please contact X" / "Submitted
-         by X" patterns. Trigger case-insensitive, name strict-cap.
-
-    Org-name false positives (Hood County Purchasing, Convergent
-    Technology Partners, etc.) are filtered by _is_likely_person_label.
+         by X". Trigger case-insensitive, name strict-cap.
+      3. EMAIL LOCAL-PART derivation — when the email has a
+         dot-separated firstname.lastname pattern (e.g.
+         "kaylee.yinger@beaufort.k12.sc.us") and the back-scan
+         found NO preceding name, derive the person name from
+         the local-part. Catches PM contacts in form-only docs
+         where the docline reads "a) by email to: <email>" with
+         no name in front. Skips role-shaped local-parts (info,
+         support, noreply, etc.) via _EMAIL_LOCAL_DENY.
     """
     keys: set[str] = set()
     # Email-anchored back-scan
@@ -3408,6 +3427,7 @@ def _emit_person_from_contact(text: str) -> set[str]:
     for em in _EMAIL_REGEX.finditer(text):
         start = max(0, em.start() - 100)
         window = text[start:em.start()]
+        any_name_found = False
         for nm in _NAME_NEAR_EMAIL.finditer(window):
             name = nm.group(1).strip()
             for bs in bad_starts:
@@ -3416,6 +3436,26 @@ def _emit_person_from_contact(text: str) -> set[str]:
             slug = _slug_simple(name)
             if slug and "_" in slug and not _is_likely_person_label(name):
                 keys.add(f"stakeholder:{slug}")
+                any_name_found = True
+        # Fallback 3 — derive name from email local-part if no
+        # preceding name in the back-scan window AND the local-part
+        # has the firstname.lastname dot-separated shape.
+        if not any_name_found:
+            email = em.group(1)
+            local = email.split("@", 1)[0]
+            if "." in local:
+                parts = [p for p in local.split(".") if p]
+                if (
+                    len(parts) >= 2
+                    and parts[0].lower() not in _EMAIL_LOCAL_DENY
+                    and all(p.isalpha() and len(p) >= 2 for p in parts)
+                ):
+                    # Title-case for natural-looking name
+                    name_parts = [p.capitalize() for p in parts]
+                    name = " ".join(name_parts)
+                    slug = _slug_simple(name)
+                    if slug and "_" in slug and not _is_likely_person_label(name):
+                        keys.add(f"stakeholder:{slug}")
     # Contact-line
     for m in _PERSON_CONTACT_LINE.finditer(text):
         name = m.group(1).strip()
