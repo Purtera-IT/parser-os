@@ -422,13 +422,26 @@ def _is_obvious_non_site(normalized: str) -> bool:
     # Denylist match
     if normalized in _OBVIOUS_NON_SITES:
         return True
-    # Duplicate-token fragment: "MCS MCS", "POS POS", "BCSD BCSD" —
-    # these come from heading-split where the same code/acronym
-    # appears twice (cover page header echo, table-of-contents
-    # styling). Real site names never repeat a token verbatim.
+    # Duplicate-token fragment: "MCS MCS", "POS POS", "BCSD BCSD" /
+    # "MCS MCS Newton" / "POS POS Receipt" — heading-split artifacts
+    # where the same acronym appears IMMEDIATELY AFTER itself (cover
+    # page echo, table-of-contents styling). Catching ANY repeat
+    # in the phrase is too aggressive (would drop legitimate names
+    # like "Long Beach Long Beach Memorial Hospital"); requiring
+    # ADJACENT identical tokens is the precise signal — heading
+    # echo always puts the dup next to itself.
     _tokens = normalized.replace("-", " ").replace("_", " ").split()
-    if len(_tokens) >= 2 and len(set(_tokens)) == 1:
-        return True
+    if len(_tokens) >= 2:
+        # All identical (legacy: "mcs mcs")
+        if len(set(_tokens)) == 1:
+            return True
+        # Two ADJACENT identical tokens (catches "mcs mcs newton",
+        # "pos pos receipt" without dropping "long beach long beach
+        # memorial" or other legit multi-word names with non-adjacent
+        # repeats)
+        for i in range(len(_tokens) - 1):
+            if _tokens[i] == _tokens[i + 1]:
+                return True
     # Tiny single-word fragments (e.g., "apac", "back", "rock")
     if " " not in normalized and "-" not in normalized and "/" not in normalized:
         # Allow site codes (anything with digits) and 5+ char acronyms

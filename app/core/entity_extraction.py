@@ -3430,9 +3430,13 @@ def _emit_person_from_contact(text: str) -> set[str]:
     # Single source of truth for "is this a real person name?" lives
     # in _is_likely_field_label.
     try:
-        from app.core.multi_entity_llm import _is_likely_field_label
+        from app.core.multi_entity_llm import (
+            _is_likely_field_label,
+            _looks_like_email_or_url,
+        )
     except Exception:
         _is_likely_field_label = None  # type: ignore
+        _looks_like_email_or_url = None  # type: ignore
 
     def _looks_like_real_person(name: str) -> bool:
         if not name:
@@ -3440,6 +3444,8 @@ def _emit_person_from_contact(text: str) -> set[str]:
         if _is_likely_person_label(name):
             return False
         if _is_likely_field_label is not None and _is_likely_field_label(name):
+            return False
+        if _looks_like_email_or_url is not None and _looks_like_email_or_url(name):
             return False
         return True
 
@@ -4160,6 +4166,18 @@ def _inject_multi_entity_keys(
 
     # Pre-compute slugs for each entity
     customer = multi.get("customer")
+    # Customer hygiene: drop LLM picks that look like regulatory
+    # bodies / licensing issuers ("State of South Carolina Department
+    # of Revenue Retail License") rather than buying customers.
+    # Real govt buyers like "City of Atlanta" / "Beaufort County
+    # School District" don't match these patterns.
+    if isinstance(customer, str) and customer.strip():
+        try:
+            from app.core.multi_entity_llm import _looks_like_regulator_not_customer
+            if _looks_like_regulator_not_customer(customer):
+                customer = None
+        except Exception:
+            pass
     customer_slug = _slug(customer) if isinstance(customer, str) and customer else None
 
     stakeholders = multi.get("stakeholders") or []

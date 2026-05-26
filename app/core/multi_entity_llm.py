@@ -750,12 +750,84 @@ def _parse_json_object(response_text: str) -> dict[str, Any] | None:
         return None
 
 
+def _looks_like_email_or_url(value: str) -> bool:
+    """True if the value looks like an email address, URL, or
+    URL-tail (e.g. 'support@e-hps.com', 'foo.bar.com', 'site.net').
+
+    The LLM sometimes returns an EMAIL as a `name` field when the
+    line shape confuses it ("Help Desk: hss-ce-help@e-hps.com" →
+    name="hss-ce-help@e-hps.com"). Slug-of-email looks like
+    `hss_ce_help_e_hps_com` and pollutes the stakeholder list.
+    """
+    if not value:
+        return False
+    s = value.lower().strip()
+    if "@" in s:
+        return True
+    # Trailing TLD-ish token after a dot or slug-separator
+    for tld in (".com", ".org", ".net", ".io", ".gov", ".edu",
+                ".co", ".us", ".uk", ".info", ".biz", ".ai",
+                "_com", "_org", "_net", "_io", "_gov", "_edu",
+                "_co", "_us", "_uk", "_info", "_biz", "_ai"):
+        if s.endswith(tld):
+            return True
+    return False
+
+
+def _looks_like_regulator_not_customer(value: str) -> bool:
+    """True if the value looks like a regulatory body / licensing
+    issuer rather than a buying customer.
+
+    Catches LLM customer false positives like 'State of South
+    Carolina Department of Revenue Retail License' (an SC license
+    issuer mentioned in the doc, NOT the buying customer who is
+    Beaufort County School District).
+
+    Heuristic: customer ends with a regulatory tail word OR contains
+    a regulator phrase in the middle. Keeps real govt customers
+    like 'City of Atlanta' / 'Beaufort County School District' /
+    'Department of Defense' (none of which match these patterns).
+    """
+    if not value:
+        return False
+    s = value.lower().strip()
+    # Tail-word check
+    tail_words = {
+        "license", "licenses", "permit", "permits",
+        "registration", "registrations",
+        "certification", "certifications",
+        "tax", "taxes", "tariff", "tariffs",
+        "code", "statute", "statutes",
+        "regulation", "regulations",
+    }
+    last_token = s.split()[-1] if s else ""
+    if last_token in tail_words:
+        return True
+    # Phrase contains a regulator marker
+    regulator_markers = (
+        "department of revenue",
+        "secretary of state",
+        "office of regulations",
+        "office of compliance",
+        "internal revenue service",
+        "department of motor vehicles",
+        "consumer protection",
+        "licensing board",
+    )
+    for marker in regulator_markers:
+        if marker in s:
+            return True
+    return False
+
+
 def _normalize_objects(
     items: Any, fields: tuple[str, ...], *, is_stakeholder: bool = False
 ) -> list[dict[str, Any]]:
     """Coerce list of objects to uniform shape; drop malformed.
 
-    For stakeholders, also drops names that look like field labels.
+    For stakeholders, also drops names that look like field labels
+    OR like email addresses / URLs (the LLM sometimes returns an
+    email as a `name` when the line shape confuses it).
     """
     if not isinstance(items, list):
         return []
@@ -774,8 +846,12 @@ def _normalize_objects(
         first_value = rec.get(fields[0])
         if not first_value:
             continue
-        if is_stakeholder and _is_likely_field_label(str(first_value)):
-            continue
+        if is_stakeholder:
+            fv = str(first_value)
+            if _is_likely_field_label(fv):
+                continue
+            if _looks_like_email_or_url(fv):
+                continue
         out.append(rec)
     return out
 
