@@ -69,6 +69,22 @@ REQUIREMENT_EXEMPLARS: list[str] = [
     "Federal Acquisition Regulation Part 52 clauses are incorporated by reference.",
     "Section 504 of the Rehabilitation Act prohibits disability discrimination.",
     "All hardware carries a three-year manufacturer warranty.",
+    # v45 — edge cases surfaced by 19-pack raw audits
+    "Confidentiality of customer data must be maintained at all times.",
+    "Non-disclosure agreements apply to all vendor personnel.",
+    "Bidder represents that all information provided is accurate.",
+    "Contractor's persistent failure to perform allows district termination.",
+    "Cure period of thirty days applies before default declaration.",
+    "Vendor accepts all terms upon contract execution.",
+    "Confidential data is restricted to authorized personnel only.",
+    "Vendor's response constitutes acceptance of the General Conditions.",
+    "All proposers must acknowledge addendums via signed receipt.",
+    "Contractor will be responsible for site safety throughout the project.",
+    "Bidder shall pay all taxes, fees, and assessments associated with the work.",
+    "The contractor is bound by the terms of the South Carolina Procurement Code.",
+    "Equal employment opportunity and affirmative action plans are required.",
+    "The contractor agrees to comply with all federal and state laws.",
+    "Solution offered shall meet all functional and technical specifications.",
 ]
 
 
