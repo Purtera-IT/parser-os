@@ -3956,6 +3956,44 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         if dropped_any:
             atom.entity_keys = kept
 
+    # ─── SITE FRAGMENT DROP ───
+    # When a site:* slug is a strict prefix of the customer:* slug
+    # (e.g. site:beaufort_county_school when customer is
+    # customer:beaufort_county_school_district), the site key is a
+    # FRAGMENT of the customer name and shouldn't be a separate
+    # site entity. Drop it.
+    customer_slugs = {
+        k[len("customer:"):]
+        for atom in atom_list
+        for k in (atom.entity_keys or [])
+        if k.startswith("customer:")
+    }
+    if customer_slugs:
+        for atom in atom_list:
+            keys = atom.entity_keys or []
+            if not keys:
+                continue
+            new_keys = []
+            changed = False
+            for k in keys:
+                if k.startswith("site:"):
+                    site_slug = k[len("site:"):]
+                    # Strict-prefix match: site_slug is a proper
+                    # prefix of any customer_slug, AND has ≥2 tokens
+                    # (so we don't drop short codes like "atl_hq")
+                    if (
+                        "_" in site_slug
+                        and any(
+                            cs.startswith(site_slug + "_")
+                            for cs in customer_slugs
+                        )
+                    ):
+                        changed = True
+                        continue
+                new_keys.append(k)
+            if changed:
+                atom.entity_keys = new_keys
+
     # ─── FINAL PASS: contact-anchor stakeholder recovery ───
     # The noisy regex _emit_stakeholders may have been dropped by the
     # LLM-trumps-regex rule above (or by hygiene). The contact-anchor
