@@ -78,18 +78,20 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
         "customer": _build_excerpt_for_customer(by_artifact),
         "stakeholders": _build_excerpt_for_stakeholders(by_artifact),
         "milestones": _build_excerpt_for_milestones(by_artifact),
-        "requirements": _build_excerpt_for_requirements(by_artifact),
         "site_clusters": _build_excerpt_for_site_clusters(by_artifact),
     }
 
-    # Dispatch 5 calls in parallel. ThreadPoolExecutor is fine here:
-    # the LLM HTTP call is I/O-bound, so GIL doesn't bottleneck.
+    # Dispatch the 4 single-excerpt calls + 1 chunked-per-doc call in
+    # parallel. Requirements uses the chunked path because real bid
+    # docs (Pack 18 Beaufort 196 clauses, Pack 19 Hood 38 clauses)
+    # blow past a single 30K-char budget; per-doc extraction recovers
+    # the missing 80% of shall/must clauses.
     parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
     calls: dict[str, Callable[[], Any]] = {
         "customer": lambda: _extract_customer(excerpts["customer"]),
         "stakeholders": lambda: _extract_stakeholders(excerpts["stakeholders"]),
         "milestones": lambda: _extract_milestones(excerpts["milestones"]),
-        "requirements": lambda: _extract_requirements(excerpts["requirements"]),
+        "requirements": lambda: _extract_requirements_chunked(by_artifact),
         "site_clusters": lambda: _extract_site_clusters(excerpts["site_clusters"]),
     }
 
@@ -392,23 +394,43 @@ If no real milestones, return: {{"milestones": []}}
 
 
 def _extract_requirements(docs_excerpt: str) -> list[dict[str, Any]]:
+    """Single-call requirement extraction over a pre-built excerpt.
+
+    Called by the per-doc chunked variant below — direct callers
+    should use ``_extract_requirements_chunked(by_artifact)`` instead
+    so doc-large packs (Pack 18 Beaufort POS, Pack 19 Hood, Pack 12
+    BMS) don't lose 95% of their shall/must clauses to a single-call
+    30K-char budget.
+    """
     if not docs_excerpt:
         return []
-    prompt = f"""Identify REQUIREMENTS (what the customer requires the contractor to do).
+    prompt = _build_requirements_prompt(docs_excerpt)
+    text = _call_ollama(prompt, max_tokens=2048)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    return _normalize_objects(
+        obj.get("requirements"), ("text", "category")
+    )
+
+
+def _build_requirements_prompt(docs_excerpt: str) -> str:
+    return f"""Identify REQUIREMENTS (what the customer requires the contractor to do).
 
 INCLUDE:
-- "Shall" / "must" / "required" clauses from the SOW
-- SLAs and performance targets (uptime %, response times)
-- Compliance requirements (NFPA, HIPAA, PCI, IEEE, ISO standards)
+- "Shall" / "must" / "required" / "will" clauses from the SOW or vendor response
+- SLAs and performance targets (uptime %, response times like "24/7", "4-hour response", "99.9% uptime")
+- Compliance requirements (NFPA, HIPAA, PCI, PCI-DSS, IEEE, ISO, FERPA, SOC 2, CJIS, etc.)
 - Acceptance criteria (functional, performance, security)
-- Deliverables (documentation, test reports, training)
-- Security requirements (badge, escort, audit)
+- Deliverables (documentation, test reports, training, background checks)
+- Security requirements (badge, escort, audit, background checks)
+- Hardware requirements (CPU, RAM, storage minimums)
+- Personnel requirements (criminal background checks, dress code, conduct)
 
 EXCLUDE:
-- Boilerplate ("contractor will comply with applicable laws")
-- Vendor-side aspirational statements ("we strive to provide...")
-- Pricing terms (those belong elsewhere)
-- Project metadata (deal ID, packet version, etc.)
+- Pure boilerplate ("contractor will comply with applicable laws")
+- Pricing terms
+- Project metadata (deal ID, packet version)
 
 Paraphrase each requirement to ONE concise sentence (≤ 25 words).
 
@@ -420,20 +442,58 @@ DOCUMENTS:
 
 OUTPUT (array of objects):
 {{"requirements": [
-  {{"text": "<requirement, ≤25 words>", "category": "<sla|compliance|performance|security|deliverable|acceptance|other>"}},
+  {{"text": "<requirement, ≤25 words>", "category": "<sla|compliance|performance|security|deliverable|acceptance|hardware|personnel|other>"}},
   ...
 ]}}
 
 If no real requirements found, return: {{"requirements": []}}
 
 /no_think"""
-    text = _call_ollama(prompt, max_tokens=2048)
-    obj = _parse_json_object(text)
-    if not isinstance(obj, dict):
+
+
+def _extract_requirements_chunked(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Multi-call requirement extraction — one LLM call per artifact,
+    union the results, dedupe by text similarity.
+
+    Real bid packages can have 100-200+ shall/must clauses scattered
+    across multiple docs (Pack 18 Beaufort POS source has 196). A
+    single 30K-char excerpt only sees ~15% of a 200K-char doc set,
+    losing 80%+ of the requirements. Per-doc extraction fixes that.
+
+    Each artifact gets its own LLM call with its own ~25K-char
+    budget. Results are unioned then deduplicated by normalizing
+    the requirement text (lowercase + collapse whitespace + take
+    first 100 chars) so multi-doc reposts of the same clause don't
+    duplicate.
+    """
+    if not by_artifact:
         return []
-    return _normalize_objects(
-        obj.get("requirements"), ("text", "category")
-    )
+    seen_signatures: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for aid in sorted(by_artifact.keys()):
+        slot = by_artifact[aid]
+        # Single artifact excerpt — generous per-doc budget so we
+        # don't truncate body text. qwen3:14b context is 40K tokens
+        # (~160K chars); 25K leaves headroom for the prompt frame.
+        excerpt = _format_artifact_section(slot, max_chars=25000)
+        if not excerpt:
+            continue
+        prompt = _build_requirements_prompt(excerpt)
+        text = _call_ollama(prompt, max_tokens=2048)
+        obj = _parse_json_object(text)
+        if not isinstance(obj, dict):
+            continue
+        for rec in _normalize_objects(
+            obj.get("requirements"), ("text", "category")
+        ):
+            text_val = rec.get("text") or ""
+            sig = re.sub(r"\s+", " ", text_val.lower()).strip()[:100]
+            if sig and sig not in seen_signatures:
+                seen_signatures.add(sig)
+                out.append(rec)
+    return out
 
 
 def _extract_site_clusters(docs_excerpt: str) -> list[dict[str, Any]]:
