@@ -3760,11 +3760,32 @@ def _inject_multi_entity_keys(
         if isinstance(name, str) and name.strip():
             stakeholder_entries.append((name.strip(), _slug(name)))
 
-    # LLM-trumps-regex: when the LLM gave us customer or
-    # stakeholder data, drop the noisy regex emissions for those
-    # categories so the LLM output is the source of truth.
-    drop_regex_customer = bool(customer_slug)
-    drop_regex_stakeholder = bool(stakeholder_entries)
+    # LLM-AUTHORITATIVE for customer + stakeholder: when the LLM
+    # multi-entity pass ran successfully (the dict is non-empty,
+    # regardless of whether it returned anything for these specific
+    # categories), it has read the full doc context and IS the
+    # source of truth. Drop ALL regex emissions for customer:* and
+    # stakeholder:* — the LLM-injected keys below will be the only
+    # ones in those categories.
+    #
+    # Rationale:
+    #   - If LLM found people, regex noise (department names, jargon)
+    #     pollutes the list.
+    #   - If LLM found NO people, the project genuinely has no named
+    #     stakeholders in the supplied docs; the regex output is
+    #     spurious matches (technical terms, fragments, headers) that
+    #     PMs don't want to see.
+    # This collapses Pack 14 Neptune from 18 jargon stakeholders
+    # ("annual_electricity_bill", "energy_surety_microgrid",
+    # "pareto_energy", "the_township", ...) to whatever the LLM
+    # actually identified.
+    llm_ran = bool(multi.get("customer") is not None or
+                   multi.get("stakeholders") or
+                   multi.get("milestones") or
+                   multi.get("requirements") or
+                   multi.get("site_clusters"))
+    drop_regex_customer = llm_ran
+    drop_regex_stakeholder = llm_ran
     if drop_regex_customer or drop_regex_stakeholder:
         for atom in atom_list:
             keys = atom.entity_keys or []
