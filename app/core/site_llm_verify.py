@@ -148,46 +148,56 @@ def extract_sites_with_llm(atoms: list[Any]) -> set[str]:
 def _build_extract_prompt(docs_excerpt: str) -> str:
     """Compose the LLM extraction prompt.
 
-    Compact, precision-first instructions. The Python hygiene
-    denylist catches form-field words / generic nouns the LLM may
-    still slip through; we keep the prompt small so per-call
-    latency stays low.
+    Compact, precision-first instructions. Examples use placeholder
+    NAMES (not real institutions) so the model doesn't echo example
+    names back into its output instead of extracting from the docs.
+    The Python hygiene denylist catches form-field words / generic
+    nouns the LLM may still slip through.
     """
-    return f"""Identify PHYSICAL PROJECT SITES from this bid package — buildings, schools, hospitals, offices, plants, depots, or named facilities where the contracted work will be performed.
+    return f"""Identify PHYSICAL PROJECT SITES from this bid package — the actual buildings, schools, hospitals, offices, plants, depots, or named facilities where the contracted work will be performed.
+
+CRITICAL: Only return sites that ACTUALLY APPEAR in the documents below. Do NOT invent sites or include sites from your training data. If the document mentions a site name or site code, include exactly that.
 
 RULES:
 - PRECISION OVER RECALL. When in doubt, EXCLUDE.
-- Use FULL canonical names ("Wesley Elementary School", not "Wesley").
-- Each site must be a SPECIFIC named building/facility, 2+ words.
+- Extract sites VERBATIM from the document text. Use the FULL canonical name as it appears.
+- Each site must be a SPECIFIC named building/facility OR a site-code identifier.
+- ALWAYS include site codes (e.g. "ATL-HQ-01", "STORE-142", "Building 47") when they appear — these are the customer's authoritative scope anchors.
+- Include both the site code AND the friendly name when both appear (they refer to the same physical place).
 
-INCLUDE:
-✓ Named schools, hospitals, buildings ("Wesley Elementary School", "Booker Pavilion", "Hackensack University Medical Center")
-✓ Customer institution ("Geary County Schools USD 475", "Albuquerque Public Schools")
-✓ Named plants/utility sites ("Tolt #1 Supply Station", "Central Plant")
-✓ Site codes IF used as scope anchors ("ATL-WEST-01", "Building A")
+INCLUDE shape examples (these are PATTERNS, not real names — use names from the docs below):
+  ✓ "<Proper Noun> Elementary School" / "<Proper Noun> High School"
+  ✓ "<Proper Noun> Medical Center" / "<Proper Noun> University Medical Center"
+  ✓ "<Proper Noun> Pavilion" / "<Proper Noun> Plant" / "<Proper Noun> Annex"
+  ✓ "<Customer> School District" / "<Customer> Public Schools" / "<Customer> County Schools USD N"
+  ✓ Site codes: "<REGION>-<FUNCTION>-<NN>" (e.g. ATL-HQ-01, ATL-WEST-02, ATL-AIR-03, ATL-CP-05)
+  ✓ Street addresses when used as the site name (e.g. "1200 Peachtree St NE")
+  ✓ Customer-specific named facilities (e.g. "<Customer Name> Headquarters", "<Customer Name> Logistics Center")
 
 EXCLUDE — these are NOT physical sites:
-✗ Standards bodies: ANSI, ASHRAE, NFPA, IEEE, AWWA, AWPA, UL, OSHA, EPA, ISO, TIA
-✗ Vendor / product / SaaS brands: Cisco, Genetec, MySchoolBucks, Mealviewer, Mosaic Cloud, Heartland Payment Systems, LunchByte, Lifesize, ServiceNow, ANY CamelCase software/cloud name
-✗ Government licensing/regulatory bodies: "Department of Revenue", "Secretary of State", "IRS", "Treasury"
-✗ Cities/counties alone (without a specific facility): "Boston", "Hood County" (but "Hood County EOC" is OK)
-✗ Departments without a physical building: "IT Department", "Accounts Payable", "Information Technology", "Food Services"
-✗ Spec/form labels: "Pre Bid Meeting", "Purchasing Office", "Bid Opening", "Performance Bond", "Project Name", "Owner", "Date", "Phone", "Certification"
-✗ Sentence fragments / truncations / table cells: "consumption annual energy costs", "604 Gables Elementary School 734"
-✗ Generic nouns alone: "academy", "school", "building", "library", "medical center", "high school"
-✗ Streets alone: "Main Street", "Corlies Avenue"
-✗ Concepts/systems: "Wide Area Network", "VoIP", "Mass Notification"
-✗ Categories: "Phase I", "FEMA Category III", "Level I"
-✗ Abbreviations <5 chars unless explicitly a site code: AHU, VAV, RTU, APAC
+✗ Standards bodies (ANSI, ASHRAE, NFPA, IEEE, AWWA, AWPA, UL, OSHA, EPA, ISO, TIA)
+✗ Vendor / product / SaaS brands (Cisco, Genetec, MySchoolBucks, Mealviewer, Mosaic Cloud, Heartland Payment Systems, ServiceNow, any CamelCase software/cloud name)
+✗ Government licensing/regulatory bodies ("Department of Revenue", "Secretary of State", "IRS", "Treasury")
+✗ Cities/counties alone without a specific named facility
+✗ Departments without a physical building ("IT Department", "Accounts Payable", "Information Technology", "Food Services")
+✗ Spec/form labels ("Pre Bid Meeting", "Purchasing Office", "Bid Opening", "Performance Bond", "Project Name", "Owner", "Date", "Phone", "Certification")
+✗ Sentence fragments / table-cell truncations
+✗ Generic nouns alone ("academy", "school", "building", "library", "medical center", "high school")
+✗ Streets alone ("Main Street")
+✗ Concepts/systems ("Wide Area Network", "VoIP", "Mass Notification")
+✗ Categories ("Phase I", "FEMA Category III", "Level I")
+✗ Abbreviations <5 chars unless clearly a site code (AHU, VAV, RTU, APAC)
 
 PROJECT DOCUMENTS:
 
 {docs_excerpt}
 
 OUTPUT (single-line JSON, no commentary, no markdown):
-{{"sites": ["Full Name 1", "Full Name 2"]}}
+{{"sites": ["<site name or code 1>", "<site name or code 2>"]}}
 
-If no real sites, return: {{"sites": []}}
+If no real sites in the docs, return: {{"sites": []}}
+
+Remember: extract VERBATIM from the docs above. Do not invent. Do not echo example shapes.
 
 /no_think"""
 
