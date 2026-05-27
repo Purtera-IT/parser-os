@@ -160,9 +160,20 @@ _SITE_BLOCKLIST: frozenset[str] = frozenset({
 
 
 def _normalize(phrase: str) -> str:
-    """Lowercase, trim, collapse whitespace, strip punctuation."""
+    """Lowercase, trim, collapse whitespace, strip punctuation.
+
+    v53.6: normalize hyphens AND underscores to spaces so "ATL-HQ-01"
+    and "atl_hq_01" (the entity_key slug form) compare equal. Previously
+    only underscores collapsed → "atl-hq-01" stayed with hyphens while
+    "atl hq 01" (from slug) had spaces, so phrase_is_in_catalog never
+    matched site_keys to catalog entries.
+    """
     s = phrase.lower().strip()
-    s = re.sub(r"[^a-z0-9\s\-/.]", " ", s)
+    # First, replace hyphens AND underscores AND slashes with spaces
+    # so site IDs and slug forms collapse to the same shape.
+    s = re.sub(r"[\-_/]", " ", s)
+    # Then strip all other punctuation
+    s = re.sub(r"[^a-z0-9\s.]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -763,13 +774,26 @@ def phrase_is_in_catalog(phrase: str, catalog: set[str]) -> bool:
         return False
     if norm in catalog:
         return True
+    # v53.6: also check normalized-form match against normalized
+    # catalog entries. Catalog stores original case ("ATL-HQ") but
+    # the phrase parameter is normalized to lowercase+space ("atl hq").
+    norm_catalog = {_normalize(c) for c in catalog}
+    if norm in norm_catalog:
+        return True
     norm_words = norm.split()
     if not norm_words:
         return False
     for c in catalog:
-        if len(c) < 8:
+        nc = _normalize(c)
+        # v53.6: was `if len(c) < 8: continue` which dropped legitimate
+        # short site IDs like "atl hq" (6 chars). Lower threshold to 4
+        # AND allow shorter when the catalog entry has structure (digit
+        # or hyphen — typical of site IDs like B12, MDC-01, ATL-HQ).
+        c_has_id_shape = any(ch.isdigit() or ch == "-" for ch in c)
+        min_len = 4 if c_has_id_shape else 6
+        if len(nc) < min_len:
             continue
-        c_words = c.split()
+        c_words = nc.split()
         if not c_words:
             continue
         # Catalog is prefix of phrase: ``c_words`` is a prefix of
