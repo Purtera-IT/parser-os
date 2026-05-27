@@ -336,27 +336,40 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         else:
             other.append(atom)
     result: list = list(other)
+
+    def _atype(atom) -> str:
+        t = getattr(atom, "atom_type", None)
+        return t.value if hasattr(t, "value") else str(t or "")
+
     for aid, art_atoms in by_artifact.items():
-        seen_normalized: dict[str, object] = {}
+        # v50.1: dedupe key INCLUDES atom_type so a raw_table_row and
+        # a bom_line sourced from the SAME table row both survive —
+        # they represent different facets of the data (raw vs typed
+        # classification). Same goes for vendor_line_item vs bom_line.
+        seen_normalized: dict[tuple, object] = {}
         unique: list = []
         for atom in sorted(art_atoms, key=lambda a: getattr(a, "confidence", 0.0), reverse=True):
             norm = getattr(atom, "normalized_text", None) or getattr(atom, "raw_text", "") or ""
             if not norm:
                 unique.append(atom)
                 continue
-            norm_key = norm.strip().lower()
+            norm_key = (_atype(atom), norm.strip().lower())
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)
-        # Second pass: fuzzy dedup on long text only (≥50 chars)
+        # Second pass: fuzzy dedup on long text only (≥50 chars).
+        # Also type-aware — only collapse atoms of SAME atom_type.
         final: list = []
         for atom in unique:
             rt = getattr(atom, "raw_text", "") or ""
             if len(rt) < 50:
                 final.append(atom)
                 continue
+            atype = _atype(atom)
             is_dup = False
             for existing in final:
+                if _atype(existing) != atype:
+                    continue
                 ext = getattr(existing, "raw_text", "") or ""
                 if len(ext) < 50:
                     continue

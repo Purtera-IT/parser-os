@@ -4229,6 +4229,14 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # single change in table_schema_registry covers all parsers (xlsx,
     # docx, future pptx/csv). Runs ALWAYS, even when multi_result is
     # empty (LLM may be unreachable but tables are still classifiable).
+    # v50.1: collect NEW atoms (raw_table_row classifications + entity
+    # bridge results). We append these to BOTH atom_list (used inside
+    # this function) AND `atoms` (the caller's reference) so they
+    # survive into the rest of the pipeline. enrich_atoms previously
+    # silently dropped them because `atom_list = list(atoms)` made a
+    # disconnected copy.
+    _new_atoms_to_publish: list[Any] = []
+
     try:
         _proj_id_rtr = (
             getattr(atom_list[0], "project_id", "") if atom_list else ""
@@ -4236,6 +4244,7 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         _rtr_atoms = _enrich_table_atoms(atom_list, project_id=_proj_id_rtr)
         if _rtr_atoms:
             atom_list.extend(_rtr_atoms)
+            _new_atoms_to_publish.extend(_rtr_atoms)
             atoms_enriched += len(_rtr_atoms)
     except Exception as _rtr_exc:
         import logging as _lg_rtr
@@ -4271,12 +4280,23 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             )
             if bridge_atoms:
                 atom_list.extend(bridge_atoms)
+                _new_atoms_to_publish.extend(bridge_atoms)
                 atoms_enriched += len(bridge_atoms)
         except Exception as _bridge_exc:
             import logging as _lg
             _lg.getLogger(__name__).warning(
                 "entity-to-atom bridge failed: %s", _bridge_exc
             )
+
+    # v50.1: publish new atoms back to caller's list so downstream
+    # stages (typed_atom_classification, dedup, entity_resolution,
+    # graph_build, packetize, envelope projection) actually see them.
+    if _new_atoms_to_publish:
+        try:
+            if isinstance(atoms, list):
+                atoms.extend(_new_atoms_to_publish)
+        except Exception:
+            pass
 
         # v44.5: inject vision-extracted rows AS atom entity_keys so
         # BOM line items, contact rosters, schedule phases, etc. that
