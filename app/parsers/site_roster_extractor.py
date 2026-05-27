@@ -230,6 +230,25 @@ def looks_like_site_roster(
       3. ≥3 row's leftmost non-empty cell matches the site-ID shape
          regex (handles rosters that ship without column headers).
     """
+    # v48 FIX 3: Negative guard — if column headers contain strong
+    # non-roster signals (requirements / BOM / risk / acceptance /
+    # schedule / spec), REJECT immediately. This prevents the roster
+    # path from silently eating these tables and dropping their rows.
+    _NON_ROSTER_HEADER_SIGNALS: frozenset[str] = frozenset({
+        "requirement", "acceptance", "bom", "line item", "unit price",
+        "quantity", "risk id", "probability", "impact", "mitigation",
+        "checklist", "checkpoint", "deliverable", "criterion", "criteria",
+        "phase", "milestone", "task", "activity", "duration", "predecessor",
+        "status", "priority", "category", "description",
+        "part number", "part no", "model number", "model no", "sku",
+        "unit cost", "extended", "subtotal", "total cost",
+        "shall", "must", "will provide",
+    })
+    if columns:
+        header_blob = " ".join(c.lower() for c in columns)
+        if any(sig in header_blob for sig in _NON_ROSTER_HEADER_SIGNALS):
+            return False
+
     # Signal 1: explicit declaration
     if _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text):
         return True

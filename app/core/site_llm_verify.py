@@ -3,12 +3,13 @@
 Two modes:
 
   1. EXTRACT (preferred when LLM available)
-     ``extract_sites_with_llm(atoms) -> set[str]``
-     Sends the project's document content to an LLM and asks it
-     to identify the project sites directly. The model returns a
-     canonical site list which becomes the catalog. No regex,
-     no candidate-list pre-pass — pure semantic understanding of
-     what the bid is about.
+     ``extract_sites_with_llm(atoms) -> list[dict]``
+     v48: returns structured site objects (id, names, address,
+     mdf_idf, access_window, escort, users, rooms, notes) so MDF
+     codes, access windows, and escort names land in typed attribute
+     fields instead of becoming ghost site entries. The caller in
+     ``site_detection.py`` derives a ``set[str]`` catalog from the
+     ids+names for backward compatibility.
 
   2. VERIFY (fallback / legacy)
      ``verify_sites_with_llm(catalog, atoms) -> set[str]``
@@ -71,29 +72,24 @@ def ollama_reachable() -> bool:
 # ─────────────────────── EXTRACT MODE ───────────────────────
 
 
-def extract_sites_with_llm(atoms: list[Any]) -> set[str]:
+def extract_sites_with_llm(atoms: list[Any]) -> list[dict]:
     """Ask LLM to identify project sites directly from doc content.
 
-    No candidate-list input — the LLM reads representative excerpts
-    from the project's source documents and returns a canonical site
-    list. This is the primary site-detection path when an LLM is
-    available; the structural 6-tier regex catalog is the fallback.
+    v48: Returns structured site objects (list[dict]) instead of flat
+    set[str]. Each object carries id, names/aliases, address, mdf_idf,
+    access_window, escort, users, rooms, notes — preventing MDF codes,
+    access windows, and escort names from becoming ghost site entities.
 
-    For projects whose total atom-text content fits within
-    ``_EXTRACT_DOC_BUDGET``, a single LLM call is sufficient.
-    For larger projects, falls back to per-document extraction:
-    each artifact gets its own LLM call, results are unioned. This
-    guarantees we don't miss sites in document #4 because we only
-    sent #1-3 to the LLM.
+    Caller in site_detection.py extracts a set[str] of names/ids for
+    backward-compatible catalog membership AND caches the full attribute
+    dicts in module-level state for entity enrichment.
 
-    Returns a set of normalized site phrases. Returns ``set()`` on
-    any failure (LLM unreachable, malformed response) so the caller
-    can fall back to the structural catalog.
+    Returns ``[]`` on any failure (LLM unreachable, malformed response)
+    so caller can fall back to the structural regex catalog.
     """
     if not atoms:
-        return set()
+        return []
 
-    # Estimate total project content size to decide call strategy.
     total_chars = 0
     by_artifact: dict[str, list[Any]] = {}
     for atom in atoms:
@@ -106,53 +102,154 @@ def extract_sites_with_llm(atoms: list[Any]) -> set[str]:
             total_chars += len(rt)
 
     if not by_artifact:
-        return set()
+        return []
+
+    def _merge_site_lists(a: list[dict], b: list[dict]) -> list[dict]:
+        """Merge two structured site lists, dedup by id and shared names."""
+        merged = list(a)
+        seen_ids: set[str] = {s["id"] for s in merged}
+        seen_names: set[str] = set()
+        for s in merged:
+            seen_names.update(s["names"])
+            seen_names.add(s["id"])
+        for s in b:
+            sid = s["id"]
+            match_idx = None
+            if sid in seen_ids:
+                match_idx = next(i for i, x in enumerate(merged) if x["id"] == sid)
+            else:
+                for name in s["names"]:
+                    if name in seen_names:
+                        match_idx = next(
+                            (i for i, x in enumerate(merged) if name in x["names"] or name == x["id"]),
+                            None,
+                        )
+                        if match_idx is not None:
+                            break
+            if match_idx is not None:
+                existing = merged[match_idx]
+                existing["names"] = list(set(existing["names"]) | set(s["names"]))
+                for attr in ("address", "mdf_idf", "access_window", "escort", "notes"):
+                    if s[attr] and not existing[attr]:
+                        existing[attr] = s[attr]
+                for attr in ("users", "rooms"):
+                    if s[attr] is not None and existing[attr] is None:
+                        existing[attr] = s[attr]
+            else:
+                merged.append(s)
+                seen_ids.add(sid)
+                seen_names.update(s["names"])
+                seen_names.add(sid)
+        return merged
 
     # Strategy 1 — small project: one combined call.
-    # Send all docs concatenated when they fit comfortably.
     if total_chars <= int(_EXTRACT_DOC_BUDGET * 1.2):
         docs_excerpt = _build_doc_excerpt(
             atoms, max_per_doc=15000, max_total=_EXTRACT_DOC_BUDGET,
         )
         if not docs_excerpt:
-            return set()
+            return []
         prompt = _build_extract_prompt(docs_excerpt)
-        response_text = _call_ollama(prompt, max_tokens=1024)
+        response_text = _call_ollama(prompt, max_tokens=2048)
         if not response_text:
-            return set()
-        return _parse_sites_list(response_text)
+            return []
+        return _parse_sites_structured(response_text)
 
-    # Strategy 2 — large project: per-artifact calls, union results.
-    # Each artifact gets its own atom list and its own LLM extract.
-    # This is critical for projects like Pack 02 APS / Pack 12 BMS
-    # where total content far exceeds the doc budget.
-    union_sites: set[str] = set()
+    # Strategy 2 — large project: per-artifact calls, merge results.
+    union_sites: list[dict] = []
     for aid in sorted(by_artifact.keys()):
         artifact_atoms = by_artifact[aid]
-        # Per-artifact budget: cap each doc at 18000 chars so
-        # the prompt stays well within qwen3:14b's context window
-        # and the per-call latency stays bounded.
         docs_excerpt = _build_doc_excerpt(
             artifact_atoms, max_per_doc=18000, max_total=18000,
         )
         if not docs_excerpt:
             continue
         prompt = _build_extract_prompt(docs_excerpt)
-        response_text = _call_ollama(prompt, max_tokens=1024)
+        response_text = _call_ollama(prompt, max_tokens=2048)
         if not response_text:
             continue
-        union_sites |= _parse_sites_list(response_text)
+        batch = _parse_sites_structured(response_text)
+        union_sites = _merge_site_lists(union_sites, batch)
     return union_sites
 
 
 def _build_extract_prompt(docs_excerpt: str) -> str:
-    """Compose the LLM extraction prompt.
+    """v48 Structured site extraction prompt.
 
-    Compact, precision-first instructions. Examples use placeholder
-    NAMES (not real institutions) so the model doesn't echo example
-    names back into its output instead of extracting from the docs.
-    The Python hygiene denylist catches form-field words / generic
-    nouns the LLM may still slip through.
+    Returns structured objects instead of flat strings so MDF codes,
+    access windows, escort names, and address fragments are captured
+    as site ATTRIBUTES rather than becoming ghost site entries. The
+    schema enforces the site/attribute boundary architecturally —
+    a denylist patch couldn't catch every new MDF naming convention
+    or access-window format across deals.
+    """
+    return f"""You are extracting the complete physical site roster from a project bid package.
+For each NAMED PHYSICAL WORKPLACE in the documents, return a structured object.
+
+A physical workplace is a named building, campus, office, warehouse, annex, data center, school,
+hospital, or named facility that project staff physically travel to. It has an address, people,
+and a name.
+
+CRITICAL — ATTRIBUTES vs. SITES:
+When a document row says:
+  "SITE-HQ-01 | Company HQ | 1200 Main St | MDF-3A / IDF 2-A | Mon-Fri 07:00-18:00"
+→ SITE-HQ-01 is the SITE (put in "id")
+→ MDF-3A / IDF 2-A is a network-closet ATTRIBUTE (put in "mdf_idf" — NOT a new site entry)
+→ Mon-Fri 07:00-18:00 is the ACCESS WINDOW attribute (put in "access_window" — NOT a new site entry)
+→ Company HQ is an alias for SITE-HQ-01 (put in "names" — NOT a separate site entry)
+→ 1200 Main St is the address attribute (put in "address" — NOT a new site entry)
+
+NEVER create a separate site entry for:
+- Network infrastructure labels: MDF, IDF, rack IDs, circuit IDs, patch panels, PDUs, UPS, closet names
+- Access time windows: "Mon-Fri 07:00-18:00", "weekends only", "after-hours"
+- Escort or contact names: any person name / department name that controls access
+- Address fragments: "Building C", "Floor 12", "Suite 200" (these are attributes of a larger site)
+- Risk or constraint descriptions: "warehouse RF interference" is a RISK, not a site
+- Column headers or form labels
+- Generic nouns without a proper name: "the warehouse", "the office", "the building"
+
+FOR EACH REAL SITE, extract every attribute you can find ACROSS ALL DOCUMENTS:
+- id: The most specific identifier (e.g. "SITE-HQ-01", "Store 142"). Use the customer's site code if present.
+- names: ALL names/aliases for this site across all docs. Different docs often use different names for
+  the same place (site code in one doc, street address in another, nickname in a third). Collect them all.
+  This is the deduplication key — if two entries share any name in common, merge them.
+- address: Full street address. If truncated in one doc, use the longest/most complete version across docs.
+- mdf_idf: Network closet designation (e.g. "MDF-3A / IDF 2-A"). This is an ATTRIBUTE, not a site.
+- access_window: When work is allowed (e.g. "Mon-Fri 07:00-18:00", "weekends preferred").
+- escort: Who provides building access escort (person name or department).
+- users: Number of users/staff at this site (integer only, no units text).
+- rooms: Number of in-scope rooms (integer only).
+- notes: Any other relevant notes (blackout windows, priority, special constraints).
+
+DEDUPLICATION: When two names clearly refer to the same physical building, merge them into ONE entry.
+
+PROJECT DOCUMENTS:
+
+{docs_excerpt}
+
+OUTPUT — single JSON object, no markdown, no commentary:
+{{"sites": [
+  {{
+    "id": "<most specific site code or identifier>",
+    "names": ["<name 1>", "<name 2>"],
+    "address": "<full street address or empty string>",
+    "mdf_idf": "<network closet label or empty string>",
+    "access_window": "<access hours or empty string>",
+    "escort": "<escort owner or empty string>",
+    "users": <integer or null>,
+    "rooms": <integer or null>,
+    "notes": "<any other relevant notes or empty string>"
+  }}
+]}}
+
+If no real physical sites appear in the documents, return: {{"sites": []}}
+
+/no_think"""
+
+
+def _build_extract_prompt_legacy(docs_excerpt: str) -> str:
+    """Legacy flat-list prompt — retained for callers that still use the
+    set[str] interface during the v48 transition. Do not use for new code.
     """
     return f"""Identify PHYSICAL PROJECT SITES from this bid package — the actual buildings, schools, hospitals, offices, plants, depots, or named facilities where the contracted work will be performed.
 
@@ -231,6 +328,136 @@ def _parse_sites_list(response_text: str) -> set[str]:
         if _is_obvious_non_site(normalized):
             continue
         out.add(normalized)
+    return out
+
+
+def _parse_sites_structured(response_text: str) -> list[dict]:
+    """v48 — parse structured site objects from the LLM response.
+
+    Returns list of dicts: id, names, address, mdf_idf, access_window,
+    escort, users, rooms, notes. Empty list on any parse failure.
+
+    Two-pass parser: first tries the full JSON envelope, falls back to
+    just the sites array — handles markdown-wrapped output and trailing
+    commentary.
+    """
+    parsed: dict | None = None
+
+    # Pass 1: bracket-balanced extraction of the outermost JSON object.
+    # Regex with non-greedy [\s\S]*? is WRONG for nested JSON — it stops
+    # at the first ] or } inside a nested array/object, truncating the
+    # response and causing json.loads to fail. Instead: find the first {,
+    # then walk forward counting brackets to find the matching }.
+    first_brace = response_text.find("{")
+    if first_brace != -1:
+        depth = 0
+        in_str = False
+        escape_next = False
+        end_pos = -1
+        for i, ch in enumerate(response_text[first_brace:], start=first_brace):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_str:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_pos = i
+                    break
+        if end_pos != -1:
+            candidate = response_text[first_brace : end_pos + 1]
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                parsed = None
+
+    # Pass 2: bracket-balanced extraction of just the sites array.
+    # Same technique: find the [ after "sites": and walk to matching ].
+    if parsed is None:
+        key_match = re.search(r'"sites"\s*:\s*\[', response_text)
+        if key_match:
+            arr_start = key_match.end() - 1  # position of the opening [
+            depth = 0
+            in_str = False
+            escape_next = False
+            end_pos = -1
+            for i, ch in enumerate(response_text[arr_start:], start=arr_start):
+                if escape_next:
+                    escape_next = False
+                    continue
+                if ch == "\\" and in_str:
+                    escape_next = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if ch == "[":
+                    depth += 1
+                elif ch == "]":
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = i
+                        break
+            if end_pos != -1:
+                arr_text = response_text[arr_start : end_pos + 1]
+                try:
+                    sites_arr = json.loads(arr_text)
+                    parsed = {"sites": sites_arr}
+                except json.JSONDecodeError:
+                    pass
+
+    if parsed is None:
+        return []
+
+    raw_sites = parsed.get("sites", [])
+    if not isinstance(raw_sites, list):
+        return []
+
+    out: list[dict] = []
+    for item in raw_sites:
+        if not isinstance(item, dict):
+            continue
+        site_id = _normalize_phrase(str(item.get("id") or ""))
+
+        names_raw = item.get("names", [])
+        if isinstance(names_raw, str):
+            names_raw = [names_raw]
+        names = [_normalize_phrase(str(n)) for n in names_raw if n]
+        names = [n for n in names if len(n) >= 3 and not _is_obvious_non_site(n)]
+
+        primary = site_id or (names[0] if names else "")
+        if not primary or len(primary) < 3:
+            continue
+        if _is_obvious_non_site(primary):
+            continue
+
+        raw_users = item.get("users")
+        raw_rooms = item.get("rooms")
+        users = raw_users if isinstance(raw_users, int) else None
+        rooms = raw_rooms if isinstance(raw_rooms, int) else None
+
+        out.append({
+            "id": site_id or primary,
+            "names": names,
+            "address": str(item.get("address") or "").strip(),
+            "mdf_idf": str(item.get("mdf_idf") or "").strip(),
+            "access_window": str(item.get("access_window") or "").strip(),
+            "escort": str(item.get("escort") or "").strip(),
+            "users": users,
+            "rooms": rooms,
+            "notes": str(item.get("notes") or "").strip(),
+        })
     return out
 
 

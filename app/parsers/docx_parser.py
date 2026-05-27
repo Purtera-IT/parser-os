@@ -109,7 +109,27 @@ class DocxParser(BaseParser):
         document = Document(path)
         atoms: list[EvidenceAtom] = []
 
+        # v48 FIX 1: Build the set of paragraph object IDs that live inside
+        # table cells BEFORE the paragraph loop runs. python-docx's
+        # document.paragraphs includes table-cell paragraphs, so without this
+        # guard every table cell is processed TWICE: once as a standalone
+        # paragraph atom (losing row context) and once inside the table loop
+        # below (correct, with full row structure). Double-emission produces
+        # garbage atoms ("Access Constraint") and silently drops full-row
+        # structured content when site_roster fires.
+        _table_para_ids: set[int] = set()
+        for _tbl in document.tables:
+            for _row in _tbl.rows:
+                for _cell in _row.cells:
+                    for _para in _cell.paragraphs:
+                        _table_para_ids.add(id(_para))
+
         for idx, paragraph in enumerate(document.paragraphs):
+            # v48 FIX 1: skip paragraphs that belong to a table cell.
+            # Their content is handled by the table loop below with proper
+            # row structure and column context preserved.
+            if id(paragraph) in _table_para_ids:
+                continue
             text = paragraph.text.strip()
             if not text:
                 continue
@@ -130,8 +150,12 @@ class DocxParser(BaseParser):
             )
 
         # Build all-document text once for ``kind=physical_site`` declarations.
+        # v48 FIX 1: exclude table-cell paragraphs so the surrounding-text
+        # heuristic stays accurate (otherwise table text bleeds in twice).
         document_text = " ".join(
-            (p.text or "").strip() for p in document.paragraphs
+            (p.text or "").strip()
+            for p in document.paragraphs
+            if id(p) not in _table_para_ids
         )
 
         for table_idx, table in enumerate(document.tables):
@@ -154,7 +178,19 @@ class DocxParser(BaseParser):
             )
             if roster_atoms:
                 atoms.extend(roster_atoms)
-                continue
+                # v48 FIX 3: Only skip per-row fallback when the roster
+                # extraction is HIGH-confidence (≥2 atoms, all confidence
+                # ≥0.75). Low-confidence rosters fall through so the
+                # per-row emitter ALSO processes the table — duplicate
+                # coverage beats silent data loss. entity_resolution
+                # collapses the dupes later.
+                _high_conf_roster = (
+                    len(roster_atoms) >= 2
+                    and all(getattr(a, "confidence", 0.0) >= 0.75 for a in roster_atoms)
+                )
+                if _high_conf_roster:
+                    continue
+                # Low confidence: fall through to per-row emission below.
 
             # Per-row atom — concatenate all cells so the row's
             # context (Site + Part + Qty) survives as one atom for

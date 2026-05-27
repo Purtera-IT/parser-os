@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from app.core.cache import (
     build_cached_artifact_result,
@@ -562,6 +563,20 @@ def compile_project(
             warnings.append(f"INFO: typed-atom classifier promoted {promoted} atoms from scope_item/entity")
         telemetry.end_stage(stage, output_count=promoted)
 
+    # v48 FIX 7: collapse intra-doc duplicate atoms emitted by PLIR
+    # (page-level iterative recall) on repeated section headers.
+    with telemetry.stage("duplicate_atom_collapse", input_count=len(atoms)) as stage:
+        before = len(atoms)
+        try:
+            from app.core.entity_resolution import collapse_duplicate_atoms
+            atoms = collapse_duplicate_atoms(atoms)
+        except Exception as exc:
+            warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
+        dropped = before - len(atoms)
+        if dropped > 0:
+            warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
@@ -583,6 +598,112 @@ def compile_project(
             entities, site_alias_groups + stakeholder_alias_groups
         )
         telemetry.end_stage(stage, output_count=len(entities))
+
+    # v48 FIX 6: Cross-doc conflict detection.
+    # Build artifact_id → authority_tier map from filenames, then scan
+    # atoms for the same entity_key appearing with contradictory numeric
+    # values across docs with different tiers.
+    cross_doc_conflicts: list[dict[str, Any]] = []
+    try:
+        from app.core.authority import classify_artifact_authority
+        from collections import defaultdict
+        # Map artifact_id → filename → tier
+        artifact_tier: dict[str, str] = {}
+        for atom in atoms:
+            aid = getattr(atom, "artifact_id", None)
+            if not aid or aid in artifact_tier:
+                continue
+            refs = getattr(atom, "source_refs", None) or []
+            fname = ""
+            if refs:
+                fname = getattr(refs[0], "filename", "") or ""
+            artifact_tier[aid] = classify_artifact_authority(fname) if fname else "supporting_evidence"
+        # Group (entity_key, first_int_in_atom) → list of (artifact_id, tier, raw_text)
+        groups: dict[tuple, list] = defaultdict(list)
+        for atom in atoms:
+            ekeys = getattr(atom, "entity_keys", None) or []
+            if not ekeys:
+                continue
+            rt = getattr(atom, "raw_text", "") or ""
+            nums = re.findall(r'\b(\d+(?:\.\d+)?)\b', rt)
+            if not nums:
+                continue
+            aid = getattr(atom, "artifact_id", "unknown")
+            tier = artifact_tier.get(aid, "supporting_evidence")
+            for ekey in ekeys:
+                groups[(ekey, nums[0])].append({
+                    "value": nums[0],
+                    "artifact_id": aid,
+                    "authority_tier": tier,
+                    "raw_text": rt[:200],
+                })
+        # Look for entity keys with multiple distinct values across multiple tiers
+        by_entity: dict[str, list] = defaultdict(list)
+        for (ekey, val), entries in groups.items():
+            for entry in entries:
+                by_entity[ekey].append({**entry, "value": val})
+        for ekey, entries in by_entity.items():
+            tiers = {e["authority_tier"] for e in entries}
+            values = {e["value"] for e in entries}
+            if len(values) > 1 and len(tiers) > 1:
+                if "contractual_final" in tiers:
+                    severity = "high"
+                elif "approved_scope" in tiers:
+                    severity = "medium"
+                else:
+                    severity = "low"
+                cross_doc_conflicts.append({
+                    "entity_key": ekey,
+                    "values": entries,
+                    "severity": severity,
+                })
+        if cross_doc_conflicts:
+            warnings.append(f"INFO: detected {len(cross_doc_conflicts)} cross-doc conflicts")
+    except Exception as exc:
+        warnings.append(f"WARNING: cross_doc_conflicts failed: {type(exc).__name__}: {exc}")
+
+    # v48 FIX 8: BOM arithmetic cross-check.
+    bom_arithmetic_check: dict[str, Any] | None = None
+    try:
+        def _extract_dollars(text: str) -> float | None:
+            m = re.search(r'\$\s*([\d,]+(?:\.\d+)?)', text)
+            if m:
+                return float(m.group(1).replace(",", ""))
+            return None
+        line_items: list[float] = []
+        stated_total: float | None = None
+        for atom in atoms:
+            atype = str(getattr(atom, "atom_type", "") or "")
+            if hasattr(atom.atom_type, "value"):
+                atype = atom.atom_type.value
+            rt = getattr(atom, "raw_text", "") or ""
+            rt_lower = rt.lower()
+            if "vendor_line_item" in atype or "bom_line" in atype:
+                v = _extract_dollars(rt)
+                if v and v > 0:
+                    line_items.append(v)
+            elif any(kw in rt_lower for kw in ("grand total", "total price", "contract total", "project total")):
+                v = _extract_dollars(rt)
+                if v and v > 0:
+                    stated_total = v
+        if len(line_items) >= 2 and stated_total is not None:
+            line_sum = sum(line_items)
+            discrepancy = abs(line_sum - stated_total)
+            pct = (discrepancy / stated_total * 100) if stated_total else 0
+            if pct >= 0.5:
+                bom_arithmetic_check = {
+                    "line_item_sum": round(line_sum, 2),
+                    "stated_total": round(stated_total, 2),
+                    "discrepancy": round(discrepancy, 2),
+                    "discrepancy_pct": round(pct, 2),
+                    "severity": "high" if pct > 5 else "medium" if pct > 1 else "low",
+                }
+                warnings.append(
+                    f"INFO: BOM arithmetic discrepancy: line-item sum ${line_sum:,.2f} "
+                    f"vs stated total ${stated_total:,.2f} ({pct:.1f}%)"
+                )
+    except Exception as exc:
+        warnings.append(f"WARNING: bom_arithmetic_check failed: {type(exc).__name__}: {exc}")
 
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:
         edges = build_edges(project_id=resolved_project_id, atoms=atoms, entities=entities)

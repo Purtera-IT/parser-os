@@ -138,6 +138,10 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             "acceptance_criteria": lambda: _extract_acceptance_retrieved(by_artifact),
             "penalties": lambda: _extract_penalties_retrieved(by_artifact),
             "compliance_obligations": lambda: _extract_compliance_obligations_retrieved(by_artifact),
+            # v48 — 3 new extractors
+            "lead_times": lambda: _extract_lead_times_retrieved(by_artifact),
+            "electrical_acceptance": lambda: _extract_electrical_acceptance_retrieved(by_artifact),
+            "payment_terms": lambda: _extract_payment_terms_retrieved(by_artifact),
         }
     else:
         calls = {
@@ -576,6 +580,10 @@ def _empty_result() -> dict[str, Any]:
         "acceptance_criteria": [],
         "penalties": [],
         "compliance_obligations": [],
+        # v48 — 3 new entity types
+        "lead_times": [],
+        "electrical_acceptance": [],
+        "payment_terms": [],
     }
 
 
@@ -787,12 +795,27 @@ DOCUMENTS:
 
 OUTPUT (array of objects):
 {{"stakeholders": [
-  {{"name": "<Full Name as written in docs>", "role": "<role or null>", "email": "<email or null>", "phone": "<phone or null>"}},
+  {{
+    "name": "<Full Name as written in docs>",
+    "title": "<job title or null>",
+    "role": "<functional role in THIS project: PM | technical lead | approver | signatory | bid contact | exec sponsor | null>",
+    "email": "<email or null>",
+    "phone": "<phone or null>",
+    "approval_domain": "<what this person approves, e.g. 'technical design', 'contracts >$1.5M', 'scope changes', 'all deliverables' — or null>",
+    "org": "<'customer' | 'vendor' | 'integrator' | 'consultant' | null>",
+    "signatory": <true if they sign contracts or acceptance docs, false otherwise>
+  }},
   ...
 ]}}
 
 If genuinely no named humans appear in the docs, return: {{"stakeholders": []}}
 But if you see ANY email with an associated name, or any "contact <Name>" line, that person MUST appear in your output.
+
+approval_domain examples:
+- "technical sign-off on design docs"
+- "CFO authority for contracts >$1.5M"
+- "IT security approval on network changes"
+- "project acceptance sign-off"
 
 /no_think"""
 
@@ -810,7 +833,7 @@ def _extract_stakeholders(docs_excerpt: str) -> list[dict[str, Any]]:
         return []
     return _normalize_objects(
         obj.get("stakeholders"),
-        ("name", "role", "email", "phone"),
+        ("name", "title", "role", "email", "phone", "approval_domain", "org", "signatory"),
         is_stakeholder=True,
     )
 
@@ -1031,7 +1054,7 @@ def _extract_stakeholders_chunked(
         by_artifact,
         build_prompt=_build_stakeholders_prompt,
         output_key="stakeholders",
-        fields=("name", "role", "email", "phone"),
+        fields=("name", "title", "role", "email", "phone", "approval_domain", "org", "signatory"),
         max_tokens=1024,
         is_stakeholder=True,
     )
@@ -1740,9 +1763,13 @@ def _extract_stakeholders_retrieved(
         else:
             entries = [{
                 "name": r.get("name"),
+                "title": r.get("title"),
                 "role": r.get("role"),
                 "email": r.get("email"),
                 "phone": r.get("phone"),
+                "approval_domain": r.get("approval_domain"),
+                "org": r.get("org"),
+                "signatory": r.get("signatory"),
             }]
         for entry in entries:
             if not isinstance(entry, dict):
@@ -1775,11 +1802,16 @@ def _extract_stakeholders_retrieved(
             if sig in seen_names:
                 continue
             seen_names.add(sig)
+            sig_val = entry.get("signatory")
             out.append({
                 "name": name,
+                "title": (entry.get("title") or "").strip() or None,
                 "role": (entry.get("role") or "").strip() or None,
                 "email": (entry.get("email") or "").strip() or None,
                 "phone": (entry.get("phone") or "").strip() or None,
+                "approval_domain": (entry.get("approval_domain") or "").strip() or None,
+                "org": (entry.get("org") or "").strip() or None,
+                "signatory": bool(sig_val) if isinstance(sig_val, (bool, int)) else False,
                 "_source_sentence": r.get("_source_sentence"),
                 "_source_artifact_id": r.get("_source_artifact_id"),
             })
@@ -2033,6 +2065,220 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
         return str(result.get("response") or "")
     except json.JSONDecodeError:
         return ""
+
+
+# ════════════════════════════════════════════════════════════════════
+# v48 EXTRACTORS — lead times / electrical acceptance / payment terms
+# ════════════════════════════════════════════════════════════════════
+
+
+def _retrieve_for_v48(by_artifact: dict[str, list[Any]], queries: list[str]) -> str:
+    """Shared retrieval + excerpt build for v48 extractors. Returns the
+    excerpt text (one line per retrieved atom) or empty string if nothing
+    relevant was found.
+    """
+    try:
+        from app.core.embedding_retrieval import retrieve_for_query
+    except ImportError:
+        return ""
+    atoms: list[Any] = []
+    seen: set[str] = set()
+    for art_atoms in by_artifact.values():
+        for a in art_atoms:
+            aid = getattr(a, "id", None)
+            if aid and aid not in seen:
+                atoms.append(a)
+                seen.add(aid)
+    if not atoms:
+        return ""
+    try:
+        retrieved = retrieve_for_query(atoms=atoms, queries=queries, top_k=20, dedupe=True)
+    except TypeError:
+        # Fallback for retrieval implementations with a slightly different signature.
+        retrieved = []
+    except Exception:
+        return ""
+    if not retrieved:
+        return ""
+    return "\n".join(f"- {getattr(a, 'raw_text', '')}" for a in retrieved)
+
+
+def _extract_lead_times_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract procurement lead times and delivery windows.
+
+    Targets: "ARO N weeks", "lead time N days/weeks", "delivery within N
+    weeks of PO", "staging T+N", "ship window", "procurement timeline".
+    """
+    queries = [
+        "lead time delivery weeks after purchase order ARO",
+        "procurement timeline equipment delivery schedule",
+        "staging ship window material availability",
+        "weeks days after notice to proceed delivery",
+    ]
+    excerpt = _retrieve_for_v48(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract procurement lead times and delivery windows from these project document excerpts.
+
+For each lead time / delivery constraint found, return:
+- item: what is being delivered or procured
+- duration: the time value (e.g. "14 weeks", "6-8 weeks", "21 days")
+- trigger: what starts the clock (e.g. "ARO", "after PO", "after NTP", "after deposit")
+- notes: any relevant context
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"lead_times": [
+  {{"item": "...", "duration": "...", "trigger": "...", "notes": "..."}}
+]}}
+
+If none found: {{"lead_times": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("lead_times", [])
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("item") or "").strip()
+        d = str(item.get("duration") or "").strip()
+        if t and d:
+            out.append({
+                "item": t,
+                "duration": d,
+                "trigger": str(item.get("trigger") or "").strip(),
+                "notes": str(item.get("notes") or "").strip(),
+            })
+    return out
+
+
+def _extract_electrical_acceptance_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract electrical and commissioning acceptance test requirements.
+
+    Targets: megger readings, ground resistance thresholds, burn-in
+    periods, ATP checklist items, OTDR fiber test requirements, PoE
+    load tests, UPS transfer-time tests, surge protection ratings.
+    """
+    queries = [
+        "megger insulation resistance test ground bonding ATP acceptance test",
+        "burn-in period commissioning test fiber OTDR attenuation",
+        "acceptance test procedure electrical PoE load verification",
+        "ground resistance ohm threshold UPS transfer time surge protection",
+    ]
+    excerpt = _retrieve_for_v48(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract electrical and commissioning acceptance test requirements from these excerpts.
+
+For each test requirement, return:
+- test: name or description of the test
+- threshold: the pass/fail criterion (e.g. ">100 MΩ", "<5 Ω", "≥-3.5 dB insertion loss")
+- scope: what equipment or system it applies to
+- notes: timing, who performs it, documentation required
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"electrical_acceptance": [
+  {{"test": "...", "threshold": "...", "scope": "...", "notes": "..."}}
+]}}
+
+If none found: {{"electrical_acceptance": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("electrical_acceptance", [])
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("test") or "").strip()
+        if t:
+            out.append({
+                "test": t,
+                "threshold": str(item.get("threshold") or "").strip(),
+                "scope": str(item.get("scope") or "").strip(),
+                "notes": str(item.get("notes") or "").strip(),
+            })
+    return out
+
+
+def _extract_payment_terms_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract structured payment term schedules.
+
+    Targets: milestone-based payment splits ("30% upon execution"),
+    retainage terms, net-N payment windows, progress billing schedules,
+    final acceptance payment triggers.
+    """
+    queries = [
+        "payment schedule milestone percent upon contract execution deposit",
+        "retainage final payment upon acceptance net 30 billing",
+        "progress payment invoicing tranche equipment delivery",
+        "30 percent 40 percent payment terms commercial financial",
+    ]
+    excerpt = _retrieve_for_v48(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract payment terms and schedules from these project document excerpts.
+
+For each payment tranche or term, return:
+- tranche: label (e.g. "Deposit", "Equipment Delivery", "Final Acceptance", "Retainage")
+- percent: percentage (number only, no % symbol, e.g. 30)
+- trigger: what event releases this payment
+- notes: any conditions, net terms, or exceptions
+
+Also extract any net payment window (e.g. "Net 30", "Net 45").
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON, no markdown):
+{{"payment_terms": [
+  {{"tranche": "...", "percent": <number or null>, "trigger": "...", "notes": "..."}}
+],
+  "net_days": <integer or null>,
+  "retainage_percent": <number or null>
+}}
+
+If none found: {{"payment_terms": [], "net_days": null, "retainage_percent": null}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("payment_terms", [])
+    if not isinstance(raw, list):
+        return []
+    net_days = obj.get("net_days") if isinstance(obj.get("net_days"), int) else None
+    retainage = obj.get("retainage_percent")
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        tranche = str(item.get("tranche") or "").strip()
+        if tranche:
+            pct = item.get("percent")
+            out.append({
+                "tranche": tranche,
+                "percent": pct if isinstance(pct, (int, float)) else None,
+                "trigger": str(item.get("trigger") or "").strip(),
+                "notes": str(item.get("notes") or "").strip(),
+                "net_days": net_days,
+                "retainage_percent": retainage,
+            })
+    return out
 
 
 # ════════════════════════════════════════════════════════════════════

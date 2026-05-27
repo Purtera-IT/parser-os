@@ -39,6 +39,13 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+# v48: populated by extract_sites_with_llm structured path.
+# Maps any site name/alias → full site attribute dict
+# {id, names, address, mdf_idf, access_window, escort, users, rooms, notes}.
+# Read by entity_extraction.py / envelope projector to enrich site entities
+# with their attributes (currently a marker for future wiring).
+_llm_site_attr_cache: dict[str, dict] = {}
+
 # Headings that indicate the section IS the authoritative site list.
 # Match against normalized section path tokens (lower-cased).
 _LOCATIONS_SECTION_PHRASES: tuple[str, ...] = (
@@ -586,15 +593,33 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             if ollama_reachable():
                 # Primary path: LLM reads the docs and tells us the
                 # sites directly. No regex involvement.
-                llm_extracted = extract_sites_with_llm(atom_list)
-                if llm_extracted:
-                    # LLM extract is the source of truth. No merge with
-                    # the regex catalog — merging contaminates the result
-                    # with false positives the verify pass doesn't always
-                    # catch (SaaS vendor names misread as buildings,
-                    # table-header fragments, etc.). The LLM read the
-                    # actual doc content; trust its answer.
-                    catalog = llm_extracted
+                # v48: extract_sites_with_llm now returns list[dict] of
+                # structured site objects with attributes (mdf_idf,
+                # access_window, etc.). Build the set[str] catalog from
+                # all ids + names so phrase_is_in_catalog() works
+                # unchanged. Cache the full attribute dicts so entity
+                # enrichment can later attach them to site entities.
+                llm_site_objects = extract_sites_with_llm(atom_list)
+                # v48 supplemental: complete truncated PDF values
+                try:
+                    from app.core.entity_resolution import complete_truncated_site_values
+                    llm_site_objects = complete_truncated_site_values(llm_site_objects)
+                except Exception:
+                    pass
+                if llm_site_objects:
+                    catalog = set()
+                    for _s in llm_site_objects:
+                        if _s.get("id"):
+                            catalog.add(_s["id"])
+                        catalog.update(_s.get("names") or [])
+                    # Cache structured attrs keyed by id + any alias.
+                    import app.core.site_detection as _self
+                    _self._llm_site_attr_cache = {
+                        key: _s
+                        for _s in llm_site_objects
+                        for key in ([_s.get("id")] + list(_s.get("names") or []))
+                        if key
+                    }
                 elif catalog:
                     # Extract returned nothing — try verify on the
                     # structural regex catalog as a fallback polish.

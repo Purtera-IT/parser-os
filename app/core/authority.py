@@ -33,6 +33,58 @@ MEETING_NOTE_NEVER_BEATS = {
 }
 
 
+# v48: Document-level authority tier signals.
+# Maps normalized filename substrings to their tier label so the compiler
+# can assign artifact-level authority and resolve cross-doc conflicts.
+AUTHORITY_TIER_SIGNALS: dict[str, str] = {
+    # Tier 1: contractually binding — customer-signed or final-approved
+    "sow": "contractual_final",
+    "statement of work": "contractual_final",
+    "executed": "contractual_final",
+    "signed": "contractual_final",
+    "purchase order": "contractual_final",
+    "contract": "contractual_final",
+    "change order": "contractual_final",
+    # Tier 2: approved scope — customer-reviewed, scope-defining
+    "rfp": "approved_scope",
+    "rfq": "approved_scope",
+    "rfb": "approved_scope",
+    "specifications": "approved_scope",
+    "spec": "approved_scope",
+    "requirements": "approved_scope",
+    "scope": "approved_scope",
+    "design": "approved_scope",
+    "approved": "approved_scope",
+    # Tier 3: supporting evidence — informs scope but not authoritative
+    "proposal": "supporting_evidence",
+    "pre-sales": "supporting_evidence",
+    "pre_sales": "supporting_evidence",
+    "pre sales": "supporting_evidence",
+    "survey": "supporting_evidence",
+    "assessment": "supporting_evidence",
+    "discovery": "supporting_evidence",
+    "transcript": "supporting_evidence",
+    "meeting notes": "supporting_evidence",
+    "notes": "supporting_evidence",
+    "draft": "supporting_evidence",
+}
+
+
+def classify_artifact_authority(filename: str) -> str:
+    """Return the authority tier for an artifact based on its filename.
+
+    Returns one of: 'contractual_final', 'approved_scope', 'supporting_evidence'.
+    Defaults to 'supporting_evidence' when no signal matches.
+    Match strategy: case-insensitive substring on a normalized filename.
+    Order in AUTHORITY_TIER_SIGNALS matters — more specific signals first.
+    """
+    normalized = filename.lower().replace("_", " ").replace("-", " ")
+    for signal, tier in AUTHORITY_TIER_SIGNALS.items():
+        if signal in normalized:
+            return tier
+    return "supporting_evidence"
+
+
 class AuthorityDecision(BaseModel):
     governing_atom_id: str
     losing_atom_id: str

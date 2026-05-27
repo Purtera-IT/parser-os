@@ -315,6 +315,98 @@ def collect_stakeholder_alias_groups(atoms: list[EvidenceAtom]) -> list[frozense
     return _coalesce_alias_groups(groups)
 
 
+def collapse_duplicate_atoms(atoms: list) -> list:
+    """v48 — collapse near-duplicate atoms emitted by repeated doc sections.
+
+    Two atoms are duplicates when:
+      1. normalized_text / raw_text is IDENTICAL (PLIR repeat), OR
+      2. raw_text SequenceMatcher similarity > 0.92 AND same artifact_id.
+
+    Keep the higher-confidence copy. Intra-doc only — cross-doc repetition
+    is intentional evidence corroboration.
+    """
+    if not atoms:
+        return atoms
+    by_artifact: dict[str, list] = {}
+    other: list = []
+    for atom in atoms:
+        aid = getattr(atom, "artifact_id", None)
+        if aid:
+            by_artifact.setdefault(aid, []).append(atom)
+        else:
+            other.append(atom)
+    result: list = list(other)
+    for aid, art_atoms in by_artifact.items():
+        seen_normalized: dict[str, object] = {}
+        unique: list = []
+        for atom in sorted(art_atoms, key=lambda a: getattr(a, "confidence", 0.0), reverse=True):
+            norm = getattr(atom, "normalized_text", None) or getattr(atom, "raw_text", "") or ""
+            if not norm:
+                unique.append(atom)
+                continue
+            norm_key = norm.strip().lower()
+            if norm_key not in seen_normalized:
+                seen_normalized[norm_key] = atom
+                unique.append(atom)
+        # Second pass: fuzzy dedup on long text only (≥50 chars)
+        final: list = []
+        for atom in unique:
+            rt = getattr(atom, "raw_text", "") or ""
+            if len(rt) < 50:
+                final.append(atom)
+                continue
+            is_dup = False
+            for existing in final:
+                ext = getattr(existing, "raw_text", "") or ""
+                if len(ext) < 50:
+                    continue
+                sim = SequenceMatcher(None, rt[:500], ext[:500]).ratio()
+                if sim > 0.92:
+                    is_dup = True
+                    break
+            if not is_dup:
+                final.append(atom)
+        result.extend(final)
+    return result
+
+
+def complete_truncated_site_values(site_objects: list[dict]) -> list[dict]:
+    """v48 supplemental — cross-doc prefix completion for truncated PDF
+    site attribute values.
+
+    Doc 08 (PDF) clips at column boundaries: 'ATL-WEST-02' → 'ATL-WEST-0'.
+    Doc 02 (DOCX) has the complete value. When one is a tight prefix of
+    another (≤4 chars longer), promote the truncated entry to the full value.
+
+    Only applies to id/address/mdf_idf attributes. Prefix must be ≥5 chars.
+    """
+    if not site_objects:
+        return site_objects
+    attrs_to_check = ("id", "address", "mdf_idf")
+    for attr in attrs_to_check:
+        all_values: list[tuple[int, str]] = [
+            (i, s[attr]) for i, s in enumerate(site_objects)
+            if s.get(attr) and len(s[attr]) >= 5
+        ]
+        all_values.sort(key=lambda x: len(x[1]), reverse=True)
+        for long_idx, long_val in all_values:
+            for short_idx, short_val in all_values:
+                if short_idx == long_idx:
+                    continue
+                if len(short_val) >= len(long_val):
+                    continue
+                if len(short_val) < 5:
+                    continue
+                if long_val.startswith(short_val) and len(long_val) - len(short_val) <= 4:
+                    site_objects[short_idx][attr] = long_val
+                    if attr == "id":
+                        names = site_objects[short_idx].get("names", [])
+                        if short_val in names:
+                            names[names.index(short_val)] = long_val
+                        site_objects[short_idx]["names"] = names
+    return site_objects
+
+
 def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]:
     """Scan every atom's raw_text for site-alias co-mention patterns
     and return the union of all discovered alias groups.
