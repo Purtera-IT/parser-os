@@ -229,6 +229,20 @@ def embed_texts(texts: list[str]) -> np.ndarray:
         return np.zeros((0, 4096), dtype=np.float32)
     parallel = int(os.environ.get("SOWSMITH_EMBED_PARALLEL", str(_BATCH_SIZE)))
     out: list[list[float] | None] = [None] * len(texts)
+    # v45.2: progress tracker substage updates so the UI can show "Embedding
+    # sentences X/Y" instead of a frozen progress bar.
+    try:
+        from app.core.progress_tracker import get_active_tracker as _get_tr
+        _tr = _get_tr()
+    except Exception:
+        _tr = None
+    if _tr is not None and len(texts) >= 20:
+        try:
+            _tr.substage("embedding", current=0, total=len(texts))
+        except Exception:
+            pass
+    _done = 0
+    _emit_every = max(1, len(texts) // 20)  # ~20 updates per embed call
     with ThreadPoolExecutor(max_workers=parallel) as ex:
         futures = {ex.submit(_embed_one, t): i for i, t in enumerate(texts)}
         for fut in as_completed(futures):
@@ -237,6 +251,12 @@ def embed_texts(texts: list[str]) -> np.ndarray:
                 out[i] = fut.result()
             except Exception:
                 out[i] = None
+            _done += 1
+            if _tr is not None and len(texts) >= 20 and (_done % _emit_every == 0 or _done == len(texts)):
+                try:
+                    _tr.substage("embedding", current=_done, total=len(texts))
+                except Exception:
+                    pass
     # Build matrix; failed rows = zeros (zero similarity to anything,
     # so they auto-drop in top-K)
     dim = 4096

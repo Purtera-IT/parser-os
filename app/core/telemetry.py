@@ -30,9 +30,20 @@ class CompileTelemetry:
         self._stream = stream or sys.stderr
         self._compile_start_perf = perf_counter()
         self.stages: list[CompileStageTrace] = []
+        # v45.2: optional ProgressTracker hook.  Set via set_progress_tracker().
+        self._progress_tracker = None
 
     def set_compile_id(self, compile_id: str) -> None:
         self.compile_id = compile_id
+
+    def set_progress_tracker(self, tracker) -> None:
+        """v45.2: attach a ProgressTracker so each start/end_stage call updates progress.json.
+
+        Every subsequent start_stage() emits tracker.stage_started(name) and every
+        end_stage() emits tracker.stage_completed(name, duration_ms, counts).  Errors
+        in the tracker never bubble up into the compile pipeline.
+        """
+        self._progress_tracker = tracker
 
     def _emit_log(
         self,
@@ -58,6 +69,12 @@ class CompileTelemetry:
         print(json.dumps(payload, ensure_ascii=True), file=self._stream)
 
     def start_stage(self, stage_name: str, input_count: int | None = None) -> _StageToken:
+        # v45.2: notify the progress tracker that we entered this stage.
+        if self._progress_tracker is not None:
+            try:
+                self._progress_tracker.stage_started(stage_name)
+            except Exception:
+                pass
         return _StageToken(
             stage_name=stage_name,
             started_at=utc_now_iso(),
@@ -97,6 +114,20 @@ class CompileTelemetry:
             warnings=warning_rows,
             errors=error_rows,
         )
+        # v45.2: tell the progress tracker the stage finished so it can advance ETA
+        # and percent_complete.  Failures here never bubble into the pipeline.
+        if self._progress_tracker is not None:
+            try:
+                self._progress_tracker.stage_completed(
+                    token.stage_name,
+                    duration_ms=stage.duration_ms,
+                    counts={
+                        "input_count": token.input_count or 0,
+                        "output_count": output_count or 0,
+                    },
+                )
+            except Exception:
+                pass
         return stage
 
     @contextmanager

@@ -718,7 +718,21 @@ def extract_visual_pages(
             "raw_extraction": parsed, "rows": rows,
         }
 
+    # v45.2: progress tracker — emit a "vision" substage with current/total so
+    # the UI can show "Reading tables and diagrams (vision-LLM) 4/30 pages".
+    try:
+        from app.core.progress_tracker import get_active_tracker as _get_tr
+        _tr = _get_tr()
+    except Exception:
+        _tr = None
+    if _tr is not None:
+        try:
+            _tr.substage("vision", current=0, total=len(pages_to_process))
+        except Exception:
+            pass
+
     results: list[dict[str, Any]] = []
+    _done = 0
     with ThreadPoolExecutor(max_workers=parallel) as pool:
         futures = [pool.submit(process, p) for p in pages_to_process]
         for fut in as_completed(futures):
@@ -729,6 +743,12 @@ def extract_visual_pages(
                 r = None
             if r:
                 results.append(r)
+            _done += 1
+            if _tr is not None:
+                try:
+                    _tr.substage("vision", current=_done, total=len(pages_to_process))
+                except Exception:
+                    pass
     return results
 
 

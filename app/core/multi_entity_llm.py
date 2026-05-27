@@ -148,7 +148,21 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             "site_clusters": lambda: _extract_site_clusters_chunked(by_artifact),
         }
 
+    # v45.2: progress tracker hookup — emit canonicalize substage updates as
+    # each of the 11 extractors completes.  No-op when no tracker is registered.
+    try:
+        from app.core.progress_tracker import get_active_tracker as _get_tr
+        _tr = _get_tr()
+    except Exception:
+        _tr = None
+    if _tr is not None:
+        try:
+            _tr.substage("canonicalize", current=0, total=len(calls))
+        except Exception:
+            pass
+
     results: dict[str, Any] = _empty_result()
+    _done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         futures = {pool.submit(fn): key for key, fn in calls.items()}
         for fut in concurrent.futures.as_completed(futures):
@@ -158,6 +172,12 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             except Exception:
                 # Individual extractor failure: keep zero-value.
                 pass
+            _done += 1
+            if _tr is not None:
+                try:
+                    _tr.substage("canonicalize", current=_done, total=len(calls))
+                except Exception:
+                    pass
     # Stash site_clusters for entity_resolution to pick up without a
     # second LLM call. Used by collect_site_alias_groups to feed
     # canonical-name fusion alongside the regex co-mention patterns.
@@ -309,6 +329,12 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # All gated by SOWSMITH_ZERO_MISS_DISABLE.
     # ────────────────────────────────────────────────────────────
     if not os.environ.get("SOWSMITH_ZERO_MISS_DISABLE"):
+        # v45.2: enter zero_miss substage so the UI shows "PM-critical vocabulary sweep".
+        if _tr is not None:
+            try:
+                _tr.substage("zero_miss", current=0, total=2)  # PM-vocab + PLIR
+            except Exception:
+                pass
         try:
             from app.core.zero_miss import (
                 pm_vocab_sweep,
@@ -424,6 +450,11 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
                 _lg.getLogger(__name__).warning("pm_vocab_sweep failed: %s", e)
 
             # 2 + 3. Per-page coverage + PLIR
+            if _tr is not None:
+                try:
+                    _tr.substage("plir", current=1, total=2)
+                except Exception:
+                    pass
             try:
                 coverage = compute_page_coverage(atoms, raw_by_page)
                 low_cov = find_low_coverage_pages(

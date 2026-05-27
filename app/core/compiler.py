@@ -275,6 +275,29 @@ def compile_project(
     # specific exemplars (POS / ITAD / cabling / wireless / etc.).
     import os as _os
     _os.environ["SOWSMITH_PROJECT_DIR_NAME"] = project_dir.name
+
+    # v45.2: progress tracker — emits per-stage events to
+    # {project_dir}/.orbitbrief/progress.json for live UI consumption.
+    # Compile ID is finalized after parse_artifacts (when we have atom
+    # contents to hash); use a placeholder until then.
+    import time as _time
+    try:
+        from app.core.progress_tracker import (
+            ProgressTracker,
+            register_tracker,
+            unregister_tracker,
+        )
+        _progress_id = f"cmp_pending_{int(_time.time())}"
+        _progress_tracker = ProgressTracker(
+            compile_id=_progress_id,
+            deal_id=resolved_project_id,
+            project_dir=project_dir,
+        )
+        register_tracker(_progress_tracker)
+        _progress_tracker.start({})  # populated after artifacts discovered
+    except Exception:
+        _progress_tracker = None
+        _progress_id = None
     if isinstance(domain_pack, DomainPack):
         # Pre-loaded pack from caller wins outright (e.g. tests)
         resolved_domain_pack = domain_pack
@@ -288,6 +311,13 @@ def compile_project(
         )
     set_active_domain_pack(resolved_domain_pack)
     telemetry = CompileTelemetry(project_id=resolved_project_id)
+    # v45.2: hook telemetry → progress tracker so every stage start/end auto-
+    # advances progress.json without instrumenting 20+ stage call sites by hand.
+    if _progress_tracker is not None:
+        try:
+            telemetry.set_progress_tracker(_progress_tracker)
+        except Exception:
+            pass
     warnings: list[str] = []
     if pack_routing_decision is not None:
         warnings.append(
@@ -478,6 +508,28 @@ def compile_project(
             errors=parse_errors,
         )
 
+    # v45.2: now that parse_artifacts is done we know the *real* document size.
+    # Feed it back into the progress tracker so the ETA + remaining-time figures
+    # become accurate for the rest of the run (especially enrich_entities which
+    # dominates wall-clock time).
+    if _progress_tracker is not None:
+        try:
+            _total_chars = sum(len(getattr(a, "text", "") or "") for a in atoms)
+            _atom_count = len(atoms)
+            # Cheap sentence-count proxy: count terminal punctuation across atoms.
+            _sentence_count = 0
+            for _a in atoms:
+                _txt = getattr(_a, "text", "") or ""
+                _sentence_count += sum(1 for ch in _txt if ch in ".!?") + (1 if _txt else 0)
+            _progress_tracker.update_doc_metadata(
+                artifact_count=len(artifacts),
+                atom_count=_atom_count,
+                total_chars=_total_chars,
+                sentence_count=_sentence_count,
+            )
+        except Exception:
+            pass
+
     with telemetry.stage("candidate_adjudication", input_count=len(candidates)) as stage:
         adjudication = adjudicate_candidates(candidates, artifact_paths)
         atoms.extend(adjudication.accepted_atoms)
@@ -496,6 +548,13 @@ def compile_project(
     manifest.cache_misses = cache_misses if use_cache else len(artifacts)
     manifest.reused_artifact_ids = sorted(set(reused_artifact_ids)) if use_cache else []
     telemetry.set_compile_id(manifest.compile_id)
+    # v45.2: rename the in-flight progress.json from cmp_pending_* to the real
+    # content-addressed compile_id so the frontend can correlate.
+    if _progress_tracker is not None:
+        try:
+            _progress_tracker.set_compile_id(manifest.compile_id)
+        except Exception:
+            pass
 
     replay_warnings: list[str] = []
     with telemetry.stage("source_replay", input_count=len(atoms)) as stage:
@@ -730,5 +789,18 @@ def compile_project(
                 ]
             )
         )
+
+    # v45.2: mark the progress tracker complete + drop it from the registry so the
+    # next compile starts with a clean slate.  Failures here NEVER bubble into the
+    # caller's result.
+    if _progress_tracker is not None:
+        try:
+            _progress_tracker.complete()
+        except Exception:
+            pass
+        try:
+            unregister_tracker(_progress_tracker.compile_id)
+        except Exception:
+            pass
 
     return result
