@@ -1,0 +1,45 @@
+name: Tag-triggered downstream rebuild
+
+# Push this file to Purtera-IT/parser-os as
+# .github/workflows/tag-release.yml
+#
+# When parser-os ships a new version tag (vN.N.N), this fires a
+# `repository_dispatch` event on parser-os-service and parser-os-worker
+# to rebuild them with the new pinned ref.  That gives us
+# "push to parser-os → downstreams auto-rebuild" without duplicating
+# workflow logic across each repo.
+#
+# Required secrets:
+#   DOWNSTREAM_DISPATCH_TOKEN: GitHub PAT with repo:write on
+#     parser-os-service + parser-os-worker (so workflows can be dispatched).
+
+on:
+  push:
+    tags: ["v*.*", "v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  notify-downstreams:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract tag
+        id: t
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Dispatch to parser-os-service
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.DOWNSTREAM_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Purtera-IT/parser-os-service/actions/workflows/deploy-dev.yml/dispatches \
+            -d "{\"ref\":\"main\",\"inputs\":{\"parser_os_ref\":\"${{ steps.t.outputs.tag }}\"}}"
+
+      - name: Dispatch to parser-os-worker
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.DOWNSTREAM_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Purtera-IT/parser-os-worker/actions/workflows/deploy-dev.yml/dispatches \
+            -d "{\"ref\":\"main\",\"inputs\":{\"parser_os_ref\":\"${{ steps.t.outputs.tag }}\"}}"
