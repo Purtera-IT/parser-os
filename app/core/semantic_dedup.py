@@ -88,6 +88,29 @@ def _value_key(atom: Any) -> tuple | None:
                     return k
         return ""
 
+    def _first_trunc(*fields: str, n: int = 40) -> str:
+        """Like _first, but truncate string values to N chars BEFORE
+        normalizing. Used for description-style fallback keys so two
+        LLM-paraphrased descriptions of the same fact collapse instead
+        of each surviving as a distinct key.
+
+        Example:
+          "Network outage during business hours could ..."   first 40 → "network_outage_during_business_hours_coul"
+          "Network outage during business hours might ..."   first 40 → "network_outage_during_business_hours_migh"
+        Still collapse-friendly at 32-char normalized prefix.
+        """
+        for f in fields:
+            v = val.get(f)
+            if v and isinstance(v, (str, int, float)):
+                s = str(v)[:n]
+                k = _norm_key(s)
+                # Use a shorter prefix of the normalized key for fuzzier
+                # collapse (LLM paraphrases of same fact diverge after
+                # ~30 chars of normalized content).
+                if k and len(k) >= 8:
+                    return k[:32]
+        return ""
+
     if atype == "milestone_phase":
         key = _first("phase_id", "name", "start")
         return (atype, key) if key else None
@@ -95,13 +118,21 @@ def _value_key(atom: Any) -> tuple | None:
         key = _first("task_id", "name")
         return (atype, key) if key else None
     if atype == "requirement":
-        key = _first("req_id", "description")
+        # ID first (stable), fall back to TRUNCATED description so LLM
+        # paraphrases of the same requirement collapse.
+        key = _first("req_id")
+        if not key:
+            key = _first_trunc("description", "text", "requirement", "criterion")
         return (atype, key) if key else None
     if atype == "bom_line":
-        key = _first("item_id", "sku", "description")
+        key = _first("item_id", "sku")
+        if not key:
+            key = _first_trunc("description")
         return (atype, key) if key else None
     if atype == "service_line":
-        key = _first("service_id", "description")
+        key = _first("service_id")
+        if not key:
+            key = _first_trunc("description")
         return (atype, key) if key else None
     if atype == "site_allocation":
         item = _first("bom_item", "item_id", "description", "sku")
@@ -131,7 +162,9 @@ def _value_key(atom: Any) -> tuple | None:
         key = _first("test")
         return (atype, key) if key else None
     if atype == "cutover_step":
-        key = _first("step_id", "description")
+        key = _first("step_id")
+        if not key:
+            key = _first_trunc("description", "action", "step")
         return (atype, key) if key else None
     if atype == "integration_checkpoint":
         ic_id = _first("ic_id")
@@ -145,7 +178,9 @@ def _value_key(atom: Any) -> tuple | None:
         key = _first("classification")
         return (atype, key) if key else None
     if atype == "compliance_rule":
-        key = _first("rule_kind", "condition")
+        key = _first("rule_kind")
+        if not key:
+            key = _first_trunc("condition", "rule", "description", "statement")
         return (atype, key) if key else None
     if atype == "approval_authority":
         appr = _first("approver")
@@ -258,7 +293,34 @@ def _value_key(atom: Any) -> tuple | None:
             return (atype, sys, key)
         return None
     if atype == "risk":
-        key = _first("risk_id", "id", "description")
+        # Stable risk_id first. When LLM didn't emit one, collapse on
+        # truncated description so paraphrased duplicates (60+ from
+        # phased LLM extraction) fold to ~5-10 unique risks.
+        key = _first("risk_id", "id")
+        if not key:
+            key = _first_trunc(
+                "description", "risk", "risk_summary",
+                "text", "summary", "title",
+            )
+        return (atype, key) if key else None
+    if atype == "acceptance_criterion":
+        # No natural ID — collapse on truncated criterion text.
+        key = _first("criterion_id", "ac_id")
+        if not key:
+            key = _first_trunc(
+                "criterion", "test", "acceptance", "criteria",
+                "check", "item", "description", "statement",
+            )
+        return (atype, key) if key else None
+    if atype == "change_order_rule":
+        key = _first("trigger_kind", "rule_id")
+        if not key:
+            key = _first_trunc("rate_or_threshold", "condition", "description")
+        return (atype, key) if key else None
+    if atype == "pricing_assumption":
+        key = _first("domain")
+        if not key:
+            key = _first_trunc("statement", "assumption", "description")
         return (atype, key) if key else None
 
     return None

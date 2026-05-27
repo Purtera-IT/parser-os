@@ -1312,20 +1312,62 @@ def build_site_readiness(
                     sites[k]["contradiction_count"] += 1
                     break
 
-    # v52 FIX 5b: collapse site_readiness rows that are aliases of
-    # the same canonical site. Two-level canonicalization:
-    #   (a) LLM site attr cache (alias_name → canonical_id) from v48
-    #       structured site extraction
-    #   (b) Prefix-based collapse — atl_hq is a prefix of atl_hq_01,
-    #       so the short form becomes an alias of the long. Universal
-    #       — not customer specific.
+    # v53.1 FIX 5c: 3-level canonicalization + gating.
+    #
+    # The problem (cloud v52): rows like atlanta_headquarters,
+    # innovation_tower, warehouse_rf survive merge because the alias
+    # map didn't catch them. They have no devices/scope — just stray
+    # mentions in text — but they still show as "sites".
+    #
+    # Fix: build canonical_set FROM physical_site atoms (authoritative
+    # IDs), build name→canonical map from physical_site value.name +
+    # value.names, then drop any merged row that is (a) not in
+    # canonical_set AND (b) has zero substantive signal.
     try:
         import re as _re_canon
         from app.core.site_detection import _llm_site_attr_cache
 
-        canonical_map: dict[str, str] = {}  # alias_slug → canonical_slug
+        canonical_map: dict[str, str] = {}   # alias_slug → canonical_slug
+        canonical_set: set[str] = set()      # canonical site_keys only
 
-        # (a) LLM cache aliases
+        # (0) Authoritative canonical IDs from physical_site atoms.
+        # These are the ONLY truly canonical sites — every other slug
+        # must alias into one of these or be dropped (if it has no
+        # substantive signal).
+        for _a in atoms:
+            if _atom_type_str(_a) != "physical_site":
+                continue
+            _val = getattr(_a, "value", None) or {}
+            if not isinstance(_val, dict):
+                continue
+            _sid = _val.get("id") or _val.get("site_id") or ""
+            if not _sid:
+                continue
+            _canon_slug = "site:" + _re_canon.sub(
+                r"[^a-z0-9]+", "_", str(_sid).lower()
+            ).strip("_")
+            if not _canon_slug or _canon_slug == "site:":
+                continue
+            canonical_set.add(_canon_slug)
+            # Map physical_site's name + alternative names to this canonical.
+            for _name_field in ("name", "names", "aliases", "alternative_names"):
+                _nv = _val.get(_name_field)
+                if not _nv:
+                    continue
+                if isinstance(_nv, str):
+                    _nv = [_nv]
+                if not isinstance(_nv, (list, tuple)):
+                    continue
+                for _nm in _nv:
+                    if not _nm:
+                        continue
+                    _nslug = "site:" + _re_canon.sub(
+                        r"[^a-z0-9]+", "_", str(_nm).lower()
+                    ).strip("_")
+                    if _nslug and _nslug != _canon_slug:
+                        canonical_map[_nslug] = _canon_slug
+
+        # (a) LLM cache aliases (v48 structured site extraction)
         if _llm_site_attr_cache:
             for alias_name, site_obj in _llm_site_attr_cache.items():
                 if not isinstance(site_obj, dict):
@@ -1335,16 +1377,18 @@ def build_site_readiness(
                     continue
                 canon_slug = "site:" + _re_canon.sub(r"[^a-z0-9]+", "_", str(canon_id).lower()).strip("_")
                 alias_slug = "site:" + _re_canon.sub(r"[^a-z0-9]+", "_", str(alias_name).lower()).strip("_")
-                canonical_map[alias_slug] = canon_slug
+                if alias_slug and canon_slug:
+                    canonical_map[alias_slug] = canon_slug
+                    canonical_set.add(canon_slug)
                 for nm in site_obj.get("names") or []:
                     if nm:
                         nslug = "site:" + _re_canon.sub(r"[^a-z0-9]+", "_", str(nm).lower()).strip("_")
-                        canonical_map[nslug] = canon_slug
+                        if nslug and nslug != canon_slug:
+                            canonical_map[nslug] = canon_slug
 
         # (b) Prefix-based universal collapse. Goal: collapse "atl_hq"
-        # into "atl_hq_01" when both exist. This catches the
-        # short-form aliases that emit when an atom mentions
-        # "ATL-HQ" without the row number.
+        # into "atl_hq_01" when both exist. Catches short-form aliases
+        # like "ATL-HQ" referring to row "ATL-HQ-01".
         sorted_slugs = sorted(sites.keys(), key=len, reverse=True)
         for long_slug in sorted_slugs:
             for short_slug in sorted_slugs:
@@ -1352,20 +1396,46 @@ def build_site_readiness(
                     continue
                 if len(short_slug) >= len(long_slug):
                     continue
-                # short_slug ends without "_"; long_slug has more text
-                # after a separator. e.g. site:atl_hq → site:atl_hq_01
                 if not long_slug.startswith(short_slug + "_"):
                     continue
-                # The extra suffix must be ≤6 chars (numeric or short
-                # code) so we don't collapse "site:atlanta" into
-                # "site:atlanta_metro_warehouse_west" (different sites).
                 extra = long_slug[len(short_slug) + 1:]
                 if len(extra) > 6:
                     continue
-                # Don't override an LLM-cache canonical.
                 if short_slug in canonical_map:
                     continue
                 canonical_map[short_slug] = long_slug
+
+        # (c) Token-overlap collapse for name-style slugs into canonical
+        # IDs. Catches "atlanta_headquarters" → "atl_hq_01" when the
+        # canonical's first-word-initials overlap. Universal heuristic.
+        if canonical_set:
+            def _token_initials(slug: str) -> str:
+                # site:atl_hq_01 → atlhq
+                body = slug[5:] if slug.startswith("site:") else slug
+                parts = [p for p in body.split("_") if p and not p.isdigit()]
+                return "".join(p[0] for p in parts if p)[:6]
+
+            canon_initials = {
+                _token_initials(c): c for c in canonical_set if _token_initials(c)
+            }
+            for sk in list(sites.keys()):
+                if sk in canonical_set or sk in canonical_map:
+                    continue
+                # Compute initials from the alias slug. If a canonical
+                # exists whose initials are a prefix of the alias's
+                # initials, alias into it.
+                body = sk[5:] if sk.startswith("site:") else sk
+                parts = [p for p in body.split("_") if p]
+                alias_initials = "".join(p[0] for p in parts if p)[:6]
+                if not alias_initials or len(alias_initials) < 2:
+                    continue
+                # Prefix match against canonical initials.
+                for ci, cslug in canon_initials.items():
+                    if not ci:
+                        continue
+                    if alias_initials.startswith(ci) or ci.startswith(alias_initials):
+                        canonical_map[sk] = cslug
+                        break
 
         # Merge entries
         merged: dict[str, dict[str, Any]] = {}
@@ -1394,7 +1464,30 @@ def build_site_readiness(
                 m["milestone_present"] = m["milestone_present"] or entry.get("milestone_present", False)
                 if sk != canon:
                     m["_aliases"].add(sk)
-        sites = merged
+
+        # v53.1 final gate: when we have canonical sites (i.e. the
+        # parser identified at least one physical_site atom), any
+        # merged row that is NOT in canonical_set AND has no
+        # substantive signal (devices, scope, stakeholders) is garbage
+        # — typically an address-as-slug or a stray "Atlanta HQ"
+        # mention that should have collapsed but didn't. Drop it.
+        if canonical_set:
+            filtered: dict[str, dict[str, Any]] = {}
+            for ck, entry in merged.items():
+                if ck in canonical_set:
+                    filtered[ck] = entry
+                    continue
+                # Non-canonical: only keep if it has REAL signal
+                substantive = (
+                    len(entry.get("device_keys", set())) > 0
+                    or entry.get("scope_atom_count", 0) > 0
+                    or len(entry.get("stakeholder_keys", set())) >= 2
+                )
+                if substantive:
+                    filtered[ck] = entry
+            sites = filtered
+        else:
+            sites = merged
     except Exception:
         pass
 
