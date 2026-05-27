@@ -3852,11 +3852,18 @@ def _entities_to_atoms(
 
     out: list[Any] = []
     seen_texts: set[str] = set()
+    # v49.1: log which categories the bridge actually saw vs. emitted.
+    # Goes to stderr so worker logs show which LLM extractors returned
+    # data and which the bridge dropped (e.g. wrong field name, dedup).
+    import sys as _sys_v491
+    _cat_counts: dict[str, dict[str, int]] = {}
 
     for category, atom_type in CATEGORY_TO_ATOM_TYPE.items():
         entities = multi_result.get(category)
         if not isinstance(entities, list):
+            _cat_counts[category] = {"in": 0, "out": 0}
             continue
+        _cat_counts[category] = {"in": len(entities), "out": 0}
         for entity in entities:
             if not isinstance(entity, dict):
                 continue
@@ -3902,6 +3909,16 @@ def _entities_to_atoms(
                     parser_version=parser_version,
                 )
             )
+            _cat_counts[category]["out"] += 1
+    # v49.1: diagnostic — surface bridge in/out per category.
+    try:
+        summary = " ".join(
+            f"{cat}:{ct['in']}→{ct['out']}" for cat, ct in _cat_counts.items() if ct["in"] > 0
+        )
+        if summary:
+            print(f"entity_bridge_v49: {summary}", file=_sys_v491.stderr)
+    except Exception:
+        pass
     return out
 
 
@@ -3974,7 +3991,27 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             out.append(k)
         return out
 
+    # v49.1: atom types whose value is already fully structured by the
+    # column schema registry (Fix 1). Their raw_text is a synthesized
+    # composite ("Wi-Fi 7 AP | site: ATL-AIR | qty: 105") that the
+    # regex emitters wrongly parse into ghost site:atl_air_qty_105
+    # entity_keys. Skip enrichment entirely — these atoms carry their
+    # structured fields in atom.value, no entity_keys needed.
+    _SKIP_ENRICHMENT_TYPES = {
+        "site_allocation", "bom_line", "cutover_step",
+        "acceptance_criterion", "deliverable", "site_budget",
+        "integration_checkpoint", "compliance_classification",
+        "system_mapping", "signatory", "site_attribute",
+        "requirement",
+    }
+
     for atom in atom_list:
+        # v49.1: skip schema-emitted atoms entirely
+        _atype = getattr(atom, "atom_type", None)
+        _atype_str = _atype.value if hasattr(_atype, "value") else str(_atype or "")
+        if _atype_str in _SKIP_ENRICHMENT_TYPES:
+            continue
+
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
         value = getattr(atom, "value", None)

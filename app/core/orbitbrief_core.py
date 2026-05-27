@@ -1245,21 +1245,35 @@ def build_site_readiness(
 
     for atom in atoms:
         atom_type = _atom_type_str(atom)
-        # v49 FIX 5: physical_site atoms ARE the authoritative site source.
-        # Read their structured value for the canonical site key instead of
-        # relying on regex entity_keys (which include ghost keys from MDF
-        # codes, access windows, and column headers).
+        # v49 FIX 5 (v49.1): physical_site atoms ARE the authoritative
+        # site source. Read their structured value for the canonical
+        # site key. Skip atoms with NO explicit site_id/id — they
+        # otherwise fall back to address strings as the slug,
+        # producing keys like "site:address_1180_peachtree_st_..."
+        # which is just another ghost site.
         if atom_type == "physical_site":
             val = getattr(atom, "value", None) or {}
             sid = ""
             if isinstance(val, dict):
                 sid = val.get("id") or val.get("site_id") or ""
             if not sid:
-                sid = (getattr(atom, "raw_text", "") or "")[:60]
+                # No explicit site code → skip. Don't pollute site_readiness.
+                continue
             import re as _re_sid
             site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
             site_keys = [f"site:{site_slug}"] if site_slug else []
         else:
+            # v49.1: skip v49 schema atom types entirely — they're
+            # already structured. Their raw_text contains snippets
+            # like "Wi-Fi 7 AP | site: ATL-AIR | qty: 105" which the
+            # regex emitter parses as site:atl_air_qty_105 ghosts.
+            if atom_type in (
+                "site_allocation", "bom_line", "cutover_step",
+                "acceptance_criterion", "deliverable", "site_budget",
+                "integration_checkpoint", "compliance_classification",
+                "system_mapping", "signatory", "site_attribute",
+            ):
+                continue
             site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
         if not site_keys:
             continue
