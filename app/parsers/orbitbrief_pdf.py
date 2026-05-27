@@ -871,6 +871,47 @@ def _fitz_site_roster_fallback(
                 except Exception:
                     is_roster = False
                 if not is_roster:
+                    # v53.5 BACKUP: route through the universal column
+                    # schema registry. When site_roster_extractor's gate
+                    # rejects the table (false negative — e.g. column
+                    # headers don't match the canonical four-pattern set
+                    # but the data IS a site roster), the schema registry
+                    # may still recognize "Site ID + Facility name +
+                    # Street address" and emit physical_site atoms.
+                    try:
+                        from app.core.table_schema_registry import (
+                            identify_schema, emit_atoms_for_schema,
+                        )
+                        sn = identify_schema(columns)
+                        if sn == "site_roster":
+                            schema_atoms = []
+                            for ri, _row in enumerate(rows):
+                                row_vals = [
+                                    _row.get(c, "") if isinstance(_row, dict)
+                                    else (_row[i] if i < len(_row) else "")
+                                    for i, c in enumerate(columns)
+                                ]
+                                schema_atoms.extend(emit_atoms_for_schema(
+                                    schema_name=sn,
+                                    columns=columns,
+                                    row=row_vals,
+                                    row_idx=ri,
+                                    table_idx=table_index,
+                                    project_id=project_id,
+                                    artifact_id=artifact_id,
+                                    filename=pdf_path.name,
+                                    parser_version=parser_version,
+                                ))
+                            for sa in schema_atoms:
+                                # Skip if already emitted by a structural path
+                                _sid = (sa.value or {}).get("id") if sa.value else None
+                                if _sid and _sid in already_emitted:
+                                    continue
+                                if _sid:
+                                    already_emitted.add(_sid)
+                                out.append(sa)
+                    except Exception:
+                        pass
                     continue
                 try:
                     roster_rows = extract_site_roster(

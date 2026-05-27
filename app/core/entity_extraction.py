@@ -3949,20 +3949,57 @@ def _entities_to_atoms(
     _SITE_ID_SHAPE = _re_sid_norm.compile(
         r"^[A-Z]{2,6}[-_][A-Z0-9]{1,8}([-_]\d{1,3})?$"
     )
+    # v53.5: matches an address (number + street name) or a city/state/zip
+    # token. Used to REJECT LLM site_clusters whose canonical_name is a
+    # street address rather than a real facility name.
+    _ADDRESS_SHAPE = _re_sid_norm.compile(
+        r"^\d+\s+[A-Z]",  # starts with house number + capitalized word
+        _re_sid_norm.IGNORECASE,
+    )
+    # v53.5: garbage canonical values from LLM site extraction that
+    # should never become physical_site atoms — generic placeholders,
+    # company names, addresses, pure numbers.
+    _BAD_SITE_NAMES: frozenset[str] = frozenset({
+        "all", "all sites", "all locations", "various", "tbd", "n/a",
+        "na", "none", "unknown", "various sites",
+    })
 
     def _pick_site_id(canonical_name: str, aliases: list) -> str:
-        """Prefer a site-ID-shaped alias over the prose canonical_name.
-        E.g. canonical_name='OPTBOT Atlanta HQ', aliases=['ATL-HQ-01',
-        'Innovation Tower'] → return 'ATL-HQ-01' so this atom collapses
-        with the roster-parsed physical_site atom for ATL-HQ-01.
+        """Prefer the LONGEST site-ID-shaped alias over the prose
+        canonical_name. Longer = more specific (ATL-HQ-01 > ATL-HQ).
+        Falls back to canonical_name when no ID-shaped alias exists.
         """
-        for cand in aliases or []:
+        candidates = []
+        for cand in (aliases or []) + [canonical_name]:
             if not isinstance(cand, str):
                 continue
             stripped = cand.strip()
             if _SITE_ID_SHAPE.match(stripped):
-                return stripped
+                candidates.append(stripped)
+        if candidates:
+            # Pick longest (most specific), tie-break alphabetically for stability
+            candidates.sort(key=lambda s: (-len(s), s))
+            return candidates[0]
         return canonical_name
+
+    def _is_garbage_site(canonical_name: str) -> bool:
+        """Reject LLM site_cluster atoms whose canonical_name is garbage:
+        addresses-as-name, generic placeholders, customer-name leaks.
+        """
+        if not canonical_name:
+            return True
+        s = canonical_name.strip()
+        if not s:
+            return True
+        if s.lower() in _BAD_SITE_NAMES:
+            return True
+        # Addresses ("1180 Peachtree Street NE...")
+        if _ADDRESS_SHAPE.match(s):
+            return True
+        # Pure number / very short / very long
+        if s.isdigit() or len(s) < 3 or len(s) > 100:
+            return True
+        return False
 
     def _normalize_entity_value(category: str, entity: dict) -> dict:
         """v53.2: per-category value normalization so the bridged
@@ -4017,6 +4054,14 @@ def _entities_to_atoms(
             if not raw_text:
                 raw_text = _best_text(entity)
             if not raw_text or len(raw_text) < 3:
+                continue
+            # v53.5: drop garbage LLM site_cluster atoms (ALL/various,
+            # address-as-name, customer-name leaks, pure numbers).
+            # These were the source of ghost site_readiness rows like
+            # "site:all" and "site:1180_peachtree_street_ne_..." even
+            # after canonical_set gating, because they themselves became
+            # canonical entries.
+            if category == "site_clusters" and _is_garbage_site(raw_text):
                 continue
             dedup_key = f"{category}:{raw_text[:120].lower()}"
             if dedup_key in seen_texts:
