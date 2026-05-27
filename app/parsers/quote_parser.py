@@ -1387,19 +1387,13 @@ class QuoteParser(BaseParser):
                 )
             )
 
-        # v49 FIX 2b: identify column schema from RAW header row so the
-        # registry can split BOM rows into bom_line + site_allocation +
-        # lead_time_constraint atoms. quote_parser's header_map uses
-        # CANONICAL keys (description, part_number, ...) — for the
-        # registry we need the raw header text.
-        from app.core.table_schema_registry import (
-            identify_schema as _identify_schema,
-            emit_atoms_for_schema as _emit_schema_atoms,
-        )
+        # v49.2: emit raw_table_row atoms for centralized classification
+        # in _enrich_table_atoms(). Parsers no longer call the schema
+        # registry directly — they just preserve {_columns, _row} on
+        # each row and one central function does all schema work.
         _raw_headers: list[str] = []
         if 0 <= header_idx < len(rows):
             _raw_headers = [str(c or "").strip() for c in rows[header_idx]]
-        _table_schema = _identify_schema(_raw_headers) if _raw_headers else None
 
         for row_idx in range(data_start, len(rows)):
             row = rows[row_idx]
@@ -1431,28 +1425,48 @@ class QuoteParser(BaseParser):
                     diagnostics=diag,
                 )
             )
-            # v49 FIX 2b: ALSO emit schema-typed atoms (bom_line + per-site
-            # site_allocation + lead_time_constraint) when the header row
-            # matched a known schema. These are ADDITIONAL atoms — the
-            # legacy vendor_line_item / quantity atoms still emit above.
-            if _table_schema:
-                try:
-                    _row_cells = [str(c or "").strip() for c in row]
-                    _schema_atoms = _emit_schema_atoms(
-                        schema_name=_table_schema,
-                        columns=_raw_headers,
-                        row=_row_cells,
-                        row_idx=row_idx,
-                        table_idx=0,
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=filename,
-                        parser_version=self.parser_version,
-                    )
-                    if _schema_atoms:
-                        atoms.extend(_schema_atoms)
-                except Exception:
-                    pass
+            # v49.2: emit raw_table_row for centralized post-parse
+            # classification. Replaces v49.0's per-parser schema call.
+            if _raw_headers:
+                _row_cells = [str(c or "").strip() for c in row]
+                _row_text = " | ".join(c for c in _row_cells if c)[:4000]
+                _rtr_id = stable_id("atm", artifact_id, "raw_table_row", sheet_name, row_idx)
+                _rtr_src = SourceRef(
+                    id=stable_id("src", _rtr_id),
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    locator={"sheet": sheet_name, "row": row_idx + 1, "extraction": "raw_table_row_v49_2"},
+                    extraction_method="raw_table_row_v49_2",
+                    parser_version=self.parser_version,
+                )
+                atoms.append(EvidenceAtom(
+                    id=_rtr_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.raw_table_row,
+                    raw_text=_row_text,
+                    normalized_text=_row_text.lower(),
+                    value={
+                        "_columns": list(_raw_headers),
+                        "_row": _row_cells,
+                        "_table_idx": 0,
+                        "_row_idx": row_idx,
+                        "_filename": filename,
+                        "_sheet": sheet_name,
+                        "_artifact_type": "xlsx",
+                    },
+                    entity_keys=[],
+                    source_refs=[_rtr_src],
+                    receipts=[],
+                    authority_class=AuthorityClass.vendor_quote,
+                    confidence=0.80,
+                    confidence_raw=0.80,
+                    calibrated_confidence=0.80,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                ))
         return atoms
 
     def _extract_row_values(self, row: list[Any], header_map: dict[str, int]) -> dict[str, str]:

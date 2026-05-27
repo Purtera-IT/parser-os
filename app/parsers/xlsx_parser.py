@@ -1308,17 +1308,12 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         label_indices = _label_column_indices(model.header_map)
 
-        # v49 FIX 2c: identify column schema from RAW header row so the
-        # cutover plan XLSX emits cutover_step atoms (not just generic
-        # scope_item blobs). Headers come from rows[model.header_idx].
-        from app.core.table_schema_registry import (
-            identify_schema as _identify_schema,
-            emit_atoms_for_schema as _emit_schema_atoms,
-        )
+        # v49.2: capture raw header row once for raw_table_row emission.
+        # The centralized _enrich_table_atoms() in entity_extraction
+        # will classify per row using the column schema registry.
         _raw_headers: list[str] = []
         if 0 <= model.header_idx < len(rows):
             _raw_headers = [str(c or "").strip() for c in rows[model.header_idx]]
-        _table_schema = _identify_schema(_raw_headers) if _raw_headers else None
 
         for row_idx in range(data_start, len(rows)):
             row = rows[row_idx]
@@ -1332,26 +1327,47 @@ class XlsxParser(BaseParser):
 
             extracted = self._extract_row_values(row, model.header_map)
 
-            # v49 FIX 2c: emit schema-typed atoms ALONGSIDE legacy ones.
-            # Cutover/milestones/risk sheets get cutover_step/milestone_phase/etc.
-            if _table_schema:
-                try:
-                    _row_cells = [str(c or "").strip() for c in row]
-                    _schema_atoms = _emit_schema_atoms(
-                        schema_name=_table_schema,
-                        columns=_raw_headers,
-                        row=_row_cells,
-                        row_idx=row_idx,
-                        table_idx=0,
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=filename,
-                        parser_version=self.parser_version,
-                    )
-                    if _schema_atoms:
-                        atoms.extend(_schema_atoms)
-                except Exception:
-                    pass
+            # v49.2: emit raw_table_row for centralized classification.
+            if _raw_headers:
+                _row_cells = [str(c or "").strip() for c in row]
+                _row_text = " | ".join(c for c in _row_cells if c)[:4000]
+                _rtr_id = stable_id("atm", artifact_id, "raw_table_row", sheet_name, row_idx)
+                _rtr_src = SourceRef(
+                    id=stable_id("src", _rtr_id),
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    locator={"sheet": sheet_name, "row": row_idx + 1, "extraction": "raw_table_row_v49_2"},
+                    extraction_method="raw_table_row_v49_2",
+                    parser_version=self.parser_version,
+                )
+                atoms.append(EvidenceAtom(
+                    id=_rtr_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.raw_table_row,
+                    raw_text=_row_text,
+                    normalized_text=_row_text.lower(),
+                    value={
+                        "_columns": list(_raw_headers),
+                        "_row": _row_cells,
+                        "_table_idx": 0,
+                        "_row_idx": row_idx,
+                        "_filename": filename,
+                        "_sheet": sheet_name,
+                        "_artifact_type": "xlsx",
+                    },
+                    entity_keys=[],
+                    source_refs=[_rtr_src],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.80,
+                    confidence_raw=0.80,
+                    calibrated_confidence=0.80,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                ))
 
             if rk in {"subtotal"}:
                 atoms.extend(

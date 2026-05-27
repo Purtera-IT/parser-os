@@ -3783,6 +3783,78 @@ def _section_path_context(atom: Any) -> str:
     return ""
 
 
+def _enrich_table_atoms(
+    atom_list: list[Any],
+    *,
+    project_id: str,
+) -> list[Any]:
+    """v49.2 — classify every raw_table_row atom via the column schema
+    registry. ONE central function replaces per-parser schema calls.
+
+    Parsers emit raw_table_row atoms with value={_columns, _row, _table_idx,
+    _row_idx, _filename}. This function detects the schema for each unique
+    column set (cached) and emits the appropriate typed atoms (bom_line,
+    cutover_step, requirement, etc.).
+    """
+    from app.core.table_schema_registry import identify_schema, emit_atoms_for_schema
+    from app.core.schemas import AtomType
+
+    new_atoms: list[Any] = []
+    schema_cache: dict[tuple, str | None] = {}
+    in_count = 0
+    schema_hits = 0
+    emitted = 0
+
+    for atom in atom_list:
+        _atype = getattr(atom, "atom_type", None)
+        _atype_val = _atype.value if hasattr(_atype, "value") else str(_atype or "")
+        if _atype_val != "raw_table_row":
+            continue
+        in_count += 1
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        columns = val.get("_columns") or []
+        row = val.get("_row") or []
+        if not columns or not row:
+            continue
+
+        cache_key = tuple(columns)
+        if cache_key not in schema_cache:
+            schema_cache[cache_key] = identify_schema(list(columns))
+        schema_name = schema_cache[cache_key]
+        if not schema_name:
+            continue
+        schema_hits += 1
+        try:
+            schema_atoms = emit_atoms_for_schema(
+                schema_name=schema_name,
+                columns=list(columns),
+                row=list(row),
+                row_idx=int(val.get("_row_idx") or 0),
+                table_idx=int(val.get("_table_idx") or 0),
+                project_id=project_id,
+                artifact_id=getattr(atom, "artifact_id", "") or "",
+                filename=str(val.get("_filename") or ""),
+            )
+            if schema_atoms:
+                new_atoms.extend(schema_atoms)
+                emitted += len(schema_atoms)
+        except Exception:
+            pass
+
+    if in_count:
+        import sys as _sys_rtr
+        try:
+            print(
+                f"raw_table_row_v49_2: input={in_count} schema_matched={schema_hits} emitted={emitted}",
+                file=_sys_rtr.stderr,
+            )
+        except Exception:
+            pass
+    return new_atoms
+
+
 def _entities_to_atoms(
     multi_result: dict[str, Any],
     *,
@@ -4003,6 +4075,11 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         "integration_checkpoint", "compliance_classification",
         "system_mapping", "signatory", "site_attribute",
         "requirement",
+        # v49.2: raw_table_row is a structured intermediate consumed
+        # by _enrich_table_atoms. Its raw_text is a synthesized
+        # "Site|Part|Qty" composite that pollutes entity_keys if
+        # the regex emitters run on it.
+        "raw_table_row",
     }
 
     for atom in atom_list:
@@ -4146,6 +4223,25 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             multi_result = extract_multi_entities_with_llm(atom_list) or {}
         except Exception:
             multi_result = {}
+
+    # v49.2 RAW TABLE ROW CLASSIFICATION: every parser emits
+    # raw_table_row atoms with {_columns, _row}. Centralized here so a
+    # single change in table_schema_registry covers all parsers (xlsx,
+    # docx, future pptx/csv). Runs ALWAYS, even when multi_result is
+    # empty (LLM may be unreachable but tables are still classifiable).
+    try:
+        _proj_id_rtr = (
+            getattr(atom_list[0], "project_id", "") if atom_list else ""
+        )
+        _rtr_atoms = _enrich_table_atoms(atom_list, project_id=_proj_id_rtr)
+        if _rtr_atoms:
+            atom_list.extend(_rtr_atoms)
+            atoms_enriched += len(_rtr_atoms)
+    except Exception as _rtr_exc:
+        import logging as _lg_rtr
+        _lg_rtr.getLogger(__name__).warning(
+            "raw_table_row enrichment failed: %s", _rtr_exc
+        )
 
     if multi_result:
         injected, key_count = _inject_multi_entity_keys(

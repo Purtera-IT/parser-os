@@ -1312,6 +1312,62 @@ def build_site_readiness(
                     sites[k]["contradiction_count"] += 1
                     break
 
+    # v49.2 FIX 5b: collapse site_readiness rows that are aliases of
+    # the same canonical site. Source of truth: site_detection's LLM
+    # site attr cache, which maps {alias_name → site_obj{id, names, ...}}.
+    # When multiple sites entries map to the same canonical id, merge:
+    # union the key sets, sum counts, take max for booleans.
+    try:
+        import re as _re_canon
+        from app.core.site_detection import _llm_site_attr_cache
+        if _llm_site_attr_cache:
+            # Build canonical_slug → set(aliased_slugs) map
+            canonical_map: dict[str, str] = {}  # alias_slug → canonical_slug
+            for alias_name, site_obj in _llm_site_attr_cache.items():
+                if not isinstance(site_obj, dict):
+                    continue
+                canon_id = site_obj.get("id") or alias_name
+                if not canon_id:
+                    continue
+                canon_slug = "site:" + _re_canon.sub(r"[^a-z0-9]+", "_", str(canon_id).lower()).strip("_")
+                alias_slug = "site:" + _re_canon.sub(r"[^a-z0-9]+", "_", str(alias_name).lower()).strip("_")
+                canonical_map[alias_slug] = canon_slug
+                # Also map each "name" of the structured site to the same canon
+                for nm in site_obj.get("names") or []:
+                    if nm:
+                        nslug = "site:" + _re_canon.sub(r"[^a-z0-9]+", "_", str(nm).lower()).strip("_")
+                        canonical_map[nslug] = canon_slug
+            # Merge entries
+            merged: dict[str, dict[str, Any]] = {}
+            for sk, entry in sites.items():
+                canon = canonical_map.get(sk, sk)
+                if canon not in merged:
+                    merged[canon] = {
+                        "site_key": canon,
+                        "device_keys": set(entry.get("device_keys", set())),
+                        "constraint_count": entry.get("constraint_count", 0),
+                        "stakeholder_keys": set(entry.get("stakeholder_keys", set())),
+                        "contradiction_count": entry.get("contradiction_count", 0),
+                        "scope_atom_count": entry.get("scope_atom_count", 0),
+                        "money_present": bool(entry.get("money_present", False)),
+                        "milestone_present": bool(entry.get("milestone_present", False)),
+                        "_aliases": {sk} if sk != canon else set(),
+                    }
+                else:
+                    m = merged[canon]
+                    m["device_keys"] |= set(entry.get("device_keys", set()))
+                    m["stakeholder_keys"] |= set(entry.get("stakeholder_keys", set()))
+                    m["constraint_count"] += entry.get("constraint_count", 0)
+                    m["scope_atom_count"] += entry.get("scope_atom_count", 0)
+                    m["contradiction_count"] += entry.get("contradiction_count", 0)
+                    m["money_present"] = m["money_present"] or entry.get("money_present", False)
+                    m["milestone_present"] = m["milestone_present"] or entry.get("milestone_present", False)
+                    if sk != canon:
+                        m["_aliases"].add(sk)
+            sites = merged
+    except Exception:
+        pass
+
     out: list[dict[str, Any]] = []
     for sk, entry in sorted(sites.items()):
         device_count = len(entry["device_keys"])

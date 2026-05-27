@@ -186,6 +186,12 @@ class AtomType(str, Enum):
     system_mapping = "system_mapping"
     metadata_requirement = "metadata_requirement"
 
+    # ─── v49.2: intermediate type consumed by _enrich_table_atoms() ───
+    # Parsers emit raw_table_row with {"_columns": [...], "_row": [...]}
+    # value so a single central function can classify them via the column
+    # schema registry. Replaces the v49 per-parser inline schema calls.
+    raw_table_row = "raw_table_row"
+
 
 class AuthorityClass(str, Enum):
     contractual_scope = "contractual_scope"

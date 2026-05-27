@@ -197,11 +197,6 @@ class DocxParser(BaseParser):
             # entity extraction. Skip the all-cell header row when
             # row 0 looks like field labels.
             header_cells = table_rows[0] if table_rows else []
-            # v49 FIX 2: identify column schema ONCE per table so we can
-            # emit field-level typed atoms (bom_line, cutover_step,
-            # requirement, etc.) in addition to the raw row blob.
-            from app.core.table_schema_registry import identify_schema as _identify_schema, emit_atoms_for_schema as _emit_schema_atoms
-            _table_schema = _identify_schema(header_cells) if header_cells else None
             for row_idx, row_cells in enumerate(table.rows):
                 cell_texts = [c.text.strip() for c in row_cells.cells if c.text.strip()]
                 if not cell_texts:
@@ -214,28 +209,48 @@ class DocxParser(BaseParser):
                 ):
                     continue
                 row_text = " | ".join(cell_texts)
-                # v49: emit typed schema atoms ALONGSIDE the raw row blob
-                # so the classifier still has the raw row to learn from
-                # but field-level facts (site_allocation, lead_time, etc.)
-                # become their own typed atoms instead of being lost.
-                if _table_schema and row_idx > 0:
-                    try:
-                        _row_cells_full = [c.text.strip() for c in row_cells.cells]
-                        _schema_atoms = _emit_schema_atoms(
-                            schema_name=_table_schema,
-                            columns=header_cells,
-                            row=_row_cells_full,
-                            row_idx=row_idx,
-                            table_idx=table_idx,
-                            project_id=project_id,
-                            artifact_id=artifact_id,
-                            filename=path.name,
-                            parser_version=self.parser_version,
-                        )
-                        if _schema_atoms:
-                            atoms.extend(_schema_atoms)
-                    except Exception:
-                        pass
+                # v49.2: emit a raw_table_row atom alongside the legacy
+                # row blob. The centralized _enrich_table_atoms() in
+                # entity_extraction will classify all raw_table_row
+                # atoms in one pass using the column schema registry.
+                if header_cells and row_idx > 0:
+                    _row_cells_full = [c.text.strip() for c in row_cells.cells]
+                    _rtr_id = stable_id("atm", artifact_id, "raw_table_row", table_idx, row_idx)
+                    _rtr_src = SourceRef(
+                        id=stable_id("src", _rtr_id),
+                        artifact_id=artifact_id,
+                        artifact_type=ArtifactType.docx,
+                        filename=path.name,
+                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2"},
+                        extraction_method="raw_table_row_v49_2",
+                        parser_version=self.parser_version,
+                    )
+                    atoms.append(EvidenceAtom(
+                        id=_rtr_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.raw_table_row,
+                        raw_text=row_text[:4000],
+                        normalized_text=row_text.lower()[:4000],
+                        value={
+                            "_columns": list(header_cells),
+                            "_row": _row_cells_full,
+                            "_table_idx": table_idx,
+                            "_row_idx": row_idx,
+                            "_filename": path.name,
+                            "_artifact_type": "docx",
+                        },
+                        entity_keys=[],
+                        source_refs=[_rtr_src],
+                        receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.80,
+                        confidence_raw=0.80,
+                        calibrated_confidence=0.80,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    ))
                 # Table rows carry structured data even without
                 # scope/constraint verbs — emit unconditionally as
                 # a scope_item (the classifier path is for prose).
