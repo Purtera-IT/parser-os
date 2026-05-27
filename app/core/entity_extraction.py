@@ -3941,6 +3941,29 @@ def _entities_to_atoms(
     import sys as _sys_v491
     _cat_counts: dict[str, dict[str, int]] = {}
 
+    # v53.3: site-ID-shaped patterns like ATL-HQ-01, STORE-142, MDF-3A.
+    # When an LLM site_cluster has one of these as an alias, prefer
+    # IT as the canonical site id so this atom collapses with any
+    # roster-parsed physical_site atom (which also uses the ID).
+    import re as _re_sid_norm
+    _SITE_ID_SHAPE = _re_sid_norm.compile(
+        r"^[A-Z]{2,6}[-_][A-Z0-9]{1,8}([-_]\d{1,3})?$"
+    )
+
+    def _pick_site_id(canonical_name: str, aliases: list) -> str:
+        """Prefer a site-ID-shaped alias over the prose canonical_name.
+        E.g. canonical_name='OPTBOT Atlanta HQ', aliases=['ATL-HQ-01',
+        'Innovation Tower'] → return 'ATL-HQ-01' so this atom collapses
+        with the roster-parsed physical_site atom for ATL-HQ-01.
+        """
+        for cand in aliases or []:
+            if not isinstance(cand, str):
+                continue
+            stripped = cand.strip()
+            if _SITE_ID_SHAPE.match(stripped):
+                return stripped
+        return canonical_name
+
     def _normalize_entity_value(category: str, entity: dict) -> dict:
         """v53.2: per-category value normalization so the bridged
         atom's value dict matches what downstream code (semantic_dedup,
@@ -3951,17 +3974,26 @@ def _entities_to_atoms(
         """
         out_val = dict(entity)
         if category == "site_clusters":
-            canon = entity.get("canonical_name") or entity.get("name") or entity.get("id") or ""
+            canon_name = entity.get("canonical_name") or entity.get("name") or entity.get("id") or ""
             aliases = entity.get("aliases") or []
             if isinstance(aliases, str):
                 aliases = [aliases]
             if not isinstance(aliases, list):
                 aliases = []
+            # v53.3: prefer a site-ID-shaped alias as canonical id so
+            # we collapse with roster-parsed atoms.
+            canonical_id = _pick_site_id(canon_name, aliases)
             # Normalize to physical_site shape
-            out_val.setdefault("id", canon)
-            out_val.setdefault("site_id", canon)
-            out_val.setdefault("name", canon)
-            out_val.setdefault("names", [canon] + list(aliases))
+            out_val["id"] = canonical_id
+            out_val.setdefault("site_id", canonical_id)
+            out_val.setdefault("name", canon_name)
+            # All forms — including the prose canonical_name — become aliases
+            # that downstream alias-collapse / catalog gates can recognize.
+            names_set: list[str] = []
+            for nm in [canonical_id, canon_name] + list(aliases):
+                if isinstance(nm, str) and nm and nm not in names_set:
+                    names_set.append(nm)
+            out_val["names"] = names_set
             out_val.setdefault("kind", "physical_site")
         elif category == "quantities":
             # quantities have {text, kind, category} — make sure value/unit
