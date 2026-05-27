@@ -3660,58 +3660,6 @@ def extract_keys(
         text, vendor_keys, authoritative_sites=authoritative_sites,
     )
     keys |= proper_noun_keys
-    # Option D — final centralized site catalog gate. When the
-    # project has an authoritative site catalog (built from
-    # Locations sections + address-anchored phrases + strong
-    # facility-tail patterns), ALL site:* candidates from EVERY
-    # emitter must clear it. This catches false positives that
-    # slipped through individual emitters — e.g. ``ahu_7`` from
-    # ``_emit_sites`` (a BMS pack's site_alias_pattern that
-    # actually matches mechanical equipment), ``block_909`` from
-    # the numbered-site regex (parcel numbers), or generic
-    # ``elementary_school`` from the proper-noun runner.
-    # Site key gate. Runs ALWAYS — when the catalog is empty (e.g.
-    # LLM extract returned 0 AND regex catalog is empty), this gate
-    # still drops obvious junk via the hygiene filter so atom-level
-    # regex emissions don't slip through ungated.
-    #
-    # Pipeline:
-    #   1. Phrase must pass site_detection._looks_like_site_phrase
-    #      (drops sentence fragments, headers, etc.)
-    #   2. Phrase must pass site_llm_verify._is_obvious_non_site
-    #      (drops vendor brands, generic nouns, form labels)
-    #   3. If catalog is non-empty, phrase must match the catalog
-    #      via phrase_is_in_catalog (prefix/suffix/exact match)
-    from app.core.site_detection import (
-        phrase_is_in_catalog,
-        _looks_like_site_phrase,
-    )
-    try:
-        from app.core.site_llm_verify import _is_obvious_non_site
-    except Exception:
-        _is_obvious_non_site = None  # type: ignore
-    site_keys_kept: set[str] = set()
-    for k in list(keys):
-        if not k.startswith("site:"):
-            continue
-        slug = k[len("site:"):]
-        # Convert slug back to space-separated for matching
-        phrase = slug.replace("_", " ")
-        # Drop sentence-fragment / header-glue site keys
-        if not _looks_like_site_phrase(phrase):
-            continue
-        # Drop hygiene-blocked phrases (vendor brands, form labels,
-        # generic nouns, sub-spaces, etc.)
-        if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
-            continue
-        # If a catalog exists, require catalog membership too
-        if authoritative_sites and not phrase_is_in_catalog(
-            phrase, authoritative_sites
-        ):
-            continue
-        site_keys_kept.add(k)
-    # Drop site keys that didn't pass the gate
-    keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
     keys |= _emit_part_numbers(text)
     keys |= _emit_quantity_keys(value or {}, text)
     keys |= _emit_qa_markers(text)
@@ -3748,6 +3696,37 @@ def extract_keys(
     keys |= _emit_phone_keys(text)
     keys |= _emit_person_from_contact(text)
     keys |= _emit_site_code_keys(text)
+
+    # Final centralized site:* gate — applies to EVERY emitter above,
+    # including _emit_site_code_keys whose loose regex catches time
+    # ranges ("AM-10"), day ranges ("Mon-Fri"), PO numbers
+    # ("PO-MOCK"), quote codes ("Q-DEV-ATL-047"), deal stages
+    # ("HS-DEAL"). The gate must run LAST so nothing downstream of
+    # the LLM-catalog check can sneak past.
+    from app.core.site_detection import (
+        phrase_is_in_catalog,
+        _looks_like_site_phrase,
+    )
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site
+    except Exception:
+        _is_obvious_non_site = None  # type: ignore
+    site_keys_kept: set[str] = set()
+    for k in list(keys):
+        if not k.startswith("site:"):
+            continue
+        slug = k[len("site:"):]
+        phrase = slug.replace("_", " ")
+        if not _looks_like_site_phrase(phrase):
+            continue
+        if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
+            continue
+        if authoritative_sites and not phrase_is_in_catalog(
+            phrase, authoritative_sites
+        ):
+            continue
+        site_keys_kept.add(k)
+    keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
 
     return sorted(keys)
 
@@ -3844,6 +3823,35 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         _slug_for_site(p): p for p in authoritative_sites
     }
 
+    # Site-gate closure — applied to ANY collection of keys, no matter
+    # the source (parser-supplied, regex-emitted, or LLM-injected).
+    # Centralised here so the gate is enforced even when extract_keys
+    # is not the entry path (e.g. parser already populated entity_keys).
+    from app.core.site_detection import (
+        phrase_is_in_catalog as _phrase_in_cat,
+        _looks_like_site_phrase as _looks_like_site,
+    )
+    try:
+        from app.core.site_llm_verify import _is_obvious_non_site as _obv_non_site
+    except Exception:
+        _obv_non_site = None  # type: ignore
+
+    def _gate_site_keys(keys_in: Iterable[str]) -> list[str]:
+        out: list[str] = []
+        for k in keys_in:
+            if not k.startswith("site:"):
+                out.append(k)
+                continue
+            phrase = k[len("site:"):].replace("_", " ")
+            if not _looks_like_site(phrase):
+                continue
+            if _obv_non_site is not None and _obv_non_site(phrase):
+                continue
+            if authoritative_sites and not _phrase_in_cat(phrase, authoritative_sites):
+                continue
+            out.append(k)
+        return out
+
     for atom in atom_list:
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""
@@ -3867,8 +3875,14 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     total_keys_added += len(new_keys)
             continue
 
-        # Parser already populated keys. Run hygiene first.
+        # Parser already populated keys. Run hygiene first, then
+        # apply the LLM-catalog site gate to parser-supplied site
+        # keys (parser may have emitted false-positive site codes
+        # like "site:po_mock" from PO numbers, "site:am_10" from
+        # time ranges — they must clear the same catalog check as
+        # regex-emitted keys).
         cleaned = filter_entity_keys_for_atom(atom, existing)
+        cleaned = _gate_site_keys(cleaned)
         # Augment with textual-pattern keys the parser doesn't emit
         # per-row (sites, dates, money, stakeholders).
         textual_keys = extract_keys(
