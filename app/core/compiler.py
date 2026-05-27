@@ -562,6 +562,55 @@ def compile_project(
                 _parent_refs = list(getattr(parent, "source_refs", None) or [])
                 _parent_aid = getattr(parent, "artifact_id", "") or ""
                 _parent_pid = getattr(parent, "project_id", "") or ""
+                # v52: detect section_path signal — if the parent atom
+                # sits under a "Deliverables" / "Stakeholders" / etc.
+                # heading, type the child atoms accordingly instead of
+                # generic scope_item.
+                _section_path = []
+                if _parent_refs:
+                    _loc0 = getattr(_parent_refs[0], "locator", None) or {}
+                    if isinstance(_loc0, dict):
+                        _section_path = _loc0.get("section_path") or []
+                _section_blob = " ".join(str(s).lower() for s in _section_path)
+                _child_type = _AtomT.scope_item
+                _SECTION_TYPE_HINTS = {
+                    "deliverable": _AtomT.deliverable,
+                    "deliverables": _AtomT.deliverable,
+                    "assumption": _AtomT.assumption,
+                    "assumptions": _AtomT.assumption,
+                    "exclusion": _AtomT.exclusion,
+                    "out of scope": _AtomT.exclusion,
+                    "exclusions": _AtomT.exclusion,
+                    "signature": _AtomT.signatory,
+                    "signatures": _AtomT.signatory,
+                    "signatories": _AtomT.signatory,
+                    "stakeholders": _AtomT.stakeholder,
+                    "approver": _AtomT.approval_authority,
+                    "approvers": _AtomT.approval_authority,
+                    "approval matrix": _AtomT.approval_authority,
+                    "payment schedule": _AtomT.payment_term,
+                    "payment terms": _AtomT.payment_term,
+                    "milestone": _AtomT.milestone_phase,
+                    "milestones": _AtomT.milestone_phase,
+                    "phase plan": _AtomT.milestone_phase,
+                    "phase": _AtomT.milestone_phase,
+                    "acceptance criteria": _AtomT.acceptance_criterion,
+                    "acceptance": _AtomT.acceptance_criterion,
+                    "lead time": _AtomT.lead_time_constraint,
+                    "lead times": _AtomT.lead_time_constraint,
+                    "cutover": _AtomT.cutover_step,
+                    "cutover checklist": _AtomT.cutover_step,
+                    "compliance": _AtomT.compliance_rule,
+                    "data flow": _AtomT.data_flow_step,
+                    "field mapping": _AtomT.system_mapping,
+                    "system mapping": _AtomT.system_mapping,
+                    "blackout": _AtomT.blackout_date_range,
+                    "blackouts": _AtomT.blackout_date_range,
+                }
+                for hint, atype in _SECTION_TYPE_HINTS.items():
+                    if hint in _section_blob:
+                        _child_type = atype
+                        break
                 for sub_idx, item_text in enumerate(items):
                     _aid = _stable_id("atm", _parent_aid, "prose_split", parent.id, sub_idx)
                     _srcs: list = []
@@ -585,7 +634,7 @@ def compile_project(
                         id=_aid,
                         project_id=_parent_pid,
                         artifact_id=_parent_aid,
-                        atom_type=_AtomT.scope_item,
+                        atom_type=_child_type,
                         raw_text=item_text[:4000],
                         normalized_text=item_text.lower()[:4000],
                         value={"_prose_split": True, "_parent_atom_id": parent.id, "_sub_idx": sub_idx},
@@ -652,6 +701,23 @@ def compile_project(
         dropped = before - len(atoms)
         if dropped > 0:
             warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
+    # v52: semantic dedup by entity key. Catches the cases the text-based
+    # v48 collapse misses — same fact extracted via 3 paths (schema /
+    # prose / LLM bridge) with different text shapes but same phase_id /
+    # req_id / sku / email. Drops milestone_phase from 23→6, requirement
+    # from 19→5, etc., losslessly (loser fields merged into winner).
+    with telemetry.stage("semantic_dedup", input_count=len(atoms)) as stage:
+        before_sem = len(atoms)
+        try:
+            from app.core.semantic_dedup import semantic_dedup_atoms
+            atoms = semantic_dedup_atoms(atoms)
+        except Exception as exc:
+            warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
+        dropped_sem = before_sem - len(atoms)
+        if dropped_sem > 0:
+            warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:

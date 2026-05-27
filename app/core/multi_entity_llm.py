@@ -155,6 +155,9 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             "dependencies": lambda: _extract_dependencies_retrieved(by_artifact),
             # GAP D FIX: pricing_structure → payment_term atoms via entity bridge
             "pricing_structure": lambda: _extract_pricing_structure_retrieved(by_artifact),
+            # v52 — 2 more new extractors
+            "blackout_date_range": lambda: _extract_blackout_dates_retrieved(by_artifact),
+            "approval_decision": lambda: _extract_approval_decisions_retrieved(by_artifact),
         }
     else:
         calls = {
@@ -175,6 +178,8 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
         "integration_checkpoints", "deliverables", "system_mappings",
         "data_flow_steps", "assumptions", "approval_authorities",
         "dependencies", "pricing_structure",
+        # v52
+        "blackout_date_range", "approval_decision",
     }
     phase1_calls = {k: fn for k, fn in calls.items() if k not in _PHASE2_KEYS}
     phase2_calls = {k: fn for k, fn in calls.items() if k in _PHASE2_KEYS}
@@ -624,6 +629,9 @@ def _empty_result() -> dict[str, Any]:
         "approval_authorities": [],
         "dependencies": [],
         "pricing_structure": [],
+        # v52
+        "blackout_date_range": [],
+        "approval_decision": [],
     }
 
 
@@ -2437,7 +2445,10 @@ def _extract_compliance_class_retrieved(by_artifact: dict[str, list[Any]]) -> li
         "classification confidential internal restricted public data handling",
         "allowed destinations data flow compliance rule restriction",
         "mock confidential HubSpot dev permitted handling requirement",
-        "GDPR HIPAA SOC2 PCI data classification regulatory compliance",
+        # v52 tuning — real bid docs phrase classification differently
+        "allowed destinations blocked destinations permitted prohibited environment",
+        "production tenant credentials data handling classification level",
+        "PII data classification governance compliance security classification",
     ]
     excerpt = _retrieve_excerpt(by_artifact, queries)
     if not excerpt:
@@ -2546,7 +2557,10 @@ def _extract_system_mappings_retrieved(by_artifact: dict[str, list[Any]]) -> lis
         "source system destination field mapping data migration transform",
         "existing system replace legacy migrate to new platform",
         "integration mapping from to field column translation",
-        "data flow source destination transform rules migration spec",
+        # v52 tuning — real docs use key=value field assignments
+        "dealname amount closedate fieldname equals value HubSpot CRM",
+        "field mapping deal record property assignment configuration",
+        "metadata key value blob storage tag attribute",
     ]
     excerpt = _retrieve_excerpt(by_artifact, queries)
     if not excerpt:
@@ -2582,7 +2596,10 @@ def _extract_data_flow_steps_retrieved(by_artifact: dict[str, list[Any]]) -> lis
         "data flow step export import migration procedure sequence",
         "extract transform load ETL data migration step procedure",
         "data handoff sequence trigger export upload validate",
-        "seven packet file data migration step HubSpot CRM",
+        # v52 tuning — real docs use arrow-notation prose
+        "HubSpot Azure parser pipeline upload attachment workflow",
+        "system to system arrow flow process step pipeline data path",
+        "deal record source destination upload copy extraction summary",
     ]
     excerpt = _retrieve_excerpt(by_artifact, queries)
     if not excerpt:
@@ -2614,12 +2631,19 @@ If none found: {{"data_flow_steps": []}}
 
 
 def _extract_assumptions_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
-    """Extract scoping, pricing, and project assumptions."""
+    """Extract scoping, pricing, and project assumptions.
+
+    v52: query tuning — added bullet-list phrasings ("OPTBOT provides",
+    "customer provides", "vendor will perform") that appear in real
+    bid packets but didn't match the original "assumes" queries.
+    """
     queries = [
         "assumes assuming this quote includes excludes pricing assumption",
         "scope assumes vendor assumes customer responsible for providing",
-        "assumption pricing based on assumes site conditions",
+        "OPTBOT provides customer provides vendor will perform deliver",
+        "explicit assumptions program assumptions global assumptions",
         "this proposal assumes excludes assumes availability assumes access",
+        "existing cable plant power circuits handoff ports ready cutover",
     ]
     excerpt = _retrieve_excerpt(by_artifact, queries, top_k=25)
     if not excerpt:
@@ -2761,6 +2785,87 @@ If none found: {{"pricing_structure": []}}
         return []
     raw = obj.get("pricing_structure", [])
     return [r for r in raw if isinstance(r, dict) and (r.get("description") or r.get("payment_milestone"))]
+
+
+def _extract_blackout_dates_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """v52 — extract blackout windows / no-work date ranges.
+
+    Targets: holiday freezes, executive blackouts, peak-season exclusions,
+    "no work permitted", "blackout window", "no cutover during".
+    """
+    queries = [
+        "blackout window no work permitted holiday freeze year end",
+        "thanksgiving christmas executive blackout date range no cutover",
+        "restricted work window peak season exclusion holiday hours",
+        "freeze period no deployment change blackout calendar",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries, top_k=15)
+    if not excerpt:
+        return []
+    prompt = f"""Extract blackout windows / no-work date ranges from these excerpts.
+
+For each blackout, return:
+- start: start date or earliest date in the window
+- end: end date or latest date in the window
+- reason: why work is blocked (holiday, exec blackout, peak season)
+- applies_to: which sites or whole project
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"blackout_date_range": [
+  {{"start": "...", "end": "...", "reason": "...", "applies_to": "..."}}
+]}}
+If none found: {{"blackout_date_range": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("blackout_date_range", [])
+    return [r for r in raw if isinstance(r, dict) and (r.get("start") or r.get("end"))]
+
+
+def _extract_approval_decisions_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """v52 — extract recorded approval decisions ("X approved Y").
+
+    Targets: "Jordan Ames: Approved business case", "CFO Delegate:
+    Approval required". Different from approval_authorities (rules);
+    these are recorded acts.
+    """
+    queries = [
+        "approved business case pending sign off acceptance decision",
+        "approval note CFO VP director approved conditional approved with conditions",
+        "approve approved approval recorded decision sign-off",
+        "mock approval notes signoff decision conditional pending",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries, top_k=20)
+    if not excerpt:
+        return []
+    prompt = f"""Extract recorded approval decisions from these excerpts.
+
+For each decision, return:
+- approver: name or role of the approver
+- decision: "approved" / "conditional" / "rejected" / "pending"
+- condition: any condition or note attached to the approval
+- scope: what was approved (business case, technical design, contract)
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"approval_decision": [
+  {{"approver": "...", "decision": "...", "condition": "...", "scope": "..."}}
+]}}
+If none found: {{"approval_decision": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("approval_decision", [])
+    return [r for r in raw if isinstance(r, dict) and (r.get("decision") or r.get("approver"))]
 
 
 # ════════════════════════════════════════════════════════════════════

@@ -3908,6 +3908,9 @@ def _entities_to_atoms(
         # GAP D: pricing_structure → payment_term atoms so OrbitBrief
         # commercial.pricing_structure rule finds the evidence.
         "pricing_structure":            AtomType.payment_term,
+        # v52
+        "blackout_date_range":          AtomType.blackout_date_range,
+        "approval_decision":            AtomType.approval_decision,
     }
 
     def _best_text(entity: dict) -> str:

@@ -43,11 +43,24 @@ def _col_matches(header: str, patterns: tuple[str, ...]) -> bool:
 # ═══════════════════════════════════════════════════════════
 
 _SCHEMAS: list[tuple[str, tuple[tuple[str, ...], ...], int]] = [
+    # ─── Services line items (split from BOM in v52) ───
+    # Distinguishing signal: explicit "service" or "sv-" prefix in id/desc.
+    # Order MATTERS — services placed before bom so it wins when both match.
+    (
+        "service_line",
+        (
+            ("service id", "sv-", "svc-", "service item"),
+            ("description", "service", "scope"),
+            ("unit price", "unit cost", "fixed fee", "rate"),
+        ),
+        2,
+    ),
     # ─── BOM / Hardware quote ───
+    # Requires SKU/part anchor so Services rows (no SKU) don't match.
     (
         "bom",
         (
-            ("sku", "part no", "part number", "model", "item id", "hw-", "sw-"),
+            ("sku", "part no", "part number", "model", "item id", "hw-", "sw-", "catalog"),
             ("qty", "quantity", "count", "units"),
             ("unit cost", "unit price", "list price", "each", "unit $"),
         ),
@@ -361,6 +374,40 @@ def emit_atoms_for_schema(
                 lt_text,
                 {"item_id": item_id, "description": description, "sku": sku,
                  "lead_time_raw": lead_time_raw, "lead_time_days": lt_days},
+            ))
+
+    elif schema_name == "service_line":
+        svc_id = _find_col_value(row_dict, ("service id", "sv-", "svc-", "id", "#"))
+        description = _find_col_value(row_dict, ("description", "service", "scope", "name"))
+        unit = _find_col_value(row_dict, ("unit", "uom"))
+        qty_raw = _find_col_value(row_dict, ("qty", "quantity", "count", "units", "ea"))
+        unit_price_raw = _find_col_value(row_dict, ("unit price", "unit cost", "fixed fee", "rate", "list price"))
+        ext_raw = _find_col_value(row_dict, ("extended", "ext cost", "total", "subtotal"))
+        notes = _find_col_value(row_dict, ("notes", "remarks", "comment"))
+
+        qty = None
+        m = re.search(r"(\d[\d,]*)", qty_raw)
+        if m:
+            try:
+                qty = int(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+        unit_price = None
+        m = re.search(r"\$?\s*([\d,]+(?:\.\d+)?)", unit_price_raw)
+        if m:
+            try:
+                unit_price = float(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+        if svc_id or description:
+            atoms.append(_atom(
+                "service_line",
+                AtomType.service_line,
+                row_text,
+                {"service_id": svc_id, "description": description, "unit": unit,
+                 "qty": qty, "unit_price": unit_price, "extended_cost": ext_raw,
+                 "notes": notes, "row_text": row_text},
             ))
 
     elif schema_name == "cutover":
