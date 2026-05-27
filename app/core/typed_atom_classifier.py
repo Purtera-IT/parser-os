@@ -53,7 +53,7 @@ from typing import Any
 DEFAULT_HOST = "http://100.114.102.122:11434"
 DEFAULT_MODEL = "qwen2.5:3b"
 DEFAULT_TIMEOUT = 180
-DEFAULT_BATCH_SIZE = 25
+DEFAULT_BATCH_SIZE = 12  # dev proxy drops responses >~3KB; 12 atoms stays well under
 DEFAULT_PARALLEL = 4
 
 # Types the classifier WILL promote scope_item / entity into.
@@ -433,6 +433,16 @@ def _ollama_reachable() -> bool:
 
 
 def _call_ollama(prompt: str, *, max_tokens: int = 4096) -> str:
+    """POST to /api/generate, robust against proxy mid-stream drops.
+
+    The dev Ollama HTTPS proxy occasionally truncates non-streaming
+    responses (urllib raises IncompleteRead). We capture the partial
+    body via IncompleteRead.partial, fall through to the parser, and
+    let the partial-body recovery in _parse_response do its job.
+    Streaming mode is no better — the proxy emits one NDJSON chunk
+    then drops the connection.
+    """
+    import http.client
     host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
     model = os.environ.get("SOWSMITH_TYPED_CLASSIFIER_MODEL") or os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
@@ -453,15 +463,35 @@ def _call_ollama(prompt: str, *, max_tokens: int = 4096) -> str:
         data=data,
         headers={"Content-Type": "application/json"},
     )
+    body = ""
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="ignore")
+    except http.client.IncompleteRead as exc:
+        # Proxy dropped mid-stream — keep what we got.
+        try:
+            body = (exc.partial or b"").decode("utf-8", errors="ignore")
+        except Exception:
+            body = ""
     except Exception:
         return ""
+    if not body:
+        return ""
+    # body is the FULL Ollama envelope: {"model":..., "response":"...", "done":..., ...}
+    # When truncated, the outer JSON itself may be broken — fall back to
+    # extracting the "response" substring directly.
     try:
         result = json.loads(body)
         return str(result.get("response") or "")
     except json.JSONDecodeError:
+        # Try to pull "response":"<...>" via raw scan even from broken JSON.
+        m = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"', body)
+        if m:
+            # JSON-unescape the captured group.
+            try:
+                return json.loads('"' + m.group(1) + '"')
+            except json.JSONDecodeError:
+                return m.group(1)
         return ""
 
 
