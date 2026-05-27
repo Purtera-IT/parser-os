@@ -124,6 +124,68 @@ class AtomType(str, Enum):
     # succeeds) the device / panel atoms it connects.
     schematic_line_run = "schematic_line_run"
 
+    # ════════════════════════════════════════════════════════════════
+    # v47 — DEAL PACKET TAXONOMY
+    # ════════════════════════════════════════════════════════════════
+    # Designed so a structured deal packet (HS deal / SOW / BOM /
+    # site roster / commercial-final) lands every fact as a TYPED
+    # atom instead of being collapsed into ``scope_item``. Each new
+    # type carries structured ``value`` so OrbitBrief surfaces don't
+    # have to re-parse text blobs to render a section.
+
+    # ─── Tier 1: deal/commercial context ───
+    deal_metadata = "deal_metadata"
+    commercial_total = "commercial_total"
+    payment_term = "payment_term"
+    change_order_rule = "change_order_rule"
+
+    # ─── Tier 2: sites (doc 08 is source of truth) ───
+    physical_site = "physical_site"
+    site_attribute = "site_attribute"
+    site_access_window = "site_access_window"
+    site_access_restriction = "site_access_restriction"
+    site_infrastructure = "site_infrastructure"
+    site_room_mix = "site_room_mix"
+    site_implementation_note = "site_implementation_note"
+
+    # ─── Tier 3: schedule/execution ───
+    milestone_phase = "milestone_phase"
+    task = "task"
+    deliverable = "deliverable"
+    cutover_step = "cutover_step"
+    integration_checkpoint = "integration_checkpoint"
+    blackout_date_range = "blackout_date_range"
+
+    # ─── Tier 4: stakeholders/authority ───
+    stakeholder = "stakeholder"
+    approval_authority = "approval_authority"
+    approval_decision = "approval_decision"
+    signatory = "signatory"
+
+    # ─── Tier 5: commercial / BOM ───
+    bom_line = "bom_line"
+    site_allocation = "site_allocation"
+    service_line = "service_line"
+    site_budget = "site_budget"
+    lead_time_constraint = "lead_time_constraint"
+    pricing_assumption = "pricing_assumption"
+
+    # ─── Tier 6: requirements / acceptance / compliance ───
+    requirement = "requirement"
+    acceptance_criterion = "acceptance_criterion"
+    electrical_acceptance_test = "electrical_acceptance_test"
+    compliance_classification = "compliance_classification"
+    compliance_rule = "compliance_rule"
+
+    # ─── Tier 7: risks (extend existing risk type) ───
+    mitigation = "mitigation"
+    dependency = "dependency"
+
+    # ─── Tier 8: integration / system ───
+    data_flow_step = "data_flow_step"
+    system_mapping = "system_mapping"
+    metadata_requirement = "metadata_requirement"
+
 
 class AuthorityClass(str, Enum):
     contractual_scope = "contractual_scope"

@@ -545,6 +545,23 @@ def compile_project(
         telemetry.end_stage(stage, output_count=atoms_enriched, warnings=enrich_warnings)
     warnings.extend(enrich_warnings)
 
+    # v47 typed-atom classification — promotes scope_item / entity
+    # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
+    # commercial_total, payment_term, requirement, acceptance_criterion,
+    # electrical_acceptance_test, compliance_*, ...). LLM-driven so
+    # it generalises across customer terminology variations without
+    # hardcoded regex column headers.
+    with telemetry.stage("typed_atom_classification", input_count=len(atoms)) as stage:
+        promoted = 0
+        try:
+            from app.core.typed_atom_classifier import classify_atoms
+            promoted = classify_atoms(atoms)
+        except Exception as exc:
+            warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
+        if promoted:
+            warnings.append(f"INFO: typed-atom classifier promoted {promoted} atoms from scope_item/entity")
+        telemetry.end_stage(stage, output_count=promoted)
+
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
