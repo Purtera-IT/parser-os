@@ -26,6 +26,13 @@ dependencies = [
   "opencv-python-headless>=4.9",
   "Pillow>=10.0",
   "pypdfium2>=4.30",
+  # v45.2: explicit deps that were transitively present in parser-os-service
+  # but missed when packaging parser-os into a fresh image (e.g. parser-os-worker).
+  # Domain pack loader (app/domain/loader.py) and pack router use PyYAML.
+  "PyYAML>=6.0",
+  "httpx>=0.27",
+  "requests>=2.31",
+  "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]
