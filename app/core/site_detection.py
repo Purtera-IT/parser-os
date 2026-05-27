@@ -370,27 +370,47 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     # add them to the catalog with the strongest tier so the central
     # gate accepts site:* keys that match these IDs/names AND rejects
     # anything else when this set is non-empty.
+    # v53.5: ALSO read site IDs from site_allocation / bom_line atoms
+    # value.site / value.site_id fields. These are the BOM rows from
+    # spreadsheet parsers (xlsx_parser) that ARE reliably extracting
+    # site codes like "ATL-HQ-01" from the BOM columns. They're more
+    # specific than LLM site_clusters which often have truncated
+    # canonical_names like "ATL-HQ". By including them in the catalog,
+    # the central gate accepts site:atl_hq_01 keys.
     for atom in atom_list:
         atype = getattr(atom, "atom_type", None)
         atype_str = atype.value if hasattr(atype, "value") else str(atype or "")
-        if atype_str != "physical_site":
-            continue
         val = getattr(atom, "value", None) or {}
         if not isinstance(val, dict):
             continue
-        # Site_id / id — the canonical (e.g. ATL-HQ-01)
-        for k in ("id", "site_id"):
-            sid = val.get(k)
-            if sid and isinstance(sid, str) and sid.strip():
-                _record(sid.strip(), atom, tier=0)
-        # Facility name and any alternative names
-        for k in ("name", "facility_name"):
-            nm = val.get(k)
-            if nm and isinstance(nm, str) and nm.strip():
-                _record(nm.strip(), atom, tier=0)
-        for nm in (val.get("names") or val.get("aliases") or val.get("alternative_names") or []):
-            if isinstance(nm, str) and nm.strip():
-                _record(nm.strip(), atom, tier=0)
+        if atype_str == "physical_site":
+            for k in ("id", "site_id"):
+                sid = val.get(k)
+                if sid and isinstance(sid, str) and sid.strip():
+                    _record(sid.strip(), atom, tier=0)
+            for k in ("name", "facility_name"):
+                nm = val.get(k)
+                if nm and isinstance(nm, str) and nm.strip():
+                    _record(nm.strip(), atom, tier=0)
+            for nm in (val.get("names") or val.get("aliases") or val.get("alternative_names") or []):
+                if isinstance(nm, str) and nm.strip():
+                    _record(nm.strip(), atom, tier=0)
+        elif atype_str in ("site_allocation", "site_attribute", "site_access_window",
+                           "site_access_restriction", "site_room_mix",
+                           "site_infrastructure", "site_implementation_note",
+                           "site_budget", "task", "milestone_phase",
+                           "integration_checkpoint", "cutover_step"):
+            # These atoms reference a site_id in value.site / value.site_id —
+            # those references are reliable site IDs (came from a structured
+            # parser column).
+            for k in ("site", "site_id", "scope", "applies_to"):
+                sid = val.get(k)
+                if sid and isinstance(sid, str) and sid.strip():
+                    s = sid.strip()
+                    # Skip placeholders like "all" / "various"
+                    if s.lower() in {"all", "various", "tbd", "n/a", "none", ""}:
+                        continue
+                    _record(s, atom, tier=0)
 
     # Tier 1: every atom in a Locations section contributes its
     # raw_text as a candidate site list. We split on commas / newlines
