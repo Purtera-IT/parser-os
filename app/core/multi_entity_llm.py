@@ -166,15 +166,30 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
         }
 
     results: dict[str, Any] = _empty_result()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
-        futures = {pool.submit(fn): key for key, fn in calls.items()}
-        for fut in concurrent.futures.as_completed(futures):
-            key = futures[fut]
-            try:
-                results[key] = fut.result()
-            except Exception:
-                # Individual extractor failure: keep zero-value.
-                pass
+    # v50 PHASED EXECUTION — split extractors into 2 phases so the
+    # newer / experimental categories can't shadow the proven v43/v48
+    # ones via proxy queue saturation. Phase 1 = stable extractors,
+    # phase 2 = v49+ newer ones. Each phase uses its own thread pool.
+    _PHASE2_KEYS = {
+        "cutover_steps", "signatories", "compliance_classifications",
+        "integration_checkpoints", "deliverables", "system_mappings",
+        "data_flow_steps", "assumptions", "approval_authorities",
+        "dependencies", "pricing_structure",
+    }
+    phase1_calls = {k: fn for k, fn in calls.items() if k not in _PHASE2_KEYS}
+    phase2_calls = {k: fn for k, fn in calls.items() if k in _PHASE2_KEYS}
+    for phase_calls in (phase1_calls, phase2_calls):
+        if not phase_calls:
+            continue
+        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = {pool.submit(fn): key for key, fn in phase_calls.items()}
+            for fut in concurrent.futures.as_completed(futures):
+                key = futures[fut]
+                try:
+                    results[key] = fut.result()
+                except Exception:
+                    # Individual extractor failure: keep zero-value.
+                    pass
     # Stash site_clusters for entity_resolution to pick up without a
     # second LLM call. Used by collect_site_alias_groups to feed
     # canonical-name fusion alongside the regex co-mention patterns.

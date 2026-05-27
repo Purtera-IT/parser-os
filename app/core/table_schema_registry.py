@@ -145,6 +145,48 @@ _SCHEMAS: list[tuple[str, tuple[tuple[str, ...], ...], int]] = [
         ),
         2,
     ),
+    # ─── v50 new schemas ───
+    # Task table (Detailed Tasks sheets, RFP task lists)
+    (
+        "task",
+        (
+            ("task", "task id", "activity id", "id", "ref", "#", "no"),
+            ("owner", "assigned", "responsible", "lead", "who"),
+            ("due", "date", "start", "end", "deadline", "target"),
+        ),
+        2,
+    ),
+    # Milestone / phase / wave table
+    (
+        "milestone",
+        (
+            ("phase", "milestone", "wave", "sprint", "stage", "iteration"),
+            ("start", "begin", "kickoff", "start date", "from"),
+            ("end", "due", "completion", "finish", "end date", "to"),
+        ),
+        2,
+    ),
+    # Risk register
+    (
+        "risk_register",
+        (
+            ("risk", "risk id", "raid id", "id", "issue"),
+            ("probability", "likelihood", "chance"),
+            ("impact", "severity", "consequence"),
+            ("mitigation", "response plan", "treatment", "action"),
+        ),
+        2,
+    ),
+    # Stakeholder table
+    (
+        "stakeholder_table",
+        (
+            ("name", "stakeholder", "contact", "person", "owner"),
+            ("role", "title", "position", "function"),
+            ("email", "phone", "contact info", "@"),
+        ),
+        2,
+    ),
 ]
 
 
@@ -434,6 +476,95 @@ def emit_atoms_for_schema(
                 AtomType.system_mapping,
                 f"{source} -> {target}" if source and target else source or target,
                 {"source": source, "target": target, "field": field, "raw": row_text},
+            ))
+
+    elif schema_name == "task":
+        task_id = _find_col_value(row_dict, ("task id", "activity id", "id", "ref", "#", "no"))
+        site = _find_col_value(row_dict, ("site", "location", "scope", "where"))
+        phase = _find_col_value(row_dict, ("phase", "milestone", "wave", "sprint"))
+        name = _find_col_value(row_dict, ("task", "activity", "description", "name", "title"))
+        owner = _find_col_value(row_dict, ("owner", "assigned", "responsible", "lead", "who"))
+        start = _find_col_value(row_dict, ("start", "begin", "from", "start date"))
+        due = _find_col_value(row_dict, ("due", "end", "deadline", "target", "by", "due date", "end date"))
+        dependency = _find_col_value(row_dict, ("dependency", "depends on", "predecessor", "prior", "blocked by"))
+        status = _find_col_value(row_dict, ("status", "state", "progress"))
+        if name or task_id:
+            atoms.append(_atom(
+                "task",
+                AtomType.task,
+                name or row_text,
+                {"task_id": task_id, "site": site, "phase": phase, "name": name,
+                 "owner": owner, "start": start, "due": due, "dependency": dependency,
+                 "status": status, "raw": row_text},
+            ))
+            # Also emit a dependency atom when the row carries one — gives PM
+            # an explicit Gantt-style predecessor link.
+            if dependency:
+                atoms.append(_atom(
+                    "task_dep",
+                    AtomType.dependency,
+                    f"{name or task_id} depends on {dependency}",
+                    {"dependent": name or task_id, "depends_on": dependency,
+                     "dependency_type": "predecessor", "raw": row_text},
+                ))
+
+    elif schema_name == "milestone":
+        phase_id = _find_col_value(row_dict, ("phase", "milestone", "wave", "sprint", "stage", "#"))
+        name = _find_col_value(row_dict, ("name", "title", "description", "deliverable"))
+        start = _find_col_value(row_dict, ("start", "begin", "kickoff", "start date", "from"))
+        end = _find_col_value(row_dict, ("end", "due", "completion", "finish", "end date", "to"))
+        owner = _find_col_value(row_dict, ("owner", "lead", "responsible", "accountable"))
+        exit_criteria = _find_col_value(row_dict, ("exit", "criteria", "deliverable", "completion criteria"))
+        atoms.append(_atom(
+            "milestone",
+            AtomType.milestone_phase,
+            name or phase_id or row_text,
+            {"phase_id": phase_id, "name": name, "start": start, "end": end,
+             "owner": owner, "exit_criteria": exit_criteria, "raw": row_text},
+        ))
+
+    elif schema_name == "risk_register":
+        risk_id = _find_col_value(row_dict, ("risk id", "raid id", "id", "issue id", "#"))
+        description = _find_col_value(row_dict, ("description", "risk", "issue", "summary", "text"))
+        probability = _find_col_value(row_dict, ("probability", "likelihood", "chance", "p"))
+        impact = _find_col_value(row_dict, ("impact", "severity", "consequence", "i"))
+        owner = _find_col_value(row_dict, ("owner", "assigned", "raid owner"))
+        mitigation = _find_col_value(row_dict, ("mitigation", "response plan", "treatment", "action"))
+        if description or risk_id:
+            atoms.append(_atom(
+                "risk_register",
+                AtomType.risk,
+                description or row_text,
+                {"risk_id": risk_id, "description": description,
+                 "probability": probability, "impact": impact,
+                 "owner": owner, "mitigation": mitigation, "raw": row_text},
+            ))
+            # Emit a separate mitigation atom paired to the risk
+            if mitigation:
+                atoms.append(_atom(
+                    "risk_mit",
+                    AtomType.mitigation,
+                    mitigation,
+                    {"risk_id": risk_id, "mitigation_text": mitigation,
+                     "owner": owner, "raw": row_text},
+                ))
+
+    elif schema_name == "stakeholder_table":
+        name = _find_col_value(row_dict, ("name", "stakeholder", "contact", "person", "full name"))
+        title = _find_col_value(row_dict, ("title", "position"))
+        role = _find_col_value(row_dict, ("role", "function", "responsibility"))
+        email = _find_col_value(row_dict, ("email", "e-mail", "address"))
+        phone = _find_col_value(row_dict, ("phone", "telephone", "tel"))
+        org = _find_col_value(row_dict, ("org", "organization", "company", "side"))
+        approval_domain = _find_col_value(row_dict, ("approval", "authority", "approves", "domain"))
+        if name:
+            atoms.append(_atom(
+                "stakeholder",
+                AtomType.stakeholder,
+                f"{name} | {title or role}" if (title or role) else name,
+                {"name": name, "title": title, "role": role, "email": email,
+                 "phone": phone, "org": org, "approval_domain": approval_domain,
+                 "raw": row_text},
             ))
 
     return atoms

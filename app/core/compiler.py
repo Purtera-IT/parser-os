@@ -531,6 +531,83 @@ def compile_project(
             warnings.extend(floor_warnings)
         telemetry.end_stage(stage, output_count=floored, warnings=floor_warnings)
 
+    # v50 PROSE-LIST SPLITTER — atomize multi-fact paragraphs.
+    # A single scope_item containing 6 stakeholders / 6 phases / 4
+    # payment tiers becomes N child atoms. Each child inherits the
+    # parent's source_ref + a sub_idx locator. Universal patterns
+    # (pipe records, numbered prefixes, semicolon-parallel, bulleted
+    # lines, label-prefix runs) — no customer-specific tuning.
+    with telemetry.stage("prose_list_split", input_count=len(atoms)) as stage:
+        split_count = 0
+        try:
+            from app.core.prose_list_splitter import split_prose_paragraph
+            from app.core.schemas import (
+                ArtifactType as _AT, AtomType as _AtomT, AuthorityClass as _Auth,
+                EvidenceAtom as _EvAtom, ReviewStatus as _Rev, SourceRef as _SrcRef,
+            )
+            from app.core.ids import stable_id as _stable_id
+
+            _splittable_types = {"scope_item", "entity", "raw_table_row"}
+            _child_atoms: list = []
+            for parent in atoms:
+                _ptype = getattr(parent, "atom_type", None)
+                _ptype_v = _ptype.value if hasattr(_ptype, "value") else str(_ptype or "")
+                if _ptype_v not in _splittable_types:
+                    continue
+                _ptext = getattr(parent, "raw_text", "") or ""
+                items = split_prose_paragraph(_ptext)
+                if not items:
+                    continue
+                # Inherit source_ref from parent
+                _parent_refs = list(getattr(parent, "source_refs", None) or [])
+                _parent_aid = getattr(parent, "artifact_id", "") or ""
+                _parent_pid = getattr(parent, "project_id", "") or ""
+                for sub_idx, item_text in enumerate(items):
+                    _aid = _stable_id("atm", _parent_aid, "prose_split", parent.id, sub_idx)
+                    _srcs: list = []
+                    for r in _parent_refs[:1]:
+                        # Build a fresh SourceRef carrying the parent's locator
+                        # plus the sub_idx so provenance traces back to the
+                        # original paragraph.
+                        _loc = dict(getattr(r, "locator", None) or {})
+                        _loc["prose_split_sub_idx"] = sub_idx
+                        _loc["parent_atom_id"] = parent.id
+                        _srcs.append(_SrcRef(
+                            id=_stable_id("src", _aid),
+                            artifact_id=_parent_aid,
+                            artifact_type=getattr(r, "artifact_type", _AT.docx),
+                            filename=getattr(r, "filename", ""),
+                            locator=_loc,
+                            extraction_method="prose_list_split_v50",
+                            parser_version=getattr(r, "parser_version", "prose_split_v50"),
+                        ))
+                    _child_atoms.append(_EvAtom(
+                        id=_aid,
+                        project_id=_parent_pid,
+                        artifact_id=_parent_aid,
+                        atom_type=_AtomT.scope_item,
+                        raw_text=item_text[:4000],
+                        normalized_text=item_text.lower()[:4000],
+                        value={"_prose_split": True, "_parent_atom_id": parent.id, "_sub_idx": sub_idx},
+                        entity_keys=[],
+                        source_refs=_srcs,
+                        receipts=[],
+                        authority_class=getattr(parent, "authority_class", _Auth.contractual_scope),
+                        confidence=max(0.5, getattr(parent, "confidence", 0.8) - 0.05),
+                        confidence_raw=max(0.5, getattr(parent, "confidence_raw", 0.8) - 0.05),
+                        calibrated_confidence=max(0.5, getattr(parent, "calibrated_confidence", 0.8) - 0.05),
+                        review_status=_Rev.auto_accepted,
+                        review_flags=[],
+                        parser_version="prose_split_v50",
+                    ))
+                split_count += 1
+            if _child_atoms:
+                atoms.extend(_child_atoms)
+                warnings.append(f"INFO: prose-list splitter created {len(_child_atoms)} child atoms from {split_count} multi-fact paragraphs")
+        except Exception as _split_exc:
+            warnings.append(f"WARNING: prose_list_split failed: {type(_split_exc).__name__}: {_split_exc}")
+        telemetry.end_stage(stage, output_count=split_count)
+
     enrich_warnings: list[str] = []
     with telemetry.stage("enrich_entities", input_count=len(atoms)) as stage:
         # Universal entity extraction — populates atom.entity_keys for any
