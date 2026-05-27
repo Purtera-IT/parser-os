@@ -720,6 +720,40 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # v53 SMART CONFIDENCE — recalibrate every atom from hardcoded
+    # provenance defaults (0.82/0.85) to content-aware scoring:
+    # semantic-key anchored + value completeness + cross-doc
+    # corroboration + source authority tier + receipts verified
+    # + text-length quality. PMs get a confidence score that
+    # actually correlates with truth.
+    with telemetry.stage("confidence_recalibration", input_count=len(atoms)) as stage:
+        recal_count = 0
+        try:
+            from app.core.confidence_recalibration import recalibrate_confidence
+            from app.core.authority import classify_artifact_authority
+            # Build artifact_id → tier from filenames
+            _artifact_tier: dict[str, str] = {}
+            for _a in atoms:
+                _aid = getattr(_a, "artifact_id", None)
+                if not _aid or _aid in _artifact_tier:
+                    continue
+                _refs = getattr(_a, "source_refs", None) or []
+                _fname = ""
+                if _refs:
+                    _fname = getattr(_refs[0], "filename", "") or ""
+                _artifact_tier[_aid] = (
+                    classify_artifact_authority(_fname)
+                    if _fname else "supporting_evidence"
+                )
+            recal_count = recalibrate_confidence(
+                atoms, artifact_authority=_artifact_tier, edges=[],
+            )
+        except Exception as exc:
+            warnings.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
+        if recal_count:
+            warnings.append(f"INFO: recalibrated confidence on {recal_count} atoms")
+        telemetry.end_stage(stage, output_count=recal_count)
+
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)

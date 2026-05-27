@@ -2347,8 +2347,74 @@ def _dedupe_atoms(by_artifact: dict[str, list[Any]]) -> list[Any]:
     return out
 
 
+def _lexical_rerank(retrieved: list[Any], queries: list[str], target_k: int) -> list[Any]:
+    """v53 lightweight reranker. Cross-encoder LLM rerankers aren't on
+    the Mac, so use deterministic lexical signals to reorder the top-K
+    embedding hits:
+
+      score = embedding_rank_inverse + lexical_token_overlap
+              + early_position_bonus - generic_penalty
+
+    Boosts atoms that contain query KEYWORDS literally, atoms where
+    matches appear EARLY in the text, and atoms of MEDIUM length
+    (50-500 chars — full thoughts, not headers or walls). Penalizes
+    short fragments and generic single-word atoms.
+    """
+    if not retrieved or not queries or len(retrieved) <= target_k:
+        return retrieved
+    # Collect query tokens (≥3 chars, stopword-light)
+    import re as _re
+    STOPWORDS = {
+        "the", "a", "an", "and", "or", "of", "in", "on", "to", "for",
+        "with", "by", "from", "is", "are", "was", "were", "be", "been",
+        "has", "have", "had", "do", "does", "did", "will", "would",
+        "should", "shall", "can", "may", "might", "must", "this", "that",
+        "these", "those", "as", "at", "it", "its",
+    }
+    tokens: set[str] = set()
+    for q in queries:
+        for t in _re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", q.lower()):
+            if t not in STOPWORDS:
+                tokens.add(t)
+    if not tokens:
+        return retrieved[:target_k]
+
+    scored: list[tuple[float, int, Any]] = []  # (score, original_rank, atom)
+    n = len(retrieved)
+    for rank, atom in enumerate(retrieved):
+        text = (getattr(atom, "raw_text", "") or "").lower()
+        if not text:
+            scored.append((0.0, rank, atom))
+            continue
+        # 1. Original retrieval rank inverse (higher = better)
+        score = (n - rank) / n
+        # 2. Lexical token overlap
+        text_tokens = set(_re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", text))
+        overlap = len(tokens & text_tokens)
+        score += 0.5 * overlap  # heavy weight on lexical match
+        # 3. Early-position bonus: first match position
+        for t in tokens:
+            pos = text.find(t)
+            if pos >= 0:
+                score += max(0.0, 0.3 * (1.0 - pos / max(len(text), 1)))
+                break
+        # 4. Medium-length bonus (50-500 chars)
+        L = len(text)
+        if 50 <= L <= 500:
+            score += 0.2
+        elif L < 20:
+            score -= 0.5  # fragment penalty
+        scored.append((score, rank, atom))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [atom for _, _, atom in scored[:target_k]]
+
+
 def _retrieve_excerpt(by_artifact: dict[str, list[Any]], queries: list[str], top_k: int = 20) -> str:
-    """Shared retrieval helper for v49 extractors. Returns "" on failure."""
+    """Shared retrieval helper for v49 extractors. v53: pulls top_k*2
+    from embedding, then lexically reranks down to top_k so the LLM
+    sees the most query-relevant atoms first. Returns "" on failure.
+    """
     try:
         from app.core.embedding_retrieval import retrieve_for_query
     except ImportError:
@@ -2356,13 +2422,19 @@ def _retrieve_excerpt(by_artifact: dict[str, list[Any]], queries: list[str], top
     atoms = _dedupe_atoms(by_artifact)
     if not atoms:
         return ""
+    # v53: over-retrieve then rerank lexically. Embedding alone often
+    # misses keyword-heavy facts (e.g. "SKU NetWave AP-9700" gets a
+    # weak embedding score because product codes don't embed well,
+    # but lexical match is perfect).
+    embed_k = min(top_k * 2, len(atoms))
     try:
-        retrieved = retrieve_for_query(atoms=atoms, queries=queries, top_k=top_k, dedupe=True)
+        retrieved = retrieve_for_query(atoms=atoms, queries=queries, top_k=embed_k, dedupe=True)
     except Exception:
         return ""
     if not retrieved:
         return ""
-    return "\n".join(f"- {getattr(a, 'raw_text', '')}" for a in retrieved)
+    reranked = _lexical_rerank(retrieved, queries, top_k)
+    return "\n".join(f"- {getattr(a, 'raw_text', '')}" for a in reranked)
 
 
 def _extract_cutover_steps_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
