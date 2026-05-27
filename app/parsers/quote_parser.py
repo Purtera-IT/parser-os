@@ -1387,6 +1387,20 @@ class QuoteParser(BaseParser):
                 )
             )
 
+        # v49 FIX 2b: identify column schema from RAW header row so the
+        # registry can split BOM rows into bom_line + site_allocation +
+        # lead_time_constraint atoms. quote_parser's header_map uses
+        # CANONICAL keys (description, part_number, ...) — for the
+        # registry we need the raw header text.
+        from app.core.table_schema_registry import (
+            identify_schema as _identify_schema,
+            emit_atoms_for_schema as _emit_schema_atoms,
+        )
+        _raw_headers: list[str] = []
+        if 0 <= header_idx < len(rows):
+            _raw_headers = [str(c or "").strip() for c in rows[header_idx]]
+        _table_schema = _identify_schema(_raw_headers) if _raw_headers else None
+
         for row_idx in range(data_start, len(rows)):
             row = rows[row_idx]
             values = self._extract_row_values(row, header_map)
@@ -1417,6 +1431,28 @@ class QuoteParser(BaseParser):
                     diagnostics=diag,
                 )
             )
+            # v49 FIX 2b: ALSO emit schema-typed atoms (bom_line + per-site
+            # site_allocation + lead_time_constraint) when the header row
+            # matched a known schema. These are ADDITIONAL atoms — the
+            # legacy vendor_line_item / quantity atoms still emit above.
+            if _table_schema:
+                try:
+                    _row_cells = [str(c or "").strip() for c in row]
+                    _schema_atoms = _emit_schema_atoms(
+                        schema_name=_table_schema,
+                        columns=_raw_headers,
+                        row=_row_cells,
+                        row_idx=row_idx,
+                        table_idx=0,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=filename,
+                        parser_version=self.parser_version,
+                    )
+                    if _schema_atoms:
+                        atoms.extend(_schema_atoms)
+                except Exception:
+                    pass
         return atoms
 
     def _extract_row_values(self, row: list[Any], header_map: dict[str, int]) -> dict[str, str]:

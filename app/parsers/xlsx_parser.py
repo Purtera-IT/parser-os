@@ -1308,6 +1308,18 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         label_indices = _label_column_indices(model.header_map)
 
+        # v49 FIX 2c: identify column schema from RAW header row so the
+        # cutover plan XLSX emits cutover_step atoms (not just generic
+        # scope_item blobs). Headers come from rows[model.header_idx].
+        from app.core.table_schema_registry import (
+            identify_schema as _identify_schema,
+            emit_atoms_for_schema as _emit_schema_atoms,
+        )
+        _raw_headers: list[str] = []
+        if 0 <= model.header_idx < len(rows):
+            _raw_headers = [str(c or "").strip() for c in rows[model.header_idx]]
+        _table_schema = _identify_schema(_raw_headers) if _raw_headers else None
+
         for row_idx in range(data_start, len(rows)):
             row = rows[row_idx]
             if _is_blank_row(row):
@@ -1319,6 +1331,27 @@ class XlsxParser(BaseParser):
                 continue
 
             extracted = self._extract_row_values(row, model.header_map)
+
+            # v49 FIX 2c: emit schema-typed atoms ALONGSIDE legacy ones.
+            # Cutover/milestones/risk sheets get cutover_step/milestone_phase/etc.
+            if _table_schema:
+                try:
+                    _row_cells = [str(c or "").strip() for c in row]
+                    _schema_atoms = _emit_schema_atoms(
+                        schema_name=_table_schema,
+                        columns=_raw_headers,
+                        row=_row_cells,
+                        row_idx=row_idx,
+                        table_idx=0,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=filename,
+                        parser_version=self.parser_version,
+                    )
+                    if _schema_atoms:
+                        atoms.extend(_schema_atoms)
+                except Exception:
+                    pass
 
             if rk in {"subtotal"}:
                 atoms.extend(

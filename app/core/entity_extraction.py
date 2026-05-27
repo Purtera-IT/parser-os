@@ -3783,6 +3783,128 @@ def _section_path_context(atom: Any) -> str:
     return ""
 
 
+def _entities_to_atoms(
+    multi_result: dict[str, Any],
+    *,
+    project_id: str,
+    artifact_ids: list[str],
+    parser_version: str = "entity_bridge_v49",
+) -> list[Any]:
+    """v49 — bridge LLM entity findings into proper EvidenceAtom instances.
+
+    multi_result contains structured facts extracted by multi_entity_llm
+    (stakeholders, milestones, requirements, cutover_steps, signatories,
+    etc.). Previously these only mutated entity_keys on existing atoms —
+    they never became atoms themselves. After this bridge: every entity
+    finding becomes a typed EvidenceAtom with structured value.
+    """
+    from app.core.ids import stable_id
+    from app.core.schemas import (
+        ArtifactType, AtomType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef,
+    )
+
+    if not multi_result or not artifact_ids:
+        return []
+
+    canonical_aid = artifact_ids[0]
+
+    CATEGORY_TO_ATOM_TYPE: dict[str, AtomType] = {
+        "stakeholders":                 AtomType.stakeholder,
+        "milestones":                   AtomType.milestone_phase,
+        "requirements":                 AtomType.requirement,
+        "lead_times":                   AtomType.lead_time_constraint,
+        "payment_terms":                AtomType.payment_term,
+        "electrical_acceptance":        AtomType.electrical_acceptance_test,
+        "compliance_obligations":       AtomType.compliance_rule,
+        "certifications":               AtomType.compliance,
+        "risks":                        AtomType.risk,
+        "acceptance_criteria":          AtomType.acceptance_criterion,
+        "penalties":                    AtomType.constraint,
+        # v49 new categories (Fix 4)
+        "cutover_steps":                AtomType.cutover_step,
+        "signatories":                  AtomType.signatory,
+        "compliance_classifications":   AtomType.compliance_classification,
+        "integration_checkpoints":      AtomType.integration_checkpoint,
+        "deliverables":                 AtomType.deliverable,
+        "system_mappings":              AtomType.system_mapping,
+        "data_flow_steps":              AtomType.data_flow_step,
+        "assumptions":                  AtomType.assumption,
+        "approval_authorities":         AtomType.approval_authority,
+        "approval_decisions":           AtomType.approval_decision,
+        "dependencies":                 AtomType.dependency,
+        "mitigations":                  AtomType.mitigation,
+        # GAP D: pricing_structure → payment_term atoms so OrbitBrief
+        # commercial.pricing_structure rule finds the evidence.
+        "pricing_structure":            AtomType.payment_term,
+    }
+
+    def _best_text(entity: dict) -> str:
+        for field in ("text", "description", "name", "item", "test", "criterion",
+                      "deliverable", "step", "checkpoint", "source", "title",
+                      "assumption", "approver", "tranche", "step_id"):
+            v = entity.get(field)
+            if v and isinstance(v, str) and len(v.strip()) >= 3:
+                return v.strip()
+        return " | ".join(
+            str(v) for v in entity.values()
+            if v and isinstance(v, (str, int, float)) and str(v).strip()
+        )[:500]
+
+    out: list[Any] = []
+    seen_texts: set[str] = set()
+
+    for category, atom_type in CATEGORY_TO_ATOM_TYPE.items():
+        entities = multi_result.get(category)
+        if not isinstance(entities, list):
+            continue
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            raw_text = _best_text(entity)
+            if not raw_text or len(raw_text) < 3:
+                continue
+            dedup_key = f"{category}:{raw_text[:120].lower()}"
+            if dedup_key in seen_texts:
+                continue
+            seen_texts.add(dedup_key)
+
+            atom_id = stable_id("atm", canonical_aid, "entity_bridge", category, raw_text[:64])
+            src = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=canonical_aid,
+                artifact_type=ArtifactType.docx,
+                filename="entity_bridge",
+                locator={
+                    "extraction": "entity_bridge_v49",
+                    "category": category,
+                },
+                extraction_method="entity_bridge_v49",
+                parser_version=parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=canonical_aid,
+                    atom_type=atom_type,
+                    raw_text=raw_text,
+                    normalized_text=raw_text.lower(),
+                    value=entity,
+                    entity_keys=[],
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.machine_extractor,
+                    confidence=0.82,
+                    confidence_raw=0.82,
+                    calibrated_confidence=0.82,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=parser_version,
+                )
+            )
+    return out
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     """Mutate ``atoms`` in place: populate ``entity_keys``.
 
@@ -3994,6 +4116,34 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         )
         atoms_enriched += injected
         total_keys_added += key_count
+
+        # v49 ENTITY-TO-ATOM BRIDGE: convert every LLM entity finding
+        # into a proper typed EvidenceAtom. This is the fix for all 22
+        # ZERO extraction categories — the LLM was finding the facts
+        # but they were dying in the entity dict, never reaching the
+        # atom stream. After this call, stakeholders/deliverables/
+        # signatories/cutover_steps etc. become real typed atoms.
+        try:
+            _artifact_ids = sorted({
+                getattr(a, "artifact_id", "") for a in atom_list
+                if getattr(a, "artifact_id", "")
+            })
+            _project_id = (
+                getattr(atom_list[0], "project_id", "") if atom_list else ""
+            )
+            bridge_atoms = _entities_to_atoms(
+                multi_result,
+                project_id=_project_id,
+                artifact_ids=_artifact_ids,
+            )
+            if bridge_atoms:
+                atom_list.extend(bridge_atoms)
+                atoms_enriched += len(bridge_atoms)
+        except Exception as _bridge_exc:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "entity-to-atom bridge failed: %s", _bridge_exc
+            )
 
         # v44.5: inject vision-extracted rows AS atom entity_keys so
         # BOM line items, contact rosters, schedule phases, etc. that

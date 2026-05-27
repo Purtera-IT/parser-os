@@ -233,6 +233,51 @@ def build_orbitbrief_envelope(
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
     envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+
+    # v49 FIX 6: enrich site_readiness rows with structured attributes
+    # (address, mdf_idf, access_window, escort, users, rooms, notes,
+    # aliases) from physical_site atoms. These come from the v48 site
+    # roster extractor and v49 docx schema registry and are the single
+    # source of truth for site metadata.
+    try:
+        import re as _re_v49
+        _sr = envelope.get("site_readiness") or {}
+        _sites_list = _sr.get("sites") or []
+        # site_readiness.sites is a LIST of dicts keyed by "site" field
+        _by_slug: dict[str, dict] = {}
+        for _entry in _sites_list:
+            if isinstance(_entry, dict):
+                _k = _entry.get("site") or _entry.get("site_key") or ""
+                if _k:
+                    _by_slug[_k] = _entry
+        for _atom in atoms:
+            if _atom_type_str(_atom) != "physical_site":
+                continue
+            _val = getattr(_atom, "value", None) or {}
+            if not isinstance(_val, dict):
+                continue
+            _sid = _val.get("id") or _val.get("site_id") or ""
+            if not _sid:
+                continue
+            _slug = f"site:{_re_v49.sub(r'[^a-z0-9]+', '_', _sid.lower()).strip('_')}"
+            _entry = _by_slug.get(_slug)
+            if _entry is None:
+                continue
+            for _attr in ("address", "mdf_idf", "access_window", "escort", "users", "rooms", "notes",
+                          "facility_name", "street_address", "escort_owner", "contact", "phone", "email"):
+                _v = _val.get(_attr)
+                if _v and not _entry.get(_attr):
+                    _entry[_attr] = _v
+            _names = _val.get("names") or []
+            if _names:
+                _aliases = _entry.setdefault("aliases", [])
+                for _n in _names:
+                    if _n and _n not in _aliases:
+                        _aliases.append(_n)
+    except Exception as _v49_exc:
+        import logging as _lg_v49
+        _lg_v49.getLogger(__name__).warning("v49 site attribute passthrough failed: %s", _v49_exc)
+
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
     envelope["project_vitals"] = build_project_vitals(
         atoms=atoms,

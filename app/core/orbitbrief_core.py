@@ -1244,10 +1244,25 @@ def build_site_readiness(
     })
 
     for atom in atoms:
-        site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
+        atom_type = _atom_type_str(atom)
+        # v49 FIX 5: physical_site atoms ARE the authoritative site source.
+        # Read their structured value for the canonical site key instead of
+        # relying on regex entity_keys (which include ghost keys from MDF
+        # codes, access windows, and column headers).
+        if atom_type == "physical_site":
+            val = getattr(atom, "value", None) or {}
+            sid = ""
+            if isinstance(val, dict):
+                sid = val.get("id") or val.get("site_id") or ""
+            if not sid:
+                sid = (getattr(atom, "raw_text", "") or "")[:60]
+            import re as _re_sid
+            site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+            site_keys = [f"site:{site_slug}"] if site_slug else []
+        else:
+            site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
         if not site_keys:
             continue
-        atom_type = _atom_type_str(atom)
         for sk in site_keys:
             entry = sites[sk]
             entry["site_key"] = sk

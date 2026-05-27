@@ -142,6 +142,19 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             "lead_times": lambda: _extract_lead_times_retrieved(by_artifact),
             "electrical_acceptance": lambda: _extract_electrical_acceptance_retrieved(by_artifact),
             "payment_terms": lambda: _extract_payment_terms_retrieved(by_artifact),
+            # v49 — 11 new extractors for zero-extraction categories
+            "cutover_steps": lambda: _extract_cutover_steps_retrieved(by_artifact),
+            "signatories": lambda: _extract_signatories_retrieved(by_artifact),
+            "compliance_classifications": lambda: _extract_compliance_class_retrieved(by_artifact),
+            "integration_checkpoints": lambda: _extract_integration_checkpoints_retrieved(by_artifact),
+            "deliverables": lambda: _extract_deliverables_retrieved(by_artifact),
+            "system_mappings": lambda: _extract_system_mappings_retrieved(by_artifact),
+            "data_flow_steps": lambda: _extract_data_flow_steps_retrieved(by_artifact),
+            "assumptions": lambda: _extract_assumptions_retrieved(by_artifact),
+            "approval_authorities": lambda: _extract_approval_authorities_retrieved(by_artifact),
+            "dependencies": lambda: _extract_dependencies_retrieved(by_artifact),
+            # GAP D FIX: pricing_structure → payment_term atoms via entity bridge
+            "pricing_structure": lambda: _extract_pricing_structure_retrieved(by_artifact),
         }
     else:
         calls = {
@@ -584,6 +597,18 @@ def _empty_result() -> dict[str, Any]:
         "lead_times": [],
         "electrical_acceptance": [],
         "payment_terms": [],
+        # v49 — 11 new categories
+        "cutover_steps": [],
+        "signatories": [],
+        "compliance_classifications": [],
+        "integration_checkpoints": [],
+        "deliverables": [],
+        "system_mappings": [],
+        "data_flow_steps": [],
+        "assumptions": [],
+        "approval_authorities": [],
+        "dependencies": [],
+        "pricing_structure": [],
     }
 
 
@@ -2279,6 +2304,448 @@ If none found: {{"payment_terms": [], "net_days": null, "retainage_percent": nul
                 "retainage_percent": retainage,
             })
     return out
+
+
+# ════════════════════════════════════════════════════════════════════
+# v49 EXTRACTORS — 11 new categories for zero-extraction gaps
+# ════════════════════════════════════════════════════════════════════
+
+
+def _dedupe_atoms(by_artifact: dict[str, list[Any]]) -> list[Any]:
+    """Flatten by_artifact → flat atom list, deduplicating by id."""
+    seen: set[str] = set()
+    out: list[Any] = []
+    for art_atoms in by_artifact.values():
+        for a in art_atoms:
+            aid = getattr(a, "id", None)
+            if aid and aid not in seen:
+                out.append(a)
+                seen.add(aid)
+    return out
+
+
+def _retrieve_excerpt(by_artifact: dict[str, list[Any]], queries: list[str], top_k: int = 20) -> str:
+    """Shared retrieval helper for v49 extractors. Returns "" on failure."""
+    try:
+        from app.core.embedding_retrieval import retrieve_for_query
+    except ImportError:
+        return ""
+    atoms = _dedupe_atoms(by_artifact)
+    if not atoms:
+        return ""
+    try:
+        retrieved = retrieve_for_query(atoms=atoms, queries=queries, top_k=top_k, dedupe=True)
+    except Exception:
+        return ""
+    if not retrieved:
+        return ""
+    return "\n".join(f"- {getattr(a, 'raw_text', '')}" for a in retrieved)
+
+
+def _extract_cutover_steps_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract cutover plan steps and go-live sequencing."""
+    queries = [
+        "cutover step T minus go-live day activity owner timing",
+        "cutover plan procedure sequence step-by-step migration",
+        "go live checklist pre-cutover post-cutover validation",
+        "site access confirm network ready cutover day procedure",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries, top_k=25)
+    if not excerpt:
+        return []
+    prompt = f"""Extract cutover steps / go-live sequence steps from these document excerpts.
+
+For each step, return:
+- step_id: identifier (e.g. "Step 1", "T-5", "C-03")
+- timing: when this step occurs
+- owner: who is responsible
+- description: what action is performed
+- dependencies: any prior steps required (can be empty)
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"cutover_steps": [
+  {{"step_id": "...", "timing": "...", "owner": "...", "description": "...", "dependencies": "..."}}
+]}}
+If none found: {{"cutover_steps": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=2048)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("cutover_steps", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("description")]
+
+
+def _extract_signatories_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract signature blocks and authorized signatories."""
+    queries = [
+        "signature authorized representative date sign acceptance",
+        "by printed name title date approved authorized to sign",
+        "accepted by contractor customer signature block",
+        "director VP authorized signatory contract execution date",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract signature blocks and authorized signatories from these document excerpts.
+
+For each signatory, return:
+- name: full name if present
+- title: job title or role
+- org: customer/vendor/integrator
+- signatory_type: what they sign (contract, acceptance, change order)
+- date_field: whether a date line is present (true/false)
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"signatories": [
+  {{"name": "...", "title": "...", "org": "...", "signatory_type": "...", "date_field": true}}
+]}}
+If none found: {{"signatories": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("signatories", [])
+    return [r for r in raw if isinstance(r, dict) and (r.get("name") or r.get("title"))]
+
+
+def _extract_compliance_class_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract data classification and compliance handling rules."""
+    queries = [
+        "classification confidential internal restricted public data handling",
+        "allowed destinations data flow compliance rule restriction",
+        "mock confidential HubSpot dev permitted handling requirement",
+        "GDPR HIPAA SOC2 PCI data classification regulatory compliance",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract data classification levels and compliance handling rules from these excerpts.
+
+For each rule or classification, return:
+- classification: classification level (Mock Confidential, Internal, Public)
+- allowed_destinations: where this data can go
+- restrictions: what is NOT allowed
+- applies_to: what data or system this applies to
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"compliance_classifications": [
+  {{"classification": "...", "allowed_destinations": "...", "restrictions": "...", "applies_to": "..."}}
+]}}
+If none found: {{"compliance_classifications": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("compliance_classifications", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("classification")]
+
+
+def _extract_integration_checkpoints_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract integration checkpoints and system-level validations."""
+    queries = [
+        "integration checkpoint IC test validation system handoff",
+        "packet file HubSpot integration test verify confirm",
+        "system to system test checkpoint pass criteria expected result",
+        "IC-001 IC-002 integration test step expected outcome validation",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract integration checkpoints from these excerpts.
+
+For each checkpoint, return:
+- ic_id: identifier (IC-001, Checkpoint 3)
+- system: which system or integration
+- test_description: what is being validated
+- pass_criteria: how you know it passed
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"integration_checkpoints": [
+  {{"ic_id": "...", "system": "...", "test_description": "...", "pass_criteria": "..."}}
+]}}
+If none found: {{"integration_checkpoints": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("integration_checkpoints", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("test_description")]
+
+
+def _extract_deliverables_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract project deliverables with owners and due dates."""
+    queries = [
+        "deliverable work product document due date owner responsible",
+        "as-built drawings training materials closeout documentation submit",
+        "final deliverable acceptance milestone hand over customer",
+        "deliverable schedule project output artifact required by",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries, top_k=25)
+    if not excerpt:
+        return []
+    prompt = f"""Extract project deliverables from these document excerpts.
+
+For each deliverable, return:
+- name: what is being delivered
+- due: when it is due
+- owner: who is responsible
+- format: file format or medium
+- acceptance: how the deliverable is accepted
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"deliverables": [
+  {{"name": "...", "due": "...", "owner": "...", "format": "...", "acceptance": "..."}}
+]}}
+If none found: {{"deliverables": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=2048)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("deliverables", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("name")]
+
+
+def _extract_system_mappings_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract system-to-system integration and data mappings."""
+    queries = [
+        "source system destination field mapping data migration transform",
+        "existing system replace legacy migrate to new platform",
+        "integration mapping from to field column translation",
+        "data flow source destination transform rules migration spec",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract system-to-system mappings from these excerpts.
+
+For each mapping, return:
+- source: source system or field
+- target: destination system or field
+- transform: transformation rule or note
+- data_type: kind of data mapped
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"system_mappings": [
+  {{"source": "...", "target": "...", "transform": "...", "data_type": "..."}}
+]}}
+If none found: {{"system_mappings": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("system_mappings", [])
+    return [r for r in raw if isinstance(r, dict) and (r.get("source") or r.get("target"))]
+
+
+def _extract_data_flow_steps_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract data flow procedures and migration step sequences."""
+    queries = [
+        "data flow step export import migration procedure sequence",
+        "extract transform load ETL data migration step procedure",
+        "data handoff sequence trigger export upload validate",
+        "seven packet file data migration step HubSpot CRM",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract data flow steps and migration procedures from these excerpts.
+
+For each step, return:
+- step_number: sequence number
+- action: action taken (export, import, validate, transform)
+- system: which system performs or receives
+- trigger: what triggers this step
+- output: what the step produces
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"data_flow_steps": [
+  {{"step_number": "...", "action": "...", "system": "...", "trigger": "...", "output": "..."}}
+]}}
+If none found: {{"data_flow_steps": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("data_flow_steps", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("action")]
+
+
+def _extract_assumptions_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract scoping, pricing, and project assumptions."""
+    queries = [
+        "assumes assuming this quote includes excludes pricing assumption",
+        "scope assumes vendor assumes customer responsible for providing",
+        "assumption pricing based on assumes site conditions",
+        "this proposal assumes excludes assumes availability assumes access",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries, top_k=25)
+    if not excerpt:
+        return []
+    prompt = f"""Extract scoping and pricing assumptions from these excerpts.
+
+For each assumption, return:
+- assumption: the assumption text
+- category: type (pricing, scope, site_conditions, customer_responsibility, timing)
+- risk_if_false: what happens if wrong (optional)
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"assumptions": [
+  {{"assumption": "...", "category": "...", "risk_if_false": "..."}}
+]}}
+If none found: {{"assumptions": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("assumptions", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("assumption")]
+
+
+def _extract_approval_authorities_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract approval thresholds and authority assignments."""
+    queries = [
+        "requires approval authority threshold CFO VP sign-off board",
+        "approval required when changes exceeding dollar amount authority",
+        "authorized to approve change order contract modification authority",
+        "approval domain technical design scope financial authority",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract approval thresholds and authority assignments from these excerpts.
+
+For each rule, return:
+- approver: role or name with authority
+- domain: what they approve
+- threshold: dollar or scope threshold
+- process: how approval is given
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"approval_authorities": [
+  {{"approver": "...", "domain": "...", "threshold": "...", "process": "..."}}
+]}}
+If none found: {{"approval_authorities": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("approval_authorities", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("domain")]
+
+
+def _extract_dependencies_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Extract project dependencies and predecessor relationships."""
+    queries = [
+        "depends on requires completion cannot start until blocked by prerequisite",
+        "contingent on completion prior to starting dependency constraint",
+        "site X must complete before site Y can begin dependency sequence",
+        "prerequisite blocked waiting on external dependency project",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries)
+    if not excerpt:
+        return []
+    prompt = f"""Extract project dependencies from these excerpts.
+
+For each dependency, return:
+- dependent: what is waiting
+- depends_on: what it is waiting for
+- dependency_type: predecessor/external/resource/technical/approval
+- notes: relevant context
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"dependencies": [
+  {{"dependent": "...", "depends_on": "...", "dependency_type": "...", "notes": "..."}}
+]}}
+If none found: {{"dependencies": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("dependencies", [])
+    return [r for r in raw if isinstance(r, dict) and r.get("depends_on")]
+
+
+def _extract_pricing_structure_retrieved(by_artifact: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """GAP D FIX — pricing structure for OrbitBrief commercial.pricing_structure rule.
+
+    Targets payment schedules, % at milestone, pricing model (fixed/T&M).
+    Mapped to AtomType.payment_term via entity bridge.
+    """
+    queries = [
+        "payment schedule percent at order acceptance equipment receipt site acceptance",
+        "pricing structure fixed price time materials payment milestone invoice",
+        "30% 40% 20% 10% payment schedule hypercare closeout billing trigger",
+        "quote valid hardware pricing consolidated shipment payment terms",
+        "commercial terms pricing model payment schedule invoice terms",
+    ]
+    excerpt = _retrieve_excerpt(by_artifact, queries, top_k=25)
+    if not excerpt:
+        return []
+    prompt = f"""Extract pricing structure and payment schedule from these excerpts.
+
+For each pricing element, return:
+- pricing_type: fixed_price/time_and_materials/milestone_billing
+- description: what this covers
+- payment_milestone: when payment triggers
+- percentage: % of total if milestone-based
+- amount: dollar amount if specified
+- conditions: conditions or notes
+
+DOCUMENT EXCERPTS:
+{excerpt}
+
+OUTPUT (JSON array, no markdown):
+{{"pricing_structure": [
+  {{"pricing_type": "...", "description": "...", "payment_milestone": "...", "percentage": "...", "amount": "...", "conditions": "..."}}
+]}}
+If none found: {{"pricing_structure": []}}
+/no_think"""
+    text = _call_ollama(prompt, max_tokens=1024)
+    obj = _parse_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("pricing_structure", [])
+    return [r for r in raw if isinstance(r, dict) and (r.get("description") or r.get("payment_milestone"))]
 
 
 # ════════════════════════════════════════════════════════════════════
