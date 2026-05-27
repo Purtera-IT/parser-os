@@ -1811,7 +1811,11 @@ def _atoms_for_block(
                         artifact_id=artifact_id,
                         filename=filename,
                         parser_version=parser_version,
-                        atom_type=AtomType.entity,
+                        # v53.2 ROOT-CAUSE FIX: must be physical_site
+                        # (was AtomType.entity — meant ALL site roster
+                        # rows from PDF v1 extraction path were invisible
+                        # to downstream physical_site filters).
+                        atom_type=AtomType.physical_site,
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=site_row.confidence,
                         locator={
@@ -1821,8 +1825,11 @@ def _atoms_for_block(
                         },
                         value={
                             "kind": "physical_site",
+                            "id": site_row.site_id,  # canonical id
                             "site_id": site_row.site_id,
+                            "name": site_row.facility_name,
                             "facility_name": site_row.facility_name,
+                            "address": site_row.street_address,
                             "street_address": site_row.street_address,
                             "mdf_idf": site_row.mdf_idf,
                             "access_window": site_row.access_window,

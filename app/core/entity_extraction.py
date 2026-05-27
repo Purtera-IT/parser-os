@@ -3911,6 +3911,14 @@ def _entities_to_atoms(
         # v52
         "blackout_date_range":          AtomType.blackout_date_range,
         "approval_decision":            AtomType.approval_decision,
+        # v53.2 BRIDGE GAP — site_clusters from LLM site extraction now
+        # become physical_site atoms (used to only feed
+        # _llm_site_attr_cache → never crossed into atoms list →
+        # downstream canonical_set never saw them on docs without a
+        # structural roster table). quantities now become quantity
+        # atoms (similar gap — LLM-extracted figures had no atom).
+        "site_clusters":                AtomType.physical_site,
+        "quantities":                   AtomType.quantity,
     }
 
     def _best_text(entity: dict) -> str:
@@ -3933,6 +3941,36 @@ def _entities_to_atoms(
     import sys as _sys_v491
     _cat_counts: dict[str, dict[str, int]] = {}
 
+    def _normalize_entity_value(category: str, entity: dict) -> dict:
+        """v53.2: per-category value normalization so the bridged
+        atom's value dict matches what downstream code (semantic_dedup,
+        site_readiness canonical_set, find_authoritative_site_phrases)
+        expects. Without this, LLM-shaped {canonical_name, aliases}
+        site_clusters never reach the physical_site flow because
+        downstream queries value.id / value.name / value.names.
+        """
+        out_val = dict(entity)
+        if category == "site_clusters":
+            canon = entity.get("canonical_name") or entity.get("name") or entity.get("id") or ""
+            aliases = entity.get("aliases") or []
+            if isinstance(aliases, str):
+                aliases = [aliases]
+            if not isinstance(aliases, list):
+                aliases = []
+            # Normalize to physical_site shape
+            out_val.setdefault("id", canon)
+            out_val.setdefault("site_id", canon)
+            out_val.setdefault("name", canon)
+            out_val.setdefault("names", [canon] + list(aliases))
+            out_val.setdefault("kind", "physical_site")
+        elif category == "quantities":
+            # quantities have {text, kind, category} — make sure value/unit
+            # are present for downstream consumers.
+            qt = entity.get("text") or entity.get("canonical") or ""
+            out_val.setdefault("text", qt)
+            out_val.setdefault("description", qt)
+        return out_val
+
     for category, atom_type in CATEGORY_TO_ATOM_TYPE.items():
         entities = multi_result.get(category)
         if not isinstance(entities, list):
@@ -3942,7 +3980,10 @@ def _entities_to_atoms(
         for entity in entities:
             if not isinstance(entity, dict):
                 continue
-            raw_text = _best_text(entity)
+            # v53.2: best_text needs to look at canonical_name for sites.
+            raw_text = entity.get("canonical_name") if category == "site_clusters" else None
+            if not raw_text:
+                raw_text = _best_text(entity)
             if not raw_text or len(raw_text) < 3:
                 continue
             dedup_key = f"{category}:{raw_text[:120].lower()}"
@@ -3963,6 +4004,7 @@ def _entities_to_atoms(
                 extraction_method="entity_bridge_v49",
                 parser_version=parser_version,
             )
+            normalized_value = _normalize_entity_value(category, entity)
             out.append(
                 EvidenceAtom(
                     id=atom_id,
@@ -3971,14 +4013,17 @@ def _entities_to_atoms(
                     atom_type=atom_type,
                     raw_text=raw_text,
                     normalized_text=raw_text.lower(),
-                    value=entity,
+                    value=normalized_value,
                     entity_keys=[],
                     source_refs=[src],
                     receipts=[],
+                    # v53.2: site_clusters from LLM are weaker authority
+                    # than a parsed roster table (avoid promoting LLM
+                    # guesses over real physical_site atoms in dedup).
                     authority_class=AuthorityClass.machine_extractor,
-                    confidence=0.82,
-                    confidence_raw=0.82,
-                    calibrated_confidence=0.82,
+                    confidence=0.78 if category == "site_clusters" else 0.82,
+                    confidence_raw=0.78 if category == "site_clusters" else 0.82,
+                    calibrated_confidence=0.78 if category == "site_clusters" else 0.82,
                     review_status=ReviewStatus.auto_accepted,
                     review_flags=[],
                     parser_version=parser_version,
