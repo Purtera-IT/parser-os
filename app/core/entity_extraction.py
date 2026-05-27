@@ -3956,12 +3956,23 @@ def _entities_to_atoms(
         r"^\d+\s+[A-Z]",  # starts with house number + capitalized word
         _re_sid_norm.IGNORECASE,
     )
+    # v53.7: LLM commonly hallucinates "<prefix> <suffix> <year>" patterns
+    # ("Atl Hq 2026", "ATL West 2027") from contract/phase dates in text.
+    # Reject canonical_names that end with a 4-digit year token.
+    _YEAR_SUFFIX = _re_sid_norm.compile(r"\s\d{4}$")
+    # v53.7: LLM also hallucinates "Site X" / "Location X" wrapper prefixes.
+    _WRAPPED_SITE = _re_sid_norm.compile(
+        r"^(?:site|location|facility|building)\s+",
+        _re_sid_norm.IGNORECASE,
+    )
     # v53.5: garbage canonical values from LLM site extraction that
     # should never become physical_site atoms — generic placeholders,
     # company names, addresses, pure numbers.
     _BAD_SITE_NAMES: frozenset[str] = frozenset({
         "all", "all sites", "all locations", "various", "tbd", "n/a",
         "na", "none", "unknown", "various sites",
+        # v53.7: common LLM placeholder phrasing
+        "site all", "site various", "various locations",
     })
 
     def _pick_site_id(canonical_name: str, aliases: list) -> str:
@@ -3984,7 +3995,9 @@ def _entities_to_atoms(
 
     def _is_garbage_site(canonical_name: str) -> bool:
         """Reject LLM site_cluster atoms whose canonical_name is garbage:
-        addresses-as-name, generic placeholders, customer-name leaks.
+        addresses-as-name, generic placeholders, customer-name leaks,
+        year-suffixed phase names ("Atl Hq 2026"), wrapped tags
+        ("Site ALL", "Location TBD").
         """
         if not canonical_name:
             return True
@@ -3993,11 +4006,25 @@ def _entities_to_atoms(
             return True
         if s.lower() in _BAD_SITE_NAMES:
             return True
+        # v53.7: strip wrapping prefix and recheck the inner phrase
+        # ("Site ALL" → "ALL" → bad)
+        if _WRAPPED_SITE.match(s):
+            inner = _WRAPPED_SITE.sub("", s, count=1).strip()
+            if not inner or inner.lower() in _BAD_SITE_NAMES:
+                return True
+        # v53.7: LLM hallucinated "<phase> <year>" patterns
+        if _YEAR_SUFFIX.search(s):
+            return True
         # Addresses ("1180 Peachtree Street NE...")
         if _ADDRESS_SHAPE.match(s):
             return True
         # Pure number / very short / very long
         if s.isdigit() or len(s) < 3 or len(s) > 100:
+            return True
+        # v53.7: also check id/aliases for "ALL" garbage that survives
+        # via aliases-only construction (canonical_name something else
+        # but id resolves to 'ALL' via _pick_site_id).
+        if s.upper() == "ALL":
             return True
         return False
 

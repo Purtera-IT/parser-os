@@ -644,8 +644,18 @@ def emit_atoms_for_schema(
         )
         latlong = _find_col_value(row_dict, ("lat", "long", "lat, long", "coordinates", "gps"))
         # Skip header-repeat rows and totals/sub-totals.
+        # v53.7: also reject "all" / "various" / "none" / pure-numbers
+        # placeholders that show up in site allocation columns of
+        # spreadsheet tables.
         _bad = (name or site_id or "").strip().lower()
-        if not _bad or _bad in {"total", "sum", "subtotal", "n/a", "tbd"}:
+        if not _bad or _bad in {
+            "total", "sum", "subtotal", "n/a", "tbd",
+            "all", "various", "none", "unknown", "all sites",
+            "all locations",
+        }:
+            return atoms
+        # Also reject if id is a year token only (e.g. "2026").
+        if site_id and site_id.strip().isdigit() and len(site_id.strip()) == 4:
             return atoms
         # Need at least site_id OR name OR address — drop pure-empty rows.
         if not (site_id or name or address):
