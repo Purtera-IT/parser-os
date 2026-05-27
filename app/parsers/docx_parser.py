@@ -428,13 +428,17 @@ class DocxParser(BaseParser):
                     id=atom_id,
                     project_id=project_id,
                     artifact_id=artifact_id,
-                    atom_type=AtomType.entity,
+                    # v53.2 ROOT-CAUSE FIX: physical_site (not entity).
+                    atom_type=AtomType.physical_site,
                     raw_text=row_text,
                     normalized_text=row_text.lower(),
                     value={
                         "kind": "physical_site",
+                        "id": sid or site_row.site_id,
                         "site_id": sid or site_row.site_id,
+                        "name": site_row.facility_name,
                         "facility_name": site_row.facility_name,
+                        "address": site_row.street_address,
                         "street_address": site_row.street_address,
                         "mdf_idf": site_row.mdf_idf,
                         "access_window": site_row.access_window,

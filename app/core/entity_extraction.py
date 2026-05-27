@@ -4050,6 +4050,17 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     except Exception:
         _obv_non_site = None  # type: ignore
 
+    # v53.2: STRICT mode — when ANY physical_site atom exists, the
+    # roster catalog is the ONLY valid set of sites. Reject any
+    # site:* key not aliasing to a roster row.
+    _has_physical_site_atoms = any(
+        (getattr(a, "atom_type", None).value
+            if hasattr(getattr(a, "atom_type", None), "value")
+            else str(getattr(a, "atom_type", "") or "")) == "physical_site"
+        for a in atom_list
+    )
+    _strict_site_gate = _has_physical_site_atoms or bool(authoritative_sites)
+
     def _gate_site_keys(keys_in: Iterable[str]) -> list[str]:
         out: list[str] = []
         for k in keys_in:
@@ -4061,8 +4072,13 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 continue
             if _obv_non_site is not None and _obv_non_site(phrase):
                 continue
-            if authoritative_sites and not _phrase_in_cat(phrase, authoritative_sites):
-                continue
+            # When we have a canonical roster (physical_site atoms or
+            # LLM-built catalog), REJECT anything not in it. Previously
+            # this was opt-in only when catalog was non-empty; now it's
+            # strict whenever roster signal exists.
+            if _strict_site_gate:
+                if not authoritative_sites or not _phrase_in_cat(phrase, authoritative_sites):
+                    continue
             out.append(k)
         return out
 

@@ -1465,25 +1465,16 @@ def build_site_readiness(
                 if sk != canon:
                     m["_aliases"].add(sk)
 
-        # v53.1 final gate: when we have canonical sites (i.e. the
-        # parser identified at least one physical_site atom), any
-        # merged row that is NOT in canonical_set AND has no
-        # substantive signal (devices, scope, stakeholders) is garbage
-        # — typically an address-as-slug or a stray "Atlanta HQ"
-        # mention that should have collapsed but didn't. Drop it.
+        # v53.2 STRICT final gate: when we have canonical sites,
+        # ANYTHING not in canonical_set is dropped. No "kept if has
+        # devices" exception — devices/scope are TAGGED with whatever
+        # site phrase the regex/LLM lifted from the atom's text, which
+        # is exactly the ghost-site source. The canonical roster is
+        # authoritative.
         if canonical_set:
             filtered: dict[str, dict[str, Any]] = {}
             for ck, entry in merged.items():
                 if ck in canonical_set:
-                    filtered[ck] = entry
-                    continue
-                # Non-canonical: only keep if it has REAL signal
-                substantive = (
-                    len(entry.get("device_keys", set())) > 0
-                    or entry.get("scope_atom_count", 0) > 0
-                    or len(entry.get("stakeholder_keys", set())) >= 2
-                )
-                if substantive:
                     filtered[ck] = entry
             sites = filtered
         else:

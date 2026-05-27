@@ -935,14 +935,23 @@ def _fitz_site_roster_fallback(
                             artifact_id=artifact_id,
                             filename=pdf_path.name,
                             parser_version=parser_version,
-                            atom_type=AtomType.entity,
+                            # v53.2 ROOT-CAUSE FIX: must be physical_site so
+                            # downstream code (semantic_dedup, build_site_readiness
+                            # canonical_set, find_authoritative_site_phrases) can
+                            # find these as the canonical roster. Previously
+                            # labeled AtomType.entity with value.kind="physical_site"
+                            # — produced physical_site_atoms=0 envelope-wide.
+                            atom_type=AtomType.physical_site,
                             authority_class=AuthorityClass.contractual_scope,
                             confidence=site_row.confidence,
                             locator=locator,
                             value={
                                 "kind": "physical_site",
+                                "id": sid or site_row.site_id,  # canonical id (drives canonical_set)
                                 "site_id": sid or site_row.site_id,
+                                "name": site_row.facility_name,  # also as `name` for cross-doc joins
                                 "facility_name": site_row.facility_name,
+                                "address": site_row.street_address,
                                 "street_address": site_row.street_address,
                                 "mdf_idf": site_row.mdf_idf,
                                 "access_window": site_row.access_window,

@@ -364,6 +364,34 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     artifact_ids.discard(None)
     artifact_count = len(artifact_ids)
 
+    # ─── Tier 0: physical_site atoms ARE the authoritative catalog ───
+    # v53.2: any atom emitted by a site-roster parser (PDF/XLSX/DOCX)
+    # carries explicit id / name / aliases. These are ground truth —
+    # add them to the catalog with the strongest tier so the central
+    # gate accepts site:* keys that match these IDs/names AND rejects
+    # anything else when this set is non-empty.
+    for atom in atom_list:
+        atype = getattr(atom, "atom_type", None)
+        atype_str = atype.value if hasattr(atype, "value") else str(atype or "")
+        if atype_str != "physical_site":
+            continue
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        # Site_id / id — the canonical (e.g. ATL-HQ-01)
+        for k in ("id", "site_id"):
+            sid = val.get(k)
+            if sid and isinstance(sid, str) and sid.strip():
+                _record(sid.strip(), atom, tier=0)
+        # Facility name and any alternative names
+        for k in ("name", "facility_name"):
+            nm = val.get(k)
+            if nm and isinstance(nm, str) and nm.strip():
+                _record(nm.strip(), atom, tier=0)
+        for nm in (val.get("names") or val.get("aliases") or val.get("alternative_names") or []):
+            if isinstance(nm, str) and nm.strip():
+                _record(nm.strip(), atom, tier=0)
+
     # Tier 1: every atom in a Locations section contributes its
     # raw_text as a candidate site list. We split on commas / newlines
     # / semicolons since these sections often list sites comma-
@@ -541,8 +569,14 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     # AND seen exactly once. Tier 3 alone is the weakest signal
     # because a phrase like "Chrysler Building" matches the tail
     # regex but isn't anchored to anything project-specific.
-    _HIGH_PRECISION_TIERS: set[int] = {1, 2, 4, 5, 6}
+    # v53.2: tier 0 is physical_site atoms — they're the strongest
+    # signal (already parsed from an authoritative site roster table)
+    # so they always enter the catalog regardless of mention count.
+    _HIGH_PRECISION_TIERS: set[int] = {0, 1, 2, 4, 5, 6}
     catalog: set[str] = set()
+    # Track the physical_site canonical set so we can preserve it
+    # if LLM extraction below decides to replace `catalog` wholesale.
+    physical_site_phrases: set[str] = set()
     for phrase, ev in evidence.items():
         tiers = ev["tiers"]
         n_arts = len(ev["artifacts"])
@@ -554,6 +588,8 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
         elif n_mentions >= 2:
             catalog.add(phrase)
         # else: drop (single mention, only Tier 3 — the weak case)
+        if 0 in tiers:
+            physical_site_phrases.add(phrase)
 
     # ─────────── LLM EXTRACTION (Phase B — default-on) ───────────
     # The LLM reads the actual doc content (including section_path
@@ -612,6 +648,10 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
                         if _s.get("id"):
                             catalog.add(_s["id"])
                         catalog.update(_s.get("names") or [])
+                    # v53.2: physical_site atoms (parsed from the
+                    # authoritative roster table) are GROUND TRUTH —
+                    # never let the LLM extraction drop them. Union back in.
+                    catalog |= physical_site_phrases
                     # Cache structured attrs keyed by id + any alias.
                     import app.core.site_detection as _self
                     _self._llm_site_attr_cache = {
@@ -620,6 +660,35 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
                         for key in ([_s.get("id")] + list(_s.get("names") or []))
                         if key
                     }
+                    # v53.2: also seed the LLM cache with physical_site
+                    # atom rows. build_site_readiness uses this cache as
+                    # alias_name → canonical_id; without seeding it from
+                    # physical_site, a roster-emitted atom doesn't
+                    # contribute to alias collapse.
+                    for atom in atom_list:
+                        atype = getattr(atom, "atom_type", None)
+                        atype_str = atype.value if hasattr(atype, "value") else str(atype or "")
+                        if atype_str != "physical_site":
+                            continue
+                        val = getattr(atom, "value", None) or {}
+                        if not isinstance(val, dict):
+                            continue
+                        sid = val.get("id") or val.get("site_id") or ""
+                        if not sid:
+                            continue
+                        names = []
+                        for k in ("name", "facility_name"):
+                            v = val.get(k)
+                            if v and isinstance(v, str):
+                                names.append(v.strip())
+                        for nm in (val.get("names") or val.get("aliases") or []):
+                            if isinstance(nm, str) and nm.strip():
+                                names.append(nm.strip())
+                        site_obj = {"id": sid, "names": names}
+                        # Map both the id and every name to this canonical.
+                        _self._llm_site_attr_cache[sid] = site_obj
+                        for nm in names:
+                            _self._llm_site_attr_cache[nm] = site_obj
                 elif catalog:
                     # Extract returned nothing — try verify on the
                     # structural regex catalog as a fallback polish.
@@ -642,6 +711,11 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             pass
     else:
         catalog = hygiene_fn(catalog)
+
+    # v53.2: physical_site atom entries bypass hygiene — they're
+    # ground truth and hygiene's vendor-name/proper-noun heuristics
+    # can mis-drop legitimate facility names like "Brady Training".
+    catalog |= physical_site_phrases
 
     return catalog
 

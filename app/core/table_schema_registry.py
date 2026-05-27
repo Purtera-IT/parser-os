@@ -43,6 +43,26 @@ def _col_matches(header: str, patterns: tuple[str, ...]) -> bool:
 # ═══════════════════════════════════════════════════════════
 
 _SCHEMAS: list[tuple[str, tuple[tuple[str, ...], ...], int]] = [
+    # ─── v53.2: Site roster (HIGHEST priority — placed first so it wins
+    # over site_budget when both could match) ───
+    # Universal site-roster shape across customer docs:
+    #   OPTBOT:  Site ID | Facility name | Street address | MDF/IDF | Access window
+    #   APS:     Site No. | Administrative Site | Street | City | Zip | Lat,Long
+    #   Generic: Code | Location | Address | Type
+    # Need 2 of 3 column groups (id-like + name-like + address-like) to fire
+    # so a generic ("site" + "cost") site_budget table doesn't accidentally match.
+    (
+        "site_roster",
+        (
+            # ID-like column
+            ("site id", "site no", "site #", "site code", "facility id", "location id", "school id", "no.", "no "),
+            # Name-like column
+            ("facility name", "site name", "location name", "school site", "administrative site", "facility", "campus"),
+            # Address-like column
+            ("street address", "street", "address"),
+        ),
+        2,
+    ),
     # ─── Services line items (split from BOM in v52) ───
     # Distinguishing signal: explicit "service" or "sv-" prefix in id/desc.
     # Order MATTERS — services placed before bom so it wins when both match.
@@ -595,6 +615,64 @@ def emit_atoms_for_schema(
                     {"risk_id": risk_id, "mitigation_text": mitigation,
                      "owner": owner, "raw": row_text},
                 ))
+
+    elif schema_name == "site_roster":
+        # v53.2: emit a physical_site atom per row. Captures EVERY site
+        # in the authoritative roster table — drives the canonical
+        # catalog used by the central site:* gate so ghost sites can't
+        # leak through.
+        site_id = _find_col_value(
+            row_dict,
+            ("site id", "site no", "site #", "site code", "facility id",
+             "location id", "school id", "no.", "no "),
+        )
+        name = _find_col_value(
+            row_dict,
+            ("facility name", "site name", "location name", "school site",
+             "administrative site", "facility", "campus"),
+        )
+        address = _find_col_value(row_dict, ("street address", "street", "address"))
+        city = _find_col_value(row_dict, ("city",))
+        state = _find_col_value(row_dict, ("state", "province"))
+        zip_code = _find_col_value(row_dict, ("zip", "postal", "post code"))
+        mdf_idf = _find_col_value(row_dict, ("mdf", "idf", "telecom", "wiring closet"))
+        access_window = _find_col_value(
+            row_dict, ("access window", "access hours", "hours", "operating hours"),
+        )
+        escort_owner = _find_col_value(
+            row_dict, ("escort owner", "escort", "contact", "facility contact", "owner"),
+        )
+        latlong = _find_col_value(row_dict, ("lat", "long", "lat, long", "coordinates", "gps"))
+        # Skip header-repeat rows and totals/sub-totals.
+        _bad = (name or site_id or "").strip().lower()
+        if not _bad or _bad in {"total", "sum", "subtotal", "n/a", "tbd"}:
+            return atoms
+        # Need at least site_id OR name OR address — drop pure-empty rows.
+        if not (site_id or name or address):
+            return atoms
+        canonical = (site_id or name or "").strip()
+        if not canonical:
+            return atoms
+        atoms.append(_atom(
+            "physical_site",
+            AtomType.physical_site,
+            f"{canonical} | {name} | {address}".strip(" |"),
+            {
+                "kind": "physical_site",
+                "id": canonical,
+                "site_id": site_id or canonical,
+                "name": name or canonical,
+                "facility_name": name,
+                "address": address,
+                "street_address": address,
+                "city": city, "state": state, "zip": zip_code,
+                "mdf_idf": mdf_idf,
+                "access_window": access_window,
+                "escort_owner": escort_owner,
+                "lat_long": latlong,
+                "raw": row_text,
+            },
+        ))
 
     elif schema_name == "stakeholder_table":
         name = _find_col_value(row_dict, ("name", "stakeholder", "contact", "person", "full name"))
