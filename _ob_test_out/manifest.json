@@ -1,0 +1,17 @@
+{
+  "envelope_path": "C:\\Users\\lilli\\parser-os\\envelope_current.json",
+  "generated_at": "2026-05-28T14:32:48.376011Z",
+  "active_packs": [
+    "security_camera",
+    "wireless",
+    "delivery_execution"
+  ],
+  "brains_run": [],
+  "queued_for_review": 0,
+  "skipped_brains_no_chat": true,
+  "stage_count": 20,
+  "stage_status_counts": {
+    "ok": 7,
+    "skipped": 13
+  }
+}

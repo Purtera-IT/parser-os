@@ -1,0 +1,238 @@
+[
+  {
+    "stage": "00_ingest_envelope",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:41.345996Z",
+    "finished_at": "2026-05-28T14:32:42.701535Z",
+    "duration_ms": 1355,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\00_envelope.json",
+    "detail": {
+      "envelope_path": "C:\\Users\\lilli\\parser-os\\envelope_current.json",
+      "atom_count": 295,
+      "packet_count": 73,
+      "entity_count": 178
+    }
+  },
+  {
+    "stage": "10_pack_prior",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:42.704537Z",
+    "finished_at": "2026-05-28T14:32:42.771636Z",
+    "duration_ms": 67,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\10_pack_prior_state.json",
+    "detail": {}
+  },
+  {
+    "stage": "11_site_reality",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:42.771636Z",
+    "finished_at": "2026-05-28T14:32:42.797669Z",
+    "duration_ms": 25,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\11_site_reality_state.json",
+    "detail": {}
+  },
+  {
+    "stage": "20_retrieval_bundles::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:42.797669Z",
+    "finished_at": "2026-05-28T14:32:42.813893Z",
+    "duration_ms": 16,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\20_retrieval_bundles\\security_camera.json",
+    "detail": {
+      "packet_count": 6,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion"
+      ]
+    }
+  },
+  {
+    "stage": "20_retrieval_bundles::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:42.813893Z",
+    "finished_at": "2026-05-28T14:32:42.829126Z",
+    "duration_ms": 15,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\20_retrieval_bundles\\wireless.json",
+    "detail": {
+      "packet_count": 12,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion"
+      ]
+    }
+  },
+  {
+    "stage": "20_retrieval_bundles::delivery_execution",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:42.829126Z",
+    "finished_at": "2026-05-28T14:32:42.845121Z",
+    "duration_ms": 16,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\20_retrieval_bundles\\delivery_execution.json",
+    "detail": {
+      "packet_count": 25,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion",
+        "site_access"
+      ]
+    }
+  },
+  {
+    "stage": "30_planner",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {
+      "reason": "no chat_client; planner requires LLM"
+    }
+  },
+  {
+    "stage": "31_refiner",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "40_brain::security_camera",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {
+      "reason": "no chat_client"
+    }
+  },
+  {
+    "stage": "50_validator::security_camera",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "60_calibrator::security_camera",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "40_brain::wireless",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {
+      "reason": "no chat_client"
+    }
+  },
+  {
+    "stage": "50_validator::wireless",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "60_calibrator::wireless",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "40_brain::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {
+      "reason": "no chat_client"
+    }
+  },
+  {
+    "stage": "50_validator::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "60_calibrator::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "70_review_queue",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "80_composer",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:42.846122Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "90_inspection",
+    "status": "ok",
+    "started_at": "2026-05-28T14:32:42.846122Z",
+    "finished_at": "2026-05-28T14:32:43.052852Z",
+    "duration_ms": 207,
+    "artifact_path": "C:\\Users\\lilli\\parser-os\\_ob_test_out\\90_inspection_report.json",
+    "detail": {
+      "atoms": 295,
+      "packets": 73,
+      "active_packs": [
+        "security_camera",
+        "wireless",
+        "delivery_execution",
+        "procurement_finance",
+        "electrical",
+        "low_voltage_cabling",
+        "audio_visual",
+        "hardware",
+        "security_access",
+        "camera_vms_operations",
+        "imac",
+        "commercial",
+        "fire_safety",
+        "professional_services",
+        "audit",
+        "data_migration",
+        "building_management_systems",
+        "alm",
+        "network_maintenance"
+      ]
+    }
+  }
+]

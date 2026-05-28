@@ -1,0 +1,330 @@
+[
+  {
+    "stage": "00_ingest_envelope",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:00.997102Z",
+    "finished_at": "2026-05-28T14:38:03.440904Z",
+    "duration_ms": 2443,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/00_envelope.json",
+    "detail": {
+      "envelope_path": "/tmp/ob-core-144mqzhe/envelope.json",
+      "atom_count": 295,
+      "packet_count": 73,
+      "entity_count": 178
+    }
+  },
+  {
+    "stage": "10_pack_prior",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:03.441959Z",
+    "finished_at": "2026-05-28T14:38:03.574587Z",
+    "duration_ms": 132,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/10_pack_prior_state.json",
+    "detail": {}
+  },
+  {
+    "stage": "11_site_reality",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:03.574647Z",
+    "finished_at": "2026-05-28T14:38:03.601251Z",
+    "duration_ms": 26,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/11_site_reality_state.json",
+    "detail": {}
+  },
+  {
+    "stage": "20_retrieval_bundles::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:03.601344Z",
+    "finished_at": "2026-05-28T14:38:03.617035Z",
+    "duration_ms": 15,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/20_retrieval_bundles/security_camera.json",
+    "detail": {
+      "packet_count": 6,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion"
+      ]
+    }
+  },
+  {
+    "stage": "20_retrieval_bundles::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:03.617096Z",
+    "finished_at": "2026-05-28T14:38:03.631968Z",
+    "duration_ms": 14,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/20_retrieval_bundles/wireless.json",
+    "detail": {
+      "packet_count": 12,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion"
+      ]
+    }
+  },
+  {
+    "stage": "20_retrieval_bundles::delivery_execution",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:03.632031Z",
+    "finished_at": "2026-05-28T14:38:03.646746Z",
+    "duration_ms": 14,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/20_retrieval_bundles/delivery_execution.json",
+    "detail": {
+      "packet_count": 25,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion",
+        "site_access"
+      ]
+    }
+  },
+  {
+    "stage": "30_planner",
+    "status": "fallback",
+    "started_at": "2026-05-28T14:38:03.684716Z",
+    "finished_at": "2026-05-28T14:38:04.432226Z",
+    "duration_ms": 747,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/30_brief_state.raw.json",
+    "detail": {
+      "tier": "escalated",
+      "fallback_used": true,
+      "validation_errors": [
+        "inference_error_attempt_0: transport error against http://griffins-mac-studio:11434/v1/chat/completions: <urlopen error [Errno -2] Name or service not known>"
+      ],
+      "token_cost": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "latency_ms": 0
+      },
+      "raw_response_snippet": "",
+      "raw_response_length": 0
+    }
+  },
+  {
+    "stage": "31_refiner",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.432294Z",
+    "finished_at": "2026-05-28T14:38:04.490526Z",
+    "duration_ms": 58,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/31_brief_state.refined.json",
+    "detail": {
+      "dropped_claims": [],
+      "dropped_pack_activations": [],
+      "dropped_sites": [],
+      "duplicate_claims_collapsed": 0
+    }
+  },
+  {
+    "stage": "40_brain::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:38:04.490791Z",
+    "finished_at": "2026-05-28T14:38:04.490801Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {
+      "routing_source": "intent_none",
+      "rationale": "pack 'delivery_execution' matched but brain.intent=none (YAML declares this pack has no LLM brain by design)",
+      "canonical_pack_id": "delivery_execution",
+      "brain_id": null,
+      "aliases_tried": []
+    }
+  },
+  {
+    "stage": "50_validator::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:38:04.490815Z",
+    "finished_at": "2026-05-28T14:38:04.490819Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "60_calibrator::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:38:04.490827Z",
+    "finished_at": "2026-05-28T14:38:04.490831Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "40_brain::security_camera",
+    "status": "fallback",
+    "started_at": "2026-05-28T14:38:04.598301Z",
+    "finished_at": "2026-05-28T14:38:04.619376Z",
+    "duration_ms": 21,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/40_brain_outputs/security_camera.json",
+    "detail": {
+      "fallback_used": true,
+      "unresolved_packet_ids": [],
+      "unresolved_atom_ids": [],
+      "token_cost": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "latency_ms": 0
+      },
+      "validation_errors": [
+        "inference_error_attempt_0: transport error against http://griffins-mac-studio:11434/v1/chat/completions: <urlopen error [Errno -2] Name or service not known>"
+      ],
+      "raw_response_snippet": "",
+      "raw_response_length": 0,
+      "routing_source": "redirect",
+      "brain_id": "camera_vms_operations",
+      "routing_rationale": "exact match on canonical pack_id 'security_camera'; running brain 'camera_vms_operations'"
+    }
+  },
+  {
+    "stage": "50_validator::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.664706Z",
+    "finished_at": "2026-05-28T14:38:04.669583Z",
+    "duration_ms": 4,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/50_validations/security_camera.json",
+    "detail": {
+      "rule_counts": {},
+      "n_passed": 1,
+      "n_failed": 0,
+      "n_blocker": 0
+    }
+  },
+  {
+    "stage": "60_calibrator::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.669632Z",
+    "finished_at": "2026-05-28T14:38:04.669958Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/60_calibrations/security_camera.json",
+    "detail": {
+      "by_verdict_counts": {
+        "needs_review": 1
+      }
+    }
+  },
+  {
+    "stage": "70_review_queue::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.670108Z",
+    "finished_at": "2026-05-28T14:38:04.670117Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/70_review_queue",
+    "detail": {
+      "queued": 1
+    }
+  },
+  {
+    "stage": "40_brain::wireless",
+    "status": "fallback",
+    "started_at": "2026-05-28T14:38:04.619508Z",
+    "finished_at": "2026-05-28T14:38:04.664620Z",
+    "duration_ms": 45,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/40_brain_outputs/wireless.json",
+    "detail": {
+      "fallback_used": true,
+      "unresolved_packet_ids": [],
+      "unresolved_atom_ids": [],
+      "token_cost": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "latency_ms": 0
+      },
+      "validation_errors": [
+        "inference_error_attempt_0: transport error against http://griffins-mac-studio:11434/v1/chat/completions: <urlopen error [Errno -2] Name or service not known>"
+      ],
+      "raw_response_snippet": "",
+      "raw_response_length": 0,
+      "routing_source": "direct",
+      "brain_id": "wireless",
+      "routing_rationale": "exact match on canonical pack_id 'wireless'; brain 'wireless'"
+    }
+  },
+  {
+    "stage": "50_validator::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.670164Z",
+    "finished_at": "2026-05-28T14:38:04.673961Z",
+    "duration_ms": 3,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/50_validations/wireless.json",
+    "detail": {
+      "rule_counts": {},
+      "n_passed": 1,
+      "n_failed": 0,
+      "n_blocker": 0
+    }
+  },
+  {
+    "stage": "60_calibrator::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.674001Z",
+    "finished_at": "2026-05-28T14:38:04.674284Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/60_calibrations/wireless.json",
+    "detail": {
+      "by_verdict_counts": {
+        "needs_review": 1
+      }
+    }
+  },
+  {
+    "stage": "70_review_queue::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.674377Z",
+    "finished_at": "2026-05-28T14:38:04.674384Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/70_review_queue",
+    "detail": {
+      "queued": 1
+    }
+  },
+  {
+    "stage": "80_composer",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.674426Z",
+    "finished_at": "2026-05-28T14:38:04.675185Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/80_composed_brief.json",
+    "detail": {
+      "domains": [
+        "security_camera",
+        "wireless"
+      ],
+      "auto_accept": 0,
+      "needs_review": 2,
+      "rejected": 0
+    }
+  },
+  {
+    "stage": "90_inspection",
+    "status": "ok",
+    "started_at": "2026-05-28T14:38:04.676074Z",
+    "finished_at": "2026-05-28T14:38:04.719229Z",
+    "duration_ms": 43,
+    "artifact_path": "/tmp/ob-core-144mqzhe/out/90_inspection_report.json",
+    "detail": {
+      "atoms": 295,
+      "packets": 73,
+      "active_packs": [
+        "security_camera",
+        "wireless",
+        "delivery_execution",
+        "procurement_finance",
+        "electrical",
+        "low_voltage_cabling",
+        "audio_visual",
+        "hardware",
+        "security_access",
+        "camera_vms_operations",
+        "imac",
+        "commercial",
+        "fire_safety",
+        "professional_services",
+        "audit",
+        "data_migration",
+        "building_management_systems",
+        "alm",
+        "network_maintenance"
+      ]
+    }
+  }
+]

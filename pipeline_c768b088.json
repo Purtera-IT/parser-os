@@ -1,0 +1,328 @@
+[
+  {
+    "stage": "00_ingest_envelope",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:01.022372Z",
+    "finished_at": "2026-05-28T14:55:03.456611Z",
+    "duration_ms": 2434,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/00_envelope.json",
+    "detail": {
+      "envelope_path": "/tmp/ob-core-9nytfz4_/envelope.json",
+      "atom_count": 295,
+      "packet_count": 73,
+      "entity_count": 178
+    }
+  },
+  {
+    "stage": "10_pack_prior",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:03.457789Z",
+    "finished_at": "2026-05-28T14:55:32.565360Z",
+    "duration_ms": 29107,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/10_pack_prior_state.json",
+    "detail": {}
+  },
+  {
+    "stage": "11_site_reality",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:32.565423Z",
+    "finished_at": "2026-05-28T14:55:32.592123Z",
+    "duration_ms": 26,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/11_site_reality_state.json",
+    "detail": {}
+  },
+  {
+    "stage": "20_retrieval_bundles::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:32.592221Z",
+    "finished_at": "2026-05-28T14:55:32.606916Z",
+    "duration_ms": 14,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/20_retrieval_bundles/security_camera.json",
+    "detail": {
+      "packet_count": 6,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion"
+      ]
+    }
+  },
+  {
+    "stage": "20_retrieval_bundles::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:32.606976Z",
+    "finished_at": "2026-05-28T14:55:32.621416Z",
+    "duration_ms": 14,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/20_retrieval_bundles/wireless.json",
+    "detail": {
+      "packet_count": 12,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion"
+      ]
+    }
+  },
+  {
+    "stage": "20_retrieval_bundles::delivery_execution",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:32.621483Z",
+    "finished_at": "2026-05-28T14:55:32.636147Z",
+    "duration_ms": 14,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/20_retrieval_bundles/delivery_execution.json",
+    "detail": {
+      "packet_count": 25,
+      "families": [
+        "meeting_decision",
+        "scope_inclusion",
+        "site_access"
+      ]
+    }
+  },
+  {
+    "stage": "30_planner",
+    "status": "ok",
+    "started_at": "2026-05-28T14:55:32.674959Z",
+    "finished_at": "2026-05-28T14:57:26.324287Z",
+    "duration_ms": 113649,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/30_brief_state.raw.json",
+    "detail": {
+      "tier": "escalated",
+      "fallback_used": false,
+      "validation_errors": [],
+      "token_cost": {
+        "prompt_tokens": 13125,
+        "completion_tokens": 2321,
+        "total_tokens": 15446,
+        "latency_ms": 112924
+      },
+      "raw_response_snippet": "{\n  \"project_id\": \"2dbc02c9-9d49-40ad-8048-aae78836b0eb\",\n  \"compile_id\": \"2dbc02c9-9d49-40ad-8048-aae78836b0eb\",\n  \"generated_at\": \"2026-05-28T14:55:33Z\",\n  \"pack_activations\": [\n    {\n      \"pack_id\": \"wireless\",\n      \"status\": \"active\",\n      \"confidence\": 0.3592,\n      \"rationale\": \"High keyword match for wireless deployment, coverage validation, and AP installation.\"\n    },\n    {\n      \"pack_id\": \"security_camera\",\n      \"status\": \"active\",\n      \"confidence\": 0.3629,\n      \"rationale\": \"Strong evidence of camera deployment, VMS integration, and room setup requirements.\"\n    },\n    {\n      \"pack_id\": \"delivery_execution\",\n      \"status\": \"active\",\n      \"confidence\": 0.3555,\n      \"rationale\": \"Cutover windows, logistics, and execution phases explicitly detailed in scope items.\"\n    },\n    {\n      \"pack_id\": \"procurement_finance\",\n      \"status\": \"active\",\n      \"confidence\": 0.3259,\n      \"rationale\": \"Procurement workflows, milestone billing, and PO approval processes clearly defined.\"\n    },\n    {\n      \"pack_id\": \"electrical\",\n      \"status\": \"inactive\",\n      \"confidence\": 0.2592,\n      \"rationale\": \"No explicit mention of electrical systems in scope or constraints.\"\n    },\n    {\n      \"pack_id\": \"low_voltage_cabling\",\n      \"status\": \"inactive\",\n      \"confidence\": 0.2481,\n      \"rationale\": \"No cabling or fiber-related requirements in retrieval bundles.\"\n    },\n    {\n      \"pack_id\": \"audio_visual\",\n      \"status\": \"inactive\",\n      \"confidence\": 0.2296,\n      \"rationale\": \"No AV equipment or integration needs identified.\"\n    },\n    {\n      \"pack_id\": \"hardware\",\n      \"status\": \"inactive\",\n      \"confidence\": 0.1778,\n      \"rationale\": \"Hardware procurement details are subsumed under procurement_finance.\"\n    }\n  ],\n  \"sites\": [\n    {\n      \"cluster_id\": \"site_cluster::site:atl_047_04\",\n      \"canonical_name\": \"atl 047 04\",\n      \"role\": \"primary\",\n      \"confidence\": 1.0,\n      \"depends_on_cluster_ids\": []\n    },\n    {\n      \"cluster_id\": \"site_clust",
+      "raw_response_length": 7799
+    }
+  },
+  {
+    "stage": "31_refiner",
+    "status": "ok",
+    "started_at": "2026-05-28T14:57:26.324363Z",
+    "finished_at": "2026-05-28T14:57:26.376470Z",
+    "duration_ms": 52,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/31_brief_state.refined.json",
+    "detail": {
+      "dropped_claims": [],
+      "dropped_pack_activations": [],
+      "dropped_sites": [],
+      "duplicate_claims_collapsed": 0
+    }
+  },
+  {
+    "stage": "40_brain::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:57:26.376736Z",
+    "finished_at": "2026-05-28T14:57:26.376747Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {
+      "routing_source": "intent_none",
+      "rationale": "pack 'delivery_execution' matched but brain.intent=none (YAML declares this pack has no LLM brain by design)",
+      "canonical_pack_id": "delivery_execution",
+      "brain_id": null,
+      "aliases_tried": []
+    }
+  },
+  {
+    "stage": "50_validator::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:57:26.376761Z",
+    "finished_at": "2026-05-28T14:57:26.376765Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "60_calibrator::delivery_execution",
+    "status": "skipped",
+    "started_at": "2026-05-28T14:57:26.376773Z",
+    "finished_at": "2026-05-28T14:57:26.376777Z",
+    "duration_ms": 0,
+    "artifact_path": null,
+    "detail": {}
+  },
+  {
+    "stage": "40_brain::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:57:26.481514Z",
+    "finished_at": "2026-05-28T14:58:16.147651Z",
+    "duration_ms": 49666,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/40_brain_outputs/security_camera.json",
+    "detail": {
+      "fallback_used": false,
+      "unresolved_packet_ids": [
+        "pkt_20a5c717f7a9192f",
+        "pkt_d0e5e6ab97df3d48",
+        "pkt_bdae260774dc595b"
+      ],
+      "unresolved_atom_ids": [],
+      "token_cost": {
+        "prompt_tokens": 5635,
+        "completion_tokens": 1274,
+        "total_tokens": 6909,
+        "latency_ms": 49664
+      },
+      "validation_errors": [],
+      "raw_response_snippet": "{\n  \"project_id\": \"2dbc02c9-9d49-40ad-8048-aae78836b0eb\",\n  \"compile_id\": \"2dbc02c9-9d49-40ad-8048-aae78836b0eb\",\n  \"generated_at\": \"2026-05-28T14:57:26Z\",\n  \"domain_id\": \"camera_vms_operations\",\n  \"scope_overview\": [\n    {\n      \"id\": \"scope_overview_001\",\n      \"statement\": \"Operational ownership includes VMS health monitoring for Genetec Security Center with 30-day retention SLA for criminal justice compliance at ATL-HQ, ATL-WEST, and ATL-AIR sites.\",\n      \"supporting_packet_ids\": [\"pkt_09ebe409332a8723\", \"pkt_63991c09a540bfa5\"],\n      \"supporting_atom_ids\": [\"atm_9c3bf294de9dc4d3\", \"atm_9b0aa5e418996c7e\"],\n      \"confidence\": 0.88,\n      \"metadata\": {}\n    }\n  ],\n  \"detailed_scope_of_services\": [\n    {\n      \"id\": \"service_001\",\n      \"statement\": \"VMS storage rebalancing and retention audit reporting for 184,725 USD deal covering ATL-HQ, ATL-WEST, and ATL-AIR sites.\",\n      \"supporting_packet_ids\": [\"pkt_09ebe409332a8723\", \"pkt_20a5c717f7a9192f\"],\n      \"supporting_atom_ids\": [\"a",
+      "raw_response_length": 3177,
+      "routing_source": "redirect",
+      "brain_id": "camera_vms_operations",
+      "routing_rationale": "exact match on canonical pack_id 'security_camera'; running brain 'camera_vms_operations'"
+    }
+  },
+  {
+    "stage": "50_validator::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.422996Z",
+    "finished_at": "2026-05-28T14:59:32.437014Z",
+    "duration_ms": 14,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/50_validations/security_camera.json",
+    "detail": {
+      "rule_counts": {},
+      "n_passed": 3,
+      "n_failed": 0,
+      "n_blocker": 0
+    }
+  },
+  {
+    "stage": "60_calibrator::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.437079Z",
+    "finished_at": "2026-05-28T14:59:32.437604Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/60_calibrations/security_camera.json",
+    "detail": {
+      "by_verdict_counts": {
+        "needs_review": 3
+      }
+    }
+  },
+  {
+    "stage": "70_review_queue::security_camera",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.437826Z",
+    "finished_at": "2026-05-28T14:59:32.437833Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/70_review_queue",
+    "detail": {
+      "queued": 3
+    }
+  },
+  {
+    "stage": "40_brain::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:58:16.147767Z",
+    "finished_at": "2026-05-28T14:59:32.422908Z",
+    "duration_ms": 76275,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/40_brain_outputs/wireless.json",
+    "detail": {
+      "fallback_used": false,
+      "unresolved_packet_ids": [],
+      "unresolved_atom_ids": [],
+      "token_cost": {
+        "prompt_tokens": 9172,
+        "completion_tokens": 1537,
+        "total_tokens": 10709,
+        "latency_ms": 76273
+      },
+      "validation_errors": [],
+      "raw_response_snippet": "{\n  \"project_id\": \"2dbc02c9-9d49-40ad-8048-aae78836b0eb\",\n  \"compile_id\": \"2dbc02c9-9d49-40ad-8048-aae78836b0eb\",\n  \"generated_at\": \"2026-05-28T14:58:16Z\",\n  \"domain_id\": \"wireless\",\n  \"scope_overview\": [\n    {\n      \"id\": \"scope_overview_001\",\n      \"statement\": \"Wireless modernization project for three OPTBOT Atlanta sites: ATL-HQ, ATL-WEST, and ATL-AIR, involving design validation, procurement, and cutover.\",\n      \"supporting_packet_ids\": [\"pkt_09ebe409332a8723\", \"pkt_b339523175a99e7d\"],\n      \"supporting_atom_ids\": [\"atm_01b89013e47880d5\", \"atm_2929e030605637ec\", \"atm_5d0f9fecd450550f\", \"atm_18161f3b25417c20\"],\n      \"confidence\": 0.9,\n      \"metadata\": {}\n    }\n  ],\n  \"detailed_scope_of_services\": [\n    {\n      \"id\": \"service_001\",\n      \"statement\": \"Design validation for Wi-Fi 7 AP deployment across three sites, including asset tagging and procurement of 94 APs and 18 PoE++ switches.\",\n      \"supporting_packet_ids\": [\"pkt_63991c09a540bfa5\", \"pkt_09ebe409332a8723\"],\n      \"suppo",
+      "raw_response_length": 4121,
+      "routing_source": "direct",
+      "brain_id": "wireless",
+      "routing_rationale": "exact match on canonical pack_id 'wireless'; brain 'wireless'"
+    }
+  },
+  {
+    "stage": "50_validator::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.437878Z",
+    "finished_at": "2026-05-28T14:59:32.470883Z",
+    "duration_ms": 33,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/50_validations/wireless.json",
+    "detail": {
+      "rule_counts": {},
+      "n_passed": 10,
+      "n_failed": 0,
+      "n_blocker": 0
+    }
+  },
+  {
+    "stage": "60_calibrator::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.470947Z",
+    "finished_at": "2026-05-28T14:59:32.472049Z",
+    "duration_ms": 1,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/60_calibrations/wireless.json",
+    "detail": {
+      "by_verdict_counts": {
+        "needs_review": 10
+      }
+    }
+  },
+  {
+    "stage": "70_review_queue::wireless",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.472485Z",
+    "finished_at": "2026-05-28T14:59:32.472491Z",
+    "duration_ms": 0,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/70_review_queue",
+    "detail": {
+      "queued": 10
+    }
+  },
+  {
+    "stage": "80_composer",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.472541Z",
+    "finished_at": "2026-05-28T14:59:32.473999Z",
+    "duration_ms": 1,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/80_composed_brief.json",
+    "detail": {
+      "domains": [
+        "security_camera",
+        "wireless"
+      ],
+      "auto_accept": 0,
+      "needs_review": 13,
+      "rejected": 0
+    }
+  },
+  {
+    "stage": "90_inspection",
+    "status": "ok",
+    "started_at": "2026-05-28T14:59:32.474882Z",
+    "finished_at": "2026-05-28T14:59:32.520272Z",
+    "duration_ms": 45,
+    "artifact_path": "/tmp/ob-core-9nytfz4_/out/90_inspection_report.json",
+    "detail": {
+      "atoms": 295,
+      "packets": 73,
+      "active_packs": [
+        "wireless",
+        "security_camera",
+        "delivery_execution",
+        "procurement_finance",
+        "electrical",
+        "low_voltage_cabling",
+        "audio_visual",
+        "hardware",
+        "security_access",
+        "camera_vms_operations",
+        "imac",
+        "commercial",
+        "fire_safety",
+        "professional_services",
+        "audit",
+        "data_migration",
+        "building_management_systems",
+        "alm",
+        "network_maintenance"
+      ]
+    }
+  }
+]

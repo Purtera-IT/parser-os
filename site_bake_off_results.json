@@ -1,0 +1,355 @@
+{
+  "optbot": {
+    "deal": "optbot",
+    "pdf": "C:\\Users\\lilli\\test_deals\\optbot\\artifacts\\08_site_roster_and_facilities_authoritative.pdf",
+    "ground_truth": {
+      "site_ids": [
+        "ATL-HQ-01",
+        "ATL-WEST-02",
+        "ATL-AIR-03",
+        "ATL-047-04",
+        "ATL-CP-05"
+      ],
+      "count": 5
+    },
+    "structural_union": [
+      "ATL-047-04",
+      "ATL-AIR-03",
+      "ATL-CP-05",
+      "ATL-HQ-01",
+      "ATL-WEST-0",
+      "ATL-WEST-02"
+    ],
+    "paths": [
+      {
+        "path": "fitz_table",
+        "runtime_sec": 0.33,
+        "atom_count": 6,
+        "site_ids": [
+          "ATL-HQ-01",
+          "ATL-WEST-0",
+          "ATL-AIR-03",
+          "ATL-047-04",
+          "ATL-CP-05",
+          "ATL-WEST-02"
+        ],
+        "atoms_full": [
+          {
+            "site_id": "ATL-HQ-01",
+            "name": "OPTBOT Atlanta HQ",
+            "facility_name": "OPTBOT Atlanta HQ",
+            "address": "1200 Peachtree St NE, Atlant",
+            "raw_text_snippet": "site_id: ATL-HQ-01 | facility: OPTBOT Atlanta HQ | address: 1200 Peachtree St NE, Atlant | mdf_idf: MDF-3A / IDF 2- | access: Mon-Fri 07:00-18: | escort: OPTBOT Facil"
+          },
+          {
+            "site_id": "ATL-WEST-0",
+            "name": "OPTBOT West Campus",
+            "facility_name": "OPTBOT West Campus",
+            "address": "3100 Interstate N Pkwy, Atla",
+            "raw_text_snippet": "site_id: ATL-WEST-0 | facility: OPTBOT West Campus | address: 3100 Interstate N Pkwy, Atla | mdf_idf: MDF-W1 / IDF W2 | access: Mon-Fri 07:00-18: | escort: OPTBOT Facil"
+          },
+          {
+            "site_id": "ATL-AIR-03",
+            "name": "OPTBOT Airport Logist",
+            "facility_name": "OPTBOT Airport Logist",
+            "address": "6000 N Terminal Pkwy, Atlant",
+            "raw_text_snippet": "site_id: ATL-AIR-03 | facility: OPTBOT Airport Logist | address: 6000 N Terminal Pkwy, Atlant | mdf_idf: MDF-A / IDF A1 | access: Mon-Sat 06:00-22: | escort: OPTBOT Secur"
+          },
+          {
+            "site_id": "ATL-047-04",
+            "name": "OPTBOT Brady Training",
+            "facility_name": "OPTBOT Brady Training",
+            "address": "047 Brady Ave NW, Atlanta GA",
+            "raw_text_snippet": "site_id: ATL-047-04 | facility: OPTBOT Brady Training | address: 047 Brady Ave NW, Atlanta GA | mdf_idf: MDF-B / IDF B1- | access: Mon-Fri 08:00-17: | escort: OPTBOT Facil"
+          },
+          {
+            "site_id": "ATL-CP-05",
+            "name": "OPTBOT College Park S",
+            "facility_name": "OPTBOT College Park S",
+            "address": "1850 Sullivan Rd, College Pa",
+            "raw_text_snippet": "site_id: ATL-CP-05 | facility: OPTBOT College Park S | address: 1850 Sullivan Rd, College Pa | mdf_idf: MDF-CP / stagin | access: Mon-Fri 07:00-15: | escort: OPTBOT Logis"
+          },
+          {
+            "site_id": "ATL-WEST-02",
+            "name": "ATL-WEST-02",
+            "facility_name": "ATL-WEST-02",
+            "address": null,
+            "raw_text_snippet": "ATL-WEST-02 | ATL-WEST-02"
+          }
+        ],
+        "vs_ground_truth": {
+          "found": [
+            "ATL-047-04",
+            "ATL-AIR-03",
+            "ATL-CP-05",
+            "ATL-HQ-01",
+            "ATL-WEST-0",
+            "ATL-WEST-02"
+          ],
+          "true_positive": [
+            "ATL-047-04",
+            "ATL-AIR-03",
+            "ATL-CP-05",
+            "ATL-HQ-01",
+            "ATL-WEST-02"
+          ],
+          "false_negative_missed": [],
+          "false_positive_garbage": [
+            "ATL-WEST-0"
+          ],
+          "precision": 0.833,
+          "recall": 1.0
+        }
+      },
+      {
+        "path": "text_based",
+        "runtime_sec": 0.01,
+        "atom_count": 6,
+        "site_ids": [
+          "ATL-HQ-01",
+          "ATL-WEST-0",
+          "ATL-AIR-03",
+          "ATL-047-04",
+          "ATL-CP-05",
+          "ATL-WEST-02"
+        ],
+        "atoms_full": [
+          {
+            "site_id": "ATL-HQ-01",
+            "name": "ATL-HQ-01",
+            "facility_name": "ATL-HQ-01",
+            "address": null,
+            "raw_text_snippet": "ATL-HQ-01 | ATL-HQ-01"
+          },
+          {
+            "site_id": "ATL-WEST-0",
+            "name": "OPTBOT West Campus",
+            "facility_name": "OPTBOT West Campus",
+            "address": null,
+            "raw_text_snippet": "ATL-WEST-0 | OPTBOT West Campus"
+          },
+          {
+            "site_id": "ATL-AIR-03",
+            "name": "ATL-AIR-03",
+            "facility_name": "ATL-AIR-03",
+            "address": null,
+            "raw_text_snippet": "ATL-AIR-03 | ATL-AIR-03"
+          },
+          {
+            "site_id": "ATL-047-04",
+            "name": "ATL-047-04",
+            "facility_name": "ATL-047-04",
+            "address": null,
+            "raw_text_snippet": "ATL-047-04 | ATL-047-04"
+          },
+          {
+            "site_id": "ATL-CP-05",
+            "name": "ATL-CP-05",
+            "facility_name": "ATL-CP-05",
+            "address": null,
+            "raw_text_snippet": "ATL-CP-05 | ATL-CP-05"
+          },
+          {
+            "site_id": "ATL-WEST-02",
+            "name": "ATL-WEST-02",
+            "facility_name": "ATL-WEST-02",
+            "address": null,
+            "raw_text_snippet": "ATL-WEST-02 | ATL-WEST-02"
+          }
+        ],
+        "vs_ground_truth": {
+          "found": [
+            "ATL-047-04",
+            "ATL-AIR-03",
+            "ATL-CP-05",
+            "ATL-HQ-01",
+            "ATL-WEST-0",
+            "ATL-WEST-02"
+          ],
+          "true_positive": [
+            "ATL-047-04",
+            "ATL-AIR-03",
+            "ATL-CP-05",
+            "ATL-HQ-01",
+            "ATL-WEST-02"
+          ],
+          "false_negative_missed": [],
+          "false_positive_garbage": [
+            "ATL-WEST-0"
+          ],
+          "precision": 0.833,
+          "recall": 1.0
+        }
+      },
+      {
+        "path": "llm_no_context",
+        "runtime_sec": 8.3,
+        "cluster_count": 5,
+        "canonical_names": [
+          "OPTBOT Atlanta HQ",
+          "OPTBOT West Campus",
+          "OPTBOT Airport Logist",
+          "OPTBOT Brady Training",
+          "OPTBOT College Park S"
+        ],
+        "aliases_sample": [
+          "ATL-HQ-01",
+          "1200 Peachtree St NE, Atlant",
+          "OPTBOT Atlanta HQ",
+          "ATL-WEST-0",
+          "3100 Interstate N Pkwy, Atla",
+          "OPTBOT West Campus",
+          "ATL-AIR-03",
+          "6000 N Terminal Pkwy, Atlant",
+          "OPTBOT Airport Logist",
+          "ATL-047-04",
+          "047 Brady Ave NW, Atlanta GA",
+          "OPTBOT Brady Training",
+          "ATL-CP-05",
+          "1850 Sullivan Rd, College Pa",
+          "OPTBOT College Park S"
+        ],
+        "vs_ground_truth": {
+          "found": [
+            "OPTBOT AIRPORT LOGIST",
+            "OPTBOT ATLANTA HQ",
+            "OPTBOT BRADY TRAINING",
+            "OPTBOT COLLEGE PARK S",
+            "OPTBOT WEST CAMPUS"
+          ],
+          "true_positive": [],
+          "false_negative_missed": [
+            "ATL-047-04",
+            "ATL-AIR-03",
+            "ATL-CP-05",
+            "ATL-HQ-01",
+            "ATL-WEST-02"
+          ],
+          "false_positive_garbage": [
+            "OPTBOT AIRPORT LOGIST",
+            "OPTBOT ATLANTA HQ",
+            "OPTBOT BRADY TRAINING",
+            "OPTBOT COLLEGE PARK S",
+            "OPTBOT WEST CAMPUS"
+          ],
+          "precision": 0.0,
+          "recall": 0.0
+        }
+      },
+      {
+        "path": "llm_with_context",
+        "runtime_sec": 2.5,
+        "cluster_count": 0,
+        "canonical_names": [],
+        "aliases_sample": [],
+        "known_sites_passed": [
+          "ATL-AIR-03",
+          "ATL-WEST-0",
+          "ATL-CP-05",
+          "ATL-HQ-01",
+          "ATL-WEST-02",
+          "ATL-047-04"
+        ],
+        "vs_ground_truth": {
+          "found": [],
+          "true_positive": [],
+          "false_negative_missed": [
+            "ATL-047-04",
+            "ATL-AIR-03",
+            "ATL-CP-05",
+            "ATL-HQ-01",
+            "ATL-WEST-02"
+          ],
+          "false_positive_garbage": [],
+          "precision": 0.0,
+          "recall": 0.0
+        }
+      }
+    ]
+  },
+  "aps": {
+    "deal": "aps_fiber",
+    "pdf": "C:\\Users\\lilli\\test_deals\\aps_fiber\\artifacts\\APS_fiber_Attachment_A.pdf",
+    "ground_truth": {
+      "site_ids": [],
+      "count": 132
+    },
+    "structural_union": [],
+    "paths": [
+      {
+        "path": "fitz_table",
+        "runtime_sec": 0.82,
+        "atom_count": 0,
+        "site_ids": [],
+        "atoms_full": [],
+        "vs_ground_truth": {
+          "found_count": 0,
+          "found": [],
+          "shape_matching_count": 0,
+          "garbage_examples": [],
+          "gt_count_approx": 132
+        }
+      },
+      {
+        "path": "text_based",
+        "runtime_sec": 0.02,
+        "atom_count": 0,
+        "site_ids": [],
+        "atoms_full": [],
+        "vs_ground_truth": {
+          "found_count": 0,
+          "found": [],
+          "shape_matching_count": 0,
+          "garbage_examples": [],
+          "gt_count_approx": 132
+        }
+      },
+      {
+        "path": "llm_no_context",
+        "runtime_sec": 11.7,
+        "cluster_count": 3,
+        "canonical_names": [
+          "Core Data site",
+          "uptown admin site",
+          "AB3 Colocation site"
+        ],
+        "aliases_sample": [
+          "Core Data site",
+          "930 Oak St SE",
+          "uptown admin site",
+          "AB3 Colocation site"
+        ],
+        "vs_ground_truth": {
+          "found_count": 3,
+          "found": [
+            "AB3 COLOCATION SITE",
+            "CORE DATA SITE",
+            "UPTOWN ADMIN SITE"
+          ],
+          "shape_matching_count": 0,
+          "garbage_examples": [
+            "AB3 COLOCATION SITE",
+            "CORE DATA SITE",
+            "UPTOWN ADMIN SITE"
+          ],
+          "gt_count_approx": 132
+        }
+      },
+      {
+        "path": "llm_with_context",
+        "runtime_sec": 9.6,
+        "cluster_count": 0,
+        "canonical_names": [],
+        "aliases_sample": [],
+        "known_sites_passed": [],
+        "vs_ground_truth": {
+          "found_count": 0,
+          "found": [],
+          "shape_matching_count": 0,
+          "garbage_examples": [],
+          "gt_count_approx": 132
+        }
+      }
+    ]
+  }
+}

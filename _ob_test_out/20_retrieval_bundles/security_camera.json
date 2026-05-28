@@ -1,0 +1,154 @@
+{
+  "project_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "compile_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "packets_by_family": {
+    "meeting_decision": [
+      {
+        "packet_id": "pkt_09ebe409332a8723",
+        "family": "meeting_decision",
+        "anchor_type": "meeting_decision",
+        "anchor_key": "meeting_decision:jordan_ames_approved_business_case_pending_final_cutover_calendar_priya_af19ff",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_01b89013e47880d5"
+        ],
+        "supporting_atom_ids": [
+          "atm_01b89013e47880d5",
+          "atm_0f5ff913ca618b8c",
+          "atm_1eb1c2ba8928378e",
+          "atm_20a5c717f7a9192f",
+          "atm_2929e030605637ec",
+          "atm_5d0f9fecd450550f",
+          "atm_78393cea7df9b587",
+          "atm_794db16b4826d341",
+          "atm_8840a1822a76c366",
+          "atm_9b0aa5e418996c7e",
+          "atm_9c3bf294de9dc4d3",
+          "atm_bb5140132d6678ab",
+          "atm_bdae260774dc595b",
+          "atm_c01940829e446306",
+          "atm_d0e5e6ab97df3d48",
+          "atm_d53b05a0d233755c"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_c01940829e446306": "Confirm HubSpot dev deal exists and is owned by dev-integration-owner@example.com. Attach exactly seven packet files and verify filenames preserve sequence numbers. Copy every attachment to Azure with mock=true and dealId metadata. Run parser-os and confirm extraction of total am",
+          "atm_8840a1822a76c366": "Jordan Ames | VP Workplace Operations | jordan.ames@optbot.example | Executive sponsor | approves business outcome and CFO packet. Priya Narang | Director of Enterprise IT | priya.narang@optbot.example | Technical buyer | approves network, endpoint, and identity standards. Elliot",
+          "atm_d53b05a0d233755c": "Field: Mock PO | Value: PO-MOCK-77421",
+          "atm_2929e030605637ec": "Deal Name: OPTBOT Atlanta Office Refresh - Three Site Modernization HubSpot Deal ID: HS-DEAL-OPTBOT-ATL-2026-047 Company: OPTBOT, Inc. | Domain: optbot.example Mock Deal Stage: contractsent_mock_dev Target Close Date: 2026-07-31 Total Mock Amount: $1,847,250.00 Quote: Q-DEV-ATL-0",
+          "atm_9b0aa5e418996c7e": "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 Peachtree Street NE, Floors 12-15 | 620 users | 38 rooms | Primary launch site | executive blackout June 17-21. ATL-WEST | Westside Operations Center | 976 Brady Avenue NW, Suites 200-260 | 285 users | 21 rooms | operations ",
+          "atm_794db16b4826d341": "Hardware subtotal target: $1,015,626.00. Services subtotal target: $536,030.00. Logistics, freight, contingency, taxes, and fees target: $295,594.00. Grand total target: $1,847,250.00. Payment schedule: 30% at order acceptance, 40% on equipment receipt, 20% at site acceptance, 10",
+          "atm_78393cea7df9b587": "Asset tags for ATL-WEST must begin with ATL-WEST-2026- and include room or area code.",
+          "atm_9c3bf294de9dc4d3": "Jordan Ames: Approved business case pending final cutover calendar. Priya Narang: Approved technical design pending ATL-WEST carrier confirmation. Camila Brooks: Approved dev-only handling with production-blocking controls. Elliot Tran: Procurement can issue PO-MOCK-77421 after C",
+          "atm_0f5ff913ca618b8c": "Wi-Fi 7 APs: 94 units x $995 | allocated ATL-HQ 52, ATL-WEST 27, ATL-AIR 15 | validates quantity and site-allocation parsing. PoE++ switches: 18 units x $6,125 | access layer refresh and PoE budget expansion for rooms and wireless. Video bars: 31 units x $2,895 | medium-room stan",
+          "atm_20a5c717f7a9192f": "dealname = OPTBOT Atlanta Office Refresh - Three Site Modernization amount = 1847250 dealstage = contractsent_mock_dev closedate = 2026-07-31 project_sites = ATL-HQ; ATL-WEST; ATL-AIR implementation_window = 2026-05-20 through 2026-08-14 parser_batch_id = parser-os-dev-batch-ATL-",
+          "atm_5d0f9fecd450550f": "Phase: 1 | Name: Design validation | Start Date: 2026-06-01 | End Date: 2026-06-12 | Owner: Priya Narang | Exit Criteria: Design approved and BOM locked | HubSpot Task Type: Mock task",
+          "atm_d0e5e6ab97df3d48": "Phase: 2 | Name: Procurement and staging | Start Date: 2026-06-15 | End Date: 2026-07-03 | Owner: Elliot Tran | Exit Criteria: Hardware received and staged | HubSpot Task Type: Mock task",
+          "atm_bb5140132d6678ab": "Brief title should mention OPTBOT Atlanta Office Refresh. Summary should mention all three sites and the mock-only classification. Key risks should include ATL-WEST circuit timing, ATL-HQ blackout, ATL-AIR RF reliability, and CFO approval threshold.",
+          "atm_1eb1c2ba8928378e": "Tag Prefix: ATL-WEST-2026- | Site: ATL-WEST | Asset Type: Ops center devices | Starting Number: 2001 | Ending Number: 2365 | Owner: Noah Patel | Upload Destination: mock-hubspot-dev/opbtot-atl-refresh-2026-047",
+          "atm_01b89013e47880d5": "This fictional procurement packet supports OPTBOT Atlanta Office Refresh - Three Site Modernization. It references quote Q-DEV-ATL-047-R3, mock PO PO-MOCK-77421, and mock MSA",
+          "atm_bdae260774dc595b": "Phase: 4 | Name: Cutover and adoption | Start Date: 2026-07-27 | End Date: 2026-07-31 | Owner: Jordan Ames | Exit Criteria: Cutover accepted and support live | HubSpot Task Type: Mock task"
+        }
+      }
+    ],
+    "scope_inclusion": [
+      {
+        "packet_id": "pkt_024514067b557ea9",
+        "family": "scope_inclusion",
+        "anchor_type": "money",
+        "anchor_key": "money:248",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_6f9321d34eeda67a"
+        ],
+        "supporting_atom_ids": [
+          "atm_6f9321d34eeda67a"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_6f9321d34eeda67a": "After-hours / weekend labor: $248/hr (1.5x)"
+        }
+      },
+      {
+        "packet_id": "pkt_45ee65d1976429d7",
+        "family": "scope_inclusion",
+        "anchor_type": "site",
+        "anchor_key": "site:atl_air_asset_type_warehouse",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_f65507fca348dbab"
+        ],
+        "supporting_atom_ids": [
+          "atm_f65507fca348dbab"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_f65507fca348dbab": "Current rooms use inconsistent camera, microphone, calendar, and scheduling-panel setups, causing meeting delays and uneven user experience. Desk-accessory standards vary by floor and site, creating support complexity and asset tracking gaps. The refresh standardizes collaboratio"
+        }
+      },
+      {
+        "packet_id": "pkt_63991c09a540bfa5",
+        "family": "scope_inclusion",
+        "anchor_type": "site",
+        "anchor_key": "site:atl_air",
+        "status": "needs_review",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_0f5ff913ca618b8c"
+        ],
+        "supporting_atom_ids": [
+          "atm_0f5ff913ca618b8c",
+          "atm_9b0aa5e418996c7e",
+          "atm_a6912a5fd384806b",
+          "atm_ab05bdfc9f07f395",
+          "atm_bb5140132d6678ab",
+          "atm_c01940829e446306",
+          "atm_cc24557a550b09ae"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_a6912a5fd384806b": "Asset tags for ATL-AIR must begin with ATL-AIR-2026- and include room or area code.",
+          "atm_9b0aa5e418996c7e": "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 Peachtree Street NE, Floors 12-15 | 620 users | 38 rooms | Primary launch site | executive blackout June 17-21. ATL-WEST | Westside Operations Center | 976 Brady Avenue NW, Suites 200-260 | 285 users | 21 rooms | operations ",
+          "atm_0f5ff913ca618b8c": "Wi-Fi 7 APs: 94 units x $995 | allocated ATL-HQ 52, ATL-WEST 27, ATL-AIR 15 | validates quantity and site-allocation parsing. PoE++ switches: 18 units x $6,125 | access layer refresh and PoE budget expansion for rooms and wireless. Video bars: 31 units x $2,895 | medium-room stan",
+          "atm_c01940829e446306": "Confirm HubSpot dev deal exists and is owned by dev-integration-owner@example.com. Attach exactly seven packet files and verify filenames preserve sequence numbers. Copy every attachment to Azure with mock=true and dealId metadata. Run parser-os and confirm extraction of total am",
+          "atm_cc24557a550b09ae": "Tag Prefix: ATL-AIR-2026- | Site: ATL-AIR | Asset Type: Warehouse and office devices | Starting Number: 3001 | Ending Number: 3215 | Owner: Noah Patel | Upload Destination: mock-hubspot-dev/opbtot-atl-refresh-2026-047",
+          "atm_ab05bdfc9f07f395": "UPS kits: 54 units x $725 and secure label printers: 18 units x $845 | closet resilience and receiving station support.",
+          "atm_bb5140132d6678ab": "Brief title should mention OPTBOT Atlanta Office Refresh. Summary should mention all three sites and the mock-only classification. Key risks should include ATL-WEST circuit timing, ATL-HQ blackout, ATL-AIR RF reliability, and CFO approval threshold."
+        }
+      },
+      {
+        "packet_id": "pkt_de2824469c0eab95",
+        "family": "scope_inclusion",
+        "anchor_type": "device",
+        "anchor_key": "device:cable",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_d8c97b7381e0b857"
+        ],
+        "supporting_atom_ids": [
+          "atm_d8c97b7381e0b857"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_d8c97b7381e0b857": "Existing cable plant is Category 6A or better unless survey marks replacement."
+        }
+      },
+      {
+        "packet_id": "pkt_eab42b2545fa2f7f",
+        "family": "scope_inclusion",
+        "anchor_type": "device",
+        "anchor_key": "device:ip_camera",
+        "status": "active",
+        "confidence": 0.85,
+        "governing_atom_ids": [],
+        "supporting_atom_ids": [],
+        "contradicting_atom_ids": [],
+        "atom_text": {}
+      }
+    ]
+  }
+}

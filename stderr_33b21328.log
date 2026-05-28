@@ -1,0 +1,23 @@
+brain_registry: alias 'access_control' claimed by both 'other' and 'security_access' (same intent=none); keeping 'other' — clean domain_packs.yaml to remove ambiguity
+brain_registry: alias 'access_control' claimed by both 'other' and 'security_access' (same intent=none); keeping 'other' — clean domain_packs.yaml to remove ambiguity
+brain_registry: alias 'video_surveillance' reassigned from 'other' (intent=none) to 'security_camera' (intent=implemented)
+brain_registry: alias 'av' reassigned from 'other' (intent=none) to 'audio_visual' (intent=implemented)
+compile_brief: v46 step apply_envelope_passthroughs...
+compile_brief: v46 step apply_risk_signals...
+compile_brief: v46 step apply_claim_consensus...
+compile_brief: v46 step apply_section_narration...
+compile_brief: PM handoff render skipped: TypeError: '<' not supported between instances of 'dict' and 'dict'
+Traceback (most recent call last):
+  File "/app/Orbitbrief-Core/compile_brief.py", line 259, in main
+    handoff = apply_section_narration(handoff, chat_client=chat)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/Orbitbrief-Core/src/orbitbrief_core/risk_net/narrator.py", line 313, in apply_section_narration
+    payload = _build_payload(handoff)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/Orbitbrief-Core/src/orbitbrief_core/risk_net/narrator.py", line 216, in _build_payload
+    "sow_readiness_dimensions": _compact_sow_dims(h.get("sow_readiness_dimensions")),
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/Orbitbrief-Core/src/orbitbrief_core/risk_net/narrator.py", line 86, in _compact_sow_dims
+    lowest = sorted(dims.items(), key=lambda kv: kv[1])[:3]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: '<' not supported between instances of 'dict' and 'dict'

@@ -1,0 +1,390 @@
+{
+  "project_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "compile_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "packets_by_family": {
+    "meeting_decision": [
+      {
+        "packet_id": "pkt_09ebe409332a8723",
+        "family": "meeting_decision",
+        "anchor_type": "meeting_decision",
+        "anchor_key": "meeting_decision:jordan_ames_approved_business_case_pending_final_cutover_calendar_priya_af19ff",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_01b89013e47880d5"
+        ],
+        "supporting_atom_ids": [
+          "atm_01b89013e47880d5",
+          "atm_0f5ff913ca618b8c",
+          "atm_1eb1c2ba8928378e",
+          "atm_20a5c717f7a9192f",
+          "atm_2929e030605637ec",
+          "atm_5d0f9fecd450550f",
+          "atm_78393cea7df9b587",
+          "atm_794db16b4826d341",
+          "atm_8840a1822a76c366",
+          "atm_9b0aa5e418996c7e",
+          "atm_9c3bf294de9dc4d3",
+          "atm_bb5140132d6678ab",
+          "atm_bdae260774dc595b",
+          "atm_c01940829e446306",
+          "atm_d0e5e6ab97df3d48",
+          "atm_d53b05a0d233755c"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_c01940829e446306": "Confirm HubSpot dev deal exists and is owned by dev-integration-owner@example.com. Attach exactly seven packet files and verify filenames preserve sequence numbers. Copy every attachment to Azure with mock=true and dealId metadata. Run parser-os and confirm extraction of total am",
+          "atm_8840a1822a76c366": "Jordan Ames | VP Workplace Operations | jordan.ames@optbot.example | Executive sponsor | approves business outcome and CFO packet. Priya Narang | Director of Enterprise IT | priya.narang@optbot.example | Technical buyer | approves network, endpoint, and identity standards. Elliot",
+          "atm_d53b05a0d233755c": "Field: Mock PO | Value: PO-MOCK-77421",
+          "atm_2929e030605637ec": "Deal Name: OPTBOT Atlanta Office Refresh - Three Site Modernization HubSpot Deal ID: HS-DEAL-OPTBOT-ATL-2026-047 Company: OPTBOT, Inc. | Domain: optbot.example Mock Deal Stage: contractsent_mock_dev Target Close Date: 2026-07-31 Total Mock Amount: $1,847,250.00 Quote: Q-DEV-ATL-0",
+          "atm_9b0aa5e418996c7e": "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 Peachtree Street NE, Floors 12-15 | 620 users | 38 rooms | Primary launch site | executive blackout June 17-21. ATL-WEST | Westside Operations Center | 976 Brady Avenue NW, Suites 200-260 | 285 users | 21 rooms | operations ",
+          "atm_794db16b4826d341": "Hardware subtotal target: $1,015,626.00. Services subtotal target: $536,030.00. Logistics, freight, contingency, taxes, and fees target: $295,594.00. Grand total target: $1,847,250.00. Payment schedule: 30% at order acceptance, 40% on equipment receipt, 20% at site acceptance, 10",
+          "atm_78393cea7df9b587": "Asset tags for ATL-WEST must begin with ATL-WEST-2026- and include room or area code.",
+          "atm_9c3bf294de9dc4d3": "Jordan Ames: Approved business case pending final cutover calendar. Priya Narang: Approved technical design pending ATL-WEST carrier confirmation. Camila Brooks: Approved dev-only handling with production-blocking controls. Elliot Tran: Procurement can issue PO-MOCK-77421 after C",
+          "atm_0f5ff913ca618b8c": "Wi-Fi 7 APs: 94 units x $995 | allocated ATL-HQ 52, ATL-WEST 27, ATL-AIR 15 | validates quantity and site-allocation parsing. PoE++ switches: 18 units x $6,125 | access layer refresh and PoE budget expansion for rooms and wireless. Video bars: 31 units x $2,895 | medium-room stan",
+          "atm_20a5c717f7a9192f": "dealname = OPTBOT Atlanta Office Refresh - Three Site Modernization amount = 1847250 dealstage = contractsent_mock_dev closedate = 2026-07-31 project_sites = ATL-HQ; ATL-WEST; ATL-AIR implementation_window = 2026-05-20 through 2026-08-14 parser_batch_id = parser-os-dev-batch-ATL-",
+          "atm_5d0f9fecd450550f": "Phase: 1 | Name: Design validation | Start Date: 2026-06-01 | End Date: 2026-06-12 | Owner: Priya Narang | Exit Criteria: Design approved and BOM locked | HubSpot Task Type: Mock task",
+          "atm_d0e5e6ab97df3d48": "Phase: 2 | Name: Procurement and staging | Start Date: 2026-06-15 | End Date: 2026-07-03 | Owner: Elliot Tran | Exit Criteria: Hardware received and staged | HubSpot Task Type: Mock task",
+          "atm_bb5140132d6678ab": "Brief title should mention OPTBOT Atlanta Office Refresh. Summary should mention all three sites and the mock-only classification. Key risks should include ATL-WEST circuit timing, ATL-HQ blackout, ATL-AIR RF reliability, and CFO approval threshold.",
+          "atm_1eb1c2ba8928378e": "Tag Prefix: ATL-WEST-2026- | Site: ATL-WEST | Asset Type: Ops center devices | Starting Number: 2001 | Ending Number: 2365 | Owner: Noah Patel | Upload Destination: mock-hubspot-dev/opbtot-atl-refresh-2026-047",
+          "atm_01b89013e47880d5": "This fictional procurement packet supports OPTBOT Atlanta Office Refresh - Three Site Modernization. It references quote Q-DEV-ATL-047-R3, mock PO PO-MOCK-77421, and mock MSA",
+          "atm_bdae260774dc595b": "Phase: 4 | Name: Cutover and adoption | Start Date: 2026-07-27 | End Date: 2026-07-31 | Owner: Jordan Ames | Exit Criteria: Cutover accepted and support live | HubSpot Task Type: Mock task"
+        }
+      },
+      {
+        "packet_id": "pkt_b339523175a99e7d",
+        "family": "meeting_decision",
+        "anchor_type": "meeting_decision",
+        "anchor_key": "meeting_decision:total_mock_deal_amount_1_847_250_00_cfo_approval_required_over_1_500_000_bb7f60",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_18161f3b25417c20"
+        ],
+        "supporting_atom_ids": [
+          "atm_126035625078909f",
+          "atm_18161f3b25417c20",
+          "atm_2929e030605637ec",
+          "atm_2e86721664879f08",
+          "atm_41386f6aebb536ce",
+          "atm_564a0ee6ec58d340",
+          "atm_5d0f9fecd450550f",
+          "atm_794db16b4826d341",
+          "atm_8840a1822a76c366",
+          "atm_8b99e8b62a5ce691",
+          "atm_bdae260774dc595b",
+          "atm_c01940829e446306",
+          "atm_d0e5e6ab97df3d48"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_c01940829e446306": "Confirm HubSpot dev deal exists and is owned by dev-integration-owner@example.com. Attach exactly seven packet files and verify filenames preserve sequence numbers. Copy every attachment to Azure with mock=true and dealId metadata. Run parser-os and confirm extraction of total am",
+          "atm_8840a1822a76c366": "Jordan Ames | VP Workplace Operations | jordan.ames@optbot.example | Executive sponsor | approves business outcome and CFO packet. Priya Narang | Director of Enterprise IT | priya.narang@optbot.example | Technical buyer | approves network, endpoint, and identity standards. Elliot",
+          "atm_18161f3b25417c20": "Total mock deal amount: $1,847,250.00. CFO approval required over $1,500,000. Budget owner approval required over $250,000. Jordan Ames approves workplace outcome and business case. Priya Narang approves technical design. Camila Brooks approves security and data handling. Elliot ",
+          "atm_41386f6aebb536ce": "Contract type: Fixed Price Agreement. Grand Total (not-to-exceed for defined scope): USD $1,847,250.00. Currency: United States Dollars (USD). Taxes: Excluded; OPTBOT responsible for sales/use tax unless otherwise stated in MSA. Milestone billing schedule:",
+          "atm_2929e030605637ec": "Deal Name: OPTBOT Atlanta Office Refresh - Three Site Modernization HubSpot Deal ID: HS-DEAL-OPTBOT-ATL-2026-047 Company: OPTBOT, Inc. | Domain: optbot.example Mock Deal Stage: contractsent_mock_dev Target Close Date: 2026-07-31 Total Mock Amount: $1,847,250.00 Quote: Q-DEV-ATL-0",
+          "atm_5d0f9fecd450550f": "Phase: 1 | Name: Design validation | Start Date: 2026-06-01 | End Date: 2026-06-12 | Owner: Priya Narang | Exit Criteria: Design approved and BOM locked | HubSpot Task Type: Mock task",
+          "atm_d0e5e6ab97df3d48": "Phase: 2 | Name: Procurement and staging | Start Date: 2026-06-15 | End Date: 2026-07-03 | Owner: Elliot Tran | Exit Criteria: Hardware received and staged | HubSpot Task Type: Mock task",
+          "atm_2e86721664879f08": "T&M not-to-exceed without signed CO: $250,000 cumulative",
+          "atm_126035625078909f": "Phase: 0 | Name: Discovery and intake | Start Date: 2026-05-20 | End Date: 2026-05-29 | Owner: Renee Watkins | Exit Criteria: Stakeholders confirmed and source docs uploaded | HubSpot Task Type: Mock task",
+          "atm_794db16b4826d341": "Hardware subtotal target: $1,015,626.00. Services subtotal target: $536,030.00. Logistics, freight, contingency, taxes, and fees target: $295,594.00. Grand total target: $1,847,250.00. Payment schedule: 30% at order acceptance, 40% on equipment receipt, 20% at site acceptance, 10",
+          "atm_8b99e8b62a5ce691": "Category: Grand Total | Calculation Note: Expected parser reference total should reconcile near $1,847,250",
+          "atm_bdae260774dc595b": "Phase: 4 | Name: Cutover and adoption | Start Date: 2026-07-27 | End Date: 2026-07-31 | Owner: Jordan Ames | Exit Criteria: Cutover accepted and support live | HubSpot Task Type: Mock task",
+          "atm_564a0ee6ec58d340": "Phase: 5 | Name: Post go-live | Start Date: 2026-08-03 | End Date: 2026-08-14 | Owner: Renee Watkins | Exit Criteria: Hypercare closed and integration outputs archived | HubSpot Task Type: Mock task"
+        }
+      }
+    ],
+    "scope_inclusion": [
+      {
+        "packet_id": "pkt_423eb9430a5014d6",
+        "family": "scope_inclusion",
+        "anchor_type": "site",
+        "anchor_key": "site:req_002",
+        "status": "active",
+        "confidence": 0.85,
+        "governing_atom_ids": [],
+        "supporting_atom_ids": [],
+        "contradicting_atom_ids": [],
+        "atom_text": {}
+      },
+      {
+        "packet_id": "pkt_45ee65d1976429d7",
+        "family": "scope_inclusion",
+        "anchor_type": "site",
+        "anchor_key": "site:atl_air_asset_type_warehouse",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_f65507fca348dbab"
+        ],
+        "supporting_atom_ids": [
+          "atm_f65507fca348dbab"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_f65507fca348dbab": "Current rooms use inconsistent camera, microphone, calendar, and scheduling-panel setups, causing meeting delays and uneven user experience. Desk-accessory standards vary by floor and site, creating support complexity and asset tracking gaps. The refresh standardizes collaboratio"
+        }
+      },
+      {
+        "packet_id": "pkt_59ed0c2c2ebdb8b3",
+        "family": "scope_inclusion",
+        "anchor_type": "milestone",
+        "anchor_key": "milestone:2026-07-06",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_c010a0915eba3ec7"
+        ],
+        "supporting_atom_ids": [
+          "atm_c010a0915eba3ec7"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_c010a0915eba3ec7": "palletize, and stage deployment kits. Phase 3 Site implementation | 2026-07-06 to 2026-07-24 | install site waves, commission rooms, validate Wi-Fi, reconcile assets. Phase 4 Cutover and adoption | 2026-07-27 to 2026-07-31 | run cutover checklist, floor support, signoff, final pu"
+        }
+      },
+      {
+        "packet_id": "pkt_5ac2036126644131",
+        "family": "scope_inclusion",
+        "anchor_type": "vendor",
+        "anchor_key": "vendor:milestone",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_41386f6aebb536ce"
+        ],
+        "supporting_atom_ids": [
+          "atm_41386f6aebb536ce",
+          "atm_4c3d5e27e444a30a"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_4c3d5e27e444a30a": "Phase 0 Discovery and intake | 2026-05-20 to 2026-05-29 | confirm HubSpot record, upload packet, copy to Azure, launch parser-os and OrbitBrief dev tests. Phase 1 Design validation | 2026-06-01 to 2026-06-12 | room standards, network design, site constraints, security review, fin",
+          "atm_41386f6aebb536ce": "Contract type: Fixed Price Agreement. Grand Total (not-to-exceed for defined scope): USD $1,847,250.00. Currency: United States Dollars (USD). Taxes: Excluded; OPTBOT responsible for sales/use tax unless otherwise stated in MSA. Milestone billing schedule:"
+        }
+      },
+      {
+        "packet_id": "pkt_60856e7315191801",
+        "family": "scope_inclusion",
+        "anchor_type": "stakeholder",
+        "anchor_key": "stakeholder:priya_narang",
+        "status": "active",
+        "confidence": 0.84,
+        "governing_atom_ids": [
+          "atm_5d0f9fecd450550f"
+        ],
+        "supporting_atom_ids": [
+          "atm_5d0f9fecd450550f"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_5d0f9fecd450550f": "Phase: 1 | Name: Design validation | Start Date: 2026-06-01 | End Date: 2026-06-12 | Owner: Priya Narang | Exit Criteria: Design approved and BOM locked | HubSpot Task Type: Mock task"
+        }
+      },
+      {
+        "packet_id": "pkt_63991c09a540bfa5",
+        "family": "scope_inclusion",
+        "anchor_type": "site",
+        "anchor_key": "site:atl_air",
+        "status": "needs_review",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_0f5ff913ca618b8c"
+        ],
+        "supporting_atom_ids": [
+          "atm_0f5ff913ca618b8c",
+          "atm_9b0aa5e418996c7e",
+          "atm_a6912a5fd384806b",
+          "atm_ab05bdfc9f07f395",
+          "atm_bb5140132d6678ab",
+          "atm_c01940829e446306",
+          "atm_cc24557a550b09ae"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_a6912a5fd384806b": "Asset tags for ATL-AIR must begin with ATL-AIR-2026- and include room or area code.",
+          "atm_9b0aa5e418996c7e": "ATL-HQ | Atlanta Headquarters - Innovation Tower | 1180 Peachtree Street NE, Floors 12-15 | 620 users | 38 rooms | Primary launch site | executive blackout June 17-21. ATL-WEST | Westside Operations Center | 976 Brady Avenue NW, Suites 200-260 | 285 users | 21 rooms | operations ",
+          "atm_0f5ff913ca618b8c": "Wi-Fi 7 APs: 94 units x $995 | allocated ATL-HQ 52, ATL-WEST 27, ATL-AIR 15 | validates quantity and site-allocation parsing. PoE++ switches: 18 units x $6,125 | access layer refresh and PoE budget expansion for rooms and wireless. Video bars: 31 units x $2,895 | medium-room stan",
+          "atm_c01940829e446306": "Confirm HubSpot dev deal exists and is owned by dev-integration-owner@example.com. Attach exactly seven packet files and verify filenames preserve sequence numbers. Copy every attachment to Azure with mock=true and dealId metadata. Run parser-os and confirm extraction of total am",
+          "atm_cc24557a550b09ae": "Tag Prefix: ATL-AIR-2026- | Site: ATL-AIR | Asset Type: Warehouse and office devices | Starting Number: 3001 | Ending Number: 3215 | Owner: Noah Patel | Upload Destination: mock-hubspot-dev/opbtot-atl-refresh-2026-047",
+          "atm_ab05bdfc9f07f395": "UPS kits: 54 units x $725 and secure label printers: 18 units x $845 | closet resilience and receiving station support.",
+          "atm_bb5140132d6678ab": "Brief title should mention OPTBOT Atlanta Office Refresh. Summary should mention all three sites and the mock-only classification. Key risks should include ATL-WEST circuit timing, ATL-HQ blackout, ATL-AIR RF reliability, and CFO approval threshold."
+        }
+      },
+      {
+        "packet_id": "pkt_a7889aefb8cb7d6d",
+        "family": "scope_inclusion",
+        "anchor_type": "milestone",
+        "anchor_key": "milestone:2026-08-03",
+        "status": "active",
+        "confidence": 0.85,
+        "governing_atom_ids": [],
+        "supporting_atom_ids": [],
+        "contradicting_atom_ids": [],
+        "atom_text": {}
+      },
+      {
+        "packet_id": "pkt_bf386398b65df592",
+        "family": "scope_inclusion",
+        "anchor_type": "site",
+        "anchor_key": "site:dev_2026_05_19",
+        "status": "active",
+        "confidence": 0.88,
+        "governing_atom_ids": [
+          "atm_34d6247facb45277"
+        ],
+        "supporting_atom_ids": [
+          "atm_34d6247facb45277"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_34d6247facb45277": "Recommended next actions should include upload validation, Azure metadata check, parser extraction baseline, OrbitBrief summary review, and procurement approval. ACCESS AND SECURITY CONTROLS Use least privilege group OPTBOT-ATL-Refresh-Dev-Readers for any vendor portal test. Use "
+        }
+      },
+      {
+        "packet_id": "pkt_e834e78751800319",
+        "family": "scope_inclusion",
+        "anchor_type": "device",
+        "anchor_key": "device:access_point",
+        "status": "active",
+        "confidence": 0.92,
+        "governing_atom_ids": [],
+        "supporting_atom_ids": [
+          "atm_29c945b79df5022f",
+          "atm_ac41e8777d6e5806"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_29c945b79df5022f": "Step: 5 | Timing: Cutover evening | Owner: Install Lead | Checklist Item: Replace room devices and APs by wave | Evidence Required: Install checklist",
+          "atm_ac41e8777d6e5806": "Expedite +12% fee if <30 days Wireless access points"
+        }
+      },
+      {
+        "packet_id": "pkt_f271a3c24d4a8843",
+        "family": "scope_inclusion",
+        "anchor_type": "date",
+        "anchor_key": "date:2026-05-20",
+        "status": "needs_review",
+        "confidence": 0.92,
+        "governing_atom_ids": [],
+        "supporting_atom_ids": [
+          "atm_00216294cbc1bf4f",
+          "atm_0537286237ba6fbf",
+          "atm_0bc766cd1bfd1393",
+          "atm_0ea6cac472d0b62c",
+          "atm_2a507c1d5483d8fa",
+          "atm_2c499bb900cf8b29",
+          "atm_349adb8f4db676ac",
+          "atm_3f40bfe5262556f8",
+          "atm_40fa15bc15af27d6",
+          "atm_4850879811bf3c8f",
+          "atm_4b3ee2c6a9c48314",
+          "atm_4cf164723eb78bd4",
+          "atm_5681f8884fd20f39",
+          "atm_5f181066701d465e",
+          "atm_5f84af2dcf1016c4",
+          "atm_65f3c0d977a28933",
+          "atm_689723d4e310d517",
+          "atm_68f173faf1cd97ca",
+          "atm_6e1f5d9975d5db81",
+          "atm_6f00dd7e22f3a0c1",
+          "atm_7448309f8440e043",
+          "atm_759b546435b9924c",
+          "atm_768c3e7f78a6147f",
+          "atm_7a2da231ae544ef6",
+          "atm_7ad6a72896287e88",
+          "atm_7e05cdf1f96bd4af",
+          "atm_80527b560d510ac3",
+          "atm_820294badea21602",
+          "atm_83a6fa9991bd6854",
+          "atm_86ce0793ac8d17d5",
+          "atm_8bae344e7c9f26a8",
+          "atm_92c410e13be13f55",
+          "atm_9d4fa89314a14c85",
+          "atm_9e8b971a9cae07e8",
+          "atm_a0b7ce183d0047af",
+          "atm_a1e33cc5aedc3935",
+          "atm_ac6c3e0ddd85c6f5",
+          "atm_af13e438207ffcf6",
+          "atm_b120d94b5eabc6e6",
+          "atm_b31a781de71703b9",
+          "atm_b4aea1782f2e7aa8",
+          "atm_b530cf0624f79a63",
+          "atm_b8b5aa887b5bb955",
+          "atm_ba13af95d5fafef0",
+          "atm_c72533ee4f43e5b9",
+          "atm_cbc6211fb4e3a962",
+          "atm_cc26b819dff2e9c3",
+          "atm_d3ee1e7e5fa215e9",
+          "atm_d9433ca22c78bbf5",
+          "atm_dc529bc522dd3d47",
+          "atm_dec219ed640b820b",
+          "atm_f6584ddfe5f764e1",
+          "atm_f85e1fd373c6f8f0",
+          "atm_fb90b586a2b1cb91",
+          "atm_fec79ea8989aee29",
+          "atm_ff2fe4deeee4c7aa"
+        ],
+        "contradicting_atom_ids": [],
+        "atom_text": {
+          "atm_ba13af95d5fafef0": "Ceiling mount kits separate 7 days Conference room AV kits",
+          "atm_b4aea1782f2e7aa8": "Category: Contingency | Amount: 92438 | Calculation Note: Approximate project contingency",
+          "atm_fb90b586a2b1cb91": "Field: Deal Name | Value: OPTBOT Atlanta Office Refresh - Three Site Modernization",
+          "atm_5f84af2dcf1016c4": "40% - Factory Acceptance Test (FAT) sign-off for core network kit",
+          "atm_a1e33cc5aedc3935": "30% - Upon Purchase Order acceptance and project kickoff",
+          "atm_b31a781de71703b9": "Quote valid through 2026-06-14. Hardware pricing assumes consolidated shipment to Atlanta staging facility. Substitutions require written approval from Priya Narang and an updated BOM workbook. Payment schedule: 30% order acceptance, 40% equipment receipt, 20% site acceptance, 10",
+          "atm_a0b7ce183d0047af": "Category: Estimated Taxes and Fees | Amount: 84406 | Calculation Note: Mock estimate for testing only",
+          "atm_349adb8f4db676ac": "New construction, electrical trenching, permanent conduit installation, furniture procurement, production billing, legal review, and real customer communications are out of scope.",
+          "atm_dc529bc522dd3d47": "PDF extraction should capture contact names, sites, addresses, deal amount, payment schedule, risks, milestones, and approval thresholds. DOCX extraction should preserve SOW sections, site survey tables, assumptions, exclusions, acceptance criteria, and requirements. XLSX extract",
+          "atm_af13e438207ffcf6": "Authoritative physical site roster (site_roster v5)",
+          "atm_5681f8884fd20f39": "Category: Services Subtotal | Calculation Note: Sum of implementation and support services",
+          "atm_f6584ddfe5f764e1": "Discovery files 01-07 remain supporting evidence; this document 09 controls pricing and acceptance where conflicts",
+          "atm_2a507c1d5483d8fa": "Field: Total Mock Deal Amount | Value: 1847250",
+          "atm_4850879811bf3c8f": "XLSX. 5. Project Schedule XLSX. 6. Security and Integration Notes PDF. 7. Contracting and Procurement Packet PDF. Expected HubSpot attachment count: seven. Expected Azure blob count: seven. Expected parser",
+          "atm_00216294cbc1bf4f": "Change order pricing (Time & Materials):",
+          "atm_0bc766cd1bfd1393": "Quantity 1",
+          "atm_7448309f8440e043": "Quantity 1680",
+          "atm_ac6c3e0ddd85c6f5": "Step: 4 | Timing: T-1 business day | Owner: Install Lead | Checklist Item: Confirm staged equipment by site and room | Evidence Required: Asset staging report",
+          "atm_b120d94b5eabc6e6": "Pricing structure (commercial.pricing_structure)",
+          "atm_6f00dd7e22f3a0c1": "10% - Final acceptance (ATP) across all five sites in site roster doc 08",
+          "atm_dec219ed640b820b": "record for commercial totals.",
+          "atm_c72533ee4f43e5b9": "Receiving team must photograph pallet labels and upload images to the dev deal timeline before installation begins.",
+          "atm_65f3c0d977a28933": "Category: Hardware Subtotal | Calculation Note: Sum of hardware extended cost",
+          "atm_cc26b819dff2e9c3": "Field: Azure Container | Value: mock-hubspot-dev/opbtot-atl-refresh-2026-047",
+          "atm_2c499bb900cf8b29": "Field: Customer | Value: OPTBOT, Inc.",
+          "atm_4cf164723eb78bd4": "Install team must record any deviation from the standard room build in the punch-list workbook and notify the PM during daily standup.",
+          "atm_68f173faf1cd97ca": "000087 - OPTBOT Atlanta Office Refresh  |  HubSpot 60355665326 09 - Commercial, Pricing & Acceptance (Final) Closes pricing structure, electrical acceptance, lead times, and program assumptions",
+          "atm_0ea6cac472d0b62c": "Quantity 2",
+          "atm_7ad6a72896287e88": "Explicit program assumptions (global.explicit_assumptions)",
+          "atm_86ce0793ac8d17d5": "After-hours installation waves",
+          "atm_b8b5aa887b5bb955": "Step: 3 | Timing: T-2 business days | Owner: Facilities | Checklist Item: Post employee communications and room signage | Evidence Required: Comms screenshot",
+          "atm_7a2da231ae544ef6": "Step: 8 | Timing: Closeout | Owner: PM | Checklist Item: Upload acceptance and parser/orbitbrief outputs | Evidence Required: HubSpot timeline note",
+          "atm_6e1f5d9975d5db81": "PurTera carries GL and workers comp; OPTBOT added as additional insured.",
+          "atm_9d4fa89314a14c85": "000087 - OPTBOT Atlanta Office Refresh  |  HubSpot 60355665326",
+          "atm_9e8b971a9cae07e8": "Field: Mock Notice | Value: Fictional test data only",
+          "atm_5f181066701d465e": "Access window Escort owner",
+          "atm_3f40bfe5262556f8": "Receiving team must photograph pallet labels and upload images to the dev deal timeline before installation begins.",
+          "atm_40fa15bc15af27d6": "Step: 1 | Timing: T-5 business days | Owner: PM | Checklist Item: Confirm site access and escort roster | Evidence Required: Approved access list",
+          "atm_ff2fe4deeee4c7aa": "Standard business-hour access per site roster doc 08; after-hours per Section 2 of doc 08.",
+          "atm_b530cf0624f79a63": "Electrical acceptance tests (electrical.acceptance)",
+          "atm_d3ee1e7e5fa215e9": "OPTBOT provides WAN/MPLS handoff ports ready at each MDF on cutover day.",
+          "atm_83a6fa9991bd6854": "Step: 6 | Timing: Cutover evening | Owner: QA Lead | Checklist Item: Run room acceptance script | Evidence Required: Pass/fail export",
+          "atm_8bae344e7c9f26a8": "Quantity 1",
+          "atm_f85e1fd373c6f8f0": "OPTBOT provides site access, escorts, loading dock windows, and after-hours approvals at least five business days before each installation wave.",
+          "atm_92c410e13be13f55": "Install team must record any deviation from the standard room build in the punch-list workbook and notify the PM during daily standup.",
+          "atm_759b546435b9924c": "Site-specific install kits",
+          "atm_80527b560d510ac3": "Includes scheduling panels Fiber patch panels / MPO casse",
+          "atm_7e05cdf1f96bd4af": "HubSpot deal 60355665326 and PurPulse opportunity 841ea7e0-0e2f-412a-aebc-5794c199b85c are the system of",
+          "atm_cbc6211fb4e3a962": "Install team must record any deviation from the standard room build in the punch-list workbook and notify the PM during daily standup.",
+          "atm_689723d4e310d517": "Materials: cost + 15% handling",
+          "atm_768c3e7f78a6147f": "Executive brief PDF. 2. Statement of Work DOCX. 3. Site Surveys DOCX. 4. Hardware BOM",
+          "atm_820294badea21602": "Quantity 18",
+          "atm_fec79ea8989aee29": "Lead times and procurement constraints (procurement.lead_times)",
+          "atm_d9433ca22c78bbf5": "OPTBOT is refreshing three Atlanta-area offices to create a common collaboration, wireless, and desk-accessory standard. The project is intentionally represented across PDF, DOCX, and XLSX formats so parser-os can reconcile facts from narrative paragraphs, tables, workbooks, and ",
+          "atm_4b3ee2c6a9c48314": "Category: Logistics and Freight | Amount: 118750 | Calculation Note: Mock freight, staging space, pallet handling",
+          "atm_0537286237ba6fbf": "Receiving team must photograph pallet labels and upload images to the dev deal timeline before installation begins."
+        }
+      }
+    ]
+  }
+}

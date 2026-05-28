@@ -1,0 +1,27 @@
+{
+  "pdf": "C:\\Users\\lilli\\test_deals\\aps_fiber\\artifacts\\APS_fiber_Attachment_B.pdf",
+  "text_chars": 13376,
+  "tests": [
+    {
+      "prompt": "site_clusters",
+      "runtime_sec": 138.7,
+      "cluster_count": 0,
+      "canonical_names": [],
+      "raw_response_length": 11048,
+      "parse_ok": false,
+      "raw_response_snippet": "{\"site_clusters\": [{\"canonical_name\": \"Albuquerque GigaPop\", \"aliases\": [\"Albuquerque GigaPop\", \"505 Marquette NW\", \"Alb.\"]}, {\"canonical_name\": \"City Center\", \"aliases\": [\"City Center\", \"6400 Uptown Blvd NE\", \"Alb.\"]}, {\"canonical_name\": \"Data Center (Hub)\", \"aliases\": [\"Data Center (Hub)\", \"930-B Oak St SE\", \"Alb.\"]}, {\"canonical_name\": \"Data Center / AB3\", \"aliases\": [\"Data Center / AB3\", \"400 ",
+      "raw_response_tail": "anzano Mesa ES\", \"801 Elizabeth St Se\", \"Alb.\", \"87123\"]}, {\"canonical_name\": \"Marie M. Hughes ES\", \"aliases\": [\"Marie M. Hughes ES\", \"5701 Mojave NW\", \"Alb.\", \"87120\"]}, {\"canonical_name\": \"Mark Twain ES\", \"aliases\": [\"Mark Twain ES\", \"6316 Constitution Ave. Ne\", \"Alb.\", \"87110\"]}, {\"canonical_name\": \"Mary Ann Binford ES\", \"aliases\": [\"Mary Ann Binford ES\", \"1400 Corriz SW\", \"Alb.\", \"87121\"]}, {\""
+    },
+    {
+      "prompt": "row_oriented",
+      "runtime_sec": 249.3,
+      "site_count": 0,
+      "sites_sample": [],
+      "all_site_nos": [],
+      "raw_response_length": 15993,
+      "parse_ok": false,
+      "raw_response_snippet": "{\"sites\": [\n  {\"site_no\": \"1\", \"name\": \"Albuquerque GigaPop\", \"street\": \"505 Marquette NW\", \"city\": \"Alb.\", \"zip\": \"87102\", \"lat_long\": \"35.52037, -106.39103\"},\n  {\"site_no\": \"2\", \"name\": \"City Center\", \"street\": \"6400 Uptown Blvd NE\", \"city\": \"Alb.\", \"zip\": \"87110\", \"lat_long\": \"35.103233147, -106.572570924\"},\n  {\"site_no\": \"3\", \"name\": \"Data Center (Hub)\", \"street\": \"930-B Oak St SE\", \"city\": \"A",
+      "raw_response_tail": "name\": \"Mary Ann Binford ES\", \"street\": \"1400 Corriz SW\", \"city\": \"Alb.\", \"zip\": \"87121\", \"lat_long\": \"35.05123599, -106.726774017\"},\n  {\"site_no\": \"103\", \"name\": \"Matheson Park ES\", \"street\": \"10809 Lexington St Ne\", \"city\": \"Alb.\", \"zip\": \"87112\", \"lat_long\": \"35.113549406, -10\u7ebf6.520589581\"},\n  {\"site_no\": \"104\", \"name\": \"McCollum ES\", \"street\": \"10900 San Jacinto Ne\", \"city\": \"Alb.\", \"zip\": \"87"
+    }
+  ]
+}

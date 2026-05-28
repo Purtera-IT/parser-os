@@ -1,0 +1,599 @@
+{
+  "project_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "compile_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "clusters": [
+    {
+      "cluster_id": "site_cluster::site:atl_047_04",
+      "canonical_name": "atl 047 04",
+      "candidate_names": [
+        "atl 047 04"
+      ],
+      "site_keys": [
+        "site:atl_047_04"
+      ],
+      "member_atom_ids": [
+        "atm_17d03508fa3708bd",
+        "atm_1a820c888b20fba6",
+        "atm_3bad885bb218de59"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_2026_047",
+      "canonical_name": "atl 2026 047",
+      "candidate_names": [
+        "atl 2026 047"
+      ],
+      "site_keys": [
+        "site:atl_2026_047"
+      ],
+      "member_atom_ids": [
+        "atm_02695585bb555e2a",
+        "atm_15365db2449bef38",
+        "atm_2929e030605637ec",
+        "atm_2ee8588f923d382e",
+        "atm_48fb9cd22f7f4242",
+        "atm_51cc7fa0c9fd570c",
+        "atm_526bcc6e9be97bb4",
+        "atm_74ed209528b89c88",
+        "atm_8d949a86d23b4016"
+      ],
+      "artifact_ids": [
+        "art_12552694961ae509",
+        "art_30e1b1d0692eb4ff",
+        "art_7609b76b3a9cc752",
+        "art_ba0669bf1f21071e",
+        "art_cdc96f63d694c85d"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_air_03",
+      "canonical_name": "atl air 03",
+      "candidate_names": [
+        "atl air 03"
+      ],
+      "site_keys": [
+        "site:atl_air_03"
+      ],
+      "member_atom_ids": [
+        "atm_18192de0383acb42",
+        "atm_431cd16af92deb99",
+        "atm_58fe554ae0ea6599",
+        "atm_86d2000a136fe14c",
+        "atm_ade0aabb625095ef",
+        "atm_b7a06b96e7da7c58"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_6d629b371cc509d1"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_air_2026",
+      "canonical_name": "atl air 2026",
+      "candidate_names": [
+        "atl air 2026"
+      ],
+      "site_keys": [
+        "site:atl_air_2026"
+      ],
+      "member_atom_ids": [
+        "atm_a6912a5fd384806b",
+        "atm_cc24557a550b09ae"
+      ],
+      "artifact_ids": [
+        "art_b91f6989e534c864",
+        "art_ba0669bf1f21071e"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_air_asset_type_warehouse",
+      "canonical_name": "atl air asset type warehouse",
+      "candidate_names": [
+        "atl air asset type warehouse"
+      ],
+      "site_keys": [
+        "site:atl_air_asset_type_warehouse"
+      ],
+      "member_atom_ids": [
+        "atm_0f5ff913ca618b8c",
+        "atm_9b0aa5e418996c7e",
+        "atm_bb3a3014e3e2ada5",
+        "atm_be68afdb636af9ca",
+        "atm_cc24557a550b09ae",
+        "atm_f31be874c3b36d9e",
+        "atm_f65507fca348dbab"
+      ],
+      "artifact_ids": [
+        "art_12552694961ae509",
+        "art_7609b76b3a9cc752",
+        "art_ba0669bf1f21071e",
+        "art_c5b68eeadf247c56",
+        "art_cdc96f63d694c85d"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_cp_05",
+      "canonical_name": "atl cp 05",
+      "candidate_names": [
+        "atl cp 05"
+      ],
+      "site_keys": [
+        "site:atl_cp_05"
+      ],
+      "member_atom_ids": [
+        "atm_03876be5af4a7e0c",
+        "atm_17308aa2eb7142b2",
+        "atm_18192de0383acb42",
+        "atm_44b7fbca46e351e1",
+        "atm_8dfdc0d21c018229",
+        "atm_9ade24fc615a0316",
+        "atm_a071a740a83e7dc4",
+        "atm_b7a06b96e7da7c58",
+        "atm_ba7f368095bc73ae",
+        "atm_baf1a31774a1e2fc",
+        "atm_df3679ff6b92e193",
+        "atm_f1dc752136b4201f"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_6d629b371cc509d1"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_hq_01",
+      "canonical_name": "atl hq 01",
+      "candidate_names": [
+        "atl hq 01"
+      ],
+      "site_keys": [
+        "site:atl_hq_01"
+      ],
+      "member_atom_ids": [
+        "atm_18192de0383acb42",
+        "atm_53c510ed5524183e",
+        "atm_9030388600951df4",
+        "atm_9939c33c37dc7f2c",
+        "atm_9b0aa5e418996c7e",
+        "atm_f595ae7f6920e63a"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_6d629b371cc509d1",
+        "art_7609b76b3a9cc752"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:atl_hq_asset_type_room",
+      "canonical_name": "atl hq asset type room",
+      "candidate_names": [
+        "atl hq asset type room"
+      ],
+      "site_keys": [
+        "site:atl_hq_asset_type_room"
+      ],
+      "member_atom_ids": [
+        "atm_0f5ff913ca618b8c",
+        "atm_18192de0383acb42",
+        "atm_3d735e88968c12db",
+        "atm_9b0aa5e418996c7e",
+        "atm_a5ff221f67aa3b77",
+        "atm_bb3a3014e3e2ada5"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_7609b76b3a9cc752",
+        "art_b91f6989e534c864",
+        "art_ba0669bf1f21071e"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:college_pa",
+      "canonical_name": "college pa",
+      "candidate_names": [
+        "college pa"
+      ],
+      "site_keys": [
+        "site:college_pa"
+      ],
+      "member_atom_ids": [
+        "atm_061d7df2ecc06959",
+        "atm_17308aa2eb7142b2",
+        "atm_8dfdc0d21c018229",
+        "atm_9ade24fc615a0316",
+        "atm_9b0aa5e418996c7e",
+        "atm_e162855892373f2e"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_12552694961ae509",
+        "art_7609b76b3a9cc752",
+        "art_b91f6989e534c864"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:college_pa_mdf_cp",
+      "canonical_name": "college pa mdf cp",
+      "candidate_names": [
+        "college pa mdf cp"
+      ],
+      "site_keys": [
+        "site:college_pa_mdf_cp"
+      ],
+      "member_atom_ids": [
+        "atm_9ade24fc615a0316"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:dev_atl_047",
+      "canonical_name": "dev atl 047",
+      "candidate_names": [
+        "dev atl 047"
+      ],
+      "site_keys": [
+        "site:dev_atl_047"
+      ],
+      "member_atom_ids": [
+        "atm_01b89013e47880d5",
+        "atm_2929e030605637ec",
+        "atm_78bb9205345e246e",
+        "atm_d2bfaadddc46977c"
+      ],
+      "artifact_ids": [
+        "art_12552694961ae509",
+        "art_7609b76b3a9cc752",
+        "art_ba0669bf1f21071e",
+        "art_cdc96f63d694c85d"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:hs_deal",
+      "canonical_name": "hs deal",
+      "candidate_names": [
+        "hs deal"
+      ],
+      "site_keys": [
+        "site:hs_deal"
+      ],
+      "member_atom_ids": [
+        "atm_02695585bb555e2a",
+        "atm_15365db2449bef38",
+        "atm_2929e030605637ec",
+        "atm_2ee8588f923d382e",
+        "atm_48fb9cd22f7f4242",
+        "atm_51cc7fa0c9fd570c",
+        "atm_526bcc6e9be97bb4",
+        "atm_74ed209528b89c88",
+        "atm_8d949a86d23b4016"
+      ],
+      "artifact_ids": [
+        "art_12552694961ae509",
+        "art_30e1b1d0692eb4ff",
+        "art_7609b76b3a9cc752",
+        "art_ba0669bf1f21071e",
+        "art_cdc96f63d694c85d"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:mdf_3a",
+      "canonical_name": "mdf 3a",
+      "candidate_names": [
+        "mdf 3a"
+      ],
+      "site_keys": [
+        "site:mdf_3a"
+      ],
+      "member_atom_ids": [
+        "atm_9030388600951df4",
+        "atm_9939c33c37dc7f2c",
+        "atm_b2d28fb0ebfef936"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:mon_fri",
+      "canonical_name": "mon fri",
+      "candidate_names": [
+        "mon fri"
+      ],
+      "site_keys": [
+        "site:mon_fri"
+      ],
+      "member_atom_ids": [
+        "atm_1111f592eef85c71",
+        "atm_17308aa2eb7142b2",
+        "atm_17d03508fa3708bd",
+        "atm_20aaca32a5855837",
+        "atm_3bad885bb218de59",
+        "atm_85f02abbca2863a7",
+        "atm_8dfdc0d21c018229",
+        "atm_9030388600951df4",
+        "atm_9939c33c37dc7f2c",
+        "atm_9ade24fc615a0316",
+        "atm_b2d28fb0ebfef936",
+        "atm_d0a84da9c1ab9853"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:mon_sat",
+      "canonical_name": "mon sat",
+      "candidate_names": [
+        "mon sat"
+      ],
+      "site_keys": [
+        "site:mon_sat"
+      ],
+      "member_atom_ids": [
+        "atm_431cd16af92deb99",
+        "atm_85005ce7f15ecb4b",
+        "atm_ade0aabb625095ef"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:optbot_college",
+      "canonical_name": "optbot college",
+      "candidate_names": [
+        "optbot college"
+      ],
+      "site_keys": [
+        "site:optbot_college"
+      ],
+      "member_atom_ids": [
+        "atm_17308aa2eb7142b2",
+        "atm_8dfdc0d21c018229",
+        "atm_9ade24fc615a0316"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:optbot_facil",
+      "canonical_name": "optbot facil",
+      "candidate_names": [
+        "optbot facil"
+      ],
+      "site_keys": [
+        "site:optbot_facil"
+      ],
+      "member_atom_ids": [
+        "atm_1111f592eef85c71",
+        "atm_17308aa2eb7142b2",
+        "atm_17d03508fa3708bd",
+        "atm_18192de0383acb42",
+        "atm_20aaca32a5855837",
+        "atm_3bad885bb218de59",
+        "atm_431cd16af92deb99",
+        "atm_45d2e42c61eb67f7",
+        "atm_85f02abbca2863a7",
+        "atm_8840a1822a76c366",
+        "atm_8dfdc0d21c018229",
+        "atm_9030388600951df4",
+        "atm_9939c33c37dc7f2c",
+        "atm_ade0aabb625095ef",
+        "atm_b2d28fb0ebfef936",
+        "atm_d0a84da9c1ab9853"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_7609b76b3a9cc752"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:optbot_logis",
+      "canonical_name": "optbot logis",
+      "candidate_names": [
+        "optbot logis"
+      ],
+      "site_keys": [
+        "site:optbot_logis"
+      ],
+      "member_atom_ids": [
+        "atm_17308aa2eb7142b2",
+        "atm_431cd16af92deb99",
+        "atm_86d2000a136fe14c",
+        "atm_8dfdc0d21c018229",
+        "atm_9ade24fc615a0316",
+        "atm_ade0aabb625095ef",
+        "atm_d4e661c5130ee478"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_12552694961ae509"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:optbot_secur",
+      "canonical_name": "optbot secur",
+      "candidate_names": [
+        "optbot secur"
+      ],
+      "site_keys": [
+        "site:optbot_secur"
+      ],
+      "member_atom_ids": [
+        "atm_18192de0383acb42",
+        "atm_34d6247facb45277",
+        "atm_431cd16af92deb99",
+        "atm_51cc7fa0c9fd570c",
+        "atm_85005ce7f15ecb4b",
+        "atm_8840a1822a76c366",
+        "atm_ade0aabb625095ef",
+        "atm_b7a06b96e7da7c58"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a",
+        "art_30e1b1d0692eb4ff",
+        "art_7609b76b3a9cc752"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:optbot_west_campus",
+      "canonical_name": "optbot west campus",
+      "candidate_names": [
+        "optbot west campus"
+      ],
+      "site_keys": [
+        "site:optbot_west_campus"
+      ],
+      "member_atom_ids": [
+        "atm_20aaca32a5855837",
+        "atm_85f02abbca2863a7",
+        "atm_b2d28fb0ebfef936"
+      ],
+      "artifact_ids": [
+        "art_104fb9f44f3b218a"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    },
+    {
+      "cluster_id": "site_cluster::site:po_mock",
+      "canonical_name": "po mock",
+      "candidate_names": [
+        "po mock"
+      ],
+      "site_keys": [
+        "site:po_mock"
+      ],
+      "member_atom_ids": [
+        "atm_01b89013e47880d5",
+        "atm_2929e030605637ec",
+        "atm_4b837566c5088b61",
+        "atm_794db16b4826d341",
+        "atm_8840a1822a76c366",
+        "atm_9c3bf294de9dc4d3",
+        "atm_d53b05a0d233755c"
+      ],
+      "artifact_ids": [
+        "art_12552694961ae509",
+        "art_7609b76b3a9cc752",
+        "art_ba0669bf1f21071e",
+        "art_cdc96f63d694c85d"
+      ],
+      "name_resolved_by_llm": false,
+      "confidence": 1.0,
+      "kind": "physical_site",
+      "parent_cluster_id": null,
+      "publishable": true
+    }
+  ],
+  "cluster_count": 21,
+  "escalation_log": {
+    "count": 0,
+    "by_reason": {},
+    "entries": []
+  },
+  "merged_keys": 0
+}

@@ -1,0 +1,91 @@
+{"event": "compile_stage_completed", "compile_id": "pending_compile_id", "project_id": "optbot", "stage": "discover_artifacts", "duration_ms": 11.337, "counts": {"input_count": 1, "output_count": 9}, "warning_count": 0, "error_count": 0}
+v53_text_roster: 01_deal_overview_executive_brief.pdf fitz=0 text=0
+v53_text_roster: 06_security_it_integration_notes.pdf fitz=0 text=0
+v53_text_roster: 07_contracting_procurement_packet.pdf fitz=0 text=0
+v53_text_roster: 08_site_roster_and_facilities_authoritative.pdf fitz=5 text=1
+v53_text_roster: 09_commercial_pricing_acceptance_assumptions_final.pdf fitz=0 text=0
+{"event": "compile_stage_completed", "compile_id": "pending_compile_id", "project_id": "optbot", "stage": "parse_artifacts", "duration_ms": 7760.731, "counts": {"input_count": 9, "output_count": 395}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "pending_compile_id", "project_id": "optbot", "stage": "candidate_adjudication", "duration_ms": 0.068, "counts": {"input_count": 0, "output_count": 0}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "source_replay", "duration_ms": 2082.15, "counts": {"input_count": 395, "output_count": 395}, "warning_count": 1, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "confidence_floor", "duration_ms": 0.045, "counts": {"input_count": 395, "output_count": 0}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "prose_list_split", "duration_ms": 4.057, "counts": {"input_count": 395, "output_count": 0}, "warning_count": 0, "error_count": 0}
+raw_table_row_v49_2: input=100 schema_matched=68 emitted=128
+entity_bridge_v49: stakeholders:5\u21925 milestones:7\u21927 requirements:35\u219235 risks:1\u21921 acceptance_criteria:7\u21927 site_clusters:4\u21920 quantities:3\u21923
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "enrich_entities", "duration_ms": 910816.623, "counts": {"input_count": 395, "output_count": 701}, "warning_count": 1, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "typed_atom_classification", "duration_ms": 230959.534, "counts": {"input_count": 591, "output_count": 109}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "duplicate_atom_collapse", "duration_ms": 2.501, "counts": {"input_count": 591, "output_count": 571}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "semantic_dedup", "duration_ms": 11.905, "counts": {"input_count": 571, "output_count": 505}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "confidence_recalibration", "duration_ms": 6.391, "counts": {"input_count": 505, "output_count": 465}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "entity_resolution", "duration_ms": 21465.991, "counts": {"input_count": 505, "output_count": 233}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "graph_build", "duration_ms": 709.052, "counts": {"input_count": 505, "output_count": 200}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "packetize", "duration_ms": 177.858, "counts": {"input_count": 200, "output_count": 43}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "packet_certificates", "duration_ms": 16.608, "counts": {"input_count": 43, "output_count": 43}, "warning_count": 0, "error_count": 0}
+{"event": "compile_stage_completed", "compile_id": "cmp_da7a23d42a8c24aa", "project_id": "optbot", "stage": "quality_gates", "duration_ms": 15.795, "counts": {"input_count": 43, "output_count": 618}, "warning_count": 618, "error_count": 0}
+======================================================================
+v56e VERIFICATION — LLM ON, full OPTBOT compile
+======================================================================
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+
+Compile finished in 1174.3s
+Total atoms: 505
+
+=== PHYSICAL_SITE COUNT: 9 ===
+  expected: 5  (FAIL)
+
+=== Atoms by extraction_method ===
+    8  orbitbrief_pdf_color_driven_v1
+    1  docx_table_row_v1
+
+=== Each physical_site atom ===
+1. site_id='ATL-CP-05'  name='OPTBOT College Park S'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['ATL-CP-05', 'OPTBOT College Park S', '1850 Sullivan Rd, College Pa']
+   site:* keys (1): ['site:atl_cp_05']
+
+2. site_id='ATL-WEST-02'  name='OPTBOT West Campus'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['ATL-WEST-02', 'OPTBOT West Campus', '3100 Interstate N Pkwy, Atla']
+   site:* keys (1): ['site:atl_west_02']
+
+3. site_id='ATL-HQ-01'  name='OPTBOT Atlanta HQ'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['ATL-HQ-01', 'OPTBOT Atlanta HQ', '1200 Peachtree St NE, Atlant']
+   site:* keys (1): ['site:atl_hq_01']
+
+4. site_id='ATL-047-04'  name='OPTBOT Brady Training'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['ATL-047-04', 'OPTBOT Brady Training', '047 Brady Ave NW, Atlanta GA']
+   site:* keys (1): ['site:atl_047_04']
+
+5. site_id='OPTBOT-AIRPORT-LOGIST'  name='OPTBOT Airport Logist'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['OPTBOT-AIRPORT-LOGIST', 'OPTBOT Airport Logist', '6000 N Terminal Pkwy, Atlanta']
+   site:* keys (1): ['site:optbot_airport_logist']
+
+6. site_id='OPTBOT-COLLEGE-PARK-S'  name='OPTBOT College Park S'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['OPTBOT-COLLEGE-PARK-S', 'OPTBOT College Park S', '1850 Sullivan Rd, College PA']
+   site:* keys (1): ['site:optbot_college_park_s']
+
+7. site_id='4200-GLOBAL-GATEWAY-CONNECTOR'  name='Building C'
+   extraction_method=docx_table_row_v1
+   aliases (3): ['4200-GLOBAL-GATEWAY-CONNECTOR', 'Building C', 'College Park, GA 30337']
+   site:* keys (1): ['site:4200_global_gateway_connector']
+
+8. site_id='ATL-AIR-03'  name='OPTBOT Airport Logist'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['ATL-AIR-03', 'OPTBOT Airport Logist', '6000 N Terminal Pkwy, Atlant']
+   site:* keys (1): ['site:atl_air_03']
+
+9. site_id='OPTBOT-BRADY-TRAINING'  name='OPTBOT Brady Training'
+   extraction_method=orbitbrief_pdf_color_driven_v1
+   aliases (3): ['OPTBOT-BRADY-TRAINING', 'OPTBOT Brady Training', '047 Brady Ave NW, Atlanta GA']
+   site:* keys (1): ['site:optbot_brady_training']
+
+Traceback (most recent call last):
+  File "C:\Users\lilli\parser-os\scripts\v56e_verify_local.py", line 93, in <module>
+    print(f"=== \u274c {len(ghost_atoms)} GHOST ATOM(S) DETECTED ===")
+  File "C:\Users\lilli\miniconda3\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 4: character maps to <undefined>

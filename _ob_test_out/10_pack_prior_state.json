@@ -1,0 +1,372 @@
+{
+  "project_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "compile_id": "2dbc02c9-9d49-40ad-8048-aae78836b0eb",
+  "scores": [
+    {
+      "pack_id": "security_camera",
+      "display_name": "Security Camera and VMS",
+      "raw_score": 98,
+      "confidence": 0.36294538860929787,
+      "matched_keywords": [
+        "!ip_camera",
+        "camera"
+      ]
+    },
+    {
+      "pack_id": "wireless",
+      "display_name": "Wireless",
+      "raw_score": 97,
+      "confidence": 0.3592,
+      "matched_keywords": [
+        "!access_point",
+        "!access_points",
+        "!wi_fi",
+        "!wireless",
+        "coverage",
+        "mounting",
+        "validation",
+        "wireless"
+      ]
+    },
+    {
+      "pack_id": "delivery_execution",
+      "display_name": "Delivery / Execution",
+      "raw_score": 96,
+      "confidence": 0.3555,
+      "matched_keywords": [
+        "!blackout_window",
+        "!go_live",
+        "!hypercare",
+        "blackout",
+        "cutover",
+        "dock",
+        "lift",
+        "logistics",
+        "rollback",
+        "wave"
+      ]
+    },
+    {
+      "pack_id": "procurement_finance",
+      "display_name": "Procurement and Finance",
+      "raw_score": 88,
+      "confidence": 0.3259,
+      "matched_keywords": [
+        "!milestone_billing",
+        "!purchase_order",
+        "approval",
+        "billing",
+        "milestone",
+        "procurement",
+        "purchase",
+        "quote"
+      ]
+    },
+    {
+      "pack_id": "electrical",
+      "display_name": "Electrical and Power",
+      "raw_score": 70,
+      "confidence": 0.2592,
+      "matched_keywords": [
+        "!conduit",
+        "!ups",
+        "circuit",
+        "electrical",
+        "panel",
+        "power",
+        "ups"
+      ]
+    },
+    {
+      "pack_id": "low_voltage_cabling",
+      "display_name": "Low Voltage Cabling",
+      "raw_score": 67,
+      "confidence": 0.2481,
+      "matched_keywords": [
+        "!cabling",
+        "cable",
+        "cabling",
+        "drops",
+        "fiber",
+        "idf",
+        "mdf"
+      ]
+    },
+    {
+      "pack_id": "audio_visual",
+      "display_name": "Audio Visual",
+      "raw_score": 62,
+      "confidence": 0.2296,
+      "matched_keywords": [
+        "!av",
+        "audio",
+        "codec",
+        "display",
+        "microphone",
+        "speaker",
+        "visual"
+      ]
+    },
+    {
+      "pack_id": "hardware",
+      "display_name": "Hardware",
+      "raw_score": 48,
+      "confidence": 0.1778,
+      "matched_keywords": [
+        "!intune",
+        "imaging",
+        "procurement",
+        "receiving",
+        "staging"
+      ]
+    },
+    {
+      "pack_id": "security_access",
+      "display_name": "Security / Access",
+      "raw_score": 41,
+      "confidence": 0.1518,
+      "matched_keywords": [
+        "!badge",
+        "!card_reader",
+        "!escort_required",
+        "badge",
+        "escort",
+        "secure",
+        "union"
+      ]
+    },
+    {
+      "pack_id": "camera_vms_operations",
+      "display_name": "Camera / VMS Operations",
+      "raw_score": 40,
+      "confidence": 0.1481,
+      "matched_keywords": [
+        "camera",
+        "operations",
+        "storage"
+      ]
+    },
+    {
+      "pack_id": "imac",
+      "display_name": "IMAC",
+      "raw_score": 37,
+      "confidence": 0.137,
+      "matched_keywords": [
+        "change",
+        "refresh"
+      ]
+    },
+    {
+      "pack_id": "commercial",
+      "display_name": "Commercial",
+      "raw_score": 34,
+      "confidence": 0.1259,
+      "matched_keywords": [
+        "!change_order",
+        "acceptance",
+        "commercial",
+        "exclusions",
+        "fee",
+        "fixed",
+        "hybrid",
+        "milestones",
+        "pricing",
+        "travel"
+      ]
+    },
+    {
+      "pack_id": "fire_safety",
+      "display_name": "Fire Safety and Alarm",
+      "raw_score": 23,
+      "confidence": 0.0852,
+      "matched_keywords": [
+        "panel"
+      ]
+    },
+    {
+      "pack_id": "professional_services",
+      "display_name": "Professional Services",
+      "raw_score": 23,
+      "confidence": 0.0852,
+      "matched_keywords": [
+        "!sow",
+        "design",
+        "discovery"
+      ]
+    },
+    {
+      "pack_id": "audit",
+      "display_name": "Audit",
+      "raw_score": 22,
+      "confidence": 0.0815,
+      "matched_keywords": [
+        "!punch_list",
+        "readiness"
+      ]
+    },
+    {
+      "pack_id": "data_migration",
+      "display_name": "Data Migration",
+      "raw_score": 21,
+      "confidence": 0.0778,
+      "matched_keywords": [
+        "cutover",
+        "migration",
+        "profile",
+        "rollback",
+        "tenant"
+      ]
+    },
+    {
+      "pack_id": "building_management_systems",
+      "display_name": "Building Management Systems",
+      "raw_score": 20,
+      "confidence": 0.0741,
+      "matched_keywords": [
+        "controls",
+        "sensor"
+      ]
+    },
+    {
+      "pack_id": "alm",
+      "display_name": "ALM",
+      "raw_score": 16,
+      "confidence": 0.0593,
+      "matched_keywords": [
+        "approvals",
+        "environment",
+        "governance",
+        "release"
+      ]
+    },
+    {
+      "pack_id": "network_maintenance",
+      "display_name": "Network Maintenance / Operations",
+      "raw_score": 15,
+      "confidence": 0.0556,
+      "matched_keywords": [
+        "circuit",
+        "wan"
+      ]
+    },
+    {
+      "pack_id": "datacenter",
+      "display_name": "Datacenter",
+      "raw_score": 13,
+      "confidence": 0.0481,
+      "matched_keywords": [
+        "!pdu",
+        "rack"
+      ]
+    },
+    {
+      "pack_id": "msp",
+      "display_name": "MSP",
+      "raw_score": 11,
+      "confidence": 0.0407,
+      "matched_keywords": [
+        "!help_desk",
+        "endpoint"
+      ]
+    },
+    {
+      "pack_id": "telecom",
+      "display_name": "Telecom",
+      "raw_score": 10,
+      "confidence": 0.037,
+      "matched_keywords": [
+        "carrier",
+        "circuit"
+      ]
+    },
+    {
+      "pack_id": "itad",
+      "display_name": "ITAD",
+      "raw_score": 7,
+      "confidence": 0.0259,
+      "matched_keywords": [
+        "chain",
+        "handoff",
+        "serial",
+        "tag"
+      ]
+    },
+    {
+      "pack_id": "site_structure",
+      "display_name": "Site Structure",
+      "raw_score": 7,
+      "confidence": 0.0259,
+      "matched_keywords": [
+        "!campus_site",
+        "campus"
+      ]
+    },
+    {
+      "pack_id": "paging_mass_notification",
+      "display_name": "Paging and Mass Notification",
+      "raw_score": 4,
+      "confidence": 0.0148,
+      "matched_keywords": [
+        "speaker"
+      ]
+    },
+    {
+      "pack_id": "rack_and_stack",
+      "display_name": "Rack & Stack",
+      "raw_score": 4,
+      "confidence": 0.0148,
+      "matched_keywords": [
+        "rack"
+      ]
+    },
+    {
+      "pack_id": "staff_augmentation",
+      "display_name": "Staff Augmentation",
+      "raw_score": 2,
+      "confidence": 0.0074,
+      "matched_keywords": [
+        "staff"
+      ]
+    },
+    {
+      "pack_id": "das",
+      "display_name": "Distributed Antenna System",
+      "raw_score": 0,
+      "confidence": 0.0,
+      "matched_keywords": []
+    },
+    {
+      "pack_id": "other",
+      "display_name": "Other / Adjacent",
+      "raw_score": 0,
+      "confidence": 0.0,
+      "matched_keywords": [
+        "!camera",
+        "!huddle_room",
+        "firewall"
+      ]
+    }
+  ],
+  "top_pack_id": "security_camera",
+  "top_confidence": 0.36294538860929787,
+  "runner_up_pack_id": "wireless",
+  "runner_up_confidence": 0.3592,
+  "margin": 0.0037453886092978506,
+  "escalated": false,
+  "pre_escalation_top_pack_id": null,
+  "escalation_log": {
+    "count": 0,
+    "by_reason": {},
+    "entries": []
+  },
+  "tokens_considered": 8545,
+  "selected_pack_ids": [
+    "security_camera",
+    "wireless",
+    "delivery_execution",
+    "procurement_finance",
+    "electrical",
+    "low_voltage_cabling",
+    "security_access"
+  ]
+}

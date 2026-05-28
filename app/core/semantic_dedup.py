@@ -305,9 +305,11 @@ def _is_hallucinated_physical_site_value(value: Any) -> bool:
     name = (value.get("name") or "").strip()
     address = (value.get("address") or value.get("street_address") or "").strip()
     facility = (value.get("facility_name") or "").strip()
-    nonempty = [s for s in (name, address, facility) if s]
-    # All three identity fields identical with at least two populated.
-    if len(nonempty) >= 2 and len(set(nonempty)) == 1:
+    # All three identity fields identical — only fire when ALL THREE are
+    # populated (mirrors typed_atom_classifier guard). A clean text-roster
+    # atom legitimately has name == facility with address empty; that's
+    # not a ghost.
+    if name and address and facility and name == address == facility:
         return True
     # Also catch the ``v\d+`` / 4-digit-year suffix on site_id directly.
     sid = (value.get("site_id") or value.get("id") or "").strip()

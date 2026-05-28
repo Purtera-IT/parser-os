@@ -369,11 +369,15 @@ def _is_hallucinated_physical_site(atom: Any, new_value: Any) -> bool:
     site_id = (new_value.get("site_id") or new_value.get("id") or "").strip()
 
     # 1. Identical identity fields — mathematically impossible for a real
-    # row. Requires at least two of name/address/facility being non-empty
-    # and ALL equal (otherwise an LLM that only filled ``name`` could
-    # legitimately leave the others blank).
-    nonempty = [s for s in (name, address, facility) if s]
-    if len(nonempty) >= 2 and len(set(nonempty)) == 1:
+    # row. Requires ALL THREE of name/address/facility to be non-empty
+    # AND all equal. A clean text-fallback atom with name == facility
+    # but address empty is NOT a ghost (the v53.8 text-roster extractor
+    # legitimately emits that shape: it only extracts site_id + facility
+    # name from a section header, never an address). Only fire when the
+    # LLM filled all three slots with the same string — that's the
+    # forfeit shape (couldn't separate columns, copied one value into
+    # every field).
+    if name and address and facility and name == address == facility:
         return True
 
     # 2. Ghost suffix on site_id, name, or facility_name.
