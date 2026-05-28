@@ -1108,6 +1108,16 @@ def _text_based_site_roster_extract(
         if not declares_roster and site_id_count < 5:
             return []
 
+        # v53.12: known non-site prefixes that match the loose site-ID
+        # regex but aren't actual sites. Universal — these are network
+        # closets, days, system codes, etc.
+        _NON_SITE_PREFIXES = {
+            "MDF", "IDF", "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
+            "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP",
+            "OCT", "NOV", "DEC", "USB", "AC", "DC", "DC1", "ON", "OFF",
+            "HVAC", "PoE", "POE", "AP", "AP1", "AP2", "ID", "PO", "QA",
+            "URL", "GUI", "API", "SSO", "VPN", "WAN", "LAN", "PSU",
+        }
         # Find every site-ID-shaped token in the text
         site_ids_seen: dict[str, str] = {}  # id → name guess
         for line in document_text.split("\n"):
@@ -1117,6 +1127,25 @@ def _text_based_site_roster_extract(
             for token in line_stripped.split():
                 clean = token.rstrip(":,;")
                 if not _SITE_ID_SHAPE_RE.match(clean):
+                    continue
+                # v53.12: reject non-site prefixes
+                prefix = clean.split("-", 1)[0].split("_", 1)[0].upper()
+                if prefix in _NON_SITE_PREFIXES:
+                    continue
+                # Reject if doesn't contain at least 2 alpha chars AND
+                # 1 digit (real site IDs typically have both — like
+                # ATL-HQ-01, STORE-142). Pure alphabetic codes (FRI,
+                # ATL-HQ without numeric suffix) are usually weak.
+                # We allow ATL-HQ via the BOM catalog path; here we
+                # only emit when there's a digit suffix proving it's
+                # a numbered site row.
+                if not re.search(r"\d", clean):
+                    continue
+                # v53.12b: require ≥2 alpha chars AND total length ≥6.
+                # Filters out "W2", "B1", etc. — single-letter+digit
+                # codes that aren't realistic site IDs.
+                alpha_count = sum(1 for ch in clean if ch.isalpha())
+                if alpha_count < 2 or len(clean) < 6:
                     continue
                 if clean in already_emitted or clean in site_ids_seen:
                     continue
@@ -1134,6 +1163,11 @@ def _text_based_site_roster_extract(
                 )
                 facility = (name_match.group(1).strip() if name_match else after[:50].strip())
                 facility = re.sub(r"\s+[A-Z]$", "", facility).strip()
+                # v53.12: reject facility names containing days/months — caught from
+                # adjacent table cells in PDF text flow.
+                facility_low = facility.lower()
+                if any(w in facility_low for w in ["mon-fri", "mon-sat", "tue ", "wed ", "thu ", "fri ", "sat ", "sun "]):
+                    facility = clean  # fallback to id-as-name
                 site_ids_seen[clean] = facility or clean
 
         # Emit one physical_site atom per discovered ID
