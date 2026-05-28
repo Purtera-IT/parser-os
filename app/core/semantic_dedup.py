@@ -295,6 +295,39 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     good_ids = [_physical_site_id(a) for a in physical if not _is_bad_physical_site_id(_physical_site_id(a))]
     complete_ids = sorted({sid for sid in good_ids if _looks_complete_site_id(sid)}, key=len)
 
+    # v57.1: address/facility lookup against complete atoms. typed_atom_
+    # classification and other downstream promoters create physical_site
+    # atoms with synthetic site_ids derived from facility names (e.g.
+    # "OPTBOT-ATLANTA-HQ" from "OPTBOT Atlanta HQ"). These have the SAME
+    # street_address as the canonical roster atom ("ATL-HQ-01") but a
+    # non-canonical site_id, so the old by-site-id grouping kept them
+    # as separate sites. We now build a normalized address+facility
+    # index over the complete atoms and use it as a fallback when the
+    # site_id alone doesn't resolve. Without this, the OPTBOT cockpit
+    # shows 10 sites (5 clean + 5 ghosts) instead of 5.
+    def _nf(s: Any) -> str:
+        if not isinstance(s, str):
+            return ""
+        return re.sub(r"[^a-z0-9]+", "", s.lower())
+
+    addr_to_canonical: dict[str, str] = {}
+    facility_to_canonical: dict[str, str] = {}
+    for a in physical:
+        sid_a = _physical_site_id(a)
+        if not _looks_complete_site_id(sid_a):
+            continue
+        v = getattr(a, "value", None) or {}
+        if not isinstance(v, dict):
+            continue
+        for field in ("street_address", "address"):
+            key = _nf(v.get(field))
+            if key and key not in addr_to_canonical:
+                addr_to_canonical[key] = sid_a
+        for field in ("facility_name", "name"):
+            key = _nf(v.get(field))
+            if key and key not in facility_to_canonical:
+                facility_to_canonical[key] = sid_a
+
     def canonical_for(atom: Any) -> str | None:
         sid = _physical_site_id(atom)
         if not sid or _is_bad_physical_site_id(sid):
@@ -312,6 +345,28 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         prefix_matches = [full for full in complete_ids if full.startswith(sid + "-")]
         if prefix_matches:
             return prefix_matches[0]
+        # v57.1: address/facility lookup. Catches typed_atom_classifier
+        # promotions where site_id was derived from facility_name (e.g.
+        # "OPTBOT-ATLANTA-HQ") but address/facility match a complete
+        # atom ("ATL-HQ-01"). Without this, the dedup keeps both as
+        # separate sites — 10 atoms displayed instead of 5.
+        v = getattr(atom, "value", None) or {}
+        if isinstance(v, dict) and complete_ids:
+            for field in ("street_address", "address"):
+                ak = _nf(v.get(field))
+                if ak and ak in addr_to_canonical:
+                    return addr_to_canonical[ak]
+            for field in ("facility_name", "name"):
+                fk = _nf(v.get(field))
+                if fk and fk in facility_to_canonical:
+                    return facility_to_canonical[fk]
+            # No match against any complete atom — ghost emission with a
+            # synthetic site_id and no canonical address/facility to
+            # merge into. Drop it. Safe: a genuine new site would have
+            # either a canonical-shape site_id (caught above) or be in a
+            # document with NO structural roster (complete_ids empty,
+            # this branch skipped).
+            return None
         return sid
 
     grouped: dict[str, list[Any]] = {}
