@@ -3861,6 +3861,7 @@ def _entities_to_atoms(
     project_id: str,
     artifact_ids: list[str],
     parser_version: str = "entity_bridge_v49",
+    existing_physical_site_count: int = 0,
 ) -> list[Any]:
     """v49 — bridge LLM entity findings into proper EvidenceAtom instances.
 
@@ -4067,7 +4068,23 @@ def _entities_to_atoms(
             out_val.setdefault("description", qt)
         return out_val
 
+    # v53.9 UNIVERSAL FIX: LLM site_clusters should NOT become
+    # physical_site atoms when STRUCTURAL physical_site atoms already
+    # exist (parsed from a roster table by PDF/XLSX/DOCX parser or
+    # the v53.8 text-based extractor). The structural ones are ground
+    # truth. LLM clusters at best provide aliases — they should never
+    # be promoted to canonicals when we have authoritative IDs.
+    # The pattern of regression (v53.4-7) traced back to LLM-bridged
+    # site atoms with hallucinated names ("Atl Hq 2026", "Site ALL")
+    # being treated as separate canonicals.
+    # When zero structural physical_site atoms exist, LLM clusters
+    # fall back to filling the canonical_set so downstream gates work.
+    suppress_llm_sites = existing_physical_site_count > 0
+
     for category, atom_type in CATEGORY_TO_ATOM_TYPE.items():
+        if category == "site_clusters" and suppress_llm_sites:
+            _cat_counts[category] = {"in": len(multi_result.get(category, []) or []), "out": 0, "suppressed": True}
+            continue
         entities = multi_result.get(category)
         if not isinstance(entities, list):
             _cat_counts[category] = {"in": 0, "out": 0}
@@ -4441,10 +4458,21 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             _project_id = (
                 getattr(atom_list[0], "project_id", "") if atom_list else ""
             )
+            # v53.9: count existing structural physical_site atoms so the
+            # bridge knows whether to suppress LLM site_clusters as new
+            # physical_site atoms (would create hallucinated canonicals
+            # competing with authoritative roster IDs).
+            _existing_phys = sum(
+                1 for a in atom_list
+                if (getattr(a, "atom_type", None).value
+                    if hasattr(getattr(a, "atom_type", None), "value")
+                    else str(getattr(a, "atom_type", "") or "")) == "physical_site"
+            )
             bridge_atoms = _entities_to_atoms(
                 multi_result,
                 project_id=_project_id,
                 artifact_ids=_artifact_ids,
+                existing_physical_site_count=_existing_phys,
             )
             if bridge_atoms:
                 atom_list.extend(bridge_atoms)
