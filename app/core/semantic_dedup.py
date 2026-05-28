@@ -312,10 +312,19 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             winner.value["id"] = canon
             winner.value["site_id"] = canon
             winner.value = _clean_physical_site_value(winner.value)
-        # v56: also force entity_keys to a SINGLE canonical site:<slug>.
-        # Any prior site:* keys (from over-eager regex passes, LLM cluster
-        # aliases, or pre-merge variant slugs) get dropped here. Non-site
-        # keys (date:, money:, address:, etc.) are preserved.
+        for loser in group_sorted[1:]:
+            _merge_physical_site_values(winner, loser)
+            _merge_atom_metadata(winner, loser)
+            consumed_ids.add(id(loser))
+        # v56: AFTER the merge loop, force entity_keys to a SINGLE
+        # canonical site:<slug>. Doing this before the merge would have
+        # been undone by _merge_atom_metadata (line 205) which copies
+        # loser's entity_keys onto winner. Order MUST be: merge then
+        # dedup-keys. Address/quantity/etc keys carried by losers are
+        # preserved (only site:* gets collapsed). Other physical_site
+        # atoms that mention this site's address in their raw_text may
+        # still pick up a site:* variant via cross-doc joins later, but
+        # at this point the canonical roster atoms are clean.
         try:
             canon_slug = re.sub(r"[^a-z0-9]+", "_", canon.lower()).strip("_")
             if canon_slug:
@@ -325,10 +334,6 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 winner.entity_keys = sorted(set(non_site_keys))
         except Exception:
             pass
-        for loser in group_sorted[1:]:
-            _merge_physical_site_values(winner, loser)
-            _merge_atom_metadata(winner, loser)
-            consumed_ids.add(id(loser))
         merged_physical.append(winner)
 
     out: list[Any] = []
