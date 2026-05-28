@@ -92,6 +92,10 @@ _PHYSICAL_SITE_ALLOWED_FIELDS: frozenset[str] = frozenset({
     "mdf_idf", "access_window", "escort_owner", "contact",
     "phone", "email", "sqft", "occupancy", "notes", "extras",
     "raw", "raw_cells", "row_index",
+    # v56: aliases / surface forms collected by the v55 LLM-cluster
+    # merge step in entity_extraction._entities_to_atoms. Without
+    # this, _clean_physical_site_value silently drops them.
+    "names", "aliases",
 })
 
 _NON_SITE_CODE_HEADS: frozenset[str] = frozenset({
