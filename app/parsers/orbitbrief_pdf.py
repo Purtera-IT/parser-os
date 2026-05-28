@@ -1036,9 +1036,23 @@ def _fitz_site_roster_fallback(
             parser_version=parser_version,
             already_emitted=already_emitted,
         )
+        # v53.12: explicit stderr log so we can see in cloud worker logs
+        # whether the text extractor fired and how many atoms it produced.
+        import sys as _sys_v512
+        try:
+            print(
+                f"v53_text_roster: {pdf_path.name} fitz={len(out)} text={len(text_atoms)}",
+                file=_sys_v512.stderr,
+            )
+        except Exception:
+            pass
         out.extend(text_atoms)
-    except Exception:
-        pass
+    except Exception as _exc_v512:
+        try:
+            import sys as _sys_v512x
+            print(f"v53_text_roster_FAIL: {pdf_path.name}: {_exc_v512}", file=_sys_v512x.stderr)
+        except Exception:
+            pass
 
     return out
 
