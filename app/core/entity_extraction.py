@@ -4196,6 +4196,26 @@ def _entities_to_atoms(
                         # Skip emitting — we merged into structural.
                         _cat_counts[category]["merged"] = _cat_counts[category].get("merged", 0) + 1
                         continue
+                    # v56e MERGE-OR-DROP GUARD: when structural physical_site
+                    # atoms exist, the bridge must NOT create new physical_site
+                    # atoms from unmatched LLM clusters. The structural roster
+                    # is canonical truth; LLM clusters are best-effort
+                    # enrichment. Unmatched clusters here are noise — bare
+                    # abbreviations the matcher couldn't resolve ("HQ",
+                    # "AIR"), address-as-name strings, or LLM hallucinations.
+                    # Without this guard, parallel-dispatch ordering in the
+                    # LLM-pool produces 0–5 ghost atoms per run depending
+                    # on which clusters happen to arrive before the
+                    # alias-index expansion catches their forms — a
+                    # non-deterministic regression source. Dropping is
+                    # safe: any genuine NEW site appearing only in prose
+                    # (not in the structural roster) would also lack the
+                    # contextual signals the matcher needs, so emitting
+                    # it would produce a poor-quality atom anyway.
+                    _cat_counts[category]["dropped_unmatched"] = (
+                        _cat_counts[category].get("dropped_unmatched", 0) + 1
+                    )
+                    continue
                 # Field-level garbage check
                 bad_field = False
                 for field in ("id", "site_id", "name", "facility_name", "canonical_name"):
