@@ -395,17 +395,34 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
         if not isinstance(val, dict):
             continue
         if atype_str == "physical_site":
+            # v53.11: reject ALL/placeholder IDs at catalog level so
+            # they don't enter as canonicals (was leaking via
+            # graph_expansion-bridged physical_site atoms with id='ALL').
+            _GENERIC_PLACEHOLDERS = {
+                "all", "various", "tbd", "n/a", "na", "none", "unknown", "",
+                "all sites", "all locations", "various sites",
+                "site all", "site various",
+            }
             for k in ("id", "site_id"):
                 sid = val.get(k)
                 if sid and isinstance(sid, str) and sid.strip():
-                    _record(sid.strip(), atom, tier=0)
+                    s = sid.strip()
+                    if s.lower() in _GENERIC_PLACEHOLDERS:
+                        continue
+                    _record(s, atom, tier=0)
             for k in ("name", "facility_name"):
                 nm = val.get(k)
                 if nm and isinstance(nm, str) and nm.strip():
-                    _record(nm.strip(), atom, tier=0)
+                    s = nm.strip()
+                    if s.lower() in _GENERIC_PLACEHOLDERS:
+                        continue
+                    _record(s, atom, tier=0)
             for nm in (val.get("names") or val.get("aliases") or val.get("alternative_names") or []):
                 if isinstance(nm, str) and nm.strip():
-                    _record(nm.strip(), atom, tier=0)
+                    s = nm.strip()
+                    if s.lower() in _GENERIC_PLACEHOLDERS:
+                        continue
+                    _record(s, atom, tier=0)
         elif atype_str in ("site_allocation", "site_attribute", "site_access_window",
                            "site_access_restriction", "site_room_mix",
                            "site_infrastructure", "site_implementation_note",

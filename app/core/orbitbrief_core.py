@@ -1471,14 +1471,24 @@ def build_site_readiness(
         # site phrase the regex/LLM lifted from the atom's text, which
         # is exactly the ghost-site source. The canonical roster is
         # authoritative.
+        # v53.11 ALSO: drop generic placeholder slugs unconditionally
+        # ("site:all", "site:various", etc.) — these are NEVER real sites.
+        _PLACEHOLDER_SLUGS = {
+            "site:all", "site:various", "site:tbd", "site:n_a",
+            "site:none", "site:unknown", "site:all_sites",
+            "site:all_locations", "site:various_sites",
+            "site:site_all",
+        }
         if canonical_set:
             filtered: dict[str, dict[str, Any]] = {}
             for ck, entry in merged.items():
+                if ck in _PLACEHOLDER_SLUGS:
+                    continue
                 if ck in canonical_set:
                     filtered[ck] = entry
             sites = filtered
         else:
-            sites = merged
+            sites = {ck: e for ck, e in merged.items() if ck not in _PLACEHOLDER_SLUGS}
     except Exception:
         pass
 
