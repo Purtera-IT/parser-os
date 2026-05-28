@@ -1013,6 +1013,140 @@ def _fitz_site_roster_fallback(
             doc.close()
         except Exception:
             pass
+
+    # v53.8 TEXT-BASED FALLBACK: if no physical_site atoms were emitted
+    # by either fitz-table path AND the document text contains
+    # "kind=physical_site" or "site_roster" / "Site Roster", scan text
+    # for site-ID-shaped tokens followed by a facility name. This
+    # rescues reportlab-rendered PDFs where fitz.find_tables() can't
+    # detect the table layout but the IDs are clearly present in text.
+    if not out:
+        try:
+            already_emitted = already_emitted or set()
+            text_atoms = _text_based_site_roster_extract(
+                pdf_path=pdf_path,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                parser_version=parser_version,
+                already_emitted=already_emitted,
+            )
+            out.extend(text_atoms)
+        except Exception:
+            pass
+
+    return out
+
+
+def _text_based_site_roster_extract(
+    *,
+    pdf_path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+    already_emitted: set[str | None],
+) -> list[EvidenceAtom]:
+    """v53.8: scan PDF text for site-ID-shaped tokens when no roster
+    table parsed. Triggers ONLY when document text explicitly declares
+    a site roster. Catches reportlab-rendered PDFs where fitz can't
+    detect the table layout but the IDs are visible in extracted text.
+
+    Universal — works for any deal whose roster section declares
+    site IDs in a recognizable shape.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    try:
+        from app.parsers.site_roster_extractor import _SITE_ID_SHAPE_RE
+    except Exception:
+        return []
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+
+    out: list[EvidenceAtom] = []
+    try:
+        page_texts: list[str] = []
+        for p in doc:
+            try:
+                page_texts.append(p.get_text() or "")
+            except Exception:
+                continue
+        document_text = "\n".join(page_texts)
+
+        # Gate: only fire when document declares a site roster
+        text_lower = document_text.lower()
+        declares_roster = any(s in text_lower for s in [
+            "kind=physical_site", "kind = physical_site",
+            "site roster", "physical site roster",
+            "authoritative physical site",
+        ])
+        # Also fire if many site-id-shaped tokens appear (5+)
+        site_id_count = sum(1 for tok in document_text.split() if _SITE_ID_SHAPE_RE.match(tok.rstrip(":,;")))
+        if not declares_roster and site_id_count < 5:
+            return []
+
+        # Find every site-ID-shaped token in the text
+        site_ids_seen: dict[str, str] = {}  # id → name guess
+        for line in document_text.split("\n"):
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+            for token in line_stripped.split():
+                clean = token.rstrip(":,;")
+                if not _SITE_ID_SHAPE_RE.match(clean):
+                    continue
+                if clean in already_emitted or clean in site_ids_seen:
+                    continue
+                # Try to extract a facility name from the same line.
+                # Pattern: "ATL-HQ-01 OPTBOT Atlanta HQ 1200 ..."
+                try:
+                    after = line_stripped[line_stripped.index(token) + len(token):].strip()
+                except Exception:
+                    after = ""
+                after = after.lstrip(":,; -|\t")
+                name_match = re.match(
+                    r"^([A-Za-z][A-Za-z0-9\s\-&'.]{2,60}?)"
+                    r"(?=\s+\d|\s+(?:Street|St\.|Avenue|Ave|Road|Rd|Blvd|Parkway|Pkwy|Drive|Dr\.)|$)",
+                    after,
+                )
+                facility = (name_match.group(1).strip() if name_match else after[:50].strip())
+                facility = re.sub(r"\s+[A-Z]$", "", facility).strip()
+                site_ids_seen[clean] = facility or clean
+
+        # Emit one physical_site atom per discovered ID
+        for sid, facility_name in site_ids_seen.items():
+            if sid in already_emitted:
+                continue
+            already_emitted.add(sid)
+            text = f"{sid} | {facility_name}".strip(" |")
+            out.append(
+                _make_atom(
+                    text=text,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=pdf_path.name,
+                    parser_version=parser_version,
+                    atom_type=AtomType.physical_site,
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.78,
+                    locator={"extraction": "site_roster_text_fallback_v53_8"},
+                    value={
+                        "kind": "physical_site",
+                        "id": sid,
+                        "site_id": sid,
+                        "name": facility_name or sid,
+                        "facility_name": facility_name or sid,
+                    },
+                )
+            )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
     return out
 
 
