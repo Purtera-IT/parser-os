@@ -79,10 +79,9 @@ _GENERIC_SITE_PSEUDO_VALUES: frozenset[str] = frozenset({
     "ic 001", "ic 002", "ic 003",
     "am 3", "am 4", "am 5",
     "atlanta ga", "atlanta",
-    # Bare ATL- prefixes that survived without their numbered suffix
-    # (the full forms atl_hq_01 / atl_west_02 / atl_air_03 are
-    # already canonical via the site-code regex).
-    "atl hq", "atl west", "atl air", "atl cp", "atl 047",
+    # Bare ATL-style prefixes are legitimate aliases for numbered site
+    # rows (ATL-HQ -> ATL-HQ-01). Keep them as entity keys; the physical_site
+    # semantic deduper performs alias-to-canonical collapse later.
     # Building / closet identifiers
     "building c", "building d", "building e",
 })

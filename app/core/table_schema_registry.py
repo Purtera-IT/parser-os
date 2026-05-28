@@ -18,6 +18,7 @@ from app.core.schemas import (
     AtomType,
     AuthorityClass,
     EvidenceAtom,
+    EvidenceReceipt,
     ReviewStatus,
     SourceRef,
 )
@@ -308,6 +309,18 @@ def emit_atoms_for_schema(
 
     def _atom(suffix: str, atom_type: AtomType, text: str, value: dict) -> EvidenceAtom:
         aid = stable_id("atm", artifact_id, "schema_row", table_idx, row_idx, suffix)
+        src = _make_src(suffix)
+        receipt = EvidenceReceipt(
+            atom_id=aid,
+            artifact_id=artifact_id,
+            filename=filename,
+            source_ref_id=src.id,
+            replay_status="unsupported",
+            extracted_snippet=text[:500],
+            locator=src.locator,
+            reason="post_source_replay_table_schema_atom",
+            verifier_version=parser_version,
+        )
         return EvidenceAtom(
             id=aid,
             project_id=project_id,
@@ -317,8 +330,8 @@ def emit_atoms_for_schema(
             normalized_text=text.lower()[:4000],
             value=value,
             entity_keys=[],
-            source_refs=[_make_src(suffix)],
-            receipts=[],
+            source_refs=[src],
+            receipts=[receipt],
             authority_class=AuthorityClass.contractual_scope,
             confidence=0.85,
             confidence_raw=0.85,

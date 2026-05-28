@@ -1096,17 +1096,115 @@ def _text_based_site_roster_extract(
                 continue
         document_text = "\n".join(page_texts)
 
-        # Gate: only fire when document declares a site roster
+        # Gate: only fire when the page/document explicitly declares a
+        # physical-site roster. The previous count-only fallback ("5+
+        # site-shaped tokens") emitted payment/MSA/project IDs from
+        # commercial and contracting packets as physical_site atoms. A
+        # table/document must identify itself as a roster before this
+        # function is allowed to mint canonical sites.
         text_lower = document_text.lower()
-        declares_roster = any(s in text_lower for s in [
+        compact_text = re.sub(r"\s+", " ", text_lower)
+        explicit_roster = any(s in compact_text for s in [
             "kind=physical_site", "kind = physical_site",
-            "site roster", "physical site roster",
-            "authoritative physical site",
+            "physical site roster", "authoritative physical site",
+            "authoritative site roster",
         ])
-        # Also fire if many site-id-shaped tokens appear (5+)
-        site_id_count = sum(1 for tok in document_text.split() if _SITE_ID_SHAPE_RE.match(tok.rstrip(":,;")))
-        if not declares_roster and site_id_count < 5:
+        table_roster = (
+            "site roster" in compact_text
+            and ("site id" in compact_text or "site no" in compact_text or "facility code" in compact_text)
+            and ("facility name" in compact_text or "street address" in compact_text or "administrative site" in compact_text)
+        )
+        numeric_roster = (
+            ("site no" in compact_text or "site no." in compact_text)
+            and ("administrative site" in compact_text or "school site" in compact_text)
+            and "lat, long" in compact_text
+            and "zip" in compact_text
+        )
+        declares_roster = explicit_roster or table_roster or numeric_roster
+        if not declares_roster:
             return []
+
+        # Numeric public-sector rosters (APS Attachment B style) often
+        # extract as one cell per line rather than a fitz table. Parse the
+        # repeated sequence: site_no, site name (possibly wrapped), street,
+        # city, zip, lat/long. This is schema-driven from the header, not a
+        # customer-specific school list.
+        if numeric_roster:
+            raw_lines = [ln.strip() for ln in document_text.split("\n") if ln.strip()]
+            header_noise = {
+                "attachment b", "site", "no.", "site no.", "administrative site",
+                "school site", "street", "city", "zip", "lat, long",
+            }
+            lines = [ln for ln in raw_lines if ln.strip().lower() not in header_noise]
+            street_re = re.compile(
+                r"^(?:\d+[A-Za-z-]*\s+|P\.?O\.?\s+Box\s+|#?N/?A\b)",
+                re.IGNORECASE,
+            )
+            latlong_re = re.compile(r"^(?:-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+|#?N/?A)$", re.IGNORECASE)
+            zip_re = re.compile(r"^(?:\d{5}(?:-\d{4})?|#?N/?A)$", re.IGNORECASE)
+            i = 0
+            while i < len(lines):
+                if not re.fullmatch(r"\d{1,4}", lines[i]):
+                    i += 1
+                    continue
+                site_no = lines[i]
+                j = i + 1
+                name_parts: list[str] = []
+                while j < len(lines) and not street_re.match(lines[j]) and not re.fullmatch(r"\d{1,4}", lines[j]):
+                    if not latlong_re.match(lines[j]) and not zip_re.match(lines[j]):
+                        name_parts.append(lines[j])
+                    j += 1
+                if not name_parts or j + 3 >= len(lines) or not street_re.match(lines[j]):
+                    i += 1
+                    continue
+                street = lines[j].strip()
+                k = j + 1
+                city_parts: list[str] = []
+                while k < len(lines) and not zip_re.match(lines[k]) and not re.fullmatch(r"\d{1,4}", lines[k]):
+                    city_parts.append(lines[k].strip())
+                    k += 1
+                    if len(city_parts) >= 4:
+                        break
+                zip_code = lines[k].strip() if k < len(lines) else ""
+                lat_long = lines[k + 1].strip() if k + 1 < len(lines) else ""
+                if not city_parts or not zip_re.match(zip_code) or not latlong_re.match(lat_long):
+                    i += 1
+                    continue
+                city = " ".join(city_parts).strip()
+                name = " ".join(name_parts).strip()
+                sid = site_no
+                if sid not in already_emitted:
+                    already_emitted.add(sid)
+                    text = f"Site No. {site_no} | {name} | {street} | {city} | {zip_code} | {lat_long}"
+                    out.append(
+                        _make_atom(
+                            text=text,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=pdf_path.name,
+                            parser_version=parser_version,
+                            atom_type=AtomType.physical_site,
+                            authority_class=AuthorityClass.contractual_scope,
+                            confidence=0.90,
+                            locator={"extraction": "site_roster_numeric_text_v54", "site_no": site_no},
+                            value={
+                                "kind": "physical_site",
+                                "id": sid,
+                                "site_id": sid,
+                                "site_no": site_no,
+                                "name": name,
+                                "facility_name": name,
+                                "administrative_site_name": name,
+                                "address": street,
+                                "street": street,
+                                "street_address": street,
+                                "city": city,
+                                "zip": zip_code,
+                                "lat_long": lat_long,
+                            },
+                        )
+                    )
+                i = k + 2
 
         # v53.12: known non-site prefixes that match the loose site-ID
         # regex but aren't actual sites. Universal — these are network

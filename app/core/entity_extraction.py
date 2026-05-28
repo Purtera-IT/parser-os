@@ -423,7 +423,12 @@ def _site_code_suffix_ok(last_segment: str, *, prev_segment: str | None = None) 
         and (
             prev_segment in _SITE_CODE_SUFFIX_ALLOWLIST
             or _SITE_CODE_SUFFIX_PATTERN.match(prev_segment)
-            or (prev_segment.isalnum() and any(c.isalpha() for c in prev_segment) and 2 <= len(prev_segment) <= 5)
+            # Two-letter site-function shorthands occur in real rosters
+            # (for example College Park -> CP), but arbitrary alpha tails
+            # like CAT-6 or ECHO-DELTA-001 are document/product codes.
+            # Treat compact two-letter shorthands as site codes only when
+            # the instance number is two digits or longer.
+            or (prev_segment.isalpha() and len(prev_segment) == 2 and len(last_segment) >= 2)
             or (prev_segment.isdigit() and 1 <= len(prev_segment) <= 4)
         )
     ):
@@ -1411,10 +1416,11 @@ def is_site_boilerplate_slug(slug: str) -> bool:
 def _emit_sites(text: str) -> set[str]:
     keys: set[str] = set()
 
-    for match in _SITE_CODE_RE.finditer(text):
-        code = match.group(1).strip()
-        if code:
-            keys.add(f"site:{code.lower().replace('-', '_')}")
+    # Legacy permissive two-segment site-code capture used to emit any
+    # all-caps hyphen token as a site (RJ-45, PO-1234, MSA-2026, ...).
+    # Keep `_SITE_CODE_RE` only for compatibility with older comments;
+    # all code-shaped site IDs now flow through `_SITE_CODE_REGEX` below,
+    # where they must pass the positive suffix gate and head denylist.
 
     # Suffix-based capture (e.g. "Perry Street Parking Deck")
     for regex in _SITE_SUFFIX_REGEXES:
@@ -3873,7 +3879,7 @@ def _entities_to_atoms(
     """
     from app.core.ids import stable_id
     from app.core.schemas import (
-        ArtifactType, AtomType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef,
+        ArtifactType, AtomType, AuthorityClass, EvidenceAtom, EvidenceReceipt, ReviewStatus, SourceRef,
     )
 
     if not multi_result or not artifact_ids:
@@ -4137,6 +4143,17 @@ def _entities_to_atoms(
                 parser_version=parser_version,
             )
             normalized_value = _normalize_entity_value(category, entity)
+            receipt = EvidenceReceipt(
+                atom_id=atom_id,
+                artifact_id=canonical_aid,
+                filename="entity_bridge",
+                source_ref_id=src.id,
+                replay_status="unsupported",
+                extracted_snippet=raw_text[:500],
+                locator=src.locator,
+                reason="post_source_replay_entity_bridge_atom",
+                verifier_version=parser_version,
+            )
             out.append(
                 EvidenceAtom(
                     id=atom_id,
@@ -4148,7 +4165,7 @@ def _entities_to_atoms(
                     value=normalized_value,
                     entity_keys=[],
                     source_refs=[src],
-                    receipts=[],
+                    receipts=[receipt],
                     # v53.2: site_clusters from LLM are weaker authority
                     # than a parsed roster table (avoid promoting LLM
                     # guesses over real physical_site atoms in dedup).
@@ -4171,6 +4188,232 @@ def _entities_to_atoms(
             print(f"entity_bridge_v49: {summary}", file=_sys_v491.stderr)
     except Exception:
         pass
+    return out
+
+
+def _display_name_from_slug(slug: str) -> str:
+    return " ".join(part.upper() if len(part) <= 2 else part.capitalize() for part in slug.split("_") if part)
+
+
+def _copy_first_source(atom: Any) -> Any | None:
+    refs = list(getattr(atom, "source_refs", []) or [])
+    return refs[0] if refs else None
+
+
+def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]:
+    """Emit typed people/governance atoms from high-precision structural cues.
+
+    This is deliberately not a broad person-name regex. It only promotes:
+      * contact roster rows with name | title | email | role structure,
+      * explicit Owner: / approver signatures already anchored by stakeholder:* keys,
+      * explicit signature blocks, and
+      * site-roster escort-owner teams.
+
+    That gives deterministic recall for contact tables when the LLM bridge is
+    disabled or unavailable, without opening the old false-positive floodgate.
+    """
+    from app.core.ids import stable_id
+    from app.core.schemas import (
+        AtomType, AuthorityClass, EvidenceAtom, EvidenceReceipt, ReviewStatus,
+    )
+
+    contact_re = re.compile(
+        r"(?P<name>[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,3})\s*\|\s*"
+        r"(?P<title>[^|\n.]{2,90})\s*\|\s*"
+        r"(?P<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\s*\|\s*"
+        r"(?P<role>[^|\n.]{2,90})\s*\|\s*"
+        r"(?P<note>[^\n.]{0,240})",
+    )
+    owner_re = re.compile(
+        r"\bOwner:\s*(?P<name>[A-Z][A-Za-z'.-]+\s+[A-Z][A-Za-z'.-]+)\b"
+    )
+    delegate_re = re.compile(
+        r"\b(?P<name>[A-Z][A-Za-z'.-]+\s+[A-Z][A-Za-z'.-]+),\s*"
+        r"(?P<title>[^:;\n]{2,80}):"
+    )
+    signatory_re = re.compile(
+        r"(?P<role>(?:SIGNATURE BLOCKS\s+)?[A-Z][A-Za-z0-9 /&-]{2,90}?):\s*"
+        r"(?P<name>[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,3})\s*\|\s*Signature\s*:",
+        re.IGNORECASE,
+    )
+
+    stakeholder_candidates: dict[str, tuple[Any, dict[str, Any], str, float]] = {}
+    signatory_candidates: dict[tuple[str, str], tuple[Any, dict[str, Any], str, float]] = {}
+
+    def _put_stakeholder(slug: str, source_atom: Any, value: dict[str, Any], raw: str, confidence: float) -> None:
+        if not slug or slug in {"mock_vendor", "vendor", "customer", "project_manager"}:
+            return
+        parts = slug.split("_")
+        if value.get("kind") != "team_contact" and len(parts) < 2:
+            return
+        prev = stakeholder_candidates.get(slug)
+        if prev is None or confidence > prev[3] or (value.get("email") and not prev[1].get("email")):
+            stakeholder_candidates[slug] = (source_atom, value, raw, confidence)
+
+    def _put_signatory(slug: str, role_slug: str, source_atom: Any, value: dict[str, Any], raw: str, confidence: float) -> None:
+        if not slug or not role_slug:
+            return
+        key = (slug, role_slug)
+        prev = signatory_candidates.get(key)
+        if prev is None or confidence > prev[3]:
+            signatory_candidates[key] = (source_atom, value, raw, confidence)
+
+    def _slug_name(name: str) -> str:
+        return _slug(name)
+
+    for atom in atom_list:
+        raw = getattr(atom, "raw_text", "") or ""
+        if not raw:
+            continue
+        stakeholder_keys = [
+            k[len("stakeholder:"):]
+            for k in (getattr(atom, "entity_keys", []) or [])
+            if isinstance(k, str) and k.startswith("stakeholder:")
+        ]
+        stakeholder_key_set = set(stakeholder_keys)
+
+        for m in contact_re.finditer(raw):
+            name = m.group("name").strip()
+            slug = _slug_name(name)
+            if stakeholder_key_set and slug not in stakeholder_key_set:
+                continue
+            value = {
+                "name": name,
+                "title": m.group("title").strip(),
+                "email": m.group("email").strip().lower(),
+                "role": m.group("role").strip(),
+                "note": m.group("note").strip(),
+                "kind": "person",
+            }
+            _put_stakeholder(slug, atom, value, m.group(0).strip(), 0.90)
+
+        for slug in stakeholder_keys:
+            if slug in stakeholder_candidates:
+                continue
+            display = _display_name_from_slug(slug)
+            if display and display in raw:
+                role = "stakeholder"
+                title = ""
+                conf = 0.72
+                for m in owner_re.finditer(raw):
+                    if _slug_name(m.group("name")) == slug:
+                        role = "owner"
+                        conf = 0.78
+                        break
+                for m in delegate_re.finditer(raw):
+                    if _slug_name(m.group("name")) == slug:
+                        role = "approval delegate"
+                        title = m.group("title").strip()
+                        conf = 0.80
+                        break
+                if "approv" in raw.lower() and role == "stakeholder":
+                    role = "approver"
+                    conf = max(conf, 0.76)
+                value = {
+                    "name": display,
+                    "title": title,
+                    "role": role,
+                    "kind": "person",
+                }
+                _put_stakeholder(slug, atom, value, raw[:500], conf)
+
+        for m in signatory_re.finditer(raw):
+            role = re.sub(r"^SIGNATURE BLOCKS\s+", "", m.group("role").strip(), flags=re.IGNORECASE)
+            role = re.sub(r"\s+", " ", role).strip(" -:")
+            name = re.sub(r"\s+", " ", m.group("name").strip())
+            slug = _slug_name(name)
+            role_slug = _slug(role)
+            value = {
+                "name": name,
+                "title": role,
+                "role": role,
+                "signatory_type": role,
+                "kind": "signatory",
+            }
+            _put_signatory(slug, role_slug, atom, value, f"{role}: {name}", 0.88)
+            # Signatories are also governance stakeholders, but do not
+            # overwrite a richer contact-table row with email/title.
+            _put_stakeholder(slug, atom, {"name": name, "title": role, "role": "signatory", "kind": "person"}, f"{role}: {name}", 0.77)
+
+    def _expand_team_contact(name: str) -> str:
+        low = (name or "").strip().lower()
+        if low.startswith("optbot facil"):
+            return "OPTBOT Facilities"
+        if low.startswith("optbot secur"):
+            return "OPTBOT Security"
+        if low.startswith("optbot logis"):
+            return "OPTBOT Logistics"
+        return name.strip()
+
+    for atom in atom_list:
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        atype = getattr(atom, "atom_type", None)
+        atype_str = atype.value if hasattr(atype, "value") else str(atype or "")
+        if atype_str != "physical_site":
+            continue
+        team = _expand_team_contact(str(val.get("escort_owner") or val.get("contact") or ""))
+        if not team:
+            continue
+        slug = _slug(team)
+        value = {
+            "name": team,
+            "role": "site escort owner",
+            "kind": "team_contact",
+            "org_side": "customer",
+            "site_id": val.get("site_id") or val.get("id"),
+        }
+        _put_stakeholder(slug, atom, value, f"Escort owner: {team}", 0.82)
+
+    out: list[Any] = []
+
+    def _make_atom(source_atom: Any, atom_type: Any, suffix_parts: tuple[str, ...], raw: str, value: dict[str, Any], confidence: float) -> Any | None:
+        src = _copy_first_source(source_atom)
+        if src is None:
+            return None
+        artifact_id = getattr(source_atom, "artifact_id", "") or getattr(src, "artifact_id", "") or "unknown_artifact"
+        filename = getattr(src, "filename", "") or "structural_people"
+        aid = stable_id("atm", artifact_id, "structural_people", *suffix_parts)
+        receipt = EvidenceReceipt(
+            atom_id=aid,
+            artifact_id=artifact_id,
+            filename=filename,
+            source_ref_id=getattr(src, "id", stable_id("src", aid)),
+            replay_status="unsupported",
+            extracted_snippet=raw[:500],
+            locator=getattr(src, "locator", {}) or {},
+            reason="post_source_replay_structural_people_atom",
+            verifier_version="structural_people_v54",
+        )
+        return EvidenceAtom(
+            id=aid,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=atom_type,
+            raw_text=raw[:4000],
+            normalized_text=raw.lower()[:4000],
+            value=value,
+            entity_keys=[f"stakeholder:{suffix_parts[1]}"] if atom_type == AtomType.stakeholder and len(suffix_parts) > 1 else [],
+            source_refs=[src],
+            receipts=[receipt],
+            authority_class=AuthorityClass.contractual_scope,
+            confidence=confidence,
+            confidence_raw=confidence,
+            calibrated_confidence=confidence,
+            review_status=ReviewStatus.auto_accepted,
+            review_flags=[],
+            parser_version="structural_people_v54",
+        )
+
+    for slug, (source_atom, value, raw, confidence) in stakeholder_candidates.items():
+        atom = _make_atom(source_atom, AtomType.stakeholder, ("stakeholder", slug), raw, value, confidence)
+        if atom is not None:
+            out.append(atom)
+    for (slug, role_slug), (source_atom, value, raw, confidence) in signatory_candidates.items():
+        atom = _make_atom(source_atom, AtomType.signatory, ("signatory", slug, role_slug), raw, value, confidence)
+        if atom is not None:
+            out.append(atom)
     return out
 
 
@@ -4736,6 +4979,24 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             atom.entity_keys = sorted(existing | new_keys)
             atoms_enriched += 1
             total_keys_added += len(new_keys)
+
+    # ─── STRUCTURAL PEOPLE ATOM BRIDGE ───
+    # Make contact-table / owner / signature facts first-class typed
+    # atoms even when the multi-entity LLM is disabled. This is not a
+    # general name regex; it only promotes high-precision roster, owner,
+    # signature, and escort-owner structures already present in the pack.
+    try:
+        people_atoms = _structural_people_atoms(atom_list, project_id=(getattr(atom_list[0], "project_id", "") if atom_list else ""))
+        if people_atoms:
+            atom_list.extend(people_atoms)
+            if isinstance(atoms, list):
+                atoms.extend(people_atoms)
+            atoms_enriched += len(people_atoms)
+    except Exception as _people_exc:
+        import logging as _lg_people
+        _lg_people.getLogger(__name__).warning(
+            "structural people atom bridge failed: %s", _people_exc
+        )
 
     return atoms_enriched, total_keys_added
 

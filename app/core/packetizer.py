@@ -1009,6 +1009,17 @@ def build_packets(
     attach_metadata: bool = True,
 ) -> list[EvidencePacket]:
     del entities  # reserved for future packet anchoring refinements
+    # Roster-scale packets can include hundreds of physical_site atoms.
+    # Those rows are first-class evidence in the envelope, but this
+    # packetizer does not currently build physical_site-specific packet
+    # families; leaving them in every generic atom/edge scan makes APS-size
+    # site lists pay packetization cost for rows that will never be selected.
+    # Keep the atoms in the final envelope; exclude them only from packet
+    # candidate scans and related-edge scans.
+    if sum(1 for a in atoms if a.atom_type == AtomType.physical_site) > 100:
+        roster_atom_ids = {a.id for a in atoms if a.atom_type == AtomType.physical_site}
+        atoms = [a for a in atoms if a.id not in roster_atom_ids]
+        edges = [e for e in edges if e.from_atom_id not in roster_atom_ids and e.to_atom_id not in roster_atom_ids]
     atom_by_id = {a.id: a for a in atoms}
     packets: list[EvidencePacket] = []
     consumed_by_conflict_or_exclusion: set[str] = set()

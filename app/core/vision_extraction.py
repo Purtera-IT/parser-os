@@ -42,6 +42,53 @@ _DEFAULT_VISION_MODEL = "qwen2.5vl:7b"
 
 
 # ────────────────────────────────────────────────────────────────────
+# Artifact path registry — basename → absolute path
+# ────────────────────────────────────────────────────────────────────
+#
+# Atom source_refs only carry the artifact basename (e.g.
+# "08_site_roster_and_facilities_authoritative.pdf"), not the absolute
+# on-disk path. When downstream stages (enrich_entities → vision pass)
+# walk atoms and try to fitz.open() those names, the open fails because
+# the cwd isn't the artifact directory. The compiler registers the
+# {artifact_id: Path} map here once at parse time so vision-pass leaf
+# functions can resolve basenames to absolute paths transparently.
+
+_ARTIFACT_PATH_REGISTRY: dict[str, Path] = {}
+
+
+def register_artifact_paths(artifact_paths: dict[str, Any]) -> None:
+    """Register a mapping of artifact_id (or filename) → on-disk Path so
+    vision-pass functions that only have a basename from atom.source_refs
+    can still find the file. Called by compile_project after parsing."""
+    _ARTIFACT_PATH_REGISTRY.clear()
+    for _key, raw_path in artifact_paths.items():
+        try:
+            p = Path(raw_path) if not isinstance(raw_path, Path) else raw_path
+        except Exception:
+            continue
+        _ARTIFACT_PATH_REGISTRY[p.name] = p
+
+
+def _resolve_pdf_path(name_or_path: str) -> str:
+    """Resolve a possibly-basename pdf reference to an absolute on-disk
+    path via the registry. If the input is already an existing path, or
+    no registry entry matches, return it unchanged so callers that pass
+    full paths (tests, scripts) keep working."""
+    if not name_or_path:
+        return name_or_path
+    try:
+        if os.path.isfile(name_or_path):
+            return name_or_path
+    except Exception:
+        pass
+    base = os.path.basename(name_or_path)
+    resolved = _ARTIFACT_PATH_REGISTRY.get(base)
+    if resolved is not None:
+        return str(resolved)
+    return name_or_path
+
+
+# ────────────────────────────────────────────────────────────────────
 # Vision-LLM client (Ollama vision API)
 # ────────────────────────────────────────────────────────────────────
 
@@ -115,8 +162,9 @@ def render_pdf_page(
         import fitz
     except ImportError:
         return None
+    resolved = _resolve_pdf_path(pdf_path)
     try:
-        doc = fitz.open(pdf_path)
+        doc = fitz.open(resolved)
         if page_num >= len(doc) or page_num < 0:
             doc.close()
             return None
@@ -137,8 +185,9 @@ def get_pdf_page_text(pdf_path: str, page_num: int) -> str:
         import fitz
     except ImportError:
         return ""
+    resolved = _resolve_pdf_path(pdf_path)
     try:
-        doc = fitz.open(pdf_path)
+        doc = fitz.open(resolved)
         if 0 <= page_num < len(doc):
             text = doc.load_page(page_num).get_text() or ""
         else:
@@ -792,8 +841,9 @@ def find_table_pages_via_pymupdf(
     out: list[tuple[str, int]] = []
     seen: set[tuple[str, int]] = set()
     for pdf_path in pdf_paths:
+        resolved = _resolve_pdf_path(pdf_path)
         try:
-            doc = fitz.open(pdf_path)
+            doc = fitz.open(resolved)
             for i in range(min(len(doc), max_pages_per_pdf)):
                 page = doc.load_page(i)
                 try:
@@ -879,8 +929,9 @@ def find_scanned_pages(pdf_path: str) -> list[int]:
     except ImportError:
         return []
     out: list[int] = []
+    resolved = _resolve_pdf_path(pdf_path)
     try:
-        doc = fitz.open(pdf_path)
+        doc = fitz.open(resolved)
         for i in range(len(doc)):
             page = doc.load_page(i)
             text = (page.get_text() or "").strip()
@@ -1112,4 +1163,5 @@ __all__ = [
     "ocr_all_scanned_pages",
     "classify_page",
     "inject_vision_rows_as_entities",
+    "register_artifact_paths",
 ]

@@ -64,6 +64,293 @@ def _norm_key(s: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
 
 
+def _atom_type_value(atom: Any) -> str:
+    atom_type = getattr(atom, "atom_type", None)
+    return atom_type.value if hasattr(atom_type, "value") else str(atom_type or "")
+
+
+def _site_display_key(value: Any) -> str:
+    """Stable display key for physical-site ids/names.
+
+    Unlike ``_norm_key`` this keeps the enterprise-code convention
+    (upper-case with hyphens) so canonical ids such as ATL-HQ-01 remain
+    human-readable after dedup.
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").upper()
+
+
+_PHYSICAL_SITE_ALLOWED_FIELDS: frozenset[str] = frozenset({
+    "kind", "id", "site_id", "site_no", "name", "facility_name",
+    "administrative_site_name", "address", "street", "street_address",
+    "city", "state", "zip", "zip_code",
+    "city_state", "lat_long", "latitude", "longitude",
+    "mdf_idf", "access_window", "escort_owner", "contact",
+    "phone", "email", "sqft", "occupancy", "notes", "extras",
+    "raw", "raw_cells", "row_index",
+})
+
+_NON_SITE_CODE_HEADS: frozenset[str] = frozenset({
+    "MOCK", "DEV", "TEST", "DEMO", "FAKE", "DUMMY", "SAMPLE",
+    "MSA", "NDA", "SOW", "RFP", "RFQ", "RFI", "PO", "WO",
+    "INV", "TKT", "TASK", "PROJ", "DEAL", "CASE", "REQ",
+    "QUOTE", "Q", "ORDER", "ORD", "HS", "HUBSPOT", "AZURE",
+    "AWS", "GCP", "INTUNE", "OKTA", "API", "SKU", "UPC",
+})
+
+_GENERIC_SITE_IDS: frozenset[str] = frozenset({
+    "", "ALL", "ALL-SITES", "ALL-LOCATIONS", "N-A", "NA", "N/A",
+    "TBD", "TBA", "VARIOUS", "MULTIPLE", "NONE", "UNKNOWN",
+    "SITE", "LOCATION", "ADDRESS", "TOTAL", "SUBTOTAL", "SUM",
+})
+
+
+def _physical_site_id(atom: Any) -> str:
+    val = getattr(atom, "value", None) or {}
+    if not isinstance(val, dict):
+        return ""
+    return _site_display_key(val.get("site_id") or val.get("id") or val.get("name"))
+
+
+def _is_bad_physical_site_id(site_id: str) -> bool:
+    sid = _site_display_key(site_id)
+    if sid in _GENERIC_SITE_IDS:
+        return True
+    # A naked year or amount is not a site.
+    if sid.isdigit() and len(sid) >= 4:
+        return True
+    parts = [p for p in sid.split("-") if p]
+    if parts and parts[0] in _NON_SITE_CODE_HEADS:
+        return True
+    # Test-data/document identifiers often contain these tokens after a
+    # one-letter lead (Q-DEV-ATL-047, HS-DEAL-ATL-2026, etc.).
+    if any(p in _NON_SITE_CODE_HEADS for p in parts[:2]):
+        return True
+    return False
+
+
+def _looks_complete_site_id(site_id: str) -> bool:
+    sid = _site_display_key(site_id)
+    if not sid or _is_bad_physical_site_id(sid):
+        return False
+    if not re.search(r"\d", sid):
+        return False
+    # Common PDF table clipping turns ATL-WEST-02 into ATL-WEST-0.
+    # Do not let the clipped form become the canonical full id when a
+    # real full id is also present elsewhere in the authoritative doc.
+    if re.search(r"-0$", sid):
+        return False
+    return True
+
+
+def _physical_site_quality(atom: Any, canonical_id: str = "") -> tuple[int, int, float]:
+    val = getattr(atom, "value", None) or {}
+    if not isinstance(val, dict):
+        val = {}
+    sid = _physical_site_id(atom)
+    filename_blob = " ".join(
+        str(getattr(ref, "filename", "") or "") for ref in (getattr(atom, "source_refs", None) or [])
+    ).lower()
+    authoritative = int(
+        "authoritative" in filename_blob
+        or "site_roster" in filename_blob
+        or "site roster" in str(getattr(atom, "raw_text", "")).lower()
+        or "kind=physical_site" in str(getattr(atom, "raw_text", "")).lower()
+    )
+    exact_canonical = int(bool(canonical_id) and sid == canonical_id)
+    rich_fields = sum(
+        1 for k in (
+            "facility_name", "name", "address", "street_address",
+            "mdf_idf", "access_window", "escort_owner", "lat_long",
+            "city", "zip", "phone", "email",
+        )
+        if val.get(k)
+    )
+    return (authoritative * 100 + exact_canonical * 50 + rich_fields, len(str(getattr(atom, "raw_text", "") or "")), _confidence(atom))
+
+
+def _append_unique(target: list[Any], incoming: list[Any]) -> None:
+    seen = {getattr(x, "id", None) or repr(x) for x in target}
+    for item in incoming or []:
+        key = getattr(item, "id", None) or repr(item)
+        if key not in seen:
+            target.append(item)
+            seen.add(key)
+
+
+def _merge_atom_metadata(winner: Any, loser: Any) -> None:
+    """Carry evidence/provenance from a collapsed duplicate into winner."""
+    try:
+        _append_unique(winner.source_refs, getattr(loser, "source_refs", []) or [])
+    except Exception:
+        pass
+    try:
+        _append_unique(winner.receipts, getattr(loser, "receipts", []) or [])
+    except Exception:
+        pass
+    try:
+        for key in getattr(loser, "entity_keys", []) or []:
+            if key not in winner.entity_keys:
+                winner.entity_keys.append(key)
+    except Exception:
+        pass
+    try:
+        for flag in getattr(loser, "review_flags", []) or []:
+            if flag not in winner.review_flags:
+                winner.review_flags.append(flag)
+    except Exception:
+        pass
+
+
+def _clean_physical_site_value(value: dict[str, Any]) -> dict[str, Any]:
+    cleaned = {k: v for k, v in value.items() if k in _PHYSICAL_SITE_ALLOWED_FIELDS and v not in (None, "", [], {})}
+    cleaned["kind"] = "physical_site"
+    # Keep id/site_id/name/facility_name synchronized without importing a
+    # heavyweight schema layer into the hot dedup path.
+    canonical = cleaned.get("site_id") or cleaned.get("id") or cleaned.get("name") or cleaned.get("facility_name")
+    if canonical:
+        canonical = _site_display_key(canonical) if re.search(r"[A-Z]{2,}[-_][A-Z0-9]", str(canonical), re.I) else str(canonical).strip()
+        cleaned.setdefault("id", canonical)
+        cleaned.setdefault("site_id", canonical)
+    label = cleaned.get("facility_name") or cleaned.get("name") or cleaned.get("site_id") or cleaned.get("id")
+    if label:
+        cleaned.setdefault("name", label)
+        cleaned.setdefault("facility_name", label)
+    return cleaned
+
+
+def _merge_physical_site_values(winner: Any, loser: Any) -> None:
+    wv = getattr(winner, "value", None)
+    lv = getattr(loser, "value", None)
+    if not isinstance(wv, dict) or not isinstance(lv, dict):
+        return
+    # Remove legacy/LLM bridge shape fields before they can create
+    # Frankenstein physical_site values.
+    for k in list(wv.keys()):
+        if k not in _PHYSICAL_SITE_ALLOWED_FIELDS:
+            wv.pop(k, None)
+    for k, lval in lv.items():
+        if k not in _PHYSICAL_SITE_ALLOWED_FIELDS or lval in (None, "", [], {}):
+            continue
+        wval = wv.get(k)
+        if wval in (None, "", [], {}):
+            wv[k] = lval
+            continue
+        # A text-fallback atom may have name == id. Let a structured row
+        # provide the actual facility name, but otherwise do not overwrite
+        # authoritative fields merely because a less-authoritative document
+        # has a longer string.
+        if k in {"name", "facility_name"}:
+            wid = _site_display_key(wv.get("site_id") or wv.get("id"))
+            if _site_display_key(wval) == wid and str(lval).strip():
+                wv[k] = lval
+        elif isinstance(wval, (list, tuple)) and isinstance(lval, (list, tuple)):
+            merged = list(wval)
+            for x in lval:
+                if x not in merged:
+                    merged.append(x)
+            wv[k] = merged
+    winner.value = _clean_physical_site_value(wv)
+
+
+def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
+    physical = [a for a in atoms if _atom_type_value(a) == "physical_site"]
+    if not physical:
+        return atoms
+
+    good_ids = [_physical_site_id(a) for a in physical if not _is_bad_physical_site_id(_physical_site_id(a))]
+    complete_ids = sorted({sid for sid in good_ids if _looks_complete_site_id(sid)}, key=len)
+
+    def canonical_for(atom: Any) -> str | None:
+        sid = _physical_site_id(atom)
+        if not sid or _is_bad_physical_site_id(sid):
+            return None
+        # Exact complete ids are canonical.
+        if sid in complete_ids:
+            return sid
+        # Merge clipped table ids: ATL-WEST-0 -> ATL-WEST-02 when a full
+        # id is present from the same authoritative text.
+        clipped_matches = [full for full in complete_ids if full.startswith(sid) and len(full) > len(sid)]
+        if clipped_matches:
+            return clipped_matches[0]
+        # Merge short aliases from SOW/BOM tables into the authoritative
+        # numbered site row: ATL-HQ -> ATL-HQ-01.
+        prefix_matches = [full for full in complete_ids if full.startswith(sid + "-")]
+        if prefix_matches:
+            return prefix_matches[0]
+        return sid
+
+    grouped: dict[str, list[Any]] = {}
+    dropped_ids: set[int] = set()
+    for atom in physical:
+        canon = canonical_for(atom)
+        if canon is None:
+            dropped_ids.add(id(atom))
+            continue
+        grouped.setdefault(canon, []).append(atom)
+
+    merged_physical: list[Any] = []
+    consumed_ids: set[int] = set(dropped_ids)
+    for canon, group in grouped.items():
+        group_sorted = sorted(group, key=lambda a: _physical_site_quality(a, canon), reverse=True)
+        winner = group_sorted[0]
+        # Force the canonical display id onto the winner before merging.
+        if isinstance(getattr(winner, "value", None), dict):
+            winner.value["id"] = canon
+            winner.value["site_id"] = canon
+            winner.value = _clean_physical_site_value(winner.value)
+        for loser in group_sorted[1:]:
+            _merge_physical_site_values(winner, loser)
+            _merge_atom_metadata(winner, loser)
+            consumed_ids.add(id(loser))
+        merged_physical.append(winner)
+
+    out: list[Any] = []
+    merged_by_id = {id(a): a for a in merged_physical}
+    emitted_merged: set[int] = set()
+    for atom in atoms:
+        if _atom_type_value(atom) != "physical_site":
+            out.append(atom)
+            continue
+        aid = id(atom)
+        if aid in consumed_ids:
+            continue
+        if aid in merged_by_id:
+            out.append(merged_by_id[aid])
+            emitted_merged.add(aid)
+            continue
+    # Add winners whose original position belonged to an atom consumed by
+    # another winner. This is rare but keeps the function total.
+    for atom in merged_physical:
+        if id(atom) not in emitted_merged and id(atom) not in consumed_ids:
+            out.append(atom)
+    return out
+
+
+def _drop_generic_site_entity_atoms(atoms: list[Any]) -> list[Any]:
+    """Remove legacy generic entity atoms that restate roster sites.
+
+    The pack contract is explicit: site rows must be typed as
+    physical_site. Once a physical_site roster exists, keeping
+    ``atom_type=entity`` with ``value.entity_type == 'site'`` resurrects
+    the old anti-pattern and pollutes downstream packet/entity counts.
+    """
+    has_physical_site = any(_atom_type_value(a) == "physical_site" for a in atoms)
+    if not has_physical_site:
+        return atoms
+    out: list[Any] = []
+    for atom in atoms:
+        val = getattr(atom, "value", None) or {}
+        if isinstance(val, dict) and str(val.get("entity_type") or "").lower() == "site":
+            continue
+        out.append(atom)
+    return out
+
+
 def _value_key(atom: Any) -> tuple | None:
     """Return a hashable key describing the atom's identity.
 
@@ -73,8 +360,7 @@ def _value_key(atom: Any) -> tuple | None:
     eligible for semantic dedup (they go through the v48 text-based
     pass only).
     """
-    atom_type = getattr(atom, "atom_type", None)
-    atype = atom_type.value if hasattr(atom_type, "value") else str(atom_type or "")
+    atype = _atom_type_value(atom)
     val = getattr(atom, "value", None) or {}
     if not isinstance(val, dict):
         return None
@@ -337,6 +623,10 @@ def _merge_values(winner: Any, loser: Any) -> None:
     """Best-effort merge: take longest non-empty value per field from
     loser into winner. Doesn't override populated winner fields.
     """
+    if _atom_type_value(winner) == "physical_site":
+        _merge_physical_site_values(winner, loser)
+        _merge_atom_metadata(winner, loser)
+        return
     wv = getattr(winner, "value", None)
     lv = getattr(loser, "value", None)
     if not isinstance(wv, dict) or not isinstance(lv, dict):
@@ -356,6 +646,7 @@ def _merge_values(winner: Any, loser: Any) -> None:
                 if x not in merged:
                     merged.append(x)
             wv[k] = merged
+    _merge_atom_metadata(winner, loser)
 
 
 def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
@@ -385,7 +676,7 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
         else:
             _merge_values(by_key[key], atom)
 
-    return list(by_key.values()) + unkeyed
+    return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(list(by_key.values()) + unkeyed))
 
 
 __all__ = ["semantic_dedup_atoms"]

@@ -121,7 +121,7 @@ def propose_semantic_link_candidates(
     # at N=10k). For S++ scale, skip the linker entirely above this
     # threshold — its findings on near-identical template rows in a
     # huge BOM are low-value and the cost is prohibitive.
-    _LINKER_MAX_ATOMS = 2000
+    _LINKER_MAX_ATOMS = 500
     if len(atoms) > _LINKER_MAX_ATOMS:
         return []
     ordered = sorted(atoms, key=lambda atom: atom.id)

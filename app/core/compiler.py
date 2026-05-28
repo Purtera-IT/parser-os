@@ -479,6 +479,21 @@ def compile_project(
             errors=parse_errors,
         )
 
+    # Register {artifact_id: Path} with the vision module so its leaf
+    # fitz.open() calls — invoked from enrich_entities via atom
+    # source_refs, which only carry basenames — can resolve to the
+    # absolute on-disk path. Without this, find_table_pages and PDF
+    # render fall through to "no such file" warnings and we lose
+    # table-derived atoms.
+    try:
+        from app.core.vision_extraction import register_artifact_paths
+        register_artifact_paths(artifact_paths)
+    except Exception as _vp_exc:
+        warnings.append(
+            f"WARNING: vision artifact-path registration failed: "
+            f"{type(_vp_exc).__name__}: {_vp_exc}"
+        )
+
     with telemetry.stage("candidate_adjudication", input_count=len(candidates)) as stage:
         adjudication = adjudicate_candidates(candidates, artifact_paths)
         atoms.extend(adjudication.accepted_atoms)

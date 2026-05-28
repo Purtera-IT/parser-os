@@ -357,19 +357,31 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)
-        # Second pass: fuzzy dedup on long text only (≥50 chars).
-        # Also type-aware — only collapse atoms of SAME atom_type.
+        # Second pass: fuzzy dedup on long prose only (≥50 chars).
+        # Structured rows (physical_site, BOM, site_allocation, tasks, etc.)
+        # have semantic keys and should not pay the O(n²) SequenceMatcher
+        # cost. APS Attachment B has 100+ long but distinct physical_site
+        # rows; comparing every row to every row can dominate compile time
+        # and is the wrong dedup layer anyway.
+        fuzzy_dedup_types = {
+            "scope_item", "constraint", "assumption", "exclusion",
+            "decision", "action_item", "open_question", "customer_instruction",
+        }
         final: list = []
+        # Bucket by atom type plus the first few normalized tokens so even
+        # prose comparisons stay local; exact duplicates were already removed
+        # above.
+        fuzzy_buckets: dict[tuple[str, str], list] = {}
         for atom in unique:
+            atype = _atype(atom)
             rt = getattr(atom, "raw_text", "") or ""
-            if len(rt) < 50:
+            if len(rt) < 50 or atype not in fuzzy_dedup_types:
                 final.append(atom)
                 continue
-            atype = _atype(atom)
+            norm = (getattr(atom, "normalized_text", None) or rt).strip().lower()
+            bucket_key = (atype, " ".join(norm.split()[:8]))
             is_dup = False
-            for existing in final:
-                if _atype(existing) != atype:
-                    continue
+            for existing in fuzzy_buckets.get(bucket_key, []):
                 ext = getattr(existing, "raw_text", "") or ""
                 if len(ext) < 50:
                     continue
@@ -379,6 +391,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
                     break
             if not is_dup:
                 final.append(atom)
+                fuzzy_buckets.setdefault(bucket_key, []).append(atom)
         result.extend(final)
     return result
 
