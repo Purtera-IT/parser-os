@@ -264,6 +264,7 @@ def compile_project(
     calibrator_path: Path | None = None,
     abstain_threshold: float = 0.70,
     use_cache: bool = True,
+    stage_callback: Callable[..., None] | None = None,
 ) -> CompileResult:
     project_dir = project_dir.resolve()
     if not project_dir.exists():
@@ -288,7 +289,10 @@ def compile_project(
             project_dir, explicit=domain_pack
         )
     set_active_domain_pack(resolved_domain_pack)
-    telemetry = CompileTelemetry(project_id=resolved_project_id)
+    telemetry = CompileTelemetry(
+        project_id=resolved_project_id,
+        on_stage_end=stage_callback,
+    )
     warnings: list[str] = []
     if pack_routing_decision is not None:
         warnings.append(

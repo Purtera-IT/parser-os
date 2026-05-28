@@ -6,9 +6,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Iterator
+from typing import Callable, Iterator
 
 from app.core.schemas import CompileStageTrace, CompileTrace
+
+# Type alias for the per-stage callback the worker uses to write
+# compile-progress.json after every stage finishes.
+StageEndCallback = Callable[[CompileStageTrace, list[CompileStageTrace]], None]
 
 
 def utc_now_iso() -> str:
@@ -24,12 +28,21 @@ class _StageToken:
 
 
 class CompileTelemetry:
-    def __init__(self, project_id: str, compile_id: str = "pending_compile_id", stream=None) -> None:
+    def __init__(
+        self,
+        project_id: str,
+        compile_id: str = "pending_compile_id",
+        stream=None,
+        on_stage_end: StageEndCallback | None = None,
+    ) -> None:
         self.project_id = project_id
         self.compile_id = compile_id
         self._stream = stream or sys.stderr
         self._compile_start_perf = perf_counter()
         self.stages: list[CompileStageTrace] = []
+        # Optional: worker uses this to write compile-progress.json after
+        # every stage so the UI can render live pipeline progress.
+        self._on_stage_end: StageEndCallback | None = on_stage_end
 
     def set_compile_id(self, compile_id: str) -> None:
         self.compile_id = compile_id
@@ -97,6 +110,12 @@ class CompileTelemetry:
             warnings=warning_rows,
             errors=error_rows,
         )
+        if self._on_stage_end is not None:
+            try:
+                self._on_stage_end(stage, list(self.stages))
+            except Exception:
+                # Never let a progress callback failure crash the compile.
+                pass
         return stage
 
     @contextmanager
