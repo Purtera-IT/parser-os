@@ -287,10 +287,54 @@ def _merge_physical_site_values(winner: Any, loser: Any) -> None:
     winner.value = _clean_physical_site_value(wv)
 
 
+def _is_hallucinated_physical_site_value(value: Any) -> bool:
+    """v57.2 — independent invariant guard. True if the atom value smells
+    like an LLM hallucination of a physical_site row.
+
+    Real roster atoms come from a structured row with three DISTINCT
+    identity strings: site_id (``ATL-HQ-01``), facility_name
+    (``OPTBOT Atlanta HQ``), address (``1200 Peachtree St NE...``).
+    When the LLM fails to separate cell-bleed text from a paragraph
+    block, it fills ``name`` / ``address`` / ``facility_name`` with the
+    SAME synthesized string (and often appends ``v5`` / ``2026``).
+    This invariant catches both shapes regardless of source path —
+    typed_atom_classifier, LLM bridge, vision extractor, etc.
+    """
+    if not isinstance(value, dict):
+        return False
+    name = (value.get("name") or "").strip()
+    address = (value.get("address") or value.get("street_address") or "").strip()
+    facility = (value.get("facility_name") or "").strip()
+    nonempty = [s for s in (name, address, facility) if s]
+    # All three identity fields identical with at least two populated.
+    if len(nonempty) >= 2 and len(set(nonempty)) == 1:
+        return True
+    # Also catch the ``v\d+`` / 4-digit-year suffix on site_id directly.
+    sid = (value.get("site_id") or value.get("id") or "").strip()
+    if sid and (re.search(r"-V\d+$", sid, re.IGNORECASE) or re.search(r"\s\d{4}$", sid)):
+        return True
+    return False
+
+
 def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     physical = [a for a in atoms if _atom_type_value(a) == "physical_site"]
     if not physical:
         return atoms
+
+    # v57.2: kill the LLM hallucination shape unconditionally before
+    # canonical_for resolves anything. Independent of the address/facility
+    # lookup below — even when those indexes are empty (no complete
+    # structural atoms), this catches OPTBOT-WEST-CAMPUS-V5-style ghosts.
+    # Atoms that don't smell hallucinated continue through the existing
+    # canonical_for resolution + winner-merge logic unchanged.
+    before_hallucination = len(physical)
+    physical = [a for a in physical if not _is_hallucinated_physical_site_value(getattr(a, "value", None))]
+    if before_hallucination != len(physical):
+        # Update the atoms list too so the new list reflects the drop.
+        dropped_ids = {id(a) for a in atoms if _atom_type_value(a) == "physical_site"} - {id(a) for a in physical}
+        atoms = [a for a in atoms if id(a) not in dropped_ids]
+        if not physical:
+            return atoms
 
     good_ids = [_physical_site_id(a) for a in physical if not _is_bad_physical_site_id(_physical_site_id(a))]
     complete_ids = sorted({sid for sid in good_ids if _looks_complete_site_id(sid)}, key=len)

@@ -284,12 +284,27 @@ def classify_atoms(atoms: list[Any]) -> int:
             continue
         if new_type not in _TAXONOMY:
             continue
+        # v57.2: reject promotion to physical_site when the source text or
+        # the LLM-emitted value smells like a hallucination. The OPTBOT
+        # site-roster PDF has cell-bleed paragraph blocks like
+        # "Mon-Fri 07:00-18: OPTBOT Facil ATL-WEST-0 OPTBOT West Campus
+        # 3100 Interstate N Pkwy, Atla" — six columns from one row mashed
+        # into one string. qwen3:14b sees the chaos and synthesizes
+        # site_id="OPTBOT-WEST-CAMPUS-V5" with name == address ==
+        # facility_name == "OPTBOT West Campus v5" (all three identical,
+        # mathematically impossible for a real roster row). These ghosts
+        # survive every other downstream guard because their hallucinated
+        # address (literally the facility name) doesn't match any
+        # canonical street address in the dedup index. Kill at the source.
+        new_value = payload.get("value")
+        if new_type == "physical_site":
+            if _is_hallucinated_physical_site(atom, new_value):
+                continue
         try:
             from app.core.schemas import AtomType
             atom.atom_type = AtomType(new_type)
         except (ImportError, ValueError):
             continue
-        new_value = payload.get("value")
         if isinstance(new_value, dict) and new_value:
             existing_value = getattr(atom, "value", None)
             if isinstance(existing_value, dict):
@@ -300,6 +315,82 @@ def classify_atoms(atoms: list[Any]) -> int:
         promoted += 1
 
     return promoted
+
+
+# v57.2 — hallucination invariants for typed_atom_classifier physical_site
+# promotions. ALL checks operate on the VALUE shape, never on raw_text,
+# because the structured table parser legitimately synthesizes raw_text
+# strings like "Mon-Fri 07:00-18 | OPTBOT Facil" for cross-doc text
+# matching — those are clean atoms despite the time-window content.
+_GHOST_NAME_PATTERNS = (
+    re.compile(r"\sv\d+$", re.IGNORECASE),    # "OPTBOT West Campus v5"
+    re.compile(r"\s\d{4}$"),                  # "Atl Hq 2026"  (v53.7 pattern)
+    re.compile(r"-v\d+$", re.IGNORECASE),     # "OPTBOT-WEST-CAMPUS-V5"
+)
+# v57.2 — site_id shapes that betray the LLM mistakenly classifying a
+# street address as the ID column. Real site IDs are short codes
+# (ATL-HQ-01, SITE-042); addresses-as-id contain ZIP codes or building
+# words. The actual address goes in value.address — never in value.site_id.
+_ADDRESS_AS_ID_PATTERNS = (
+    re.compile(r"\d{5}(?:-\d{4})?\b"),                          # ZIP code in id
+    re.compile(r"\bBUILDING\b", re.IGNORECASE),                 # "BUILDING-C"
+    re.compile(r"\b(STREET|AVENUE|BOULEVARD|PARKWAY|DRIVE)\b", re.IGNORECASE),
+)
+
+
+def _is_hallucinated_physical_site(atom: Any, new_value: Any) -> bool:
+    """True if the LLM-promoted physical_site atom shows hallucination tells.
+
+    Three value-only invariants — never inspects ``raw_text`` because the
+    structured table parser legitimately synthesizes row-summary strings
+    that contain time windows and column labels.
+
+    1. **All identity fields identical.** Real roster rows have distinct
+       ``site_id``, ``facility_name``, and ``address``. When the LLM
+       emits the SAME string for ``name``, ``address``, and
+       ``facility_name``, it forfeited parsing — that string is just
+       whatever it could grab. Catches every ``OPTBOT-XXX-V5`` ghost.
+
+    2. **Ghost suffix on site_id / name / facility.** Trailing ``-V5`` /
+       ``v\\d+`` / 4-digit year is a schema-version or row-number
+       hallucination. Real site IDs come from the structured ID column.
+
+    3. **Address-shape site_id.** When ``value.site_id`` contains a ZIP
+       code or a street-type word, the LLM swapped the ID and address
+       columns. Catches ``4200-GLOBAL-GATEWAY-...-COLLEGE-PARK-GA-30337``
+       and similar.
+    """
+    if not isinstance(new_value, dict):
+        return False
+
+    name = (new_value.get("name") or "").strip()
+    address = (new_value.get("address") or new_value.get("street_address") or "").strip()
+    facility = (new_value.get("facility_name") or "").strip()
+    site_id = (new_value.get("site_id") or new_value.get("id") or "").strip()
+
+    # 1. Identical identity fields — mathematically impossible for a real
+    # row. Requires at least two of name/address/facility being non-empty
+    # and ALL equal (otherwise an LLM that only filled ``name`` could
+    # legitimately leave the others blank).
+    nonempty = [s for s in (name, address, facility) if s]
+    if len(nonempty) >= 2 and len(set(nonempty)) == 1:
+        return True
+
+    # 2. Ghost suffix on site_id, name, or facility_name.
+    for s in (site_id, name, facility):
+        if not s:
+            continue
+        for pat in _GHOST_NAME_PATTERNS:
+            if pat.search(s):
+                return True
+
+    # 3. Address-shape site_id — model swapped ID and address columns.
+    if site_id:
+        for pat in _ADDRESS_AS_ID_PATTERNS:
+            if pat.search(site_id):
+                return True
+
+    return False
 
 
 # ────────────────────────── internals ──────────────────────────
