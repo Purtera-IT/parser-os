@@ -4101,12 +4101,23 @@ def _entities_to_atoms(
                 continue
             # v53.5: drop garbage LLM site_cluster atoms (ALL/various,
             # address-as-name, customer-name leaks, pure numbers).
-            # These were the source of ghost site_readiness rows like
-            # "site:all" and "site:1180_peachtree_street_ne_..." even
-            # after canonical_set gating, because they themselves became
-            # canonical entries.
-            if category == "site_clusters" and _is_garbage_site(raw_text):
-                continue
+            # v53.9b: also check the entity's id/site_id/name fields
+            # directly — graph_expansion creates entities like
+            # {entity_type:'site', site_id:'ALL', name:''} where
+            # canonical_name is None and _best_text concatenates values
+            # into "site | ALL" which bypasses the canonical_name filter.
+            if category == "site_clusters":
+                if _is_garbage_site(raw_text):
+                    continue
+                # Field-level garbage check
+                bad_field = False
+                for field in ("id", "site_id", "name", "facility_name", "canonical_name"):
+                    val = entity.get(field)
+                    if isinstance(val, str) and _is_garbage_site(val):
+                        bad_field = True
+                        break
+                if bad_field:
+                    continue
             dedup_key = f"{category}:{raw_text[:120].lower()}"
             if dedup_key in seen_texts:
                 continue
