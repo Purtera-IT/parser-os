@@ -1014,25 +1014,31 @@ def _fitz_site_roster_fallback(
         except Exception:
             pass
 
-    # v53.8 TEXT-BASED FALLBACK: if no physical_site atoms were emitted
-    # by either fitz-table path AND the document text contains
-    # "kind=physical_site" or "site_roster" / "Site Roster", scan text
-    # for site-ID-shaped tokens followed by a facility name. This
-    # rescues reportlab-rendered PDFs where fitz.find_tables() can't
-    # detect the table layout but the IDs are clearly present in text.
-    if not out:
-        try:
-            already_emitted = already_emitted or set()
-            text_atoms = _text_based_site_roster_extract(
-                pdf_path=pdf_path,
-                project_id=project_id,
-                artifact_id=artifact_id,
-                parser_version=parser_version,
-                already_emitted=already_emitted,
-            )
-            out.extend(text_atoms)
-        except Exception:
-            pass
+    # v53.8/v53.10 TEXT-BASED EXTRACTION: always attempt when the doc
+    # text declares a roster section. Even if fitz-table extraction
+    # produced some rows, the text scan catches IDs the table extractor
+    # missed (truncated cells, columns mis-aligned in reportlab PDFs).
+    # The `already_emitted` set prevents duplicate emission.
+    try:
+        already_emitted = already_emitted or set()
+        # Add IDs from any already-emitted atoms in `out` (this call's
+        # own atoms) so the text extractor doesn't re-emit them.
+        for a in out:
+            v = getattr(a, "value", None) or {}
+            if isinstance(v, dict):
+                sid = v.get("id") or v.get("site_id")
+                if sid:
+                    already_emitted.add(sid)
+        text_atoms = _text_based_site_roster_extract(
+            pdf_path=pdf_path,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            parser_version=parser_version,
+            already_emitted=already_emitted,
+        )
+        out.extend(text_atoms)
+    except Exception:
+        pass
 
     return out
 
