@@ -199,6 +199,18 @@ def build_orbitbrief_envelope(
         documents=documents,
     )
 
+    # v57.3: filter envelope.entities[site:*] to only include site keys
+    # that match a physical_site atom (by site_id slug, name, facility_name,
+    # or any alternative names listed). Without this, orbitbrief-core's
+    # site_reality.cluster builder reads from envelope.entities and turns
+    # every LLM-extracted "atlanta west office" / "headquarters" /
+    # "atl_hq_2026" / "site:site" into a dossier site row, even when the
+    # canonical roster only has 5 ATL-XX-XX rows. Physical_site atoms are
+    # the authoritative roster; any site:* entity that doesn't trace to one
+    # is either a ghost LLM cluster or a year/2026-suffix hallucination
+    # that survived the v53.7/v57.2 guards (which only inspect atoms, not
+    # entities).
+    entities = _filter_site_entities_against_physical_atoms(entities, atoms)
     envelope: dict[str, Any] = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
         "project_id": compile_result.project_id,
@@ -1202,6 +1214,99 @@ def _atom_verification_state(atom: EvidenceAtom) -> str:
     if "verified" in statuses:
         return "partial"
     return "unsupported"
+
+
+def _filter_site_entities_against_physical_atoms(
+    entities: list[EntityRecord],
+    atoms: list[EvidenceAtom],
+) -> list[EntityRecord]:
+    """v57.3 — drop ``site:*`` entity records that don't trace to a
+    physical_site atom.
+
+    Why: ``orbitbrief-core/world_model/site_reality/cluster.py`` walks
+    every ``site:*`` entity in the envelope and builds one cluster per
+    entity. The dossier renders one row per cluster. Without this
+    filter, every LLM-extracted ghost (``atlanta_west_office``,
+    ``optbot_atlanta_office``, ``atl_hq_2026``, ``site:site``,
+    ``atlanta_headquarters_innovation_tower``, ...) becomes a dossier
+    site even though the canonical roster only has the 5 ATL-XX-XX rows.
+
+    The rule: a ``site:*`` entity is real iff its canonical_key,
+    canonical_name, or any alias matches the slugified site_id, name,
+    or facility_name of a physical_site atom. Everything else is a
+    ghost LLM cluster.
+
+    Non-``site:*`` entities (vendor, device, money, etc.) pass through
+    untouched.
+    """
+    import re as _re
+
+    def _slug(s: str) -> str:
+        return _re.sub(r"[^a-z0-9]+", "_", (s or "").lower()).strip("_")
+
+    canonical_site_slugs: set[str] = set()
+    for a in atoms:
+        atype = getattr(a, "atom_type", None)
+        atype_s = atype.value if hasattr(atype, "value") else str(atype or "")
+        if atype_s != "physical_site":
+            continue
+        val = getattr(a, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        for field in ("site_id", "id", "name", "facility_name"):
+            v = val.get(field)
+            if isinstance(v, str) and v.strip():
+                canonical_site_slugs.add(_slug(v))
+        # Multi-name slot used by some roster atoms.
+        names_field = val.get("names") or val.get("aliases") or ()
+        if isinstance(names_field, (list, tuple)):
+            for n in names_field:
+                if isinstance(n, str) and n.strip():
+                    canonical_site_slugs.add(_slug(n))
+    # Strip empties from any all-whitespace slugifications.
+    canonical_site_slugs.discard("")
+
+    # If the parser found no canonical sites, we have nothing to filter
+    # against — return as-is to avoid wiping every site:* entity on
+    # documents that legitimately have no roster.
+    if not canonical_site_slugs:
+        return entities
+
+    kept: list[EntityRecord] = []
+    for ent in entities:
+        ck = getattr(ent, "canonical_key", "") or ""
+        if not ck.startswith("site:"):
+            kept.append(ent)
+            continue
+        # Compute every slug this entity might match against canonical.
+        candidate_slugs: set[str] = set()
+        ck_slug = ck[len("site:"):]
+        candidate_slugs.add(ck_slug)
+        cname = getattr(ent, "canonical_name", "") or ""
+        if cname:
+            candidate_slugs.add(_slug(cname))
+        for alias in (getattr(ent, "aliases", None) or ()):
+            if isinstance(alias, str) and alias:
+                candidate_slugs.add(_slug(alias))
+        candidate_slugs.discard("")
+        # Match: exact slug equality, OR canonical contains candidate as
+        # prefix (catches truncated aliases like ``atl_047`` → ``atl_047_04``),
+        # OR candidate contains canonical (catches expansions where the
+        # entity slug includes extra qualifier suffixes).
+        is_real = False
+        for cs in candidate_slugs:
+            if cs in canonical_site_slugs:
+                is_real = True
+                break
+            for canon in canonical_site_slugs:
+                if canon and (canon.startswith(cs + "_") or cs.startswith(canon + "_")):
+                    is_real = True
+                    break
+            if is_real:
+                break
+        if is_real:
+            kept.append(ent)
+    return kept
 
 
 def _compact_entity(
