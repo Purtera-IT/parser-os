@@ -4178,23 +4178,30 @@ def _entities_to_atoms(
                             matched_atom = structural_sites_index[key]
                             break
                     if matched_atom is not None:
-                        # Merge cluster's aliases into the matched atom.
-                        mv = getattr(matched_atom, "value", None) or {}
-                        if isinstance(mv, dict):
-                            existing_names = list(mv.get("names") or [])
-                            for form in cluster_forms:
-                                if form and form not in existing_names:
-                                    existing_names.append(form)
-                            mv["names"] = existing_names
-                            # Also index newly-seen forms so later
-                            # clusters in this same run can also match
-                            # back to this atom.
-                            for form in cluster_forms:
-                                k = _nf(form)
-                                if k and k not in structural_sites_index:
-                                    structural_sites_index[k] = matched_atom
-                        # Skip emitting — we merged into structural.
-                        _cat_counts[category]["merged"] = _cat_counts[category].get("merged", 0) + 1
+                        # v56f: SKIP — structural atom is canonical. Do NOT
+                        # merge LLM cluster aliases into value.names. The
+                        # structural atom already has every column from
+                        # its source row (site_id, facility_name,
+                        # street_address, mdf_idf, access_window,
+                        # escort_owner) in proper named fields.
+                        # _clean_physical_site_value derives aliases
+                        # deterministically from THOSE fields — not from
+                        # LLM clusters whose aliases mix multiple-row
+                        # data ("MDF-3A" as alias of West Campus,
+                        # "OPTBOT Facil" the escort_owner ending up
+                        # tagged onto a site, "1200 Peachtree St NE"
+                        # from row 1 leaking onto row 2 etc.).
+                        #
+                        # We also no longer expand structural_sites_index
+                        # with cluster aliases. That expansion was the
+                        # source of cross-row contamination: cluster B's
+                        # alias matching the alias-expanded-from-cluster-A
+                        # entry → cluster B merging into row A's atom.
+                        # Without expansion, matching is deterministic
+                        # and tied to the original structural fields only.
+                        _cat_counts[category]["merged_into_structural"] = (
+                            _cat_counts[category].get("merged_into_structural", 0) + 1
+                        )
                         continue
                     # v56e MERGE-OR-DROP GUARD: when structural physical_site
                     # atoms exist, the bridge must NOT create new physical_site

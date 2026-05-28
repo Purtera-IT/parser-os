@@ -233,6 +233,23 @@ def _clean_physical_site_value(value: dict[str, Any]) -> dict[str, Any]:
     if label:
         cleaned.setdefault("name", label)
         cleaned.setdefault("facility_name", label)
+    # v56f: DETERMINISTIC aliases — only the SAME-ROW identity signals
+    # (site_id, facility_name, street_address). NEVER mdf_idf,
+    # access_window, escort_owner — those are SEPARATE FIELDS for a
+    # reason. NEVER carry over aliases from prior LLM merges since
+    # those mixed multiple-row data ("OPTBOT Facil" from row 1 ending
+    # up as an alias of ATL-WEST-02). One row = one site = three
+    # identity strings tops. The atom already has every column in its
+    # proper field; aliases exist only for cross-doc text matching.
+    names_out: list[str] = []
+    for f in ("site_id", "id", "facility_name", "name", "street_address", "address"):
+        v = cleaned.get(f)
+        if isinstance(v, str) and v.strip() and v not in names_out:
+            names_out.append(v.strip())
+    if names_out:
+        cleaned["names"] = names_out
+    else:
+        cleaned.pop("names", None)
     return cleaned
 
 
