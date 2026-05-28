@@ -113,7 +113,16 @@ def _physical_site_id(atom: Any) -> str:
     val = getattr(atom, "value", None) or {}
     if not isinstance(val, dict):
         return ""
-    return _site_display_key(val.get("site_id") or val.get("id") or val.get("name"))
+    # v56: NEVER fall back to val.get("name"). When an atom has a facility
+    # name but no real site_id, it's a ghost emission from a non-roster
+    # parser (text-extracted prose, BOM SKU mis-classification, address
+    # tokenization). Synthesizing site_id from name creates atoms like
+    # "OPTBOT-AIRPORT-LOGIST" (truncated facility) and
+    # "4200-GLOBAL-GATEWAY-CONNECTOR" (address bleed). Real physical_site
+    # atoms always carry an explicit site_id from a structured ID column.
+    # Returning "" here causes such ghost atoms to be DROPPED in
+    # _dedupe_physical_site_atoms (canonical_for returns None).
+    return _site_display_key(val.get("site_id") or val.get("id") or "")
 
 
 def _is_bad_physical_site_id(site_id: str) -> bool:
@@ -303,6 +312,19 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             winner.value["id"] = canon
             winner.value["site_id"] = canon
             winner.value = _clean_physical_site_value(winner.value)
+        # v56: also force entity_keys to a SINGLE canonical site:<slug>.
+        # Any prior site:* keys (from over-eager regex passes, LLM cluster
+        # aliases, or pre-merge variant slugs) get dropped here. Non-site
+        # keys (date:, money:, address:, etc.) are preserved.
+        try:
+            canon_slug = re.sub(r"[^a-z0-9]+", "_", canon.lower()).strip("_")
+            if canon_slug:
+                existing_keys = list(getattr(winner, "entity_keys", []) or [])
+                non_site_keys = [k for k in existing_keys if not k.startswith("site:")]
+                non_site_keys.append(f"site:{canon_slug}")
+                winner.entity_keys = sorted(set(non_site_keys))
+        except Exception:
+            pass
         for loser in group_sorted[1:]:
             _merge_physical_site_values(winner, loser)
             _merge_atom_metadata(winner, loser)

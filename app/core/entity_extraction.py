@@ -4600,13 +4600,64 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         # "Site|Part|Qty" composite that pollutes entity_keys if
         # the regex emitters run on it.
         "raw_table_row",
+        # v56: physical_site atoms come from structured-table parsers
+        # (PDF tables / xlsx rows / docx tables). Their identity is
+        # value.site_id; raw_text is a synthesized "site_id: ATL-WEST-0
+        # | facility: OPTBOT West Campus | address: ... | mdf_idf:
+        # MDF-3A | escort: OPTBOT Facilities" composite that the regex
+        # emitters wrongly parse into ghost keys: site:mdf_3a (MDF
+        # column → not a site), site:optbot_facil (escort column +
+        # truncation → not a site), site:atl_air_asset_type_warehouse
+        # (column-header bleed), site:atl_hq_2026 (year-suffix concat).
+        # The parser already KNOWS the identity from the table row;
+        # the regex pass undoes that knowledge. Skip enrichment and
+        # emit exactly ONE clean key from value.site_id (see _emit_one_
+        # site_key_from_value below).
+        "physical_site",
     }
+
+    def _emit_one_site_key_from_value(atom: Any) -> bool:
+        """v56: for atoms in _SKIP_ENRICHMENT_TYPES that have a
+        ``value.site_id`` (physical_site rows specifically), ensure the
+        atom carries EXACTLY ONE clean ``site:<slug>`` entity_key derived
+        from the structured site_id field. This preserves graph anchoring
+        without regex-deriving garbage keys from a flattened raw_text.
+
+        Returns True when a key was added/modified, False otherwise.
+        """
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            return False
+        sid = val.get("site_id") or val.get("id") or ""
+        if not isinstance(sid, str) or not sid.strip():
+            return False
+        slug = re.sub(r"[^a-z0-9]+", "_", sid.strip().lower()).strip("_")
+        if not slug:
+            return False
+        target_key = f"site:{slug}"
+        existing = list(getattr(atom, "entity_keys", []) or [])
+        # Drop any pre-existing site:* keys (from parser or prior pass)
+        # and add the single canonical one. Preserve non-site keys
+        # (date:, money:, etc.) the parser may have emitted.
+        non_site = [k for k in existing if not k.startswith("site:")]
+        non_site.append(target_key)
+        if list(getattr(atom, "entity_keys", []) or []) == non_site:
+            return False  # already canonical
+        atom.entity_keys = non_site
+        return True
 
     for atom in atom_list:
         # v49.1: skip schema-emitted atoms entirely
         _atype = getattr(atom, "atom_type", None)
         _atype_str = _atype.value if hasattr(_atype, "value") else str(_atype or "")
         if _atype_str in _SKIP_ENRICHMENT_TYPES:
+            # v56: physical_site rows still need ONE canonical site:* key
+            # for downstream graph linking. Derive it from value.site_id —
+            # do NOT regex over raw_text (that's how ghost keys creep in).
+            if _atype_str == "physical_site":
+                if _emit_one_site_key_from_value(atom):
+                    atoms_enriched += 1
+                    total_keys_added += 1
             continue
 
         existing = list(getattr(atom, "entity_keys", []) or [])
@@ -4715,6 +4766,16 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                         if hits >= min(2, len(words)):
                             to_add.append(f"site:{slug}")
                 if to_add:
+                    # v56: physical_site atoms own their identity from
+                    # value.site_id — never override that with phrase
+                    # matches from the catalog (those introduce variant
+                    # slugs like site:atl_air alongside the canonical
+                    # site:atl_air_03, polluting the graph). Other atom
+                    # types still benefit from the injection.
+                    _atype_inj = getattr(atom, "atom_type", None)
+                    _atype_str_inj = _atype_inj.value if hasattr(_atype_inj, "value") else str(_atype_inj or "")
+                    if _atype_str_inj == "physical_site":
+                        continue
                     merged_keys = sorted(set(atom.entity_keys or []) | set(to_add))
                     atom.entity_keys = merged_keys
                     atoms_enriched += 1
@@ -5389,12 +5450,23 @@ def _inject_multi_entity_keys(
                 to_add.append(f"site:{canon_slug}")
 
         if to_add:
-            existing_keys = set(atom.entity_keys or [])
-            new_keys = [k for k in to_add if k not in existing_keys]
-            if new_keys:
-                atom.entity_keys = sorted(existing_keys | set(new_keys))
-                atoms_modified += 1
-                keys_added += len(new_keys)
+            # v56: same physical_site guard as the earlier injection pass.
+            # The atom's site identity is value.site_id; LLM cluster
+            # aliases shouldn't add competing site:* slugs onto it.
+            _atype_llm = getattr(atom, "atom_type", None)
+            _atype_str_llm = _atype_llm.value if hasattr(_atype_llm, "value") else str(_atype_llm or "")
+            if _atype_str_llm == "physical_site":
+                # Allow non-site:* keys (penalty:, compliance:, etc.) but
+                # drop any site:* augments — physical_site atoms own
+                # their key already.
+                to_add = [k for k in to_add if not k.startswith("site:")]
+            if to_add:
+                existing_keys = set(atom.entity_keys or [])
+                new_keys = [k for k in to_add if k not in existing_keys]
+                if new_keys:
+                    atom.entity_keys = sorted(existing_keys | set(new_keys))
+                    atoms_modified += 1
+                    keys_added += len(new_keys)
 
     return atoms_modified, keys_added
 

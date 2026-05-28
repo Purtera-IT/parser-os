@@ -1245,6 +1245,16 @@ def _text_based_site_roster_extract(
                 alpha_count = sum(1 for ch in clean if ch.isalpha())
                 if alpha_count < 2 or len(clean) < 6:
                     continue
+                # v56: require a trailing numeric suffix like "-NN" or "_NN".
+                # Real numbered roster IDs always have one (ATL-HQ-01,
+                # STORE-142). Facility names that incidentally match
+                # the shape (ATL-AIR, ATL-WEST without a row number)
+                # would otherwise leak through and be promoted later to
+                # synthetic site_ids like OPTBOT-AIRPORT-LOGIST. By
+                # requiring -NN we accept the authoritative roster
+                # row IDs and reject everything else.
+                if not re.search(r"[-_]\d+$", clean):
+                    continue
                 if clean in already_emitted or clean in site_ids_seen:
                     continue
                 # Try to extract a facility name from the same line.
