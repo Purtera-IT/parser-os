@@ -3868,6 +3868,7 @@ def _entities_to_atoms(
     artifact_ids: list[str],
     parser_version: str = "entity_bridge_v49",
     existing_physical_site_count: int = 0,
+    existing_physical_sites: list[Any] | None = None,
 ) -> list[Any]:
     """v49 — bridge LLM entity findings into proper EvidenceAtom instances.
 
@@ -4074,18 +4075,58 @@ def _entities_to_atoms(
             out_val.setdefault("description", qt)
         return out_val
 
-    # v53.9 UNIVERSAL FIX: LLM site_clusters should NOT become
-    # physical_site atoms when STRUCTURAL physical_site atoms already
-    # exist (parsed from a roster table by PDF/XLSX/DOCX parser or
-    # the v53.8 text-based extractor). The structural ones are ground
-    # truth. LLM clusters at best provide aliases — they should never
-    # be promoted to canonicals when we have authoritative IDs.
-    # The pattern of regression (v53.4-7) traced back to LLM-bridged
-    # site atoms with hallucinated names ("Atl Hq 2026", "Site ALL")
-    # being treated as separate canonicals.
-    # When zero structural physical_site atoms exist, LLM clusters
-    # fall back to filling the canonical_set so downstream gates work.
-    suppress_llm_sites = existing_physical_site_count > 0
+    # v55 TARGETED-MERGE FIX (replaces v53.9 all-or-nothing suppression):
+    # The old approach suppressed EVERY LLM site_cluster whenever any
+    # structural physical_site atom existed. That was overcorrection —
+    # we threw away (a) genuine new sites the LLM found in prose that
+    # weren't in the roster table, and (b) high-value alias data
+    # (canonical names, addresses) the LLM extracted that could enrich
+    # structural atoms.
+    #
+    # The right algorithm:
+    #   1. Build a normalized-form index over every existing structural
+    #      physical_site atom: every alias (site_id, name, facility_name,
+    #      street_address) maps back to the atom's canonical id.
+    #   2. For each LLM site_cluster, normalize its canonical_name +
+    #      every alias and look them up in the index.
+    #   3. If ANY form matches an existing structural atom → MERGE the
+    #      LLM's aliases into that atom and SKIP creating a new atom.
+    #   4. If NO form matches → emit as a new physical_site atom (this
+    #      is the supplemental "found in prose, not in any table" case).
+    #
+    # Net effect on OPTBOT: structural finds ATL-HQ-01..ATL-CP-05 (5
+    # atoms). LLM finds 5 clusters with surface forms like
+    # "OPTBOT Atlanta HQ" (aliases include ATL-HQ-01 + address). The
+    # match step recognises these as the same sites, merges the rich
+    # aliases into the 5 structural atoms, and emits 0 new atoms. The
+    # PM sees 5 sites with full aliases attached, not 10 fighting.
+    structural_sites_index: dict[str, Any] = {}  # normalized_form -> atom
+    structural_atoms_list = existing_physical_sites or []
+    if structural_atoms_list:
+        def _norm_form(s: str | None) -> str:
+            if not isinstance(s, str):
+                return ""
+            return re.sub(r"[^a-z0-9]+", "", s.lower())
+        for _atom in structural_atoms_list:
+            v = getattr(_atom, "value", None) or {}
+            if not isinstance(v, dict):
+                continue
+            for field in ("site_id", "id", "name", "facility_name", "street_address", "address"):
+                key = _norm_form(v.get(field))
+                if key and key not in structural_sites_index:
+                    structural_sites_index[key] = _atom
+            # Also index any pre-existing names[] array
+            for nm in (v.get("names") or []):
+                key = _norm_form(nm if isinstance(nm, str) else "")
+                if key and key not in structural_sites_index:
+                    structural_sites_index[key] = _atom
+
+    # Back-compat: when structural list isn't passed but the count is
+    # >0 (older callers), fall back to the old suppression behaviour.
+    suppress_llm_sites = (
+        existing_physical_site_count > 0
+        and not structural_sites_index  # only if we DIDN'T get the actual list
+    )
 
     for category, atom_type in CATEGORY_TO_ATOM_TYPE.items():
         if category == "site_clusters" and suppress_llm_sites:
@@ -4115,6 +4156,46 @@ def _entities_to_atoms(
             if category == "site_clusters":
                 if _is_garbage_site(raw_text):
                     continue
+                # v55: MERGE step — if any of this cluster's forms matches
+                # a structural physical_site atom, enrich that atom's
+                # aliases instead of creating a new (duplicate) atom.
+                if structural_sites_index:
+                    def _nf(s: str | None) -> str:
+                        if not isinstance(s, str):
+                            return ""
+                        return re.sub(r"[^a-z0-9]+", "", s.lower())
+                    cluster_forms: list[str] = []
+                    cn = entity.get("canonical_name")
+                    if isinstance(cn, str):
+                        cluster_forms.append(cn)
+                    for a_ in (entity.get("aliases") or []):
+                        if isinstance(a_, str):
+                            cluster_forms.append(a_)
+                    matched_atom = None
+                    for form in cluster_forms:
+                        key = _nf(form)
+                        if key and key in structural_sites_index:
+                            matched_atom = structural_sites_index[key]
+                            break
+                    if matched_atom is not None:
+                        # Merge cluster's aliases into the matched atom.
+                        mv = getattr(matched_atom, "value", None) or {}
+                        if isinstance(mv, dict):
+                            existing_names = list(mv.get("names") or [])
+                            for form in cluster_forms:
+                                if form and form not in existing_names:
+                                    existing_names.append(form)
+                            mv["names"] = existing_names
+                            # Also index newly-seen forms so later
+                            # clusters in this same run can also match
+                            # back to this atom.
+                            for form in cluster_forms:
+                                k = _nf(form)
+                                if k and k not in structural_sites_index:
+                                    structural_sites_index[k] = matched_atom
+                        # Skip emitting — we merged into structural.
+                        _cat_counts[category]["merged"] = _cat_counts[category].get("merged", 0) + 1
+                        continue
                 # Field-level garbage check
                 bad_field = False
                 for field in ("id", "site_id", "name", "facility_name", "canonical_name"):
@@ -4712,21 +4793,21 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             _project_id = (
                 getattr(atom_list[0], "project_id", "") if atom_list else ""
             )
-            # v53.9: count existing structural physical_site atoms so the
-            # bridge knows whether to suppress LLM site_clusters as new
-            # physical_site atoms (would create hallucinated canonicals
-            # competing with authoritative roster IDs).
-            _existing_phys = sum(
-                1 for a in atom_list
-                if (getattr(a, "atom_type", None).value
-                    if hasattr(getattr(a, "atom_type", None), "value")
-                    else str(getattr(a, "atom_type", "") or "")) == "physical_site"
-            )
+            # v55: pass the ACTUAL list of structural physical_site atoms
+            # to the bridge (not just a count). The bridge uses this to
+            # MERGE matching LLM site_cluster aliases into existing atoms
+            # instead of suppressing/duplicating them. See _entities_to_atoms.
+            def _atype_str(a: Any) -> str:
+                at = getattr(a, "atom_type", None)
+                return at.value if hasattr(at, "value") else str(at or "")
+            _existing_phys_list = [a for a in atom_list if _atype_str(a) == "physical_site"]
+            _existing_phys = len(_existing_phys_list)
             bridge_atoms = _entities_to_atoms(
                 multi_result,
                 project_id=_project_id,
                 artifact_ids=_artifact_ids,
                 existing_physical_site_count=_existing_phys,
+                existing_physical_sites=_existing_phys_list,
             )
             if bridge_atoms:
                 atom_list.extend(bridge_atoms)

@@ -48,7 +48,12 @@ from typing import Any, Callable
 DEFAULT_HOST = "http://100.114.102.122:11434"
 DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_TIMEOUT = 360  # v44.4: bumped from 240s — ollama on Mac queues
-DEFAULT_PARALLEL = 3   # v44.4: was 5 — Mac ollama 1-4 concurrent ceiling
+# v55: bumped 3→8. LLM calls are I/O-bound; even when Mac Ollama
+# saturates earlier, the extras queue at Ollama-side without dropping
+# (timeout=360s is generous). All 25 extractors merge into ONE pool
+# now (was 2 phases), letting fast/skipped extractors yield slots to
+# slower ones instead of leaving the pool idle between phases.
+DEFAULT_PARALLEL = 8
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -74,9 +79,19 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     if not by_artifact:
         return _empty_result()
 
+    # v55: build per-doc atom-type presence index once. Used by the
+    # relevance gate to skip doc×extractor pairs that have no
+    # plausible signal (e.g. stakeholder extractor on a BOM xlsx).
+    atom_type_index = _build_atom_type_index(atoms)
+
+    def _gated(extractor_key: str) -> dict[str, dict[str, Any]]:
+        return _filter_by_artifact(by_artifact, extractor_key, atom_type_index)
+
+    # Per-category excerpts use the gated slice so prompts shrink for
+    # extractors whose docs got pruned.
     excerpts = {
-        "customer": _build_excerpt_for_customer(by_artifact),
-        "milestones": _build_excerpt_for_milestones(by_artifact),
+        "customer": _build_excerpt_for_customer(_gated("customer")),
+        "milestones": _build_excerpt_for_milestones(_gated("milestones")),
     }
 
     # Three categories get the chunked-per-doc path (one LLM call per
@@ -114,16 +129,19 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
 
     if use_retrieval:
         def _retrieved_or_chunked_requirements() -> list[dict[str, Any]]:
-            r = _extract_requirements_retrieved(by_artifact)
-            return r if r else _extract_requirements_chunked(by_artifact)
+            ba = _gated("requirements")
+            r = _extract_requirements_retrieved(ba)
+            return r if r else _extract_requirements_chunked(ba)
 
         def _retrieved_or_chunked_stakeholders() -> list[dict[str, Any]]:
-            r = _extract_stakeholders_retrieved(by_artifact)
-            return r if r else _extract_stakeholders_chunked(by_artifact)
+            ba = _gated("stakeholders")
+            r = _extract_stakeholders_retrieved(ba)
+            return r if r else _extract_stakeholders_chunked(ba)
 
         def _retrieved_or_chunked_sites() -> list[dict[str, Any]]:
-            r = _extract_site_clusters_retrieved(by_artifact)
-            return r if r else _extract_site_clusters_chunked(by_artifact)
+            ba = _gated("site_clusters")
+            r = _extract_site_clusters_retrieved(ba)
+            return r if r else _extract_site_clusters_chunked(ba)
 
         calls: dict[str, Callable[[], Any]] = {
             "customer": lambda: _extract_customer(excerpts["customer"]),
@@ -131,63 +149,71 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             "milestones": lambda: _extract_milestones(excerpts["milestones"]),
             "requirements": _retrieved_or_chunked_requirements,
             "site_clusters": _retrieved_or_chunked_sites,
-            "quantities": lambda: _extract_quantities_retrieved(by_artifact),
+            "quantities": lambda: _extract_quantities_retrieved(_gated("quantities")),
             # v43 — 5 new entity-type extractors
-            "certifications": lambda: _extract_certifications_retrieved(by_artifact),
-            "risks": lambda: _extract_risks_retrieved(by_artifact),
-            "acceptance_criteria": lambda: _extract_acceptance_retrieved(by_artifact),
-            "penalties": lambda: _extract_penalties_retrieved(by_artifact),
-            "compliance_obligations": lambda: _extract_compliance_obligations_retrieved(by_artifact),
+            "certifications": lambda: _extract_certifications_retrieved(_gated("certifications")),
+            "risks": lambda: _extract_risks_retrieved(_gated("risks")),
+            "acceptance_criteria": lambda: _extract_acceptance_retrieved(_gated("acceptance_criteria")),
+            "penalties": lambda: _extract_penalties_retrieved(_gated("penalties")),
+            "compliance_obligations": lambda: _extract_compliance_obligations_retrieved(_gated("compliance_obligations")),
             # v48 — 3 new extractors
-            "lead_times": lambda: _extract_lead_times_retrieved(by_artifact),
-            "electrical_acceptance": lambda: _extract_electrical_acceptance_retrieved(by_artifact),
-            "payment_terms": lambda: _extract_payment_terms_retrieved(by_artifact),
+            "lead_times": lambda: _extract_lead_times_retrieved(_gated("lead_times")),
+            "electrical_acceptance": lambda: _extract_electrical_acceptance_retrieved(_gated("electrical_acceptance")),
+            "payment_terms": lambda: _extract_payment_terms_retrieved(_gated("payment_terms")),
             # v49 — 11 new extractors for zero-extraction categories
-            "cutover_steps": lambda: _extract_cutover_steps_retrieved(by_artifact),
-            "signatories": lambda: _extract_signatories_retrieved(by_artifact),
-            "compliance_classifications": lambda: _extract_compliance_class_retrieved(by_artifact),
-            "integration_checkpoints": lambda: _extract_integration_checkpoints_retrieved(by_artifact),
-            "deliverables": lambda: _extract_deliverables_retrieved(by_artifact),
-            "system_mappings": lambda: _extract_system_mappings_retrieved(by_artifact),
-            "data_flow_steps": lambda: _extract_data_flow_steps_retrieved(by_artifact),
-            "assumptions": lambda: _extract_assumptions_retrieved(by_artifact),
-            "approval_authorities": lambda: _extract_approval_authorities_retrieved(by_artifact),
-            "dependencies": lambda: _extract_dependencies_retrieved(by_artifact),
+            "cutover_steps": lambda: _extract_cutover_steps_retrieved(_gated("cutover_steps")),
+            "signatories": lambda: _extract_signatories_retrieved(_gated("signatories")),
+            "compliance_classifications": lambda: _extract_compliance_class_retrieved(_gated("compliance_classifications")),
+            "integration_checkpoints": lambda: _extract_integration_checkpoints_retrieved(_gated("integration_checkpoints")),
+            "deliverables": lambda: _extract_deliverables_retrieved(_gated("deliverables")),
+            "system_mappings": lambda: _extract_system_mappings_retrieved(_gated("system_mappings")),
+            "data_flow_steps": lambda: _extract_data_flow_steps_retrieved(_gated("data_flow_steps")),
+            "assumptions": lambda: _extract_assumptions_retrieved(_gated("assumptions")),
+            "approval_authorities": lambda: _extract_approval_authorities_retrieved(_gated("approval_authorities")),
+            "dependencies": lambda: _extract_dependencies_retrieved(_gated("dependencies")),
             # GAP D FIX: pricing_structure → payment_term atoms via entity bridge
-            "pricing_structure": lambda: _extract_pricing_structure_retrieved(by_artifact),
+            "pricing_structure": lambda: _extract_pricing_structure_retrieved(_gated("pricing_structure")),
             # v52 — 2 more new extractors
-            "blackout_date_range": lambda: _extract_blackout_dates_retrieved(by_artifact),
-            "approval_decision": lambda: _extract_approval_decisions_retrieved(by_artifact),
+            "blackout_date_range": lambda: _extract_blackout_dates_retrieved(_gated("blackout_date_range")),
+            "approval_decision": lambda: _extract_approval_decisions_retrieved(_gated("approval_decision")),
         }
     else:
         calls = {
             "customer": lambda: _extract_customer(excerpts["customer"]),
-            "stakeholders": lambda: _extract_stakeholders_chunked(by_artifact),
+            "stakeholders": lambda: _extract_stakeholders_chunked(_gated("stakeholders")),
             "milestones": lambda: _extract_milestones(excerpts["milestones"]),
-            "requirements": lambda: _extract_requirements_chunked(by_artifact),
-            "site_clusters": lambda: _extract_site_clusters_chunked(by_artifact),
+            "requirements": lambda: _extract_requirements_chunked(_gated("requirements")),
+            "site_clusters": lambda: _extract_site_clusters_chunked(_gated("site_clusters")),
         }
 
     results: dict[str, Any] = _empty_result()
-    # v50 PHASED EXECUTION — split extractors into 2 phases so the
-    # newer / experimental categories can't shadow the proven v43/v48
-    # ones via proxy queue saturation. Phase 1 = stable extractors,
-    # phase 2 = v49+ newer ones. Each phase uses its own thread pool.
-    _PHASE2_KEYS = {
+    # v55 SINGLE-POOL EXECUTION — was split into 2 phases (stable v43/v48
+    # then experimental v49+) so the newer extractors couldn't shadow the
+    # proven ones via proxy queue saturation. With max_workers bumped to
+    # 8 (was 3), a single pool sees ~3× the concurrency, so the queue is
+    # short and "shadowing" isn't a real concern. We submit stable
+    # extractors FIRST so when the queue does back up at Ollama it's the
+    # older / higher-value calls that already entered the wire.
+    _PRIORITY_KEYS = (
+        # phase-1 stable extractors — submit first so they start first
+        "customer", "stakeholders", "milestones", "requirements",
+        "site_clusters", "quantities",
+        "certifications", "risks", "acceptance_criteria",
+        "penalties", "compliance_obligations",
+        "lead_times", "electrical_acceptance", "payment_terms",
+        # phase-2 experimental — submit after
         "cutover_steps", "signatories", "compliance_classifications",
         "integration_checkpoints", "deliverables", "system_mappings",
         "data_flow_steps", "assumptions", "approval_authorities",
         "dependencies", "pricing_structure",
-        # v52
         "blackout_date_range", "approval_decision",
-    }
-    phase1_calls = {k: fn for k, fn in calls.items() if k not in _PHASE2_KEYS}
-    phase2_calls = {k: fn for k, fn in calls.items() if k in _PHASE2_KEYS}
-    for phase_calls in (phase1_calls, phase2_calls):
-        if not phase_calls:
-            continue
+    )
+    ordered_keys = [k for k in _PRIORITY_KEYS if k in calls]
+    # Any key not in _PRIORITY_KEYS (future additions) lands at the end.
+    ordered_keys.extend(k for k in calls if k not in _PRIORITY_KEYS)
+    if ordered_keys:
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
-            futures = {pool.submit(fn): key for key, fn in phase_calls.items()}
+            futures = {pool.submit(calls[k]): k for k in ordered_keys}
             for fut in concurrent.futures.as_completed(futures):
                 key = futures[fut]
                 try:
@@ -636,6 +662,257 @@ def _empty_result() -> dict[str, Any]:
 
 
 # ════════════════════════════════════════════════════════════════════
+# v55 — PER-DOC RELEVANCE GATE
+# ════════════════════════════════════════════════════════════════════
+#
+# For each extractor, drop documents whose filename / atom-type
+# composition / body text contain no signal for that entity category.
+# A doc that has zero stakeholder atoms, no "@" in any body, and no
+# people-related filename token shouldn't have stakeholder extraction
+# run on it. Same for BOM lines, payment terms, cutover steps, etc.
+#
+# SAFETY MODEL: a doc passes the gate when ANY of (filename keyword,
+# atom-type present, body keyword) match. We err on the side of
+# INCLUDING. The gate only kicks in when ALL three signal channels
+# stay silent — i.e. there's genuinely nothing in this doc for this
+# extractor to chew on.
+#
+# Disable with SOWSMITH_RELEVANCE_GATE_DISABLE=1.
+
+# Each entry: extractor_key → {filename_kw, atom_types, text_kw}.
+# Empty list = "no signal source of this kind — rely on the others."
+# When all three sources are empty for an extractor, the gate is
+# effectively a no-op for that extractor (every doc passes).
+_RELEVANCE_SIGNALS: dict[str, dict[str, tuple[str, ...]]] = {
+    "customer": {
+        # Customer name lives in cover-page docs. Keep brief / overview / SOW.
+        "filename_kw": ("overview", "brief", "summary", "executive", "deal", "rfp", "sow", "statement_of_work"),
+        "atom_types": (),
+        "text_kw": (),
+    },
+    "stakeholders": {
+        "filename_kw": ("contact", "stakeholder", "team", "roster", "personnel", "contracting", "procurement"),
+        "atom_types": ("stakeholder", "signatory"),
+        "text_kw": ("@", "phone:", "contact ", "signatory", "manager", "director", "project manager"),
+    },
+    "milestones": {
+        "filename_kw": ("schedule", "timeline", "cutover", "milestone", "project_schedule", "plan", "sow"),
+        "atom_types": ("milestone_phase", "task"),
+        "text_kw": ("milestone", "kickoff", "go-live", "go live", "cutover", "phase", "deadline"),
+    },
+    "requirements": {
+        "filename_kw": ("sow", "statement_of_work", "requirement", "specification", "spec", "rfp", "survey", "compliance", "security"),
+        "atom_types": ("requirement",),
+        "text_kw": ("shall ", "must ", "required", "will provide"),
+    },
+    "site_clusters": {
+        "filename_kw": ("site", "location", "facility", "roster", "survey", "address", "overview"),
+        "atom_types": ("physical_site", "site_allocation", "site_attribute"),
+        "text_kw": (" street", " road", " ave", " blvd", " building", " campus", " school", " hospital"),
+    },
+    "quantities": {
+        "filename_kw": ("bom", "material", "hardware", "schedule", "sow", "pricing", "commercial", "spec"),
+        "atom_types": ("bom_line", "site_allocation", "quantity"),
+        "text_kw": (" qty", "quantity", " each ", " ea.", " ea ", " per ", "%", "uptime", "sla"),
+    },
+    "certifications": {
+        "filename_kw": ("compliance", "security", "rfp", "spec", "sow", "integration"),
+        "atom_types": ("compliance_classification", "compliance_obligation"),
+        "text_kw": ("pci", "soc 2", "soc2", "hipaa", "iso ", "nist", "ferpa", "nfpa", "tia-", "certified"),
+    },
+    "risks": {
+        "filename_kw": ("risk", "rfp", "sow", "overview", "commercial"),
+        "atom_types": ("risk",),
+        "text_kw": ("risk", "contingen", "dependent on"),
+    },
+    "acceptance_criteria": {
+        "filename_kw": ("sow", "acceptance", "commercial", "spec", "test"),
+        "atom_types": ("acceptance_criterion",),
+        "text_kw": ("accept", " criterion", "criteria", "test", "validation"),
+    },
+    "penalties": {
+        "filename_kw": ("contract", "procurement", "commercial", "terms", "rfp"),
+        "atom_types": (),
+        "text_kw": ("penalty", "liquidated damages", "service credit", "terminat", "default"),
+    },
+    "compliance_obligations": {
+        "filename_kw": ("compliance", "security", "rfp", "sow", "regulatory", "integration"),
+        "atom_types": ("compliance_obligation",),
+        "text_kw": ("statute", "regulation", "comply ", "cfr", " usc ", "ferpa", "hipaa", "pci"),
+    },
+    "lead_times": {
+        "filename_kw": ("bom", "procurement", "schedule", "hardware", "commercial"),
+        "atom_types": ("bom_line",),
+        "text_kw": ("lead time", "aro", "after po", "delivery", "ship "),
+    },
+    "electrical_acceptance": {
+        "filename_kw": ("sow", "acceptance", "test", "electrical", "spec", "survey"),
+        "atom_types": (),
+        "text_kw": ("megger", "otdr", " ground ", "fiber", " poe ", " ups ", "burn-in"),
+    },
+    "payment_terms": {
+        "filename_kw": ("commercial", "pricing", "contract", "procurement", "payment"),
+        "atom_types": ("payment_term",),
+        "text_kw": ("payment", "net 30", "net 45", "net 60", "deposit", "retainage", "milestone"),
+    },
+    "cutover_steps": {
+        "filename_kw": ("cutover", "schedule", "go-live", "migration", "plan"),
+        "atom_types": ("cutover_step",),
+        "text_kw": ("cutover", " t-", " t+", "go-live", "go live", "rollback"),
+    },
+    "signatories": {
+        "filename_kw": ("contract", "procurement", "commercial", "acceptance"),
+        "atom_types": ("signatory",),
+        "text_kw": ("signature", "signed by", " by:", "authorized", "approved by"),
+    },
+    "compliance_classifications": {
+        "filename_kw": ("security", "compliance", "data", "integration"),
+        "atom_types": ("compliance_classification",),
+        "text_kw": ("confidential", "classification", "pii", "restricted", " public "),
+    },
+    "integration_checkpoints": {
+        "filename_kw": ("integration", "security", "sow", "test"),
+        "atom_types": ("integration_checkpoint",),
+        "text_kw": ("ic-", "integration test", "checkpoint", "handoff"),
+    },
+    "deliverables": {
+        "filename_kw": ("sow", "deliverable", "schedule", "acceptance"),
+        "atom_types": ("deliverable",),
+        "text_kw": ("deliverable", "submit", "as-built", "documentation", "training material"),
+    },
+    "system_mappings": {
+        "filename_kw": ("integration", "security", "data"),
+        "atom_types": ("system_mapping",),
+        "text_kw": ("mapping", "source ", "target ", "hubspot", "crm", "field "),
+    },
+    "data_flow_steps": {
+        "filename_kw": ("data", "integration", "flow", "security"),
+        "atom_types": (),
+        "text_kw": ("data flow", "export", "import", "pipeline", "etl"),
+    },
+    "assumptions": {
+        "filename_kw": ("commercial", "pricing", "sow", "assumption", "overview"),
+        "atom_types": (),
+        "text_kw": ("assume", "assuming", "exclude", "excludes ", "this quote"),
+    },
+    "approval_authorities": {
+        "filename_kw": ("contract", "procurement", "commercial"),
+        "atom_types": (),
+        "text_kw": ("approval", "authorized", "sign-off", "sign off", "threshold"),
+    },
+    "dependencies": {
+        "filename_kw": ("schedule", "sow", "dependency", "integration"),
+        "atom_types": (),
+        "text_kw": ("depend", "prerequisite", "predecessor", "blocked by", "contingent"),
+    },
+    "pricing_structure": {
+        "filename_kw": ("commercial", "pricing", "bom", "procurement", "contract"),
+        "atom_types": (),
+        "text_kw": ("%", "payment", "milestone", "billing", "deposit", "retainage"),
+    },
+    "blackout_date_range": {
+        "filename_kw": ("schedule", "commercial", "sow", "policy"),
+        "atom_types": (),
+        "text_kw": ("blackout", "freeze", "holiday", "thanksgiving", "christmas", "no work"),
+    },
+    "approval_decision": {
+        "filename_kw": ("contract", "commercial", "procurement"),
+        "atom_types": (),
+        "text_kw": ("approved", "approval", "pending", "conditional"),
+    },
+}
+
+
+def _build_atom_type_index(atoms: list[Any]) -> dict[str, set[str]]:
+    """Map artifact_id → set of atom_type strings present in that doc.
+
+    Cheap one-pass scan over the atom list. Used by the relevance
+    gate so each extractor can ask "does any atom of type X exist
+    in doc Y?" without re-scanning.
+    """
+    out: dict[str, set[str]] = {}
+    for atom in atoms:
+        aid = getattr(atom, "artifact_id", None)
+        if not aid:
+            continue
+        atype = getattr(atom, "atom_type", None)
+        atype_str = atype.value if hasattr(atype, "value") else str(atype or "")
+        if atype_str:
+            out.setdefault(aid, set()).add(atype_str)
+    return out
+
+
+def _doc_is_relevant_for(
+    extractor_key: str,
+    slot: dict[str, Any],
+    atom_types_in_doc: set[str],
+) -> bool:
+    """Return True when this doc has ANY signal for this extractor.
+
+    OR across three independent signals so a hit on any one channel
+    is sufficient. If the extractor has no entry in _RELEVANCE_SIGNALS
+    (e.g. one added in a future patch we haven't classified), we
+    default to True so the extractor still runs everywhere.
+    """
+    sig = _RELEVANCE_SIGNALS.get(extractor_key)
+    if not sig:
+        return True
+    # 1. Filename keyword
+    filename = (slot.get("filename") or "").lower()
+    for kw in sig.get("filename_kw", ()):
+        if kw in filename:
+            return True
+    # 2. Atom-type presence
+    for at in sig.get("atom_types", ()):
+        if at in atom_types_in_doc:
+            return True
+    # 3. Body keyword
+    text_kws = sig.get("text_kw", ())
+    if text_kws:
+        # Stitch a single search blob to avoid N-way passes per doc.
+        # Headings + first chunk of bodies is usually enough — full-body
+        # scan would defeat the point of a fast gate.
+        headings_blob = " ".join(slot.get("headings") or ())
+        bodies = slot.get("bodies") or ()
+        body_blob = " ".join(bodies[:5]) if bodies else ""
+        haystack = (headings_blob + " " + body_blob).lower()
+        for kw in text_kws:
+            if kw in haystack:
+                return True
+    # If this extractor has only filename signal and no body/atom-type
+    # source AND filename didn't match → default to TRUE (don't gate on
+    # filename alone). This keeps the gate conservative.
+    if not sig.get("atom_types") and not sig.get("text_kw"):
+        return True
+    return False
+
+
+def _filter_by_artifact(
+    by_artifact: dict[str, dict[str, Any]],
+    extractor_key: str,
+    atom_type_index: dict[str, set[str]],
+) -> dict[str, dict[str, Any]]:
+    """Return a new by_artifact dict containing only docs the gate
+    judges relevant for ``extractor_key``. Never returns empty when
+    by_artifact was non-empty — if the gate would drop every doc, we
+    fall back to passing through unchanged so the extractor still has
+    SOMETHING to work with.
+    """
+    if os.environ.get("SOWSMITH_RELEVANCE_GATE_DISABLE"):
+        return by_artifact
+    filtered: dict[str, dict[str, Any]] = {}
+    for aid, slot in by_artifact.items():
+        if _doc_is_relevant_for(
+            extractor_key, slot, atom_type_index.get(aid, set())
+        ):
+            filtered[aid] = slot
+    if filtered:
+        return filtered
+    # Fallback — empty filter is suspicious; preserve old behavior.
+    return by_artifact
+
+
+# ════════════════════════════════════════════════════════════════════
 # DOC EXCERPT BUILDERS (per-category)
 # ════════════════════════════════════════════════════════════════════
 
@@ -1059,9 +1336,15 @@ def _extract_with_chunked_dispatch(
                 continue
             prompt = build_prompt(chunk)
             text = _call_ollama(prompt, max_tokens=max_tokens)
+            # v55: try tolerant parser when strict path fails — recovers
+            # complete objects from a stream truncated by max_tokens
+            # (132-site APS roster discovered to overflow 2048 tokens
+            # and previously yielded 0 items).
             obj = _parse_json_object(text)
             if not isinstance(obj, dict):
-                continue
+                obj = _parse_json_object_tolerant(text, array_key=output_key)
+                if not isinstance(obj, dict):
+                    continue
             items = obj.get(output_key)
             for rec in _normalize_objects(
                 items, fields, is_stakeholder=is_stakeholder
@@ -1113,13 +1396,20 @@ def _extract_site_clusters_chunked(
 ) -> list[dict[str, Any]]:
     """Multi-chunk site-cluster extraction — catches roster tables /
     school lists buried later in big PDFs (Albuquerque Public Schools,
-    Muskegon Paging, etc.)."""
+    Muskegon Paging, etc.).
+
+    v55: max_tokens 2048 → 16384. APS-style 132-site rosters need ~12K
+    tokens to stream the full JSON; the prior 2048 cap silently
+    truncated past the first ~30 sites and the parser dumped the whole
+    response. The chunked dispatcher already passes any unterminated
+    JSON through a tolerant recovery path (see _parse_json_object_tolerant).
+    """
     out_raw = _extract_with_chunked_dispatch(
         by_artifact,
         build_prompt=_build_site_clusters_prompt,
         output_key="site_clusters",
         fields=("canonical_name", "aliases"),
-        max_tokens=2048,
+        max_tokens=16384,
     )
     # The dispatcher returns plain dicts; normalize through the
     # cluster-validator to merge aliases properly.
@@ -1177,12 +1467,19 @@ If no real sites, return: {{"site_clusters": []}}
 def _extract_site_clusters(docs_excerpt: str) -> list[dict[str, Any]]:
     """Single-call extraction — kept for back-compat. The chunked
     variant ``_extract_site_clusters_chunked`` is what the parallel
-    runner uses now."""
+    runner uses now.
+
+    v55: bumped max_tokens 2048 → 16384 and switched to tolerant parser
+    so a 132-site roster (APS) yields all sites instead of 0. Discovered
+    via aps_b_prompt_test bake-off — qwen3:32b streams complete site
+    objects but at 2048 tokens it hit max budget after only ~30 sites
+    and the JSON parser dumped the whole truncated stream.
+    """
     if not docs_excerpt:
         return []
     prompt = _build_site_clusters_prompt(docs_excerpt)
-    text = _call_ollama(prompt, max_tokens=2048)
-    obj = _parse_json_object(text)
+    text = _call_ollama(prompt, max_tokens=16384)
+    obj = _parse_json_object_tolerant(text, array_key="site_clusters")
     if not isinstance(obj, dict):
         return []
     return _normalize_site_clusters(obj.get("site_clusters"))
@@ -1600,10 +1897,13 @@ def _run_retrieval_extract(
     if not candidates:
         return []
 
-    # v44.4: was 12, lowered to 6 to avoid ollama saturation on Mac
-    # (3 extractors x 6 canon = 18 max concurrent LLM calls, vs old
-    # 5 x 12 = 60).
-    parallel = int(os.environ.get("SOWSMITH_CANONICALIZE_PARALLEL", "6"))
+    # v44.4: was 12, lowered to 6 for Mac ollama. v55: bumped to 8 —
+    # outer extractor pool went 3→8, but most extractors hit the
+    # relevance gate and finish fast, so concurrent in-flight LLM calls
+    # rarely hit (8 outer × 8 inner = 64). Queueing at Ollama is fine;
+    # higher canonicalize concurrency drops per-extractor wall time
+    # when its candidate list is large (requirements top_k=600).
+    parallel = int(os.environ.get("SOWSMITH_CANONICALIZE_PARALLEL", "8"))
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -2982,6 +3282,101 @@ def _parse_json_object(response_text: str) -> dict[str, Any] | None:
         return json.loads(response_text[start:end + 1])
     except json.JSONDecodeError:
         return None
+
+
+def _parse_json_object_tolerant(
+    response_text: str,
+    *,
+    array_key: str,
+) -> dict[str, Any] | None:
+    """Like ``_parse_json_object`` but recovers gracefully when the LLM
+    response was truncated mid-stream (hit max_tokens before closing the
+    JSON). Specifically: locates the array under ``array_key``, walks
+    forward through it object-by-object, and returns everything that
+    parsed cleanly before truncation.
+
+    Returns ``{"<array_key>": [obj1, obj2, ...]}`` so callers can treat
+    the output identically to the non-truncated path.
+
+    v55: discovered via APS bake-off — qwen3:32b streams 100+ valid
+    site objects before max_tokens hits, but the closing ``]}`` never
+    arrives, so strict JSON parse rejects the whole thing.
+    """
+    # First try the strict path — most responses are well-formed.
+    obj = _parse_json_object(response_text)
+    if isinstance(obj, dict) and array_key in obj:
+        return obj
+
+    if not response_text:
+        return None
+
+    # Locate the array opening: "<array_key>": [
+    # Use a tolerant search — quote style + whitespace can vary.
+    import re as _re
+    key_pat = _re.compile(r'"' + _re.escape(array_key) + r'"\s*:\s*\[')
+    m = key_pat.search(response_text)
+    if not m:
+        return None
+    cursor = m.end()  # index just past the opening [
+
+    recovered: list[dict[str, Any]] = []
+    n = len(response_text)
+    while cursor < n:
+        # Skip whitespace + comma + newline between objects
+        while cursor < n and response_text[cursor] in " \t\r\n,":
+            cursor += 1
+        if cursor >= n:
+            break
+        ch = response_text[cursor]
+        if ch == "]":
+            break  # clean array close
+        if ch != "{":
+            # Unexpected token (e.g. truncation mid-string) — stop.
+            break
+
+        # Walk this object via brace-matching identical to the strict parser.
+        depth = 0
+        in_str = False
+        esc = False
+        obj_end = -1
+        for i in range(cursor, n):
+            c = response_text[i]
+            if esc:
+                esc = False
+                continue
+            if c == "\\":
+                esc = True
+                continue
+            if c == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    obj_end = i
+                    break
+        if obj_end < 0:
+            # Object never closed — we're at truncation boundary. Stop.
+            break
+
+        chunk = response_text[cursor:obj_end + 1]
+        try:
+            parsed = json.loads(chunk)
+        except json.JSONDecodeError:
+            # Bad object — stop. Don't try to skip ahead, the stream is
+            # corrupted past this point.
+            break
+        if isinstance(parsed, dict):
+            recovered.append(parsed)
+        cursor = obj_end + 1
+
+    if not recovered:
+        return None
+    return {array_key: recovered}
 
 
 def _looks_like_email_or_url(value: str) -> bool:
