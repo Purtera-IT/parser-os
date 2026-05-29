@@ -1275,25 +1275,92 @@ def _device_union_for_pack(pack: DomainPack, alias_index: dict[str, str]) -> tup
     return _DEVICE_UNION_CACHE[key]
 
 
+# ─── v57 P2: negation guard for device alias matching ───
+# When a doc says "Programming is pretty easy, but not via thumb drive",
+# the substring "thumb drive" matches the ``storage`` alias and we emit
+# ``device:storage`` — a hallucination, since the sentence is denying
+# that device. Same trap for "no external drive", "without HDD", etc.
+#
+# We scan a small window (~40 chars) before each match for negation
+# cues. If a strong negator appears AND no positive override (like
+# "and", "but also") intervenes, the match is suppressed.
+_NEGATION_CUES = (
+    "but not",
+    "but no ",
+    "but no,",
+    "but no.",
+    "not via",
+    "not using",
+    "without ",
+    " no ",
+    "rather than ",
+    "instead of ",
+    "as opposed to ",
+)
+_NEGATION_OVERRIDES = (
+    " and also ",
+    "; also ",
+    ", also ",
+    " plus ",
+)
+
+
+def _is_negated_match(text_lower: str, span_start: int) -> bool:
+    """Return True if the device-alias match at ``span_start`` is
+    preceded by a negation cue inside the last ~40 chars.
+
+    Conservative: requires the negator to appear AFTER any positive
+    override word (so "we ship HDD and also no tape backup" still
+    emits ``device:storage`` from the HDD half).
+    """
+    window_start = max(0, span_start - 40)
+    window = text_lower[window_start:span_start]
+    last_neg = -1
+    for cue in _NEGATION_CUES:
+        idx = window.rfind(cue)
+        if idx > last_neg:
+            last_neg = idx
+    if last_neg < 0:
+        return False
+    last_override = -1
+    for cue in _NEGATION_OVERRIDES:
+        idx = window.rfind(cue)
+        if idx > last_override:
+            last_override = idx
+    # Negator only "wins" when it's the most recent cue in the window.
+    return last_neg > last_override
+
+
 def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack | None = None) -> set[str]:
     """Emit ``device:<canonical>`` keys for every alias in
     ``alias_index`` that word-matches ``text_lower``.
 
     Fast path: when ``pack`` is supplied we use the cached union regex
     (single sweep, O(matches) work). Legacy path: iterate aliases.
+
+    v57 P2: skip matches preceded by negation cues ("but not", "without",
+    "no", "rather than"). Prevents ``thumb drive`` → ``device:storage``
+    hallucination from text like "but not via thumb drive".
     """
     keys: set[str] = set()
     if pack is not None:
         pattern, _ = _device_union_for_pack(pack, alias_index)
         for match in pattern.finditer(text_lower):
+            if _is_negated_match(text_lower, match.start()):
+                continue
             alias = match.group(1)
             canonical = alias_index.get(alias)
             if canonical:
                 keys.add(f"device:{_slugify(canonical)}")
         return keys
     for alias_norm, canonical in alias_index.items():
-        if _word_match(text_lower, alias_norm):
-            keys.add(f"device:{_slugify(canonical)}")
+        pattern = _compiled_word_pattern(alias_norm)
+        match = pattern.search(text_lower)
+        if match is None:
+            continue
+        if _is_negated_match(text_lower, match.start()):
+            continue
+        keys.add(f"device:{_slugify(canonical)}")
     return keys
 
 

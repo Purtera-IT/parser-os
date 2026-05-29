@@ -66,6 +66,89 @@ PDF_MAGIC = b"%PDF-"
 _QA_BOUNDARY_REGEX = re.compile(r"(?=(?:^|\s)[QA]\d{1,3}\.\s)")
 _QA_PAIR_PROBE = re.compile(r"\b[QA]\d{1,3}\.\s")
 
+# ─── v57 P1.1b: form-style Q&A (no Q1./A1. markers) ───
+# Discovery notes / pre-proposal interview transcripts often use a
+# free-form pattern like:
+#   "City/state for this location? – location Santa Fe, NM 87506
+#    What size TVs? – LG part 65UN570H0UD – 65"
+#    Will techs need to perform an inventory count?  Yes
+#    Property has 23 dwellings, approx 8 have second story..."
+#
+# Each question ends in "?" and is followed by an answer (possibly
+# prefixed with an em-dash "–"). The whole transcript is one PDF
+# paragraph, so without splitting we get one giant blob.
+_FORM_QA_BOUNDARY = re.compile(
+    # Split AFTER a "?", consuming the trailing whitespace and an
+    # optional em-dash answer prefix. Lookahead requires the next
+    # chunk to start with *any* alpha char. The ≥3 "?" gate at
+    # the top of ``_split_form_qa_blob`` already prevents firing on
+    # normal prose with one or two rhetorical questions.
+    r"(?<=\?)[\s ]+(?:[–—-][\s ]+)?(?=[A-Za-z])"
+)
+# After splitting at "?" boundaries, the final chunk may be a trailing
+# statement (no "?" in it) — like "Property has 23 dwellings..." after
+# the last question. We want to KEEP that as a separate atom because
+# it carries scope.
+_DECLARATIVE_TAIL_BOUNDARY = re.compile(
+    # Split at sentence-final "." followed by "  " or start of capital
+    # word that begins a new declarative fact. Conservative — requires
+    # ≥2 whitespace OR newline so we don't split mid-paragraph prose.
+    r"(?<=[.!)])[\s\xa0]+(?=[A-Z][a-z])"
+)
+_NBSP_REWRITE = re.compile(r"(?:&nbsp;|&#160;| )+")
+
+
+def _decode_html_entities(text: str) -> str:
+    """Replace common HTML entities + non-breaking-space runs with a
+    single regular space.
+
+    The PDF text extractor occasionally surfaces &nbsp; / \\u00A0 when
+    a copy-paste source preserved literal HTML; downstream tokenizers
+    then split tokens on the wrong boundary or fail to lower-case
+    them correctly. Normalize at the splitter boundary so every
+    downstream pipeline sees clean prose.
+    """
+    if not text:
+        return text
+    return _NBSP_REWRITE.sub(" ", text)
+
+
+def _split_form_qa_blob(text: str) -> list[str]:
+    """Split a free-form Q&A interview transcript into per-question atoms.
+
+    Triggers when the paragraph contains ≥3 "?" marks AND no formal
+    ``Q\\d./A\\d.`` markers (those go through ``_split_qa_blob``).
+
+    Each emitted chunk is ``"<question?> <answer>"`` so downstream
+    typed-atom classification can fire on the full Q+A context.
+
+    A trailing declarative tail ("Property has 23 dwellings...") is
+    further split on ``". "`` sentence boundaries so each scope-bearing
+    fact becomes its own atom.
+    """
+    if not text:
+        return []
+    cleaned = _decode_html_entities(text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if cleaned.count("?") < 3:
+        return [cleaned]
+    if _QA_PAIR_PROBE.search(cleaned):
+        # Defer to the strict Q\d./A\d. splitter — don't double-handle.
+        return [cleaned]
+    parts = [p.strip() for p in _FORM_QA_BOUNDARY.split(cleaned) if p.strip()]
+    if len(parts) < 2:
+        return [cleaned]
+    # Last chunk may be a trailing declarative statement run-on;
+    # split it further on "<sentence>.<gap><Capital>" boundaries so
+    # quantity / disposition / process facts each get their own atom.
+    head, tail = parts[:-1], parts[-1]
+    tail_chunks = [
+        p.strip()
+        for p in _DECLARATIVE_TAIL_BOUNDARY.split(tail)
+        if p.strip()
+    ]
+    return head + tail_chunks
+
 
 def _split_qa_blob(text: str) -> list[str]:
     """Split a paragraph at Q\\d. / A\\d. boundaries.
@@ -2000,6 +2083,12 @@ def _atoms_for_block(
         # paragraphs without Q&A markers fall through to the original
         # single-atom path below.
         qa_chunks = _split_qa_blob(text)
+        # v57 P1.1b: free-form Q&A (no Q1./A1. markers, but many "?")
+        # also need splitting — discovery notes / interview transcripts.
+        if len(qa_chunks) < 2:
+            form_qa_chunks = _split_form_qa_blob(text)
+            if len(form_qa_chunks) >= 2:
+                qa_chunks = form_qa_chunks
         if len(qa_chunks) >= 2:
             for chunk_idx, chunk in enumerate(qa_chunks):
                 atom_type, authority = _classify_text_block(
