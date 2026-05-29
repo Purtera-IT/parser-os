@@ -1221,7 +1221,9 @@ def _filter_site_entities_against_physical_atoms(
     atoms: list[EvidenceAtom],
 ) -> list[EntityRecord]:
     """v57.3 — drop ``site:*`` entity records that don't trace to a
-    physical_site atom.
+    physical_site atom; v57.3.1 — also REWRITE atom.entity_keys so
+    atoms previously tagged with a ghost site key get reassigned to
+    the canonical site they actually describe.
 
     Why: ``orbitbrief-core/world_model/site_reality/cluster.py`` walks
     every ``site:*`` entity in the envelope and builds one cluster per
@@ -1236,6 +1238,16 @@ def _filter_site_entities_against_physical_atoms(
     or facility_name of a physical_site atom. Everything else is a
     ghost LLM cluster.
 
+    v57.3.1 follow-up: when we DROP a ghost site:* entity, atoms that
+    previously had ``entity_keys=[..., site:ghost_name]`` get orphaned
+    (their cluster disappears) — that's why the OPTBOT dossier showed
+    ATL-WEST-02 missing. Fix: for each dropped ghost, find the best
+    canonical match by token overlap against the physical_site facility
+    names, then walk all atoms and rewrite their entity_keys so
+    ``site:atlanta_west_office`` becomes ``site:atl_west_02``. The
+    canonical cluster then absorbs those atoms and passes
+    orbitbrief-core's >2-evidence gate.
+
     Non-``site:*`` entities (vendor, device, money, etc.) pass through
     untouched.
     """
@@ -1244,7 +1256,23 @@ def _filter_site_entities_against_physical_atoms(
     def _slug(s: str) -> str:
         return _re.sub(r"[^a-z0-9]+", "_", (s or "").lower()).strip("_")
 
-    canonical_site_slugs: set[str] = set()
+    def _tokens(slug: str) -> set[str]:
+        return {t for t in slug.split("_") if t and len(t) >= 2}
+
+    # ── 1. Build canonical site catalog from physical_site atoms.
+    # ``canonical_site_id_slugs`` = the *strict* truth (only the
+    # ``slug(site_id)`` of each canonical roster atom). An entity is
+    # accepted as canonical ONLY when its key matches one of these
+    # exactly. Everything else — even legitimate aliases like
+    # ``site:atl_047`` (truncation of ``atl_047_04``) — is treated as
+    # ghost and routed through token-overlap redirect so atoms collapse
+    # into the canonical key. This guarantees the dossier sees one
+    # cluster per real roster row.
+    canonical_site_id_slugs: set[str] = set()
+    canonical_to_token_sets: dict[str, list[set[str]]] = {}
+    # site_id slug → primary facility_name for entity injection.
+    primary_to_facility_name: dict[str, str] = {}
+
     for a in atoms:
         atype = getattr(a, "atom_type", None)
         atype_s = atype.value if hasattr(atype, "value") else str(atype or "")
@@ -1253,35 +1281,97 @@ def _filter_site_entities_against_physical_atoms(
         val = getattr(a, "value", None) or {}
         if not isinstance(val, dict):
             continue
-        for field in ("site_id", "id", "name", "facility_name"):
+        sid = val.get("site_id") or val.get("id") or ""
+        sid_slug = _slug(str(sid))
+        if not sid_slug:
+            continue
+        primary = sid_slug
+        canonical_site_id_slugs.add(primary)
+        canonical_to_token_sets.setdefault(primary, [])
+        facility = val.get("facility_name") or val.get("name") or sid
+        if isinstance(facility, str) and facility.strip():
+            primary_to_facility_name.setdefault(primary, facility.strip())
+        identity_strings: list[str] = []
+        for field in ("site_id", "id", "name", "facility_name", "address", "street_address"):
             v = val.get(field)
             if isinstance(v, str) and v.strip():
-                canonical_site_slugs.add(_slug(v))
-        # Multi-name slot used by some roster atoms.
+                identity_strings.append(v)
         names_field = val.get("names") or val.get("aliases") or ()
         if isinstance(names_field, (list, tuple)):
             for n in names_field:
                 if isinstance(n, str) and n.strip():
-                    canonical_site_slugs.add(_slug(n))
-    # Strip empties from any all-whitespace slugifications.
-    canonical_site_slugs.discard("")
+                    identity_strings.append(n)
+        for s in identity_strings:
+            slug = _slug(s)
+            if slug:
+                canonical_to_token_sets[primary].append(_tokens(slug))
 
-    # If the parser found no canonical sites, we have nothing to filter
-    # against — return as-is to avoid wiping every site:* entity on
-    # documents that legitimately have no roster.
-    if not canonical_site_slugs:
+    if not canonical_site_id_slugs:
         return entities
 
+    # ── 2. Pass 1 — classify each entity as canonical-or-ghost. For
+    # ghosts, also pick the best canonical to redirect them to.
     kept: list[EntityRecord] = []
+    ghost_to_canonical: dict[str, str] = {}  # ghost site_key → canonical site_key
+
+    def _best_canonical_for(candidate_slugs: set[str]) -> str | None:
+        """Return the primary canonical slug whose token sets best
+        overlap with any candidate slug, or None if no confident match.
+
+        Scoring is two-tier: ``(total_overlap, site_id_overlap)``.
+        Total overlap counts any identity-string token shared; site_id
+        overlap counts only tokens shared with the canonical's site_id
+        slug itself (the distinguishing piece).
+
+        Acceptance rule: REQUIRE at least one shared site_id token. This
+        catches ``atlanta_west_office`` -> ``atl_west_02`` (shares ``west``
+        with the site_id ``atl_west_02``) but rejects ``headquarters`` /
+        ``site:site`` (no site_id contains ``headquarters`` or ``site``).
+        Pure facility-name matches without a site_id token are too risky
+        — ``office`` alone is in every canonical and would over-collapse.
+        """
+        if not candidate_slugs:
+            return None
+        cand_tokens: set[str] = set()
+        for cs in candidate_slugs:
+            cand_tokens |= _tokens(cs)
+        if not cand_tokens:
+            return None
+        best_primary: str | None = None
+        best_score: tuple[int, int] = (0, 0)
+        for primary, token_sets in canonical_to_token_sets.items():
+            site_id_tokens = _tokens(primary)
+            # Exclude tokens that are pure digits or 1-char — they're
+            # too generic to be discriminative (``01``, ``02``, ``a``).
+            site_id_tokens = {t for t in site_id_tokens if len(t) >= 2 and not t.isdigit()}
+            site_id_overlap = len(cand_tokens & site_id_tokens)
+            if site_id_overlap < 1:
+                continue
+            for ts in token_sets:
+                total_overlap = len(cand_tokens & ts)
+                score = (total_overlap, site_id_overlap)
+                if score > best_score:
+                    best_score = score
+                    best_primary = primary
+        return best_primary
+
+    canonical_seen_in_entities: set[str] = set()
     for ent in entities:
         ck = getattr(ent, "canonical_key", "") or ""
         if not ck.startswith("site:"):
             kept.append(ent)
             continue
-        # Compute every slug this entity might match against canonical.
-        candidate_slugs: set[str] = set()
         ck_slug = ck[len("site:"):]
-        candidate_slugs.add(ck_slug)
+        # STRICT canonical: entity is real iff its slug == one of the
+        # canonical site_id slugs exactly. Everything else (truncated
+        # aliases, LLM names, year-suffix hallucinations) is a ghost and
+        # gets routed through the token-overlap redirect below.
+        if ck_slug in canonical_site_id_slugs:
+            kept.append(ent)
+            canonical_seen_in_entities.add(ck_slug)
+            continue
+        # Ghost — try to redirect to a canonical via token overlap.
+        candidate_slugs: set[str] = {ck_slug}
         cname = getattr(ent, "canonical_name", "") or ""
         if cname:
             candidate_slugs.add(_slug(cname))
@@ -1289,23 +1379,99 @@ def _filter_site_entities_against_physical_atoms(
             if isinstance(alias, str) and alias:
                 candidate_slugs.add(_slug(alias))
         candidate_slugs.discard("")
-        # Match: exact slug equality, OR canonical contains candidate as
-        # prefix (catches truncated aliases like ``atl_047`` → ``atl_047_04``),
-        # OR candidate contains canonical (catches expansions where the
-        # entity slug includes extra qualifier suffixes).
-        is_real = False
-        for cs in candidate_slugs:
-            if cs in canonical_site_slugs:
-                is_real = True
-                break
-            for canon in canonical_site_slugs:
-                if canon and (canon.startswith(cs + "_") or cs.startswith(canon + "_")):
-                    is_real = True
-                    break
-            if is_real:
-                break
-        if is_real:
-            kept.append(ent)
+        best_primary = _best_canonical_for(candidate_slugs)
+        if best_primary:
+            ghost_to_canonical[ck] = f"site:{best_primary}"
+
+    # ── 3. Pass 2 — rewrite atom.entity_keys: replace each ghost site
+    # key with its canonical-mapped site key. This redirects orphaned
+    # atoms into the canonical cluster so the >2-evidence gate in
+    # orbitbrief-core promotes them.
+    if ghost_to_canonical:
+        for atom in atoms:
+            keys = getattr(atom, "entity_keys", None)
+            if not keys:
+                continue
+            try:
+                new_keys: list[str] = []
+                changed = False
+                seen: set[str] = set()
+                for k in keys:
+                    if isinstance(k, str) and k.startswith("site:") and k in ghost_to_canonical:
+                        canon = ghost_to_canonical[k]
+                        changed = True
+                        if canon not in seen:
+                            new_keys.append(canon)
+                            seen.add(canon)
+                    else:
+                        if isinstance(k, str) and k not in seen:
+                            new_keys.append(k)
+                            seen.add(k)
+                if changed:
+                    try:
+                        atom.entity_keys = new_keys
+                    except (AttributeError, TypeError):
+                        pass
+            except TypeError:
+                continue
+
+    # ── 4. Inject canonical site entities for any physical_site atom
+    # whose canonical key isn't already represented. Without this, the
+    # ``site:atl_047_04`` key has atoms tagged to it (from the
+    # physical_site atom + redirected ghosts) but no entity record →
+    # orbitbrief-core's cluster builder never seeds a cluster for it
+    # and the dossier shows the alias name instead of the facility name.
+    # We inject a minimal EntityRecord so the cluster gets built with
+    # the canonical key + facility-name display.
+    missing = canonical_site_id_slugs - canonical_seen_in_entities
+    if missing:
+        try:
+            from app.core.schemas import EntityRecord, ReviewStatus  # local import to avoid cycles
+            import uuid as _uuid
+            for slug in sorted(missing):
+                # Skip if we couldn't extract a facility name (shouldn't
+                # happen for real physical_site atoms but defensive).
+                facility = primary_to_facility_name.get(slug, "")
+                if not facility:
+                    continue
+                # Find one source atom_id to anchor provenance.
+                anchor_atom_id = ""
+                for a in atoms:
+                    atype = getattr(a, "atom_type", None)
+                    atype_s = atype.value if hasattr(atype, "value") else str(atype or "")
+                    if atype_s != "physical_site":
+                        continue
+                    val = getattr(a, "value", None) or {}
+                    if not isinstance(val, dict):
+                        continue
+                    sid = val.get("site_id") or val.get("id") or ""
+                    if _slug(str(sid)) == slug:
+                        anchor_atom_id = getattr(a, "id", "") or ""
+                        break
+                # Find the original project_id from any atom (all share one).
+                proj_id = ""
+                for a in atoms:
+                    pid = getattr(a, "project_id", None)
+                    if pid:
+                        proj_id = str(pid)
+                        break
+                injected = EntityRecord(
+                    id=f"ent_canon_{slug}_{_uuid.uuid4().hex[:8]}",
+                    project_id=proj_id,
+                    entity_type="site",
+                    canonical_key=f"site:{slug}",
+                    canonical_name=facility,
+                    aliases=[],
+                    source_atom_ids=[anchor_atom_id] if anchor_atom_id else [],
+                    confidence=0.99,
+                    review_status=ReviewStatus.auto_accepted,
+                )
+                kept.append(injected)
+        except Exception:
+            # If injection fails for any reason, fall through silently
+            # — the dossier might miss a cluster but at least won't crash.
+            pass
+
     return kept
 
 
