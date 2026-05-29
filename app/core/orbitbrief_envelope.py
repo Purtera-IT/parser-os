@@ -190,6 +190,16 @@ def build_orbitbrief_envelope(
     crm = _load_manifest_crm(project_dir)
     if crm:
         summary["crm"] = crm
+    # v57.3.5: filter site:* entities + redirect ghost atom keys
+    # BEFORE building the indexes — because orbitbrief-core's cluster
+    # builder reads from ``envelope.indexes.atoms_by_entity_key`` to
+    # decide how many atoms each canonical site has. If we filter
+    # entities AFTER the index is built, the index still maps ghost
+    # keys to lots of atom_ids while the canonical keys only have the
+    # 1 physical_site atom each — so canonical clusters fail the >2
+    # atoms gate in orbitbrief-core and get dropped from the dossier.
+    # Move filter ABOVE _build_indexes so the redirect propagates.
+    entities = _filter_site_entities_against_physical_atoms(entities, atoms)
     indexes = _build_indexes(atoms=atoms, entities=entities, edges=edges)
     drawings = _build_drawings_section(
         atoms=atoms,
@@ -198,19 +208,6 @@ def build_orbitbrief_envelope(
         atoms_by_artifact=atoms_by_artifact,
         documents=documents,
     )
-
-    # v57.3: filter envelope.entities[site:*] to only include site keys
-    # that match a physical_site atom (by site_id slug, name, facility_name,
-    # or any alternative names listed). Without this, orbitbrief-core's
-    # site_reality.cluster builder reads from envelope.entities and turns
-    # every LLM-extracted "atlanta west office" / "headquarters" /
-    # "atl_hq_2026" / "site:site" into a dossier site row, even when the
-    # canonical roster only has 5 ATL-XX-XX rows. Physical_site atoms are
-    # the authoritative roster; any site:* entity that doesn't trace to one
-    # is either a ghost LLM cluster or a year/2026-suffix hallucination
-    # that survived the v53.7/v57.2 guards (which only inspect atoms, not
-    # entities).
-    entities = _filter_site_entities_against_physical_atoms(entities, atoms)
     envelope: dict[str, Any] = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
         "project_id": compile_result.project_id,
