@@ -719,16 +719,16 @@ docChildren.push(
 // ── TOC ────────────────────────────────────────────────────────
 docChildren.push(
   h1("What's in this guide"),
-  lead("Eight sections. Skim, or read end-to-end in 18 minutes. Every screen the PM will see, plus the parser models running underneath, plus how to grade output and report what's wrong."),
+  lead("Eight sections. Skim, or read end-to-end in 18 minutes. Every screen the PM will see, plus the three models that produce what you see (Parser, Orbit, SOW), plus how to grade each one and file a useful bug."),
 );
 const tocRows = [
   ["1", "Finding deals", "The quoting list · filters · jumping into a deal"],
   ["2", "The deal page layout", "Header bar · 7-step workflow strip · 6 content tabs"],
   ["3", "Deal Artifacts — the parser pipeline", "Where 9 files become 433 typed atoms and 5 canonical sites"],
-  ["4", "The 4 parser models", "orbitbrief_pdf_v3 · docx_parser_v1 · xlsx_parser_v2_1 · quote_parser_v1_4_1"],
-  ["5", "PM grading rubric", "How to grade atoms, entities, sites, edges, packets — 5-letter scorecard"],
-  ["6", "OrbitBrief — the LLM brief", "What the LLM makes of those atoms, what to check"],
-  ["7", "SowSmith & SOW Versions", "Render the final Word doc, track revisions"],
+  ["4", "The 3 models — Parser, Orbit, SOW", "What each one outputs, where you see it, what PMs grade"],
+  ["5", "PM grading rubric", "How to grade the Parser's 5 outputs · plus grading Orbit and SOW"],
+  ["6", "Grading the OrbitBrief", "What the LLM brief should look like, what to check"],
+  ["7", "Grading the SOW (SowSmith)", "Render the final Word doc, what to verify before promote"],
   ["8", "Reporting a bug — from inside the UI", "The Help button · popover · modal form · severity ladder"],
 ];
 docChildren.push(new Table({
@@ -871,172 +871,158 @@ docChildren.push(
 );
 
 // ═══════════════════════════════════════════════════════════════════
-// ── SECTION 4 — THE 4 PARSER MODELS (NEW IN v3) ─────────────────
+// ── SECTION 4 — THE 3 MODELS (Parser · Orbit · SOW) ─────────────
 // ═══════════════════════════════════════════════════════════════════
 docChildren.push(
   new Paragraph({ children: [new TextRun({ text: "SECTION 4", font: "JetBrains Mono", size: 18, color: ACCENT, bold: true, characterSpacing: 80 })] }),
-  h1("The 4 parser models"),
-  lead("During the parse stage, parser-os routes each file to one of four specialized models. Each model has a job, an output signature, and a failure mode. Knowing which model produced which atoms is the difference between “file a bug” and “kick it back to the customer.”"),
+  h1("The 3 models — Parser, Orbit, SOW"),
+  lead("PurPulse has three models the PM team cares about. Knowing which one is responsible when something looks wrong is the difference between filing a great bug and pinging Slack for half an hour. Everything else under the hood — file readers, OCR, schema validators — is plumbing the PM never touches."),
 
-  h3("Routing — which model sees which file"),
+  h3("The three models, at a glance"),
 );
-const routeRows = [
-  ["FILE EXTENSION", "PRIMARY MODEL", "FALLBACK"],
-  [".pdf (text-extractable)", "orbitbrief_pdf_v3", "—"],
-  [".pdf (scanned / quotes)", "quote_parser_v1_4_1", "orbitbrief_pdf_v3"],
-  [".docx", "docx_parser_v1", "—"],
-  [".doc (legacy)", "docx_parser_v1", "(soffice convert first)"],
-  [".xlsx / .xlsm", "xlsx_parser_v2_1", "—"],
-  [".xls (legacy)", "xlsx_parser_v2_1", "(soffice convert first)"],
+const modelOverviewRows = [
+  ["MODEL", "WHAT IT PRODUCES", "WHERE YOU SEE IT"],
+  ["1 · Parser",  "atoms · entities · sites · edges · packets",       "Deal Artifacts tab"],
+  ["2 · Orbit",   "PM status · summary · gaps · questions · SA focus", "OrbitBrief tab"],
+  ["3 · SOW",     "the final Word doc · per-site sections · BOM table", "SowSmith · SOW Versions tabs"],
 ];
 docChildren.push(new Table({
   width: { size: CONTENT_W, type: WidthType.DXA },
-  columnWidths: [3000, 3500, 2860],
-  rows: routeRows.map((r, i) => new TableRow({ children: r.map((c, ci) => cell(c, {
-    width: [3000, 3500, 2860][ci],
-    size: i === 0 ? 14 : 19,
-    mono: i > 0,
-    bold: i === 0 || ci === 1,
+  columnWidths: [2200, 4200, 2960],
+  rows: modelOverviewRows.map((r, i) => new TableRow({ children: r.map((c, ci) => cell(c, {
+    width: [2200, 4200, 2960][ci],
+    size: i === 0 ? 14 : 21,
+    bold: i === 0 || ci === 0,
+    mono: ci === 0 && i > 0,
     fill: i === 0 ? INK : (i % 2 === 0 ? SURF : SURF2),
-    color: i === 0 ? SURF : INK,
+    color: i === 0 ? SURF : (ci === 0 && i > 0 ? ACCENT : INK),
+    padTop: 160, padBottom: 160,
   }))})),
 }));
 
 docChildren.push(
-  caption("Discovery stage picks the model from file extension + magic bytes. A scanned-PDF quote routes to quote_parser, not the generic PDF model."),
+  caption("All three read from the same envelope.json. Parser writes it. Orbit reads it. SOW reads it. Bugs upstream often only show up downstream."),
   pageBreak(),
 );
 
-// MODEL 1 — orbitbrief_pdf_v3
+// MODEL 1 — PARSER
 docChildren.push(
-  h2("Model 1 — orbitbrief_pdf_v3", INK),
+  h2("Model 1 — Parser", INK),
   parserCard({
-    name: "PDF text-and-layout parser",
-    label: "orbitbrief_pdf_v3",
-    version: "v3.2",
+    name: "Files in, structured atoms out",
+    label: "parser-os",
+    version: "v57.14",
     color: ACCENT,
-    role: "Pulls prose + tables out of text-extractable PDFs. Walks each page block-by-block, preserves heading hierarchy, captures table cells as raw_table_row, captures stand-alone sentences as raw prose atoms (later classified by the LLM enrich/classify stages).",
-    files: "Notes PDFs · executive briefs · contract addenda · security packets · site rosters. Anything that's a PDF and isn't a printed quote/BOM scan.",
-    atomCount: "90 atoms",
-    mainTypes: "in OPTBOT across 5 PDF files — mostly scope_item, stakeholder, payment_term",
+    role: "Reads every uploaded file (PDF / DOCX / XLSX), extracts the smallest units of meaning (\"atoms\"), normalizes entities (devices · sites · money · people · dates), reconciles the same site mentioned across different files into one canonical record, and bundles related atoms into scope packets ready for the SOW.",
+    files: "Every file dropped into Deal Artifacts. Under the hood it routes to specialized handlers per file type, but the PM only ever sees the unified output. You don't need to know whether row 14 came from the BOM xlsx or the schedule xlsx — just whether it's right.",
+    atomCount: "433 atoms · 155 entities · 5 sites · 182 edges · 31 packets",
+    mainTypes: "in OPTBOT — top atom types: raw_table_row, site_allocation, scope_item, task, dependency",
     lookFor: [
-      "Headings preserved as bold-prefixed prose atoms (“Section 3: …”).",
-      "Multi-column page layout split correctly (no left-column-then-right-column smash).",
-      "Tables come through as raw_table_row, not as squashed prose.",
-      "Page numbers visible in the right-pane atom inspector (“page 4”).",
-      "Atom confidence ≥ 0.75 on body text; ≥ 0.85 on titles.",
+      "Atom counts match what you'd eyeball from the source files (no missing files, no zero-yield).",
+      "atom_type is right for the row — bom_line for BOM rows, task for schedule rows, scope_item for prose scope.",
+      "Confidence ≥ 0.75 on typed atoms, ≥ 0.65 on prose.",
+      "Same site mentioned in 3 files becomes 1 canonical site row (not 3 dupes).",
+      "EDGES counter is healthy: at least 30 % cross-file on multi-file deals.",
+      "Every typed atom has at least one entity_key (site, vendor, device, person, money).",
     ],
     redFlags: [
-      "Same paragraph appearing 2–3× in a row → page-header/footer leak (file a bug).",
-      "All atoms tagged “prose” with no typed atoms after classify → LLM stage degraded.",
-      "Tables flattened into one long string → layout-detection regression.",
-      "Diacritics or smart quotes become mojibake (Â·) → encoding bug.",
-      "Single-page PDF yields 0 atoms → PDF was actually scanned, route to quote_parser instead.",
+      "Phantom entity — “device:storage” on a deal with no storage scope. File as CRITICAL.",
+      "Same site appears twice with different IDs (ATL-HQ-01 and ATL-HQ-001). File as MAJOR.",
+      "Cross-file edges = 0 on a multi-file deal → linker is broken. File as CRITICAL.",
+      "Currency missing or mixed (USD lines tagged EUR). File as CRITICAL.",
+      "Quantity off by 10× — decimal point misread. File as CRITICAL (will blow up pricing).",
+      "ATOMS goes up but typed-atom ratio drops sharply between compiles → classify regressed.",
     ],
   }),
   pageBreak(),
 );
 
-// MODEL 2 — docx_parser_v1
+// MODEL 2 — ORBIT
 docChildren.push(
-  h2("Model 2 — docx_parser_v1", INK),
+  h2("Model 2 — Orbit (OrbitBrief)", INK),
   parserCard({
-    name: "Word document parser",
-    label: "docx_parser_v1",
-    version: "v1.6",
+    name: "Atoms in, PM-ready brief out",
+    label: "OrbitBrief LLM",
+    version: "v57.14",
     color: GREEN,
-    role: "Walks the DOCX XML directly. Tables become raw_table_row (one atom per row). Body paragraphs become prose atoms. Headings get pStyle preserved so the LLM later knows what section they came from. Bullet/numbered lists are flattened into one atom per list item.",
-    files: "Statements of work, site survey docs, customer questionnaires, scope addenda. Most DOCX from PurTera customers.",
-    atomCount: "160 atoms",
-    mainTypes: "in OPTBOT across 2 DOCX files — 67 raw_table_row, 41 scope_item, 18 site_allocation",
+    role: "Reads the Parser's envelope.json and synthesizes a PM handoff: red/amber/green status, one-line summary, gap list, customer questions, SA focus, facts grouped by category (pricing · schedule · stakeholders · sites · risks). Powered by a local LLM (Ollama on the Mac Studio over Tailscale).",
+    files: "envelope.json from the Parser. Reads atoms, entities, sites, edges, packets. Does NOT re-read the source files.",
+    atomCount: "1 brief per deal",
+    mainTypes: "structured sections — PM status, summary, domains, sites with readiness, customer questions, gaps, facts-by-category, SA focus",
     lookFor: [
-      "Each table row = exactly one raw_table_row atom (no row merging).",
-      "Cell text inside a row preserved with “·” or “|” separators.",
-      "Heading text appears in entity_keys (e.g. “section:site-survey”).",
-      "Numbered lists keep their numbers in the atom text (“1. Provide rack space…”).",
-      "Hyperlinked text retains visible label, not the URL.",
+      "PM status matches reality — RED if pricing is missing, AMBER if scope is partial, GREEN only when everything is in.",
+      "One-line summary nails the dollar amount, site count, close date, and the actual blocker.",
+      "Customer questions are specific and answerable (“confirm display model # at College Park”), not generic (“clarify scope”).",
+      "Each gap links back to specific atoms that triggered it (click → jump to source).",
+      "SA focus identifies the highest-risk site or biggest blocker, not just the first site alphabetically.",
+      "Facts-by-category is a clean digest — no duplicates, no contradictions across categories.",
     ],
     redFlags: [
-      "Multi-row merged-cell tables explode into many empty raw_table_row atoms.",
-      "Embedded XLSX or PDF inside DOCX is silently dropped (filed as bug, severity Major).",
-      "Track-changes content appears with the markup chars visible (“[del]…[ins]…”).",
-      "Comments from the source DOCX leak into atoms as if they were body text.",
-      "Footer/header text repeats on every page-equivalent block.",
+      "Status says GREEN when Deal Artifacts shows obvious gaps. File as MAJOR.",
+      "Summary hallucinates — wrong customer, wrong dollar amount, wrong site count. File as CRITICAL.",
+      "Gaps flag missing data that's actually present in the envelope. File as MAJOR.",
+      "Questions are generic boilerplate (“please clarify”) → LLM degraded, file as MAJOR.",
+      "SA focus picks a benign site and ignores the actual blocker. File as MAJOR.",
+      "Brief is empty or 503 → Mac Studio Ollama is down. Restart, refresh, then file if it persists.",
     ],
   }),
   pageBreak(),
 );
 
-// MODEL 3 — xlsx_parser_v2_1
+// MODEL 3 — SOW
 docChildren.push(
-  h2("Model 3 — xlsx_parser_v2_1", INK),
+  h2("Model 3 — SOW (SowSmith)", INK),
   parserCard({
-    name: "Excel workbook parser",
-    label: "xlsx_parser_v2_1",
-    version: "v2.1",
+    name: "Envelope in, customer-ready Word doc out",
+    label: "SowSmith",
+    version: "v57.14",
     color: ACCENT,
-    role: "Reads every visible sheet, scans for header rows, then turns each data row into a raw_table_row atom. Detects merged-header BOMs (“Site → Item → Qty → Unit Price”) and tags them site_allocation. Date columns become milestone atoms. Money columns become commercial_total or vendor_line_item.",
-    files: "BOMs, pricing schedules, cutover plans, site rosters with quantities.",
-    atomCount: "183 atoms",
-    mainTypes: "in OPTBOT across 2 XLSX files — 53 site_allocation, 31 raw_table_row, 15 task, 15 dependency",
+    role: "Renders the customer-facing Statement of Work straight from the envelope. One section per canonical site, BOM table per site, schedule table, assumptions, exclusions, pricing summary. Promote-on-save snapshots the current draft into SOW Versions with diff against the previous version.",
+    files: "envelope.json (atoms + entities + sites + packets) + the most recent OrbitBrief facts. Renders to .docx.",
+    atomCount: "1 SOW per deal · N versions over time",
+    mainTypes: "Word-doc sections: cover · executive summary · scope per site · BOM table · schedule · assumptions · exclusions · pricing summary",
     lookFor: [
-      "Sheet name appears in entity_keys (“sheet:BOM”, “sheet:Schedule”).",
-      "Site column on a BOM correctly resolves to canonical site_id (ATL-HQ-01, not “ATL HQ”).",
-      "Quantity, unit price, line total all extracted as separate numeric fields.",
-      "Date columns parsed as ISO dates (2026-06-15), not strings.",
-      "Hidden sheets skipped unless they contain real data.",
+      "Every canonical site has its own section — 5 sites → 5 site sections.",
+      "BOM table per site contains the right line items and the right quantities for THAT site only.",
+      "Pricing summary total equals the sum of per-site BOM ext-prices (and matches Deal Kit).",
+      "Schedule dates match envelope milestones — same ISO dates, same task names.",
+      "No placeholder text in the rendered doc — “[TBD]”, “XXX”, “{site_name}” should never ship.",
+      "Word doc opens cleanly in Google Docs (no broken styling, no overflow tables).",
     ],
     redFlags: [
-      "Header row missed → every data row tagged with column letter (“A1: …, B1: …”) instead of column name.",
-      "Merged cells across rows cause duplicate atoms with same content.",
-      "Currency symbol stripped from money entity (“1250” instead of “$1,250”).",
-      "Formula cells (=SUM(…)) appear with the formula text, not the value.",
-      "Schedule with task + dependency columns missing the dependency edges.",
-    ],
-  }),
-  pageBreak(),
-);
-
-// MODEL 4 — quote_parser_v1_4_1
-docChildren.push(
-  h2("Model 4 — quote_parser_v1_4_1", INK),
-  parserCard({
-    name: "Vendor-quote / BOM PDF parser",
-    label: "quote_parser_v1_4_1",
-    version: "v1.4.1",
-    color: GREEN,
-    role: "Specialized for printed/scanned vendor quotes and BOM PDFs. OCRs scanned tables, recovers part-number / qty / unit-price / extended-price columns, normalizes vendor names. Outputs bom_line and vendor_line_item atoms with structured numeric fields.",
-    files: "Vendor quote PDFs (Synnex, TD Synnex, Ingram), printed BOMs, commercial pricing PDFs that were originally Excel.",
-    atomCount: "34 atoms",
-    mainTypes: "in OPTBOT on the commercial-pricing PDF — 16 scope_item, 4 payment_term, plus extracted bom_line in entity_keys",
-    lookFor: [
-      "Part number (“65UH5N-E”, “CRESTRON-DM-MD-4K”) preserved exactly, no dashes lost.",
-      "Vendor name normalized (“TD Synnex” not “TDS” or “Td-Synnex”).",
-      "Quantity, unit price, extended price all present as separate fields.",
-      "Payment terms picked up as own atoms (“Net 30 from invoice”).",
-      "Each line item carries page+line provenance in entity_keys.",
-    ],
-    redFlags: [
-      "OCR confidence < 0.65 on numeric fields → don't trust the totals.",
-      "Quantity off by 10× → decimal point misread, always file a bug.",
-      "Vendor name fragmented into two atoms (“TD” + “Synnex”).",
-      "Multi-page quote treated as separate quotes → totals will be wrong.",
-      "Currency mixed (USD line items tagged EUR) → file as Critical, blocks pricing.",
+      "A canonical site has no section in the SOW. File as CRITICAL.",
+      "BOM total in the SOW ≠ Deal Kit total. File as CRITICAL.",
+      "Site A's BOM contains items that allocate to Site B (cross-contamination). File as CRITICAL.",
+      "Placeholder strings visible (“{customer_name}”) in the rendered doc. File as MAJOR.",
+      "Schedule table missing or all dates blank. File as MAJOR.",
+      "Word doc errors when opened in Google Docs / Word. File as MAJOR.",
     ],
   }),
   pageBreak(),
 );
 
 docChildren.push(
-  calloutBox("Which model produced which atom?", [
+  calloutBox("How the three flow together", [
     new Paragraph({ children: [new TextRun({
-      text: "In the right-pane atom inspector, every atom has a `producer` field. Click any atom to see:",
+      text: "PARSER  →  ORBIT  →  SOW",
+      font: "JetBrains Mono", size: 28, color: ACCENT, bold: true })] }),
+    new Paragraph({ spacing: { before: 160 }, children: [new TextRun({
+      text: "All three read from the SAME envelope.json. The Parser writes it; Orbit and SOW only read it. So:",
       font: "Inter", size: 22, color: INK })] }),
     new Paragraph({ spacing: { before: 120 }, children: [new TextRun({
-      text: "  producer: docx_parser_v1   file: 02_statement_of_work.docx   page: 3   conf: 0.88",
-      font: "JetBrains Mono", size: 18, color: ACCENT })] }),
-    new Paragraph({ spacing: { before: 120 }, children: [new TextRun({
-      text: "When you file a bug, paste this line into the report. The dev jumps straight to the right code path.",
+      text: "  •  Bad atoms (Parser) → wrong gaps in Orbit → wrong scope in SOW.",
+      font: "Inter", size: 22, color: INK })] }),
+    new Paragraph({ children: [new TextRun({
+      text: "  •  Wrong site canonical (Parser) → split brief sites in Orbit → split SOW sections.",
+      font: "Inter", size: 22, color: INK })] }),
+    new Paragraph({ children: [new TextRun({
+      text: "  •  Good envelope but bad brief = ORBIT bug. Hit Re-brief.",
+      font: "Inter", size: 22, color: INK })] }),
+    new Paragraph({ children: [new TextRun({
+      text: "  •  Good envelope + good brief but bad SOW = SOW bug. Hit Re-render SOW.",
+      font: "Inter", size: 22, color: INK })] }),
+    new Paragraph({ spacing: { before: 160 }, children: [new TextRun({
+      text: "When you file a bug, name the model: “PARSER · wrong atom_type…” / “ORBIT · status says GREEN…” / “SOW · site missing section…”. Dev triages to the right repo instantly.",
       font: "Inter", size: 22, color: INK, italics: true })] }),
   ], ACCENT, ACCENT_BG),
   pageBreak(),
@@ -1048,9 +1034,9 @@ docChildren.push(
 docChildren.push(
   new Paragraph({ children: [new TextRun({ text: "SECTION 5", font: "JetBrains Mono", size: 18, color: ACCENT, bold: true, characterSpacing: 80 })] }),
   h1("PM grading rubric"),
-  lead("Every deal you grade makes the system smarter. Five dimensions, five letter grades. Spend 4 minutes per deal, file bugs on anything C or below, and the parser improves week over week."),
+  lead("Every deal you grade makes the system smarter. This section covers grading the Parser model in detail — five dimensions, five letter grades. Grading Orbit lives in §6, grading SOW lives in §7. Spend 4 minutes per deal, file bugs on anything below B, and the stack improves week over week."),
 
-  h3("The 5-letter scorecard"),
+  h3("Grading the Parser — the 5-letter scorecard"),
 );
 const cw5 = Math.floor(CONTENT_W / 5);
 docChildren.push(new Table({
@@ -1206,11 +1192,12 @@ docChildren.push(new Table({
 }));
 docChildren.push(pageBreak());
 
-// ── SECTION 6 — OrbitBrief (renumbered from 4) ────────────────
+// ── SECTION 6 — Grading the OrbitBrief ────────────────────────
 docChildren.push(
   new Paragraph({ children: [new TextRun({ text: "SECTION 6", font: "JetBrains Mono", size: 18, color: ACCENT, bold: true, characterSpacing: 80 })] }),
-  h1("OrbitBrief — the LLM brief"),
-  lead("Same source atoms, packaged for PM consumption: \"what's the deal · what's missing · what to ask · what should the SA focus on.\""),
+  h1("Grading the OrbitBrief"),
+  lead("The Orbit model packages the Parser's envelope into a PM handoff: status, summary, gaps, questions, SA focus. Here's what should be in the brief, and how to spot when the LLM hallucinated."),
+  h3("What's in the brief"),
 );
 const briefRows = [
   ["PM status", "Red / amber / green. Derived from gap-coverage, risk count, scope completeness. OPTBOT today: RED (missing CFO signoff packet)."],
@@ -1232,14 +1219,36 @@ docChildren.push(new Table({
 }));
 
 docChildren.push(
-  h3("How to grade the brief"),
+  h3("Orbit letter grade"),
+);
+const oGrade = [
+  ["A", "All 5 sections accurate — status, summary, questions, gaps, SA focus all check out."],
+  ["B", "4/5 accurate — one section a bit weak (generic question, etc.). No bug needed."],
+  ["C", "3/5 — noticeably off. File as Minor."],
+  ["D", "2/5 — multiple sections wrong. File as Major."],
+  ["F", "0–1/5 — brief is unusable. File as Critical."],
+];
+docChildren.push(new Table({
+  width: { size: CONTENT_W, type: WidthType.DXA },
+  columnWidths: [800, 8560],
+  rows: oGrade.map(([g, d], i) => new TableRow({ children: [
+    cell(g, { width: 800, mono: true, bold: true, size: 28,
+      fill: i === 0 ? GREEN_BG : (i === 4 ? RED_BG : PAPER),
+      color: i === 0 ? GREEN : (i === 4 ? RED : ACCENT), align: AlignmentType.CENTER }),
+    cell(d, { width: 8560, size: 20, fill: SURF }),
+  ]})),
+}));
+
+docChildren.push(
+  h3("What to check, dimension by dimension"),
   bullet("PM status correct? — if you'd call it RED, brief says RED. If brief says GREEN on a deal missing pricing → bug."),
   bullet("Summary accurate? — dollar amount, site count, close date all right? If brief says “3-site” on a 5-site deal → bug."),
   bullet("Customer questions actionable? — each question should be answerable. Generic “clarify scope” → brief is weak, bug as Minor."),
   bullet("Gaps real? — a flagged gap that's actually covered in some file means LLM missed an atom. Bug as Major."),
   bullet("SA focus right? — if it says “start with West Campus” but the blocker is actually at HQ → bug."),
+  bullet("Hallucinations? — customer name, dollar amount, or site name that doesn't appear in the source files → bug as Critical."),
 
-  h3("The three Re- buttons"),
+  h3("The three Re- buttons — when to use which"),
 );
 const reRows = [
   ["Re-parse", "Only re-runs parser-os. Use when files changed but context didn't. ~7s on small deals, ~10 min on big ones."],
@@ -1256,27 +1265,59 @@ docChildren.push(new Table({
 }));
 docChildren.push(pageBreak());
 
-// ── SECTION 7 — SowSmith (renumbered) ─────────────────────────
+// ── SECTION 7 — Grading the SOW (SowSmith) ────────────────────
 docChildren.push(
   new Paragraph({ children: [new TextRun({ text: "SECTION 7", font: "JetBrains Mono", size: 18, color: ACCENT, bold: true, characterSpacing: 80 })] }),
-  h1("SowSmith & SOW Versions"),
-  lead("Close the loop. SowSmith builds the SOW; SOW Versions tracks drafts."),
-  h3("SowSmith"),
-  num("Click the active SOW draft to preview it inline (full DOCX rendered in-browser)."),
-  num("\"Re-render\" rebuilds the doc from the latest envelope. Use after Re-parse or Re-brief."),
-  num("\"Promote to next version\" snapshots the current SOW into SOW Versions and bumps the version number."),
-  num("\"Export DOCX\" downloads the Word file."),
-  num("\"Open in Google Drive\" syncs to the customer-facing drive folder."),
+  h1("Grading the SOW (SowSmith)"),
+  lead("The SOW model renders the customer-facing Word doc from the envelope. This is the last thing the customer sees — grade it like you'd grade a contract draft about to go out."),
+
+  h3("How SowSmith works (one paragraph)"),
+  p("Open the SowSmith tab. The active draft renders inline. \"Re-render\" rebuilds from the latest envelope. \"Promote to next version\" snapshots into SOW Versions. \"Export DOCX\" downloads. \"Open in Google Drive\" syncs to the customer drive folder."),
+
+  h3("Pre-promote checklist — run this every time before you ship a SOW"),
+  num("Site count matches: every canonical site has its own section."),
+  num("BOM totals: per-site total = Deal Kit per-site total. No drift."),
+  num("Pricing summary total = sum of per-site totals (and matches Deal Kit grand total)."),
+  num("Schedule: dates match envelope milestones, no blank cells, no rows missing."),
+  num("Assumptions and exclusions are populated (not “TBD”)."),
+  num("No placeholder strings visible: search for “{”, “TBD”, “XXX”, “TODO”, “[”."),
+  num("Open the .docx in Google Docs — no broken styling, no overflowing tables, no font fallback."),
+
+  h3("SOW letter grade"),
+);
+const sGrade = [
+  ["A", "Ships as-is — totals match, sites all present, no placeholders, clean render."],
+  ["B", "One cosmetic fix needed — table width / page break / heading style. Manual fix in Word, promote."],
+  ["C", "Wording or section weak — assumptions thin, exclusions missing. File as Minor, edit upstream, re-render."],
+  ["D", "Pricing or schedule off — totals don't reconcile or dates wrong. File as Major, fix Parser inputs, re-render."],
+  ["F", "Won't ship — missing site sections, placeholder text, cross-site contamination, Word doc errors. File as Critical."],
+];
+docChildren.push(new Table({
+  width: { size: CONTENT_W, type: WidthType.DXA },
+  columnWidths: [800, 8560],
+  rows: sGrade.map(([g, d], i) => new TableRow({ children: [
+    cell(g, { width: 800, mono: true, bold: true, size: 28,
+      fill: i === 0 ? GREEN_BG : (i === 4 ? RED_BG : PAPER),
+      color: i === 0 ? GREEN : (i === 4 ? RED : ACCENT), align: AlignmentType.CENTER }),
+    cell(d, { width: 8560, size: 20, fill: SURF }),
+  ]})),
+}));
+
+docChildren.push(
   h3("SOW Versions"),
   p("Side-by-side compare of any two versions, with rollback highlights:"),
   bullet("Each version has: version number · created at · who promoted it · changed atom count vs prior."),
   bullet("Click \"Diff vs v1\" to see what changed."),
   bullet("Click \"Restore\" to make any old version the active draft."),
-  calloutBox("How the three flow together", [
-    new Paragraph({ children: [new TextRun({ text: "Deal Artifacts → atoms.  OrbitBrief → brief.  SowSmith → SOW.",
-      font: "Inter", size: 22, color: INK, bold: true })] }),
+
+  calloutBox("The golden rule — never edit a SOW directly", [
+    new Paragraph({ children: [new TextRun({ text: "PARSER → ORBIT → SOW.   Always fix upstream.",
+      font: "JetBrains Mono", size: 22, color: GREEN, bold: true })] }),
+    new Paragraph({ spacing: { before: 160 }, children: [new TextRun({
+      text: "Bad BOM number in the SOW? It came from a wrong atom in the Parser. Fix the Parser (re-upload the file or file a bug), Re-parse, Re-brief, Re-render. The fix sticks for every future version.",
+      font: "Inter", size: 22, color: INK })] }),
     new Paragraph({ spacing: { before: 120 }, children: [new TextRun({
-      text: "All three read from the SAME envelope.json. Edit upstream (Re-parse), and SowSmith picks it up on Re-render. Never edit a SOW directly — change the source.",
+      text: "Edit the .docx by hand and you'll be doing it again next week. The envelope is the source of truth.",
       font: "Inter", size: 22, color: INK, italics: true })] }),
   ], GREEN, GREEN_BG),
   pageBreak(),
