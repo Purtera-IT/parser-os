@@ -341,6 +341,23 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         t = getattr(atom, "atom_type", None)
         return t.value if hasattr(t, "value") else str(t or "")
 
+    # v57: the two catch-all/untyped families are treated as ONE
+    # equivalence class for exact-text dedup. The parsers' page-level
+    # recall passes routinely emit the SAME sentence as both a scope_item
+    # and an entity — different type GUESSES of one source span, not two
+    # facts. Before the type-aware classifier runs they are pure
+    # duplicates, so collapse identical-text copies across these generic
+    # types and keep the highest-confidence one. Structured types
+    # (raw_table_row, bom_line, physical_site, ...) are NOT folded — they
+    # legitimately co-exist as distinct facets of the same row. Nor is
+    # customer_instruction folded — it is a meaningful classification
+    # that downstream stages (and the transcript gate) assert on.
+    _GENERIC_TYPES = {"scope_item", "entity"}
+
+    def _dedup_type(atom) -> str:
+        at = _atype(atom)
+        return "_generic" if at in _GENERIC_TYPES else at
+
     for aid, art_atoms in by_artifact.items():
         # v50.1: dedupe key INCLUDES atom_type so a raw_table_row and
         # a bom_line sourced from the SAME table row both survive —
@@ -353,7 +370,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             if not norm:
                 unique.append(atom)
                 continue
-            norm_key = (_atype(atom), norm.strip().lower())
+            norm_key = (_dedup_type(atom), norm.strip().lower())
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)

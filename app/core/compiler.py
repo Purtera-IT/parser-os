@@ -453,6 +453,23 @@ def compile_project(
                             "warning_count": len(per_artifact_warnings),
                             "cache_hit": cache_hit,
                         }
+                        # Parse-coverage gate: a parser that ran without
+                        # error but extracted ZERO atoms is the most
+                        # dangerous failure mode — silent data loss. A
+                        # scanned / image-only PDF (e.g. Notes.pdf that
+                        # yields 0 text), an empty sheet, or a parser that
+                        # quietly bailed all land here. Surface a hard
+                        # warning so the reviewer knows an input contributed
+                        # nothing, instead of the file vanishing without a
+                        # trace. Universal: keys off atom_count, not file type.
+                        if len(parsed_atoms) == 0:
+                            parse_warnings.append(
+                                f"WARNING: artifact '{relative_name}' parsed cleanly "
+                                f"with {parser_name} but yielded 0 atoms — no content "
+                                f"extracted (possible scanned/image-only PDF, empty "
+                                f"file, or unextractable layout). This input "
+                                f"contributed nothing to the compile."
+                            )
             except Exception as exc:  # pragma: no cover
                 message = f"Failed parsing {artifact.name} ({parser_key}): {exc}"
                 parse_warnings.append(message)

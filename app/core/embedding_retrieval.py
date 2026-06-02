@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_HOST = "http://100.114.102.122:11434"
 _DEFAULT_MODEL = "qwen3-embedding:8b"
+_DEFAULT_DIM = 4096  # qwen3-embedding:8b native dim; only used when no embed succeeds
 _DEFAULT_TIMEOUT = 60
 _BATCH_SIZE = 8  # parallel HTTP calls; ollama queues internally
 
@@ -226,7 +227,7 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     Failed embeds → zero vector at that row (caller filters).
     """
     if not texts:
-        return np.zeros((0, 4096), dtype=np.float32)
+        return np.zeros((0, _DEFAULT_DIM), dtype=np.float32)
     parallel = int(os.environ.get("SOWSMITH_EMBED_PARALLEL", str(_BATCH_SIZE)))
     out: list[list[float] | None] = [None] * len(texts)
     with ThreadPoolExecutor(max_workers=parallel) as ex:
@@ -238,8 +239,11 @@ def embed_texts(texts: list[str]) -> np.ndarray:
             except Exception:
                 out[i] = None
     # Build matrix; failed rows = zeros (zero similarity to anything,
-    # so they auto-drop in top-K)
-    dim = 4096
+    # so they auto-drop in top-K). Dimensionality is derived from the
+    # first successful embedding rather than hardcoded, so swapping the
+    # embed model (e.g. qwen3-embedding:8b=4096 → bge-m3=1024) can't
+    # silently zero every vector on a len-mismatch.
+    dim = next((len(e) for e in out if e), _DEFAULT_DIM)
     mat = np.zeros((len(texts), dim), dtype=np.float32)
     for i, emb in enumerate(out):
         if emb and len(emb) == dim:
