@@ -237,4 +237,73 @@ def _matched(pattern: re.Pattern[str], text: str) -> list[str]:
     return seen
 
 
-__all__ = ["filter_entity_keys_for_atom", "filter_entity_keys_with_audit"]
+# ── signature / execution-block boilerplate ─────────────────────────
+#
+# SOW documents end with a signature page: "Signature: ___",
+# "Name: ___ Date: ___", "Services By: PurTera | Agreed By: ___". The
+# table/prose parser sweeps those cells into scope_item / raw_table_row
+# atoms, so they masquerade as scope and inflate scope_truth. They carry
+# zero customer scope. This validator recognizes an atom whose every
+# segment is an execution-block form field and drops it — regardless of
+# the type it was misclassified into.
+
+_EXEC_FIELD_LABELS: frozenset[str] = frozenset({
+    "signature", "printed name", "print name", "name", "date",
+    "title", "by", "agreed by", "services by", "accepted by",
+    "authorized by", "authorized signature", "witness",
+    "signed", "approved by", "company", "for", "its",
+})
+
+# Splits on table-cell pipes only — a value that wrapped onto the next
+# line ("Services By:\nPurTera") must stay attached to its label.
+_SEGMENT_SPLIT_RE = re.compile(r"\|+")
+
+
+def _segment_is_exec_field(segment: str) -> bool:
+    seg = segment.strip()
+    if not seg:
+        return True  # empty cell — neutral
+    label, _, value = seg.partition(":")
+    label_norm = re.sub(r"\s+", " ", label.strip().lower())
+    if label_norm not in _EXEC_FIELD_LABELS:
+        return False
+    # Label-only ("Signature:") or a short proper-noun value ("PurTera").
+    # A long value means real content rode in on a form label — keep it.
+    val = value.strip()
+    return len(val.split()) <= 3
+
+
+def is_execution_boilerplate(atom: Any) -> bool:
+    """True when the atom is pure signature/execution-block boilerplate.
+
+    Requires at least one recognizable exec-field segment and *every*
+    non-empty segment to be an exec field, so a real scope line that
+    merely contains a colon is never dropped.
+    """
+    raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
+    text = str(raw).strip()
+    if not text or len(text) > 200:
+        return False
+    segments = [s for s in _SEGMENT_SPLIT_RE.split(text) if s.strip()]
+    if not segments:
+        return False
+    exec_fields = 0
+    for seg in segments:
+        if not _segment_is_exec_field(seg):
+            return False
+        if seg.strip():
+            exec_fields += 1
+    return exec_fields >= 1
+
+
+def drop_execution_boilerplate(atoms: list[Any]) -> list[Any]:
+    """Return ``atoms`` with signature/execution-block boilerplate removed."""
+    return [a for a in atoms if not is_execution_boilerplate(a)]
+
+
+__all__ = [
+    "filter_entity_keys_for_atom",
+    "filter_entity_keys_with_audit",
+    "is_execution_boilerplate",
+    "drop_execution_boilerplate",
+]

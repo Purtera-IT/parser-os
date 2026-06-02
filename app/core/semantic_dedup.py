@@ -798,6 +798,100 @@ def _merge_values(winner: Any, loser: Any) -> None:
     _merge_atom_metadata(winner, loser)
 
 
+# ── cross-type dedup ────────────────────────────────────────────────
+#
+# The same source sentence often reaches the atom list under several
+# types: a table row gets emitted as a ``raw_table_row`` AND typed into a
+# ``service_line`` AND swept into ``scope_item`` AND tagged a ``task``.
+# semantic_dedup keys *with* atom_type (by design — a task_id and a
+# req_id of "001" must not collide), so those never collapse. This pass
+# folds same-text-different-type duplicates into the single most-specific
+# type. A fact that is verbatim-identical across types is one fact; we
+# keep the richest representation and merge the rest's provenance in.
+
+# Higher rank wins. raw_table_row is the raw extraction and always loses
+# to anything typed; scope_item is the generic catch-all; structured
+# commercial/service types are the most specific.
+_CROSS_TYPE_PRIORITY: dict[str, int] = {
+    "raw_table_row": 0,
+    "scope_item": 2,
+    "deliverable": 4,
+    "task": 4,
+    "open_question": 4,
+    "requirement": 5,
+    "exclusion": 5,
+    "constraint": 6,
+    "service_line": 7,
+    "bom_line": 7,
+    "pricing_assumption": 7,
+    "site_budget": 7,
+    "payment_term": 8,
+    "commercial_total": 8,
+}
+_CROSS_TYPE_DEFAULT_PRIORITY = 3
+
+# Money/quantity tokens are stripped before keying so "…| $5,390.00" and
+# "…| 5390" collapse, and so a typed atom that dropped the trailing total
+# still matches the raw row.
+_CROSS_TYPE_STRIP_RE = re.compile(r"[$£€]|\b\d[\d,.]*\b|[^a-z0-9\s]")
+
+
+def _cross_type_text_key(atom: Any) -> str:
+    raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
+    norm = _CROSS_TYPE_STRIP_RE.sub(" ", str(raw).lower())
+    norm = re.sub(r"\s+", " ", norm).strip()
+    if len(norm) < 8:
+        return ""
+    # Cap so trailing paraphrase divergence doesn't split a shared fact.
+    return norm[:80]
+
+
+def _cross_type_priority(atom: Any) -> int:
+    return _CROSS_TYPE_PRIORITY.get(_atom_type_value(atom), _CROSS_TYPE_DEFAULT_PRIORITY)
+
+
+def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
+    """Collapse the *same sentence* emitted under multiple atom types.
+
+    Groups atoms by a money/quantity-stripped text key. Within any group
+    that spans more than one atom_type, the highest-priority type wins
+    (ties broken by confidence); the losers' provenance is merged in and
+    they are dropped. Groups that are all one type are left untouched
+    (intra-type dedup is semantic_dedup's job). Pure function, no I/O.
+    """
+    if not atoms:
+        return atoms
+
+    groups: dict[str, list[Any]] = {}
+    order: list[str] = []
+    passthrough: list[Any] = []
+    for atom in atoms:
+        key = _cross_type_text_key(atom)
+        if not key:
+            passthrough.append(atom)
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(atom)
+
+    kept: list[Any] = []
+    for key in order:
+        members = groups[key]
+        if len(members) == 1 or len({_atom_type_value(a) for a in members}) == 1:
+            # Single atom, or all one type — not a cross-type duplicate.
+            kept.extend(members)
+            continue
+        winner = max(members, key=lambda a: (_cross_type_priority(a), _confidence(a)))
+        for loser in members:
+            if loser is winner:
+                continue
+            _merge_atom_metadata(winner, loser)
+        kept.append(winner)
+
+    return kept + passthrough
+
+
 def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     """Collapse atoms that share a semantic key into one (highest-
     confidence wins; loser values merged into winner).
@@ -828,4 +922,4 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(list(by_key.values()) + unkeyed))
 
 
-__all__ = ["semantic_dedup_atoms"]
+__all__ = ["semantic_dedup_atoms", "cross_type_dedup_atoms"]

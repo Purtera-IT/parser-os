@@ -279,10 +279,85 @@ def _filename_hint_score(filenames: list[str]) -> dict[str, float]:
     return scores
 
 
+def _docx_text_preview(path: Path, max_chars: int) -> str:
+    """First paragraphs + table cells of a .docx, capped at ``max_chars``.
+
+    Office-doc deals (the common case for real RFP/SOW packages) carry
+    their authoritative scope in .docx/.xlsx, not in side-car .txt. If we
+    can't read them, content scoring sees nothing and routing falls back
+    to incidental filename/customer-name tokens — exactly how a
+    residential TV-install deal got routed as a datacenter/cabling job.
+    """
+    try:
+        from docx import Document  # python-docx
+    except Exception:
+        return ""
+    try:
+        doc = Document(str(path))
+    except Exception:
+        return ""
+    parts: list[str] = []
+    total = 0
+    for para in doc.paragraphs:
+        t = (para.text or "").strip()
+        if not t:
+            continue
+        parts.append(t)
+        total += len(t)
+        if total >= max_chars:
+            return "\n".join(parts)[:max_chars]
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                t = (cell.text or "").strip()
+                if not t:
+                    continue
+                parts.append(t)
+                total += len(t)
+                if total >= max_chars:
+                    return "\n".join(parts)[:max_chars]
+    return "\n".join(parts)[:max_chars]
+
+
+def _xlsx_text_preview(path: Path, max_chars: int) -> str:
+    """Text of the first worksheet's cells, capped at ``max_chars``."""
+    try:
+        from openpyxl import load_workbook
+    except Exception:
+        return ""
+    try:
+        wb = load_workbook(str(path), read_only=True, data_only=True)
+    except Exception:
+        return ""
+    parts: list[str] = []
+    total = 0
+    try:
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                for cell in row:
+                    if cell is None:
+                        continue
+                    t = str(cell).strip()
+                    if not t:
+                        continue
+                    parts.append(t)
+                    total += len(t)
+                    if total >= max_chars:
+                        return " ".join(parts)[:max_chars]
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+    return " ".join(parts)[:max_chars]
+
+
 def _read_text_preview(path: Path, max_bytes: int = 6 * 1024) -> str:
     """Best-effort text preview for filename + lightweight content scoring.
 
-    Returns empty string for binary files we can't preview cheaply.
+    Reads plain text directly; extracts a cheap preview from .docx/.xlsx so
+    office-doc deals route on their actual scope content. Never raises —
+    routing must not fail on a single unreadable artifact.
     """
     suffix = path.suffix.lower()
     if suffix in {".txt", ".md", ".csv"}:
@@ -290,7 +365,91 @@ def _read_text_preview(path: Path, max_bytes: int = 6 * 1024) -> str:
             return path.read_text(encoding="utf-8", errors="ignore")[:max_bytes]
         except Exception:
             return ""
+    if suffix == ".docx":
+        return _docx_text_preview(path, max_bytes)
+    if suffix == ".xlsx":
+        return _xlsx_text_preview(path, max_bytes)
     return ""
+
+
+_ALIAS_RE_CACHE: dict[str, re.Pattern[str]] = {}
+
+# Single-word aliases that are common English / cross-trade vocabulary.
+# They appear in nearly any deal document regardless of trade, so they
+# must never be a routing signal — "area"/"battery" made a TV-install
+# SOW score for fire_safety, "tape" for itad.  Multi-word aliases that
+# merely contain these ("fire panel", "server rack") are unaffected;
+# the stoplist only suppresses the bare single-token form.
+_GENERIC_ALIAS_STOPWORDS: frozenset[str] = frozenset({
+    "area", "level", "site", "zone", "room", "floor", "unit", "units",
+    "building", "battery", "tape", "channel", "board", "point", "line",
+    "system", "device", "section", "phase", "field", "panel", "outlet",
+})
+
+
+def _alias_in_text(alias: str, haystack: str) -> bool:
+    """Word-boundary alias match.
+
+    Plain substring matching produced false positives that flipped
+    routing — "ap" matched *ap*proximately, "tr" matched cen*tr*e,
+    "site"/"level" matched freely — so a TV-install deal scored higher
+    for ``wireless`` than ``av``. Anchoring on word boundaries kills
+    those incidental collisions (and lets distinctive 2-char aliases
+    like "tv" count safely). Single-character aliases stay too
+    ambiguous to trust and are skipped.
+    """
+    if len(alias) < 2:
+        return False
+    pat = _ALIAS_RE_CACHE.get(alias)
+    if pat is None:
+        pat = re.compile(r"(?<!\w)" + re.escape(alias) + r"(?!\w)")
+        _ALIAS_RE_CACHE[alias] = pat
+    return pat.search(haystack) is not None
+
+
+# Markers that a blob is authoritative scope prose (a SOW / scope of
+# work / project overview) vs. a commercial deal-kit / pricing summary.
+# Domain routing must follow the scope document, not the money sheet —
+# a deal-kit xlsx mentions generic infra vocabulary ("cat6", "switch")
+# regardless of the actual trade.
+_SCOPE_AUTHORITY_MARKERS = (
+    "statement of work",
+    "scope of work",
+    "project overview",
+    "scope:",
+    "work will be performed",
+    "deliverables",
+    "responsibilities",
+)
+_COMMERCIAL_MARKERS = (
+    "deal kit",
+    "net margin",
+    "total deal revenue",
+    "total deal cost",
+    "total deal margin",
+    "margin %",
+    "gross margin",
+    "rate card",
+    "bill of materials",
+)
+_SCOPE_AUTHORITY_WEIGHT = 3.0
+_COMMERCIAL_AUTHORITY_WEIGHT = 0.4
+_DEFAULT_AUTHORITY_WEIGHT = 1.0
+
+
+def _blob_authority(filename: str, text: str) -> float:
+    """Weight a content blob by how authoritative it is for *domain*.
+
+    A statement-of-work / scope document is the real signal; a
+    financial deal-kit summary's incidental infra words are noise.
+    """
+    lo = text.lower()
+    fn = filename.lower()
+    if any(m in lo for m in _SCOPE_AUTHORITY_MARKERS):
+        return _SCOPE_AUTHORITY_WEIGHT
+    if any(m in lo for m in _COMMERCIAL_MARKERS) or "deal kit" in fn:
+        return _COMMERCIAL_AUTHORITY_WEIGHT
+    return _DEFAULT_AUTHORITY_WEIGHT
 
 
 def _content_score(project_dir: Path) -> dict[str, float]:
@@ -317,7 +476,7 @@ def _content_score(project_dir: Path) -> dict[str, float]:
     if not artifact_dir.is_dir():
         return scores
     filenames: list[str] = []
-    text_blobs: list[str] = []
+    text_blobs: list[tuple[str, float]] = []  # (lowercased text, authority weight)
     skip_names = {
         "source_notes.md",
         "readme.md",
@@ -352,7 +511,9 @@ def _content_score(project_dir: Path) -> dict[str, float]:
         filenames.append(path.name)
         text_preview = _read_text_preview(path)
         if text_preview:
-            text_blobs.append(text_preview)
+            text_blobs.append(
+                (text_preview.lower(), _blob_authority(path.name, text_preview))
+            )
     if not filenames:
         return scores
 
@@ -374,32 +535,67 @@ def _content_score(project_dir: Path) -> dict[str, float]:
         scores[pack_id] = scores.get(pack_id, 0.0) + sc * 2.0
 
     if text_blobs:
-        haystack = "\n".join(text_blobs).lower()
+        # Build {pack_id: set(aliases)} for every narrow pack, plus a
+        # frequency map of how many packs share each alias.  Aliases
+        # shared across many packs ("switch", "site", "rack", "panel")
+        # are generic low-voltage vocabulary and carry almost no
+        # routing signal — a deal-kit financial summary mentions them
+        # regardless of trade.  We down-weight them by inverse pack
+        # frequency so distinctive aliases ("tv", "display mount")
+        # dominate.  This is what keeps a TV-install deal from routing
+        # to ``wireless`` just because its money sheet says "switch".
+        pack_aliases: dict[str, set[str]] = {}
+        alias_freq: dict[str, int] = {}
         for pack_id in pack_ids:
             try:
                 pack = load_domain_pack(pack_id)
             except Exception:  # pragma: no cover
                 continue
-            # Skip wide reference packs that intentionally cover many
-            # service lines — they'd dominate scoring otherwise.  A
-            # pack is "wide" if it declares only the default service
-            # line or carries a reference_ontology_path.
             service_lines = [sl.lower() for sl in (pack.service_lines or [])]
             if pack.reference_ontology_path:
                 continue
             if not service_lines or service_lines == ["default"]:
                 continue
-            hits = 0
+            aliases: set[str] = set()
             for surfaces in (pack.device_aliases or {}).values():
                 for surface in surfaces:
-                    if surface and surface.lower() in haystack:
-                        hits += 1
+                    if surface:
+                        aliases.add(surface.lower())
             for entity in pack.entity_types or []:
                 for alias in entity.aliases or []:
-                    if alias.lower() in haystack:
-                        hits += 1
+                    if alias:
+                        aliases.add(alias.lower())
+            aliases = {
+                a for a in aliases if a not in _GENERIC_ALIAS_STOPWORDS
+            }
+            pack_aliases[pack_id] = aliases
+            for alias in aliases:
+                alias_freq[alias] = alias_freq.get(alias, 0) + 1
+
+        n_packs = len(pack_aliases) or 1
+        for pack_id, aliases in pack_aliases.items():
+            hits = 0.0
+            for alias in aliases:
+                freq = alias_freq.get(alias, 1)
+                # Drop aliases that appear in more than half the packs —
+                # they're shared vocabulary, not a discriminating signal.
+                if freq > n_packs / 2:
+                    continue
+                # Strongest evidence comes from the most authoritative
+                # blob that mentions this alias: a SOW outweighs a deal
+                # kit.  Take the max authority among matching blobs.
+                best_authority = 0.0
+                for blob_text, authority in text_blobs:
+                    if authority > best_authority and _alias_in_text(alias, blob_text):
+                        best_authority = authority
+                if best_authority <= 0.0:
+                    continue
+                # Multi-word phrases are far stronger evidence than a
+                # bare token; inverse-frequency rewards distinctiveness.
+                weight = 2.0 if " " in alias else 1.0
+                hits += (weight / freq) * best_authority
             if hits:
-                scores[pack_id] = scores.get(pack_id, 0.0) + float(hits)
+                scores[pack_id] = scores.get(pack_id, 0.0) + hits
     return scores
 
 

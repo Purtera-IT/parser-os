@@ -75,6 +75,15 @@ _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+# Header tokens that disqualify a column from being a street_address
+# even though they contain the "address" substring — these are network
+# / contact identifiers, not physical addresses.
+_NON_STREET_ADDRESS_HEADERS: tuple[str, ...] = (
+    "ip address", "ip addr", "mac address", "email address", "e-mail address",
+    "ipv4", "ipv6", "url", "web address",
+)
+
+
 # Patterns that, when present in the column headers as a SET, signal
 # "this is a site roster" with high confidence.
 _ROSTER_HEADER_PRESENCE_SIGNALS = (
@@ -186,6 +195,15 @@ def map_columns_to_fields(
         for field_name, keywords in _FIELD_HEADER_PATTERNS:
             if field_name in used_fields:
                 continue
+            # The street_address patterns match the bare "address"
+            # substring, which also lives inside "IP Address", "MAC
+            # Address" and "Email Address". Those are network / contact
+            # identifiers, not a physical address — never let them claim
+            # the street_address slot (the ghost-site root cause).
+            if field_name == "street_address" and any(
+                d in header for d in _NON_STREET_ADDRESS_HEADERS
+            ):
+                continue
             for kw in keywords:
                 if kw in header:
                     out[i] = field_name
@@ -243,6 +261,14 @@ def looks_like_site_roster(
         "part number", "part no", "model number", "model no", "sku",
         "unit cost", "extended", "subtotal", "total cost",
         "shall", "must", "will provide",
+        # Asset-inventory signals: an asset inventory (Asset ID / Serial /
+        # Model / IP Address / MAC Address / Hostname) is NOT a site
+        # roster. Without this guard, AST-001 matches the site-ID shape
+        # and "IP Address" matches the street-address header, producing
+        # ghost physical_site rows. One asset-inventory signal is enough
+        # to reject — real site rosters never carry serial/MAC/IP columns.
+        "serial", "mac address", "ip address", "asset id", "asset tag",
+        "hostname",
     })
     if columns:
         header_blob = " ".join(c.lower() for c in columns)

@@ -676,6 +676,42 @@ def compile_project(
             warnings.append(f"WARNING: prose_list_split failed: {type(_split_exc).__name__}: {_split_exc}")
         telemetry.end_stage(stage, output_count=split_count)
 
+    # v57 PIPELINE REORDER (#10): prune BEFORE the expensive per-atom LLM
+    # stages (enrich_entities, typed_atom_classification). Both pruners
+    # below are deterministic and depend on neither entity_keys nor typed
+    # classification, so running them up front shrinks the atom set the
+    # LLM has to chew through WITHOUT changing the final atom set — the
+    # same atoms are dropped, just before they burn an LLM call instead
+    # of after.
+    with telemetry.stage("duplicate_atom_collapse", input_count=len(atoms)) as stage:
+        before = len(atoms)
+        try:
+            from app.core.entity_resolution import collapse_duplicate_atoms
+            atoms = collapse_duplicate_atoms(atoms)
+        except Exception as exc:
+            warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
+        dropped = before - len(atoms)
+        if dropped > 0:
+            warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
+    # Execution-block hygiene: SOW signature pages ("Signature:",
+    # "Name: ___ Date: ___", "Services By: PurTera | Agreed By:") get
+    # swept into scope_item / raw_table_row atoms and masquerade as
+    # scope. Drop them up front so they never reach scope_truth or burn
+    # an LLM enrich / classification call.
+    with telemetry.stage("execution_boilerplate_drop", input_count=len(atoms)) as stage:
+        before_bp = len(atoms)
+        try:
+            from app.core.entity_hygiene import drop_execution_boilerplate
+            atoms = drop_execution_boilerplate(atoms)
+        except Exception as exc:
+            warnings.append(f"WARNING: execution_boilerplate_drop failed: {type(exc).__name__}: {exc}")
+        dropped_bp = before_bp - len(atoms)
+        if dropped_bp > 0:
+            warnings.append(f"INFO: dropped {dropped_bp} signature/execution-block boilerplate atoms")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     enrich_warnings: list[str] = []
     with telemetry.stage("enrich_entities", input_count=len(atoms)) as stage:
         # Universal entity extraction — populates atom.entity_keys for any
@@ -708,19 +744,27 @@ def compile_project(
             warnings.append(f"INFO: typed-atom classifier promoted {promoted} atoms from scope_item/entity")
         telemetry.end_stage(stage, output_count=promoted)
 
-    # v48 FIX 7: collapse intra-doc duplicate atoms emitted by PLIR
-    # (page-level iterative recall) on repeated section headers.
-    with telemetry.stage("duplicate_atom_collapse", input_count=len(atoms)) as stage:
-        before = len(atoms)
+    # Geographic fallback: a deal whose only locational anchor is a bare
+    # "City, ST ZIP" in a notes file produces zero physical_site atoms,
+    # an empty site_readiness, and a RED "no confirmed site" brief. When
+    # no real site exists, mine a City/State/ZIP anchor and emit one
+    # low-confidence (needs_review) physical_site so the deal anchors
+    # somewhere instead of going blank-RED. No-op when a real site exists.
+    with telemetry.stage("site_geo_fallback", input_count=len(atoms)) as stage:
+        added_geo = 0
         try:
-            from app.core.entity_resolution import collapse_duplicate_atoms
-            atoms = collapse_duplicate_atoms(atoms)
+            from app.core.site_geo_fallback import geo_fallback_sites
+            geo_atoms = geo_fallback_sites(atoms, project_id=resolved_project_id)
+            if geo_atoms:
+                atoms.extend(geo_atoms)
+                added_geo = len(geo_atoms)
+                warnings.append(
+                    f"INFO: site_geo_fallback inferred {added_geo} physical_site atom(s) "
+                    f"from City/State/ZIP (no confirmed site found)"
+                )
         except Exception as exc:
-            warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
-        dropped = before - len(atoms)
-        if dropped > 0:
-            warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
-        telemetry.end_stage(stage, output_count=len(atoms))
+            warnings.append(f"WARNING: site_geo_fallback failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=added_geo)
 
     # v52: semantic dedup by entity key. Catches the cases the text-based
     # v48 collapse misses — same fact extracted via 3 paths (schema /
@@ -730,8 +774,23 @@ def compile_project(
     with telemetry.stage("semantic_dedup", input_count=len(atoms)) as stage:
         before_sem = len(atoms)
         try:
-            from app.core.semantic_dedup import semantic_dedup_atoms
+            from app.core.semantic_dedup import (
+                cross_type_dedup_atoms,
+                semantic_dedup_atoms,
+            )
             atoms = semantic_dedup_atoms(atoms)
+            # Cross-type pass: the same sentence emitted as raw_table_row +
+            # scope_item + service_line + task collapses to the single most-
+            # specific type. semantic_dedup keys with atom_type so it can't
+            # catch these; without this, one table row inflates scope_truth
+            # and the scorecards four-fold.
+            before_xt = len(atoms)
+            atoms = cross_type_dedup_atoms(atoms)
+            dropped_xt = before_xt - len(atoms)
+            if dropped_xt > 0:
+                warnings.append(
+                    f"INFO: cross_type_dedup collapsed {dropped_xt} same-text cross-type atoms"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
         dropped_sem = before_sem - len(atoms)

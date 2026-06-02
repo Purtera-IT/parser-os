@@ -38,6 +38,10 @@ device_aliases:
     - display
     - displays
     - tv
+    - tvs
+    - television
+    - televisions
+    - flat panel tv
     - led display
     - lcd display
     - oled display
@@ -169,6 +173,8 @@ device_aliases:
     - cat6a av
   mount:
     - tv mount
+    - tv mounts
+    - wall mount
     - display mount
     - projector mount
     - lift bracket

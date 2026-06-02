@@ -1497,6 +1497,36 @@ class XlsxParser(BaseParser):
                 classification=classification,
             )
 
+        # RF1 — explicit fast-path for known structured-row CSVs.
+        # Files named asset_inventory / site_list / risk_register /
+        # license_support_matrix / lifecycle route to the typed-row
+        # profiler so they produce asset_record / site_roster / risk /
+        # support_entitlement / lifecycle_status atoms (PR2). This must
+        # run BEFORE the site-roster fast path: an asset_inventory CSV
+        # (Asset ID / Serial / IP Address / MAC Address) would otherwise
+        # be mis-read as a site roster (AST-001 matches the site-ID shape
+        # and "IP Address" matches the street-address header) and emit
+        # ghost physical_site atoms. Restricted to .csv to avoid
+        # disturbing existing .xlsx fixtures (e.g. demo_project's
+        # site_list.xlsx that legacy tests expect on the canonical path).
+        _STRUCTURED_NAMES = (
+            "asset_inventory", "site_list", "risk_register",
+            "license_support", "support_matrix", "lifecycle",
+        )
+        stem = filename.lower().replace("-", "_").replace(" ", "_")
+        if (
+            artifact_type == ArtifactType.csv
+            and any(s in stem for s in _STRUCTURED_NAMES)
+        ):
+            return self._emit_generic_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+            )
+
         # Site-roster fast path: when this sheet's first non-empty row
         # looks like site_roster headers (Site ID / Facility / Address /
         # MDF / Access / Escort), route the rows through the same
@@ -1536,33 +1566,6 @@ class XlsxParser(BaseParser):
             # produced nothing (e.g. blank sheet).
 
         model = _detect_header(rows)
-        # RF1 — explicit fast-path for known structured-row CSVs.
-        # Files named asset_inventory / site_list / risk_register /
-        # license_support_matrix / lifecycle should route to the
-        # typed-row profiler in _emit_generic_rows so they produce
-        # asset_record / site_roster / risk / support_entitlement /
-        # lifecycle_status atoms (PR2). Restricted to .csv to avoid
-        # disturbing existing .xlsx fixtures (e.g. demo_project's
-        # site_list.xlsx that legacy tests expect on the canonical
-        # path).
-        _STRUCTURED_NAMES = (
-            "asset_inventory", "site_list", "risk_register",
-            "license_support", "support_matrix", "lifecycle",
-        )
-        stem = filename.lower().replace("-", "_").replace(" ", "_")
-        if (
-            artifact_type == ArtifactType.csv
-            and any(s in stem for s in _STRUCTURED_NAMES)
-        ):
-            return self._emit_generic_rows(
-                project_id=project_id,
-                artifact_id=artifact_id,
-                artifact_type=artifact_type,
-                filename=filename,
-                sheet_name=sheet_name,
-                rows=rows,
-            )
-
         if model.header_idx < 0:
             # PRODUCTION_GAPS P0.4: when the canonical-header detector can't
             # find a cabling/networking-style schedule (plate_id, site,
@@ -1609,12 +1612,17 @@ class XlsxParser(BaseParser):
                 _row_cells = [str(c or "").strip() for c in row]
                 _row_text = " | ".join(c for c in _row_cells if c)[:4000]
                 _rtr_id = stable_id("atm", artifact_id, "raw_table_row", sheet_name, row_idx)
+                _rtr_columns = {
+                    h: get_column_letter(i + 1)
+                    for i, h in enumerate(_raw_headers)
+                    if h
+                }
                 _rtr_src = SourceRef(
                     id=stable_id("src", _rtr_id),
                     artifact_id=artifact_id,
                     artifact_type=artifact_type,
                     filename=filename,
-                    locator={"sheet": sheet_name, "row": row_idx + 1, "extraction": "raw_table_row_v49_2"},
+                    locator={"sheet": sheet_name, "row": row_idx + 1, "columns": _rtr_columns, "extraction": "raw_table_row_v49_2"},
                     extraction_method="raw_table_row_v49_2",
                     parser_version=self.parser_version,
                 )
