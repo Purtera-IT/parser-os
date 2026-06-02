@@ -257,6 +257,10 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     except Exception:
         _allow = []
     ordered_keys = _gate_extractor_keys(ordered_keys, _allow)
+    # v57: content-driven selection — drop extractors the deal has zero
+    # signal for so they make NO LLM calls (was: fall back to running on
+    # every doc). Universal + self-determining; see _active_extractor_keys.
+    ordered_keys = _active_extractor_keys(ordered_keys, by_artifact, atom_type_index)
     if ordered_keys:
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = {pool.submit(calls[k]): k for k in ordered_keys}
@@ -888,6 +892,23 @@ def _build_atom_type_index(atoms: list[Any]) -> dict[str, set[str]]:
     return out
 
 
+def _doc_haystack(slot: dict[str, Any]) -> str:
+    """Lowercased filename + headings + full body text for ``slot``.
+
+    Built once and memoized on the slot (``_hay``) so the relevance gate's
+    body-keyword channel sees the WHOLE document while still doing a single
+    blob build per doc regardless of how many extractors query it.
+    """
+    hay = slot.get("_hay")
+    if hay is None:
+        headings_blob = " ".join(slot.get("headings") or ())
+        body_blob = " ".join(slot.get("bodies") or ())
+        filename = slot.get("filename") or ""
+        hay = (filename + " " + headings_blob + " " + body_blob).lower()
+        slot["_hay"] = hay
+    return hay
+
+
 def _doc_is_relevant_for(
     extractor_key: str,
     slot: dict[str, Any],
@@ -912,16 +933,16 @@ def _doc_is_relevant_for(
     for at in sig.get("atom_types", ()):
         if at in atom_types_in_doc:
             return True
-    # 3. Body keyword
+    # 3. Body keyword — scan the FULL document text, not a prefix.
+    # A requirement clause ("shall", "must") or a signature block can sit
+    # anywhere in a long doc; truncating to the first few atoms silently
+    # dropped extractors whose trigger word lived deeper (caught by the
+    # cross-deal selection harness). The lowercased blob is built ONCE per
+    # doc and cached on the slot, so all ~27 extractors share a single
+    # pass — substring scans over an in-memory blob are cheap.
     text_kws = sig.get("text_kw", ())
     if text_kws:
-        # Stitch a single search blob to avoid N-way passes per doc.
-        # Headings + first chunk of bodies is usually enough — full-body
-        # scan would defeat the point of a fast gate.
-        headings_blob = " ".join(slot.get("headings") or ())
-        bodies = slot.get("bodies") or ()
-        body_blob = " ".join(bodies[:5]) if bodies else ""
-        haystack = (headings_blob + " " + body_blob).lower()
+        haystack = _doc_haystack(slot)
         for kw in text_kws:
             if kw in haystack:
                 return True
@@ -955,7 +976,97 @@ def _filter_by_artifact(
     if filtered:
         return filtered
     # Fallback — empty filter is suspicious; preserve old behavior.
+    # NOTE: with content-driven selection (_active_extractor_keys) this
+    # branch is now only reachable for keys that DID have ≥1 relevant doc
+    # at selection time, so it is effectively defensive dead code. Kept so
+    # an extractor never receives an empty doc set even under a race.
     return by_artifact
+
+
+# ════════════════════════════════════════════════════════════════════
+# v57 — CONTENT-DRIVEN EXTRACTOR SELECTION (self-determining, universal)
+# ════════════════════════════════════════════════════════════════════
+#
+# The relevance gate above shrinks each extractor's DOC set. This selector
+# goes one step further and decides, per deal, WHICH extractors run at all
+# — purely from the deal's own content. An extractor is run only when at
+# least one document trips one of its three signal channels (filename /
+# atom-type / body keyword). When the whole deal is silent for an
+# extractor, it is SKIPPED entirely (zero LLM calls) instead of the old
+# behavior of falling back to running it across every document.
+#
+# WHY THIS IS UNIVERSAL (not a per-pack allow-list):
+#   The active set is derived from the deal in hand, never from the routed
+#   pack. An enterprise-IT deal that ships integration / data-flow content
+#   keeps data_flow_steps, system_mappings, integration_checkpoints — those
+#   channels fire on its filenames + body text. An AV deal with none of
+#   that content skips them. A misrouted or cross-domain deal still gets
+#   every extractor its own content justifies. Nothing is gated on which
+#   pack won the route.
+#
+# WHY NOTHING GETS STARVED:
+#   - "customer" is an always-run anchor (every deal needs it).
+#   - Extractors with no _RELEVANCE_SIGNALS entry, or only filename signal
+#     / no signal sources, are default-True in _doc_is_relevant_for, so
+#     they match every doc and are never skipped. Only extractors with
+#     real atom-type OR body-keyword signal can be dropped, and only when
+#     not one document in the deal trips any channel.
+#   - Honors SOWSMITH_RELEVANCE_GATE_DISABLE: when set, every extractor
+#     runs (selection is a no-op), same escape hatch as the doc gate.
+
+_ALWAYS_RUN_EXTRACTORS: frozenset[str] = frozenset({"customer"})
+
+
+def _extractor_has_signal(
+    extractor_key: str,
+    by_artifact: dict[str, dict[str, Any]],
+    atom_type_index: dict[str, set[str]],
+) -> bool:
+    """True when ANY document in the deal has signal for this extractor.
+
+    Reuses the exact per-doc predicate (_doc_is_relevant_for) so this
+    selector and _filter_by_artifact stay consistent: a key reported as
+    having signal here is guaranteed a non-empty filtered doc set there.
+    """
+    for aid, slot in by_artifact.items():
+        if _doc_is_relevant_for(
+            extractor_key, slot, atom_type_index.get(aid, set())
+        ):
+            return True
+    return False
+
+
+def _active_extractor_keys(
+    ordered_keys: list[str],
+    by_artifact: dict[str, dict[str, Any]],
+    atom_type_index: dict[str, set[str]],
+) -> list[str]:
+    """Narrow ``ordered_keys`` to the extractors the deal actually warrants.
+
+    Content-driven and universal: keeps every always-run anchor plus any
+    extractor with ≥1 relevant document, drops the rest. Order preserved.
+    No-op when the relevance gate is disabled.
+    """
+    if os.environ.get("SOWSMITH_RELEVANCE_GATE_DISABLE"):
+        return list(ordered_keys)
+    out: list[str] = []
+    for k in ordered_keys:
+        if k in _ALWAYS_RUN_EXTRACTORS or _extractor_has_signal(
+            k, by_artifact, atom_type_index
+        ):
+            out.append(k)
+    # Never return empty — if somehow nothing qualified, fall back to all
+    # so a deal is never silently un-extracted.
+    selected = out or list(ordered_keys)
+    skipped = [k for k in ordered_keys if k not in selected]
+    if skipped:
+        import logging
+        logging.getLogger(__name__).info(
+            "content-driven selection: running %d/%d extractors; "
+            "skipped (no signal in deal): %s",
+            len(selected), len(ordered_keys), ", ".join(skipped),
+        )
+    return selected
 
 
 # ════════════════════════════════════════════════════════════════════
