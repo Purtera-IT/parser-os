@@ -25,6 +25,7 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_quote
+from app.parsers.sheet_classifier import SheetDestination, classify_sheet
 from app.parsers.structured_projection import (
     derived_files_for,
     make_page,
@@ -1361,6 +1362,14 @@ class QuoteParser(BaseParser):
         rows: list[list[Any]],
     ) -> list[EvidenceAtom]:
         if not rows:
+            return []
+        # Sheet-role gate (shared with xlsx_parser). Only DROP-destination
+        # sheets (empty / cover / instruction / lookup-helper noise) are
+        # skipped here. COMMERCIAL-destination sheets (rate cards, price
+        # catalogs, deal-financials) are exactly what a quote parser
+        # *should* mine — they fall through to normal line-item parsing so
+        # their pricing is captured rather than discarded.
+        if classify_sheet(sheet_name, rows).destination is SheetDestination.DROP:
             return []
         header_idx, header_map, header_mode, diag = _detect_header_advanced(rows, scan_limit=40)
         if header_idx is None or not header_map:

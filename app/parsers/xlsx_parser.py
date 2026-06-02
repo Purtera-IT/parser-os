@@ -26,6 +26,10 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_xlsx
+from app.parsers.sheet_classifier import (
+    SheetDestination,
+    classify_sheet,
+)
 from app.parsers.structured_projection import (
     derived_files_for,
     make_page,
@@ -211,6 +215,62 @@ def _looks_like_service_line(value: str) -> bool:
 
 def _norm_op_sheet(sheet_name: str) -> str:
     return normalize_text(sheet_name).replace("_", " ").strip()
+
+
+# ── Commercial-sheet money extraction ───────────────────────────────
+# Pricing in estimating workbooks is stored as bare numeric cells, not
+# "$"-formatted text, so the symbol-based money extractor in
+# entity_extraction misses it. These helpers recover money two ways:
+#   • money columns  — a header cell naming a money concept (cost / sell /
+#     price / rate / total / revenue / margin …) over numeric data cells
+#     (master catalogs, rate cards).
+#   • label→value    — a money-concept label cell paired with the nearest
+#     numeric cell to its right on the same row (deal-financials summaries
+#     like "Total Deal Revenue | 21560").
+_MONEY_CONCEPT_RE = re.compile(
+    r"revenue|cost|margin|price|\bsell\b|\bfee\b|budget|subtotal|amount"
+    r"|\brate\b|charge|expense|extended|unit\s*price|total",
+    re.I,
+)
+# Floor that rejects tax multipliers (1.09 / 1.34), margin ratios (0.27),
+# and other sub-dollar line noise while keeping genuine prices/totals.
+_MIN_MONEY_VALUE = 5.0
+
+
+def _is_money_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and abs(value) >= _MIN_MONEY_VALUE
+    )
+
+
+def _money_columns(rows: list[list[Any]]) -> set[int]:
+    """Column indices whose header names a money concept (% columns excluded)."""
+    cols: set[int] = set()
+    for row in rows[:20]:
+        for idx, c in enumerate(row):
+            t = str(c or "").strip()
+            if t and "%" not in t and _MONEY_CONCEPT_RE.search(t):
+                cols.add(idx)
+    return cols
+
+
+def _row_money_values(row: list[Any], money_cols: set[int]) -> list[float]:
+    """Money amounts on a row, via money columns and label→value pairs."""
+    vals: list[float] = []
+    for idx in money_cols:
+        if idx < len(row) and _is_money_number(row[idx]):
+            vals.append(float(row[idx]))
+    for idx, c in enumerate(row):
+        t = str(c or "").strip()
+        if not t or "%" in t or not _MONEY_CONCEPT_RE.search(t):
+            continue
+        for j in range(idx + 1, len(row)):
+            if _is_money_number(row[j]):
+                vals.append(float(row[j]))
+                break
+    return vals
 
 
 def _first_nonblank_header_row(rows: list[list[Any]]) -> int | None:
@@ -1213,6 +1273,105 @@ class XlsxParser(BaseParser):
             )
         return out
 
+    # Sheets the classifier routes to COMMERCIAL (rate cards, master
+    # catalogs, deal-financials) can be large pricebooks; cap the number
+    # of pricing atoms per sheet so a 1000-row catalog can't flood the
+    # envelope. Deal totals and rate cards are far smaller than this.
+    _COMMERCIAL_ROW_CAP = 200
+
+    def _emit_commercial_sheet_rows(
+        self,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+        classification: Any,
+    ) -> list[EvidenceAtom]:
+        """Route a non-scope *pricing* sheet to typed commercial atoms.
+
+        Rate cards, master catalogs and deal-financials tabs are not
+        customer scope, but they carry pricing the PM needs. Rather than
+        drop them, every money-bearing row becomes a typed commercial
+        atom (``commercial_total`` for a deal-financials summary,
+        ``pricing_assumption`` for rate-card / catalog rows), tagged
+        ``vendor_quote`` authority and carrying ``money:`` entity keys so
+        it feeds the OrbitBrief ``pricing_clarity`` dimension without ever
+        landing in ``scope_truth``.
+        """
+        from app.parsers.sheet_classifier import SheetRole
+
+        role = classification.role
+        atom_type = (
+            AtomType.commercial_total
+            if role is SheetRole.FINANCIAL_SUMMARY
+            else AtomType.pricing_assumption
+        )
+
+        money_cols = _money_columns(rows)
+        atoms: list[EvidenceAtom] = []
+        for row_idx, row in enumerate(rows):
+            cells = [("" if c is None else str(c).strip()) for c in row]
+            if not any(cells):
+                continue
+            values = _row_money_values(row, money_cols)
+            if not values:
+                # Header / label rows with no dollar figure carry no
+                # pricing signal — skip so the commercial view stays clean.
+                continue
+            money_keys = sorted({f"money:{int(round(v))}" for v in values})
+            row_text = " | ".join(c for c in cells if c)[:4000]
+            label = " ".join(
+                c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
+            ).strip()[:300]
+            atom_id = stable_id(
+                "atm", artifact_id, atom_type.value, sheet_name, row_idx
+            )
+            src = SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                locator={
+                    "sheet": sheet_name,
+                    "row": row_idx + 1,
+                    "extraction": "commercial_sheet_routing",
+                },
+                extraction_method="commercial_sheet_routing",
+                parser_version=self.parser_version,
+            )
+            atoms.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=atom_type,
+                    raw_text=row_text,
+                    normalized_text=row_text.lower(),
+                    value={
+                        "label": label,
+                        "money_keys": money_keys,
+                        "sheet_role": role.value,
+                        "sheet_name": sheet_name,
+                        "cells": [c for c in cells if c],
+                    },
+                    entity_keys=money_keys,
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.vendor_quote,
+                    confidence=0.7,
+                    confidence_raw=0.7,
+                    calibrated_confidence=0.7,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+            if len(atoms) >= self._COMMERCIAL_ROW_CAP:
+                break
+        return atoms
+
     def _parse_sheet_rows(
         self,
         project_id: str,
@@ -1224,6 +1383,29 @@ class XlsxParser(BaseParser):
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
+
+        # Sheet-role router: estimating workbooks carry rate-card backing
+        # lists, master price catalogs, deal-financials tabs and empty
+        # template sheets that are not customer scope. The classifier
+        # routes each sheet so non-scope sheets can't bury real evidence:
+        #   • DROP       → empty / cover / lookup-helper noise: emit nothing.
+        #   • COMMERCIAL → rate card / catalog / deal financials: emit TYPED
+        #     commercial atoms (pricing the PM needs) — never scope_item, so
+        #     scope_truth stays clean while pricing still surfaces.
+        #   • SCOPE      → fall through to normal row mining.
+        classification = classify_sheet(sheet_name, rows)
+        if classification.destination is SheetDestination.DROP:
+            return []
+        if classification.destination is SheetDestination.COMMERCIAL:
+            return self._emit_commercial_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+                classification=classification,
+            )
 
         # Site-roster fast path: when this sheet's first non-empty row
         # looks like site_roster headers (Site ID / Facility / Address /
