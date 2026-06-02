@@ -61,6 +61,42 @@ DEFAULT_PARALLEL = 8
 # ════════════════════════════════════════════════════════════════════
 
 
+def _gate_extractor_keys(
+    call_keys: list[str], allow_list: list[str] | None
+) -> list[str]:
+    """v57 pack-gated extractor selection.
+
+    Given the full set of extractor keys and a pack's ``llm_extractors``
+    allow-list, return the subset to actually run.
+
+      * empty / None allow-list  → run everything (backward compatible)
+      * non-empty allow-list      → run only those keys, intersected with
+        what's actually available, plus the always-needed ``customer``
+        anchor (every deal needs its customer resolved; it's a cheap
+        1-shot call). Unknown keys in the allow-list are ignored rather
+        than erroring, so a pack typo degrades to "run that extractor's
+        siblings" not "crash the compile".
+
+    Pure + order-preserving so it's trivially unit-testable without the
+    network.
+    """
+    if not allow_list:
+        return list(call_keys)
+    allowed = set(allow_list)
+    gated = [k for k in call_keys if k in allowed]
+    # If the allow-list matched NONE of the available keys it's almost
+    # certainly a misconfiguration (typo'd keys, stale names). Falling
+    # back to "run all" is safer than silently extracting nothing.
+    if not gated:
+        return list(call_keys)
+    # Always include the customer anchor — every deal needs its customer
+    # resolved and it's a cheap 1-shot call. Re-derive in call_keys order
+    # so ordering stays stable.
+    if "customer" in call_keys and "customer" not in allowed:
+        return [k for k in call_keys if k == "customer" or k in allowed]
+    return gated
+
+
 def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     """Run all 5 focused extractors in parallel and merge results.
 
@@ -211,6 +247,16 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     ordered_keys = [k for k in _PRIORITY_KEYS if k in calls]
     # Any key not in _PRIORITY_KEYS (future additions) lands at the end.
     ordered_keys.extend(k for k in calls if k not in _PRIORITY_KEYS)
+    # v57: pack-gated extractor selection — when the active domain pack
+    # declares an llm_extractors allow-list, drop the extractors it does
+    # not name. Empty list (every current pack) = run all, so this is a
+    # no-op until a pack opts in.
+    try:
+        from app.domain import get_active_domain_pack
+        _allow = list(getattr(get_active_domain_pack(), "llm_extractors", []) or [])
+    except Exception:
+        _allow = []
+    ordered_keys = _gate_extractor_keys(ordered_keys, _allow)
     if ordered_keys:
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = {pool.submit(calls[k]): k for k in ordered_keys}
