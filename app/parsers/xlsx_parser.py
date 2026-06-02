@@ -1311,6 +1311,7 @@ class XlsxParser(BaseParser):
 
         money_cols = _money_columns(rows)
         atoms: list[EvidenceAtom] = []
+        all_values: list[float] = []
         for row_idx, row in enumerate(rows):
             cells = [("" if c is None else str(c).strip()) for c in row]
             if not any(cells):
@@ -1320,6 +1321,7 @@ class XlsxParser(BaseParser):
                 # Header / label rows with no dollar figure carry no
                 # pricing signal — skip so the commercial view stays clean.
                 continue
+            all_values.extend(values)
             money_keys = sorted({f"money:{int(round(v))}" for v in values})
             row_text = " | ".join(c for c in cells if c)[:4000]
             label = " ".join(
@@ -1370,7 +1372,95 @@ class XlsxParser(BaseParser):
             )
             if len(atoms) >= self._COMMERCIAL_ROW_CAP:
                 break
-        return atoms
+
+        if not atoms:
+            return []
+
+        # Roll-up banner: a single summary atom per pricing sheet so the
+        # OrbitBrief pricing view can render one readable line (count +
+        # $-range + total) that expands to the granular rows above. Carries
+        # the sheet's aggregate money keys so it still feeds pricing_clarity.
+        summary = self._commercial_summary_atom(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            sheet_name=sheet_name,
+            role=role,
+            atom_type=atom_type,
+            line_count=len(atoms),
+            values=all_values,
+        )
+        return [summary, *atoms]
+
+    def _commercial_summary_atom(
+        self,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        role: Any,
+        atom_type: AtomType,
+        line_count: int,
+        values: list[float],
+    ) -> EvidenceAtom:
+        lo = min(values) if values else 0.0
+        hi = max(values) if values else 0.0
+        total = sum(values)
+        money_keys = sorted(
+            {f"money:{int(round(v))}" for v in (lo, hi, total) if v >= _MIN_MONEY_VALUE}
+        )
+        label = (
+            f"{sheet_name}: {line_count} pricing line"
+            f"{'s' if line_count != 1 else ''}, "
+            f"${int(round(lo)):,}–${int(round(hi)):,}"
+        )
+        atom_id = stable_id(
+            "atm", artifact_id, atom_type.value, sheet_name, "summary"
+        )
+        src = SourceRef(
+            id=stable_id("src", atom_id),
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            locator={
+                "sheet": sheet_name,
+                "extraction": "commercial_sheet_routing",
+                "rollup": True,
+            },
+            extraction_method="commercial_sheet_routing",
+            parser_version=self.parser_version,
+        )
+        return EvidenceAtom(
+            id=atom_id,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=atom_type,
+            raw_text=label,
+            normalized_text=label.lower(),
+            value={
+                "is_summary": True,
+                "label": label,
+                "line_count": line_count,
+                "money_min": round(lo, 2),
+                "money_max": round(hi, 2),
+                "money_sum": round(total, 2),
+                "money_keys": money_keys,
+                "sheet_role": role.value,
+                "sheet_name": sheet_name,
+            },
+            entity_keys=money_keys,
+            source_refs=[src],
+            receipts=[],
+            authority_class=AuthorityClass.vendor_quote,
+            confidence=0.7,
+            confidence_raw=0.7,
+            calibrated_confidence=0.7,
+            review_status=ReviewStatus.needs_review,
+            review_flags=["pricing_rollup"],
+            parser_version=self.parser_version,
+        )
 
     def _parse_sheet_rows(
         self,

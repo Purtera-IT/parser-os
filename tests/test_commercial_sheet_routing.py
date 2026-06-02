@@ -75,6 +75,12 @@ def test_financial_summary_emits_commercial_totals(tmp_path) -> None:
     assert "money:0" not in keys
     # Tagged as vendor/internal pricing, flagged for review.
     assert all(a.authority_class == AuthorityClass.vendor_quote for a in totals)
+    # Exactly one roll-up banner leads the granular rows.
+    summaries = [a for a in atoms if "pricing_rollup" in (a.review_flags or [])]
+    assert len(summaries) == 1
+    s = summaries[0]
+    assert s is atoms[0] and s.value["is_summary"] is True
+    assert s.value["line_count"] == len(atoms) - 1
 
 
 # ── master catalog (money-keyword columns) ──────────────────────────
@@ -96,6 +102,10 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     assert pricing
     keys = {k for a in atoms for k in (a.entity_keys or [])}
     assert "money:661" in keys and "money:339" in keys
+    # Banner roll-up leads, granular rows follow.
+    assert atoms[0].value.get("is_summary") is True
+    assert "pricing_rollup" in (atoms[0].review_flags or [])
+    assert atoms[0].value["line_count"] == len([a for a in atoms[1:]])
 
 
 # ── pure backing data is still dropped ──────────────────────────────
