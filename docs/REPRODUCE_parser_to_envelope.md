@@ -161,13 +161,42 @@ Expected for Yonah deal 126 (verified earlier against real atoms):
 - 6 P&L categories (Deal/Labor/PMO/Materials/Lift/Misc)
 - Truth Gate clean of `quantity:*_cost` / `quantity:*_margin` junk entities
 
-### Tests (no LLM needed — pure unit tests)
+### Tests A — deterministic, no LLM (run anywhere)
+These cover the branch's parser/scrub/render logic directly and pass on any
+box with the deps. They do NOT call `compile_project`, so the LLM being
+unreachable doesn't matter:
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=. python -m pytest -p no:cacheprovider -q \
   tests/test_financial_summary_parser.py tests/test_deal_sections.py \
   tests/test_commercial_sheet_routing.py tests/test_atom_type_sanity.py \
-  tests/test_xlsx_parser.py tests/test_orbitbrief_envelope.py
+  tests/test_xlsx_parser.py
 ```
+
+### Tests B — LLM-pipeline integration (HEALTHY BOX ONLY)
+These call `compile_project()`, so they exercise the full pipeline incl. the
+**LLM classifier + embeddings**. They are only meaningful when `$OLLAMA_HOST`
+is reachable (see §2) — run them on the same box you do the live compile on:
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=. python -m pytest -p no:cacheprovider -q \
+  tests/test_orbitbrief_envelope.py \
+  tests/parser_adversarial/test_transcript_adversarial.py
+```
+⚠️ **If the LLM host is unreachable these fail for environmental reasons, not
+code.** Tell-tale: the `typed_atom_classification` stage logs
+`"duration_ms": 180090` (the 180s `SOWSMITH_LLM_TIMEOUT`) and
+`"output_count": 0`. When the classifier times out:
+- PDF atoms keep imprecise locators → receipts come back `unsupported`
+  (`test_orbitbrief_envelope` receipt-status asserts fail), and
+- a transcript `open_question` never gets cleanly typed/linked and is dropped
+  before packetize, so no `missing_info` packet is built
+  (`test_transcript_adversarial` fails).
+
+Both failures are LLM-availability artifacts. The `open_question →
+missing_info` routing (`packetizer.build_packets`, incl. the badge/MDF/IDF
+access gate) and the DOCX whole-document replay fallback are intact; the PDF
+`unsupported` path is the still-open work tracked under "provenance replay
+coverage" (Gap D). Confirm these on a box where `curl $OLLAMA_HOST/api/tags`
+lists the models before treating any failure as a real regression.
 
 ---
 
