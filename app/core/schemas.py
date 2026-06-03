@@ -246,6 +246,12 @@ class PacketFamily(str, Enum):
     # separately from generic constraints so OrbitBrief can render a
     # "Compliance" tab independent of project-internal rules.
     compliance_clause = "compliance_clause"
+    # Deal economics surfaced as a PM-facing section: revenue / cost /
+    # margin totals (commercial_total) and the rate-card / catalog price
+    # rollups (pricing_assumption summaries). Previously these typed
+    # commercial atoms were emitted by the xlsx parser but had no packet
+    # family, so they never reached the deliverable.
+    commercial_summary = "commercial_summary"
 
 
 class ParserCapability(BaseModel):

@@ -1,0 +1,316 @@
+"""Deterministic post-classification type-sanity pass.
+
+The LLM ``typed_atom_classifier`` and the table/xlsx extractors label atoms
+in isolation, so commercial meta-values leak into the ``quantity`` bucket:
+``"28.57% margin"``, ``"260 PMO Cost"``, ``"99 pricing lines"`` are not
+deliverable quantities — they're financial figures or spreadsheet row
+counts. This pollutes quantity rollups and the scorecards.
+
+This module is a *guardrail*, not an extractor: it runs after
+classification and re-types atoms that fail type-specific sanity rules.
+It is fully deterministic (no LLM, no I/O), universal (no customer
+terminology), and conservative — it only demotes atoms it can prove are
+mis-typed, never the reverse.
+
+Two passes:
+
+1. ``demote_nondeliverable_quantities`` — a ``quantity`` atom that is
+   really a financial/percentage figure or a spreadsheet meta-count is
+   re-typed to ``pricing_assumption`` (financial) and its ``quantity:``
+   entity keys are stripped so it stops inflating quantity rollups.
+
+2. ``surface_headline_quantities`` — when a ``requirement`` / ``scope_item``
+   / ``service_line`` atom states a strong ``"<N> <deliverable-noun>"``
+   count (e.g. "replace approximately 110 existing TVs") and no existing
+   ``quantity`` atom carries that count, emit a child ``quantity`` atom so
+   the deal's headline figure is structured, not buried in prose.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+# --- financial / meta tokens that disqualify a "quantity" --------------
+
+# Currency, percentage and pricing vocabulary. A quantity carrying any of
+# these is a commercial figure, not a deliverable count.
+_FINANCIAL_RE = re.compile(
+    r"(?:\$|%|\bpercent\b|\bpct\b|\bmargin\b|\bmarkup\b|\bcost(?:s)?\b|"
+    r"\bprice(?:s|d|ing)?\b|\brate(?:s)?\b|\bfee(?:s)?\b|\btax(?:es)?\b|"
+    r"\bdiscount(?:s)?\b|\brevenue\b|\bprofit\b|\bmsrp\b|\busd\b|\bdollar(?:s)?\b|"
+    r"\bsubtotal\b|\bgrand\s+total\b|\bpmo\b|\bburden(?:ed)?\b|\bsell\b\s*rate)",
+    re.IGNORECASE,
+)
+
+# Spreadsheet meta-counts: "99 pricing lines", "14 line items", "5 rows",
+# "118 skus". These count *records*, not deliverables.
+_META_COUNT_RE = re.compile(
+    r"\b\d[\d,]*\s+(?:pricing\s+lines?|line\s+items?|rows?|records?|"
+    r"sku(?:s)?|entries|cells?|columns?|sheets?|tabs?)\b",
+    re.IGNORECASE,
+)
+
+# Deliverable nouns — the presence of one of these (with a number) means
+# the atom really is a countable deliverable and must NOT be demoted even
+# if a stray financial token also appears.
+_DELIVERABLE_NOUN_RE = re.compile(
+    r"\b\d[\d,]*\s+(?:[a-z][a-z\-]*\s+){0,3}"
+    r"(?:tv(?:s)?|television(?:s)?|display(?:s)?|monitor(?:s)?|screen(?:s)?|"
+    r"unit(?:s)?|device(?:s)?|dwelling(?:s)?|room(?:s)?|door(?:s)?|"
+    r"camera(?:s)?|cam(?:s)?|switch(?:es)?|router(?:s)?|firewall(?:s)?|"
+    r"access\s+point(?:s)?|ap(?:s)?|wap(?:s)?|sensor(?:s)?|reader(?:s)?|"
+    r"controller(?:s)?|speaker(?:s)?|panel(?:s)?|jack(?:s)?|outlet(?:s)?|"
+    r"drop(?:s)?|port(?:s)?|cable(?:s)?|cord(?:s)?|rack(?:s)?|cabinet(?:s)?|"
+    r"server(?:s)?|appliance(?:s)?|workstation(?:s)?|laptop(?:s)?|"
+    r"desktop(?:s)?|license(?:s)?|seat(?:s)?|endpoint(?:s)?|mount(?:s)?|"
+    r"projector(?:s)?|enclosure(?:s)?|station(?:s)?|piece(?:s)?|each)\b",
+    re.IGNORECASE,
+)
+
+
+def _atom_type_str(atom: Any) -> str:
+    at = getattr(atom, "atom_type", None)
+    return at.value if hasattr(at, "value") else str(at or "")
+
+
+def _atom_text(atom: Any) -> str:
+    return str(getattr(atom, "raw_text", None) or getattr(atom, "normalized_text", None) or "")
+
+
+def _classify_quantity(text: str) -> str:
+    """Return 'deliverable', 'financial', 'meta', or 'ok'.
+
+    'deliverable' wins over 'financial' — a real count that happens to sit
+    near a price stays a quantity.
+    """
+    if _DELIVERABLE_NOUN_RE.search(text):
+        return "deliverable"
+    if _META_COUNT_RE.search(text):
+        return "meta"
+    if _FINANCIAL_RE.search(text):
+        return "financial"
+    return "ok"
+
+
+def _classify_quantity_key(key: str) -> str:
+    """Classify a single ``quantity:<tail>`` entity key.
+
+    The tail is a slugified figure label — ``quantity:260_pmo_cost``,
+    ``quantity:28_57_margin``, ``quantity:118_pricing_lines``. We
+    de-slugify (``_`` -> space) and run the same deliverable/financial/meta
+    vocabulary as atom text. A bare numeric tail (``quantity:110``) carries
+    no vocabulary and stays ``ok`` so legitimate deliverable counts survive.
+    """
+    if not key.startswith("quantity:"):
+        return "ok"
+    tail = key.split(":", 1)[1]
+    probe = re.sub(r"[_\-]+", " ", tail).strip()
+    if not probe:
+        return "ok"
+    # Ensure the meta/deliverable regexes (which anchor on "<number> <noun>")
+    # can fire even when the slug leads with the noun rather than the count.
+    if not re.match(r"^\d", probe):
+        probe = "1 " + probe
+    return _classify_quantity(probe)
+
+
+def scrub_nondeliverable_quantity_keys(atoms: list[Any]) -> int:
+    """Strip financial/meta ``quantity:`` entity keys from **every** atom.
+
+    ``demote_nondeliverable_quantities`` only fixes atoms *typed* as
+    quantity. But commercial atoms (``commercial_total`` /
+    ``pricing_assumption``) routinely carry junk ``quantity:`` keys like
+    ``quantity:260_pmo_cost`` or ``quantity:28_57_margin`` — financial
+    figures and spreadsheet meta-counts that the entity resolver then
+    promotes into bogus quantity entities (polluting the Truth Gate and
+    quantity rollups). This pass removes those keys wherever they appear,
+    regardless of atom type, while preserving genuine deliverable counts
+    (bare numeric tails) untouched.
+
+    Mutates in place. Returns the number of keys stripped.
+    """
+    stripped = 0
+    for atom in atoms:
+        keys = list(getattr(atom, "entity_keys", None) or [])
+        if not keys:
+            continue
+        kept: list[Any] = []
+        removed_here = False
+        for k in keys:
+            ks = str(k)
+            if ks.startswith("quantity:") and _classify_quantity_key(ks) in ("financial", "meta"):
+                stripped += 1
+                removed_here = True
+                continue
+            kept.append(k)
+        if removed_here:
+            atom.entity_keys = kept
+            flag = "scrubbed_nondeliverable_quantity_key"
+            existing = list(getattr(atom, "review_flags", None) or [])
+            if flag not in existing:
+                atom.review_flags = sorted(set(existing + [flag]))
+    return stripped
+
+
+def demote_nondeliverable_quantities(atoms: list[Any]) -> int:
+    """Re-type financial/meta atoms mis-labelled as ``quantity``.
+
+    Mutates in place. Returns the number of atoms demoted.
+    """
+    from app.core.schemas import AtomType, ReviewStatus
+
+    demoted = 0
+    for atom in atoms:
+        if _atom_type_str(atom) != "quantity":
+            continue
+        verdict = _classify_quantity(_atom_text(atom))
+        if verdict in ("financial", "meta"):
+            atom.atom_type = AtomType.pricing_assumption
+            # Strip quantity: keys so the atom stops inflating quantity rollups.
+            keys = [k for k in (getattr(atom, "entity_keys", None) or []) if not str(k).startswith("quantity:")]
+            atom.entity_keys = keys
+            flag = "retyped_quantity_to_pricing_assumption"
+            existing = list(getattr(atom, "review_flags", None) or [])
+            if flag not in existing:
+                atom.review_flags = sorted(set(existing + [flag]))
+            if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
+                atom.review_status = ReviewStatus.needs_review
+            demoted += 1
+    return demoted
+
+
+_HEADLINE_RE = re.compile(
+    r"(?:approximately\s+|approx\.?\s+|about\s+|~\s*)?"
+    r"(\d[\d,]*)\s+(?:[a-z][a-z\-]*\s+){0,3}"
+    r"(tv(?:s)?|television(?:s)?|display(?:s)?|monitor(?:s)?|unit(?:s)?|"
+    r"device(?:s)?|camera(?:s)?|switch(?:es)?|access\s+point(?:s)?|ap(?:s)?|"
+    r"door(?:s)?|reader(?:s)?|drop(?:s)?|jack(?:s)?|outlet(?:s)?|port(?:s)?|"
+    r"speaker(?:s)?|panel(?:s)?|sensor(?:s)?|workstation(?:s)?|laptop(?:s)?|"
+    r"endpoint(?:s)?|license(?:s)?|seat(?:s)?|rack(?:s)?|server(?:s)?)",
+    re.IGNORECASE,
+)
+
+_SOURCE_TYPES_FOR_HEADLINE = {"requirement", "scope_item", "service_line"}
+_MIN_HEADLINE_COUNT = 10
+
+
+def _existing_quantity_counts(atoms: list[Any]) -> set[int]:
+    counts: set[int] = set()
+    for atom in atoms:
+        if _atom_type_str(atom) != "quantity":
+            continue
+        for k in (getattr(atom, "entity_keys", None) or []):
+            ks = str(k)
+            if ks.startswith("quantity:"):
+                try:
+                    counts.add(int(float(ks.split(":", 1)[1])))
+                except (ValueError, IndexError):
+                    pass
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict):
+            q = val.get("quantity")
+            if isinstance(q, (int, float)) and not isinstance(q, bool):
+                counts.add(int(q))
+    return counts
+
+
+def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[Any]:
+    """Emit a ``quantity`` atom for a strong ``<N> <deliverable>`` count
+    stated in prose that no existing quantity atom captures.
+
+    Conservative: only counts >= ``_MIN_HEADLINE_COUNT`` from
+    requirement/scope/service atoms, deduped against existing quantity
+    values and against each other. Returns new atoms (does not mutate the
+    input list).
+    """
+    from app.core.ids import stable_id
+    from app.core.schemas import (
+        ArtifactType,
+        AtomType,
+        AuthorityClass,
+        EvidenceAtom,
+        ReviewStatus,
+        SourceRef,
+    )
+
+    have = _existing_quantity_counts(atoms)
+    emitted_counts: set[int] = set()
+    out: list[Any] = []
+    for atom in atoms:
+        if _atom_type_str(atom) not in _SOURCE_TYPES_FOR_HEADLINE:
+            continue
+        text = _atom_text(atom)
+        for m in _HEADLINE_RE.finditer(text):
+            raw = m.group(1).replace(",", "")
+            try:
+                n = int(raw)
+            except ValueError:
+                continue
+            if n < _MIN_HEADLINE_COUNT or n > 100_000:
+                continue
+            if n in have or n in emitted_counts:
+                continue
+            emitted_counts.add(n)
+            noun = re.sub(r"\s+", " ", m.group(2).strip().lower())
+            artifact_id = getattr(atom, "artifact_id", "") or ""
+            atom_id = stable_id("atm", artifact_id, "quantity_headline", str(n), noun)
+            src_refs = list(getattr(atom, "source_refs", None) or [])
+            if not src_refs:
+                src_refs = [
+                    SourceRef(
+                        id=stable_id("src", atom_id),
+                        artifact_id=artifact_id,
+                        artifact_type=ArtifactType.txt,
+                        filename=artifact_id or "headline_quantity",
+                        locator={"extraction": "headline_quantity"},
+                        extraction_method="headline_quantity",
+                        parser_version="atom_type_sanity_v1",
+                    )
+                ]
+            out.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.quantity,
+                    raw_text=f"{n} {noun}",
+                    normalized_text=f"{n} {noun}",
+                    value={"kind": "quantity", "quantity": n, "noun": noun, "inferred": True},
+                    entity_keys=[f"quantity:{n}"],
+                    source_refs=src_refs,
+                    receipts=[],
+                    authority_class=AuthorityClass.machine_extractor,
+                    confidence=0.55,
+                    confidence_raw=0.55,
+                    calibrated_confidence=0.55,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["headline_quantity"],
+                    parser_version="atom_type_sanity_v1",
+                )
+            )
+    return out
+
+
+def apply_type_sanity(atoms: list[Any], *, project_id: str) -> tuple[list[Any], int, int]:
+    """Run both passes. Returns (atoms, demoted_count, surfaced_count).
+
+    ``atoms`` is returned (possibly extended with surfaced quantities).
+    """
+    demoted = demote_nondeliverable_quantities(atoms)
+    # Universal scrub: strip junk quantity: keys off *any* atom (commercial
+    # totals, pricing assumptions) — not just quantity-typed ones — so the
+    # entity resolver never promotes "260 pmo cost" into a quantity entity.
+    scrub_nondeliverable_quantity_keys(atoms)
+    surfaced = surface_headline_quantities(atoms, project_id=project_id)
+    if surfaced:
+        atoms = atoms + surfaced
+    return atoms, demoted, len(surfaced)
+
+
+__all__ = [
+    "apply_type_sanity",
+    "demote_nondeliverable_quantities",
+    "scrub_nondeliverable_quantity_keys",
+    "surface_headline_quantities",
+]

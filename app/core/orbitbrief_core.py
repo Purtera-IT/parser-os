@@ -138,18 +138,25 @@ def build_pm_dashboard(
         text = atom.raw_text or ""
 
         # Open questions — the canonical "PM needs to chase someone" signal.
+        # Skip questions whose answer already exists in the corpus (flagged
+        # by open_question_resolution): they're not blockers.
         if atom_type == "open_question":
-            open_qs.append({
-                "atom_id": atom.id,
-                "artifact_id": atom.artifact_id,
-                "text": text[:200],
-                "review_status": _review_status_str(atom.review_status),
-            })
-            blockers.append({
-                "kind": "open_question",
-                "atom_id": atom.id,
-                "summary": text[:200],
-            })
+            _answered = (
+                (isinstance(value, dict) and value.get("answered") is True)
+                or ("answered_in_corpus" in (atom.review_flags or []))
+            )
+            if not _answered:
+                open_qs.append({
+                    "atom_id": atom.id,
+                    "artifact_id": atom.artifact_id,
+                    "text": text[:200],
+                    "review_status": _review_status_str(atom.review_status),
+                })
+                blockers.append({
+                    "kind": "open_question",
+                    "atom_id": atom.id,
+                    "summary": text[:200],
+                })
 
         # Change orders — customer_instruction with a structured delta.
         if atom_type == "customer_instruction":
@@ -287,6 +294,32 @@ def build_pm_dashboard(
             "summary": c.get("reason", "")[:240],
             "from_atom_id": c.get("from_atom_id"),
             "to_atom_id": c.get("to_atom_id"),
+        })
+
+    # Gap-driven questions: turn high-priority MISSING SRL fields into
+    # explicit questions the PM should chase. Unlike open_question atoms,
+    # these come from what's absent, not from literal "?" characters.
+    gap_questions: list[dict[str, Any]] = []
+    try:
+        from app.core.open_question_resolution import generate_gap_questions
+        _srl = build_srl_missing_checklist(atoms=atoms)
+        gap_questions = generate_gap_questions(_srl)
+    except Exception:
+        gap_questions = []
+    for gq in gap_questions:
+        open_qs.append({
+            "atom_id": None,
+            "artifact_id": None,
+            "text": gq["summary"],
+            "review_status": "needs_review",
+            "kind": "generated_gap",
+            "field_id": gq.get("field_id"),
+        })
+        blockers.append({
+            "kind": "generated_gap",
+            "atom_id": None,
+            "summary": gq["summary"],
+            "field_id": gq.get("field_id"),
         })
 
     # Milestones sorted by ISO date.
@@ -1220,6 +1253,13 @@ def build_change_order_timeline(
 
 # ─────────────────────────── SITE READINESS ───────────────────────────
 
+# Gap E: readiness floor for a site that is anchored by a physical_site
+# atom (we know where it is and that it's in scope) but has no other
+# signal yet. Keeps "located, details pending" from scoring identically
+# to a site we know nothing about. Deliberately small — anchoring is
+# real progress but far from readiness.
+_SITE_ANCHOR_FLOOR = 0.15
+
 
 def build_site_readiness(
     *,
@@ -1242,6 +1282,14 @@ def build_site_readiness(
         "money_present": False,
         "milestone_present": False,
     })
+
+    # Gap E: the set of site slugs that are *anchored* by a physical_site
+    # atom — i.e. we positively know the location exists and is in scope.
+    # An anchored-but-undetailed site is materially different from a deal
+    # where the site is entirely unknown; the maturity model below uses
+    # this to grade "located, details pending" (amber) apart from
+    # "unscoped" (red), instead of both collapsing to readiness 0.0.
+    anchored_set: set[str] = set()
 
     for atom in atoms:
         atom_type = _atom_type_str(atom)
@@ -1349,6 +1397,7 @@ def build_site_readiness(
             if not _canon_slug or _canon_slug == "site:":
                 continue
             canonical_set.add(_canon_slug)
+            anchored_set.add(_canon_slug)
             # Map physical_site's name + alternative names to this canonical.
             for _name_field in ("name", "names", "aliases", "alternative_names"):
                 _nv = _val.get(_name_field)
@@ -1493,29 +1542,70 @@ def build_site_readiness(
         pass
 
     out: list[dict[str, Any]] = []
+    maturity_breakdown: dict[str, int] = {
+        "anchored": 0, "scoping": 0, "planning": 0, "ready": 0,
+    }
     for sk, entry in sorted(sites.items()):
         device_count = len(entry["device_keys"])
         stakeholder_count = len(entry["stakeholder_keys"])
         # Per-site readiness: small weighted sum of "do we have it?"
         # bools, scaled to 0-1.
         score = 0.0
+        signal_count = 0
         if device_count > 0:
             score += 0.25
+            signal_count += 1
         if stakeholder_count > 0:
             score += 0.20
+            signal_count += 1
         if entry["constraint_count"] > 0:
             score += 0.15
+            signal_count += 1
         if entry["scope_atom_count"] > 0:
             score += 0.15
+            signal_count += 1
         if entry["money_present"]:
             score += 0.10
+            signal_count += 1
         if entry["milestone_present"]:
             score += 0.15
+            signal_count += 1
         # Penalize contradictions.
         score = max(0.0, score - 0.10 * min(3, entry["contradiction_count"]))
+
+        # Gap E — graded maturity. A site anchored by a physical_site
+        # atom but carrying no other signal is "located, details pending"
+        # (amber), not "unknown" (red). Floor its readiness so the deal
+        # isn't scored as if the site doesn't exist, and label the stage
+        # explicitly so the UI can show progress rather than a flat 0.
+        is_anchored = sk in anchored_set
+        if is_anchored:
+            score = max(score, _SITE_ANCHOR_FLOOR)
+
+        if score >= 0.75:
+            maturity = "ready"
+            band = "green"
+        elif signal_count >= 2:
+            maturity = "planning"
+            band = "amber"
+        elif signal_count == 1:
+            maturity = "scoping"
+            band = "amber"
+        elif is_anchored:
+            maturity = "anchored"
+            band = "amber"
+        else:
+            maturity = "anchored"
+            band = "red"
+        maturity_breakdown[maturity] = maturity_breakdown.get(maturity, 0) + 1
+
         out.append({
             "site": sk,
             "readiness": round(score, 3),
+            "maturity": maturity,
+            "band": band,
+            "anchored": is_anchored,
+            "signal_count": signal_count,
             "device_keys": sorted(entry["device_keys"]),
             "device_count": device_count,
             "stakeholder_keys": sorted(entry["stakeholder_keys"]),
@@ -1533,6 +1623,8 @@ def build_site_readiness(
     return {
         "sites": out,
         "site_count": len(out),
+        "anchored_count": sum(1 for s in out if s["anchored"]),
+        "maturity_breakdown": maturity_breakdown,
         "avg_readiness": round(
             sum(s["readiness"] for s in out) / max(1, len(out)), 3
         ),
@@ -1766,6 +1858,195 @@ def build_project_vitals(
     }
 
 
+# ──────────────────── DEAL HEADER / FINANCIALS / BOM ────────────────
+# PM-facing assembly of the structured commercial atoms the xlsx parser
+# now emits (deal_metadata header + per-category P&L commercial_total +
+# folded materials rollups). These read existing atom ``value`` payloads
+# and never re-parse text, so they are deterministic and cheap.
+
+# Logical P&L order the PM reads top-to-bottom; "deal" is the grand total.
+_PL_CATEGORY_ORDER = [
+    "deal", "labor", "pmo", "materials", "lift_rental", "miscellaneous",
+]
+
+
+def build_deal_header(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
+    """Assemble the deal header (OPPTY #, customer, sales rep, billing
+    type, duration, region, …) from ``deal_metadata`` atoms.
+
+    First non-empty value wins per field across atoms. Returns the merged
+    field map plus presence/provenance so the PM surface can render a deal
+    banner without re-reading the workbook."""
+    fields: dict[str, Any] = {}
+    source_atom_ids: list[str] = []
+    for atom in atoms:
+        if _atom_type_str(atom) != "deal_metadata":
+            continue
+        value = atom.value if isinstance(atom.value, dict) else {}
+        if value.get("kind") != "deal_header":
+            continue
+        afields = value.get("fields") if isinstance(value.get("fields"), dict) else {}
+        if not afields:
+            continue
+        source_atom_ids.append(atom.id)
+        for k, v in afields.items():
+            if v not in (None, "") and k not in fields:
+                fields[k] = v
+
+    return {
+        "fields": fields,
+        "field_count": len(fields),
+        "present": bool(fields),
+        "source_atom_ids": source_atom_ids,
+    }
+
+
+def _round2(v: Any) -> Any:
+    return round(v, 2) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+
+
+def build_deal_financials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
+    """Assemble the deal P&L from ``commercial_total`` atoms whose value
+    is a structured ``pl_line`` (category + revenue/cost/margin/margin%).
+
+    Returns an ordered line list (grand-total "Deal" first), the rolled-up
+    totals (the Deal line when present, else summed), and presence so the
+    PM surface can render a financial table + headline margin."""
+    by_key: dict[str, dict[str, Any]] = {}
+    for atom in atoms:
+        if _atom_type_str(atom) != "commercial_total":
+            continue
+        value = atom.value if isinstance(atom.value, dict) else {}
+        if value.get("kind") != "pl_line":
+            continue
+        ckey = value.get("category_key")
+        if not ckey:
+            import re as _re_pl
+            ckey = _re_pl.sub(r"[^a-z0-9]+", "_", str(value.get("category", "")).lower()).strip("_")
+        if not ckey or ckey in by_key:
+            continue
+        by_key[ckey] = {
+            "category": value.get("category", ckey.title()),
+            "category_key": ckey,
+            "revenue": _round2(value.get("revenue")),
+            "cost": _round2(value.get("cost")),
+            "margin": _round2(value.get("margin")),
+            "margin_pct": _round2(value.get("margin_pct")),
+            "atom_id": atom.id,
+        }
+
+    def _order(k: str) -> tuple[int, str]:
+        return (_PL_CATEGORY_ORDER.index(k) if k in _PL_CATEGORY_ORDER else 99, k)
+
+    lines = [by_key[k] for k in sorted(by_key, key=_order)]
+
+    # Totals: prefer the explicit grand-total "deal" line; else sum the
+    # component categories (excluding any "deal" to avoid double counting).
+    deal_line = by_key.get("deal")
+    if deal_line and any(deal_line.get(m) is not None for m in ("revenue", "cost", "margin")):
+        rev, cost, margin = deal_line.get("revenue"), deal_line.get("cost"), deal_line.get("margin")
+        mpct = deal_line.get("margin_pct")
+    else:
+        comp = [v for k, v in by_key.items() if k != "deal"]
+        rev = sum(v["revenue"] for v in comp if isinstance(v.get("revenue"), (int, float)))
+        cost = sum(v["cost"] for v in comp if isinstance(v.get("cost"), (int, float)))
+        margin = round(rev - cost, 2)
+        mpct = round(margin / rev * 100, 2) if rev else None
+    totals = {
+        "revenue": _round2(rev),
+        "cost": _round2(cost),
+        "margin": _round2(margin),
+        "margin_pct": _round2(mpct),
+    }
+
+    return {
+        "lines": lines,
+        "category_count": len(lines),
+        "totals": totals,
+        "present": bool(lines),
+    }
+
+
+def build_bill_of_materials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
+    """Assemble the materials / BOM view from the folded pricing rollups
+    (``pricing_assumption`` / ``commercial_total`` atoms carrying
+    ``value.rows``) and any per-line ``bom_line`` atoms.
+
+    Surfaces the line items as readable rows so a PM sees the actual
+    materials menu instead of a single "99 pricing lines" banner."""
+    sections: list[dict[str, Any]] = []
+    total_lines = 0
+
+    for atom in atoms:
+        atype = _atom_type_str(atom)
+        value = atom.value if isinstance(atom.value, dict) else {}
+        folded = value.get("rows")
+        # Only materials/parts catalogs belong in the BOM. Labor rate
+        # cards and deal-financials rollups carry folded rows too but are
+        # not bills of materials — they surface in the pricing/commercial
+        # views instead. Gate on the sheet role the parser stamped.
+        sheet_role = str(value.get("sheet_role") or "")
+        name_lc = str(value.get("sheet_name") or "").lower()
+        is_material = sheet_role == "catalog" or any(
+            t in name_lc for t in ("material", "bom", "bill of material", "equipment", "parts", "hardware")
+        )
+        if sheet_role in ("rate_card", "financial_summary"):
+            is_material = False
+        if (
+            atype in ("pricing_assumption", "commercial_total")
+            and isinstance(folded, list) and folded
+            and is_material
+        ):
+            rows: list[dict[str, Any]] = []
+            for r in folded:
+                if not isinstance(r, dict):
+                    continue
+                rows.append({
+                    "row": r.get("row"),
+                    "label": (r.get("label") or "")[:300],
+                    "cells": r.get("cells") or [],
+                    "money_keys": r.get("money_keys") or [],
+                })
+            if rows:
+                total_lines += len(rows)
+                sections.append({
+                    "sheet_name": value.get("sheet_name") or atom.artifact_id,
+                    "line_count": value.get("line_count") or len(rows),
+                    "money_min": value.get("money_min"),
+                    "money_max": value.get("money_max"),
+                    "money_sum": value.get("money_sum"),
+                    "atom_id": atom.id,
+                    "rows": rows,
+                })
+
+    # Per-line bom_line atoms (if any parser emits them) become their own
+    # one-row-per-atom section so nothing is lost.
+    bom_rows: list[dict[str, Any]] = []
+    for atom in atoms:
+        if _atom_type_str(atom) != "bom_line":
+            continue
+        value = atom.value if isinstance(atom.value, dict) else {}
+        bom_rows.append({
+            "label": (value.get("description") or atom.raw_text or "")[:300],
+            "cells": value.get("cells") or [],
+            "atom_id": atom.id,
+        })
+    if bom_rows:
+        total_lines += len(bom_rows)
+        sections.append({
+            "sheet_name": "bom_line atoms",
+            "line_count": len(bom_rows),
+            "rows": bom_rows,
+        })
+
+    return {
+        "sections": sections,
+        "section_count": len(sections),
+        "total_lines": total_lines,
+        "present": bool(sections),
+    }
+
+
 __all__ = [
     "build_pm_dashboard",
     "build_sow_readiness_scorecard",
@@ -1775,4 +2056,7 @@ __all__ = [
     "build_site_readiness",
     "build_stakeholder_load",
     "build_project_vitals",
+    "build_deal_header",
+    "build_deal_financials",
+    "build_bill_of_materials",
 ]

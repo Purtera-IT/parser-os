@@ -58,6 +58,99 @@ def clear_workbook_cache() -> None:  # pragma: no cover — used by tests
     _WORKBOOK_CACHE.clear()
 
 
+# ────────────── docx whole-document text cache ──────────────
+# A large share of DOCX atoms carry a locator type the precise
+# paragraph/table verifier can't resolve (tracked-change anchors,
+# section/run offsets, list-item paths the parser emits but the
+# verifier doesn't model). Those used to return "unsupported" — a
+# receipt that proves nothing. Reading the whole document body once
+# (cached) lets us at least confirm the atom's text genuinely appears
+# in the file, upgrading "unsupported" to a (lower-precision but real)
+# "verified" provenance receipt. Cache by (path, mtime, size).
+_DOCX_TEXT_CACHE: dict[tuple[str, float, int], str] = {}
+
+
+def _docx_full_text(path: Path) -> str:
+    """Return the concatenated text of every paragraph and table cell
+    in a .docx, memoized by (path, mtime, size)."""
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime, st.st_size)
+    except FileNotFoundError:
+        return ""
+    cached = _DOCX_TEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        document = Document(path)
+    except Exception:
+        return ""
+    parts: list[str] = [p.text for p in document.paragraphs if p.text]
+    for table in document.tables:
+        for trow in table.rows:
+            for tcell in trow.cells:
+                if tcell.text:
+                    parts.append(tcell.text)
+    body = "\n".join(parts)
+    _DOCX_TEXT_CACHE[key] = body
+    if len(_DOCX_TEXT_CACHE) > 16:
+        oldest = next(iter(_DOCX_TEXT_CACHE))
+        if oldest != key:
+            _DOCX_TEXT_CACHE.pop(oldest, None)
+    return body
+
+
+def clear_docx_text_cache() -> None:  # pragma: no cover — used by tests
+    _DOCX_TEXT_CACHE.clear()
+
+
+def _match_excerpt(atom: EvidenceAtom, body: str, *, window: int = 90) -> str | None:
+    """Best-effort short excerpt of ``body`` around where the atom text
+    appears, for the receipt's ``extracted_snippet``. Returns ``None``
+    when no anchor token can be located (the caller stores nothing
+    rather than the whole document)."""
+    if not body:
+        return None
+    haystack = body.lower()
+    anchors = sorted(
+        (a for a in _atom_match_candidates(atom) if a),
+        key=len,
+        reverse=True,
+    )
+    for anchor in anchors:
+        idx = haystack.find(anchor)
+        if idx >= 0:
+            start = max(0, idx - window)
+            end = min(len(body), idx + len(anchor) + window)
+            prefix = "…" if start > 0 else ""
+            suffix = "…" if end < len(body) else ""
+            return f"{prefix}{body[start:end].strip()}{suffix}"
+    return None
+
+
+def _whole_document_text_fallback(
+    atom: EvidenceAtom,
+    source_ref: SourceRef,
+    body: str,
+    *,
+    label: str,
+) -> EvidenceReceipt | None:
+    """Upgrade an otherwise-unsupported receipt to ``verified`` when the
+    atom's text genuinely appears anywhere in the document body. Returns
+    ``None`` when there is no match, so the caller keeps its original
+    (unsupported/failed) verdict. This never *downgrades* — it is only
+    ever called on paths that would otherwise be unsupported."""
+    if body and _snippet_matches_atom(atom, body):
+        return _receipt(
+            atom,
+            source_ref,
+            "verified",
+            f"{label} (whole-document text fallback; locator imprecise)",
+            _match_excerpt(atom, body),
+        )
+    return None
+
+
 def _replay_norm(text: str) -> str:
     """Normalize text for replay matching.
 
@@ -365,7 +458,14 @@ def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) ->
     line_start = locator.get("line_start")
     line_end = locator.get("line_end")
     if not isinstance(line_start, int) or not isinstance(line_end, int) or line_start < 1 or line_end < line_start:
-        return _receipt(atom, source_ref, "failed", "Line-range locator missing or invalid")
+        # No usable line locator. Rather than fail outright, confirm the
+        # atom text against the whole file — a real provenance receipt
+        # even though the precise line offsets are absent.
+        body = path.read_text(encoding="utf-8", errors="ignore")
+        fallback = _whole_document_text_fallback(
+            atom, source_ref, body, label="Text locator missing line range"
+        )
+        return fallback or _receipt(atom, source_ref, "unsupported", "Line-range locator missing or invalid")
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     if line_end > len(lines):
         return _receipt(atom, source_ref, "failed", f"Line range {line_start}-{line_end} is out of bounds")
@@ -379,6 +479,11 @@ def _verify_docx_locator(atom: EvidenceAtom, source_ref: SourceRef, path: Path) 
     locator = source_ref.locator
     tracked_change = locator.get("tracked_change")
     if tracked_change == "deleted":
+        # A tracked deletion is a special provenance case: the text is
+        # struck through, not asserted. python-docx still surfaces the
+        # struck text in the body, so a whole-document fallback would
+        # falsely "verify" it — deliberately keep tracked deletions
+        # unsupported (OOXML tracked-change replay isn't modeled here).
         return _receipt(
             atom,
             source_ref,
@@ -413,7 +518,12 @@ def _verify_docx_locator(atom: EvidenceAtom, source_ref: SourceRef, path: Path) 
             return _receipt(atom, source_ref, "verified", "DOCX table locator verified", snippet)
         return _receipt(atom, source_ref, "failed", "DOCX table cell did not match atom content", snippet)
 
-    return _receipt(atom, source_ref, "unsupported", "DOCX locator type is not currently supported")
+    fallback = _whole_document_text_fallback(
+        atom, source_ref, _docx_full_text(path), label="DOCX locator unmodeled"
+    )
+    return fallback or _receipt(
+        atom, source_ref, "unsupported", "DOCX locator type is not currently supported"
+    )
 
 
 def _verify_pdf_block(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:

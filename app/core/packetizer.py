@@ -240,6 +240,135 @@ from app.core.schemas import (
     ReviewStatus,
 )
 
+# ════════════════════════════════════════════════════════════════════
+# ATOM-TYPE → PACKET COVERAGE CONTRACT
+# ════════════════════════════════════════════════════════════════════
+# Every AtomType must be ACCOUNTED FOR: either it is eligible to anchor a
+# packet (PACKET_ANCHOR_ELIGIBLE, mapped to the family it most naturally
+# drives) or it is intentionally contextual/supporting and produces no
+# packet of its own (PACKET_NON_ANCHOR). ``test_packet_coverage_contract``
+# asserts the two sets partition AtomType exhaustively, so a NEW atom type
+# added to the schema fails the test until someone declares where it goes —
+# which is exactly how commercial_total / pricing_assumption slipped through
+# before: parsed, typed, then silently orphaned because no one wired them to
+# a family. This contract makes that failure loud and compile-time instead
+# of a missing section in a live deliverable.
+#
+# NOTE: this is a *coverage declaration*, not the routing logic. The actual
+# (often conditional) anchoring lives in build_packets; a type listed here as
+# anchor-eligible may still, for a given deal, be consumed/deduped without a
+# packet. The contract's job is only to guarantee no type is forgotten.
+PACKET_ANCHOR_ELIGIBLE: dict[AtomType, PacketFamily] = {
+    AtomType.quantity: PacketFamily.quantity_claim,
+    AtomType.scope_item: PacketFamily.scope_inclusion,
+    AtomType.exclusion: PacketFamily.scope_exclusion,
+    AtomType.customer_instruction: PacketFamily.customer_override,
+    AtomType.open_question: PacketFamily.missing_info,
+    AtomType.action_item: PacketFamily.action_item,
+    AtomType.decision: PacketFamily.meeting_decision,
+    AtomType.meeting_commitment: PacketFamily.meeting_decision,
+    AtomType.constraint: PacketFamily.site_access,
+    AtomType.compliance: PacketFamily.compliance_clause,
+    AtomType.vendor_line_item: PacketFamily.vendor_mismatch,
+    # v57.16 — deal economics now reach the deliverable.
+    AtomType.commercial_total: PacketFamily.commercial_summary,
+    AtomType.pricing_assumption: PacketFamily.commercial_summary,
+}
+
+# Types that are first-class evidence in the envelope but do not anchor a
+# packet on their own — they enrich/support packets, feed OrbitBrief
+# section renderers directly, or are intermediate/structured rows consumed
+# upstream. Listing them here is a deliberate "no packet" decision, not an
+# oversight.
+PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
+    {
+        AtomType.entity,
+        AtomType.assumption,
+        # PR2 structured rows — render in their own OrbitBrief sections.
+        AtomType.risk,
+        AtomType.asset_record,
+        AtomType.support_entitlement,
+        AtomType.site_roster,
+        AtomType.lifecycle_status,
+        AtomType.form_option_state,
+        AtomType.project_metadata,
+        AtomType.site_survey_row,
+        AtomType.port_vlan_assignment,
+        AtomType.circuit_inventory,
+        AtomType.alert_route,
+        AtomType.cutover_validation,
+        AtomType.conditional_support_boundary,
+        AtomType.quote_status,
+        # Schematic atoms — surfaced via the drawing/legend views.
+        AtomType.schematic_legend,
+        AtomType.schematic_detection_target_set,
+        AtomType.schematic_symbol_detection,
+        AtomType.schematic_warning,
+        AtomType.schematic_sheet_metadata,
+        AtomType.schematic_room,
+        AtomType.schematic_keyed_note,
+        AtomType.schematic_note_callout,
+        AtomType.schematic_schedule_row,
+        AtomType.schematic_line_run,
+        # v47 deal taxonomy — contextual / section-rendered, not packet anchors.
+        AtomType.deal_metadata,
+        AtomType.payment_term,
+        AtomType.change_order_rule,
+        AtomType.physical_site,
+        AtomType.site_attribute,
+        AtomType.site_access_window,
+        AtomType.site_access_restriction,
+        AtomType.site_infrastructure,
+        AtomType.site_room_mix,
+        AtomType.site_implementation_note,
+        AtomType.milestone_phase,
+        AtomType.task,
+        AtomType.deliverable,
+        AtomType.cutover_step,
+        AtomType.integration_checkpoint,
+        AtomType.blackout_date_range,
+        AtomType.stakeholder,
+        AtomType.approval_authority,
+        AtomType.approval_decision,
+        AtomType.signatory,
+        AtomType.bom_line,
+        AtomType.site_allocation,
+        AtomType.service_line,
+        AtomType.site_budget,
+        AtomType.lead_time_constraint,
+        AtomType.requirement,
+        AtomType.acceptance_criterion,
+        AtomType.electrical_acceptance_test,
+        AtomType.compliance_classification,
+        AtomType.compliance_rule,
+        AtomType.mitigation,
+        AtomType.dependency,
+        AtomType.data_flow_step,
+        AtomType.system_mapping,
+        AtomType.metadata_requirement,
+        # Intermediate row type — classified into a concrete type upstream.
+        AtomType.raw_table_row,
+    }
+)
+
+
+def assert_atom_type_coverage() -> None:
+    """Raise if any AtomType is neither anchor-eligible nor declared non-anchor.
+
+    Single source of truth for the coverage test and any runtime caller that
+    wants to fail fast when the schema grows a type nobody routed.
+    """
+    declared = set(PACKET_ANCHOR_ELIGIBLE) | set(PACKET_NON_ANCHOR)
+    missing = set(AtomType) - declared
+    overlap = set(PACKET_ANCHOR_ELIGIBLE) & set(PACKET_NON_ANCHOR)
+    if missing or overlap:
+        raise AssertionError(
+            "packet coverage contract is incomplete: "
+            f"unrouted atom types={sorted(t.value for t in missing)}; "
+            f"declared both anchor and non-anchor={sorted(t.value for t in overlap)}"
+        )
+
+
 # Any token that can place an atom in a site_access *candidate* group (includes catwalk as location).
 _ACCESS_CANDIDATE_TOKENS_RE = re.compile(
     r"\b("
@@ -1647,6 +1776,59 @@ def build_packets(
             reason="Scoped inclusion evidence is consistent.",
         )
         packets.append(packet)
+
+    # 10) commercial_summary — deal economics + pricing rollups.
+    # These typed commercial atoms (``commercial_total`` = revenue / cost /
+    # margin from the deal-financials tab; ``pricing_assumption`` summary =
+    # rate-card / catalog $-range rollup) are emitted by the xlsx parser but
+    # had no packet family, so the deal's headline economics — the thing a PM
+    # reads first — never reached the deliverable. Group the financials totals
+    # into ONE deal-economics packet and emit one packet per pricing-sheet
+    # rollup.
+    commercial_totals = [
+        a
+        for a in atoms
+        if a.atom_type == AtomType.commercial_total
+        and a.id not in consumed_by_conflict_or_exclusion
+    ]
+    if commercial_totals:
+        related_edges = [
+            e
+            for e in edges
+            if any(a.id in {e.from_atom_id, e.to_atom_id} for a in commercial_totals)
+        ]
+        packets.append(
+            _build_packet(
+                project_id=project_id,
+                family=PacketFamily.commercial_summary,
+                atoms=commercial_totals,
+                related_edges=related_edges,
+                status=PacketStatus.needs_review,
+                reason="Deal economics (revenue, cost, margin) for PM review.",
+                review_flags=["commercial_summary", "deal_economics"],
+            )
+        )
+
+    pricing_rollups = [
+        a
+        for a in atoms
+        if a.atom_type == AtomType.pricing_assumption
+        and _atom_value_dict(a).get("is_summary")
+        and a.id not in consumed_by_conflict_or_exclusion
+    ]
+    for atom in pricing_rollups:
+        related_edges = [e for e in edges if atom.id in {e.from_atom_id, e.to_atom_id}]
+        packets.append(
+            _build_packet(
+                project_id=project_id,
+                family=PacketFamily.commercial_summary,
+                atoms=[atom],
+                related_edges=related_edges,
+                status=PacketStatus.needs_review,
+                reason="Rate-card / catalog pricing rollup for PM review.",
+                review_flags=["commercial_summary", "pricing_rollup"],
+            )
+        )
 
     # Deduplicate packets by family + canonical anchor signature + atom set (scope_exclusion can share a site).
     dedup: dict[tuple[str, str, str], EvidencePacket] = {}

@@ -76,7 +76,10 @@ from pathlib import Path
 from typing import Any
 
 from app.core.orbitbrief_core import (
+    build_bill_of_materials,
     build_change_order_timeline,
+    build_deal_financials,
+    build_deal_header,
     build_pm_dashboard,
     build_project_vitals,
     build_scope_truth,
@@ -250,6 +253,9 @@ def build_orbitbrief_envelope(
     # source of truth for site metadata.
     try:
         import re as _re_v49
+        def _atom_type_str(_a) -> str:
+            _at = getattr(_a, "atom_type", None)
+            return _at.value if hasattr(_at, "value") else str(_at or "")
         _sr = envelope.get("site_readiness") or {}
         _sites_list = _sr.get("sites") or []
         # site_readiness.sites is a LIST of dicts keyed by "site" field
@@ -288,6 +294,38 @@ def build_orbitbrief_envelope(
         _lg_v49.getLogger(__name__).warning("v49 site attribute passthrough failed: %s", _v49_exc)
 
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
+
+    # Deal header / financials / BOM — PM-facing assembly of the
+    # structured commercial atoms the xlsx parser emits. Each is omitted
+    # when the deal carries no such data, so the envelope shape stays
+    # stable for non-commercial projects. Never fatal.
+    try:
+        _deal_header = build_deal_header(atoms=atoms)
+        if _deal_header.get("present"):
+            envelope["deal_header"] = _deal_header
+        _deal_financials = build_deal_financials(atoms=atoms)
+        if _deal_financials.get("present"):
+            envelope["deal_financials"] = _deal_financials
+        _bom = build_bill_of_materials(atoms=atoms)
+        if _bom.get("present"):
+            envelope["bill_of_materials"] = _bom
+    except Exception as _deal_exc:
+        import logging as _lg_deal
+        _lg_deal.getLogger(__name__).warning("deal section build failed: %s", _deal_exc)
+
+    # Gap F — Truth Gate: grade every entity by independent-source
+    # corroboration so single-sourced facts are visibly distinct from
+    # facts three documents agree on. Deterministic, never fatal.
+    try:
+        from app.core.truth_gate import build_truth_gate
+        envelope["truth_gate"] = build_truth_gate(
+            atoms=atoms, entities=entities, edges=edges,
+        )
+    except Exception as _tg_exc:
+        import logging as _lg_tg
+        _lg_tg.getLogger(__name__).warning("truth_gate build failed: %s", _tg_exc)
+        envelope["truth_gate"] = {}
+
     envelope["project_vitals"] = build_project_vitals(
         atoms=atoms,
         edges=edges,

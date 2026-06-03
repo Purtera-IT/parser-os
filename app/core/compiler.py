@@ -42,7 +42,7 @@ from app.core.schemas import (
     ParserDerivedFile,
     ParserOutput,
 )
-from app.core.source_replay import attach_receipts_to_atoms, summarize_receipts
+from app.core.source_replay import attach_receipts_to_atoms, replay_atom_receipts, summarize_receipts
 from app.core.telemetry import CompileTelemetry
 from app.core.validators import validate_compile_result
 from app.domain import load_domain_pack, set_active_domain_pack
@@ -767,6 +767,42 @@ def compile_project(
     # no real site exists, mine a City/State/ZIP anchor and emit one
     # low-confidence (needs_review) physical_site so the deal anchors
     # somewhere instead of going blank-RED. No-op when a real site exists.
+    # Type-sanity guardrail: classification labels atoms in isolation, so
+    # commercial meta ("28.57% margin", "99 pricing lines") leaks into the
+    # quantity bucket and the deal's headline count ("110 displays") stays
+    # buried in prose. This deterministic pass demotes non-deliverable
+    # quantities to pricing_assumption and surfaces strong prose counts as
+    # quantity atoms. No LLM, no customer tuning.
+    with telemetry.stage("atom_type_sanity", input_count=len(atoms)) as stage:
+        sanity_changed = 0
+        try:
+            from app.core.atom_type_sanity import apply_type_sanity
+            atoms, _demoted, _surfaced = apply_type_sanity(atoms, project_id=resolved_project_id)
+            sanity_changed = _demoted + _surfaced
+            if _demoted:
+                warnings.append(f"INFO: atom_type_sanity demoted {_demoted} non-deliverable quantity atom(s) to pricing_assumption")
+            if _surfaced:
+                warnings.append(f"INFO: atom_type_sanity surfaced {_surfaced} headline quantity atom(s) from prose")
+        except Exception as exc:
+            warnings.append(f"WARNING: atom_type_sanity failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=sanity_changed)
+
+    # Open-question resolution: an open_question whose answer already
+    # exists in the corpus (shares an answer-bearing entity key with a
+    # fact atom) is flagged answered so it stops surfacing as a PM
+    # blocker. Genuine gaps are added later from the SRL schema, not from
+    # literal "?" detection. Deterministic, no LLM.
+    with telemetry.stage("open_question_resolution", input_count=len(atoms)) as stage:
+        resolved_q = 0
+        try:
+            from app.core.open_question_resolution import resolve_open_questions
+            resolved_q = resolve_open_questions(atoms)
+            if resolved_q:
+                warnings.append(f"INFO: open_question_resolution flagged {resolved_q} already-answered question(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: open_question_resolution failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=resolved_q)
+
     with telemetry.stage("site_geo_fallback", input_count=len(atoms)) as stage:
         added_geo = 0
         try:
@@ -782,6 +818,27 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: site_geo_fallback failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=added_geo)
+
+    # Receipt backfill: source_replay (stage 4) runs before the late
+    # atom-creating stages (typed_atom_classification, site_geo_fallback),
+    # so any atom *born* after replay carries source_refs but empty
+    # receipts — which the quality gate rejects ("no receipts while source
+    # files are available"). Re-replay only those stragglers so every atom
+    # reaching the gate is provenance-complete. Idempotent: atoms that
+    # already have receipts are untouched, and this generalises to any
+    # future stage that mints atoms post-replay.
+    with telemetry.stage("receipt_backfill", input_count=len(atoms)) as stage:
+        backfilled = 0
+        try:
+            for atom in atoms:
+                if getattr(atom, "source_refs", None) and not getattr(atom, "receipts", None):
+                    atom.receipts = replay_atom_receipts(atom, artifact_paths)
+                    backfilled += 1
+        except Exception as exc:
+            warnings.append(f"WARNING: receipt_backfill failed: {type(exc).__name__}: {exc}")
+        if backfilled:
+            warnings.append(f"INFO: receipt_backfill attached receipts to {backfilled} late-created atom(s)")
+        telemetry.end_stage(stage, output_count=backfilled)
 
     # v52: semantic dedup by entity key. Catches the cases the text-based
     # v48 collapse misses — same fact extracted via 3 paths (schema /

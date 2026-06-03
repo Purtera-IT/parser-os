@@ -77,14 +77,26 @@ _QA_PAIR_PROBE = re.compile(r"\b[QA]\d{1,3}\.\s")
 # Each question ends in "?" and is followed by an answer (possibly
 # prefixed with an em-dash "–"). The whole transcript is one PDF
 # paragraph, so without splitting we get one giant blob.
-_FORM_QA_BOUNDARY = re.compile(
-    # Split AFTER a "?", consuming the trailing whitespace and an
-    # optional em-dash answer prefix. Lookahead requires the next
-    # chunk to start with *any* alpha char. The ≥3 "?" gate at
-    # the top of ``_split_form_qa_blob`` already prevents firing on
-    # normal prose with one or two rhetorical questions.
-    r"(?<=\?)[\s ]+(?:[–—-][\s ]+)?(?=[A-Za-z])"
+_FORM_QA_SEGMENT = re.compile(
+    # Split AFTER a "?" + following whitespace. Each resulting segment
+    # (except possibly the last) ends in "?" and has the shape
+    # "<answer-to-previous-question> <next-question?>". The >=3 "?" gate
+    # at the top of ``_split_form_qa_blob`` prevents firing on normal
+    # prose with one or two rhetorical questions.
+    r"(?<=\?)\s+"
 )
+# A question almost always opens with a Wh-word or an auxiliary/modal
+# verb. We use that to find where the *next* question starts inside a
+# segment, so the preceding text (the previous answer) attaches to the
+# question it actually answers -- not glued onto the next question.
+_QUESTION_START = re.compile(
+    r"\b(?:what|where|when|who|whom|whose|which|why|how|"
+    r"is|are|am|was|were|do|does|did|will|would|can|could|"
+    r"should|shall|has|have|had|may|might|must)\b",
+    re.IGNORECASE,
+)
+# Strip a leading dash answer prefix off a segment head.
+_ANSWER_PREFIX = re.compile(r"^[–—-]\s*")
 # After splitting at "?" boundaries, the final chunk may be a trailing
 # statement (no "?" in it) — like "Property has 23 dwellings..." after
 # the last question. We want to KEEP that as a separate atom because
@@ -113,6 +125,20 @@ def _decode_html_entities(text: str) -> str:
     return _NBSP_REWRITE.sub(" ", text)
 
 
+def _peel_next_question(segment: str) -> tuple[str, str]:
+    """Split a "<answer> <next-question?>" segment into (answer, question).
+
+    The next question is taken to begin at the first Wh-word / auxiliary
+    verb; everything before it is the previous question's answer. When no
+    opener is found (or it sits at the head) the whole segment is the
+    question and the answer is empty.
+    """
+    m = _QUESTION_START.search(segment)
+    if m is None or m.start() == 0:
+        return "", segment.strip()
+    return segment[: m.start()].strip(), segment[m.start() :].strip()
+
+
 def _split_form_qa_blob(text: str) -> list[str]:
     """Split a free-form Q&A interview transcript into per-question atoms.
 
@@ -135,19 +161,33 @@ def _split_form_qa_blob(text: str) -> list[str]:
     if _QA_PAIR_PROBE.search(cleaned):
         # Defer to the strict Q\d./A\d. splitter — don't double-handle.
         return [cleaned]
-    parts = [p.strip() for p in _FORM_QA_BOUNDARY.split(cleaned) if p.strip()]
-    if len(parts) < 2:
+    segments = [s for s in _FORM_QA_SEGMENT.split(cleaned) if s.strip()]
+    if len(segments) < 2:
         return [cleaned]
-    # Last chunk may be a trailing declarative statement run-on;
-    # split it further on "<sentence>.<gap><Capital>" boundaries so
-    # quantity / disposition / process facts each get their own atom.
-    head, tail = parts[:-1], parts[-1]
-    tail_chunks = [
-        p.strip()
-        for p in _DECLARATIVE_TAIL_BOUNDARY.split(tail)
-        if p.strip()
-    ]
-    return head + tail_chunks
+    chunks: list[str] = []
+    # segments[0] is the first question verbatim (it ends in "?").
+    current_q: str | None = segments[0].strip()
+    for seg in segments[1:]:
+        seg = _ANSWER_PREFIX.sub("", seg.strip())
+        if seg.endswith("?"):
+            answer, next_q = _peel_next_question(seg)
+            chunks.append(f"{current_q} {answer}".strip() if current_q else seg)
+            current_q = next_q
+        else:
+            # Final segment: the last answer + a declarative tail. Emit
+            # the open question on its own, then split the tail so each
+            # scope-bearing fact becomes its own atom.
+            if current_q:
+                chunks.append(current_q)
+                current_q = None
+            chunks.extend(
+                p.strip()
+                for p in _DECLARATIVE_TAIL_BOUNDARY.split(seg)
+                if p.strip()
+            )
+    if current_q:
+        chunks.append(current_q)
+    return [c for c in chunks if c]
 
 
 def _split_qa_blob(text: str) -> list[str]:

@@ -53,6 +53,11 @@ def test_role_destination_mapping() -> None:
 
 
 def test_financial_summary_emits_commercial_totals(tmp_path) -> None:
+    # A deal-kit financial summary is a 2-D label→value grid, not a row
+    # table. The structured extractor recovers a clean deal header +
+    # per-category P&L instead of gluing unrelated cells together — so the
+    # economics surface as structured ``pl_line`` totals, not money-keyed
+    # row glue.
     path = tmp_path / "Deal_Kit.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -66,21 +71,33 @@ def test_financial_summary_emits_commercial_totals(tmp_path) -> None:
     atoms = _atoms(path)
     # Never scope.
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
+
+    # ── deal header recovered cleanly (not mashed into row glue) ──
+    headers = [a for a in atoms if a.atom_type == AtomType.deal_metadata]
+    assert len(headers) == 1
+    f = headers[0].value["fields"]
+    assert f["opportunity_id"] == "126"
+    assert f["sales_rep"] == "Dan"
+    assert f["customer"] == "DCW"
+    assert f["billing_type"] == "T&M"
+    assert "deal:126" in (headers[0].entity_keys or [])
+
+    # ── P&L economics as a structured commercial_total ``pl_line`` ──
     totals = [a for a in atoms if a.atom_type == AtomType.commercial_total]
     assert totals
+    deal_line = next(
+        a.value for a in totals
+        if a.value.get("kind") == "pl_line" and a.value.get("category_key") == "deal"
+    )
+    assert deal_line["revenue"] == 21560
+    assert deal_line["cost"] == 15660
+    assert deal_line["margin"] == 5900
+    # 0.27 fraction normalized to a 27% margin (a ratio, never a money key).
+    assert deal_line["margin_pct"] == 27.0
     keys = {k for a in atoms for k in (a.entity_keys or [])}
-    # Headline deal economics captured as money atoms.
-    assert {"money:21560", "money:15660", "money:5900"} <= keys
-    # The 27% margin ratio is NOT money.
     assert "money:0" not in keys
-    # Tagged as vendor/internal pricing, flagged for review.
+    # Tagged as vendor/internal pricing.
     assert all(a.authority_class == AuthorityClass.vendor_quote for a in totals)
-    # Exactly one roll-up banner leads the granular rows.
-    summaries = [a for a in atoms if "pricing_rollup" in (a.review_flags or [])]
-    assert len(summaries) == 1
-    s = summaries[0]
-    assert s is atoms[0] and s.value["is_summary"] is True
-    assert s.value["line_count"] == len(atoms) - 1
 
 
 # ── master catalog (money-keyword columns) ──────────────────────────
@@ -100,12 +117,23 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
     pricing = [a for a in atoms if a.atom_type == AtomType.pricing_assumption]
     assert pricing
-    keys = {k for a in atoms for k in (a.entity_keys or [])}
-    assert "money:661" in keys and "money:339" in keys
-    # Banner roll-up leads, granular rows follow.
-    assert atoms[0].value.get("is_summary") is True
-    assert "pricing_rollup" in (atoms[0].review_flags or [])
-    assert atoms[0].value["line_count"] == len([a for a in atoms[1:]])
+    # Bulk pricing sheets (catalogs / rate cards) collapse to a SINGLE
+    # rollup atom — the granular rows are folded into value.rows, not
+    # emitted as per-row atoms that bloat the envelope and never packetize.
+    assert len(atoms) == 1
+    summary = atoms[0]
+    assert summary.atom_type == AtomType.pricing_assumption
+    assert summary.value.get("is_summary") is True
+    assert "pricing_rollup" in (summary.review_flags or [])
+    assert summary.value["line_count"] == 2
+    # Rows preserved losslessly for drill-down, with their money keys.
+    folded = summary.value["rows"]
+    assert len(folded) == 2
+    folded_keys = {k for r in folded for k in r["money_keys"]}
+    assert "money:661" in folded_keys and "money:339" in folded_keys
+    # The rollup's own aggregate money keys cover the $-range (lo/hi).
+    assert "money:661" in (summary.entity_keys or [])
+    assert "money:339" in (summary.entity_keys or [])
 
 
 # ── pure backing data is still dropped ──────────────────────────────

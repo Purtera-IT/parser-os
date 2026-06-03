@@ -1251,6 +1251,23 @@ def _word_match(text_lower: str, alias_lower: str) -> bool:
     return _compiled_word_pattern(alias_lower).search(text_lower) is not None
 
 
+# Optional plural suffix appended to device-alias matches so a count
+# ("50 thumb drives", "20 ssds", "old boxes") still resolves to the
+# singular canonical. ``e?s`` covers both "-s" and "-es"; it sits
+# OUTSIDE the capture group so the canonical lookup keys on the
+# singular alias.
+_PLURAL_SUFFIX = r"(?:e?s)?"
+
+
+@functools.lru_cache(maxsize=4096)
+def _compiled_device_pattern(alias_lower: str) -> "re.Pattern[str]":
+    """Like ``_compiled_word_pattern`` but tolerant of a trailing
+    plural ``s``/``es`` — device mentions are routinely pluralized."""
+    return re.compile(
+        r"(?<![a-z0-9])" + re.escape(alias_lower) + _PLURAL_SUFFIX + r"(?![a-z0-9])"
+    )
+
+
 # Pre-built per-pack matcher: a single union regex over all device
 # aliases. Reduces _emit_devices from O(aliases) regex compiles per
 # atom to O(1) — one search, one canonical lookup per match.
@@ -1270,7 +1287,7 @@ def _device_union_for_pack(pack: DomainPack, alias_index: dict[str, str]) -> tup
     # ("access point" before "point").
     aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
     body = "|".join(re.escape(a) for a in aliases_sorted)
-    pattern = re.compile(r"(?<![a-z0-9])(" + body + r")(?![a-z0-9])")
+    pattern = re.compile(r"(?<![a-z0-9])(" + body + r")" + _PLURAL_SUFFIX + r"(?![a-z0-9])")
     _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
     return _DEVICE_UNION_CACHE[key]
 
@@ -1354,7 +1371,7 @@ def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack
                 keys.add(f"device:{_slugify(canonical)}")
         return keys
     for alias_norm, canonical in alias_index.items():
-        pattern = _compiled_word_pattern(alias_norm)
+        pattern = _compiled_device_pattern(alias_norm)
         match = pattern.search(text_lower)
         if match is None:
             continue

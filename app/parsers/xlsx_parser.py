@@ -28,6 +28,7 @@ from app.parsers.base import BaseParser
 from app.parsers.segmenters import segment_xlsx
 from app.parsers.sheet_classifier import (
     SheetDestination,
+    SheetRole,
     classify_sheet,
 )
 from app.parsers.structured_projection import (
@@ -271,6 +272,155 @@ def _row_money_values(row: list[Any], money_cols: set[int]) -> list[float]:
                 vals.append(float(row[j]))
                 break
     return vals
+
+
+# ── Financial-summary (Deal Kit / P&L) structured extraction ─────────
+# Deal-kit / estimating workbooks lay the deal economics out as a 2-D
+# label→value grid, not a row table, so the generic row emitter mashes
+# unrelated cells together. These helpers read the grid the way a human
+# does: find a known label, take the value to its right. The vocabulary
+# is the standard estimating-workbook field set (revenue/cost/margin by
+# category + deal header fields) — universal across the org's deals, no
+# customer-specific terms.
+
+# P&L line metric: "<Category> Revenue|Cost|Margin" (with optional
+# leading "Total"). Captures the category and which metric.
+_PL_METRIC_RE = re.compile(
+    r"^(?:total\s+)?(?P<cat>.+?)\s+(?P<metric>revenue|cost|margin)$", re.I
+)
+# Margin-percent line: "Margin % on <Category>".
+_PL_MARGIN_PCT_RE = re.compile(r"^margin\s*%\s*on\s+(?P<cat>.+)$", re.I)
+
+# Deal-header fields → normalized key. Matched against the lowercased,
+# whitespace-collapsed label cell.
+_DEAL_HEADER_LABELS: dict[str, str] = {
+    "oppty #": "opportunity_id",
+    "oppty#": "opportunity_id",
+    "opportunity #": "opportunity_id",
+    "opportunity#": "opportunity_id",
+    "sales rep": "sales_rep",
+    "customer": "customer",
+    "end user": "end_user",
+    "quoted w/ partner": "quoted_with_partner",
+    "qty of sites": "site_count",
+    "# of sites": "site_count",
+    "division": "division",
+    "project duration (months)": "project_duration",
+    "project duration": "project_duration",
+    "billing type": "billing_type",
+    "region": "region",
+    "channel/direct": "channel",
+    "enterprise/ technical": "segment",
+    "enterprise/technical": "segment",
+    "date": "deal_date",
+}
+
+# Don't treat these as values when they sit to the right of a label —
+# they are themselves column labels in the adjacent block of the grid.
+_PL_METRIC_WORDS = frozenset({"revenue", "cost", "margin"})
+
+
+def _norm_label(text: Any) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+
+def _is_label_cell(text: str) -> bool:
+    """True when a cell reads like a label (a header/P&L term), so it is
+    never mistaken for the *value* of the label to its left."""
+    if text in _DEAL_HEADER_LABELS:
+        return True
+    if _PL_MARGIN_PCT_RE.match(text):
+        return True
+    m = _PL_METRIC_RE.match(text)
+    return bool(m and m.group("metric").lower() in _PL_METRIC_WORDS)
+
+
+def _coerce_pl_number(value: Any) -> float | None:
+    """Parse a financial cell to a float. Returns None for blanks,
+    Excel errors (#DIV/0!), and non-numeric text (TBD / No)."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s or s.startswith("#"):
+        return None
+    neg = s.startswith("(") and s.endswith(")")
+    s2 = s.replace("(", "").replace(")", "").replace("$", "").replace(",", "").replace("%", "").strip()
+    if not s2:
+        return None
+    try:
+        n = float(s2)
+    except ValueError:
+        return None
+    return -n if neg else n
+
+
+def _norm_pl_category(raw: str) -> tuple[str, str]:
+    """Return (key, display) for a P&L category label.
+
+    ``key`` is a slug for grouping; ``display`` is a cleaned human label.
+    'Total Deal' / 'Deal' collapse to the same key so the summary line and
+    the detail block don't split into two categories."""
+    disp = re.sub(r"\s+", " ", raw.strip())
+    disp = re.sub(r"^total\s+", "", disp, flags=re.I).strip() or disp
+    key = re.sub(r"[^a-z0-9]+", "_", disp.lower()).strip("_")
+    # 'deal' is the grand-total category — normalize a few synonyms.
+    if key in {"deal", "overall_deal", "project"}:
+        key = "deal"
+        disp = "Deal"
+    return key, disp
+
+
+def _right_neighbor_value(row: list[Any], idx: int) -> Any:
+    """The first non-empty cell to the right of ``idx`` in ``row``."""
+    for j in range(idx + 1, len(row)):
+        v = row[j]
+        if v is not None and str(v).strip():
+            return v
+    return None
+
+
+def _looks_like_header_label(text: str) -> bool:
+    """Structural test for a deal-header *label* cell, independent of the
+    canonical vocabulary.
+
+    A header label is a short, mostly-text caption ("PO Number", "Account
+    Manager", "Site Contact") sitting to the left of its value. This lets
+    the extractor capture deal-kit header fields that aren't in the
+    canonical map, so non-standard fields are never silently dropped. P&L
+    metric / margin lines are excluded — they belong to the P&L block, not
+    the header."""
+    t = re.sub(r"\s+", " ", str(text or "").strip()).rstrip(":").strip()
+    if not t:
+        return False
+    if not re.search(r"[A-Za-z]", t):  # need a letter; pure numbers aren't labels
+        return False
+    if _PL_MARGIN_PCT_RE.match(t):
+        return False
+    m = _PL_METRIC_RE.match(t)
+    if m and m.group("metric").lower() in _PL_METRIC_WORDS:
+        return False
+    # Labels are captions, not prose: keep them short.
+    return len(t.split()) <= 6
+
+
+def _coerce_header_value(val: Any) -> str | None:
+    """Normalize a header *value* cell to a string, or None when it isn't a
+    usable value (blank, or itself a label/P&L term)."""
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        try:
+            val = val.isoformat()
+        except Exception:
+            val = str(val)
+    sval = re.sub(r"\s+", " ", str(val).strip())
+    if not sval:
+        return None
+    if _is_label_cell(_norm_label(sval)):
+        return None
+    return sval
 
 
 def _first_nonblank_header_row(rows: list[list[Any]]) -> int | None:
@@ -607,6 +757,79 @@ def _has_tabular_shape(rows: list[list[Any]]) -> bool:
         default=0,
     )
     return widest >= 2
+
+
+def _generic_table_from_rows(
+    rows: list[list[Any]],
+) -> tuple[list[str], list[dict[str, Any]]] | None:
+    """Build a full table from a tabular sheet whose header the canonical
+    detector could not recognise.
+
+    The canonical ``_detect_header`` only fires for sheets whose columns
+    match the device/quantity vocabulary it knows. Bill-of-materials, rate
+    cards, financial P&Ls and other commercial tables use arbitrary
+    headers, so they previously fell through to a 25-row truncated prose
+    dump — silently losing most rows and all structure. This recovers
+    them generically: pick the widest of the leading rows as the header,
+    keep every non-blank data row (no truncation), and never invents
+    vocabulary. Returns ``None`` when the sheet is not genuinely tabular.
+    """
+    if not _has_tabular_shape(rows):
+        return None
+
+    def _filled(row: list[Any]) -> int:
+        return sum(1 for c in (row or []) if str(c or "").strip())
+
+    # Width = the widest non-blank row's column span (drives column count).
+    width = max((len(r or []) for r in rows if not _is_blank_row(r)), default=0)
+    if width < 2:
+        return None
+
+    # Header = the first of the leading non-blank rows that is the most
+    # populated (titles/notes above the real header have fewer cells).
+    header_idx = -1
+    best_filled = -1
+    seen = 0
+    for idx, row in enumerate(rows):
+        if _is_blank_row(row):
+            continue
+        seen += 1
+        f = _filled(row)
+        if f > best_filled:
+            best_filled = f
+            header_idx = idx
+        if seen >= 8:  # only scan the leading band for a header
+            break
+    if header_idx < 0:
+        return None
+
+    header_row = rows[header_idx] or []
+    columns: list[str] = []
+    used: dict[str, int] = {}
+    for i in range(width):
+        raw = str(header_row[i]).strip() if i < len(header_row) and header_row[i] is not None else ""
+        name = raw or f"col_{i + 1}"
+        if name in used:
+            used[name] += 1
+            name = f"{name}_{used[name]}"
+        else:
+            used[name] = 1
+        columns.append(name)
+
+    table_rows: list[dict[str, Any]] = []
+    for row_idx in range(header_idx + 1, len(rows)):
+        row = rows[row_idx] or []
+        if _is_blank_row(row):
+            continue
+        cells: dict[str, Any] = {}
+        for col_idx, col_name in enumerate(columns):
+            value = row[col_idx] if col_idx < len(row) else ""
+            cells[col_name] = "" if value is None else str(value).strip()
+        table_rows.append(cells)
+
+    if not table_rows:
+        return None
+    return columns, table_rows
 
 
 def _label_text_for_row(row: list[Any], label_col_indices: list[int]) -> str:
@@ -1278,6 +1501,256 @@ class XlsxParser(BaseParser):
     # of pricing atoms per sheet so a 1000-row catalog can't flood the
     # envelope. Deal totals and rate cards are far smaller than this.
     _COMMERCIAL_ROW_CAP = 200
+    # Bulk pricing sheets (rate cards / catalogs) fold every row into the
+    # single rollup atom's value.rows rather than emitting per-row atoms.
+    # This cap bounds envelope size for pathological sheets while staying
+    # far above any realistic rate table.
+    _COMMERCIAL_FOLD_CAP = 5000
+
+    def _emit_financial_summary_rows(
+        self,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+    ) -> list[EvidenceAtom]:
+        """Structured extraction for a deal-financials / P&L summary sheet.
+
+        Reads the 2-D label→value grid the way a PM does and emits:
+
+        * one ``deal_metadata`` atom carrying the deal header (OPPTY #,
+          customer, sales rep, billing type, duration, region, …);
+        * one ``commercial_total`` atom per P&L category (Deal / Labor /
+          PMO / Materials / Lift-Rental / Misc) with a structured
+          ``value`` (revenue / cost / margin / margin_pct) so the
+          OrbitBrief financial section renders without re-parsing text.
+
+        This replaces the row-glue the generic commercial emitter produced
+        for these sheets (``OPPTY # | 126 | Total Deal Revenue | 21560``).
+        Deterministic, LLM-free, universal across estimating workbooks.
+        """
+        header: dict[str, Any] = {}
+        header_locators: dict[str, dict[str, int]] = {}
+        # category key -> {"display", "revenue", "cost", "margin",
+        #                  "margin_pct", "row"}
+        pl: dict[str, dict[str, Any]] = {}
+
+        for ri, row in enumerate(rows):
+            for ci, cell in enumerate(row):
+                if cell is None:
+                    continue
+                # Original-case, whitespace-collapsed text drives P&L
+                # category *display*; the lowercased form drives matching.
+                orig = re.sub(r"\s+", " ", str(cell).strip())
+                label = orig.lower()
+                if not label:
+                    continue
+
+                # ── deal header field (canonical key) ──
+                key = _DEAL_HEADER_LABELS.get(label)
+                if key and key not in header:
+                    sval = _coerce_header_value(_right_neighbor_value(row, ci))
+                    if sval is not None:
+                        header[key] = sval
+                        header_locators[key] = {"row": ri + 1, "col": ci + 1}
+                    continue
+
+                # ── P&L margin-percent line ──
+                mp = _PL_MARGIN_PCT_RE.match(orig)
+                if mp:
+                    ckey, disp = _norm_pl_category(mp.group("cat"))
+                    n = _coerce_pl_number(_right_neighbor_value(row, ci))
+                    slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1})
+                    if n is not None and slot.get("margin_pct") is None:
+                        # Store as a percentage; deal-kit fractions (0.2857)
+                        # become 28.57, explicit percents pass through.
+                        slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
+                    continue
+
+                # ── P&L revenue / cost / margin line ──
+                mm = _PL_METRIC_RE.match(orig)
+                if mm and mm.group("metric").lower() in _PL_METRIC_WORDS:
+                    ckey, disp = _norm_pl_category(mm.group("cat"))
+                    metric = mm.group("metric").lower()
+                    n = _coerce_pl_number(_right_neighbor_value(row, ci))
+                    slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1})
+                    if n is not None and slot.get(metric) is None:
+                        slot[metric] = round(n, 2)
+
+        # Confidence gate: only trust the structured P&L view when the grid
+        # actually reads like a deal-kit financial summary — at least two
+        # P&L categories carrying numbers, OR a multi-field deal header.
+        # Otherwise (e.g. a country-multiplier matrix mislabelled as a
+        # financial summary) fall back to the generic commercial emitter so
+        # the sheet's real money rows aren't lost.
+        pl_with_numbers = sum(
+            1 for s in pl.values()
+            if any(s.get(m) is not None for m in ("revenue", "cost", "margin", "margin_pct"))
+        )
+        if pl_with_numbers < 2 and len(header) < 3:
+            return self._emit_commercial_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+                classification=classify_sheet(sheet_name, rows),
+            )
+
+        # ── generic header enrichment ──
+        # The grid is now confirmed to be a deal-kit financial summary, so
+        # capture ANY remaining label→value pair structurally (not just the
+        # canonical vocabulary). This keeps non-standard header fields
+        # (PO #, Account Manager, Site Contact, …) from being dropped. It
+        # runs only past the confidence gate, so non-P&L grids — which fall
+        # back above — are never affected. P&L metric/margin cells and
+        # already-captured canonical fields are skipped.
+        _GENERIC_HEADER_CAP = 40
+        for ri, row in enumerate(rows):
+            for ci, cell in enumerate(row):
+                if cell is None or len(header) >= _GENERIC_HEADER_CAP:
+                    continue
+                orig = re.sub(r"\s+", " ", str(cell).strip())
+                label = orig.lower()
+                if not label or label in _DEAL_HEADER_LABELS:
+                    continue
+                if not _looks_like_header_label(orig):
+                    continue
+                sval = _coerce_header_value(_right_neighbor_value(row, ci))
+                if sval is None:
+                    continue
+                gkey = re.sub(r"[^a-z0-9]+", "_", label).strip("_")
+                if not gkey or gkey in header:
+                    continue
+                header[gkey] = sval
+                header_locators[gkey] = {"row": ri + 1, "col": ci + 1}
+
+        atoms: list[EvidenceAtom] = []
+
+        def _src(tag: str, locator: dict[str, Any]) -> SourceRef:
+            loc = {"sheet": sheet_name, "extraction": "financial_summary", **locator}
+            return SourceRef(
+                id=stable_id("src", artifact_id, sheet_name, tag),
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                locator=loc,
+                extraction_method="financial_summary",
+                parser_version=self.parser_version,
+            )
+
+        # ── deal header atom ──
+        if header:
+            parts = [f"{k.replace('_', ' ').title()}: {v}" for k, v in header.items()]
+            text = " | ".join(parts)[:4000]
+            atom_id = stable_id("atm", artifact_id, "deal_metadata", sheet_name)
+            ent_keys: list[str] = []
+            if header.get("opportunity_id"):
+                ent_keys.append(f"deal:{header['opportunity_id']}")
+            if header.get("customer"):
+                cust_slug = re.sub(r"[^a-z0-9]+", "_", str(header["customer"]).lower()).strip("_")
+                if cust_slug:
+                    ent_keys.append(f"customer:{cust_slug}")
+            atoms.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.deal_metadata,
+                    raw_text=text,
+                    normalized_text=text.lower(),
+                    value={"kind": "deal_header", "fields": header,
+                           "field_locators": header_locators, "sheet_name": sheet_name},
+                    entity_keys=ent_keys,
+                    source_refs=[_src("deal_metadata", {})],
+                    receipts=[],
+                    authority_class=AuthorityClass.vendor_quote,
+                    confidence=0.8,
+                    confidence_raw=0.8,
+                    calibrated_confidence=0.8,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+
+        # ── P&L category atoms ──
+        # Order: grand-total Deal first, then by source row.
+        def _cat_sort(item: tuple[str, dict[str, Any]]):
+            k, v = item
+            return (0 if k == "deal" else 1, v.get("row", 1_000_000))
+
+        for ckey, slot in sorted(pl.items(), key=_cat_sort):
+            rev = slot.get("revenue")
+            cost = slot.get("cost")
+            margin = slot.get("margin")
+            mpct = slot.get("margin_pct")
+            # Skip a category that carries no numeric content at all.
+            if all(x is None for x in (rev, cost, margin, mpct)):
+                continue
+            disp = slot["display"]
+            money_keys = sorted(
+                {f"money:{int(round(v))}" for v in (rev, cost, margin)
+                 if isinstance(v, (int, float)) and abs(v) >= _MIN_MONEY_VALUE}
+            )
+
+            def _fmt(v: Any) -> str:
+                return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
+
+            text = (
+                f"{disp}: revenue {_fmt(rev)}, cost {_fmt(cost)}, "
+                f"margin {_fmt(margin)}"
+                + (f" ({mpct:g}%)" if isinstance(mpct, (int, float)) else "")
+            )
+            atom_id = stable_id("atm", artifact_id, "pl", sheet_name, ckey)
+            atoms.append(
+                EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.commercial_total,
+                    raw_text=text,
+                    normalized_text=text.lower(),
+                    value={
+                        "kind": "pl_line",
+                        "category": disp,
+                        "category_key": ckey,
+                        "revenue": rev,
+                        "cost": cost,
+                        "margin": margin,
+                        "margin_pct": mpct,
+                        "sheet_name": sheet_name,
+                    },
+                    entity_keys=money_keys,
+                    source_refs=[_src(f"pl_{ckey}", {"row": slot.get("row", 0)})],
+                    receipts=[],
+                    authority_class=AuthorityClass.vendor_quote,
+                    confidence=0.78,
+                    confidence_raw=0.78,
+                    calibrated_confidence=0.78,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+
+        # If the structured pass found nothing usable (an oddly-shaped
+        # sheet), fall back to the generic commercial emitter so we never
+        # regress to zero atoms.
+        if not atoms:
+            return self._emit_commercial_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+                classification=classify_sheet(sheet_name, rows),
+            )
+        return atoms
 
     def _emit_commercial_sheet_rows(
         self,
@@ -1309,9 +1782,21 @@ class XlsxParser(BaseParser):
             else AtomType.pricing_assumption
         )
 
+        # FINANCIAL_SUMMARY sheets carry the deal economics (revenue, cost,
+        # margin, per-line labor) — low-cardinality facts a PM reads line by
+        # line, so they stay as individual atoms. RATE_CARD / CATALOG /
+        # REFERENCE sheets are bulk backing matrices (a 312-row global rate
+        # table, a master price book); exploding them into one atom per row
+        # drowns the deliverable and costs a per-row LLM pass downstream while
+        # producing zero packets. For those we fold every row losslessly into
+        # the rollup atom's ``value.rows`` (full drill-down preserved) and
+        # emit only the single summary atom.
+        collapse_to_summary = role is not SheetRole.FINANCIAL_SUMMARY
+
         money_cols = _money_columns(rows)
         atoms: list[EvidenceAtom] = []
         all_values: list[float] = []
+        folded_rows: list[dict[str, Any]] = []
         for row_idx, row in enumerate(rows):
             cells = [("" if c is None else str(c).strip()) for c in row]
             if not any(cells):
@@ -1327,6 +1812,21 @@ class XlsxParser(BaseParser):
             label = " ".join(
                 c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
             ).strip()[:300]
+
+            if collapse_to_summary:
+                # Lossless drill-down payload — kept inside the one rollup
+                # atom rather than as a standalone atom.
+                if len(folded_rows) < self._COMMERCIAL_FOLD_CAP:
+                    folded_rows.append(
+                        {
+                            "row": row_idx + 1,
+                            "label": label,
+                            "money_keys": money_keys,
+                            "cells": [c for c in cells if c],
+                        }
+                    )
+                continue
+
             atom_id = stable_id(
                 "atm", artifact_id, atom_type.value, sheet_name, row_idx
             )
@@ -1373,13 +1873,17 @@ class XlsxParser(BaseParser):
             if len(atoms) >= self._COMMERCIAL_ROW_CAP:
                 break
 
-        if not atoms:
+        # ``line_count`` reflects every money-bearing row found, whether it
+        # became its own atom (financial summary) or was folded (rate card).
+        line_count = len(atoms) if not collapse_to_summary else len(folded_rows)
+        if line_count == 0:
             return []
 
         # Roll-up banner: a single summary atom per pricing sheet so the
         # OrbitBrief pricing view can render one readable line (count +
-        # $-range + total) that expands to the granular rows above. Carries
-        # the sheet's aggregate money keys so it still feeds pricing_clarity.
+        # $-range + total). For collapsed sheets it also carries the full
+        # row matrix in ``value.rows`` for drill-down; for financial-summary
+        # sheets the granular rows follow as their own atoms.
         summary = self._commercial_summary_atom(
             project_id=project_id,
             artifact_id=artifact_id,
@@ -1388,8 +1892,9 @@ class XlsxParser(BaseParser):
             sheet_name=sheet_name,
             role=role,
             atom_type=atom_type,
-            line_count=len(atoms),
+            line_count=line_count,
             values=all_values,
+            folded_rows=folded_rows if collapse_to_summary else None,
         )
         return [summary, *atoms]
 
@@ -1404,6 +1909,7 @@ class XlsxParser(BaseParser):
         atom_type: AtomType,
         line_count: int,
         values: list[float],
+        folded_rows: list[dict[str, Any]] | None = None,
     ) -> EvidenceAtom:
         lo = min(values) if values else 0.0
         hi = max(values) if values else 0.0
@@ -1411,10 +1917,13 @@ class XlsxParser(BaseParser):
         money_keys = sorted(
             {f"money:{int(round(v))}" for v in (lo, hi, total) if v >= _MIN_MONEY_VALUE}
         )
+        # ASCII hyphen separator — the OrbitBrief renderer and several JSON
+        # consumers round-tripped the en-dash through a non-UTF-8 stage and
+        # surfaced it as U+FFFD ("$8�$5,390"). A plain "-" is unambiguous.
         label = (
             f"{sheet_name}: {line_count} pricing line"
             f"{'s' if line_count != 1 else ''}, "
-            f"${int(round(lo)):,}–${int(round(hi)):,}"
+            f"${int(round(lo)):,}-${int(round(hi)):,}"
         )
         atom_id = stable_id(
             "atm", artifact_id, atom_type.value, sheet_name, "summary"
@@ -1449,6 +1958,10 @@ class XlsxParser(BaseParser):
                 "money_keys": money_keys,
                 "sheet_role": role.value,
                 "sheet_name": sheet_name,
+                # Full row matrix for collapsed bulk sheets (rate cards /
+                # catalogs). None for financial-summary sheets whose rows
+                # are emitted as their own atoms.
+                "rows": folded_rows if folded_rows else None,
             },
             entity_keys=money_keys,
             source_refs=[src],
@@ -1487,6 +2000,18 @@ class XlsxParser(BaseParser):
         if classification.destination is SheetDestination.DROP:
             return []
         if classification.destination is SheetDestination.COMMERCIAL:
+            # Deal-financials / P&L sheets get a structured label→value
+            # extractor (clean deal header + per-category P&L atoms);
+            # rate cards / catalogs stay on the row/rollup path.
+            if classification.role is SheetRole.FINANCIAL_SUMMARY:
+                return self._emit_financial_summary_rows(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    rows=rows,
+                )
             return self._emit_commercial_sheet_rows(
                 project_id=project_id,
                 artifact_id=artifact_id,
