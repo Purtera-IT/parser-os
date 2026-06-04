@@ -130,6 +130,10 @@ def call_vision_llm(
 
 def vision_endpoint_reachable() -> bool:
     """Quick health check for the vision model."""
+    # Global kill-switch: vision is an LLM path, so SOWSMITH_DISABLE_LLM
+    # disables it too (callers gate the vision pass on this predicate).
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return False
     host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
     try:
         r = requests.get(f"{host}/api/tags", timeout=3)

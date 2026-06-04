@@ -237,6 +237,10 @@ def rerank(query: str, documents: list[str]) -> Optional[list[float]]:
         if len(scored) != len(documents):
             return None
         return scored
+    # Global kill-switch: skip the real model backends (fail-open to the
+    # bi-encoder). Test-injected overrides above still run.
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return None
     if not enabled():
         return None
     b = backend()
