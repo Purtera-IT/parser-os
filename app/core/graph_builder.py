@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -1410,6 +1411,35 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 edge_family=EDGE_FAMILY_SEMANTIC_LINK,
             )
         )
+
+    # Neural edge gate (verify-gated rollout, off by default). When enabled it
+    # learns this deal's own decision boundary from the high-precision edges and
+    # drops only the ambiguous (semantic_link / cross-artifact) edges it is
+    # confident are spurious — never a high-precision contradiction, never an
+    # added edge. Abstains (keeps everything) on a cold/under-trained head, so
+    # the default pipeline is byte-identical. Set SOWSMITH_NEURAL_EDGE_GATE=1.
+    if os.environ.get("SOWSMITH_NEURAL_EDGE_GATE"):
+        try:
+            from app.core.graph_neural_classifier import neural_edge_gate
+            from app.core.embedding_retrieval import embed_texts
+            edges, _dropped = neural_edge_gate(
+                ordered,
+                edges,
+                embed_fn=embed_texts,
+                high_precision_families={
+                    EDGE_FAMILY_VALUE_SUPPORT,
+                    EDGE_FAMILY_QUANTITY_CONTRADICTION,
+                    EDGE_FAMILY_PART_NUMBER_QUANTITY_CONFLICT,
+                    EDGE_FAMILY_DEVICE_AGGREGATE_MISMATCH,
+                    EDGE_FAMILY_SCHEMATIC_QUANTITY_CONTRADICTION,
+                },
+                ambiguous_families={
+                    EDGE_FAMILY_SEMANTIC_LINK,
+                    EDGE_FAMILY_CROSS_ARTIFACT_REINFORCEMENT,
+                },
+            )
+        except Exception:
+            pass
 
     edges.sort(key=lambda e: e.id)
     return edges

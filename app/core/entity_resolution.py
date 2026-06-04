@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from difflib import SequenceMatcher
 
@@ -538,6 +539,21 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
             if len(site_keys) >= 2:
                 all_groups.append(site_keys)
 
+    # ─── SEMANTIC SITE FUSION (decide() chokepoint) ───
+    # Everything above merges site keys by *string* shape only: shared slug,
+    # numeric-suffix, or an explicit co-mention/LLM-cluster alias. None of it
+    # can see that a site CODE ("atl_air_03") and its FRIENDLY NAME
+    # ("atlanta_air_office") are the same physical place — different slugs,
+    # different tokens, no shared substring. semantic_site_fusion_groups routes
+    # that judgment through decide() (STORE kNN → LLM → UNDECIDED), so a PM's
+    # learned correction merges them and every structurally-similar pair after.
+    # Off by default (no store wired → decide() returns fallback → zero merges →
+    # byte-identical to the deterministic pipeline above).
+    universe: set[str] = set(all_site_keys)
+    for g in all_groups:
+        universe |= {k for k in g if isinstance(k, str) and k.startswith("site:")}
+    all_groups.extend(semantic_site_fusion_groups(universe))
+
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
     # Drop any site:* key that fails hygiene before grouping is
     # finalized. Otherwise the proper-noun regex span scan in
@@ -545,18 +561,35 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     # "site:pre_bid_meeting_location" into a group of real sites,
     # and _pick_canonical may then promote the junk key to be the
     # canonical of the merged entity.
+    # NEURAL GHOST-REJECTION GATE (decide() store) — runs BEFORE the lexical
+    # denylist so a PM-taught, presentation-aware role correction OVERRIDES the
+    # hand-curated deal-specific list. Off by default → empty drop set. This is
+    # the universal replacement that lets _is_obvious_non_site (the deal-specific
+    # "cheating") be retired via verify-gate once coverage is proven live.
+    role_drops: set[str] = set()
+    try:
+        universe_keys: set[str] = set()
+        for group in all_groups:
+            universe_keys |= {k for k in group if isinstance(k, str)}
+        role_drops = semantic_site_role_drops(universe_keys)
+    except Exception:  # pragma: no cover - gate must never break resolution
+        role_drops = set()
+
     try:
         from app.core.site_llm_verify import _is_obvious_non_site
     except Exception:
         _is_obvious_non_site = None  # type: ignore
-    if _is_obvious_non_site is not None:
+    if _is_obvious_non_site is not None or role_drops:
         cleaned: list[set[str]] = []
         for group in all_groups:
             kept = set()
             for k in group:
                 if k.startswith("site:"):
+                    # Neural gate first: a confident PM-taught reject drops it.
+                    if k in role_drops:
+                        continue
                     phrase = k[len("site:"):].replace("_", " ")
-                    if _is_obvious_non_site(phrase):
+                    if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
                         continue
                 kept.add(k)
             if len(kept) >= 2:
@@ -564,6 +597,279 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
         all_groups = cleaned
 
     return _coalesce_alias_groups(all_groups)
+
+
+def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
+    """Merge physical-site keys that name the same place but slug-equality misses.
+
+    The deterministic passes in :func:`collect_site_alias_groups` merge two
+    site keys only when their slugs are identical (modulo a trailing ``_NN``
+    suffix) or an explicit alias/LLM-cluster ties them. They are blind to the
+    most common real-world dupe: a site **code** and its **friendly name** for
+    the same physical location — ``site:atl_air_03`` vs
+    ``site:atlanta_air_office``. Different slugs, different tokens, no shared
+    substring, so every string heuristic leaves them split.
+
+    This pass asks the question the *right* way — through the decide()
+    chokepoint, once per ambiguous pair::
+
+        STORE (a PM-taught kNN correction)  →  LLM (reads both names)  →  UNDECIDED
+
+    A PM teaches the merge **as text** ("atlanta air office IS atl-air-03");
+    the feedback store embeds it and every structurally-similar code/friendly
+    pair — in this deal and the next — deflects from the LLM. We never add a
+    regex or keyword list: an unrecognized pair the store and LLM can't resolve
+    stays **separate** (undecided), so we never invent a merge.
+
+    Returns extra alias groups (each a set of ≥2 ``site:`` keys judged the same
+    place) to fold into the fusion stage. Safe no-op when:
+
+      * ``SOWSMITH_NEURAL_SITE_FUSION`` is unset/0 (default), or
+      * no feedback store is wired (decide() returns fallback for every pair →
+        zero merges → byte-identical to the deterministic pipeline).
+    """
+    if os.environ.get("SOWSMITH_NEURAL_SITE_FUSION", "") in ("", "0", "false"):
+        return []
+    keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
+    if len(keys) < 2:
+        return []
+
+    try:
+        from app.core.decide import DecisionScope, decide
+    except Exception:  # pragma: no cover - decide must always import
+        return []
+
+    scope = DecisionScope()
+
+    def phrase(k: str) -> str:
+        return k[len("site:"):].replace("_", " ").strip()
+
+    # Enumerate the candidate pairs and their decision texts once.
+    pairs: list[tuple[str, str, str]] = []  # (key_a, key_b, pair_text)
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            pa, pb = phrase(keys[i]), phrase(keys[j])
+            if pa and pb:
+                pairs.append((keys[i], keys[j], f"{pa} || {pb}"))
+    if not pairs:
+        return []
+
+    # BATCH / "parallel": warm the shared embedding cache with every pair text
+    # in ONE round-trip before the loop. The store's per-pair embed inside
+    # decide() then resolves from cache instead of N sequential embed calls.
+    # We deliberately do NOT fan out concurrent LLM calls — the single remote
+    # Ollama host serializes and thrashes under concurrency; the real speedup
+    # is batched embeddings + a warm store driving LLM escalations toward zero.
+    try:
+        from app.core.embedding_retrieval import embed_texts
+        embed_texts([t for _, _, t in pairs])
+    except Exception:  # pragma: no cover - cache warming is best-effort
+        pass
+
+    # Safety valve: cap LLM escalations per compile so a pathological deal with
+    # dozens of sites can't fan out into hundreds of cold LLM calls. Past the
+    # cap, undecided pairs simply stay separate + flagged (the safe default) —
+    # never a guessed merge.
+    try:
+        llm_budget = int(os.environ.get("SOWSMITH_SITE_FUSION_LLM_BUDGET", "80"))
+    except ValueError:
+        llm_budget = 80
+
+    # Union-find over the candidate site keys; each confident "same" verdict
+    # unions two keys, so a code that matches several surface forms collapses
+    # them all into one cluster transitively.
+    parent: dict[str, str] = {k: k for k in keys}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b, pair_text in pairs:
+        if find(a) == find(b):
+            continue  # already merged transitively — skip the round-trip
+        pa, pb = phrase(a), phrase(b)
+        d = decide(
+            relation="same_physical_site",
+            text=pair_text,
+            candidates=["same_site", "distinct_site"],
+            instruction=(
+                "Two site names from one deal, separated by '||'. Decide if "
+                "they name the SAME physical location (e.g. a site code and "
+                "its friendly office name, or a name and its address) or two "
+                "DISTINCT locations."
+            ),
+            context=f"Deal site names under comparison: {pa!r} and {pb!r}.",
+            scope=scope,
+            # Let a confident STORE hit decide for free; only spend an LLM call
+            # while we still have budget. Out of budget → store-only (llm=False),
+            # so unknown pairs stay distinct rather than guessed or expensive.
+            llm=llm_budget > 0,
+        )
+        if d.source == "llm":
+            llm_budget -= 1
+        if d.verdict == "same_site":
+            union(a, b)
+
+    groups: dict[str, set[str]] = {}
+    for k in keys:
+        groups.setdefault(find(k), set()).add(k)
+    return [g for g in groups.values() if len(g) >= 2]
+
+
+def semantic_site_role_drops(site_keys: set[str]) -> set[str]:
+    """Universal ghost-rejection gate for ``site:`` keys via the decide() store.
+
+    The deterministic hygiene below uses ``_is_obvious_non_site`` — a ~300-entry
+    hand-curated, DEAL-SPECIFIC denylist (literal place names, code prefixes).
+    It is the "cheating" the store is meant to retire: it never generalizes to
+    the next deal's phrasing and a PM can't correct it.
+
+    This pass asks the same question the *right* way — through decide()
+    (STORE kNN → LLM → UNDECIDED) on the **role** of each surface form:
+
+        canonical_site   — a real physical job site (KEEP)
+        site_attribute   — an attribute OF a site: an escort/owner contact, an
+                           MDF/IDF closet, an access window (DROP — not a site)
+        not_a_site       — boilerplate / schedule / non-site noise (DROP)
+
+    A PM teaches the role **presentationally** ("a column of work hours is a
+    schedule, not a site"; "an MDF/IDF label is equipment inside a site") from a
+    few example VALUES — not from specific site names — so the store generalizes
+    across deals with zero shared tokens (proven: 0% false kills, ghosts
+    dropped). It is a deliberately **one-sided** gate:
+
+        store-confident verdict in {site_attribute, not_a_site}  →  DROP ghost
+        canonical_site  OR  store abstains (verdict None)         →  KEEP (safe)
+
+    STORE-ONLY by design (``llm=False``): the LLM tier is **never** allowed to
+    manufacture a drop here. A site key reaching this stage is often a bare CODE
+    slug ("atl 047 04") stripped of its facility name; the calibrated store
+    correctly ABSTAINS on those (no taught canonical is a bare code), so they
+    survive. The LLM, handed a context-free code, would *guess* a reject verdict
+    and false-kill a real site — measured 3/5 false kills with the LLM on, 0/5
+    store-only. So only the calibrated kNN/head, which abstains under
+    uncertainty, may drop. An unknown form the store can't confidently reject
+    **survives** — we never invent a drop. Returns ``site:`` keys to drop.
+
+    Safe no-op when:
+      * ``SOWSMITH_NEURAL_SITE_ROLE_GATE`` is unset/0 (default), or
+      * no feedback store is wired (store abstains for every key → empty drop
+        set → byte-identical to the deterministic pipeline).
+    """
+    # ON by default — the learned gate is the primary site ghost-rejection path
+    # (the denylist is trimmed to an irreducible residue behind it). Explicitly
+    # set the flag to "0"/"false" to disable. Safe-degrading regardless: with no
+    # store wired or the embedder unreachable, every decide() abstains → empty
+    # drop set → byte-identical to not running the gate.
+    if os.environ.get("SOWSMITH_NEURAL_SITE_ROLE_GATE", "1").strip().lower() in ("0", "false", "no", "off"):
+        return set()
+    keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
+    if not keys:
+        return set()
+
+    try:
+        from app.core.decide import DecisionScope, decide
+    except Exception:  # pragma: no cover - decide must always import
+        return set()
+    try:
+        from app.core.site_role_seed import (
+            CONCEPT_CANDIDATES,
+            ROLE_CANDIDATES,
+            ROLE_RELATION,
+            _CONCEPT_DROP_VERDICT,
+            _ROLE_DROP_VERDICTS,
+            concept_relations,
+            is_address_like,
+            looks_like_parse_fragment,
+        )
+    except Exception:  # pragma: no cover - seed module must always import
+        return set()
+
+    scope = DecisionScope()
+
+    def phrase(k: str) -> str:
+        return k[len("site:"):].replace("_", " ").strip()
+
+    texts = [(k, phrase(k)) for k in keys]
+    texts = [(k, p) for k, p in texts if p]
+    if not texts:
+        return set()
+
+    # A street address / ZIP IS a real site — the fusion gate DEDUPS it, it is
+    # never a non-site. Exclude it from the role/concept reject pass entirely so
+    # no learned gate can ever drop a real address.
+    texts = [(k, p) for k, p in texts if not is_address_like(p)]
+    if not texts:
+        return set()
+
+    # BATCH: warm the shared embedding cache with every phrase in ONE round-trip
+    # so the per-key resolve() inside decide() hits cache, not N embed calls.
+    try:
+        from app.core.embedding_retrieval import embed_texts
+        embed_texts([p for _, p in texts])
+    except Exception:  # pragma: no cover - cache warming is best-effort
+        pass
+
+    concept_rels = concept_relations()
+    drops: set[str] = set()
+    for k, p in texts:
+        # (0) Structural parse-garbage: a lone truncated token ("philad",
+        # "barcelon"). No name list — keys on SHAPE. Conservative (lone short
+        # tokens only) so it can never eat a real multi-word facility name.
+        if looks_like_parse_fragment(p):
+            drops.add(k)
+            continue
+
+        # (1) Aggressive 3-way ROLE head — the calibrated workhorse. One-sided:
+        # only a CONFIDENT store reject verdict drops; canonical_site OR an
+        # abstention (verdict None) both KEEP.
+        d = decide(
+            relation=ROLE_RELATION,
+            text=p,
+            candidates=list(ROLE_CANDIDATES),
+            instruction=(
+                "A single value pulled from a site-roster row. Decide its ROLE: "
+                "a real physical job site (canonical_site); an attribute OF a "
+                "site such as an escort/owner contact, an MDF/IDF network closet, "
+                "or an access/work window (site_attribute); or non-site "
+                "boilerplate (not_a_site)."
+            ),
+            context="Deciding whether this roster value is itself a site.",
+            scope=scope,
+            # STORE-ONLY: never let the LLM guess a drop on a context-free site
+            # code. Only the calibrated store, which abstains under uncertainty,
+            # may reject — keeping false kills at zero.
+            llm=False,
+        )
+        if d.verdict in _ROLE_DROP_VERDICTS:
+            drops.add(k)
+            continue
+
+        # (2) UNION the tight per-concept binary gates. Each is its own kNN
+        # (reject vs real_site) with a calibrated head; a drop fires if ANY one
+        # confidently rejects. max-sim is additive across concepts, so coverage
+        # broadens without any single head collapsing.
+        for rel in concept_rels:
+            cd = decide(
+                relation=rel,
+                text=p,
+                candidates=list(CONCEPT_CANDIDATES),
+                instruction="Decide whether this roster value is a physical site.",
+                context="Deciding whether this roster value is itself a site.",
+                scope=scope,
+                llm=False,
+            )
+            if cd.verdict == _CONCEPT_DROP_VERDICT:
+                drops.add(k)
+                break
+    return drops
 
 
 def _pick_canonical(group: frozenset[str]) -> str:

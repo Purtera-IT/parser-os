@@ -405,9 +405,18 @@ def _looks_like_header_label(text: str) -> bool:
     return len(t.split()) <= 6
 
 
+# Excel error literals leak into cells as text (#DIV/0!, #REF!, #N/A, …).
+# They are never a real field value — a formula failed — so they must
+# never be captured as a deal-header field.
+_EXCEL_ERROR_RE = re.compile(
+    r"^#(?:DIV/0!|REF!|N/A|VALUE!|NAME\?|NULL!|NUM!|SPILL!|CALC!|GETTING_DATA|#+)$",
+    re.I,
+)
+
+
 def _coerce_header_value(val: Any) -> str | None:
     """Normalize a header *value* cell to a string, or None when it isn't a
-    usable value (blank, or itself a label/P&L term)."""
+    usable value (blank, an Excel error literal, or itself a label/P&L term)."""
     if val is None:
         return None
     if hasattr(val, "isoformat"):
@@ -417,6 +426,8 @@ def _coerce_header_value(val: Any) -> str | None:
             val = str(val)
     sval = re.sub(r"\s+", " ", str(val).strip())
     if not sval:
+        return None
+    if _EXCEL_ERROR_RE.match(sval):
         return None
     if _is_label_cell(_norm_label(sval)):
         return None
@@ -1622,6 +1633,13 @@ class XlsxParser(BaseParser):
                 sval = _coerce_header_value(_right_neighbor_value(row, ci))
                 if sval is None:
                     continue
+                # A genuine header value is atomic — a name, code, number, or
+                # date. A multi-word, non-numeric phrase ("Gross Margin Deal
+                # Kit", "Overall Deal Kit Summary") is a section title that
+                # happens to sit beside a caption, not a field value; skip it
+                # so the sweep doesn't mint bogus heading fields.
+                if len(sval.split()) >= 4 and not any(ch.isdigit() for ch in sval):
+                    continue
                 gkey = re.sub(r"[^a-z0-9]+", "_", label).strip("_")
                 if not gkey or gkey in header:
                     continue
@@ -1975,6 +1993,62 @@ class XlsxParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    def _dropped_sheet_marker(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+        reason: str,
+    ) -> EvidenceAtom:
+        """A retained marker for a whole sheet the role-router classified DROP.
+
+        Carries the sheet's rows (capped) so a PM omission complaint can still
+        recover the content, and is pre-stamped ``suppressed:sheet_router`` so
+        the compiler diverts it into the suppressed sidecar — it never reaches
+        scope_truth. This is the parse-time analog of the suppression ledger.
+        """
+        # Cap retained rows — a DROP sheet is noise; we keep enough to localize
+        # an omission complaint without bloating the envelope.
+        capped = [[("" if c is None else str(c)) for c in r] for r in rows[:500]]
+        atom_id = stable_id("atm", artifact_id, "dropped_sheet", sheet_name)
+        src = SourceRef(
+            id=stable_id("src", atom_id),
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            locator={"sheet": sheet_name, "extraction": "sheet_role_router"},
+            extraction_method="sheet_role_router",
+            parser_version=self.parser_version,
+        )
+        return EvidenceAtom(
+            id=atom_id,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.dropped_sheet,
+            raw_text=f"[dropped sheet: {sheet_name}] {len(rows)} rows",
+            normalized_text=f"dropped sheet {sheet_name}".lower(),
+            value={
+                "sheet_name": sheet_name,
+                "row_count": len(rows),
+                "rows": capped,
+                "_suppression": {"stage": "sheet_router", "reason": reason},
+            },
+            entity_keys=[],
+            source_refs=[src],
+            receipts=[],
+            authority_class=AuthorityClass.machine_extractor,
+            confidence=0.0,
+            confidence_raw=0.0,
+            calibrated_confidence=0.0,
+            review_status=ReviewStatus.needs_review,
+            review_flags=["suppressed:sheet_router"],
+            parser_version=self.parser_version,
+        )
+
     def _parse_sheet_rows(
         self,
         project_id: str,
@@ -1998,7 +2072,22 @@ class XlsxParser(BaseParser):
         #   • SCOPE      → fall through to normal row mining.
         classification = classify_sheet(sheet_name, rows)
         if classification.destination is SheetDestination.DROP:
-            return []
+            # Retained-suppression: instead of vanishing, a DROP-classified
+            # sheet is emitted as ONE marker atom carrying its rows, stamped
+            # suppressed:sheet_router. The compiler diverts pre-suppressed
+            # parser atoms into CompileResult.suppressed_atoms, so the sheet
+            # never reaches scope but stays auditable + complaint-localizable.
+            return [
+                self._dropped_sheet_marker(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    rows=rows,
+                    reason=getattr(classification, "reason", "") or "sheet_role=DROP",
+                )
+            ]
         if classification.destination is SheetDestination.COMMERCIAL:
             # Deal-financials / P&L sheets get a structured label→value
             # extractor (clean deal header + per-category P&L atoms);

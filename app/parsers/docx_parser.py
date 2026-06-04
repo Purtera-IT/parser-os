@@ -735,6 +735,27 @@ class DocxParser(BaseParser):
                 atom_types.append(AtomType.scope_item)
         return atom_types
 
+    @staticmethod
+    def _is_substantive_prose(text: str) -> bool:
+        """Whether a paragraph is load-bearing narrative prose worth keeping
+        even when it matches none of the scope/exclusion/constraint patterns.
+
+        The lexical classifier is a *type hint*, not a keep/drop gate: an SOW
+        overview sentence ("The customer requires onsite field services to
+        replace approximately 110 existing TVs across 23 dwellings...") carries
+        the deal's headline facts yet uses no scope verb. Dropping it silently
+        loses data. This is a universal, content-derived signal — a real
+        multi-word sentence — not a keyword whitelist. Downstream semantic
+        classification and dedup refine the type and prune true boilerplate."""
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
+        if len(words) < 5:
+            return False  # headings, labels, fragments — not a sentence
+        # Require sentence-like shape: ends with terminal punctuation OR
+        # carries a concrete fact (a digit: quantity / date / money / count).
+        has_terminal = text.rstrip().endswith((".", "!", ";", ":"))
+        has_number = bool(re.search(r"\d", text))
+        return has_terminal or has_number
+
     def _emit_atoms_for_text(
         self,
         project_id: str,
@@ -750,8 +771,18 @@ class DocxParser(BaseParser):
         tracked_index: int | None = None,
     ) -> list[EvidenceAtom]:
         atom_types = self._classify_text(text)
+        # Fail OPEN, not closed: a paragraph that matches no lexical pattern
+        # but is substantive narrative prose is captured as a scope_item
+        # (lower confidence, flagged) so no load-bearing fact is silently
+        # dropped at parse time. Headings stay out of the fallback — they are
+        # short titles, not facts.
+        prose_fallback = False
         if not atom_types:
-            return []
+            if not heading and self._is_substantive_prose(text):
+                atom_types = [AtomType.scope_item]
+                prose_fallback = True
+            else:
+                return []
         locator = {
             "paragraph_index": paragraph_index,
             "table_index": table_index,
@@ -782,6 +813,12 @@ class DocxParser(BaseParser):
                 confidence = 0.2
             elif tracked_change == "inserted":
                 confidence = 0.72
+            elif prose_fallback:
+                # Captured by fail-open prose rule, not a lexical match:
+                # lower confidence and flag so downstream semantic stages
+                # reclassify/prune. Provenance preserved, data not lost.
+                confidence = 0.5
+                review_flags = ["prose_fallback_capture"]
             atoms.append(
                 EvidenceAtom(
                     id=stable_id(
@@ -802,7 +839,7 @@ class DocxParser(BaseParser):
                     atom_type=atom_type,
                     raw_text=text,
                     normalized_text=normalize_text(text),
-                    value={"text": text, "tracked_change": tracked_change},
+                    value={"text": text, "tracked_change": tracked_change, "prose_fallback": prose_fallback},
                     entity_keys=self._extract_entity_keys(text),
                     source_refs=[source_ref],
                     authority_class=authority_class,

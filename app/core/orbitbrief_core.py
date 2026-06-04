@@ -1967,6 +1967,60 @@ def build_deal_financials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
     }
 
 
+# Commercial sheet roles that are categorically NOT deal bills of
+# materials: a rate card is labor pricing, a financial summary is deal
+# economics, and a catalog is a *master price book* — labels + unit
+# prices with no order quantities populated. None describe materials
+# actually ordered for the job.
+_NON_BOM_SHEET_ROLES = frozenset({"rate_card", "financial_summary", "catalog"})
+
+
+def _money_values_in_row(row: dict[str, Any]) -> set[float]:
+    """Numeric values flagged as currency for this row, parsed from the
+    ``money:<n>`` keys the parser stamps (e.g. ``money:1_2`` → 1.2)."""
+    vals: set[float] = set()
+    for mk in row.get("money_keys") or []:
+        frac = str(mk).split(":", 1)[-1].replace("_", ".")
+        try:
+            vals.add(round(float(frac), 4))
+        except ValueError:
+            continue
+    return vals
+
+
+def _row_has_order_quantity(row: dict[str, Any]) -> bool:
+    """Whether a folded pricing row records a COUNT of items ordered.
+
+    Universal, content-derived signal (no sheet-name keywords): a bill of
+    materials lists quantities ordered, whereas a master price book /
+    catalog lists only unit prices. A row carries an order quantity when
+    it has a positive whole-number value in a NON-money cell — a count
+    column distinct from any currency amount."""
+    money_vals = _money_values_in_row(row)
+    for cell in row.get("cells") or []:
+        if isinstance(cell, bool):
+            continue
+        if isinstance(cell, (int, float)):
+            v = float(cell)
+            if v <= 0:
+                continue
+            if round(v, 4) in money_vals:
+                continue  # this cell is a price, not a count
+            if abs(v - round(v)) < 1e-9:
+                return True
+    return False
+
+
+def _rows_are_ordered_materials(rows: list[dict[str, Any]]) -> bool:
+    """A folded sheet is a deal BOM (rather than a price book) when a
+    majority of its rows carry order quantities."""
+    considered = [r for r in rows if isinstance(r, dict)]
+    if not considered:
+        return False
+    qty_rows = sum(1 for r in considered if _row_has_order_quantity(r))
+    return qty_rows >= 1 and qty_rows >= len(considered) * 0.5
+
+
 def build_bill_of_materials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
     """Assemble the materials / BOM view from the folded pricing rollups
     (``pricing_assumption`` / ``commercial_total`` atoms carrying
@@ -1981,17 +2035,19 @@ def build_bill_of_materials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
         atype = _atom_type_str(atom)
         value = atom.value if isinstance(atom.value, dict) else {}
         folded = value.get("rows")
-        # Only materials/parts catalogs belong in the BOM. Labor rate
-        # cards and deal-financials rollups carry folded rows too but are
-        # not bills of materials — they surface in the pricing/commercial
-        # views instead. Gate on the sheet role the parser stamped.
+        # A folded pricing sheet belongs in the BOM only when it records
+        # materials actually ordered. Two universal, content-derived
+        # gates (no sheet-name keyword matching):
+        #   1. the parser's sheet role is not a categorically-commercial
+        #      role (rate card / financial summary / master price book), and
+        #   2. the rows themselves carry order quantities — distinguishing
+        #      a real BOM from a catalog of unit prices.
         sheet_role = str(value.get("sheet_role") or "")
-        name_lc = str(value.get("sheet_name") or "").lower()
-        is_material = sheet_role == "catalog" or any(
-            t in name_lc for t in ("material", "bom", "bill of material", "equipment", "parts", "hardware")
+        is_material = (
+            sheet_role not in _NON_BOM_SHEET_ROLES
+            and isinstance(folded, list)
+            and _rows_are_ordered_materials(folded)
         )
-        if sheet_role in ("rate_card", "financial_summary"):
-            is_material = False
         if (
             atype in ("pricing_assumption", "commercial_total")
             and isinstance(folded, list) and folded

@@ -162,7 +162,29 @@ def test_financials_absent_when_no_pl_lines():
 # ─────────────────────── bill_of_materials ─────────────────────
 
 
-def _materials_rollup():
+def _ordered_materials_rollup():
+    # A real deal BOM: each row carries an ORDER QUANTITY (a positive
+    # whole-number count) alongside unit/extended prices. The quantity
+    # column is what makes it a bill of materials rather than a price book.
+    return _atom(
+        AtomType.pricing_assumption,
+        value={
+            "kind": "pricing_rollup",
+            "sheet_name": "Materials",
+            "sheet_role": "scope",
+            "line_count": 2,
+            "rows": [
+                {"row": 2, "label": "Cat6 cable", "cells": ["Cat6 cable", 100, 0.5, 50.0], "money_keys": ["money:0_5", "money:50_0"]},
+                {"row": 3, "label": "RJ45 jack", "cells": ["RJ45 jack", 200, 1.2, 240.0], "money_keys": ["money:1_2", "money:240_0"]},
+            ],
+        },
+    )
+
+
+def _catalog_price_book_rollup():
+    # A master price book / catalog: labels + unit prices with NO order
+    # quantities populated. It is commercial reference data, not a deal BOM,
+    # and must NOT surface in the bill of materials.
     return _atom(
         AtomType.pricing_assumption,
         value={
@@ -193,13 +215,21 @@ def _rate_card_rollup():
     )
 
 
-def test_bom_surfaces_materials_rows():
-    bom = build_bill_of_materials(atoms=[_materials_rollup()])
+def test_bom_surfaces_ordered_materials_rows():
+    bom = build_bill_of_materials(atoms=[_ordered_materials_rollup()])
     assert bom["present"] is True
     assert bom["section_count"] == 1
     assert bom["total_lines"] == 2
     labels = [r["label"] for r in bom["sections"][0]["rows"]]
     assert "Cat6 cable" in labels
+
+
+def test_bom_excludes_catalog_price_book():
+    # A price book has unit prices but no order quantities — it is not a
+    # deal BOM regardless of being named "Materials" / tagged catalog.
+    bom = build_bill_of_materials(atoms=[_catalog_price_book_rollup()])
+    assert bom["present"] is False
+    assert bom["sections"] == []
 
 
 def test_bom_excludes_rate_card_rollups():
@@ -208,7 +238,7 @@ def test_bom_excludes_rate_card_rollups():
     assert bom["sections"] == []
 
 
-def test_bom_includes_materials_but_not_rate_card_when_mixed():
-    bom = build_bill_of_materials(atoms=[_materials_rollup(), _rate_card_rollup()])
+def test_bom_includes_ordered_materials_but_not_rate_card_when_mixed():
+    bom = build_bill_of_materials(atoms=[_ordered_materials_rollup(), _rate_card_rollup()])
     assert bom["section_count"] == 1
     assert bom["sections"][0]["sheet_name"] == "Materials"

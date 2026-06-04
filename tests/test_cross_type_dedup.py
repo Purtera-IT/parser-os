@@ -127,3 +127,31 @@ def test_short_text_passthrough() -> None:
     atoms = [_Atom("scope_item", "TVs"), _Atom("task", "TVs")]
     out = cross_type_dedup_atoms(atoms)
     assert len(out) == 2
+
+
+# ── open_question is a distinct speech act, never collapsed away ─────
+
+
+def test_open_question_survives_cross_type_collapse() -> None:
+    """The text key strips the trailing "?" (and all punctuation), so an
+    interrogative "MDF badge access?" would otherwise collapse into a
+    declarative "MDF badge access" constraint and be dropped. open_question
+    is the ONLY atom type that drives the missing_info packet, so losing it
+    silently swallows a real PM blocker. A question and an assertion about
+    the same topic are different facts — both must survive."""
+    q = _Atom("open_question", "MDF badge access?")
+    c = _Atom("constraint", "MDF badge access")  # higher cross-type priority
+    out = cross_type_dedup_atoms([q, c])
+    types = _types(out)
+    assert "open_question" in types, "the question must not be collapsed away"
+    assert "constraint" in types, "the declarative fact also survives"
+    assert len(out) == 2
+
+
+def test_open_question_not_dropped_even_against_high_priority_type() -> None:
+    # service_line (priority 7) would dominate any cross-type group; the
+    # question must still survive on its own axis.
+    q = _Atom("open_question", "Final device count per site is unknown?")
+    s = _Atom("service_line", "Final device count per site is unknown")
+    out = cross_type_dedup_atoms([q, s])
+    assert "open_question" in _types(out)

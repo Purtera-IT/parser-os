@@ -39,10 +39,16 @@ from app.core.schemas import (
     SCHEMA_VERSION,
     CandidateAtom,
     CompileResult,
+    EvidenceAtom,
     ParserDerivedFile,
     ParserOutput,
 )
 from app.core.source_replay import attach_receipts_to_atoms, replay_atom_receipts, summarize_receipts
+from app.core.suppression_ledger import (
+    SUPPRESSION_FLAG_PREFIX,
+    capture_suppressed,
+    merge_suppressed,
+)
 from app.core.telemetry import CompileTelemetry
 from app.core.validators import validate_compile_result
 from app.domain import load_domain_pack, set_active_domain_pack
@@ -254,6 +260,42 @@ def _iter_artifacts(project_dir: Path) -> list[Path]:
     return sorted(results, key=lambda p: str(p).lower())
 
 
+# Opt-in feedback store. The store stays OFF by default (decide() is a
+# transparent pass-through to the LLM, byte-identical to Phase 2) so the whole
+# test suite is unaffected. Operations turn it on by pointing
+# SOWSMITH_FEEDBACK_STORE_DB at a SQLite path; we wire it once per process,
+# seed the built-in global corrections (PurTera self-address), and register it
+# via decide.set_store. Any failure is swallowed — a store that won't load
+# must never break a compile.
+_FEEDBACK_STORE_WIRED = False
+
+
+def _maybe_wire_feedback_store() -> None:
+    global _FEEDBACK_STORE_WIRED
+    if _FEEDBACK_STORE_WIRED:
+        return
+    import os as _os
+
+    db_path = _os.environ.get("SOWSMITH_FEEDBACK_STORE_DB", "").strip()
+    if not db_path:
+        return
+    _FEEDBACK_STORE_WIRED = True  # one attempt per process, success or not
+    try:
+        from app.core.decide import get_store, set_store
+        from app.core.feedback_store import (
+            FeedbackStore,
+            seed_default_corrections,
+        )
+
+        if get_store() is not None:  # already wired (e.g. by a test/host)
+            return
+        store = FeedbackStore(db_path)
+        seed_default_corrections(store)
+        set_store(store)
+    except Exception:  # pragma: no cover - store must never break a compile
+        pass
+
+
 def compile_project(
     project_dir: Path,
     project_id: str | None = None,
@@ -269,6 +311,10 @@ def compile_project(
     project_dir = project_dir.resolve()
     if not project_dir.exists():
         raise FileNotFoundError(f"Project path does not exist: {project_dir}")
+
+    # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
+    # No-op otherwise, so default compiles (and the test suite) are unchanged.
+    _maybe_wire_feedback_store()
 
     resolved_project_id = project_id or project_dir.name
 
@@ -307,6 +353,11 @@ def compile_project(
     atoms = []
     candidates: list[CandidateAtom] = []
     rejected_candidates: list[CandidateAtom] = []
+    # Retained-suppression ledger: atoms removed by a drop-stage are captured
+    # here (flagged + reason-stamped) instead of vanishing, so omission
+    # complaints stay localizable and every drop stays auditable. Pure sidecar
+    # — never re-enters the accepted atom set.
+    suppressed_atoms: list[EvidenceAtom] = []
     fingerprints = []
     parser_atom_counts: Counter[str] = Counter()
     parser_routing: list[dict] = []
@@ -498,6 +549,31 @@ def compile_project(
             output_count=len(atoms),
             warnings=parse_warnings,
             errors=parse_errors,
+        )
+
+    # Divert parse-time pre-suppressed atoms into the suppressed sidecar. A
+    # parser can mark an atom suppressed at parse time (e.g. the xlsx sheet-role
+    # router emits a ``dropped_sheet`` marker for a whole sheet it routes DROP,
+    # stamped ``suppressed:sheet_router``). Such atoms must never reach scope,
+    # but routing them through the ledger keeps them auditable and lets an
+    # omission complaint ("you missed the Lookup tab") localize to the stage
+    # that removed them — instead of the sheet vanishing without a trace.
+    # Universal: keys off the suppression-flag prefix, not any file type.
+    pre_suppressed = [
+        a
+        for a in atoms
+        if any(
+            str(f).startswith(SUPPRESSION_FLAG_PREFIX)
+            for f in (getattr(a, "review_flags", None) or [])
+        )
+    ]
+    if pre_suppressed:
+        merge_suppressed(suppressed_atoms, pre_suppressed)
+        _sup_ids = {str(getattr(a, "id", "")) for a in pre_suppressed}
+        atoms = [a for a in atoms if str(getattr(a, "id", "")) not in _sup_ids]
+        warnings.append(
+            f"INFO: diverted {len(pre_suppressed)} parse-time suppressed "
+            f"atom(s) (e.g. whole-sheet drops) to the suppressed sidecar"
         )
 
     # Register {artifact_id: Path} with the vision module so its leaf
@@ -701,6 +777,7 @@ def compile_project(
     # same atoms are dropped, just before they burn an LLM call instead
     # of after.
     with telemetry.stage("duplicate_atom_collapse", input_count=len(atoms)) as stage:
+        before_atoms = list(atoms)
         before = len(atoms)
         try:
             from app.core.entity_resolution import collapse_duplicate_atoms
@@ -709,6 +786,14 @@ def compile_project(
             warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
         dropped = before - len(atoms)
         if dropped > 0:
+            merge_suppressed(
+                suppressed_atoms,
+                capture_suppressed(
+                    before_atoms, atoms,
+                    stage="duplicate_atom_collapse",
+                    reason="collapsed as an intra-document duplicate of another atom",
+                ),
+            )
             warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
         telemetry.end_stage(stage, output_count=len(atoms))
 
@@ -718,6 +803,7 @@ def compile_project(
     # scope. Drop them up front so they never reach scope_truth or burn
     # an LLM enrich / classification call.
     with telemetry.stage("execution_boilerplate_drop", input_count=len(atoms)) as stage:
+        before_bp_atoms = list(atoms)
         before_bp = len(atoms)
         try:
             from app.core.entity_hygiene import drop_execution_boilerplate
@@ -726,6 +812,14 @@ def compile_project(
             warnings.append(f"WARNING: execution_boilerplate_drop failed: {type(exc).__name__}: {exc}")
         dropped_bp = before_bp - len(atoms)
         if dropped_bp > 0:
+            merge_suppressed(
+                suppressed_atoms,
+                capture_suppressed(
+                    before_bp_atoms, atoms,
+                    stage="execution_boilerplate_drop",
+                    reason="signature / execution-block boilerplate, not deal scope",
+                ),
+            )
             warnings.append(f"INFO: dropped {dropped_bp} signature/execution-block boilerplate atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
@@ -806,7 +900,15 @@ def compile_project(
     with telemetry.stage("site_geo_fallback", input_count=len(atoms)) as stage:
         added_geo = 0
         try:
-            from app.core.site_geo_fallback import geo_fallback_sites
+            from app.core.site_geo_fallback import (
+                geo_fallback_sites,
+                suppress_vendor_sites,
+            )
+            # 1) Infer fallback physical_site atoms from bare City/State/ZIP
+            #    anchors. This must run FIRST: a vendor letterhead address
+            #    ("PurTera LLC … Alpharetta, GA 30009") only becomes a
+            #    physical_site atom HERE, so the suppression gate below has
+            #    nothing to act on until these exist.
             geo_atoms = geo_fallback_sites(atoms, project_id=resolved_project_id)
             if geo_atoms:
                 atoms.extend(geo_atoms)
@@ -814,6 +916,27 @@ def compile_project(
                 warnings.append(
                     f"INFO: site_geo_fallback inferred {added_geo} physical_site atom(s) "
                     f"from City/State/ZIP (no confirmed site found)"
+                )
+            # 2) Demote any physical_site that is actually the vendor's own
+            #    letterhead / billing address (semantic role gate, LLM-backed;
+            #    a no-op when the LLM is unreachable, only one site exists, or
+            #    suppression would remove every site).
+            before_vendor_atoms = list(atoms)
+            atoms, dropped_vendor = suppress_vendor_sites(
+                atoms, project_id=resolved_project_id
+            )
+            if dropped_vendor:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_vendor_atoms, atoms,
+                        stage="site_geo_fallback",
+                        reason="vendor / selling-party letterhead address, not a job site",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: site_geo_fallback suppressed {dropped_vendor} "
+                    f"vendor/letterhead address(es) misread as job sites"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: site_geo_fallback failed: {type(exc).__name__}: {exc}")
@@ -846,6 +969,7 @@ def compile_project(
     # req_id / sku / email. Drops milestone_phase from 23→6, requirement
     # from 19→5, etc., losslessly (loser fields merged into winner).
     with telemetry.stage("semantic_dedup", input_count=len(atoms)) as stage:
+        before_sem_atoms = list(atoms)
         before_sem = len(atoms)
         try:
             from app.core.semantic_dedup import (
@@ -869,6 +993,14 @@ def compile_project(
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
         dropped_sem = before_sem - len(atoms)
         if dropped_sem > 0:
+            merge_suppressed(
+                suppressed_atoms,
+                capture_suppressed(
+                    before_sem_atoms, atoms,
+                    stage="semantic_dedup",
+                    reason="semantic/cross-type duplicate collapsed into a canonical atom",
+                ),
+            )
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
@@ -1064,6 +1196,7 @@ def compile_project(
     result = CompileResult(
         project_id=resolved_project_id,
         atoms=atoms,
+        suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
         entities=entities,
         edges=edges,
         packets=packets,

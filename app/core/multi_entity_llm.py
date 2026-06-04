@@ -1909,6 +1909,42 @@ _CANONICALIZE_PROMPTS: dict[str, str] = {
 }
 
 
+# ── warm-store keep/drop deflection (upgrade #1) ─────────────────────────────
+# The per-candidate canonicalize LLM call is ~86-93% of compile wall time. The
+# keep/drop half of that decision is exactly the kind of role/shape judgment the
+# warm feedback store learns: "a sentence shaped like THIS is noise for entity
+# type T". So we front the LLM with a STORE-ONLY (llm=False) keep/drop check —
+# a CONFIDENT learned ``drop`` skips the LLM entirely (the deflection win), while
+# ``keep`` or any abstain still pays for the LLM because canonicalization is
+# GENERATIVE and the store can't synthesize a canonical form. One-sided by
+# design: the store can only ever REMOVE an LLM call on a high-confidence learned
+# reject, never fabricate a kept entity — so it cannot introduce a false keep.
+#
+# Then we self-teach: the LLM's own keep/drop boolean is folded back into the
+# store (under the teacher-cache flag) so both classes accumulate and the head
+# calibrates — next run the same shape deflects for free. This is the mechanism
+# that decays the enrich LLM-call rate as a deal corpus is processed.
+#
+# OFF by default: production behavior is byte-identical until the flag is set,
+# so this can be measured on a real deal (Yonah) before it fronts the hot path.
+
+def _enrich_deflect_enabled() -> bool:
+    return os.environ.get(
+        "SOWSMITH_ENRICH_STORE_DEFLECT", ""
+    ).strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def _enrich_keep_relation(entity_type: str) -> str:
+    return f"entity_keep:{entity_type}"
+
+
+def _enrich_keep_instruction(entity_type: str) -> str:
+    return (
+        f"Decide whether this sentence is a real {entity_type} to KEEP, or "
+        f"retrieval noise to DROP, for bid-document entity extraction."
+    )
+
+
 def _canonicalize_candidate(
     sentence: str, entity_type: str
 ) -> dict[str, Any] | None:
@@ -1918,6 +1954,10 @@ def _canonicalize_candidate(
     v42: when keep=false with confident rejection, append the sentence
     to the persistent negative-exemplar store so future runs learn
     from this rejection.
+
+    upgrade #1: when the warm feedback store CONFIDENTLY learned this shape is
+    a drop for ``entity_type``, skip the LLM round-trip entirely (one-sided
+    deflection); otherwise fall through to the LLM and teach it the outcome.
     """
     template = _CANONICALIZE_PROMPTS.get(entity_type)
     if not template:
@@ -1927,12 +1967,62 @@ def _canonicalize_candidate(
     # Truncate ultra-long sentences (the embedding pipeline already
     # caps at 500 chars but defense-in-depth)
     truncated = sentence.strip()[:600]
+
+    # upgrade #1: warm-store deflection. STORE-ONLY (llm=False) so it can only
+    # ever save an LLM call on a confident learned reject — never add latency,
+    # never fabricate a keep. Abstain → fall through to the LLM unchanged.
+    deflect = _enrich_deflect_enabled()
+    if deflect:
+        try:
+            from app.core.decide import decide
+            d = decide(
+                _enrich_keep_relation(entity_type),
+                truncated,
+                ["keep", "drop"],
+                instruction=_enrich_keep_instruction(entity_type),
+                llm=False,
+            )
+            if d.source == "store" and d.verdict == "drop":
+                return None
+        except Exception:
+            pass
+
     prompt = template.format(sentence=truncated)
     text = _call_ollama(prompt, max_tokens=256)
     obj = _parse_json_object(text)
     if not isinstance(obj, dict):
         return None
-    if not obj.get("keep"):
+    kept = bool(obj.get("keep"))
+
+    # upgrade #1: self-teach the keep/drop outcome so the store warms across
+    # runs (gated by the same teacher-cache flag decide() uses for its own LLM
+    # tier). Both classes are fed so the relation head can calibrate; only a
+    # CONFIDENT learned drop ever deflects, so a noisy keep can't suppress one.
+    if deflect:
+        try:
+            from app.core.decide import (
+                DecisionScope,
+                _teacher_cache_enabled,
+                get_store,
+            )
+            store = get_store()
+            if (
+                store is not None
+                and _teacher_cache_enabled()
+                and hasattr(store, "learn_from_teacher")
+            ):
+                store.learn_from_teacher(
+                    relation=_enrich_keep_relation(entity_type),
+                    text=truncated,
+                    verdict="keep" if kept else "drop",
+                    confidence=0.9,
+                    scope=DecisionScope(),
+                    instruction=_enrich_keep_instruction(entity_type),
+                )
+        except Exception:
+            pass
+
+    if not kept:
         # v42: self-bootstrap negatives — append this sentence to the
         # persistent negative-exemplar store. Future runs will down-rank
         # similar sentences automatically.

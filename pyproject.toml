@@ -57,4 +57,9 @@ orbitbrief_page_os = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+# The bundled `anyio` pytest plugin triggers a native access violation
+# (0xC0000409 / STATUS_STACK_BUFFER_OVERRUN) at collection time on
+# CPython 3.12.3 / pytest 9.x in the Windows conda dev env — it crashes the
+# interpreter before any test runs. We don't use anyio's pytest fixtures, so
+# disabling just that plugin restores a clean run without capping pytest.
+addopts = "-q -p no:anyio"

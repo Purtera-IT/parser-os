@@ -197,10 +197,14 @@ def sentence_split(text: str, max_sentence_chars: int = 500) -> list[str]:
 # ────────────────────────────────────────────────────────────────────
 
 
+def _embed_model() -> str:
+    return os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
+
+
 def _embed_one(text: str) -> list[float] | None:
     """POST to /api/embeddings. Returns 4096-dim vector or None on failure."""
     host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
-    model = os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
+    model = _embed_model()
     timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     try:
         r = requests.post(
@@ -219,15 +223,53 @@ def _embed_one(text: str) -> list[float] | None:
     return None
 
 
-def embed_texts(texts: list[str]) -> np.ndarray:
-    """Embed a list of texts. Returns (N, D) numpy matrix.
+# Newer Ollama exposes /api/embed which accepts {"input": [..]} and returns
+# ALL embeddings in ONE round-trip. That collapses N serial HTTP calls into 1,
+# which is the dominant cold-compile cost over a high-latency (Tailscale) link.
+# Older servers 404 here → we fall back to the per-text parallel path.
+_BATCH_ENDPOINT_OK: bool | None = None  # None=untried, True=use it, False=404'd
 
-    Parallelizes via ThreadPoolExecutor (ollama queues HTTP internally
-    but parallel calls saturate its work queue).
-    Failed embeds → zero vector at that row (caller filters).
-    """
-    if not texts:
-        return np.zeros((0, _DEFAULT_DIM), dtype=np.float32)
+
+def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
+    """Try the single-round-trip /api/embed endpoint. Returns per-text vectors
+    (None entry on individual failure) or None if the endpoint is unavailable
+    (so the caller falls back to the legacy per-text path)."""
+    global _BATCH_ENDPOINT_OK
+    if _BATCH_ENDPOINT_OK is False:
+        return None
+    if os.environ.get("SOWSMITH_EMBED_NO_BATCH"):
+        _BATCH_ENDPOINT_OK = False
+        return None
+    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    model = _embed_model()
+    timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    try:
+        r = requests.post(
+            f"{host}/api/embed",
+            json={"model": model, "input": texts},
+            timeout=timeout,
+        )
+        if r.status_code == 404:
+            _BATCH_ENDPOINT_OK = False
+            return None
+        if r.status_code != 200:
+            return None  # transient; don't disable the endpoint permanently
+        data = r.json()
+        embs = data.get("embeddings")
+        if isinstance(embs, list) and len(embs) == len(texts):
+            _BATCH_ENDPOINT_OK = True
+            return [e if (isinstance(e, list) and e) else None for e in embs]
+    except Exception:
+        return None
+    return None
+
+
+def _embed_uncached(texts: list[str]) -> list[list[float] | None]:
+    """Embed texts with no caching. Prefers the one-round-trip batch endpoint;
+    falls back to the legacy ThreadPoolExecutor per-text path."""
+    batched = _embed_batch_endpoint(texts)
+    if batched is not None:
+        return batched
     parallel = int(os.environ.get("SOWSMITH_EMBED_PARALLEL", str(_BATCH_SIZE)))
     out: list[list[float] | None] = [None] * len(texts)
     with ThreadPoolExecutor(max_workers=parallel) as ex:
@@ -238,17 +280,65 @@ def embed_texts(texts: list[str]) -> np.ndarray:
                 out[i] = fut.result()
             except Exception:
                 out[i] = None
-    # Build matrix; failed rows = zeros (zero similarity to anything,
-    # so they auto-drop in top-K). Dimensionality is derived from the
-    # first successful embedding rather than hardcoded, so swapping the
-    # embed model (e.g. qwen3-embedding:8b=4096 → bge-m3=1024) can't
-    # silently zero every vector on a len-mismatch.
+    return out
+
+
+def embed_texts(texts: list[str]) -> np.ndarray:
+    """Embed a list of texts. Returns (N, D) normalized numpy matrix.
+
+    Two universal speed layers wrap the remote call so EVERY embedding
+    consumer (entity enrichment, typed classifier, feedback store, neural
+    head, GNN) benefits at once:
+
+      1. Persistent content-addressed cache (sqlite, keyed by model +
+         sha256(text)) — a re-compile of the same/similar corpus never
+         re-embeds. See embedding_cache.py.
+      2. Single-round-trip batch endpoint (/api/embed) for cache MISSES —
+         one HTTP call for the whole miss set instead of N serial calls.
+
+    Failed embeds → zero vector at that row (caller filters; never cached).
+    """
+    if not texts:
+        return np.zeros((0, _DEFAULT_DIM), dtype=np.float32)
+
+    model = _embed_model()
+    out: list[list[float] | None] = [None] * len(texts)
+
+    # 1) cache lookup -------------------------------------------------------
+    from app.core.embedding_cache import get_cache
+    cache = get_cache()
+    miss_idx: list[int] = []
+    if cache is not None:
+        hits = cache.get_many(model, texts)
+        for i, vec in enumerate(hits):
+            if vec is not None:
+                out[i] = vec
+            else:
+                miss_idx.append(i)
+    else:
+        miss_idx = list(range(len(texts)))
+
+    # 2) embed only the misses (batched round-trip), then persist ----------
+    if miss_idx:
+        miss_texts = [texts[i] for i in miss_idx]
+        fetched = _embed_uncached(miss_texts)
+        to_store: list[tuple[str, list[float]]] = []
+        for pos, emb in zip(miss_idx, fetched):
+            out[pos] = emb
+            if cache is not None and emb:
+                to_store.append((texts[pos], emb))
+        if cache is not None and to_store:
+            cache.put_many(model, to_store)
+
+    # 3) assemble + L2-normalize (re-normalizing cached unit vectors is a
+    #    no-op; failed rows stay zero and auto-drop in cosine top-K). Dim is
+    #    derived from the first success so swapping the embed model can't
+    #    silently zero every row on a length mismatch.
     dim = next((len(e) for e in out if e), _DEFAULT_DIM)
     mat = np.zeros((len(texts), dim), dtype=np.float32)
     for i, emb in enumerate(out):
         if emb and len(emb) == dim:
             mat[i] = np.asarray(emb, dtype=np.float32)
-    # L2-normalize for cosine similarity
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms = np.where(norms > 1e-9, norms, 1.0)
     mat = mat / norms

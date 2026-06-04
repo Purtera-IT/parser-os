@@ -1776,15 +1776,49 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         }
 
     def _build_text_rich_page(page_index: int) -> dict[str, Any]:
-        sections = _text_rich_sections(page_texts[page_index])
+        # A text-rich page can still contain a ruled table (e.g. an
+        # authoritative site roster drawn with vector lines). The prose
+        # splitter has zero table awareness, so without this step the
+        # roster's columns bleed into the running text and shatter into
+        # ghost atoms ("site id", "mon-fri 07:00", "optbot facil"...).
+        # Recover any line-ruled tables first, strip their bbox regions
+        # from the text the splitter sees, then re-attach them as proper
+        # table blocks so the roster fast-path in _atoms_for_block emits
+        # clean physical_site atoms instead.
+        table_blocks, table_bboxes = _extract_ruled_tables(pdf_path, page_index)
+        prose_text = page_texts[page_index]
+        if table_blocks:
+            stripped = _page_prose_excluding_tables(
+                pdf_path, page_index, table_bboxes
+            )
+            if stripped is not None:
+                prose_text = stripped
+
+        sections = _text_rich_sections(prose_text)
+        if table_blocks:
+            sections.append(
+                {
+                    "heading": "",
+                    "level": 2,
+                    "blocks": list(table_blocks),
+                    "subsections": [],
+                }
+            )
         _stamp_section_and_block_ids(sections, page_index)
+        metadata = [
+            "[text-rich page — heavyweight layout pipeline skipped; "
+            "prose extracted via lightweight text splitter]"
+        ]
+        if table_blocks:
+            metadata.append(
+                f"[recovered {len(table_blocks)} line-ruled table(s) via "
+                "PyMuPDF; their cell regions were removed from the prose "
+                "stream to prevent column-bleed ghost atoms]"
+            )
         return {
             "page": page_index,
             "title": None,
-            "metadata": [
-                "[text-rich page — heavyweight layout pipeline skipped; "
-                "prose extracted via lightweight text splitter]"
-            ],
+            "metadata": metadata,
             "outline": [
                 {"level": s.get("level", 2), "heading": s.get("heading"),
                  "block_count": len(s.get("blocks") or [])}
@@ -3164,6 +3198,117 @@ _BULLET_LINE_RE = re.compile(r"^\s*([-*•·\u2022]|\d+[.)])\s+(.+?)\s*$")
 _HEADING_LINE_RE = re.compile(
     r"^\s*((?:[A-Z0-9][A-Z0-9 &/\-,()]{2,80})|(?:#{1,6}\s+.{2,80}))\s*$"
 )
+
+
+def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[str, Any]], list[Any]]:
+    """Recover vector-ruled tables on a text-rich page.
+
+    The text-rich fast path (``_build_text_rich_page``) runs a PROSE splitter
+    that has no notion of columns. On a page that is actually a TABLE (an
+    authoritative site roster, a BOM, a pricing grid), feeding the raw text to
+    the prose splitter mashes the columns together line-by-line — every
+    attribute-column value (access window, escort owner, MDF/IDF) bleeds into
+    prose and later becomes a ghost site/entity.
+
+    PyMuPDF's ``find_tables(strategy="lines")`` reconstructs the grid exactly
+    when the PDF has ruling lines (reportlab tables, most exported grids). This
+    helper returns:
+      * a list of ``kind="table"`` blocks (columns + rows) that the existing
+        atom emitter already knows how to turn into clean physical_site /
+        table_row atoms via ``looks_like_site_roster`` / ``extract_site_roster``;
+      * the list of table bounding boxes so the caller can EXCLUDE the table
+        region from the prose splitter (killing the column-bleed at the source).
+
+    Universal: no deal-specific logic. Any ruled table on any text-rich page
+    benefits. Returns ``([], [])`` on any failure or when no table is found, so
+    the page falls back to byte-identical prose-only behavior.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return [], []
+    table_blocks: list[dict[str, Any]] = []
+    bboxes: list[Any] = []
+    try:
+        with fitz.open(str(pdf_path)) as doc:
+            page = doc[page_index]
+            try:
+                finder = page.find_tables(strategy="lines")
+            except Exception:
+                return [], []
+            tables = list(getattr(finder, "tables", []) or [])
+            for table in tables:
+                try:
+                    extracted = table.extract()
+                except Exception:
+                    continue
+                if not extracted or len(extracted) < 2:
+                    continue
+                header = [(c or "").strip() for c in extracted[0]]
+                ncols = len(header) if header else len(extracted[0])
+                columns = [
+                    header[i] if i < len(header) and header[i] else f"col_{i}"
+                    for i in range(ncols)
+                ]
+                rows: list[dict[str, str]] = []
+                for raw_row in extracted[1:]:
+                    if not raw_row:
+                        continue
+                    cells: dict[str, str] = {}
+                    for i, c in enumerate(raw_row):
+                        col = columns[i] if i < len(columns) else f"col_{i}"
+                        val = " ".join(str(c or "").split()).strip()
+                        if val:
+                            cells[col] = val
+                    if cells:
+                        rows.append(cells)
+                if not rows:
+                    continue
+                table_blocks.append({"kind": "table", "columns": columns, "rows": rows})
+                try:
+                    bboxes.append(fitz.Rect(table.bbox))
+                except Exception:
+                    pass
+    except Exception:
+        return [], []
+    return table_blocks, bboxes
+
+
+def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[Any]) -> str | None:
+    """Return the page's text with any text falling inside a table bbox removed.
+
+    Used so the prose splitter never sees the table region (which would
+    otherwise mash columns into ghost prose). Returns ``None`` on failure so
+    the caller falls back to the full page text.
+    """
+    if not bboxes:
+        return None
+    try:
+        import fitz  # type: ignore[import-not-found]
+        with fitz.open(str(pdf_path)) as doc:
+            page = doc[page_index]
+            blocks = page.get_text("blocks") or []
+            kept: list[tuple[float, str]] = []
+            for b in blocks:
+                # block tuple: (x0, y0, x1, y1, text, block_no, block_type)
+                if len(b) < 5:
+                    continue
+                x0, y0, x1, y1, text = b[0], b[1], b[2], b[3], b[4]
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                rect = fitz.Rect(x0, y0, x1, y1)
+                in_table = False
+                for tb in bboxes:
+                    inter = rect & tb  # intersection
+                    if inter.is_valid and inter.get_area() > 0.5 * max(rect.get_area(), 1.0):
+                        in_table = True
+                        break
+                if not in_table:
+                    kept.append((y0, text))
+            kept.sort(key=lambda t: t[0])
+            return "\n".join(t for _, t in kept)
+    except Exception:
+        return None
 
 
 def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:

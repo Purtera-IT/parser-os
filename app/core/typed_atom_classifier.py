@@ -220,6 +220,32 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
         "fields": ["kind", "description", "needed_by"],
     },
 
+    # Tier 9 — procurement / solicitation (RFP/RFQ/ITB)
+    "deadline": {
+        "desc": "A hard date/time the bidder must meet: proposal/bid due date, questions-due date, pre-bid meeting, site visit. NOT a project phase end (that is milestone_phase).",
+        "fields": ["kind", "date", "time", "location"],
+    },
+    "submission_req": {
+        "desc": "A required element of the proposal submission: number of copies, file format, required form (SF330, W-9), page limit, sealed-bid labeling, delivery method.",
+        "fields": ["requirement", "value", "mandatory"],
+    },
+    "eval_criterion": {
+        "desc": "A scored evaluation/award criterion with its weight: 'Technical approach 40%', 'Price 30%', 'Past performance 20%'. One per criterion.",
+        "fields": ["criterion", "weight", "max_points", "basis"],
+    },
+    "bonding_insurance": {
+        "desc": "A bonding or insurance requirement: bid bond, performance bond, payment bond, general liability limit, workers comp, professional liability.",
+        "fields": ["kind", "amount_or_percent", "condition"],
+    },
+    "contract_term": {
+        "desc": "A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference.",
+        "fields": ["term_kind", "value", "detail"],
+    },
+    "addendum_qa": {
+        "desc": "An addendum, amendment, or question-and-answer item issued during the solicitation that modifies or clarifies the original documents.",
+        "fields": ["reference", "issued_date", "summary"],
+    },
+
     # Tier 8 — integration / system
     "data_flow_step": {
         "desc": "One step of a data-flow pipeline (source system → sink system, what payload).",
@@ -236,6 +262,29 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
 }
 
 
+def _atom_type_deflect_enabled() -> bool:
+    return os.environ.get(
+        "SOWSMITH_ATOM_TYPE_DEFLECT", ""
+    ).strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_ATOM_TYPE_RELATION = "atom_type"
+_ATOM_TYPE_INSTRUCTION = (
+    "Classify this parsed deal-document atom into the typed taxonomy, or _keep "
+    "if no taxonomy entry fits and it should retain its current type."
+)
+
+
+def _atom_type_candidates() -> list[str]:
+    return list(_TAXONOMY) + ["_keep"]
+
+
+def _atom_decide_text(atom: Any) -> str:
+    text = _atom_text(atom).replace("\n", " ").strip()
+    section = _atom_section_path(atom)
+    return f"{text} [section: {section}]" if section else text
+
+
 def classify_atoms(atoms: list[Any]) -> int:
     """Promote atoms from the v47 taxonomy where confident.
 
@@ -250,10 +299,49 @@ def classify_atoms(atoms: list[Any]) -> int:
         return 0
     if os.environ.get("SOWSMITH_TYPED_CLASSIFIER_DISABLE"):
         return 0
+    # Honour the global LLM kill-switch: this stage drives promotion via an
+    # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
+    # previously ignored the flag and spent ~46s/compile hitting a reachable
+    # but slow remote model even in "no-LLM" runs).
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return 0
 
     promotable = [a for a in atoms if _atom_type_str(a) in _PROMOTABLE_FROM]
     if not promotable:
         return 0
+
+    # upgrade #3: warm-store deflection on the atom-TYPE decision. STORE-ONLY
+    # (llm=False) pre-filter: an atom the store CONFIDENTLY classifies ``_keep``
+    # (no taxonomy entry fits → keep current type) is dropped from the LLM batch
+    # entirely — no round-trip, no value extraction needed. One-sided: the store
+    # can only ever REMOVE a promotion candidate (a no-op keep), never fabricate
+    # a promotion (those still go to the LLM, which alone synthesizes the value
+    # payload). Worst case is a missed promotion (recall, not correctness), and
+    # it's PM-correctable. OFF by default — production is byte-identical.
+    deflect = _atom_type_deflect_enabled()
+    if deflect:
+        try:
+            from app.core.decide import decide
+            kept_by_store = 0
+            survivors: list[Any] = []
+            cands = _atom_type_candidates()
+            for a in promotable:
+                d = decide(
+                    _ATOM_TYPE_RELATION,
+                    _atom_decide_text(a),
+                    cands,
+                    instruction=_ATOM_TYPE_INSTRUCTION,
+                    llm=False,
+                )
+                if d.source == "store" and d.verdict == "_keep":
+                    kept_by_store += 1
+                    continue
+                survivors.append(a)
+            promotable = survivors
+        except Exception:
+            pass
+        if not promotable:
+            return 0
 
     if not _ollama_reachable():
         return 0
@@ -274,6 +362,11 @@ def classify_atoms(atoms: list[Any]) -> int:
                 results_by_atom_id[atom_id] = payload
 
     promoted = 0
+    # upgrade #3: APPLIED outcome per atom (the verdict actually enacted, after
+    # hallucination guards) — fed back to the store so the SAME shape deflects
+    # next run. We teach the enacted decision, never the raw LLM label, so a
+    # rejected ghost teaches "_keep" (what we kept), not the bad promotion.
+    applied_verdict: dict[str, str] = {}
     for atom in promotable:
         atom_id = _atom_id(atom)
         if not atom_id or atom_id not in results_by_atom_id:
@@ -281,8 +374,10 @@ def classify_atoms(atoms: list[Any]) -> int:
         payload = results_by_atom_id[atom_id]
         new_type = payload.get("atom_type")
         if not new_type or new_type == "_keep":
+            applied_verdict[atom_id] = "_keep"
             continue
         if new_type not in _TAXONOMY:
+            applied_verdict[atom_id] = "_keep"
             continue
         # v57.2: reject promotion to physical_site when the source text or
         # the LLM-emitted value smells like a hallucination. The OPTBOT
@@ -299,11 +394,13 @@ def classify_atoms(atoms: list[Any]) -> int:
         new_value = payload.get("value")
         if new_type == "physical_site":
             if _is_hallucinated_physical_site(atom, new_value):
+                applied_verdict[atom_id] = "_keep"  # we kept the type
                 continue
         try:
             from app.core.schemas import AtomType
             atom.atom_type = AtomType(new_type)
         except (ImportError, ValueError):
+            applied_verdict[atom_id] = "_keep"
             continue
         if isinstance(new_value, dict) and new_value:
             existing_value = getattr(atom, "value", None)
@@ -312,7 +409,42 @@ def classify_atoms(atoms: list[Any]) -> int:
                 atom.value = merged
             else:
                 atom.value = new_value
+        applied_verdict[atom_id] = new_type
         promoted += 1
+
+    # upgrade #3: self-teach the enacted type decisions so the store warms and
+    # deflects matching shapes next run (gated by the same teacher-cache flag
+    # decide() uses for its own LLM tier). Both classes accumulate so the
+    # relation head can calibrate; only a confident learned "_keep" ever
+    # deflects a candidate out of the LLM batch.
+    if deflect and applied_verdict:
+        try:
+            from app.core.decide import (
+                DecisionScope,
+                _teacher_cache_enabled,
+                get_store,
+            )
+            store = get_store()
+            if (
+                store is not None
+                and _teacher_cache_enabled()
+                and hasattr(store, "learn_from_teacher")
+            ):
+                by_id = {_atom_id(a): a for a in promotable}
+                for atom_id, verdict in applied_verdict.items():
+                    a = by_id.get(atom_id)
+                    if a is None:
+                        continue
+                    store.learn_from_teacher(
+                        relation=_ATOM_TYPE_RELATION,
+                        text=_atom_decide_text(a),
+                        verdict=verdict,
+                        confidence=0.9,
+                        scope=DecisionScope(),
+                        instruction=_ATOM_TYPE_INSTRUCTION,
+                    )
+        except Exception:
+            pass
 
     return promoted
 

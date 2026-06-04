@@ -19,6 +19,7 @@ LLM.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -70,6 +71,144 @@ def _has_real_site(atoms: list[Any]) -> bool:
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+
+# ── Vendor / letterhead address suppression ─────────────────────────
+#
+# A street address in a deal is not automatically a job site. The service
+# provider's own letterhead / billing address ("PurTera LLC, 11720 Amber
+# Park Dr, Alpharetta GA 30009") sits in the SOW header and gets minted as a
+# phantom ``physical_site`` — a job site that does not exist. A keyword list
+# of vendor names can never be universal; the role of an address is a
+# semantic question, so we ask a small local LLM. When the LLM is
+# unreachable the gate is a NO-OP (we never drop a site on a guess).
+_SITE_ROLE_CANDIDATES = ["job_site", "vendor_or_billing_address"]
+# Deliberately NEUTRAL wording: it describes both roles even-handedly and lets
+# the model reason from the address's own context. An instruction that *asserts*
+# "a company name next to an address is letterhead" primes a small model to
+# answer that way for every address (including the real job site). Tested:
+# qwen2.5:3b cannot discriminate here (it parrots the prompt's emphasis);
+# qwen3:14b does, stably — so this gate routes to the larger model. It is one
+# call per site (a handful per deal), not the per-atom enrichment bottleneck.
+_SITE_ROLE_INSTRUCTION = (
+    "Classify the ROLE of this address within the deal. A job_site is a "
+    "customer location where physical installation / field work is performed. "
+    "A vendor_or_billing_address is the service provider's own corporate "
+    "office, letterhead, or billing address (not a work location)."
+)
+# A small 3B model cannot make this discrimination reliably; route to the same
+# capable model the rest of the pipeline uses. Overridable for ops.
+_SITE_ROLE_MODEL = os.environ.get("OLLAMA_SITE_ROLE_MODEL", "qwen3:14b")
+_VENDOR_DROP_CONFIDENCE = 0.6
+
+
+def _stamp_decision(atom: Any, decision: Any) -> None:
+    """Record WHY a site was demoted, on the atom itself (provenance, invariant
+    I). Captures which tier decided (``store``/``llm``) and, when a learned
+    correction drove it, that correction's id — so a PM can trace a suppression
+    back to the rule that caused it, with no keyword list involved. Best-effort:
+    only stamps when ``value`` is a dict, never raises."""
+    try:
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict):
+            val["_decision"] = {
+                "source": getattr(decision, "source", None),
+                "correction_id": getattr(decision, "correction_id", None),
+                "confidence": round(float(getattr(decision, "confidence", 0.0)), 3),
+            }
+    except Exception:  # pragma: no cover - provenance must never break a compile
+        pass
+
+
+def _site_address_text(atom: Any) -> tuple[str, str]:
+    """Return ``(address, context)`` for a physical_site atom.
+
+    The discriminating signal for a vendor/letterhead address (a company name
+    and footer code printed next to the address) usually lives in the *source*
+    text the address was lifted from, not in the terse minted site name. When a
+    geo-fallback atom preserved that originating text in ``source_context``,
+    hand it to the classifier so the model can see the letterhead.
+    """
+    val = getattr(atom, "value", None) or {}
+    text = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
+    addr = ""
+    src_ctx = ""
+    if isinstance(val, dict):
+        addr = str(val.get("address") or val.get("street_address") or "")
+        src_ctx = str(val.get("source_context") or "")
+    # Classify the richest available representation. A geo-fallback site is
+    # minted from a bare "City, ST ZIP" — its own text drops the street number
+    # and company name that actually mark a letterhead, so the originating
+    # line (source_context) is the strongest signal and must be what the model
+    # judges. A real site atom with a structured street address uses that.
+    primary = addr or src_ctx or str(text)
+    context = src_ctx or str(text)
+    return (primary, context)
+
+
+def suppress_vendor_sites(
+    atoms: list[Any], *, project_id: str
+) -> tuple[list[Any], int]:
+    """Drop ``physical_site`` atoms whose address is the vendor's own
+    office / letterhead / billing address rather than a job site.
+
+    Semantic, content-derived (no vendor-name keyword list): each site's
+    address role is classified by a small local LLM. Safe by construction —
+    returns the atoms unchanged when:
+
+    * the LLM is disabled / unreachable (classify_role yields ``None``), or
+    * fewer than two physical_site atoms exist (never remove the deal's only
+      locational anchor), or
+    * suppression would remove *every* site (always keep at least one).
+    """
+    # Route the address-role judgment through the universal decide() chokepoint.
+    # Phase 2: the feedback store is not yet wired, so decide() is a transparent
+    # pass-through to semantic_role.classify_role (same model, same instruction,
+    # same result). Phase 3 seeds the global PurTera "selling-party address is
+    # not a job site" correction HERE, and it then resolves from the store with
+    # zero LLM cost — without this call site changing again.
+    try:
+        from app.core.decide import DecisionScope, decide
+    except Exception:  # pragma: no cover - defensive
+        return atoms, 0
+
+    sites = [a for a in atoms if _atom_type_str(a) == "physical_site"]
+    if len(sites) < 2:
+        return atoms, 0
+
+    scope = DecisionScope(deal_id=project_id or "")
+    drop_ids: set[str] = set()
+    for a in sites:
+        aid = getattr(a, "id", None)
+        if not aid:
+            continue
+        addr, context = _site_address_text(a)
+        if not addr:
+            continue
+        decision = decide(
+            "physical_site",
+            addr,
+            _SITE_ROLE_CANDIDATES,
+            instruction=_SITE_ROLE_INSTRUCTION,
+            context=context,
+            scope=scope,
+            model=_SITE_ROLE_MODEL,
+        )
+        if (
+            decision.verdict == "vendor_or_billing_address"
+            and decision.confidence >= _VENDOR_DROP_CONFIDENCE
+        ):
+            drop_ids.add(aid)
+            _stamp_decision(a, decision)
+
+    if not drop_ids:
+        return atoms, 0
+    # Never strip the deal down to zero sites.
+    if len(drop_ids) >= len(sites):
+        return atoms, 0
+
+    kept = [a for a in atoms if getattr(a, "id", None) not in drop_ids]
+    return kept, len(drop_ids)
 
 
 def geo_fallback_sites(
@@ -132,6 +271,10 @@ def geo_fallback_sites(
                         "state": state,
                         "zip": zipc,
                         "inferred": True,
+                        # Preserve the originating text so a later semantic
+                        # role gate can see any company name / letterhead the
+                        # bare "City, ST ZIP" was lifted from.
+                        "source_context": str(text)[:600],
                     },
                     entity_keys=[f"site:{slug}"],
                     source_refs=src_refs,
@@ -150,4 +293,4 @@ def geo_fallback_sites(
     return out
 
 
-__all__ = ["geo_fallback_sites"]
+__all__ = ["geo_fallback_sites", "suppress_vendor_sites"]

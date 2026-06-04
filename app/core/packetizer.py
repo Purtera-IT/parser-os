@@ -346,8 +346,18 @@ PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
         AtomType.data_flow_step,
         AtomType.system_mapping,
         AtomType.metadata_requirement,
+        # Tier 9 procurement/solicitation — section-rendered, not packet anchors.
+        AtomType.deadline,
+        AtomType.submission_req,
+        AtomType.eval_criterion,
+        AtomType.bonding_insurance,
+        AtomType.contract_term,
+        AtomType.addendum_qa,
         # Intermediate row type — classified into a concrete type upstream.
         AtomType.raw_table_row,
+        # Retained-suppression marker — never anchors a packet; lives in the
+        # suppressed sidecar for audit / omission-complaint localization.
+        AtomType.dropped_sheet,
     }
 )
 

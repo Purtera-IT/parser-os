@@ -186,11 +186,33 @@ class AtomType(str, Enum):
     system_mapping = "system_mapping"
     metadata_requirement = "metadata_requirement"
 
+    # ─── Tier 9: procurement / solicitation (RFP/RFQ/ITB deals) ───
+    # Bid documents carry facts that are neither scope nor commercial: a
+    # proposal-submission deadline, a required submission element, a scored
+    # evaluation criterion, a bonding/insurance requirement, a contractual
+    # term, and addendum/Q&A items issued during the solicitation. Without
+    # these types each fact collapses into scope_item and the deliverable
+    # loses the structure a PM needs to actually respond to the solicitation.
+    deadline = "deadline"
+    submission_req = "submission_req"
+    eval_criterion = "eval_criterion"
+    bonding_insurance = "bonding_insurance"
+    contract_term = "contract_term"
+    addendum_qa = "addendum_qa"
+
     # ─── v49.2: intermediate type consumed by _enrich_table_atoms() ───
     # Parsers emit raw_table_row with {"_columns": [...], "_row": [...]}
     # value so a single central function can classify them via the column
     # schema registry. Replaces the v49 per-parser inline schema calls.
     raw_table_row = "raw_table_row"
+
+    # ─── Retained-suppression marker (parse-time whole-sheet drop) ───
+    # When the xlsx sheet-role router classifies a whole sheet DROP (empty /
+    # cover / lookup-helper noise), the sheet is emitted as ONE dropped_sheet
+    # marker carrying its rows, stamped suppressed:sheet_router, and diverted
+    # to CompileResult.suppressed_atoms instead of vanishing — so an omission
+    # complaint ("you missed the Lookup tab") stays localizable and auditable.
+    dropped_sheet = "dropped_sheet"
 
 
 class AuthorityClass(str, Enum):
@@ -414,6 +436,12 @@ class EvidenceAtom(BaseModel):
     calibrated_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     review_status: ReviewStatus
     review_flags: list[str] = Field(default_factory=list)
+    # When a learned correction (feedback store) drove a keep/drop/type decision
+    # for this atom, its provenance is stamped here so a PM can see WHICH rule
+    # fired: {"source","correction_id","rationale","neighbors"}. Additive and
+    # optional — absent on atoms no correction touched, so prod output is
+    # byte-identical until a rule actually fires.
+    decision_provenance: dict[str, Any] | None = None
     parser_version: str
     # Compatibility fields used by current MVP pipeline/tests.
     atom_id: str | None = None
@@ -731,6 +759,12 @@ class CompileResult(BaseModel):
     edges: list[EvidenceEdge]
     packets: list[EvidencePacket]
     warnings: list[str] = Field(default_factory=list)
+    # Atoms a drop-stage removed from the accepted set, retained (not lost) so
+    # omission complaints stay localizable and drops stay auditable. Excluded
+    # from the output signature and from every downstream consumer — a pure
+    # sidecar. Each carries a "suppressed:<stage>" review flag and a
+    # value["_suppression"] = {stage, reason} marker.
+    suppressed_atoms: list[EvidenceAtom] = Field(default_factory=list)
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None
@@ -756,6 +790,7 @@ class CompileResult(BaseModel):
                 "edges": data.get("edges", []),
                 "packets": data.get("packets", []),
                 "warnings": data.get("warnings", []),
+                "suppressed_atoms": data.get("suppressed_atoms", []),
                 "manifest": data.get("manifest"),
                 "trace": data.get("trace"),
                 "candidate_summary": data.get("candidate_summary"),

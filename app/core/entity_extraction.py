@@ -3801,6 +3801,17 @@ def extract_keys(
         from app.core.site_llm_verify import _is_obvious_non_site
     except Exception:
         _is_obvious_non_site = None  # type: ignore
+    # UNIVERSAL store-learned role gate over every site:* key in this set,
+    # computed once (one batched embed). Applied BEFORE the deterministic
+    # denylist so the denylist is never the sole authority. No-op when the
+    # gate flag is off / no store wired (empty set → identical pipeline).
+    try:
+        from app.core.entity_resolution import semantic_site_role_drops
+        _site_role_drops = semantic_site_role_drops(
+            {k for k in keys if isinstance(k, str) and k.startswith("site:")}
+        )
+    except Exception:
+        _site_role_drops = set()  # type: ignore
     site_keys_kept: set[str] = set()
     for k in list(keys):
         if not k.startswith("site:"):
@@ -3808,6 +3819,8 @@ def extract_keys(
         slug = k[len("site:"):]
         phrase = slug.replace("_", " ")
         if not _looks_like_site_phrase(phrase):
+            continue
+        if k in _site_role_drops:
             continue
         if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
             continue
@@ -4662,6 +4675,20 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     except Exception:
         _obv_non_site = None  # type: ignore
 
+    # UNIVERSAL store-learned role gate over the full injection key universe
+    # (roster catalog + every atom's site:* keys), computed once and applied
+    # inside the closure BEFORE the deterministic denylist. No-op when off.
+    try:
+        from app.core.entity_resolution import semantic_site_role_drops as _site_role_fn
+        _gate_role_drops = _site_role_fn(
+            {
+                k for a in atom_list for k in (getattr(a, "entity_keys", None) or [])
+                if isinstance(k, str) and k.startswith("site:")
+            }
+        )
+    except Exception:
+        _gate_role_drops = set()  # type: ignore
+
     # v53.2: STRICT mode — when ANY physical_site atom exists, the
     # roster catalog is the ONLY valid set of sites. Reject any
     # site:* key not aliasing to a roster row.
@@ -4681,6 +4708,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 continue
             phrase = k[len("site:"):].replace("_", " ")
             if not _looks_like_site(phrase):
+                continue
+            if k in _gate_role_drops:
                 continue
             if _obv_non_site is not None and _obv_non_site(phrase):
                 continue
@@ -5037,6 +5066,21 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     except Exception:
         _is_likely_field_label = None  # type: ignore
 
+    # UNIVERSAL site-role gate (decide() STORE kNN → never the denylist alone).
+    # Compute the drop-set ONCE over every site:* key across all atoms so the
+    # embedding cache warms in a single batch, then apply per-key below BEFORE
+    # the deterministic _is_obvious_non_site denylist. Safe no-op when the gate
+    # flag is off or no store is wired (returns empty set → identical pipeline).
+    try:
+        from app.core.entity_resolution import semantic_site_role_drops
+        _all_site_keys = {
+            k for atom in atom_list for k in (atom.entity_keys or [])
+            if isinstance(k, str) and k.startswith("site:")
+        }
+        _site_role_drops = semantic_site_role_drops(_all_site_keys)
+    except Exception:
+        _site_role_drops = set()  # type: ignore
+
     # v41: also import customer-regulator filter for final hygiene pass
     try:
         from app.core.multi_entity_llm import _looks_like_regulator_not_customer
@@ -5087,11 +5131,16 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         kept = []
         dropped_any = False
         for k in current:
-            if k.startswith("site:") and _is_obvious_non_site is not None:
-                phrase = k[len("site:"):].replace("_", " ")
-                if _is_obvious_non_site(phrase):
+            if k.startswith("site:"):
+                # Universal store-learned role gate first; denylist second.
+                if k in _site_role_drops:
                     dropped_any = True
                     continue
+                if _is_obvious_non_site is not None:
+                    phrase = k[len("site:"):].replace("_", " ")
+                    if _is_obvious_non_site(phrase):
+                        dropped_any = True
+                        continue
             if k.startswith("stakeholder:") and _is_likely_field_label is not None:
                 phrase = k[len("stakeholder:"):].replace("_", " ")
                 if _is_likely_field_label(phrase):

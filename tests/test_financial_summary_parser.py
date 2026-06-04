@@ -110,6 +110,31 @@ def test_div_zero_and_text_values_ignored():
     assert pl["deal"]["margin_pct"] is None  # #DIV/0! dropped, not crashed
 
 
+def test_sweep_rejects_excel_errors_and_heading_values():
+    # The structural header sweep must not mint junk fields: an Excel error
+    # literal (#DIV/0!) is a failed formula, and a multi-word non-numeric
+    # phrase is a section title, not an atomic field value. A real atomic
+    # value next to a non-canonical label is still captured (control).
+    rows = [
+        ["OPPTY #", 126, "Total Deal Revenue", 21560],
+        ["Customer", "DCW", "Total Deal Cost", 15660],
+        ["PO Number", "PO-4471", "Total Deal Margin", 5900],
+        ["Summary", "Overall Deal Kit Summary Net Margin", None, None],
+        ["Status", "#DIV/0!", None, None],
+        ["Total Labor Revenue", 21560, None, None],
+        ["Total Labor Cost", 15400, None, None],
+    ]
+    atoms = _emit(rows)
+    f = [a for a in atoms if a.atom_type.value == "deal_metadata"][0].value["fields"]
+    # atomic non-canonical value captured
+    assert f["po_number"] == "PO-4471"
+    # heading-like multi-word value rejected
+    assert "summary" not in f
+    # Excel error literal rejected
+    assert "status" not in f
+    assert "#DIV/0!" not in f.values()
+
+
 def test_non_pl_grid_falls_back_to_commercial_emitter():
     # A money table with no P&L vocabulary and no deal-header fields must
     # NOT be swallowed by the structured extractor — it falls back so the
