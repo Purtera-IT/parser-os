@@ -684,8 +684,37 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     return results
 
 
-# Per-entity-type best text field for the training-row tap. First hit wins.
-_ENTITY_TEXT_FIELDS = ("text", "canonical_name", "name", "canonical", "clause")
+# Text-field discovery for the training-row tap. The 35+ extractors emit
+# diverse dict shapes ("text", "name", "description", "criterion",
+# "obligation", …). Rather than enumerate every field name (brittle, and a
+# new extractor would silently log nothing), we try a priority list first
+# and then fall back to the LONGEST plain-string value in the dict. This is
+# universal: any shape — current or future — yields its most text-like field.
+_ENTITY_TEXT_PRIORITY = (
+    "text", "canonical_name", "name", "canonical", "clause", "description",
+    "criterion", "obligation", "requirement", "statement", "title", "summary",
+    "step", "item", "label_text",
+)
+# Keys that are metadata or the label itself — never the row's text payload.
+_ENTITY_NON_TEXT_KEYS = frozenset({
+    "category", "role", "type", "kind", "aliases", "page", "pages", "doc",
+    "document", "source", "confidence", "score", "_via",
+})
+
+
+def _best_extraction_text(it: dict[str, Any]) -> str:
+    """Most text-like value in an extractor result dict, shape-agnostically."""
+    for f in _ENTITY_TEXT_PRIORITY:
+        v = it.get(f)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    best = ""
+    for k, v in it.items():
+        if not isinstance(k, str) or k.startswith("_") or k in _ENTITY_NON_TEXT_KEYS:
+            continue
+        if isinstance(v, str) and len(v.strip()) > len(best):
+            best = v.strip()
+    return best
 # Result keys that are lists of entity dicts (skip scalars / internal keys).
 _LOGGABLE_LIST_KEYS = frozenset({
     "stakeholders", "milestones", "requirements", "site_clusters", "quantities",
@@ -729,11 +758,7 @@ def _log_extraction_training_rows(results: dict[str, Any], atoms: list[Any]) -> 
         for it in items:
             if not isinstance(it, dict):
                 continue
-            text = next(
-                (str(it[f]).strip() for f in _ENTITY_TEXT_FIELDS
-                 if it.get(f) and str(it[f]).strip()),
-                "",
-            )
+            text = _best_extraction_text(it)
             if not text:
                 continue
             label = (
@@ -2709,6 +2734,11 @@ def _extract_compliance_obligations_retrieved(
 
 def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     """POST to /api/generate. Returns the response text or empty string on failure."""
+    # Global kill-switch: SOWSMITH_DISABLE_LLM forces every LLM path to its
+    # deterministic fallback (empty == "no LLM result"). Also prevents a
+    # wedged/unreachable host from blocking a compile in offline/CI runs.
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return ""
     host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))

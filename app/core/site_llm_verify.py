@@ -1158,6 +1158,10 @@ Example: {{"keep": [1, 3, 7], "drop": [2, 4, 5, 6, 8]}}
 
 def _call_ollama(prompt: str, *, max_tokens: int = 2048) -> str:
     """POST to /api/generate. Returns the raw response.text or ''."""
+    # Global kill-switch: SOWSMITH_DISABLE_LLM forces the deterministic
+    # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return ""
     host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))

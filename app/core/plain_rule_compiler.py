@@ -379,6 +379,10 @@ def _extract_json_object(text: str) -> dict:
 
 
 def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
+    # Global kill-switch: SOWSMITH_DISABLE_LLM forces the deterministic
+    # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return ""
     import http.client
     import urllib.request
 
