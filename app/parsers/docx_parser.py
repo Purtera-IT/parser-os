@@ -39,6 +39,7 @@ from app.domain.schemas import DomainPack
 STRUCTURED_SCHEMA_DOCX = "orbitbrief.docx.structured.v1"
 
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+WORD_TBL_TAG = f"{{{WORD_NS['w']}}}tbl"
 
 SCOPE_PATTERNS = [r"\bscope includes\b", r"\binclude\b", r"\binstallation\b", r"\binstall\b"]
 EXCLUSION_PATTERNS = [r"\bexclude\b", r"\bexcluded\b", r"\bout of scope\b", r"\bnot in scope\b"]
@@ -109,26 +110,22 @@ class DocxParser(BaseParser):
         document = Document(path)
         atoms: list[EvidenceAtom] = []
 
-        # v48 FIX 1: Build the set of paragraph object IDs that live inside
-        # table cells BEFORE the paragraph loop runs. python-docx's
-        # document.paragraphs includes table-cell paragraphs, so without this
-        # guard every table cell is processed TWICE: once as a standalone
-        # paragraph atom (losing row context) and once inside the table loop
-        # below (correct, with full row structure). Double-emission produces
-        # garbage atoms ("Access Constraint") and silently drops full-row
-        # structured content when site_roster fires.
-        _table_para_ids: set[int] = set()
-        for _tbl in document.tables:
-            for _row in _tbl.rows:
-                for _cell in _row.cells:
-                    for _para in _cell.paragraphs:
-                        _table_para_ids.add(id(_para))
-
+        # v54 ROOT-CAUSE FIX: skip paragraphs that belong to a table cell so
+        # their content is handled by the table loop below with proper row
+        # structure and column context preserved (the original v48 intent).
+        #
+        # The previous implementation precomputed a set of id(paragraph) for
+        # every table-cell paragraph and skipped main-loop paragraphs whose
+        # id() was in that set. That is fundamentally broken: python-docx
+        # builds throwaway Paragraph proxy objects on every access and they are
+        # garbage-collected immediately, so the main loop's freshly-allocated
+        # proxies reused the same memory addresses → id() collisions → real
+        # body paragraphs (e.g. the SOW overview carrying "~110 TVs") were
+        # silently skipped as if they were table cells. We now decide table
+        # membership STRUCTURALLY by walking the lxml element's ancestors,
+        # which is stable and correct across python-docx versions.
         for idx, paragraph in enumerate(document.paragraphs):
-            # v48 FIX 1: skip paragraphs that belong to a table cell.
-            # Their content is handled by the table loop below with proper
-            # row structure and column context preserved.
-            if id(paragraph) in _table_para_ids:
+            if self._paragraph_in_table(paragraph):
                 continue
             text = paragraph.text.strip()
             if not text:
@@ -150,12 +147,12 @@ class DocxParser(BaseParser):
             )
 
         # Build all-document text once for ``kind=physical_site`` declarations.
-        # v48 FIX 1: exclude table-cell paragraphs so the surrounding-text
-        # heuristic stays accurate (otherwise table text bleeds in twice).
+        # Exclude table-cell paragraphs so the surrounding-text heuristic stays
+        # accurate (otherwise table text bleeds in twice).
         document_text = " ".join(
             (p.text or "").strip()
             for p in document.paragraphs
-            if id(p) not in _table_para_ids
+            if not self._paragraph_in_table(p)
         )
 
         for table_idx, table in enumerate(document.tables):
@@ -312,6 +309,31 @@ class DocxParser(BaseParser):
         # silently dropped.
         atoms.extend(
             self._extract_comment_atoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                path=path,
+            )
+        )
+
+        # Never-detected recovery: pull in content that lives inside content
+        # controls / textboxes (invisible to Document.paragraphs/.tables) and
+        # mark every embedded binary region. Dedup against what we already
+        # emitted so AlternateContent fallbacks don't double-count.
+        already_emitted = {
+            a.normalized_text for a in atoms if getattr(a, "normalized_text", "")
+        }
+        atoms.extend(
+            self._recover_nested_region_atoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                document=document,
+                already_emitted=already_emitted,
+            )
+        )
+        atoms.extend(
+            self._emit_embedded_media_markers(
                 project_id=project_id,
                 artifact_id=artifact_id,
                 filename=path.name,
@@ -736,6 +758,53 @@ class DocxParser(BaseParser):
         return atom_types
 
     @staticmethod
+    def _paragraph_in_table(paragraph: Any) -> bool:
+        """Whether a python-docx paragraph lives inside a table cell.
+
+        Decided STRUCTURALLY by walking the underlying lxml element's
+        ancestors for a ``<w:tbl>`` tag. This replaces an ``id(paragraph)``
+        membership test that was unsound: python-docx creates throwaway
+        Paragraph proxy objects on every access and they are GC'd at once, so
+        ``id()`` values get reused across the table scan and the main loop,
+        causing false-positive matches that silently dropped body paragraphs.
+        Ancestry never collides and is stable across python-docx versions.
+        """
+        el = getattr(paragraph, "_p", None)
+        if el is None:
+            return False
+        parent = el.getparent()
+        while parent is not None:
+            if parent.tag == WORD_TBL_TAG:
+                return True
+            parent = parent.getparent()
+        return False
+
+    @staticmethod
+    def _span_id(artifact_id: str, paragraph_index, table_index, row, cell, tracked_change, tracked_index) -> str:
+        """Stable id for a raw source unit, used by the span-provenance ledger."""
+        if tracked_change is not None:
+            return f"{artifact_id}:{tracked_change}{tracked_index}"
+        if table_index is not None:
+            return f"{artifact_id}:t{table_index}.r{row}.c{cell}"
+        return f"{artifact_id}:p{paragraph_index}"
+
+    @staticmethod
+    def _prose_drop_reason(text: str, *, heading: bool) -> str:
+        """One-line diagnosis for why the prose GATE dropped a paragraph.
+
+        Doubles as the fix pointer in the lost-content report: it names the
+        exact condition in ``_is_substantive_prose`` that rejected the line.
+        """
+        if heading:
+            return "heading/label fragment, no scope/exclusion verb"
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
+        if len(words) < 5:
+            return f"short fragment ({len(words)} words), no numeric fact"
+        # 5+ word lines now fail open (kept as prose_fallback), so a GATE drop
+        # of a multi-word line should not occur; if it ever does, surface it.
+        return "multi-word line unexpectedly dropped at prose gate"
+
+    @staticmethod
     def _is_substantive_prose(text: str) -> bool:
         """Whether a paragraph is load-bearing narrative prose worth keeping
         even when it matches none of the scope/exclusion/constraint patterns.
@@ -748,13 +817,29 @@ class DocxParser(BaseParser):
         multi-word sentence — not a keyword whitelist. Downstream semantic
         classification and dedup refine the type and prune true boilerplate."""
         words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
-        if len(words) < 5:
-            return False  # headings, labels, fragments — not a sentence
-        # Require sentence-like shape: ends with terminal punctuation OR
-        # carries a concrete fact (a digit: quantity / date / money / count).
-        has_terminal = text.rstrip().endswith((".", "!", ";", ":"))
         has_number = bool(re.search(r"\d", text))
-        return has_terminal or has_number
+        if len(words) < 5:
+            # Short fragment. Keep it ONLY when it states a concrete numeric
+            # fact with a little surrounding context, e.g. a "label: value"
+            # line like "Estimated quantity: 110 units" or "Project duration:
+            # 2 weeks". These carry load-bearing deal facts yet are too short
+            # to be a sentence. Bare headings/labels ("PROJECT OVERVIEW",
+            # "Name:") have no digit and are dropped; a lone number with no
+            # words ("110") lacks context and is dropped. This is a
+            # content-derived signal, not a keyword whitelist.
+            return has_number and len(words) >= 2
+        # 5+ real words -> KEEP. A multi-word line is load-bearing prose: SOW
+        # narrative, an exclusion bullet ("Procurement or supply of TVs,
+        # mounts, brackets..."), a tooling list item ("Battery powered drill
+        # or impact driver"). The deterministic GATE must NOT silently kill
+        # these just because they lack terminal punctuation or a digit —
+        # exclusion lists ("what's NOT in scope") and equipment lists are
+        # exactly the load-bearing facts a PM needs. We fail OPEN here and let
+        # the learnable decide() SEAM (semantic dedup + boilerplate drop) prune
+        # true boilerplate, where a human correction can teach it. That turns a
+        # silent recall loss into a visible, learnable decision. Universal,
+        # content-derived (a multi-word line), not a keyword whitelist.
+        return True
 
     def _emit_atoms_for_text(
         self,
@@ -770,6 +855,16 @@ class DocxParser(BaseParser):
         heading: bool,
         tracked_index: int | None = None,
     ) -> list[EvidenceAtom]:
+        # Span-provenance ledger (passive side-channel; only active when a
+        # ledger is attached). Register this raw unit so the lost-content
+        # report can attribute any drop to this exact GATE.
+        ledger = getattr(self, "_ledger", None)
+        span_id = self._span_id(
+            artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index
+        )
+        if ledger is not None:
+            ledger.register_span(span_id, text)
+
         atom_types = self._classify_text(text)
         # Fail OPEN, not closed: a paragraph that matches no lexical pattern
         # but is substantive narrative prose is captured as a scope_item
@@ -782,6 +877,18 @@ class DocxParser(BaseParser):
                 atom_types = [AtomType.scope_item]
                 prose_fallback = True
             else:
+                if ledger is not None:
+                    from app.core.span_ledger import StageKind
+
+                    ledger.record_drop(
+                        span_id=span_id,
+                        stage="docx_parse.prose_gate",
+                        kind=StageKind.GATE,
+                        rule="_is_substantive_prose",
+                        reason=self._prose_drop_reason(text, heading=heading),
+                        raw_text=text,
+                        artifact=artifact_id,
+                    )
                 return []
         locator = {
             "paragraph_index": paragraph_index,
@@ -849,4 +956,240 @@ class DocxParser(BaseParser):
                     parser_version=self.parser_version,
                 )
             )
+        if ledger is not None and atoms:
+            ledger.mark_represented(span_id)
+        return atoms
+
+    # -- never-detected recovery: content python-docx's body view can't see --
+    def _recover_nested_region_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        document: Any,
+        already_emitted: set[str],
+    ) -> list[EvidenceAtom]:
+        """Recover paragraphs/tables that live inside content controls
+        (``w:sdt``) or textboxes (``w:txbxContent``).
+
+        ``Document.paragraphs`` / ``Document.tables`` only enumerate the body's
+        *direct* ``w:p`` / ``w:tbl`` children, so anything nested under an sdt
+        or a textbox (executive summaries, revision histories, sales/customer
+        contact blocks) is silently invisible to the main parse loop — the
+        *never-detected* loss class. We walk the body lxml tree, find those
+        orphaned regions, and emit atoms for them:
+
+        * orphan **tables** -> one ``scope_item`` per row, emitted
+          UNCONDITIONALLY (mirroring the main table-row path) so contact rows
+          with no scope verb / digit survive the prose gate that would
+          otherwise drop them;
+        * orphan **paragraphs** -> routed through ``_emit_atoms_for_text``.
+
+        Dedup is by normalized text against ``already_emitted`` so VML/DrawingML
+        ``mc:AlternateContent`` fallbacks (the same textbox stored twice) don't
+        double-count. This is a structural, modality-agnostic walk — no
+        keyword lists, no per-deal tuning.
+        """
+        body = getattr(getattr(document, "element", None), "body", None)
+        if body is None:
+            return []
+
+        def _localname(tag: Any) -> str:
+            t = str(tag)
+            return t.rsplit("}", 1)[-1] if "}" in t else t
+
+        def _nested_ancestors(el: Any) -> set[str]:
+            out: set[str] = set()
+            try:
+                ancestors = el.iterancestors()
+            except Exception:  # pragma: no cover - non-lxml element
+                return out
+            for a in ancestors:
+                out.add(_localname(a.tag))
+            return out
+
+        def _el_text(el: Any) -> str:
+            parts = [t.text for t in el.iter(f"{{{WORD_NS['w']}}}t") if t.text]
+            return " ".join(parts).strip()
+
+        ledger = getattr(self, "_ledger", None)
+        atoms: list[EvidenceAtom] = []
+        tbl_tag = f"{{{WORD_NS['w']}}}tbl"
+        p_tag = f"{{{WORD_NS['w']}}}p"
+        tr_tag = f"{{{WORD_NS['w']}}}tr"
+        tc_tag = f"{{{WORD_NS['w']}}}tc"
+
+        base_tbl = len(document.tables)
+        base_p = len(document.paragraphs)
+
+        # --- orphan tables (e.g. the SALES / CUSTOMER CONTACTS blocks) ------
+        orphan_tbl_idx = 0
+        for tbl in body.iter(tbl_tag):
+            anc = _nested_ancestors(tbl)
+            if not ({"sdtContent", "txbxContent"} & anc):
+                continue
+            if "tbl" in anc:  # nested table; outer one already handled it
+                continue
+            for row_idx, tr in enumerate(tbl.iter(tr_tag)):
+                cells = [_el_text(tc) for tc in tr.iter(tc_tag)]
+                cells = [c for c in cells if c]
+                if not cells:
+                    continue
+                row_text = " | ".join(cells)
+                norm = normalize_text(row_text)
+                if norm in already_emitted:
+                    continue
+                already_emitted.add(norm)
+                t_index = base_tbl + orphan_tbl_idx
+                span_id = self._span_id(artifact_id, None, t_index, row_idx, None, None, None)
+                if ledger is not None:
+                    ledger.register_span(span_id, row_text)
+                atom_id = stable_id("atm", artifact_id, "docx_nested_row", t_index, row_idx, row_text)
+                src = SourceRef(
+                    id=stable_id("src", atom_id),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.docx,
+                    filename=filename,
+                    locator={
+                        "table_index": t_index,
+                        "row": row_idx,
+                        "extraction": "docx_nested_region_v1",
+                        "region": "sdt" if "sdtContent" in anc else "textbox",
+                    },
+                    extraction_method="docx_nested_region_v1",
+                    parser_version=self.parser_version,
+                )
+                atoms.append(EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.scope_item,
+                    raw_text=row_text,
+                    normalized_text=norm,
+                    value={
+                        "kind": "table_row",
+                        "region": "sdt" if "sdtContent" in anc else "textbox",
+                        "cells": {f"col_{i}": v for i, v in enumerate(cells)},
+                    },
+                    entity_keys=self._extract_entity_keys(row_text),
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.7,
+                    confidence_raw=0.7,
+                    calibrated_confidence=0.7,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=["recovered_nested_region"],
+                    parser_version=self.parser_version,
+                ))
+                if ledger is not None:
+                    ledger.mark_represented(span_id)
+            orphan_tbl_idx += 1
+
+        # --- orphan paragraphs (executive summary, revision notes, etc.) ----
+        orphan_p_idx = 0
+        for p in body.iter(p_tag):
+            anc = _nested_ancestors(p)
+            if not ({"sdtContent", "txbxContent"} & anc):
+                continue
+            if "tbl" in anc:  # already covered by its table region above
+                continue
+            txt = _el_text(p)
+            if not txt:
+                continue
+            norm = normalize_text(txt)
+            if norm in already_emitted:
+                continue
+            already_emitted.add(norm)
+            recovered = self._emit_atoms_for_text(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=filename,
+                text=txt,
+                paragraph_index=base_p + orphan_p_idx,
+                table_index=None,
+                row=None,
+                cell=None,
+                tracked_change=None,
+                heading=False,
+            )
+            for a in recovered:
+                a.review_flags = list(a.review_flags) + ["recovered_nested_region"]
+            atoms.extend(recovered)
+            orphan_p_idx += 1
+
+        return atoms
+
+    def _emit_embedded_media_markers(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        path: Path,
+    ) -> list[EvidenceAtom]:
+        """Emit a located ``image_marker`` / ``embedded_object_marker`` atom for
+        every binary part in the .docx zip (``word/media/*``,
+        ``word/embeddings/*``).
+
+        Detection of a binary region is *total and guaranteed* even when we
+        cannot yet read it: the region never silently vanishes — it becomes a
+        located marker the PM sees ("image/object here, vision/OLE pass
+        required"). Extraction quality is a separate, improving frontier. The
+        ``region_ref`` in each marker's value lets the content census reconcile
+        the region as MARKED rather than UNCOVERED.
+        """
+        atoms: list[EvidenceAtom] = []
+        try:
+            zf = zipfile.ZipFile(path)
+        except Exception:  # pragma: no cover - not a zip / unreadable
+            return []
+        with zf:
+            for name in sorted(zf.namelist()):
+                if name.startswith("word/media/"):
+                    kind, atype = "image_marker", "image"
+                elif name.startswith("word/embeddings/"):
+                    kind, atype = "embedded_object_marker", "embedded object"
+                else:
+                    continue
+                rel = name[len("word/"):]
+                try:
+                    size = zf.getinfo(name).file_size
+                except KeyError:  # pragma: no cover
+                    size = 0
+                marker_text = (
+                    f"[{atype.capitalize()} awaiting OCR / vision / OLE extraction] "
+                    f"{rel} in {filename} — {size:,} bytes. A vision or embedded-"
+                    f"object pass is required to recover its content."
+                )
+                atom_id = stable_id("atm", artifact_id, "docx_media_marker", rel)
+                src = SourceRef(
+                    id=stable_id("src", atom_id),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.docx,
+                    filename=filename,
+                    locator={"region_ref": rel, "extraction": "docx_media_marker_v1"},
+                    extraction_method="docx_media_marker_v1",
+                    parser_version=self.parser_version,
+                )
+                atoms.append(EvidenceAtom(
+                    id=atom_id,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.open_question,
+                    raw_text=marker_text,
+                    normalized_text=normalize_text(marker_text),
+                    value={"kind": kind, "region_ref": rel, "size_bytes": size},
+                    entity_keys=[],
+                    source_refs=[src],
+                    receipts=[],
+                    authority_class=AuthorityClass.meeting_note,
+                    confidence=0.5,
+                    confidence_raw=0.5,
+                    calibrated_confidence=0.5,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["binary_region_marker"],
+                    parser_version=self.parser_version,
+                ))
         return atoms

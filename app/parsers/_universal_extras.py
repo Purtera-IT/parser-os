@@ -30,6 +30,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import emit_zip_binary_markers
 
 
 def _make_atom(
@@ -359,6 +360,17 @@ class OdtParser(BaseParser):
                         extraction_method="odt_xml",
                         parser_version=self.parser_version,
                     ))
+        # Mark embedded ODF binaries (Pictures/, ObjectReplacements/) so an
+        # embedded diagram or object can't silently vanish.
+        atoms.extend(emit_zip_binary_markers(
+            path=path,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            filename=path.name,
+            artifact_type=ArtifactType.odt,
+            parser_version=self.parser_version,
+            family="odf",
+        ))
         return ParserOutput(atoms=atoms, derived_files=[])
 
 
@@ -427,6 +439,16 @@ class OdsParser(BaseParser):
                         parser_version=self.parser_version,
                         value_extra={"kind": "ods_cell", "sheet": sheet_name},
                     ))
+        # Mark embedded ODF binaries (Pictures/, ObjectReplacements/, charts).
+        atoms.extend(emit_zip_binary_markers(
+            path=path,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            filename=path.name,
+            artifact_type=ArtifactType.ods,
+            parser_version=self.parser_version,
+            family="odf",
+        ))
         return ParserOutput(atoms=atoms, derived_files=[])
 
 

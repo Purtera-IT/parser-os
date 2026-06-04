@@ -25,6 +25,7 @@ from app.core.schemas import (
     ParserMatch,
 )
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import emit_zip_binary_markers
 from app.parsers.segmenters import segment_xlsx
 from app.parsers.sheet_classifier import (
     SheetDestination,
@@ -1185,6 +1186,18 @@ class XlsxParser(BaseParser):
         warnings: list[str] = []
         if parse_error:
             warnings.append(f"{ARTIFACT_PARSE_ERROR_PREFIX}{artifact_id}:{parse_error}")
+        # Mark embedded charts / images / drawings / OLE objects in .xlsx so an
+        # embedded diagram or logo-as-data can't silently vanish. (CSV has no
+        # zip container, so this is a no-op there.)
+        if suffix != ".csv":
+            atoms = list(atoms) + emit_zip_binary_markers(
+                path=path,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                artifact_type=ArtifactType.xlsx,
+                parser_version=self.parser_version,
+            )
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),

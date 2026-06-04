@@ -203,7 +203,17 @@ def test_false_positive_instruction_sheet(tmp_path) -> None:
     ws.append(["Read this sheet before entering data."])
     ws.append(["", "", ""])
     wb.save(path)
-    assert XlsxParser().parse_artifact("p", "a", path) == []
+    # Retained-suppression (upgrade #5): a non-scope sheet no longer vanishes
+    # silently. It routes DROP and is emitted as ONE suppressed dropped_sheet
+    # marker (diverted to the suppressed sidecar by the compiler), so the only
+    # thing the parser must guarantee is that NO scope content escapes to
+    # scope_truth — never a hard zero-atom drop.
+    atoms = XlsxParser().parse_artifact("p", "a", path)
+    assert all(a.atom_type is AtomType.dropped_sheet for a in atoms)
+    assert all(
+        any(str(f).startswith("suppressed:") for f in a.review_flags)
+        for a in atoms
+    )
 
 
 def test_blank_workbook_no_crash(tmp_path) -> None:

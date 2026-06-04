@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from docx import Document
+
 from app.core.schemas import AtomType, AuthorityClass, ReviewStatus
 from app.parsers.docx_parser import DocxParser
 from scripts.make_demo_fixtures import create_demo_project
@@ -85,3 +87,57 @@ def test_matched_scope_prose_keeps_full_confidence() -> None:
     atoms = _emit("Installation of IP cameras at the main campus is in scope.")
     assert atoms
     assert all("prose_fallback_capture" not in a.review_flags for a in atoms)
+
+
+def test_short_numeric_fact_line_is_kept(tmp_path: Path) -> None:
+    # A short "label: value" line such as "Estimated quantity: 110 units" is
+    # under the 5-word sentence threshold but states a concrete deal fact, so
+    # the prose gate must keep it. A bare label with no digit stays dropped.
+    assert _emit("Estimated quantity: 110 units") != []
+    assert _emit("Project duration: 2 weeks") != []
+    # No digit / no context -> dropped.
+    assert _emit("Project Overview") == []
+    assert _emit("110") == []
+
+
+def test_full_parse_does_not_drop_body_paragraph_near_table(tmp_path: Path) -> None:
+    # Regression for the id()-collision data-loss bug: python-docx creates
+    # throwaway Paragraph proxies that are GC'd immediately, so an id()-based
+    # "is this a table cell?" test produced false positives and silently
+    # dropped real body paragraphs. Build a doc with MANY body paragraphs plus
+    # a table (to churn proxy allocations) and assert a sentinel overview
+    # paragraph survives the full parse, not just an isolated _emit.
+    doc = Document()
+    doc.add_heading("Statement of Work", level=1)
+    sentinel = (
+        "The customer requires onsite field services support to replace "
+        "approximately 110 existing TVs and mounts across 23 dwellings."
+    )
+    doc.add_paragraph(sentinel)
+    # Filler body paragraphs to force many proxy allocations / GC churn.
+    for i in range(80):
+        doc.add_paragraph(
+            f"Filler narrative paragraph number {i} describing routine "
+            "logistics and coordination between the parties."
+        )
+    # A real table whose cells must NOT bleed into the body loop.
+    table = doc.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "Site"
+    table.rows[0].cells[1].text = "Quantity"
+    table.rows[1].cells[0].text = "Main Campus"
+    table.rows[1].cells[1].text = "50"
+    path = tmp_path / "overview_with_table.docx"
+    doc.save(path)
+
+    atoms = DocxParser().parse_artifact(
+        project_id="proj_x",
+        artifact_id="art_x",
+        path=path,
+    )
+
+    # The headline "110" overview must appear in some atom's raw text.
+    assert any("110 existing" in (a.raw_text or "").lower() for a in atoms), (
+        "overview body paragraph carrying the headline quantity was dropped"
+    )
+    # The table data must also be present (table loop still works).
+    assert any("50" in (a.raw_text or "") for a in atoms)

@@ -41,6 +41,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import region_marker
 
 PARSER_NAME = "orbitbrief_pdf"
 PARSER_VERSION = "orbitbrief_pdf_v3"
@@ -751,6 +752,24 @@ class OrbitBriefPdfParser(BaseParser):
             },
         ]
         derived_files.extend(schematic_derived)
+
+        # Per-image markers: every embedded image XObject becomes a located
+        # marker so a figure / diagram / scanned region can't silently vanish.
+        # region_ref (``page{n}/image{xref}``) matches the content census so
+        # the region reconciles as MARKED rather than UNCOVERED. Additive and
+        # never fatal — a real OCR/vision atom for the same region wins.
+        try:
+            atoms.extend(
+                _pdf_image_markers(
+                    path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
+
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files,
@@ -758,6 +777,54 @@ class OrbitBriefPdfParser(BaseParser):
 
 
 # ──────────────────────── public helpers ─────────────────────────────────
+
+
+def _pdf_image_markers(
+    *,
+    path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Emit one located marker per embedded image XObject in the PDF.
+
+    Detection is total and cheap (reads only the image table, never decodes
+    pixels). The ``region_ref`` (``page{n}/image{xref}``) matches the content
+    census so each image region reconciles as MARKED. An OCR/vision atom that
+    later covers the same region is preferred; this is the floor that
+    guarantees no image silently vanishes.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover — env-specific
+        return []
+    out: list[EvidenceAtom] = []
+    try:
+        doc = fitz.open(str(path))
+    except Exception:  # pragma: no cover — unreadable PDF
+        return []
+    try:
+        for page_index in range(doc.page_count):
+            try:
+                page = doc.load_page(page_index)
+                images = page.get_images(full=True)
+            except Exception:
+                continue
+            for ii, img in enumerate(images):
+                xref = img[0] if img else ii
+                out.append(region_marker(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    artifact_type=ArtifactType.pdf,
+                    parser_version=parser_version,
+                    region_ref=f"page{page_index}/image{xref}",
+                    kind="image_marker",
+                    label="image",
+                ))
+    finally:
+        doc.close()
+    return out
 
 
 def _ocr_fallback_atoms(

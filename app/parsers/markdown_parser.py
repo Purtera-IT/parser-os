@@ -44,6 +44,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import region_marker
 
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(?P<title>.+?)\s*$")
@@ -200,6 +201,15 @@ class MarkdownParser(BaseParser):
                     block_index=idx,
                 )
             )
+        # Image references (``![alt](src)``) are binary regions — emit a
+        # located marker so a linked diagram / screenshot can't silently
+        # vanish. region_ref matches the census location (``image/<src>``).
+        for m in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", text):
+            atoms.append(region_marker(
+                project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                artifact_type=ArtifactType.txt, parser_version=self.parser_version,
+                region_ref=f"image/{m.group(1)}", kind="image_marker", label="image",
+            ))
         return ParserOutput(atoms=atoms)
 
     @staticmethod

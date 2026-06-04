@@ -182,7 +182,7 @@ def demote_nondeliverable_quantities(atoms: list[Any]) -> int:
 
 _HEADLINE_RE = re.compile(
     r"(?:approximately\s+|approx\.?\s+|about\s+|~\s*)?"
-    r"(\d[\d,]*)\s+(?:[a-z][a-z\-]*\s+){0,3}"
+    r"(\d[\d,]*)\s+((?:[a-z][a-z\-]*\s+){0,3})"
     r"(tv(?:s)?|television(?:s)?|display(?:s)?|monitor(?:s)?|unit(?:s)?|"
     r"device(?:s)?|camera(?:s)?|switch(?:es)?|access\s+point(?:s)?|ap(?:s)?|"
     r"door(?:s)?|reader(?:s)?|drop(?:s)?|jack(?:s)?|outlet(?:s)?|port(?:s)?|"
@@ -190,6 +190,28 @@ _HEADLINE_RE = re.compile(
     r"endpoint(?:s)?|license(?:s)?|seat(?:s)?|rack(?:s)?|server(?:s)?)",
     re.IGNORECASE,
 )
+
+# Units of measure / time / dimension. When the token IMMEDIATELY after the
+# number is one of these, the number describes a size, duration, weight, or
+# rate — NOT a count of the trailing deliverable noun. This prevents
+# "65 inch display" (a screen dimension) and "15 minutes per unit" (a config
+# duration) from masquerading as "65 displays" / "15 units". Universal,
+# content-derived: a measurement word, not a per-deal alias list.
+_MEASURE_WORDS = frozenset({
+    "inch", "inches", "in", "foot", "feet", "ft", "yard", "yards",
+    "meter", "meters", "metre", "metres", "m", "mm", "cm", "km",
+    "mile", "miles",
+    "second", "seconds", "sec", "secs", "minute", "minutes", "min", "mins",
+    "hour", "hours", "hr", "hrs", "day", "days", "week", "weeks",
+    "month", "months", "year", "years",
+    "pound", "pounds", "lb", "lbs", "kg", "kgs", "gram", "grams",
+    "ton", "tons", "tonne", "tonnes", "ounce", "ounces", "oz",
+    "gallon", "gallons", "liter", "liters", "litre", "litres",
+    "volt", "volts", "v", "watt", "watts", "w", "amp", "amps", "ampere",
+    "hz", "khz", "mhz", "ghz", "kbps", "mbps", "gbps",
+    "kb", "mb", "gb", "tb", "pb",
+    "percent", "pct", "degree", "degrees", "px", "dpi", "ppi",
+})
 
 _SOURCE_TYPES_FOR_HEADLINE = {"requirement", "scope_item", "service_line"}
 _MIN_HEADLINE_COUNT = 10
@@ -249,10 +271,19 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
                 continue
             if n < _MIN_HEADLINE_COUNT or n > 100_000:
                 continue
+            # Reject measurement/duration/dimension contexts: if the token
+            # right after the number is a unit of measure ("65 inch display",
+            # "15 minutes per unit", "10 foot rack"), the number is a size or
+            # duration, not a count of the deliverable. Guess-free: skip rather
+            # than emit a wrong quantity.
+            filler = (m.group(2) or "").strip().lower()
+            first_token = filler.split()[0] if filler else (m.group(3) or "").strip().lower()
+            if first_token in _MEASURE_WORDS:
+                continue
             if n in have or n in emitted_counts:
                 continue
             emitted_counts.add(n)
-            noun = re.sub(r"\s+", " ", m.group(2).strip().lower())
+            noun = re.sub(r"\s+", " ", m.group(3).strip().lower())
             artifact_id = getattr(atom, "artifact_id", "") or ""
             atom_id = stable_id("atm", artifact_id, "quantity_headline", str(n), noun)
             src_refs = list(getattr(atom, "source_refs", None) or [])

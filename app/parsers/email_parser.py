@@ -24,6 +24,7 @@ from app.core.schemas import (
     ParserMatch,
 )
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import attachment_marker
 from app.parsers.segmenters import segment_email
 from app.parsers.structured_projection import (
     derived_files_for,
@@ -194,12 +195,99 @@ class EmailParser(BaseParser):
                     authority=authority,
                 )
             )
+        # Header atom — the From/To/Cc/Subject/Date line is real content (and
+        # the content census inventories it). Emit it as a scope_item so the
+        # header is never silently absent from the atom stream. .eml only;
+        # headerless .txt/.md bodies have no structured headers to surface.
+        header_atom = self._header_atom(
+            project_id=project_id, artifact_id=artifact_id, path=path
+        )
+        if header_atom is not None:
+            atoms.append(header_atom)
+        # Attachments are the real deal docs more often than the body — mark
+        # each one so it can't silently vanish (the file content is a separate
+        # artifact; this is a located pointer the PM/census can see).
+        atoms.extend(
+            self._attachment_markers(
+                project_id=project_id, artifact_id=artifact_id, path=path
+            )
+        )
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
         )
+
+    def _header_atom(
+        self, *, project_id: str, artifact_id: str, path: Path
+    ) -> EvidenceAtom | None:
+        if path.suffix.lower() != ".eml":
+            return None
+        try:
+            msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+        except Exception:  # pragma: no cover - unreadable
+            return None
+        parts: list[str] = []
+        values: dict[str, str] = {}
+        for field in ("from", "to", "cc", "subject", "date"):
+            val = msg.get(field)
+            if val:
+                sval = str(val).strip()
+                parts.append(f"{field.capitalize()}: {sval}")
+                values[field] = sval
+        if not parts:
+            return None
+        text = " | ".join(parts)
+        src = SourceRef(
+            id=stable_id("src", artifact_id, "email_header"),
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.email,
+            filename=path.name,
+            locator={"kind": "email_header"},
+            extraction_method="email_headers",
+            parser_version=self.parser_version,
+        )
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, "email_header", text),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.scope_item,
+            raw_text=text,
+            normalized_text=normalize_text(text),
+            value={"kind": "email_header", **values},
+            entity_keys=[],
+            source_refs=[src],
+            authority_class=AuthorityClass.customer_current_authored,
+            confidence=0.86,
+            review_status=ReviewStatus.auto_accepted,
+            review_flags=[],
+            parser_version=self.parser_version,
+        )
+
+    def _attachment_markers(
+        self, *, project_id: str, artifact_id: str, path: Path
+    ) -> list[EvidenceAtom]:
+        if path.suffix.lower() != ".eml":
+            return []
+        try:
+            msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+        except Exception:  # pragma: no cover - unreadable
+            return []
+        out: list[EvidenceAtom] = []
+        for ai, att in enumerate(msg.iter_attachments()):
+            name = att.get_filename() or f"attachment{ai}"
+            try:
+                payload = att.get_payload(decode=True) or b""
+                size = len(payload)
+            except Exception:
+                size = 0
+            out.append(attachment_marker(
+                project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                artifact_type=ArtifactType.email, parser_version=self.parser_version,
+                attachment_name=name, size=size, content_type=att.get_content_type(),
+            ))
+        return out
 
     def _build_structured_doc(
         self,
@@ -477,6 +565,45 @@ class EmailParser(BaseParser):
                         authority_class=authority,
                         confidence=confidence,
                         review_status=review_status,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    )
+                )
+
+            # Baseline body coverage: a body line that matched no typed
+            # pattern is still real content — emit it as a scope_item so it
+            # is never silently absent from the atom stream (the content
+            # census inventories every body line). This mirrors the docx
+            # fail-open prose gate and the MboxParser per-paragraph behavior:
+            # keep + let the downstream learnable seam decide, never drop.
+            if not atom_types and any(ch.isalnum() for ch in cleaned):
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id(
+                            "atm",
+                            project_id,
+                            artifact_id,
+                            block["message_index"],
+                            block["line_start"],
+                            "scope_item",
+                            cleaned,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item,
+                        raw_text=cleaned,
+                        normalized_text=normalize_text(cleaned),
+                        value={
+                            "text": cleaned,
+                            "message_index": block["message_index"],
+                            "quoted": block["quoted"],
+                            "kind": "email_body_line",
+                        },
+                        entity_keys=entity_keys,
+                        source_refs=[source_ref],
+                        authority_class=authority,
+                        confidence=confidence,
+                        review_status=ReviewStatus.auto_accepted,
                         review_flags=[],
                         parser_version=self.parser_version,
                     )

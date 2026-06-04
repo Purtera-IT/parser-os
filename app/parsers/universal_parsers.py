@@ -35,6 +35,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import attachment_marker, region_marker
 
 
 # Shared atom-type heuristic — same families the docx/pptx parsers use
@@ -235,6 +236,16 @@ class HtmlParser(BaseParser):
                         parser_version=self.parser_version,
                         value_extra={"kind": "table_cell"},
                     ))
+        # Mark referenced binary regions (img / iframe / object / embed) so an
+        # embedded diagram or screenshot can't silently vanish. The region_ref
+        # matches the census location (``media/<src>``).
+        for ii, img in enumerate(soup.find_all(["img", "iframe", "object", "embed"])):
+            ref = img.get("src") or img.get("data") or f"media{ii}"
+            atoms.append(region_marker(
+                project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                artifact_type=ArtifactType.html, parser_version=self.parser_version,
+                region_ref=f"media/{ref}", kind="image_marker", label="image",
+            ))
         return ParserOutput(atoms=atoms, derived_files=[])
 
 
@@ -319,6 +330,27 @@ class MboxParser(BaseParser):
                             extraction_method="mbox_stdlib",
                             parser_version=self.parser_version,
                         ))
+                # Attachments — emit a located marker so a per-message
+                # attachment can't silently vanish (census reconciles MARKED).
+                try:
+                    for part in msg.walk():
+                        if part.get_content_maintype() == "multipart":
+                            continue
+                        fn = part.get_filename()
+                        disp = (part.get("Content-Disposition") or "").lower()
+                        if not fn and not disp.startswith("attachment"):
+                            continue
+                        name = fn or "(unnamed)"
+                        payload = part.get_payload(decode=True)
+                        atoms.append(attachment_marker(
+                            project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                            artifact_type=ArtifactType.mbox, parser_version=self.parser_version,
+                            attachment_name=name,
+                            size=len(payload) if payload else 0,
+                            content_type=part.get_content_type(),
+                        ))
+                except Exception:
+                    pass
         finally:
             mb.close()
         return ParserOutput(atoms=atoms, derived_files=[])

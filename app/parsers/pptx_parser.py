@@ -35,6 +35,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
+from app.parsers.binary_markers import emit_zip_binary_markers
 
 
 _HEADING_TOKENS = re.compile(
@@ -248,6 +249,17 @@ class PptxParser(BaseParser):
                         is_heading=False,
                         is_speaker_note=True,
                     ))
+        # Mark every embedded image / chart / OLE object so a slide diagram or
+        # embedded spreadsheet can't silently vanish (the census reconciles
+        # these as MARKED rather than UNCOVERED).
+        atoms.extend(emit_zip_binary_markers(
+            path=path,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            filename=path.name,
+            artifact_type=ArtifactType.pptx,
+            parser_version=self.parser_version,
+        ))
         return ParserOutput(atoms=atoms, derived_files=[])
 
     def _make_atom(

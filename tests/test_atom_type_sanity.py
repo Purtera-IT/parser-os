@@ -120,6 +120,33 @@ def test_small_counts_not_surfaced():
     assert surfaced == []
 
 
+def test_measure_word_not_surfaced_as_quantity():
+    # "65 inch display" is a SCREEN DIMENSION, not 65 displays.
+    # "15 minutes per unit" is a CONFIG DURATION, not 15 units.
+    # Both have a number >= MIN_HEADLINE_COUNT immediately followed by a
+    # measurement word, so neither may surface a quantity. Guess-free.
+    atoms = [
+        _atom(AtomType.requirement, "Each unit is an LG 65 inch display mounted on the wall."),
+        _atom(AtomType.scope_item, "Configuration takes approximately 15 minutes per unit."),
+    ]
+    surfaced = surface_headline_quantities(atoms, project_id="p")
+    assert surfaced == []
+
+
+def test_measure_word_does_not_block_real_count_in_same_corpus():
+    # The measure-word guard must reject only the measurement phrase, not
+    # suppress a genuine deliverable count elsewhere.
+    atoms = [
+        _atom(AtomType.requirement, "Install the LG 65 inch display in each room."),
+        _atom(AtomType.requirement, "Replace approximately 110 existing TVs across the property."),
+        _atom(AtomType.scope_item, "Deploy 50 wireless access points campus-wide."),
+    ]
+    surfaced = surface_headline_quantities(atoms, project_id="p")
+    counts = sorted(a.value["quantity"] for a in surfaced)
+    assert counts == [50, 110]
+    assert 65 not in counts
+
+
 def test_scrub_strips_financial_quantity_key_off_commercial_atom():
     # A commercial_total atom carrying a junk quantity key from a price label.
     atoms = [
