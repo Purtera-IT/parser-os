@@ -412,6 +412,37 @@ def classify_atoms(atoms: list[Any]) -> int:
         applied_verdict[atom_id] = new_type
         promoted += 1
 
+    # Grounded Extractor (#68): log every enacted atom-type verdict as an LLM
+    # (silver) training row so the Type head (#70) can one day serve this stage
+    # instead of qwen3:14b. Pure logging — no behavior change, no-op unless
+    # SOWSMITH_TRAINING_LOG_DB is set. We log the ENACTED verdict (post
+    # hallucination-guard), never the raw LLM label, mirroring the self-teach
+    # contract above. raw_text is delexicalized into the feature on write.
+    try:
+        from app.core.training_log import TEACHER_LLM, TrainingRow, log_rows
+        _by_id = {_atom_id(a): a for a in promotable}
+        _rows = []
+        for _aid, _verdict in applied_verdict.items():
+            _a = _by_id.get(_aid)
+            if _a is None:
+                continue
+            _rows.append(
+                TrainingRow(
+                    relation=_ATOM_TYPE_RELATION,
+                    label=_verdict,
+                    raw_text=_atom_decide_text(_a),
+                    label_kind="type",
+                    teacher=TEACHER_LLM,
+                    confidence=0.9,
+                    deal_id=str(getattr(_a, "project_id", "") or ""),
+                    project_id=str(getattr(_a, "project_id", "") or ""),
+                    provenance={"stage": "typed_atom_classification", "source": "llm_batch"},
+                )
+            )
+        log_rows(_rows)
+    except Exception:
+        pass
+
     # upgrade #3: self-teach the enacted type decisions so the store warms and
     # deflects matching shapes next run (gated by the same teacher-cache flag
     # decide() uses for its own LLM tier). Both classes accumulate so the

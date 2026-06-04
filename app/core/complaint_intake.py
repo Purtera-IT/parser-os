@@ -284,6 +284,35 @@ def confirm(store: FeedbackStore, resolution: ComplaintResolution) -> Correction
     c.updated_at = time.time()
     store.add(c)
     resolution.committed = True
+
+    # Teacher-logging tap #3 (gold): a confirmed PM correction is the scarce,
+    # high-weight signal. Log one TrainingRow per exemplar so the student head
+    # learns the *rule* (delexicalized) the PM just taught. Never raises, no-op
+    # when training-log is off (SOWSMITH_TRAINING_LOG_DB unset).
+    try:
+        from app.core.training_log import TEACHER_PM, TrainingRow, log_rows
+        _deal_id = c.scope_key if c.scope == "deal" else ""
+        _rows = [
+            TrainingRow(
+                relation=c.relation,
+                label=c.verdict,
+                raw_text=ex,
+                label_kind="judgment",
+                teacher=TEACHER_PM,
+                confidence=1.0,
+                scope=c.scope,
+                scope_key=c.scope_key,
+                deal_id=_deal_id,
+                complaint_id=c.complaint_id,
+                provenance={"stage": "pm_correction", "instruction": c.instruction},
+            )
+            for ex in c.exemplars
+            if ex and ex.strip()
+        ]
+        log_rows(_rows)
+    except Exception:
+        pass
+
     return c
 
 

@@ -672,7 +672,82 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
                 "vision-LLM pass failed: %s", e,
             )
 
+    # Grounded Extractor (#68): log the LLM's extractions as silver training
+    # rows so the Span/Norm heads (#71) can eventually serve these extractors
+    # instead of qwen3:14b. Pure logging — no behavior change, no-op unless
+    # SOWSMITH_TRAINING_LOG_DB is set.
+    try:
+        _log_extraction_training_rows(results, atoms)
+    except Exception:
+        pass
+
     return results
+
+
+# Per-entity-type best text field for the training-row tap. First hit wins.
+_ENTITY_TEXT_FIELDS = ("text", "canonical_name", "name", "canonical", "clause")
+# Result keys that are lists of entity dicts (skip scalars / internal keys).
+_LOGGABLE_LIST_KEYS = frozenset({
+    "stakeholders", "milestones", "requirements", "site_clusters", "quantities",
+    "certifications", "risks", "acceptance_criteria", "penalties",
+    "compliance_obligations", "lead_times", "electrical_acceptance",
+    "payment_terms", "cutover_steps", "signatories",
+    "compliance_classifications", "integration_checkpoints", "deliverables",
+    "system_mappings", "data_flow_steps", "assumptions",
+    "approval_authorities", "dependencies", "pricing_structure",
+    "blackout_date_range", "approval_decision",
+})
+
+
+def _log_extraction_training_rows(results: dict[str, Any], atoms: list[Any]) -> None:
+    """Emit (extractor → extracted item) silver rows into the training log."""
+    from app.core.training_log import TEACHER_LLM, TrainingRow, log_rows
+
+    deal_id = ""
+    for a in atoms or []:
+        pid = getattr(a, "project_id", "") or ""
+        if pid:
+            deal_id = str(pid)
+            break
+
+    rows: list[TrainingRow] = []
+
+    # Scalar: customer (one canonical per deal).
+    cust = results.get("customer")
+    if isinstance(cust, str) and cust.strip():
+        rows.append(TrainingRow(
+            relation="customer", label="customer", raw_text=cust.strip(),
+            label_kind="span", teacher=TEACHER_LLM, deal_id=deal_id,
+            project_id=deal_id, provenance={"stage": "multi_entity_llm"},
+        ))
+
+    # List-valued extractors.
+    for key in _LOGGABLE_LIST_KEYS:
+        items = results.get(key)
+        if not isinstance(items, list):
+            continue
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            text = next(
+                (str(it[f]).strip() for f in _ENTITY_TEXT_FIELDS
+                 if it.get(f) and str(it[f]).strip()),
+                "",
+            )
+            if not text:
+                continue
+            label = (
+                it.get("category") or it.get("role") or it.get("type") or key
+            )
+            rows.append(TrainingRow(
+                relation=key, label=str(label), raw_text=text,
+                label_kind="span", teacher=TEACHER_LLM, deal_id=deal_id,
+                project_id=deal_id,
+                provenance={"stage": "multi_entity_llm", "via": it.get("_via", "")},
+            ))
+
+    if rows:
+        log_rows(rows)
 
 
 def _empty_result() -> dict[str, Any]:
