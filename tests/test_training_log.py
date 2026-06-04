@@ -111,3 +111,56 @@ def test_log_rows_writes_when_injected():
         assert log.count(relation="r") == 1
     finally:
         set_training_log(None)
+
+
+# ── teacher-logging seam: the label is the sub-type, never the relation ──
+#
+# Regression for the cross-deal label-schema poison: when the LLM returned a
+# requirement with no ``category``, the old fallback logged ``label == relation``
+# ("requirements"), so a deal whose model emitted real categories
+# (deliverable/security/...) and a deal whose model omitted them trained the
+# head on incompatible label schemas → 0% holdout accuracy. Guess-free: an
+# item with no teacher sub-type is UNDECIDED and must not be logged at all.
+
+
+def _log_results(results, atoms=()):
+    from app.core.multi_entity_llm import _log_extraction_training_rows
+
+    log = TrainingLog(":memory:")
+    set_training_log(log)
+    try:
+        _log_extraction_training_rows(results, list(atoms))
+    finally:
+        set_training_log(None)
+    return log
+
+
+def test_list_item_with_category_logs_that_category_as_label():
+    log = _log_results({"requirements": [
+        {"text": "Guest Wi-Fi must stay off the corporate VLAN.", "category": "security"},
+    ]})
+    rows = log.rows(relation="requirements")
+    assert len(rows) == 1
+    assert rows[0].label == "security"
+
+
+def test_list_item_without_subtype_is_skipped_not_relabelled_to_relation():
+    # The exact poison shape: text but no category/role/type. Must NOT log a
+    # row labelled with the bare relation name.
+    log = _log_results({"requirements": [
+        {"text": "Either party may terminate this SOW upon material breach."},
+        {"text": "invoice for the Total Fees", "category": ""},
+    ]})
+    assert log.count(relation="requirements") == 0
+    # And no row anywhere was labelled with its own relation name.
+    assert all(r.label != r.relation for r in log.rows())
+
+
+def test_mixed_batch_keeps_only_categorised_items():
+    log = _log_results({"requirements": [
+        {"text": "Rugged tablets must enrol into Intune before handoff.", "category": "deliverable"},
+        {"text": "taxes will be invoiced but are not included"},  # no category → skip
+        {"text": "All rooms support one-touch calendar join.", "category": "acceptance"},
+    ]})
+    labels = sorted(r.label for r in log.rows(relation="requirements"))
+    assert labels == ["acceptance", "deliverable"]

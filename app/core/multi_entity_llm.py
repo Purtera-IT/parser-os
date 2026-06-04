@@ -761,11 +761,21 @@ def _log_extraction_training_rows(results: dict[str, Any], atoms: list[Any]) -> 
             text = _best_extraction_text(it)
             if not text:
                 continue
-            label = (
-                it.get("category") or it.get("role") or it.get("type") or key
-            )
+            # The row's class is the teacher-emitted sub-type. Guess-free: if the
+            # LLM returned text but NO category/role/type, it gave us a span with
+            # no class signal — that is UNDECIDED, not "label == relation name".
+            # Fabricating ``label = key`` here is exactly what poisoned the
+            # ``requirements`` head: one deal logged real categories
+            # (deliverable/security/...) while a deal whose model omitted the
+            # category logged the bare relation name, so train and holdout used
+            # incompatible label schemas and holdout accuracy was structurally 0.
+            # Skip rather than guess; an unlabeled span trains no classifier.
+            sub = it.get("category") or it.get("role") or it.get("type")
+            label = str(sub).strip() if sub is not None else ""
+            if not label:
+                continue
             rows.append(TrainingRow(
-                relation=key, label=str(label), raw_text=text,
+                relation=key, label=label, raw_text=text,
                 label_kind="span", teacher=TEACHER_LLM, deal_id=deal_id,
                 project_id=deal_id,
                 provenance={"stage": "multi_entity_llm", "via": it.get("_via", "")},
