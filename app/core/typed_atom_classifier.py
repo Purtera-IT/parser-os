@@ -268,6 +268,43 @@ def _atom_type_deflect_enabled() -> bool:
     ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def _typed_student_enabled() -> bool:
+    """Grounded-Extractor #70: let the trained student front the LLM call.
+
+    OFF by default. Flip it ON (in deploy/env) only for relations the shadow
+    harness (:mod:`app.core.shadow_eval`) has certified ``ready`` — that is the
+    cutover gate. With it off, or with an empty training log, the student
+    abstains everywhere and this stage is byte-identical to the LLM-only path.
+    """
+    return os.environ.get(
+        "SOWSMITH_TYPED_STUDENT", ""
+    ).strip().lower() not in ("", "0", "false", "no", "off")
+
+
+# Process-wide student over the warm-base training log. Lazily built; reused so
+# the (cached) embeddings of the log's masked rows aren't recomputed per compile.
+_TYPED_STUDENT = None
+_TYPED_STUDENT_TRIED = False
+
+
+def _get_typed_student():
+    """The atom-type student, or None when no training log is configured."""
+    global _TYPED_STUDENT, _TYPED_STUDENT_TRIED
+    if _TYPED_STUDENT_TRIED:
+        return _TYPED_STUDENT
+    _TYPED_STUDENT_TRIED = True
+    try:
+        from app.core.extractor_student import ExtractionStudent
+        from app.core.training_log import get_training_log
+        log = get_training_log()
+        if log is None:
+            return None
+        _TYPED_STUDENT = ExtractionStudent(log)  # production: all rows in memory
+    except Exception:
+        _TYPED_STUDENT = None
+    return _TYPED_STUDENT
+
+
 _ATOM_TYPE_RELATION = "atom_type"
 _ATOM_TYPE_INSTRUCTION = (
     "Classify this parsed deal-document atom into the typed taxonomy, or _keep "
@@ -342,6 +379,36 @@ def classify_atoms(atoms: list[Any]) -> int:
             pass
         if not promotable:
             return 0
+
+    # Grounded-Extractor #70: STUDENT deflection — the trained head fronts the
+    # LLM. Same one-sided contract as the store deflect above: the student may
+    # only DROP a candidate it confidently classifies ``_keep`` (no taxonomy
+    # entry fits → no value payload needed), never fabricate a promotion (those
+    # require the LLM's value synthesis and stay in the batch). Worst case is a
+    # missed promotion (recall, PM-correctable), never a wrong write. The
+    # student abstains when unsure / log empty / embedder down, so OFF or
+    # cold → byte-identical to the LLM-only path. This is the call we are
+    # replacing; every confident keep here is one fewer atom in the 98s stage.
+    student_deflected = 0
+    if _typed_student_enabled():
+        student = _get_typed_student()
+        if student is not None:
+            try:
+                cands = _atom_type_candidates()
+                survivors = []
+                for a in promotable:
+                    pred = student.classify(
+                        _atom_decide_text(a), _ATOM_TYPE_RELATION, candidates=cands,
+                    )
+                    if not pred.abstained and pred.label == "_keep":
+                        student_deflected += 1
+                        continue
+                    survivors.append(a)
+                promotable = survivors
+            except Exception:
+                pass
+            if not promotable:
+                return 0
 
     if not _ollama_reachable():
         return 0
