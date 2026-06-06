@@ -1964,13 +1964,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
 
 def write_structured_doc(pdf_path: Path, structured_doc: dict[str, Any]) -> Path:
     """Persist the structured doc to ``<pdf>.derived/structured.json``."""
+    from app.core.longpath import long_write_text
     derived_dir = derived_dir_for(pdf_path)
-    derived_dir.mkdir(parents=True, exist_ok=True)
     out = derived_dir / STRUCTURED_FILENAME
-    out.write_text(
-        json.dumps(structured_doc, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    # long_write_text: deep _rerun paths exceed Windows MAX_PATH (260); a plain
+    # write_text here throws WinError 206 after the parse, silently dropping the
+    # whole PDF's output. No-op cost on POSIX.
+    long_write_text(out, json.dumps(structured_doc, indent=2, ensure_ascii=False))
     return out
 
 
@@ -1981,10 +1981,10 @@ def write_structured_markdown(pdf_path: Path, structured_doc: dict[str, Any]) ->
     (``<a id="blk_..."></a>`` / ``<a id="sec_..."></a>``) so an LLM can
     cite a region by anchor and a UI can scroll to the same place.
     """
+    from app.core.longpath import long_write_text
     derived_dir = derived_dir_for(pdf_path)
-    derived_dir.mkdir(parents=True, exist_ok=True)
     out = derived_dir / STRUCTURED_MARKDOWN_FILENAME
-    out.write_text(structured_doc_to_markdown(structured_doc), encoding="utf-8")
+    long_write_text(out, structured_doc_to_markdown(structured_doc))
     return out
 
 

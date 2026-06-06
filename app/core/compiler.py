@@ -135,14 +135,17 @@ def _materialize_derived_files(
         except ValueError:
             # Path tried to escape the artifact directory — skip.
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
+        # long_write_text: Windows >260-char paths (deep _rerun/<uuid>/.../<sha>/
+        # <long name>.derived/...) otherwise throw WinError 206 here AFTER the
+        # parser did all the work, silently dropping the whole file's output.
+        from app.core.longpath import long_write_text
         if entry.content_kind == "json":
-            target.write_text(
+            long_write_text(
+                target,
                 json.dumps(entry.content_json, indent=2, ensure_ascii=False),
-                encoding="utf-8",
             )
         elif entry.content_kind in {"markdown", "text"}:
-            target.write_text(entry.content_text or "", encoding="utf-8")
+            long_write_text(target, entry.content_text or "")
 
 
 def _is_derived_path(path: Path, project_dir: Path) -> bool:
