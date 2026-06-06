@@ -590,7 +590,11 @@ class ZipParser(BaseParser):
         # PM sees evidence from inside the archive without re-running
         # the pipeline manually. Capped at 200 files / 200 MB so a
         # weaponized ZIP can't OOM the host.
-        if os.environ.get("PARSER_OS_ZIP_RECURSIVE", "").strip().lower() in {"1", "true", "yes"}:
+        # Default ON: a zip's whole purpose is to bundle deal files that must be
+        # parsed (the RFP docx + ticket-data xlsx that exist ONLY inside the zip
+        # were otherwise lost). Safety caps (200 files / 200 MB) bound zip bombs.
+        # Set PARSER_OS_ZIP_RECURSIVE=0 to fall back to the listing-only marker.
+        if os.environ.get("PARSER_OS_ZIP_RECURSIVE", "1").strip().lower() not in {"0", "false", "no", "off"}:
             recursive_result = _zip_recursive_extract(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -696,7 +700,11 @@ def _zip_recursive_extract(
         return None
     extracted_count = 0
     extracted_bytes = 0
-    with tempfile.TemporaryDirectory(prefix="parser_os_zip_") as tmpdir:
+    # ignore_cleanup_errors: on Windows a parser (openpyxl/fitz) can leave a
+    # handle open on an extracted member, making rmtree throw WinError 32 and
+    # abort the whole zip parse AFTER extraction succeeded. Swallow cleanup
+    # errors so the extracted atoms are still returned.
+    with tempfile.TemporaryDirectory(prefix="parser_os_zip_", ignore_cleanup_errors=True) as tmpdir:
         for info in entries:
             if info.is_dir():
                 continue
@@ -727,6 +735,10 @@ def _zip_recursive_extract(
                     path=inner,
                     domain_pack=None,
                 )
+                # Some parsers return a ParserOutput rather than a bare list;
+                # normalize so we never iterate a model's fields into atoms.
+                if hasattr(child_atoms, "atoms"):
+                    child_atoms = child_atoms.atoms
             except Exception as exc:
                 atoms.append(_make_atom(
                     project_id=project_id, artifact_id=artifact_id, filename=path.name,
