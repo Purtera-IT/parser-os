@@ -4,6 +4,7 @@ import os
 import re
 from difflib import SequenceMatcher
 
+from app.core import progress
 from app.core.entity_extraction import (
     _coalesce_alias_groups,
     _emit_site_aliases_from_text,
@@ -16,9 +17,10 @@ from app.domain import get_active_domain_pack
 from app.domain.schemas import DomainPack
 
 try:
-    from rapidfuzz import fuzz
+    from rapidfuzz import fuzz, process as _rf_process
 except Exception:  # pragma: no cover - fallback path
     fuzz = None
+    _rf_process = None
 
 
 def _fuzzy_score(a: str, b: str) -> float:
@@ -388,9 +390,29 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         final: list = []
         # Bucket by atom type plus the first few normalized tokens so even
         # prose comparisons stay local; exact duplicates were already removed
-        # above.
-        fuzzy_buckets: dict[tuple[str, str], list] = {}
-        for atom in unique:
+        # above. Buckets hold only the truncated rep STRINGS (not atoms) so the
+        # near-dup check is a single C-vectorized rapidfuzz call per atom.
+        #
+        # v58 robustness (#75): the old path ran pure-Python difflib in an
+        # O(n²) all-pairs loop. When boilerplate makes thousands of *distinct*
+        # prose atoms share the same 8-token bucket key (e.g. a 39k-atom
+        # spreadsheet deal where every scope row starts "contractor shall
+        # provide and install ..."), that loop hit millions of ~1ms comparisons
+        # and burned hours. Two universal fixes, neither alters behaviour on
+        # normal/small buckets:
+        #   1. rapidfuzz.fuzz.ratio is mathematically identical to difflib's
+        #      SequenceMatcher.ratio but C-accelerated (~100x), and
+        #      process.extractOne short-circuits the "matches any rep?" scan in
+        #      one call via score_cutoff.
+        #   2. a per-bucket representative cap bounds the absolute worst case to
+        #      O(n · cap): once a bucket holds `cap` distinct reps we stop
+        #      growing it (exact-dedup already ran above, so the marginal
+        #      near-dup beyond `cap` distinct prose items is negligible).
+        max_reps = max(1, int(os.environ.get("SOWSMITH_FUZZY_DEDUP_MAX_REPS", "400")))
+        fuzzy_buckets: dict[tuple[str, str], list[str]] = {}
+        for atom in progress.track(
+            unique, desc=f"dedup {str(aid)[:8]}", total=len(unique), min_total=500
+        ):
             atype = _atype(atom)
             rt = getattr(atom, "raw_text", "") or ""
             if len(rt) < 50 or atype not in fuzzy_dedup_types:
@@ -398,18 +420,27 @@ def collapse_duplicate_atoms(atoms: list) -> list:
                 continue
             norm = (getattr(atom, "normalized_text", None) or rt).strip().lower()
             bucket_key = (atype, " ".join(norm.split()[:8]))
+            reps = fuzzy_buckets.setdefault(bucket_key, [])
+            rt500 = rt[:500]
             is_dup = False
-            for existing in fuzzy_buckets.get(bucket_key, []):
-                ext = getattr(existing, "raw_text", "") or ""
-                if len(ext) < 50:
-                    continue
-                sim = SequenceMatcher(None, rt[:500], ext[:500]).ratio()
-                if sim > 0.92:
-                    is_dup = True
-                    break
+            if reps:
+                if _rf_process is not None:
+                    # One C call over all reps; returns None if none clear 92.
+                    is_dup = (
+                        _rf_process.extractOne(
+                            rt500, reps, scorer=fuzz.ratio, score_cutoff=92.0
+                        )
+                        is not None
+                    )
+                else:  # pragma: no cover - difflib fallback when rapidfuzz absent
+                    for ext in reps:
+                        if SequenceMatcher(None, rt500, ext).ratio() > 0.92:
+                            is_dup = True
+                            break
             if not is_dup:
                 final.append(atom)
-                fuzzy_buckets.setdefault(bucket_key, []).append(atom)
+                if len(reps) < max_reps:
+                    reps.append(rt500)
         result.extend(final)
     return result
 

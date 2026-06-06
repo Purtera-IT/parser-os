@@ -725,4 +725,50 @@ def census(path: str | Path, *, artifact_id: str = "") -> ContentCensus:
         return ContentCensus(artifact=path.name)
 
 
-__all__ = ["census", "census_docx"]
+def reconciled_census(
+    paths,
+    atoms,
+    *,
+    artifact: str = "project",
+) -> ContentCensus:
+    """Inventory every region across ``paths`` and reconcile it against ``atoms``.
+
+    This is the deal-level independent denominator that
+    :func:`app.core.complaint_router.route` consumes for its NEEDS_EXTRACTOR
+    bucket: a region left ``UNCOVERED`` after reconciliation is content that
+    exists in the source files but no emitted atom represents — never-detected
+    loss that only extractor code can recover.
+
+    Each file is read by its format-specific reader (independent of the
+    production parser), and every region is folded into one combined census.
+    Region ids are already namespaced by ``artifact_id`` (the file stem) inside
+    :func:`census`, so cross-file collisions are not a concern. Reconciliation
+    is a single substring pass over the full atom set, so the census stays an
+    honest, parser-independent check. Never raises — a bad reader is skipped.
+
+    Args:
+        paths: iterable of source file paths (e.g. the compiler's
+            ``_iter_artifacts`` output) — the same files the deal compiled from.
+        atoms: the emitted atoms to reconcile against (``result.atoms``).
+        artifact: a label for the combined census (cosmetic).
+
+    Returns:
+        A reconciled :class:`ContentCensus`; ``.uncovered()`` lists the
+        never-detected regions.
+    """
+    combined = ContentCensus(artifact=artifact)
+    for p in paths:
+        try:
+            c = census(p, artifact_id=Path(p).stem)
+        except Exception:
+            continue
+        for region in c.regions.values():
+            combined.register(region)
+    try:
+        combined.reconcile(list(atoms or []))
+    except Exception:
+        pass
+    return combined
+
+
+__all__ = ["census", "census_docx", "reconciled_census"]

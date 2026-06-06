@@ -169,6 +169,16 @@ class AtomType(str, Enum):
     site_budget = "site_budget"
     lead_time_constraint = "lead_time_constraint"
     pricing_assumption = "pricing_assumption"
+    # v50: full managed-services commercial taxonomy so every Deal Kit cost
+    # section gets a typed atom (not collapsed into scope_item / bom_line).
+    # bom_line = hardware/devices; material = consumables (cable, connectors,
+    # mounts); expense = travel/lodging/freight/rental/permits; pmo = project
+    # management / coordination / engineering; license_subscription = software
+    # licenses / support / warranty / recurring. Each carries value.category.
+    material = "material"
+    expense = "expense"
+    pmo = "pmo"
+    license_subscription = "license_subscription"
 
     # ─── Tier 6: requirements / acceptance / compliance ───
     requirement = "requirement"

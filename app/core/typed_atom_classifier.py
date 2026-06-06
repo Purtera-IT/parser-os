@@ -768,6 +768,11 @@ def _call_ollama(prompt: str, *, max_tokens: int = 4096) -> str:
     then drops the connection.
     """
     import http.client
+    # Hosted-teacher route (default-off): if TEACHER_API_BASE is set, classify
+    # via the OpenAI-compatible client; otherwise use the local Ollama below.
+    from app.core import llm_client
+    if llm_client.teacher_api_enabled():
+        return llm_client.complete(prompt, max_tokens=max_tokens)
     host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
     model = os.environ.get("SOWSMITH_TYPED_CLASSIFIER_MODEL") or os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))

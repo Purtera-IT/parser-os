@@ -59,6 +59,12 @@ def _llm_disabled() -> bool:
 
 
 def _post_generate(prompt: str, *, timeout: int, model: str | None = None) -> str:
+    # Hosted-teacher route (default-off): TEACHER_API_BASE → OpenAI-compatible
+    # client; otherwise the local Ollama below. The local role-model name is
+    # intentionally NOT forwarded — the API uses its configured teacher model.
+    from app.core import llm_client
+    if llm_client.teacher_api_enabled():
+        return llm_client.complete(prompt, max_tokens=64, timeout=timeout)
     host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
     model = model or os.environ.get("OLLAMA_ROLE_MODEL") or DEFAULT_ROLE_MODEL
     payload = {

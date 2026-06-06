@@ -64,6 +64,54 @@ def _norm_key(s: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
 
 
+# Bookkeeping / provenance keys that never distinguish one fact from another.
+# Excluded from the structural signature so they don't add noise (or, worse,
+# split a genuine duplicate because one copy carries a provenance stamp).
+_SIGNATURE_SKIP_FIELDS: frozenset[str] = frozenset({
+    "kind", "type", "atom_type", "raw", "raw_cells", "row_index",
+    "source", "provenance", "receipts", "confidence", "names", "aliases",
+    "notes", "note", "extras",
+})
+# A scalar string longer than this is description-like prose, not an identity
+# token — it is already represented by the truncated description key, so we
+# don't fold it into the signature.
+_SIGNATURE_MAX_STR = 48
+_SIGNATURE_MAX_FIELDS = 8
+
+
+def _scalar_signature(val: dict[str, Any], exclude: frozenset[str] | set[str]) -> str:
+    """Compact, deterministic fingerprint of an atom value's *distinguishing*
+    scalar fields (numbers and short identity strings), excluding the
+    description-style fields the caller already keyed on.
+
+    Two table rows that share a boilerplate description ("Video bar,
+    scheduling panel, …") but carry different structured fields (room name,
+    quantity, site) produce different signatures, so they are NOT collapsed.
+    Two LLM paraphrases of the *same* fact carry the same structured fields,
+    so their signature matches and they still collapse. Returns "" when the
+    atom has no distinguishing scalar field — pure-prose atoms (assumption,
+    plain risk text, …) behave exactly as before.
+    """
+    parts: list[str] = []
+    for k in sorted(val):
+        if len(parts) >= _SIGNATURE_MAX_FIELDS:
+            break
+        if k in exclude or k in _SIGNATURE_SKIP_FIELDS or k.startswith("_"):
+            continue
+        v = val.get(k)
+        if isinstance(v, bool) or v in (None, "", [], {}):
+            continue
+        if isinstance(v, (int, float)):
+            parts.append(f"{k}={v}")
+        elif isinstance(v, str):
+            s = v.strip()
+            if s and len(s) <= _SIGNATURE_MAX_STR:
+                nk = _norm_key(s)
+                if nk:
+                    parts.append(f"{k}={nk}")
+    return "|".join(parts)
+
+
 def _atom_type_value(atom: Any) -> str:
     atom_type = getattr(atom, "atom_type", None)
     return atom_type.value if hasattr(atom_type, "value") else str(atom_type or "")
@@ -533,6 +581,18 @@ def _value_key(atom: Any) -> tuple | None:
           "Network outage during business hours could ..."   first 40 → "network_outage_during_business_hours_coul"
           "Network outage during business hours might ..."   first 40 → "network_outage_during_business_hours_migh"
         Still collapse-friendly at 32-char normalized prefix.
+
+        Structure-awareness: a truncated description is a WEAK key. Table
+        rows often share a boilerplate description ("Video bar, scheduling
+        panel, …") while differing only in structured fields (room name,
+        quantity, site). Keying on description alone collapses those
+        distinct rows into one — silent data loss. So when we fall back to
+        a description key we append a signature of the atom's OTHER scalar
+        fields; distinct rows then get distinct keys and survive. This only
+        ever *splits* fuzzy groups (keeps more atoms), never merges more —
+        the guess-free / keep-don't-drop direction. The stable-ID path
+        (``_first``) is unaffected: a real req_id/sku still collapses
+        regardless of field jitter.
         """
         for f in fields:
             v = val.get(f)
@@ -543,7 +603,9 @@ def _value_key(atom: Any) -> tuple | None:
                 # collapse (LLM paraphrases of same fact diverge after
                 # ~30 chars of normalized content).
                 if k and len(k) >= 8:
-                    return k[:32]
+                    base = k[:32]
+                    sig = _scalar_signature(val, frozenset(fields))
+                    return f"{base}#{sig}" if sig else base
         return ""
 
     if atype == "milestone_phase":

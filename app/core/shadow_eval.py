@@ -144,6 +144,87 @@ def evaluate_relation(
     return report
 
 
+def _head_feature(r) -> str:
+    """The delexicalized feature a head trains/evaluates on — masked_text if
+    present, else delexicalize raw_text (mirrors ExtractionStudent)."""
+    from app.core.delexicalize import delexicalize
+    mt = r.masked_text
+    if not mt and r.raw_text:
+        rm = (r.provenance or {}).get("role_map") if isinstance(r.provenance, dict) else None
+        mt = delexicalize(r.raw_text, rm).masked
+    return mt or ""
+
+
+def evaluate_relation_head(
+    log: TrainingLog,
+    relation: str,
+    *,
+    embed_fn: Callable[[list[str]], np.ndarray],
+    head: "object | None" = None,
+    **head_kwargs,
+) -> RelationReport:
+    """Leave-one-deal-out score for the **trained NeuralHead** on one relation.
+
+    Mirrors :func:`evaluate_relation` (same TRAIN/HOLDOUT split, same report
+    shape) but the scorer is the contrastive head, not the kNN student — this
+    is the eval-gate the model registry (#72) consumes to decide whether a
+    freshly-trained head is safe to promote. One batched embedding pass per
+    split keeps it kind to the embedding host.
+
+    ``embed_fn`` must return an L2-normalized ``(N, D)`` matrix (the pipeline
+    contract). A pre-fitted ``head`` may be passed to score an existing
+    champion on the current holdout; otherwise a new head is fit on TRAIN rows
+    (gold-weighted via each row's ``weight``).
+    """
+    from app.core.neural_head import NeuralHead
+
+    train = log.rows(relation=relation, split="train")
+    holdout = log.rows(relation=relation, split="holdout")
+    report = RelationReport(relation=relation, n_holdout=len(holdout))
+
+    feats_tr, ytr, wtr = [], [], []
+    for r in train:
+        f = _head_feature(r)
+        if f and r.label:
+            feats_tr.append(f); ytr.append(r.label); wtr.append(float(r.weight) or 1.0)
+    feats_ho, yho, gold_ho = [], [], []
+    for r in holdout:
+        f = _head_feature(r)
+        if f and r.label:
+            feats_ho.append(f); yho.append(r.label)
+            gold_ho.append(r.teacher == TEACHER_PM)
+
+    # n_holdout reflects the rows we can actually score (have a feature+label).
+    report.n_holdout = len(feats_ho)
+    if not feats_ho:
+        return report
+    candidates = sorted(set(ytr))
+
+    if head is None:
+        if not feats_tr:
+            return report  # nothing to learn from → abstains everywhere
+        Xtr = np.asarray(embed_fn(feats_tr), dtype=np.float32)
+        head = NeuralHead(**head_kwargs).fit(Xtr, ytr, sample_weight=np.asarray(wtr, dtype=np.float32))
+
+    Xho = np.asarray(embed_fn(feats_ho), dtype=np.float32)
+    for i, (gold_label, is_gold) in enumerate(zip(yho, gold_ho)):
+        if is_gold:
+            report.n_gold += 1
+        dec = head.classify(Xho[i], candidates)
+        if dec.verdict is None:
+            continue
+        report.n_answered += 1
+        if dec.verdict == gold_label:
+            report.n_correct += 1
+            if is_gold:
+                report.n_gold_correct += 1
+        elif is_gold:
+            report.confusions.append((feats_ho[i][:80], gold_label, dec.verdict))
+        elif len(report.confusions) < 25:
+            report.confusions.append((feats_ho[i][:80], gold_label, dec.verdict))
+    return report
+
+
 def evaluate_all(
     log: TrainingLog,
     *,

@@ -141,15 +141,28 @@ class NeuralHead:
         return _l2norm(Z)
 
     # ── training ─────────────────────────────────────────────────────
-    def fit(self, X: np.ndarray, y: list[str]) -> "NeuralHead":
+    def fit(
+        self,
+        X: np.ndarray,
+        y: list[str],
+        sample_weight: np.ndarray | list[float] | None = None,
+    ) -> "NeuralHead":
         """Fit the head from L2-normalized embeddings ``X`` (N, D) and labels
         ``y`` (length N). Safe on tiny/degenerate data — falls back to an
         identity projection (today's raw-cosine behavior) rather than failing.
+
+        ``sample_weight`` (length N) lets gold (PM) rows dominate silver (LLM)
+        rows so a single human correction is not drowned by abundant teacher
+        labels that agree with the old mistake. Weights are normalized to mean
+        1 internally; ``None`` means uniform (every row weight 1). They shape
+        the prototypes, the metric-learning gradient, and the calibration
+        temperature — i.e. every place the data votes.
         """
         try:
             X = np.asarray(X, dtype=np.float32)
             if X.ndim != 2 or X.shape[0] == 0 or X.shape[0] != len(y):
                 return self
+            w = self._norm_weights(sample_weight, len(y))
             self.n_train = X.shape[0]
             self.classes_ = sorted(set(y))
             counts = {c: y.count(c) for c in self.classes_}
@@ -161,15 +174,15 @@ class NeuralHead:
                 and min(counts.values()) >= self.min_per_class
             )
             if learnable:
-                self._W = self._learn_projection(X, y)
+                self._W = self._learn_projection(X, y, w)
                 self.trained = True
             else:
                 self._W = None
                 self.trained = False
 
             Z = self._project(X)
-            self._protos = self._class_prototypes(Z, y)        # (K, d)
-            self._temp = self._fit_temperature(Z, y)           # calibration
+            self._protos = self._class_prototypes(Z, y, w)     # (K, d)
+            self._temp = self._fit_temperature(Z, y, w)        # calibration
             self._radius = self._fit_radius(Z, y)              # OOD floor
             return self
         except Exception:  # pragma: no cover - never break the store
@@ -178,21 +191,47 @@ class NeuralHead:
             self.trained = False
             return self
 
-    def _class_prototypes(self, Z: np.ndarray, y: list[str]) -> np.ndarray:
+    @staticmethod
+    def _norm_weights(sample_weight, n: int) -> np.ndarray:
+        """Coerce optional weights to a length-n float vector with mean 1.
+
+        Mean-1 normalization keeps the effective learning rate / gradient scale
+        identical to the uniform case, so adding weights never silently changes
+        step sizes — it only changes the *relative* pull of each row.
+        """
+        if sample_weight is None:
+            return np.ones(n, dtype=np.float32)
+        w = np.asarray(sample_weight, dtype=np.float32).reshape(-1)
+        if w.shape[0] != n:
+            return np.ones(n, dtype=np.float32)
+        w = np.clip(w, 1e-6, None)
+        mean = float(w.mean()) or 1.0
+        return (w / mean).astype(np.float32)
+
+    def _class_prototypes(self, Z: np.ndarray, y: list[str],
+                          w: np.ndarray | None = None) -> np.ndarray:
+        if w is None:
+            w = np.ones(len(y), dtype=np.float32)
         protos = []
         for c in self.classes_:
             idx = [i for i, yi in enumerate(y) if yi == c]
-            protos.append(_l2norm(Z[idx].mean(axis=0)))
+            wi = w[idx].reshape(-1, 1)
+            # Weighted class mean: gold exemplars pull the prototype harder.
+            wsum = float(wi.sum()) or 1.0
+            protos.append(_l2norm((Z[idx] * wi).sum(axis=0) / wsum))
         return np.vstack(protos).astype(np.float32)
 
-    def _learn_projection(self, X: np.ndarray, y: list[str]) -> np.ndarray:
+    def _learn_projection(self, X: np.ndarray, y: list[str],
+                          w: np.ndarray | None = None) -> np.ndarray:
         """Prototypical-softmax metric learning.
 
-        Minimize NLL of the true class under logits = (Zi . proto_k)/T over a
-        linear projection ``W``. Prototypes are recomputed each epoch from the
-        current projection but treated as constants in the gradient
-        (stop-gradient) — the standard, numerically stable prototypical-network
-        trick. Full-batch GD with momentum + L2; seeded for determinism.
+        Minimize the weighted NLL of the true class under logits =
+        (Zi . proto_k)/T over a linear projection ``W``. Prototypes are
+        recomputed each epoch from the current projection but treated as
+        constants in the gradient (stop-gradient) — the standard, numerically
+        stable prototypical-network trick. Full-batch GD with momentum + L2;
+        seeded for determinism. ``w`` weights each row's loss (mean-1), so the
+        learned metric bends toward separating the cases PMs actually corrected.
         """
         rng = np.random.default_rng(self.seed)
         D = X.shape[1]
@@ -200,6 +239,9 @@ class NeuralHead:
         # Small random init scaled by 1/sqrt(D) keeps activations ~unit.
         W = rng.standard_normal((D, d)).astype(np.float32) / np.sqrt(D)
         y_idx = np.array([self.classes_.index(c) for c in y])
+        if w is None:
+            w = np.ones(len(y), dtype=np.float32)
+        wcol = w.reshape(-1, 1)
         K = len(self.classes_)
         T = 0.1  # sharp during training; calibration temperature fit separately
         vel = np.zeros_like(W)
@@ -208,7 +250,10 @@ class NeuralHead:
             Z = _l2norm(X @ W)                                  # (N, d)
             protos = []
             for k in range(K):
-                protos.append(_l2norm(Z[y_idx == k].mean(axis=0)))
+                mask = y_idx == k
+                wk = w[mask].reshape(-1, 1)
+                wks = float(wk.sum()) or 1.0
+                protos.append(_l2norm((Z[mask] * wk).sum(axis=0) / wks))
             P = np.vstack(protos)                               # (K, d)
             logits = (Z @ P.T) / T                              # (N, K)
             logits -= logits.max(axis=1, keepdims=True)
@@ -217,19 +262,25 @@ class NeuralHead:
             # dL/dlogit = p - onehot ; dlogit/dZ = P/T  (stop-grad through P)
             g = probs.copy()
             g[np.arange(len(y_idx)), y_idx] -= 1.0              # (N, K)
+            g = g * wcol                                        # weight each row
             dZ = (g @ P) / T                                    # (N, d)
             gradW = X.T @ dZ / X.shape[0] + _L2 * W             # (D, d)
             vel = mom * vel - _LR * gradW
             W = W + vel
         return W.astype(np.float32)
 
-    def _fit_temperature(self, Z: np.ndarray, y: list[str]) -> float:
-        """Pick the temperature that minimizes NLL of the true class under the
-        prototype-softmax — turns distances into honest probabilities."""
+    def _fit_temperature(self, Z: np.ndarray, y: list[str],
+                         w: np.ndarray | None = None) -> float:
+        """Pick the temperature that minimizes the weighted NLL of the true
+        class under the prototype-softmax — turns distances into honest
+        probabilities, with gold rows counting more toward calibration."""
         if self._protos is None:
             return 1.0
+        if w is None:
+            w = np.ones(len(y), dtype=np.float32)
         y_idx = np.array([self.classes_.index(c) for c in y])
         sims = Z @ self._protos.T                               # (N, K)
+        wsum = float(w.sum()) or 1.0
         best_t, best_nll = 1.0, float("inf")
         for t in (0.02, 0.05, 0.08, 0.1, 0.15, 0.2, 0.3, 0.5, 0.8, 1.0):
             logits = sims / t
@@ -237,7 +288,7 @@ class NeuralHead:
             ex = np.exp(logits)
             probs = ex / ex.sum(axis=1, keepdims=True)
             p_true = probs[np.arange(len(y_idx)), y_idx]
-            nll = float(-np.log(np.clip(p_true, 1e-9, 1.0)).mean())
+            nll = float((-np.log(np.clip(p_true, 1e-9, 1.0)) * w).sum() / wsum)
             if nll < best_nll:
                 best_nll, best_t = nll, t
         return best_t
@@ -323,6 +374,79 @@ class NeuralHead:
             )
         except Exception:  # pragma: no cover - never break the store
             return HeadDecision(verdict=None, route_llm=True, trained=self.trained)
+
+    # ── persistence (for the model registry, #72) ────────────────────
+    # A fitted head is just a few small numpy arrays + scalars. Persisting it
+    # lets a registry keep a versioned champion per relation and load it at
+    # serve time without re-fitting. Vectors live in the *projected* metric
+    # space the head learned; we never persist the raw embedder (it stays
+    # pinned in the compile signature), so a saved head is only valid for the
+    # embedding model it was trained on — recorded in the registry metadata.
+    def to_state(self) -> dict[str, Any]:
+        """Serialize the fitted head to a plain dict (numpy arrays + scalars)."""
+        return {
+            "version": 1,
+            "proj_dim": int(self.proj_dim),
+            "p_hi": float(self.p_hi),
+            "margin": float(self.margin),
+            "ood_sim": float(self.ood_sim),
+            "min_per_class": int(self.min_per_class),
+            "seed": int(self.seed),
+            "classes_": list(self.classes_),
+            "W": None if self._W is None else np.asarray(self._W, dtype=np.float32),
+            "protos": None if self._protos is None else np.asarray(self._protos, dtype=np.float32),
+            "temp": float(self._temp),
+            "radius": float(self._radius),
+            "trained": bool(self.trained),
+            "n_train": int(self.n_train),
+        }
+
+    @classmethod
+    def from_state(cls, state: dict[str, Any]) -> "NeuralHead":
+        """Rebuild a fitted head from :meth:`to_state` output."""
+        head = cls(
+            proj_dim=int(state.get("proj_dim", _PROJ_DIM)),
+            p_hi=float(state.get("p_hi", _P_HI)),
+            margin=float(state.get("margin", _MARGIN)),
+            ood_sim=float(state.get("ood_sim", _OOD_SIM)),
+            min_per_class=int(state.get("min_per_class", _MIN_PER_CLASS)),
+            seed=int(state.get("seed", _SEED)),
+        )
+        head.classes_ = list(state.get("classes_", []))
+        W = state.get("W")
+        head._W = None if W is None else np.asarray(W, dtype=np.float32)
+        protos = state.get("protos")
+        head._protos = None if protos is None else np.asarray(protos, dtype=np.float32)
+        head._temp = float(state.get("temp", 1.0))
+        head._radius = float(state.get("radius", head.ood_sim))
+        head.trained = bool(state.get("trained", False))
+        head.n_train = int(state.get("n_train", 0))
+        return head
+
+    def save(self, path: str) -> None:
+        """Persist the fitted head to a single ``.npz`` file (arrays + json meta)."""
+        import io as _io
+        import json as _json
+        state = self.to_state()
+        meta = {k: v for k, v in state.items() if k not in ("W", "protos")}
+        arrays: dict[str, np.ndarray] = {"__meta__": np.frombuffer(
+            _json.dumps(meta).encode("utf-8"), dtype=np.uint8)}
+        if state["W"] is not None:
+            arrays["W"] = state["W"]
+        if state["protos"] is not None:
+            arrays["protos"] = state["protos"]
+        with _io.open(path, "wb") as fh:
+            np.savez(fh, **arrays)
+
+    @classmethod
+    def load(cls, path: str) -> "NeuralHead":
+        """Load a head saved by :meth:`save`."""
+        import json as _json
+        with np.load(path, allow_pickle=False) as z:
+            meta = _json.loads(bytes(z["__meta__"].tobytes()).decode("utf-8"))
+            meta["W"] = z["W"] if "W" in z.files else None
+            meta["protos"] = z["protos"] if "protos" in z.files else None
+        return cls.from_state(meta)
 
 
 __all__ = ["NeuralHead", "HeadDecision"]

@@ -105,7 +105,17 @@ def call_vision_llm(
     max_tokens: int = 2048,
     timeout_s: int = 90,
 ) -> str:
-    """POST image+prompt to ollama vision endpoint. Returns text response."""
+    """POST image+prompt to the vision teacher. Returns text response.
+
+    When a hosted teacher is configured (``TEACHER_API_BASE``) the call is
+    routed to the OpenAI-compatible multimodal endpoint instead of the local
+    Ollama vision host — same distillation teacher, image tokens metered. The
+    local Ollama path below is the offline default and the test-time path."""
+    from app.core import llm_client
+    if llm_client.teacher_api_enabled():
+        return llm_client.complete_vision(
+            prompt, _encode_image_b64(image_bytes), max_tokens=max_tokens,
+        )
     host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
     model = os.environ.get("OLLAMA_VISION_MODEL", _DEFAULT_VISION_MODEL)
     payload = {
@@ -134,6 +144,11 @@ def vision_endpoint_reachable() -> bool:
     # disables it too (callers gate the vision pass on this predicate).
     if os.environ.get("SOWSMITH_DISABLE_LLM"):
         return False
+    # Hosted teacher: the vision pass routes to the API (see call_vision_llm),
+    # so the local-host health check is irrelevant — report reachable.
+    from app.core import llm_client
+    if llm_client.teacher_api_enabled():
+        return True
     host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
     try:
         r = requests.get(f"{host}/api/tags", timeout=3)

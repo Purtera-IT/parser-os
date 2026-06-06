@@ -212,6 +212,11 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
             # v52 — 2 more new extractors
             "blackout_date_range": lambda: _extract_blackout_dates_retrieved(_gated("blackout_date_range")),
             "approval_decision": lambda: _extract_approval_decisions_retrieved(_gated("approval_decision")),
+            # v50 — comprehensive managed-services commercial line items
+            # (labor/pmo/hardware/material/expense/license/other). Runs on every
+            # doc (no relevance-signal entry → defaults to run); chunked so big
+            # rate cards / BOMs are fully covered.
+            "commercial_line_items": lambda: _extract_commercial_lineitems_chunked(_gated("commercial_line_items")),
         }
     else:
         calls = {
@@ -243,6 +248,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
         "data_flow_steps", "assumptions", "approval_authorities",
         "dependencies", "pricing_structure",
         "blackout_date_range", "approval_decision",
+        "commercial_line_items",
     )
     ordered_keys = [k for k in _PRIORITY_KEYS if k in calls]
     # Any key not in _PRIORITY_KEYS (future additions) lands at the end.
@@ -262,15 +268,44 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # every doc). Universal + self-determining; see _active_extractor_keys.
     ordered_keys = _active_extractor_keys(ordered_keys, by_artifact, atom_type_index)
     if ordered_keys:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
+        # Pool-level deadlock guard: a single extractor wedged on a half-open
+        # socket (seen over Tailscale to a vanished host — the per-call
+        # urlopen timeout did NOT fire) must never freeze the whole deal. We
+        # bound the *pool* with as_completed(timeout=...) and, on give-up,
+        # shutdown(cancel_futures=True) without joining the stuck threads, so
+        # the deal proceeds on whatever extractors finished. A plain `with`
+        # block can't do this — its __exit__ joins (blocks on) the wedged
+        # thread — so we drive the pool manually with try/finally.
+        from app.core import llm_client
+        _budget = llm_client.pool_budget_seconds()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=parallel)
+        try:
             futures = {pool.submit(calls[k]): k for k in ordered_keys}
-            for fut in concurrent.futures.as_completed(futures):
-                key = futures[fut]
-                try:
-                    results[key] = fut.result()
-                except Exception:
-                    # Individual extractor failure: keep zero-value.
-                    pass
+            try:
+                from app.core import progress
+                for fut in progress.track(
+                    concurrent.futures.as_completed(futures, timeout=_budget),
+                    desc="entity-extract",
+                    total=len(futures),
+                ):
+                    key = futures[fut]
+                    try:
+                        results[key] = fut.result()
+                    except Exception:
+                        # Individual extractor failure: keep zero-value.
+                        pass
+            except concurrent.futures.TimeoutError:
+                # Pool budget exhausted — proceed with finished extractors;
+                # the rest keep their zero-value defaults.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "entity-extract pool exceeded %ss budget; "
+                    "proceeding with %d/%d extractors",
+                    _budget, len(results), len(ordered_keys),
+                )
+        finally:
+            # Do not wait on stuck threads — abandon them with the process.
+            pool.shutdown(wait=False, cancel_futures=True)
     # Stash site_clusters for entity_resolution to pick up without a
     # second LLM call. Used by collect_site_alias_groups to feed
     # canonical-name fusion alongside the regex co-mention patterns.
@@ -678,8 +713,15 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # SOWSMITH_TRAINING_LOG_DB is set.
     try:
         _log_extraction_training_rows(results, atoms)
-    except Exception:
-        pass
+    except Exception as _tr_exc:
+        # Never let training-row logging break a compile — but never let it
+        # fail *silently* either. A swallowed error here once cost a 6-hour
+        # run zero banked rows on the largest deal with no trace.
+        import logging as _lg_tr
+        _lg_tr.getLogger(__name__).warning(
+            "extraction training-row logging failed (%s): %s",
+            type(_tr_exc).__name__, _tr_exc,
+        )
 
     return results
 
@@ -725,7 +767,9 @@ _LOGGABLE_LIST_KEYS = frozenset({
     "system_mappings", "data_flow_steps", "assumptions",
     "approval_authorities", "dependencies", "pricing_structure",
     "blackout_date_range", "approval_decision",
+    "commercial_line_items",
 })
+
 
 
 def _log_extraction_training_rows(results: dict[str, Any], atoms: list[Any]) -> None:
@@ -750,7 +794,23 @@ def _log_extraction_training_rows(results: dict[str, Any], atoms: list[Any]) -> 
             project_id=deal_id, provenance={"stage": "multi_entity_llm"},
         ))
 
-    # List-valued extractors.
+    # List-valued extractors — BULLETPROOF banking. Two invariants that make
+    # it impossible to (a) silently drop extracted data or (b) re-create the
+    # train/holdout label-schema mismatch that once zeroed the requirements head:
+    #
+    #   1. SPAN row — relation=key, label=key — banked for EVERY item that has
+    #      text. One label per relation, identical on every deal and the seed,
+    #      so leave-one-deal-out never sees a mixed schema. This is the span /
+    #      detection signal every extractor contributes; nothing is gated out.
+    #   2. CATEGORY row — relation=f"{key}__cat", label=<sub-type> — banked
+    #      ADDITIONALLY when the teacher emitted a category/role/type. It lives
+    #      in its OWN relation, so it's an internally-consistent classifier that
+    #      can never pollute the span relation. Items without a sub-type simply
+    #      don't add a __cat row (they still bank their span row).
+    #
+    # The ONLY non-bank is an item with no extractable text at all (untrainable)
+    # — and even that is COUNTED and logged, so a drop can never be silent.
+    skipped_no_text = 0
     for key in _LOGGABLE_LIST_KEYS:
         items = results.get(key)
         if not isinstance(items, list):
@@ -760,26 +820,33 @@ def _log_extraction_training_rows(results: dict[str, Any], atoms: list[Any]) -> 
                 continue
             text = _best_extraction_text(it)
             if not text:
+                skipped_no_text += 1
                 continue
-            # The row's class is the teacher-emitted sub-type. Guess-free: if the
-            # LLM returned text but NO category/role/type, it gave us a span with
-            # no class signal — that is UNDECIDED, not "label == relation name".
-            # Fabricating ``label = key`` here is exactly what poisoned the
-            # ``requirements`` head: one deal logged real categories
-            # (deliverable/security/...) while a deal whose model omitted the
-            # category logged the bare relation name, so train and holdout used
-            # incompatible label schemas and holdout accuracy was structurally 0.
-            # Skip rather than guess; an unlabeled span trains no classifier.
-            sub = it.get("category") or it.get("role") or it.get("type")
-            label = str(sub).strip() if sub is not None else ""
-            if not label:
-                continue
+            via = it.get("_via", "")
+            # (1) span row — ALWAYS.
             rows.append(TrainingRow(
-                relation=key, label=label, raw_text=text,
+                relation=key, label=key, raw_text=text,
                 label_kind="span", teacher=TEACHER_LLM, deal_id=deal_id,
                 project_id=deal_id,
-                provenance={"stage": "multi_entity_llm", "via": it.get("_via", "")},
+                provenance={"stage": "multi_entity_llm", "via": via},
             ))
+            # (2) category row — when a clean sub-type exists, in its own relation.
+            sub = it.get("category") or it.get("role") or it.get("type")
+            sub_label = str(sub).strip() if sub is not None else ""
+            if sub_label:
+                rows.append(TrainingRow(
+                    relation=f"{key}__cat", label=sub_label, raw_text=text,
+                    label_kind="span", teacher=TEACHER_LLM, deal_id=deal_id,
+                    project_id=deal_id,
+                    provenance={"stage": "multi_entity_llm", "via": via, "parent_relation": key},
+                ))
+
+    if skipped_no_text:
+        import logging as _lg_sk
+        _lg_sk.getLogger(__name__).info(
+            "training-row logging: %d extracted item(s) had no usable text "
+            "(not banked — only ever-acceptable skip)", skipped_no_text,
+        )
 
     if rows:
         log_rows(rows)
@@ -818,6 +885,7 @@ def _empty_result() -> dict[str, Any]:
         # v52
         "blackout_date_range": [],
         "approval_decision": [],
+        "commercial_line_items": [],
     }
 
 
@@ -1642,6 +1710,82 @@ def _extract_requirements_chunked(
     )
 
 
+def _build_commercial_lineitems_prompt(docs_excerpt: str) -> str:
+    return f"""Identify every COMMERCIAL / COST LINE ITEM in these managed-services
+(IT field-deployment) documents — rate cards, BOMs, quotes, deal kits, SOW pricing.
+
+For EACH distinct cost line, output one object. Classify it into exactly ONE
+top-level `category` (this routes it to the right quote section), plus a finer
+`sub_category`.
+
+CATEGORIES (choose exactly one):
+- "labor": billable field/engineering labor by role or skill level (L0-L4, NE2,
+  FT2, "Cabling Tech", survey/install hours, hourly rates, day-type rates
+  REG/OT/WKND/HOL, minimum-per-dispatch). sub_category = the role/skill level.
+- "pmo": project management, coordination, engineering/design, kickoff, closeout,
+  status reporting, PM fee. sub_category = the PMO activity.
+- "hardware": physical devices with a part number / SKU (cameras, access points,
+  switches, NVRs, readers, displays, racks). sub_category = device type.
+- "material": install consumables (cable, connectors, faceplates, patch panels,
+  conduit, mounts/brackets, jacks). sub_category = material type.
+- "expense": travel, lodging, per-diem, mileage, mobilization, freight/shipping,
+  parking/tolls, equipment/lift rental, permits/fees. sub_category = expense type.
+- "license_subscription": software licenses, support/maintenance contracts,
+  warranties, SaaS subscriptions, recurring (MRR). sub_category = the type.
+- "other_commercial": taxes, duty, bonds, insurance, contingency, markup,
+  change-order surcharges. sub_category = the type.
+
+For each line, capture what is present (omit a field if absent):
+- "text": the line description (<= 25 words)
+- "category": one of the above
+- "sub_category": finer label (role / device / material / expense type ...)
+- "qty": numeric quantity if stated
+- "uom": unit of measure (ea, hr, ft, reel, day, month, per-site, per-dispatch ...)
+- "unit_price": numeric unit price / rate if stated
+- "part_number": SKU / part number / model if present
+- "recurring": "monthly" | "annual" | "one_time" if determinable
+
+INCLUDE rate-card rows, BOM lines, quote lines, deal-kit cost lines.
+EXCLUDE prose scope, requirements, and pure totals/subtotals.
+
+{_OUTPUT_RULES}
+
+DOCUMENTS:
+
+{docs_excerpt}
+
+OUTPUT (array of objects):
+{{"commercial_line_items": [
+  {{"text": "...", "category": "labor|pmo|hardware|material|expense|license_subscription|other_commercial", "sub_category": "...", "qty": 0, "uom": "...", "unit_price": 0, "part_number": "...", "recurring": "one_time"}},
+  ...
+]}}
+
+If none found, return: {{"commercial_line_items": []}}
+
+/no_think"""
+
+
+def _extract_commercial_lineitems_chunked(
+    by_artifact: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """v50 — comprehensive managed-services commercial line-item extractor.
+
+    Pulls every cost line (labor / pmo / hardware / material / expense /
+    license_subscription / other_commercial) and classifies it so each lands in
+    the right Deal Kit section. Feeds the teacher->kNN->head loop: the top-level
+    ``category`` becomes the training label, so the head learns to route any
+    commercial line to its section. Grounded in real PurTera rate cards, deal
+    kits, BOMs and RFPs (Chipotle, Olin, Natomas, Hayward, Downey).
+    """
+    return _extract_with_chunked_dispatch(
+        by_artifact,
+        build_prompt=_build_commercial_lineitems_prompt,
+        output_key="commercial_line_items",
+        fields=("text", "category", "sub_category", "qty", "uom", "unit_price", "part_number", "recurring"),
+        max_tokens=4096,
+    )
+
+
 def _extract_stakeholders_chunked(
     by_artifact: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -2265,46 +2409,67 @@ def _run_retrieval_extract(
     seen: set[str] = set()
 
     import concurrent.futures as _cf
-    with _cf.ThreadPoolExecutor(max_workers=parallel) as pool:
+    # Same pool-level deadlock guard as the outer extractor pool: bound the
+    # whole canonicalize fan-out and abandon (never join) any candidate call
+    # wedged on a half-open socket, so a stuck nested call can't freeze the deal.
+    from app.core import llm_client
+    _budget = llm_client.pool_budget_seconds()
+    pool = _cf.ThreadPoolExecutor(max_workers=parallel)
+    try:
         # Use the PARAGRAPH (expanded context) for canonicalize — gives
         # the LLM more context to make keep/drop decision.
         future_map = {
             pool.submit(_canonicalize_candidate, c["paragraph"], entity_type): c
             for c in candidates
         }
-        for fut in _cf.as_completed(future_map):
-            candidate = future_map[fut]
-            try:
-                outcome = fut.result()
-            except Exception:
-                outcome = None
-            if not outcome:
-                continue
-            # v41: multi-entry canonicalize output (stakeholder "people"
-            # array) — DON'T dedupe at this layer because we have
-            # multiple people in one outcome. The downstream extractor
-            # will expand + dedupe by name.
-            if "people" in outcome and isinstance(outcome.get("people"), list):
+        try:
+            from app.core import progress
+            completed = progress.track(
+                _cf.as_completed(future_map, timeout=_budget),
+                desc=f"canonicalize {entity_type}",
+                total=len(future_map),
+            )
+            for fut in completed:
+                candidate = future_map[fut]
+                try:
+                    outcome = fut.result()
+                except Exception:
+                    outcome = None
+                if not outcome:
+                    continue
+                # v41: multi-entry canonicalize output (stakeholder "people"
+                # array) — DON'T dedupe at this layer because we have
+                # multiple people in one outcome. The downstream extractor
+                # will expand + dedupe by name.
+                if "people" in outcome and isinstance(outcome.get("people"), list):
+                    outcome["_source_sentence"] = candidate["sentence"]
+                    outcome["_source_paragraph"] = candidate["paragraph"]
+                    outcome["_source_artifact_id"] = candidate["artifact_id"]
+                    outcome["_retrieval_score"] = round(candidate["score"], 4)
+                    outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
+                    results.append(outcome)
+                    continue
+                # Single-canonical-value dedup (default)
+                canon_value = outcome.get(canonical_key) or outcome.get("name") or ""
+                sig = re.sub(r"\s+", " ", str(canon_value).lower()).strip()[:120]
+                if not sig or sig in seen:
+                    continue
+                seen.add(sig)
+                # Attach source info
                 outcome["_source_sentence"] = candidate["sentence"]
                 outcome["_source_paragraph"] = candidate["paragraph"]
                 outcome["_source_artifact_id"] = candidate["artifact_id"]
                 outcome["_retrieval_score"] = round(candidate["score"], 4)
                 outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
                 results.append(outcome)
-                continue
-            # Single-canonical-value dedup (default)
-            canon_value = outcome.get(canonical_key) or outcome.get("name") or ""
-            sig = re.sub(r"\s+", " ", str(canon_value).lower()).strip()[:120]
-            if not sig or sig in seen:
-                continue
-            seen.add(sig)
-            # Attach source info
-            outcome["_source_sentence"] = candidate["sentence"]
-            outcome["_source_paragraph"] = candidate["paragraph"]
-            outcome["_source_artifact_id"] = candidate["artifact_id"]
-            outcome["_retrieval_score"] = round(candidate["score"], 4)
-            outcome["_dense_score"] = round(candidate.get("dense_score", 0.0), 4)
-            results.append(outcome)
+        except _cf.TimeoutError:
+            import logging
+            logging.getLogger(__name__).warning(
+                "canonicalize pool exceeded %ss budget; proceeding with %d/%d",
+                _budget, len(results), len(candidates),
+            )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     # ────────────────────────────────────────────────────────────
     # v40+v42: SICRL — Section-Indexed Counterfactual Recall Loop
@@ -2749,6 +2914,12 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     # wedged/unreachable host from blocking a compile in offline/CI runs.
     if os.environ.get("SOWSMITH_DISABLE_LLM"):
         return ""
+    # Hosted-teacher route: when a TEACHER_API_BASE is configured, serve this
+    # teacher call from the OpenAI-compatible client (DeepSeek/etc.) instead of
+    # the local Ollama. Default-off — unset env keeps the local path below.
+    from app.core import llm_client
+    if llm_client.teacher_api_enabled():
+        return llm_client.complete(prompt, max_tokens=max_tokens)
     host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))

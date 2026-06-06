@@ -260,6 +260,35 @@ def _iter_artifacts(project_dir: Path) -> list[Path]:
     return sorted(results, key=lambda p: str(p).lower())
 
 
+def project_census(project_dir: Path | str, atoms):
+    """Build the deal-level content census and reconcile it against ``atoms``.
+
+    The census is an inventory of every region of every modality in the deal's
+    source files, read *independently* of the production parser. Reconciling it
+    against the emitted atoms yields the never-detected loss set
+    (``census.uncovered()``) — exactly the denominator
+    :func:`app.core.complaint_router.route` needs for its NEEDS_EXTRACTOR
+    bucket.
+
+    It deliberately reuses :func:`_iter_artifacts`, so the census denominator is
+    drawn from the *same* file set the compile consumed — no drift between what
+    was compiled and what we check coverage against. Pure read; no LLM, no
+    network; safe to call after any compile from ``(project_dir, result.atoms)``.
+    Never raises — returns an empty census on any failure.
+    """
+    from app.parsers.census import reconciled_census
+
+    try:
+        root = Path(project_dir).resolve()
+        return reconciled_census(
+            _iter_artifacts(root), atoms, artifact=root.name
+        )
+    except Exception:  # pragma: no cover - census must never break a caller
+        from app.core.content_census import ContentCensus
+
+        return ContentCensus(artifact=str(project_dir))
+
+
 # Opt-in feedback store. The store stays OFF by default (decide() is a
 # transparent pass-through to the LLM, byte-identical to Phase 2) so the whole
 # test suite is unaffected. Operations turn it on by pointing
@@ -823,6 +852,42 @@ def compile_project(
             warnings.append(f"INFO: dropped {dropped_bp} signature/execution-block boilerplate atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # Pre-enrich table rollup — universal backstop for money-bearing
+    # spreadsheet tables the parser's sheet-classifier missed. A 9 MB rate
+    # card otherwise lands here as tens of thousands of per-row raw_table_row
+    # atoms, each dragged through the per-atom LLM enrich pass (hours) and
+    # flooding the training store with low-diversity catalog rows. Folding
+    # each high-cardinality group losslessly into one pricing_assumption
+    # summary atom (value.rows preserved) collapses cost and training noise
+    # while leaving the deliverable unchanged (build_bill_of_materials and the
+    # commercial_summary packet already read value.rows). Runs BEFORE enrich
+    # so the expensive stages never see the exploded cardinality.
+    with telemetry.stage("table_rollup", input_count=len(atoms)) as stage:
+        before_tr_atoms = list(atoms)
+        before_tr = len(atoms)
+        try:
+            from app.core.table_rollup import roll_up_table_rows
+            atoms, tr_stats = roll_up_table_rows(atoms)
+        except Exception as exc:
+            tr_stats = {}
+            warnings.append(f"WARNING: table_rollup failed: {type(exc).__name__}: {exc}")
+        folded_tr = before_tr - len(atoms)
+        if folded_tr > 0:
+            merge_suppressed(
+                suppressed_atoms,
+                capture_suppressed(
+                    before_tr_atoms, atoms,
+                    stage="table_rollup",
+                    reason="high-cardinality money-bearing table folded into pricing rollup (value.rows preserved)",
+                ),
+            )
+            warnings.append(
+                f"INFO: table_rollup folded {tr_stats.get('rows_folded', folded_tr)} rows "
+                f"across {tr_stats.get('groups_folded', 0)} table(s) into "
+                f"{tr_stats.get('summary_atoms', 0)} pricing rollup atom(s)"
+            )
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     enrich_warnings: list[str] = []
     with telemetry.stage("enrich_entities", input_count=len(atoms)) as stage:
         # Universal entity extraction — populates atom.entity_keys for any
@@ -881,6 +946,30 @@ def compile_project(
             warnings.append(f"WARNING: atom_type_sanity failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=sanity_changed)
 
+    # Span admission (#span_admission seam): for atoms still sitting in a
+    # generic/retained type (scope_item/entity/deal_metadata/site_note), ask the
+    # decide() STORE whether they should be re-typed into a recovered specific
+    # type (milestone_phase, requirement, acceptance_criterion, quantity,
+    # commercial category, ...). STORE-ONLY (no LLM), guess-free (abstain →
+    # untouched). This makes RECALL text-ruleable: a PM teaches the system to
+    # catch a missed class by adding a correction, no code change. Flag-gated so
+    # it is a no-op in production until enabled AND a feedback store is wired.
+    with telemetry.stage("span_admission", input_count=len(atoms)) as stage:
+        readmitted = 0
+        import os as _os_sa
+        if _os_sa.environ.get("SOWSMITH_SPAN_ADMISSION", "") in ("1", "true", "yes", "on"):
+            try:
+                from app.core.span_admission import readmit_atom_types
+                readmitted = readmit_atom_types(atoms)
+                if readmitted:
+                    warnings.append(
+                        f"INFO: span_admission re-typed {readmitted} retained atom(s) "
+                        f"into recovered types via the store"
+                    )
+            except Exception as exc:
+                warnings.append(f"WARNING: span_admission failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=readmitted)
+
     # Open-question resolution: an open_question whose answer already
     # exists in the corpus (shares an answer-bearing entity key with a
     # fact atom) is flagged answered so it stops surfacing as a PM
@@ -899,47 +988,58 @@ def compile_project(
 
     with telemetry.stage("site_geo_fallback", input_count=len(atoms)) as stage:
         added_geo = 0
-        try:
-            from app.core.site_geo_fallback import (
-                geo_fallback_sites,
-                suppress_vendor_sites,
-            )
-            # 1) Infer fallback physical_site atoms from bare City/State/ZIP
-            #    anchors. This must run FIRST: a vendor letterhead address
-            #    ("PurTera LLC … Alpharetta, GA 30009") only becomes a
-            #    physical_site atom HERE, so the suppression gate below has
-            #    nothing to act on until these exist.
-            geo_atoms = geo_fallback_sites(atoms, project_id=resolved_project_id)
-            if geo_atoms:
-                atoms.extend(geo_atoms)
-                added_geo = len(geo_atoms)
-                warnings.append(
-                    f"INFO: site_geo_fallback inferred {added_geo} physical_site atom(s) "
-                    f"from City/State/ZIP (no confirmed site found)"
+        import os as _os_geo
+        if _os_geo.environ.get("SOWSMITH_DISABLE_GEO_FALLBACK"):
+            # Opt-out for bulk / training runs. On site-rich deals the geo
+            # inference short-circuits to 0 (real sites already exist), but the
+            # LLM-backed vendor-suppression sub-step still runs one call per
+            # site serially — pure wall-time for ~zero net atoms. Skip the
+            # whole stage when this flag is set. Default-off: production keeps
+            # the vendor gate (which is what stops PurTera's own address from
+            # being mistaken for a job site).
+            warnings.append("INFO: site_geo_fallback skipped (SOWSMITH_DISABLE_GEO_FALLBACK set)")
+        else:
+            try:
+                from app.core.site_geo_fallback import (
+                    geo_fallback_sites,
+                    suppress_vendor_sites,
                 )
-            # 2) Demote any physical_site that is actually the vendor's own
-            #    letterhead / billing address (semantic role gate, LLM-backed;
-            #    a no-op when the LLM is unreachable, only one site exists, or
-            #    suppression would remove every site).
-            before_vendor_atoms = list(atoms)
-            atoms, dropped_vendor = suppress_vendor_sites(
-                atoms, project_id=resolved_project_id
-            )
-            if dropped_vendor:
-                merge_suppressed(
-                    suppressed_atoms,
-                    capture_suppressed(
-                        before_vendor_atoms, atoms,
-                        stage="site_geo_fallback",
-                        reason="vendor / selling-party letterhead address, not a job site",
-                    ),
+                # 1) Infer fallback physical_site atoms from bare City/State/ZIP
+                #    anchors. This must run FIRST: a vendor letterhead address
+                #    ("PurTera LLC … Alpharetta, GA 30009") only becomes a
+                #    physical_site atom HERE, so the suppression gate below has
+                #    nothing to act on until these exist.
+                geo_atoms = geo_fallback_sites(atoms, project_id=resolved_project_id)
+                if geo_atoms:
+                    atoms.extend(geo_atoms)
+                    added_geo = len(geo_atoms)
+                    warnings.append(
+                        f"INFO: site_geo_fallback inferred {added_geo} physical_site atom(s) "
+                        f"from City/State/ZIP (no confirmed site found)"
+                    )
+                # 2) Demote any physical_site that is actually the vendor's own
+                #    letterhead / billing address (semantic role gate, LLM-backed;
+                #    a no-op when the LLM is unreachable, only one site exists, or
+                #    suppression would remove every site).
+                before_vendor_atoms = list(atoms)
+                atoms, dropped_vendor = suppress_vendor_sites(
+                    atoms, project_id=resolved_project_id
                 )
-                warnings.append(
-                    f"INFO: site_geo_fallback suppressed {dropped_vendor} "
-                    f"vendor/letterhead address(es) misread as job sites"
-                )
-        except Exception as exc:
-            warnings.append(f"WARNING: site_geo_fallback failed: {type(exc).__name__}: {exc}")
+                if dropped_vendor:
+                    merge_suppressed(
+                        suppressed_atoms,
+                        capture_suppressed(
+                            before_vendor_atoms, atoms,
+                            stage="site_geo_fallback",
+                            reason="vendor / selling-party letterhead address, not a job site",
+                        ),
+                    )
+                    warnings.append(
+                        f"INFO: site_geo_fallback suppressed {dropped_vendor} "
+                        f"vendor/letterhead address(es) misread as job sites"
+                    )
+            except Exception as exc:
+                warnings.append(f"WARNING: site_geo_fallback failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=added_geo)
 
     # Receipt backfill: source_replay (stage 4) runs before the late

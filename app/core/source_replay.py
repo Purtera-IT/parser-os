@@ -51,11 +51,38 @@ def _load_workbook_cached(path: Path):
         oldest = next(iter(_WORKBOOK_CACHE))
         if oldest != key:
             _WORKBOOK_CACHE.pop(oldest, None)
+            # An evicted workbook's worksheets may be GC'd and their id() reused;
+            # drop the memoized max_rows so a future worksheet can't read a stale
+            # value under a recycled id.
+            _MAXROW_CACHE.clear()
     return wb
+
+
+# Memoized ``worksheet.max_row``. openpyxl recomputes ``max_row`` by scanning
+# the worksheet's *entire* cell set on every single access. source_replay
+# verifies one row per atom, calling ``max_row`` once per atom purely for an
+# out-of-range check — so a big sheet with many atoms made this O(atoms × cells)
+# (observed: a 39k-atom deal grinding for >8 min in ``max_row`` alone). The value
+# can't change during a read-only verification pass, so cache it per worksheet
+# identity. The workbook (and thus its worksheets) is held alive in
+# ``_WORKBOOK_CACHE`` while in use, so ``id()`` is stable for the cache lifetime;
+# we clear this alongside any workbook-cache eviction to avoid id reuse.
+_MAXROW_CACHE: dict[int, int] = {}
+
+
+def _cached_max_row(worksheet: Any) -> int:
+    """``worksheet.max_row`` computed at most once per worksheet (see note)."""
+    wid = id(worksheet)
+    mr = _MAXROW_CACHE.get(wid)
+    if mr is None:
+        mr = worksheet.max_row or 0
+        _MAXROW_CACHE[wid] = mr
+    return mr
 
 
 def clear_workbook_cache() -> None:  # pragma: no cover — used by tests
     _WORKBOOK_CACHE.clear()
+    _MAXROW_CACHE.clear()
 
 
 # ────────────── docx whole-document text cache ──────────────
@@ -333,7 +360,7 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
         if workbook is None:
             return _receipt(atom, source_ref, "failed", f"Spreadsheet file unreadable: {path}")
         worksheet = workbook[sheet] if isinstance(sheet, str) and sheet in workbook.sheetnames else workbook.active
-        max_row = worksheet.max_row or 0
+        max_row = _cached_max_row(worksheet)
         if max_row and row_number > max_row:
             return _receipt(atom, source_ref, "failed", f"Spreadsheet row {row_number} out of range")
         for key, col_letter in columns.items():

@@ -178,6 +178,19 @@ def suppress_vendor_sites(
 
     scope = DecisionScope(deal_id=project_id or "")
     drop_ids: set[str] = set()
+    # PERF: vendor-suppression exists to catch the vendor's OWN address (usually
+    # 1-2 letterhead/signature addresses) leaking in as a job site. On a deal with
+    # thousands of real customer sites, running one LLM call PER site is the
+    # "million years" cost — and a single vendor address among thousands is
+    # negligible noise anyway. So: a CHEAP store-only check runs on EVERY site
+    # (instant; as the store learns vendor addresses it catches them for free),
+    # and the LLM fallback is bounded to a budget. Small deals (<budget sites) are
+    # unchanged; huge site rosters stay fast and complete.
+    import os as _os
+    try:
+        llm_budget = max(0, int(_os.environ.get("SOWSMITH_VENDOR_SUPPRESS_LLM_MAX", "60")))
+    except Exception:
+        llm_budget = 60
     for a in sites:
         aid = getattr(a, "id", None)
         if not aid:
@@ -185,17 +198,23 @@ def suppress_vendor_sites(
         addr, context = _site_address_text(a)
         if not addr:
             continue
+        # 1) store-only (no LLM): instant, free; warms over time.
         decision = decide(
-            "physical_site",
-            addr,
-            _SITE_ROLE_CANDIDATES,
-            instruction=_SITE_ROLE_INSTRUCTION,
-            context=context,
-            scope=scope,
-            model=_SITE_ROLE_MODEL,
+            "physical_site", addr, _SITE_ROLE_CANDIDATES,
+            instruction=_SITE_ROLE_INSTRUCTION, context=context,
+            scope=scope, model=_SITE_ROLE_MODEL, llm=False,
         )
+        # 2) bounded LLM fallback only when the store abstained AND budget remains.
+        if decision.verdict is None and llm_budget > 0:
+            decision = decide(
+                "physical_site", addr, _SITE_ROLE_CANDIDATES,
+                instruction=_SITE_ROLE_INSTRUCTION, context=context,
+                scope=scope, model=_SITE_ROLE_MODEL,
+            )
+            llm_budget -= 1
         if (
-            decision.verdict == "vendor_or_billing_address"
+            decision is not None
+            and decision.verdict == "vendor_or_billing_address"
             and decision.confidence >= _VENDOR_DROP_CONFIDENCE
         ):
             drop_ids.add(aid)

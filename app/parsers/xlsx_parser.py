@@ -1174,6 +1174,34 @@ class XlsxParser(BaseParser):
             )
             schema = STRUCTURED_SCHEMA_XLSX
             artifact_type = ArtifactType.xlsx
+            # COVERAGE BACKSTOP (parse-coverage, no silent whole-file loss):
+            # a VALID workbook whose every sheet routed to DROP/empty — e.g. an
+            # unfilled RFP price/SLA response template (price column blank, so the
+            # sheet_classifier drops it) — would otherwise vanish entirely, losing
+            # the whole priced-scope catalog. If the read SUCCEEDED but produced
+            # ZERO atoms, fall back to generic per-row extraction over any
+            # data-bearing sheet so a populated file can never be silently dropped.
+            # Purely additive: fires only when output would be empty, so it cannot
+            # regress any deal that already extracts. Instructional/cover sheets
+            # are still skipped by _emit_generic_rows' own guard.
+            if not atoms and not parse_error:
+                backstop: list[EvidenceAtom] = []
+                for sh in sheets:
+                    rws = sh.get("rows") or []
+                    nonempty = [r for r in rws if any(str(c or "").strip() for c in r)]
+                    if len(nonempty) >= 3:
+                        backstop.extend(self._emit_generic_rows(
+                            project_id=project_id, artifact_id=artifact_id,
+                            artifact_type=ArtifactType.xlsx, filename=path.name,
+                            sheet_name=sh.get("name") or "", rows=rws,
+                        ))
+                if backstop:
+                    atoms = backstop
+                    self._coverage_backstop_note = (
+                        f"INFO: coverage backstop recovered {len(backstop)} row(s) "
+                        f"from {path.name} (every sheet had routed to drop/empty — "
+                        f"e.g. an unfilled RFP price/SLA template)"
+                    )
 
         structured_doc = self._build_structured_doc(
             schema=schema,
@@ -1186,6 +1214,10 @@ class XlsxParser(BaseParser):
         warnings: list[str] = []
         if parse_error:
             warnings.append(f"{ARTIFACT_PARSE_ERROR_PREFIX}{artifact_id}:{parse_error}")
+        _bs_note = getattr(self, "_coverage_backstop_note", "")
+        if _bs_note:
+            warnings.append(_bs_note)
+            self._coverage_backstop_note = ""
         # Mark embedded charts / images / drawings / OLE objects in .xlsx so an
         # embedded diagram or logo-as-data can't silently vanish. (CSV has no
         # zip container, so this is a no-op there.)

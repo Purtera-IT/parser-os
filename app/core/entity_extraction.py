@@ -4024,6 +4024,25 @@ def _entities_to_atoms(
         # atoms (similar gap — LLM-extracted figures had no atom).
         "site_clusters":                AtomType.physical_site,
         "quantities":                   AtomType.quantity,
+        # v50 — comprehensive commercial line items. ONE extractor, but each
+        # item routes to its own atom type by the teacher-emitted `category`
+        # (see _COMMERCIAL_CAT_TO_TYPE below). Listed here with a default; the
+        # per-item override in the loop picks the real type.
+        "commercial_line_items":        AtomType.commercial_total,
+    }
+
+    # Per-item routing for commercial_line_items: the item's top-level
+    # `category` (labor/pmo/hardware/material/expense/license_subscription/
+    # other_commercial) selects the atom type so each lands in the right Deal
+    # Kit section.
+    _COMMERCIAL_CAT_TO_TYPE = {
+        "labor":                AtomType.service_line,
+        "pmo":                  AtomType.pmo,
+        "hardware":             AtomType.bom_line,
+        "material":             AtomType.material,
+        "expense":              AtomType.expense,
+        "license_subscription": AtomType.license_subscription,
+        "other_commercial":     AtomType.commercial_total,
     }
 
     def _best_text(entity: dict) -> str:
@@ -4237,6 +4256,16 @@ def _entities_to_atoms(
         for entity in entities:
             if not isinstance(entity, dict):
                 continue
+            # v50: commercial line items route per-item by their `category`
+            # (labor→service_line, hardware→bom_line, material→material,
+            # expense→expense, …). Everything else uses the category's mapped
+            # type.
+            eff_atom_type = atom_type
+            if category == "commercial_line_items":
+                eff_atom_type = _COMMERCIAL_CAT_TO_TYPE.get(
+                    str(entity.get("category") or "").strip().lower(),
+                    AtomType.commercial_total,
+                )
             # v53.2: best_text needs to look at canonical_name for sites.
             raw_text = entity.get("canonical_name") if category == "site_clusters" else None
             if not raw_text:
@@ -4364,7 +4393,7 @@ def _entities_to_atoms(
                     id=atom_id,
                     project_id=project_id,
                     artifact_id=canonical_aid,
-                    atom_type=atom_type,
+                    atom_type=eff_atom_type,
                     raw_text=raw_text,
                     normalized_text=raw_text.lower(),
                     value=normalized_value,

@@ -383,6 +383,11 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
     if os.environ.get("SOWSMITH_DISABLE_LLM"):
         return ""
+    # Hosted-teacher route (default-off): TEACHER_API_BASE → OpenAI-compatible
+    # client; otherwise the local Ollama below.
+    from app.core import llm_client
+    if llm_client.teacher_api_enabled():
+        return llm_client.complete(prompt, max_tokens=max_tokens)
     import http.client
     import urllib.request
 
