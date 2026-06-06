@@ -33,6 +33,10 @@ dependencies = [
   "httpx>=0.27",
   "requests>=2.31",
   "jsonschema>=4.23",
+  # Outlook .msg parsing (MsgParser): without it .msg files yield only a
+  # placeholder atom and the email body/attachments are lost. The parser already
+  # uses it when present; declare it so the prod image installs it.
+  "extract-msg>=0.48",
 ]
 
 [project.optional-dependencies]
