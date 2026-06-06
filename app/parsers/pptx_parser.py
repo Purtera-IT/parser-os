@@ -157,7 +157,12 @@ class PptxParser(BaseParser):
             slide_title_text = ""
             # Slide title is usually the first text-bearing placeholder.
             for shape in slide.shapes:
-                if shape.has_text_frame and shape.placeholder_format is not None and "title" in str(shape.placeholder_format.type).lower():
+                # python-pptx RAISES ValueError on .placeholder_format for a
+                # non-placeholder shape (it does not return None), which would
+                # crash the whole presentation. Gate on .is_placeholder first.
+                if not shape.has_text_frame or not getattr(shape, "is_placeholder", False):
+                    continue
+                if shape.placeholder_format is not None and "title" in str(shape.placeholder_format.type).lower():
                     slide_title_text = shape.text_frame.text.strip()
                     break
             if not slide_title_text:
