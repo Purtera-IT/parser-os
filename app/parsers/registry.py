@@ -135,6 +135,61 @@ def _deterministic_tie_break(
     return ranked[0]
 
 
+# ── magic-byte fallback ──────────────────────────────────────────────
+# Suffix-based routing drops a real document when it has no extension (an
+# extensionless %PDF export) or a wrong one. Sniff the leading bytes so content,
+# not the filename, decides — a file is never silently dropped for lacking a suffix.
+_SNIFF_TYPE_TO_CLASS = {
+    ArtifactType.pdf: "OrbitBriefPdfParser",
+    ArtifactType.xlsx: "XlsxParser",
+    ArtifactType.docx: "DocxParser",
+    ArtifactType.pptx: "PptxParser",
+    ArtifactType.zip_archive: "ZipParser",
+    ArtifactType.rtf: "RtfParser",
+}
+
+
+def _ooxml_or_zip(path: Path) -> ArtifactType:
+    """A PK\\x03\\x04 file is a zip container — peek members to tell an OOXML
+    document (docx/xlsx/pptx) from a plain archive."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+    except Exception:
+        return ArtifactType.zip_archive
+    if any(n.startswith("word/") for n in names):
+        return ArtifactType.docx
+    if any(n.startswith("xl/") for n in names):
+        return ArtifactType.xlsx
+    if any(n.startswith("ppt/") for n in names):
+        return ArtifactType.pptx
+    return ArtifactType.zip_archive
+
+
+def _sniff_parser(path: Path) -> tuple[ArtifactParser | None, ArtifactType | None]:
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8)
+    except Exception:
+        return None, None
+    if head.startswith(b"%PDF"):
+        atype: ArtifactType | None = ArtifactType.pdf
+    elif head.startswith(b"PK\x03\x04"):
+        atype = _ooxml_or_zip(path)
+    elif head[:5].lower().startswith(b"{\\rtf"):
+        atype = ArtifactType.rtf
+    else:
+        atype = None
+    if atype is None:
+        return None, None
+    cls_name = _SNIFF_TYPE_TO_CLASS.get(atype)
+    for parser in get_registered_parsers():
+        if cls_name and type(parser).__name__ == cls_name:
+            return parser, atype
+    return None, None
+
+
 def choose_parser(
     path: Path,
     domain_pack: DomainPack | None = None,
@@ -157,6 +212,20 @@ def choose_parser(
     )
     viable = [(parser, match) for parser, match in matches if match.confidence >= MATCH_THRESHOLD]
     if not viable:
+        # Suffix-based routing found nothing — fall back to magic-byte sniffing
+        # so an extensionless or mis-named real document isn't dropped.
+        sniffed, atype = _sniff_parser(path)
+        if sniffed is not None and atype is not None:
+            return (
+                sniffed,
+                ParserMatch(
+                    parser_name=sniffed.capability.parser_name,
+                    confidence=0.5,
+                    reasons=["magic_byte_sniff"],
+                    artifact_type=atype,
+                ),
+                sorted_matches,
+            )
         return (
             None,
             ParserMatch(
