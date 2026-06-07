@@ -84,6 +84,34 @@ def test_head_classifies_out_of_distribution_glyphs():
     assert correct >= 3  # robust to shift+scale outside the training range
 
 
+def test_legend_index_generalizes_per_document():
+    """The make-or-break generalization test: the SAME glyph must resolve to
+    DIFFERENT meanings under different legends, with zero global training."""
+    from app.core.schematic_symbol_head import LegendIndex
+
+    doc_a = LegendIndex()
+    doc_a.add_symbol("CAMERA", _glyph("circle"))
+    doc_a.add_symbol("SPEAKER", _glyph("square"))
+    doc_a.add_symbol("DATA_OUTLET", _glyph("triangle"))
+
+    doc_b = LegendIndex()
+    doc_b.add_symbol("SMOKE_DETECTOR", _glyph("circle"))
+    doc_b.add_symbol("MOTION_SENSOR", _glyph("square"))
+    doc_b.add_symbol("FIRE_PULL", _glyph("triangle"))
+
+    # canvas instances: shifted + scaled (not identical to the legend swatch)
+    for g, a_means, b_means in [
+        ("circle", "CAMERA", "SMOKE_DETECTOR"),
+        ("square", "SPEAKER", "MOTION_SENSOR"),
+        ("triangle", "DATA_OUTLET", "FIRE_PULL"),
+    ]:
+        inst = _glyph(g, jitter=12, scale=1.3)
+        ra, _ = doc_a.match(inst)
+        rb, _ = doc_b.match(inst)
+        assert ra.meaning == a_means
+        assert rb.meaning == b_means
+
+
 def test_head_returns_none_when_insufficient_data():
     st = SchematicSymbolStore(":memory:")
     f = crop_feature(_glyph("circle"))

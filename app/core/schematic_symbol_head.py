@@ -84,6 +84,64 @@ def feature_sha(feat: np.ndarray) -> str:
     return hashlib.sha256(np.round(feat, 5).tobytes()).hexdigest()[:16]
 
 
+def _cos(a: np.ndarray, b: np.ndarray) -> float:
+    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+
+
+# ── per-document legend matching (the generalization mechanism) ────────────────
+# CRITICAL: symbol vocabularies are PER-DOCUMENT. Firm A: circle=camera;
+# Firm B: circle=smoke-detector. A globally-trained fixed-class symbol head is
+# therefore WRONG. The legend page IS the answer key for its own drawing set, so
+# grounding is *per-document nearest-legend matching*, not global classification:
+# embed each legend swatch -> that's the reference set -> match each canvas glyph
+# to the nearest legend swatch -> inherit that legend entry's meaning. A brand-new
+# drawing set with brand-new symbols needs ZERO retraining — the embedder
+# generalizes, the legend supplies the labels. (Same shape as the text kNN store,
+# with the legend crops as the per-doc support set.)
+#
+# ``embed`` defaults to the deterministic :func:`crop_feature`; swap in a
+# contrastively-trained symbol embedder (taught by the VLM's legend<->canvas
+# match pairs) behind the same interface to sharpen separation — the matching
+# architecture is unchanged.
+
+
+@dataclass
+class LegendRef:
+    meaning: str
+    legend_entry_id: str | None
+    feature: np.ndarray
+
+
+class LegendIndex:
+    """The reference set parsed from ONE document's legend page(s)."""
+
+    def __init__(self, embed=None):
+        self._embed = embed or crop_feature
+        self.refs: list[LegendRef] = []
+
+    def add_symbol(self, meaning: str, png_bytes: bytes,
+                   legend_entry_id: str | None = None) -> None:
+        self.refs.append(LegendRef(meaning, legend_entry_id, self._embed(png_bytes)))
+
+    def add_feature(self, meaning: str, feature: np.ndarray,
+                    legend_entry_id: str | None = None) -> None:
+        self.refs.append(LegendRef(meaning, legend_entry_id, feature))
+
+    def match(self, png_bytes: bytes, *, threshold: float = 0.0):
+        """Return (LegendRef, similarity) for the nearest legend symbol, or
+        (None, best_sim) when below threshold (caller falls back to the VLM).
+        Precision over recall: an ambiguous glyph abstains rather than guesses."""
+        if not self.refs:
+            return None, 0.0
+        f = self._embed(png_bytes)
+        best = max(self.refs, key=lambda r: _cos(f, r.feature))
+        s = _cos(f, best.feature)
+        return (best, s) if s >= threshold else (None, s)
+
+    def __len__(self) -> int:
+        return len(self.refs)
+
+
 # ── training store ────────────────────────────────────────────────────────────
 
 
