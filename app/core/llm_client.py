@@ -40,7 +40,9 @@ Hard contracts (mirror the local ``_call_ollama`` callers' expectations):
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import os
 import random
@@ -341,6 +343,33 @@ def complete(prompt: str, *, max_tokens: int = 1024, model: str | None = None,
     )
 
 
+def _clamp_image_b64(image_b64: str, max_side: int = 1568,
+                     max_bytes: int = 4_500_000) -> tuple[str, str]:
+    """Downscale an image that exceeds a vision model's input limits BEFORE
+    sending. Hosted VLMs (Anthropic ~8000px/5MB, OpenAI similar) reject
+    oversized images with a 4xx and the call silently returns "" — i.e. a whole
+    sheet's data lost with no error. E-size CAD pages at 200 DPI are ~8400px and
+    trip this. We resize the long side to ``max_side`` (Anthropic's recommended
+    ~1568) when over budget. Returns (b64, mime); always PNG after a resize.
+    Best-effort: on any failure return the input unchanged."""
+    try:
+        approx_bytes = len(image_b64) * 3 // 4
+        # quick check on encoded size; decode only if we must inspect dims
+        from PIL import Image
+        raw = base64.b64decode(image_b64)
+        with Image.open(io.BytesIO(raw)) as im:
+            w, h = im.size
+            if max(w, h) <= max_side and approx_bytes <= max_bytes:
+                return image_b64, "image/png"
+            sc = max_side / float(max(w, h))
+            im2 = im.convert("RGB").resize((max(1, int(w * sc)), max(1, int(h * sc))))
+            buf = io.BytesIO()
+            im2.save(buf, format="PNG", optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("ascii"), "image/png"
+    except Exception:
+        return image_b64, "image/png"
+
+
 def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
                     max_tokens: int = 2048, model: str | None = None,
                     timeout: int | None = None) -> str:
@@ -365,6 +394,8 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
     if not image_b64:
         return ""
     model = model or os.environ.get("TEACHER_VISION_MODEL") or teacher_model()
+    # Clamp oversized images so the model never silently rejects + returns "".
+    image_b64, mime = _clamp_image_b64(image_b64)
     # Cache hit on identical (model, prompt, image) → $0, no API call.
     ck = _vision_cache_key(model, prompt, mime, image_b64)
     cached = _vision_cache_get(ck)

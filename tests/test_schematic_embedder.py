@@ -44,7 +44,9 @@ def test_embedder_plugs_into_legend_index():
     idx.add_symbol("CAMERA", _glyph("circle"))
     idx.add_symbol("SPEAKER", _glyph("square"))
     assert len(idx) == 2
-    ref, sim = idx.match(_glyph("circle"))
+    # threshold=-1 so an UNTRAINED encoder (random init, possibly negative
+    # cosine) still returns the nearest ref — we test the plumbing, not quality.
+    ref, sim = idx.match(_glyph("circle"), threshold=-1.0)
     assert ref is not None
     assert -1.0 <= sim <= 1.0
 
