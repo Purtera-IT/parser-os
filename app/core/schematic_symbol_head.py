@@ -274,8 +274,17 @@ def train_symbol_head(store: SchematicSymbolStore,
     if len(set(ytr)) < 2 or len(Xte) == 0:
         return None
 
+    # Speed: GradientBoosting (and a wide MLP) are O(dim)-brutal on high-dim
+    # features (e.g. 4096-d pixel vectors -> ~14 min). Drop them when features are
+    # large so retrain stays in seconds; LR is fast + strong on high-dim. With a
+    # low-dim learned embedding (e.g. 128-d) all candidates are fast and stay in.
+    cands = _candidates()
+    dim = Xtr.shape[1] if len(Xtr) else 0
+    if dim > 600:
+        cands = {k: v for k, v in cands.items() if k == "LR"}
+
     best = None
-    for name, make in _candidates().items():
+    for name, make in cands.items():
         try:
             clf = make()
             try:
@@ -294,7 +303,7 @@ def train_symbol_head(store: SchematicSymbolStore,
     # Refit the winner on ALL data for the shipped head.
     Xall, yall, wall = store.fetch(None)
     name, f1, _ = best
-    final = _candidates()[name]()
+    final = cands[name]()
     try:
         final.fit(Xall, yall, sample_weight=wall)
     except TypeError:
