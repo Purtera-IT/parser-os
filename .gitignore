@@ -27,3 +27,12 @@ compiled_artifacts/
 
 # Claude Code worktree configuration (per-checkout, not source).
 .claude/
+
+# Local secrets — never commit (DeepSeek/teacher API keys etc.)
+.env
+.env.*
+
+# Trained model weights + downloaded schematic corpus (artifacts, not code)
+*.pt
+_schematic_corpus/
+_vision_rip_out/
