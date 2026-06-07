@@ -198,6 +198,69 @@ def render_pdf_page(
         return None
 
 
+# ────────────────────────────────────────────────────────────────────
+# Tiling for large-format sheets (E-size CAD drawings)
+# ────────────────────────────────────────────────────────────────────
+# MEASURED: an E-size sheet (8400x6000 px @200 DPI) sent whole to the vision
+# model yields ~0 schedule rows — downscaling to the model's input makes the
+# table text unreadable. The SAME sheet tiled 3x3 yields 259 rows. So tiling
+# is mandatory for big sheets, not an optimization. Grid is auto-sized so each
+# tile is ~SOWSMITH_VISION_TILE_TARGET_PX on its long edge.
+
+
+def _tile_grid_for(png_bytes: bytes) -> int:
+    """Pick an N for an NxN tile grid so each tile is ~target px on its long
+    edge. Returns 1 (no tiling) for normal-size pages so small docs are
+    unchanged. Capped to bound cost."""
+    try:
+        target = int(os.environ.get("SOWSMITH_VISION_TILE_TARGET_PX", "1800"))
+        cap = int(os.environ.get("SOWSMITH_VISION_TILE_MAX", "6"))
+    except Exception:
+        target, cap = 1800, 6
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(png_bytes)) as im:
+            longest = max(im.size)
+    except Exception:
+        return 1
+    if longest <= int(target * 1.3):
+        return 1
+    import math
+    return max(1, min(cap, math.ceil(longest / max(target, 1))))
+
+
+def _render_tiles(png_bytes: bytes, grid_n: int, overlap: float = 0.10):
+    """Yield (label, png_bytes) for an NxN grid of overlapping crops. Overlap
+    keeps rows that straddle a tile boundary from being lost."""
+    from PIL import Image
+    with Image.open(io.BytesIO(png_bytes)) as im:
+        img = im.convert("RGB")
+        W, H = img.size
+        for i in range(grid_n):
+            for j in range(grid_n):
+                x0 = int(max(0, W * (i / grid_n - overlap)))
+                x1 = int(min(W, W * ((i + 1) / grid_n + overlap)))
+                y0 = int(max(0, H * (j / grid_n - overlap)))
+                y1 = int(min(H, H * ((j + 1) / grid_n + overlap)))
+                buf = io.BytesIO()
+                img.crop((x0, y0, x1, y1)).save(buf, format="PNG")
+                yield f"r{j}c{i}", buf.getvalue()
+
+
+def _dedup_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dedup normalized {kind,text,category} rows by lowercased text — tiles
+    overlap, so the same row can surface from adjacent crops."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        k = (r.get("text") or "").strip().lower()[:120]
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
+
+
 def get_pdf_page_text(pdf_path: str, page_num: int) -> str:
     """Return raw text of a PDF page (for hallucination text-verify)."""
     try:
@@ -755,30 +818,53 @@ def extract_visual_pages(
                 "rows": [],
             }
         prompt = _PROMPT_BY_PAGE_KIND.get(page_kind, _GENERIC_PROMPT)
-        # Step 3: specialized extraction
-        response_text = call_vision_llm(img, prompt, max_tokens=3000)
-        parsed = _parse_vision_response(response_text)
-        if not isinstance(parsed, dict):
-            parsed = {}
-        # Step 4: verify pass (only if first pass got anything)
-        has_content = any(
-            (isinstance(parsed.get(k), list) and parsed.get(k))
-            for k in ("line_items", "people", "phases", "sites", "specs", "items", "rows")
-        )
-        missed_rows: list[dict[str, Any]] = []
-        if has_content and not os.environ.get("SOWSMITH_VISION_VERIFY_DISABLE"):
-            missed_rows = _verify_pass(img, parsed, page_kind)
-        # Step 5: normalize to uniform rows + add missed_rows
-        rows = _normalize_to_rows(parsed, page_kind)
-        rows.extend(missed_rows)
+        # Step 3: specialized extraction. Large-format sheets (E-size CAD
+        # drawings) render to ~10000px; sent whole to the model the schedule
+        # text downscales below readability and recall collapses (MEASURED ~0
+        # rows). So auto-tile big pages, extract per tile, merge + dedup.
+        tile_on = os.environ.get("SOWSMITH_VISION_TILE", "1") not in ("0", "false", "")
+        grid_n = _tile_grid_for(img) if tile_on else 1
+        first_parsed: dict[str, Any] = {}
+        if grid_n <= 1:
+            # Normal-size page: single-image extract + verify pass (unchanged).
+            response_text = call_vision_llm(img, prompt, max_tokens=3000)
+            parsed = _parse_vision_response(response_text)
+            if not isinstance(parsed, dict):
+                parsed = {}
+            first_parsed = parsed
+            rows = _normalize_to_rows(parsed, page_kind)
+            has_content = any(
+                (isinstance(parsed.get(k), list) and parsed.get(k))
+                for k in ("line_items", "people", "phases", "sites", "specs", "items", "rows")
+            )
+            if has_content and not os.environ.get("SOWSMITH_VISION_VERIFY_DISABLE"):
+                rows.extend(_verify_pass(img, parsed, page_kind))
+        else:
+            # Large sheet: tile, extract per tile, merge + dedup.
+            rows = []
+            n_tiles = 0
+            for _label, tile_bytes in _render_tiles(img, grid_n):
+                n_tiles += 1
+                tile_resp = call_vision_llm(tile_bytes, prompt, max_tokens=3000)
+                tp = _parse_vision_response(tile_resp)
+                if not isinstance(tp, dict):
+                    continue
+                if not first_parsed:
+                    first_parsed = tp
+                rows.extend(_normalize_to_rows(tp, page_kind))
+            rows = _dedup_rows(rows)
+            logger.info(
+                "vision: %s page %d tiled %dx%d (%d tiles) -> %d rows",
+                Path(pdf_path).name, page_num, grid_n, grid_n, n_tiles, len(rows),
+            )
+        parsed = first_parsed
         # Step 6: hallucination guard
         if page_text:
             rows = [r for r in rows if _text_verify_row(r.get("text", ""), page_text)]
         elapsed = time.time() - t0
         logger.info(
-            "vision: %s page %d [%s] -> %d rows in %.1fs (verify-pass added %d)",
-            Path(pdf_path).name, page_num, page_kind, len(rows), elapsed,
-            len(missed_rows),
+            "vision: %s page %d [%s] grid=%dx%d -> %d rows in %.1fs",
+            Path(pdf_path).name, page_num, page_kind, grid_n, grid_n, len(rows), elapsed,
         )
         return {
             "pdf_path": pdf_path, "page_num": page_num,

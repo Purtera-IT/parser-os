@@ -40,6 +40,7 @@ Hard contracts (mirror the local ``_call_ollama`` callers' expectations):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -116,16 +117,37 @@ _PRICE_PER_M = {
 
 
 def _price_for(model: str) -> "tuple[float, float] | None":
-    """(input, output) $/1M for ``model``. Env override wins; else longest
-    matching known prefix; else ``None`` (report tokens only)."""
+    """(input, output) $/1M for ``model``. Per-endpoint aware so a split-route
+    vision model is priced correctly instead of inheriting the text teacher's
+    override:
+
+    * If ``model`` is the configured *vision* model and ``TEACHER_VISION_PRICE_IN
+      /OUT`` are set, those win.
+    * If ``model`` is the configured *text* teacher and ``TEACHER_API_PRICE_IN
+      /OUT`` are set, those win.
+    * Otherwise fall back to the longest matching known prefix in
+      ``_PRICE_PER_M`` (so e.g. ``claude-sonnet-4-6`` → $3/$15), else ``None``.
+
+    The old behavior applied ``TEACHER_API_PRICE_*`` to *every* model, which
+    mis-priced a Claude vision teacher with DeepSeek's numbers (~10x low)."""
+    m = (model or "").lower()
+    text_model = (os.environ.get("TEACHER_MODEL") or "").lower()
+    vision_model = (os.environ.get("TEACHER_VISION_MODEL") or "").lower()
     try:
-        pin = os.environ.get("TEACHER_API_PRICE_IN")
-        pout = os.environ.get("TEACHER_API_PRICE_OUT")
-        if pin is not None and pout is not None:
-            return float(pin), float(pout)
+        if vision_model and m == vision_model:
+            vin = os.environ.get("TEACHER_VISION_PRICE_IN")
+            vout = os.environ.get("TEACHER_VISION_PRICE_OUT")
+            if vin is not None and vout is not None:
+                return float(vin), float(vout)
+        # Text-teacher override applies ONLY to the text model (or when no text
+        # model is pinned, preserving the original single-endpoint behavior).
+        elif not text_model or m == text_model:
+            pin = os.environ.get("TEACHER_API_PRICE_IN")
+            pout = os.environ.get("TEACHER_API_PRICE_OUT")
+            if pin is not None and pout is not None:
+                return float(pin), float(pout)
     except Exception:
         pass
-    m = (model or "").lower()
     best: "tuple[float, float] | None" = None
     best_len = -1
     for key, price in _PRICE_PER_M.items():
@@ -188,6 +210,79 @@ def teacher_api_enabled() -> bool:
 
 def teacher_model(default: str = _DEFAULT_MODEL) -> str:
     return os.environ.get("TEACHER_MODEL") or default
+
+
+# ── vision response cache ─────────────────────────────────────────────────────
+# Optional sqlite cache for vision calls keyed by sha256(model+prompt+mime+image).
+# Vision teacher calls are the expensive ones (Claude/GPT-4o $/token >> text), and
+# dev/training re-runs hit the SAME sheets repeatedly. With ``SOWSMITH_VISION_CACHE_DB``
+# set, an identical (model, prompt, image) returns the stored reply for $0 and 0
+# latency. Default-off (unset) → no behavior change. Best-effort: any cache error
+# silently falls through to a live call.
+_VCACHE_LOCK = threading.Lock()
+_VCACHE_CONN = None
+_VCACHE_PATH = None
+
+
+def _vision_cache_conn():
+    global _VCACHE_CONN, _VCACHE_PATH
+    path = os.environ.get("SOWSMITH_VISION_CACHE_DB")
+    if not path:
+        return None
+    with _VCACHE_LOCK:
+        if _VCACHE_CONN is not None and _VCACHE_PATH == path:
+            return _VCACHE_CONN
+        try:
+            import sqlite3
+            conn = sqlite3.connect(path, check_same_thread=False)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS vision_cache "
+                "(k TEXT PRIMARY KEY, model TEXT, reply TEXT)"
+            )
+            conn.commit()
+            _VCACHE_CONN, _VCACHE_PATH = conn, path
+            return conn
+        except Exception:
+            return None
+
+
+def _vision_cache_key(model: str, prompt: str, mime: str, image_b64: str) -> str:
+    h = hashlib.sha256()
+    h.update((model or "").encode("utf-8"))
+    h.update(b"\x00")
+    h.update((prompt or "").encode("utf-8"))
+    h.update(b"\x00")
+    h.update((mime or "").encode("utf-8"))
+    h.update(b"\x00")
+    h.update((image_b64 or "").encode("utf-8"))
+    return h.hexdigest()
+
+
+def _vision_cache_get(key: str):
+    conn = _vision_cache_conn()
+    if conn is None:
+        return None
+    try:
+        with _VCACHE_LOCK:
+            row = conn.execute("SELECT reply FROM vision_cache WHERE k=?", (key,)).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _vision_cache_put(key: str, model: str, reply: str) -> None:
+    conn = _vision_cache_conn()
+    if conn is None or not reply:
+        return
+    try:
+        with _VCACHE_LOCK:
+            conn.execute(
+                "INSERT OR REPLACE INTO vision_cache (k, model, reply) VALUES (?,?,?)",
+                (key, model, reply),
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 def _max_concurrency() -> int:
@@ -270,6 +365,11 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
     if not image_b64:
         return ""
     model = model or os.environ.get("TEACHER_VISION_MODEL") or teacher_model()
+    # Cache hit on identical (model, prompt, image) → $0, no API call.
+    ck = _vision_cache_key(model, prompt, mime, image_b64)
+    cached = _vision_cache_get(ck)
+    if cached is not None:
+        return cached
     # Vision endpoint defaults to the text endpoint; override to split routes.
     base = os.environ.get("TEACHER_VISION_API_BASE") or os.environ.get("TEACHER_API_BASE", "")
     key = os.environ.get("TEACHER_VISION_API_KEY") or os.environ.get("TEACHER_API_KEY", "")
@@ -278,11 +378,13 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
         {"type": "image_url",
          "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
     ]
-    return _chat(
+    reply = _chat(
         [{"role": "user", "content": content}],
         max_tokens=max_tokens, model=model, timeout=timeout,
         base=base, key=key,
     )
+    _vision_cache_put(ck, model, reply)
+    return reply
 
 
 def _chat(messages: list, *, max_tokens: int, model: str | None,
