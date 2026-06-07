@@ -116,7 +116,16 @@ class LegendIndex:
     """The reference set parsed from ONE document's legend page(s)."""
 
     def __init__(self, embed=None):
-        self._embed = embed or crop_feature
+        if embed is None:
+            # Prefer the shipped universal symbol net (SupCon, set via
+            # SOWSMITH_SYMBOL_EMBEDDER); fall back to the deterministic feature.
+            try:
+                from app.core.schematic_embedder import default_embedder
+                de = default_embedder()
+                embed = de.embed if de is not None else crop_feature
+            except Exception:
+                embed = crop_feature
+        self._embed = embed
         self.refs: list[LegendRef] = []
 
     def add_symbol(self, meaning: str, png_bytes: bytes,
