@@ -36,3 +36,7 @@ compiled_artifacts/
 *.pt
 _schematic_corpus/
 _vision_rip_out/
+
+# RunPod detector dataset (artifacts, not code)
+runpod_detector/dataset/
+runpod_detector/objectness_box_labels.jsonl
