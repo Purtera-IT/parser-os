@@ -55,6 +55,17 @@ from app.core.schemas import (
 # ─────────────────────────── PM DASHBOARD ───────────────────────────
 
 
+
+
+def _schematic_review_safe(atoms):
+    """Never break PM_HANDOFF if the schematic review errors."""
+    try:
+        from app.core.schematic_pm_review import schematic_pm_review
+        return schematic_pm_review(atoms)
+    except Exception:
+        return {"present": False}
+
+
 def build_pm_dashboard(
     *,
     atoms: list[EvidenceAtom],
@@ -346,6 +357,7 @@ def build_pm_dashboard(
             "total": money_total,
             "atoms": money_atoms,
         },
+        "schematic_review": _schematic_review_safe(atoms),
     }
 
 
