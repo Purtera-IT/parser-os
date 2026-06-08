@@ -37,7 +37,8 @@ def main():
         mosaic=1.0, degrees=15, scale=0.5, translate=0.1, fliplr=0.0,
         patience=25, project="runs", name="symbol_detector",
     )
-    best = "runs/symbol_detector/weights/best.pt"
+    # use ultralytics' own resolved path (it nests under runs/detect/... — never hardcode)
+    best = str(model.trainer.best)
     print(f"\nbest weights -> {best}")
 
     # GENERALIZATION VERDICT: evaluate on held-out firms (never trained on)

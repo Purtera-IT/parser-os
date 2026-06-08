@@ -117,6 +117,7 @@ def main():
     print("STRONG (ship cutover)" if acc >= 0.85 else "BETTER than frozen, keep growing data"
           if acc > FROZEN_BASELINE + 0.05 else "no gain — needs more/cleaner data")
     tr_.save_model("runs/type_head_gpu/best")
+    tok.save_pretrained("runs/type_head_gpu/best")   # without this the head loads an all-UNK tokenizer
     import json; json.dump({"labels": labels}, open("runs/type_head_gpu/best/labels.json", "w"))
 
 

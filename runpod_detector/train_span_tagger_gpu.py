@@ -122,6 +122,7 @@ def main():
         print(f"  VERDICT {rel}: recall {rec:.3f} vs frozen {base:.2f} "
               f"({'SKIP UNLOCKS — LLM call dies' if rec >= SKIP_BAR else 'better, not yet skippable' if rec>base+0.05 else 'no gain'})")
         t_.save_model(f"runs/span_{rel}/best")
+        tok.save_pretrained(f"runs/span_{rel}/best")   # without this the head loads an all-UNK tokenizer
 
 
 if __name__ == "__main__":

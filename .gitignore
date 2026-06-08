@@ -40,3 +40,11 @@ _vision_rip_out/
 # RunPod detector dataset (artifacts, not code)
 runpod_detector/dataset/
 runpod_detector/objectness_box_labels.jsonl
+
+# session 2026-06-08 data artifacts (never commit)
+_rubric_gate_data*.json
+_atom_emb_cache.npz
+_gold_keep_boundary.jsonl
+_rubric_agreement.jsonl
+_type_agreement.jsonl
+runs/
