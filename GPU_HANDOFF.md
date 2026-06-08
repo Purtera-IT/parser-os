@@ -37,7 +37,8 @@ Scripts in `runpod_detector/` (in git). Data is NOT in git — fetch from blob
 git clone https://github.com/Purtera-IT/parser-os && cd parser-os
 KEY=$(az storage account keys list --account-name purpulsedevstg01 -g purtera-dev-rg --query "[0].value" -o tsv)
 az storage blob download --account-name purpulsedevstg01 --account-key "$KEY" -c ml-artifacts -n _training_deepseek.db -f _training_deepseek.db
-az storage blob download-batch --account-name purpulsedevstg01 --account-key "$KEY" -s ml-artifacts/dataset -d runpod_detector/dataset
+mkdir -p runpod_detector/dataset   # download-batch errors if the dest dir does not exist
+az storage blob download-batch --account-name purpulsedevstg01 --account-key "$KEY" -s ml-artifacts -d runpod_detector --pattern "dataset/*"
 # then on the A100:
 bash runpod_detector/run_all_gpu.sh        # trains all 3, prints per-epoch held-out + final verdicts
 ```
