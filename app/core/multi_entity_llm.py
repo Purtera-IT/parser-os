@@ -306,6 +306,20 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
         finally:
             # Do not wait on stuck threads — abandon them with the process.
             pool.shutdown(wait=False, cancel_futures=True)
+
+    # #71 AUGMENT (flag-gated, guess-free): the trained span heads scan the FULL
+    # atom set and ADD <relation> items the doc-excerpt LLM missed (the recall
+    # half — e.g. the clauses lost to a 30K-char excerpt truncation). Only ADDS
+    # verbatim-value items (requirements clause / site name), never edits the
+    # LLM's structured values, deduped. OFF by default (SOWSMITH_SPAN_AUGMENT) ->
+    # byte-identical to the LLM-only path. The per-relation SKIP (kill the LLM
+    # call) is enabled only once that relation's Norm is verified to match.
+    try:
+        from app.core.span_extractor import augment_enrich_results
+        augment_enrich_results(results, atoms)
+    except Exception:
+        pass
+
     # Stash site_clusters for entity_resolution to pick up without a
     # second LLM call. Used by collect_site_alias_groups to feed
     # canonical-name fusion alongside the regex co-mention patterns.

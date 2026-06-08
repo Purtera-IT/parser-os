@@ -267,3 +267,49 @@ class SpanExtractorSet:
                 if hit:
                     out[rel].append(a)
         return out
+
+
+# Relations whose value is verbatim-safe to synthesize from the atom text (no
+# structured parsing needed -> augmenting can't produce a wrong value).
+_VERBATIM_VALUE = {
+    "requirements": "text",
+    "site_clusters": "name",
+}
+
+
+def augment_enrich_results(results: dict, atoms: list) -> int:
+    """#71 AUGMENT (guess-free): add <relation> items the doc-excerpt LLM missed,
+    caught by the span heads scanning the FULL atom set. Pure recall gain — only
+    ADDS items (deduped by text), never edits an existing value. Restricted to
+    relations whose value is the verbatim atom text (requirements clause,
+    site name), so an added item can never carry a wrong structured value. The
+    LLM's items (authoritative structured values) are untouched. Flag-gated by
+    SOWSMITH_SPAN_AUGMENT; OFF -> no-op. Returns the number of items added."""
+    if os.environ.get("SOWSMITH_SPAN_AUGMENT", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return 0
+    try:
+        s = SpanExtractorSet(relations=tuple(_VERBATIM_VALUE))
+    except Exception:
+        return 0
+    if not s:
+        return 0
+    caught = s.extract(atoms)
+    added = 0
+    for rel, field in _VERBATIM_VALUE.items():
+        items = caught.get(rel) or []
+        if not items:
+            continue
+        existing = list(results.get(rel) or [])
+        seen = {
+            str((it.get(field) or it.get("text") or "")).strip().lower()
+            for it in existing if isinstance(it, dict)
+        }
+        for a in items:
+            t = (getattr(a, "raw_text", "") or "").strip()
+            if not t or t.lower() in seen:
+                continue
+            seen.add(t.lower())
+            existing.append({field: t, "text": t, "_via": "span_head"})
+            added += 1
+        results[rel] = existing
+    return added
