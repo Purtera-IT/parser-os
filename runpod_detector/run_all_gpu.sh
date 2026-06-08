@@ -15,6 +15,13 @@ python runpod_detector/train_type_head_gpu.py 2>&1 | tee _gpu_typehead.log
 echo "===================== 3/3  SPAN TAGGERS (#71) ============================="
 python runpod_detector/train_span_tagger_gpu.py 2>&1 | tee _gpu_span.log
 
+echo "============ EXPERIMENT  CONTRASTIVE ENCODER + kNN (Layer 1) =============="
+echo "  The architecture unlock: re-sort the SPACE so kNN works (instant-learning)."
+echo "  gate = keep-vs-typed (beat 0.82 head ceiling); facet = 7-way dashboard sections."
+pip install -U "sentence-transformers>=3.0" 2>&1 | tail -1
+LABEL_MODE=gate  python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_gate.log
+LABEL_MODE=facet python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_facet.log
+
 echo
 echo "########################  FINAL VERDICTS  ########################"
 echo "--- detector (held-out firms) ---"
@@ -23,5 +30,7 @@ echo "--- atom_type #70 (vs 0.65 frozen) ---"
 grep -E "fine-tuned held-out acc|cutover:|STRONG|BETTER|no gain" _gpu_typehead.log || echo "(see _gpu_typehead.log)"
 echo "--- span taggers #71 (vs frozen, skip bar 0.93) ---"
 grep -E "VERDICT|SKIP UNLOCKS" _gpu_span.log || echo "(see _gpu_span.log)"
+echo "--- contrastive encoder + kNN (vs 0.82 head ceiling) ---"
+grep -E "VERDICT|UNLOCK|best kNN" _gpu_contrastive_gate.log _gpu_contrastive_facet.log || echo "(see _gpu_contrastive_*.log)"
 echo "##################################################################"
 echo "Pull trained weights back:  runpodctl send runs/"
