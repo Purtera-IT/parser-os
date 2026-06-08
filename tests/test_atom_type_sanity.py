@@ -211,3 +211,28 @@ def test_apply_type_sanity_combined():
     types = [a.atom_type for a in out]
     assert types.count(AtomType.quantity) == 2  # 23 dwellings + surfaced 110
     assert AtomType.pricing_assumption in types
+
+
+def test_payment_term_demoted_from_quantity():
+    """'Net 30 days' is a credit period, not a deliverable count -> payment_term."""
+    atoms = [_atom(AtomType.quantity, "Net 30 days", entity_keys=["quantity:30"])]
+    assert demote_nondeliverable_quantities(atoms) == 1
+    assert atoms[0].atom_type == AtomType.payment_term
+    assert "retyped_quantity_to_payment_term" in atoms[0].review_flags
+    assert not any(str(k).startswith("quantity:") for k in atoms[0].entity_keys)
+
+
+def test_time_window_demoted_from_quantity():
+    """A business-hours / clock-time window is not a deliverable count."""
+    atoms = [_atom(AtomType.quantity, "8:00 AM to 5:00 PM Business Hours",
+                   entity_keys=["quantity:8"])]
+    assert demote_nondeliverable_quantities(atoms) == 1
+    assert atoms[0].atom_type in (AtomType.site_access_window,
+                                  AtomType.site_implementation_note)
+
+
+def test_deliverable_count_not_demoted_by_term_rules():
+    """The headline deliverable count survives the new term/window rules."""
+    atoms = [_atom(AtomType.quantity, "110 units", entity_keys=["quantity:110"])]
+    assert demote_nondeliverable_quantities(atoms) == 0
+    assert atoms[0].atom_type == AtomType.quantity

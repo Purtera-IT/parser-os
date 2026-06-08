@@ -118,6 +118,20 @@ def _docx_full_text(path: Path) -> str:
             for tcell in trow.cells:
                 if tcell.text:
                     parts.append(tcell.text)
+    # python-docx's .paragraphs/.tables views omit text inside content
+    # controls (w:sdt) and other body structures, so an atom whose source
+    # lives in an SDT (e.g. a SOW intro clause) is invisible to the views
+    # above and its receipt can't be verified. Harvest every raw text run
+    # (w:t) from the body XML as the ground-truth "does this text exist in
+    # the doc" corpus. Duplication is harmless for a contains-search.
+    try:
+        from docx.oxml.ns import qn
+
+        for _t in document.element.body.iter(qn("w:t")):
+            if _t.text:
+                parts.append(_t.text)
+    except Exception:
+        pass
     body = "\n".join(parts)
     _DOCX_TEXT_CACHE[key] = body
     if len(_DOCX_TEXT_CACHE) > 16:
@@ -525,11 +539,28 @@ def _verify_docx_locator(atom: EvidenceAtom, source_ref: SourceRef, path: Path) 
     cell = locator.get("cell")
 
     if isinstance(paragraph_index, int):
-        if paragraph_index < 0 or paragraph_index >= len(document.paragraphs):
-            return _receipt(atom, source_ref, "failed", f"Paragraph index {paragraph_index} out of range")
-        snippet = document.paragraphs[paragraph_index].text
-        if _snippet_matches_atom(atom, snippet):
-            return _receipt(atom, source_ref, "verified", "DOCX paragraph locator verified", snippet)
+        if 0 <= paragraph_index < len(document.paragraphs):
+            snippet = document.paragraphs[paragraph_index].text
+            if _snippet_matches_atom(atom, snippet):
+                return _receipt(atom, source_ref, "verified", "DOCX paragraph locator verified", snippet)
+        # Index out of range or text mismatch. The parser numbers paragraphs
+        # including table/SDT paragraphs that python-docx's body-only
+        # .paragraphs view omits, so the index drifts (e.g. a SOW intro in a
+        # content control indexed past len(paragraphs)). Fall back to
+        # whole-document text: the receipt verifies iff the atom's text
+        # exists ANYWHERE in the source — integrity preserved (truly-absent
+        # text still fails), false "failed" from index drift eliminated.
+        fb = _whole_document_text_fallback(
+            atom, source_ref, _docx_full_text(path),
+            label="DOCX paragraph index drift",
+        )
+        if fb is not None:
+            return fb
+        snippet = (
+            document.paragraphs[paragraph_index].text
+            if 0 <= paragraph_index < len(document.paragraphs)
+            else ""
+        )
         return _receipt(atom, source_ref, "failed", "DOCX paragraph did not match atom content", snippet)
 
     if isinstance(table_index, int) and isinstance(row, int) and isinstance(cell, int):

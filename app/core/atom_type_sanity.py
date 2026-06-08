@@ -153,29 +153,78 @@ def scrub_nondeliverable_quantity_keys(atoms: list[Any]) -> int:
     return stripped
 
 
-def demote_nondeliverable_quantities(atoms: list[Any]) -> int:
-    """Re-type financial/meta atoms mis-labelled as ``quantity``.
+# Payment / credit terms: "Net 30 days", "Net 30", "due in 45 days",
+# "30 days net". The number is a credit period, not a deliverable count.
+_PAYMENT_TERM_RE = re.compile(
+    r"\bnet\s*\d{1,3}\b|\b\d{1,3}\s*days?\s+net\b|"
+    r"\bdue\s+(?:in|within|net)\s+\d{1,3}\s*days?\b|\bpayment\s+terms?\b",
+    re.IGNORECASE,
+)
 
-    Mutates in place. Returns the number of atoms demoted.
+# Time-of-day / work-window values: "8:00 AM to 5:00 PM", "8am-5pm",
+# "business hours", "M-F 7-4". The numbers are clock times / a coverage
+# window, not a deliverable count. Universal, content-derived.
+_TIME_WINDOW_RE = re.compile(
+    r"\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm)\b|"
+    r"\bbusiness\s+hours\b|\bnormal\s+business\b|\bworking\s+hours\b|"
+    r"\b(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*[-–]\s*"
+    r"(?:mon|tue|wed|thu|fri|sat|sun)",
+    re.IGNORECASE,
+)
+
+
+def _retype_quantity(atom: Any, new_type: Any, flag: str) -> None:
+    """Re-type a mis-labelled ``quantity`` atom and stop it inflating the
+    quantity rollups (strip ``quantity:`` keys, flag for review)."""
+    from app.core.schemas import ReviewStatus
+
+    atom.atom_type = new_type
+    keys = [k for k in (getattr(atom, "entity_keys", None) or [])
+            if not str(k).startswith("quantity:")]
+    atom.entity_keys = keys
+    existing = list(getattr(atom, "review_flags", None) or [])
+    if flag not in existing:
+        atom.review_flags = sorted(set(existing + [flag]))
+    if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
+        atom.review_status = ReviewStatus.needs_review
+
+
+def demote_nondeliverable_quantities(atoms: list[Any]) -> int:
+    """Re-type financial/meta/temporal atoms mis-labelled as ``quantity``.
+
+    A ``quantity`` atom should be a count of a deliverable. Atoms that are
+    really financial figures, spreadsheet record-counts, payment terms, or
+    time-of-day windows are re-typed to their correct class and stop
+    inflating the quantity rollups. Mutates in place; returns the count.
+    A proven deliverable count ("110 units") is never demoted.
     """
-    from app.core.schemas import AtomType, ReviewStatus
+    from app.core.schemas import AtomType
+
+    # AtomType members can vary by version; resolve safely.
+    _payment = getattr(AtomType, "payment_term", None)
+    _window = getattr(AtomType, "site_access_window", None) or getattr(
+        AtomType, "site_implementation_note", None
+    )
 
     demoted = 0
     for atom in atoms:
         if _atom_type_str(atom) != "quantity":
             continue
-        verdict = _classify_quantity(_atom_text(atom))
+        text = _atom_text(atom)
+        verdict = _classify_quantity(text)
+        if verdict == "deliverable":
+            continue  # a real count — never demote
+        if _payment is not None and _PAYMENT_TERM_RE.search(text):
+            _retype_quantity(atom, _payment, "retyped_quantity_to_payment_term")
+            demoted += 1
+            continue
+        if _window is not None and _TIME_WINDOW_RE.search(text):
+            _retype_quantity(atom, _window, "retyped_quantity_to_access_window")
+            demoted += 1
+            continue
         if verdict in ("financial", "meta"):
-            atom.atom_type = AtomType.pricing_assumption
-            # Strip quantity: keys so the atom stops inflating quantity rollups.
-            keys = [k for k in (getattr(atom, "entity_keys", None) or []) if not str(k).startswith("quantity:")]
-            atom.entity_keys = keys
-            flag = "retyped_quantity_to_pricing_assumption"
-            existing = list(getattr(atom, "review_flags", None) or [])
-            if flag not in existing:
-                atom.review_flags = sorted(set(existing + [flag]))
-            if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
-                atom.review_status = ReviewStatus.needs_review
+            _retype_quantity(atom, AtomType.pricing_assumption,
+                             "retyped_quantity_to_pricing_assumption")
             demoted += 1
     return demoted
 

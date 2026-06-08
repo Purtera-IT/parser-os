@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import re
 from collections import Counter
@@ -328,6 +329,34 @@ def _maybe_wire_feedback_store() -> None:
         pass
 
 
+@functools.lru_cache(maxsize=1)
+def _parser_code_fingerprint() -> str:
+    """SHA of the parser package source, folded into the artifact cache key so
+    that ANY parser code change auto-invalidates the cache.
+
+    Root cause it fixes: ``parser_version`` is a hand-maintained constant (e.g.
+    ``"docx_parser_v1"``) that nobody bumps when the parser is improved. Since
+    the cache key includes only that string + the file sha256, a stale cached
+    parse survives parser fixes forever — e.g. the prose-gate fix that keeps
+    "Estimated quantity: 110 units" never reaches an already-parsed deal, on the
+    worker too. Keying on the actual code (not a manual constant) makes every
+    parser fix take effect on the next compile. Computed once per process."""
+    import hashlib
+
+    root = Path(__file__).resolve().parent.parent / "parsers"
+    h = hashlib.sha256()
+    try:
+        for p in sorted(root.rglob("*.py")):
+            try:
+                h.update(p.name.encode("utf-8"))
+                h.update(p.read_bytes())
+            except Exception:
+                continue
+    except Exception:
+        return "nofp"
+    return h.hexdigest()[:12]
+
+
 def compile_project(
     project_dir: Path,
     project_id: str | None = None,
@@ -424,6 +453,11 @@ def compile_project(
                 )
                 parser_name = match.parser_name
                 parser_version = parser.capability.parser_version if parser is not None else "unknown"
+                # Fold the parser code fingerprint into the cache key so any
+                # parser change busts the cache (a never-bumped manual
+                # parser_version otherwise serves stale parses forever).
+                if parser is not None:
+                    parser_version = f"{parser_version}+code{_parser_code_fingerprint()}"
                 parser_routing.append(
                     {
                         "artifact_id": artifact_id,
