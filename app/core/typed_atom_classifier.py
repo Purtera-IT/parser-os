@@ -449,6 +449,30 @@ def classify_atoms(atoms: list[Any]) -> int:
         if not promotable:
             return head_deflected
 
+    # Contrastive kNN keep-gate (Layer 2 of the cascade) — confidently-_keep atoms
+    # skip the LLM typing call and remain _keep. Guess-free + safe by direction: we
+    # only act on a confident _keep verdict (never emit a positive type here), so a
+    # wrong abstain just falls through to the LLM as before. Instant-learning store;
+    # OFF by default; cold/abstain -> byte-identical to the LLM-only path.
+    if os.environ.get("SOWSMITH_CONTRASTIVE_TYPE", "").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from app.core.contrastive_type_knn import load_promoted as _load_cknn
+
+            ck = _load_cknn()
+            if ck is not None and ck.mode in ("unified", "gate"):
+                verdicts = ck.classify_batch([_atom_decide_text(a) for a in promotable])
+                survivors = []
+                for a, res in zip(promotable, verdicts):
+                    if res is not None and res[0] == "_keep":
+                        head_deflected += 1
+                        continue
+                    survivors.append(a)
+                promotable = survivors
+        except Exception:
+            pass
+        if not promotable:
+            return head_deflected
+
     if not _ollama_reachable():
         return head_deflected
 
