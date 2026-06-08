@@ -52,10 +52,20 @@ if os.path.exists(cache_path):
         try: r = json.loads(l); seen[r["sha"]] = r["lab"]
         except: pass
 
+import requests as _rq
+_OLLAMA = os.environ.get("OLLAMA_HOST", "http://100.114.102.122:11434")
 def is_symbol(png):
     k = hashlib.sha256(png).hexdigest()[:16]
     if k in seen: return seen[k] == "SYMBOL"
-    r = (L.complete_vision(OBJ, base64.b64encode(png).decode(), max_tokens=4) or "").strip().upper()
+    # LOCAL qwen2.5vl (free) for primary objectness — never full-time API.
+    try:
+        rr = _rq.post(f"{_OLLAMA}/api/generate", json={"model":"qwen2.5vl:7b",
+            "prompt":OBJ+" Answer SYMBOL or BACKGROUND.",
+            "images":[base64.b64encode(png).decode()],"stream":False,
+            "options":{"num_predict":4}}, timeout=120)
+        r = (rr.json().get("response","") if rr.status_code==200 else "").strip().upper()
+    except Exception:
+        r = ""
     lab = "SYMBOL" if "SYMBOL" in r else "BACKGROUND"
     with open(cache_path, "a", encoding="utf-8") as f:
         f.write(json.dumps({"sha": k, "lab": lab}) + "\n")
