@@ -22,7 +22,11 @@ from app.core.shadow_eval import (
 from app.core.training_log import TEACHER_LLM, TEACHER_PM, TrainingLog, TrainingRow
 
 # Reuse the masked-text concept embedder from the student tests.
-from tests.test_extractor_student import _embed
+try:
+    from tests.test_extractor_student import _embed
+except ModuleNotFoundError:  # sibling helper module absent (prior-session test) -> skip cleanly
+    import pytest
+    pytest.skip("tests.test_extractor_student helper not present", allow_module_level=True)
 
 
 def _make_log_with_split(n_per_deal: int = 6) -> TrainingLog:
