@@ -24,6 +24,14 @@ LABEL_MODE=unified python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 
 LABEL_MODE=gate    python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_gate.log
 LABEL_MODE=facet   python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_facet.log
 
+if [ "${RUN_QWEN3_LORA:-0}" = "1" ]; then
+  echo "====== OPT-IN  UNIFIED-SPACE: qwen3-embedding LoRA (vLLM path) ============"
+  echo "  Heavier (8B LoRA, CUDA-only serving). Run to compare vs the bge build;"
+  echo "  ship whichever wins held-out kNN. See VLLM_EMBEDDING_LORA.md."
+  pip install -U "transformers>=4.51" peft bitsandbytes 2>&1 | tail -1
+  LABEL_MODE=unified python runpod_detector/train_contrastive_qwen3_lora.py 2>&1 | tee _gpu_qwen3_lora.log
+fi
+
 echo
 echo "########################  FINAL VERDICTS  ########################"
 echo "--- detector (held-out firms) ---"
