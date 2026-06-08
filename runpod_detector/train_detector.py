@@ -1,26 +1,37 @@
-"""Train the UNIVERSAL class-agnostic symbol detector on RunPod (one GPU).
+"""Train the universal symbol detector AND report the generalization verdict.
 
-YOLOv8 fine-tune: 1 class ("symbol"). Pretrained COCO weights -> fast convergence.
-After training, export best.pt -> download -> the local pipeline loads it as the
-universal symbol detector (replaces region_proposals + the pixel objectness head).
+Trains on train/val (seen firms), then evaluates on test = HELD-OUT FIRMS the
+model never saw. The held-out mAP is the exact generalization number:
+  mAP@50 >= 0.70 -> strong cross-firm generalization (universal works)
+  0.50-0.70      -> usable, add more firms / boxes
+  < 0.50         -> not generalizing yet -> more diverse data needed
 
-On RunPod:
-    pip install ultralytics
-    python train_detector.py            # ~1-3 hrs on a 4090/A100
-    # -> runs/detect/train/weights/best.pt  (download this)
+Run on RunPod (1 GPU):  pip install ultralytics && python train_detector.py
 """
 from ultralytics import YOLO
 
-if __name__ == "__main__":
-    model = YOLO("yolov8m.pt")   # bump to yolov8l/x for more capacity if needed
+def main():
+    model = YOLO("yolov8m.pt")           # yolov8l/x for more capacity
     model.train(
-        data="dataset/data.yaml",
-        epochs=120,
-        imgsz=1280,              # high res: symbols are small on E-size sheets
-        batch=8,
-        mosaic=1.0,             # heavy aug -> generalize across firms
-        degrees=15, scale=0.5, translate=0.1, fliplr=0.0,  # symbols aren't mirror-symmetric
-        patience=25,
-        project="runs", name="symbol_detector",
+        data="dataset/data.yaml", epochs=120, imgsz=1280, batch=8,
+        mosaic=1.0, degrees=15, scale=0.5, translate=0.1, fliplr=0.0,
+        patience=25, project="runs", name="symbol_detector",
     )
-    print("done -> runs/symbol_detector/weights/best.pt")
+    best = "runs/symbol_detector/weights/best.pt"
+    print(f"\nbest weights -> {best}")
+
+    # GENERALIZATION VERDICT: evaluate on held-out firms (never trained on)
+    print("\n=== GENERALIZATION TEST (held-out firms the model never saw) ===")
+    m = YOLO(best)
+    metrics = m.val(data="dataset/test.yaml", imgsz=1280, split="val")
+    mAP50 = float(metrics.box.map50)
+    mAP = float(metrics.box.map)
+    verdict = ("STRONG cross-firm generalization" if mAP50 >= 0.70 else
+               "USABLE — add firms/boxes" if mAP50 >= 0.50 else
+               "NOT generalizing yet — need more diverse data")
+    print(f"held-out mAP@50 = {mAP50:.3f} | mAP@50-95 = {mAP:.3f}")
+    print(f"VERDICT: {verdict}")
+    print("(this is the exact answer to 'does it generalize perfectly or not')")
+
+if __name__ == "__main__":
+    main()
