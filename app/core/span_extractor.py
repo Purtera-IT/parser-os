@@ -277,15 +277,19 @@ _VERBATIM_VALUE = {
 }
 
 
-def augment_enrich_results(results: dict, atoms: list) -> int:
-    """#71 AUGMENT (guess-free): add <relation> items the doc-excerpt LLM missed,
-    caught by the span heads scanning the FULL atom set. Pure recall gain — only
-    ADDS items (deduped by text), never edits an existing value. Restricted to
-    relations whose value is the verbatim atom text (requirements clause,
-    site name), so an added item can never carry a wrong structured value. The
-    LLM's items (authoritative structured values) are untouched. Flag-gated by
-    SOWSMITH_SPAN_AUGMENT; OFF -> no-op. Returns the number of items added."""
-    if os.environ.get("SOWSMITH_SPAN_AUGMENT", "").strip().lower() not in ("1", "true", "yes", "on"):
+def augment_enrich_results(results: dict, atoms: list, force: set | None = None) -> int:
+    """#71 AUGMENT / SKIP-fill (guess-free): add <relation> items the doc-excerpt
+    LLM missed, caught by the span heads scanning the FULL atom set. Pure recall
+    gain — only ADDS items (deduped by text), never edits an existing value.
+    Restricted to verbatim-value relations (requirements clause / site name) so an
+    added item can never carry a wrong structured value.
+
+    ``force`` = the SKIP-eligible relations whose LLM extractor was dropped; those
+    are ALWAYS filled from the heads (the heads are their sole source). Otherwise
+    gated by SOWSMITH_SPAN_AUGMENT. Returns the number of items added."""
+    force = force or set()
+    augment_on = os.environ.get("SOWSMITH_SPAN_AUGMENT", "").strip().lower() in ("1", "true", "yes", "on")
+    if not augment_on and not force:
         return 0
     try:
         s = SpanExtractorSet(relations=tuple(_VERBATIM_VALUE))
@@ -296,6 +300,8 @@ def augment_enrich_results(results: dict, atoms: list) -> int:
     caught = s.extract(atoms)
     added = 0
     for rel, field in _VERBATIM_VALUE.items():
+        if not augment_on and rel not in force:
+            continue   # skip-fill only the forced relations when augment is off
         items = caught.get(rel) or []
         if not items:
             continue
@@ -313,3 +319,31 @@ def augment_enrich_results(results: dict, atoms: list) -> int:
             added += 1
         results[rel] = existing
     return added
+
+
+# ── self-gating SKIP: a relation's LLM extractor is skipped ONLY when certified
+#    safe — recall >= SKIP_RECALL_BAR on held-out AND the value is verbatim (Norm
+#    is the identity, so Norm-agreement is exactly 1.0). Safe by construction: it
+#    can never lose recall (recall gate) or emit a wrong value (verbatim gate),
+#    and it auto-enables as the learning loop lifts a relation past the bar. ──
+
+SKIP_RECALL_BAR = 0.93   # near-LLM recall before we drop the LLM call
+
+
+def skip_eligible_relations() -> dict[str, float]:
+    """Relations safe to skip the LLM for: verbatim-value AND promoted recall >=
+    SKIP_RECALL_BAR. Reads the eval-gated registry metrics. Empty until a
+    relation is genuinely certified (so today this is typically a no-op)."""
+    out: dict[str, float] = {}
+    for rel in _VERBATIM_VALUE:           # only verbatim-value relations qualify
+        _, kp = _paths(rel)
+        if not os.path.exists(kp):
+            continue
+        try:
+            m = json.load(open(kp, encoding="utf-8"))
+        except Exception:
+            continue
+        r = float(m.get("recall", 0.0))
+        if r >= SKIP_RECALL_BAR:
+            out[rel] = r
+    return out

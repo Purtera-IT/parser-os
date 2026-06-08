@@ -267,6 +267,19 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # signal for so they make NO LLM calls (was: fall back to running on
     # every doc). Universal + self-determining; see _active_extractor_keys.
     ordered_keys = _active_extractor_keys(ordered_keys, by_artifact, atom_type_index)
+    # #71 self-gating SKIP: drop the LLM extractor for relations a span head is
+    # CERTIFIED to cover (recall >= bar AND verbatim value) — those are filled
+    # from heads after the pool. Safe by construction (no-op until a relation is
+    # certified). Flag-gated SOWSMITH_SPAN_SKIP.
+    _skip = set()
+    if os.environ.get("SOWSMITH_SPAN_SKIP", "").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from app.core.span_extractor import skip_eligible_relations
+            _skip = set(skip_eligible_relations())
+            if _skip:
+                ordered_keys = [k for k in ordered_keys if k not in _skip]
+        except Exception:
+            _skip = set()
     if ordered_keys:
         # Pool-level deadlock guard: a single extractor wedged on a half-open
         # socket (seen over Tailscale to a vanished host — the per-call
@@ -316,7 +329,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # call) is enabled only once that relation's Norm is verified to match.
     try:
         from app.core.span_extractor import augment_enrich_results
-        augment_enrich_results(results, atoms)
+        augment_enrich_results(results, atoms, force=_skip)
     except Exception:
         pass
 
