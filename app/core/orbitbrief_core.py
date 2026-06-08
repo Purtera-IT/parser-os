@@ -333,6 +333,29 @@ def build_pm_dashboard(
             "field_id": gq.get("field_id"),
         })
 
+    # Universal PM head-start: the standing quoting/scheduling checklist, minus
+    # topics this deal already covers. Gives the PM a strong "what to chase"
+    # list even on a thin deal. Deduped against questions already surfaced.
+    head_start: list[dict[str, Any]] = []
+    try:
+        from app.core.open_question_resolution import universal_head_start
+        _seen_q = {(q.get("text") or "").strip().lower() for q in open_qs}
+        for hs in universal_head_start(atoms):
+            t = (hs["summary"] or "").strip().lower()
+            entry = {
+                "atom_id": None, "artifact_id": None, "text": hs["summary"],
+                "review_status": "answered" if hs.get("covered") else "needs_review",
+                "kind": "headstart", "covered": bool(hs.get("covered")),
+                "category": hs.get("category"), "field_id": hs.get("field_id"),
+            }
+            head_start.append(entry)  # full checklist (covered + gaps)
+            # Only genuine gaps (uncovered) become open questions to chase.
+            if not hs.get("covered") and t not in _seen_q:
+                _seen_q.add(t)
+                open_qs.append(entry)
+    except Exception:
+        head_start = []
+
     # Milestones sorted by ISO date.
     milestones.sort(key=lambda m: (m.get("iso") or ""))
 
@@ -350,6 +373,7 @@ def build_pm_dashboard(
         "action_items_by_owner": {k: v for k, v in action_items_by_owner.items()},
         "action_items_unowned": action_items_unowned,
         "open_questions": open_qs,
+        "head_start": head_start,
         "milestones_timeline": milestones,
         "sla_summary": sla_atoms,
         "exclusions": exclusions,
