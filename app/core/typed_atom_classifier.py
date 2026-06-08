@@ -410,8 +410,47 @@ def classify_atoms(atoms: list[Any]) -> int:
             if not promotable:
                 return 0
 
+    # Grounded-Extractor #70 (partial cutover): the TRAINED, learnable type head
+    # ASSIGNS a confident specific type and skips the LLM for that atom — but
+    # only for VALUE-LIGHT types (the label is the deliverable; no rich value
+    # payload to synthesize). Value-heavy types (commercial_total, milestone,
+    # bom_line, quantity, payment_term, stakeholder, site_*) still go to the LLM.
+    # Eval-gated + learnable (app.core.type_head): precision-first (~0.92 @
+    # conf>=0.85), abstains when unsure, retrains as the log grows. OFF by
+    # default; cold/abstain -> byte-identical to the LLM-only path.
+    head_deflected = 0
+    if os.environ.get("SOWSMITH_TYPE_HEAD_DEFLECT", "").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from app.core.schemas import AtomType as _AT
+            from app.core.type_head import load_promoted_head
+
+            _VALUE_LIGHT = {
+                "requirement", "exclusion", "contract_term", "deal_metadata",
+                "acceptance_criterion", "task", "change_order_rule", "constraint",
+                "dependency", "mitigation", "compliance_rule", "submission_req",
+                "addendum_qa",
+            }
+            head = load_promoted_head()
+            if head is not None:
+                survivors = []
+                for a in promotable:
+                    res = head.classify(_atom_decide_text(a))
+                    if res is not None and res[0] in _VALUE_LIGHT:
+                        try:
+                            a.atom_type = _AT(res[0])
+                            head_deflected += 1
+                            continue
+                        except (ValueError, ImportError):
+                            pass
+                    survivors.append(a)
+                promotable = survivors
+        except Exception:
+            pass
+        if not promotable:
+            return head_deflected
+
     if not _ollama_reachable():
-        return 0
+        return head_deflected
 
     batch_size = int(os.environ.get("SOWSMITH_TYPED_CLASSIFIER_BATCH", str(DEFAULT_BATCH_SIZE)))
     parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
@@ -544,7 +583,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
 
-    return promoted
+    return promoted + head_deflected
 
 
 # v57.2 — hallucination invariants for typed_atom_classifier physical_site
