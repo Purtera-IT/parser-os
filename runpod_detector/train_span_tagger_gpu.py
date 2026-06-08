@@ -16,7 +16,8 @@ import os, sqlite3, hashlib, random
 import numpy as np
 
 DB = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
-MODEL = os.environ.get("BASE_MODEL", "microsoft/deberta-v3-small")
+# bge-small: BERT/WordPiece tokenizer (no sentencepiece gotcha), small+fast.
+MODEL = os.environ.get("BASE_MODEL", "BAAI/bge-small-en-v1.5")
 EPOCHS = int(os.environ.get("EPOCHS", "8"))
 BATCH = int(os.environ.get("BATCH", "32"))
 HOLDOUT = 0.25
@@ -111,7 +112,7 @@ def main():
             eval_strategy="epoch", save_strategy="epoch", logging_steps=50,
             learning_rate=2e-5, warmup_ratio=0.06, weight_decay=0.01,
             load_best_model_at_end=True, metric_for_best_model="recall",
-            report_to=[], fp16=torch.cuda.is_available(),
+            report_to=[], fp16=torch.cuda.is_available(), disable_tqdm=False,
         )
         t_ = Trainer(model=model, args=args, train_dataset=dtr, eval_dataset=dte,
                      compute_metrics=metrics, callbacks=[Watch()])

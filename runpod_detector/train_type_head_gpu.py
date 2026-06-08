@@ -20,7 +20,9 @@ import os, sqlite3, hashlib
 import numpy as np
 
 DB = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
-MODEL = os.environ.get("BASE_MODEL", "microsoft/deberta-v3-small")
+# bge-small uses a BERT/WordPiece tokenizer (no sentencepiece dep gotcha), is
+# small+fast on any GPU, and is a strong text encoder. Override via BASE_MODEL.
+MODEL = os.environ.get("BASE_MODEL", "BAAI/bge-small-en-v1.5")
 EPOCHS = int(os.environ.get("EPOCHS", "8"))
 BATCH = int(os.environ.get("BATCH", "32"))
 FROZEN_BASELINE = 0.65   # the CPU frozen-embedding head's held-out accuracy
@@ -77,15 +79,21 @@ def main():
                 "cutover_cov": float(sel.mean()), "cutover_prec": float(cut_prec)}
 
     class Watch(TrainerCallback):
+        best = 0.0
         def on_evaluate(self, args, state, control, metrics=None, **kw):
             m = metrics or {}
             ep = state.epoch or 0
             acc = m.get("eval_acc", 0); f1 = m.get("eval_macro_f1", 0)
             cov = m.get("eval_cutover_cov", 0); cp = m.get("eval_cutover_prec", 0)
             delta = acc - FROZEN_BASELINE
-            verdict = "LEARNING ✅" if delta > 0.02 else ("flat" if abs(delta) <= 0.02 else "below baseline")
+            up = acc > Watch.best + 1e-6
+            Watch.best = max(Watch.best, acc)
+            verdict = ("LEARNING ✅ (new best)" if up and delta > 0.02 else
+                       "LEARNING ✅" if delta > 0.02 else
+                       "flat" if abs(delta) <= 0.02 else "below baseline ⚠️ (overfit?)")
             print(f"  epoch {ep:>4.1f} | held-out acc {acc:.3f} ({delta:+.3f} vs frozen) "
-                  f"| macroF1 {f1:.3f} | cutover {cov*100:.0f}%@{cp:.3f} | {verdict}", flush=True)
+                  f"| macroF1 {f1:.3f} | cutover {cov*100:.0f}%@{cp:.3f} "
+                  f"| best {Watch.best:.3f} | {verdict}", flush=True)
 
     args = TrainingArguments(
         output_dir="runs/type_head_gpu", num_train_epochs=EPOCHS,
@@ -93,7 +101,7 @@ def main():
         eval_strategy="epoch", save_strategy="epoch", logging_steps=50,
         learning_rate=2e-5, warmup_ratio=0.06, weight_decay=0.01,
         load_best_model_at_end=True, metric_for_best_model="acc",
-        report_to=[], fp16=torch.cuda.is_available(),
+        report_to=[], fp16=torch.cuda.is_available(), disable_tqdm=False,
     )
     tr_ = Trainer(model=model, args=args, train_dataset=dtr, eval_dataset=dte,
                   compute_metrics=metrics, callbacks=[Watch()])
