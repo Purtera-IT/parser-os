@@ -16,11 +16,13 @@ echo "===================== 3/3  SPAN TAGGERS (#71) ============================
 python runpod_detector/train_span_tagger_gpu.py 2>&1 | tee _gpu_span.log
 
 echo "============ EXPERIMENT  CONTRASTIVE ENCODER + kNN (Layer 1) =============="
-echo "  The architecture unlock: re-sort the SPACE so kNN works (instant-learning)."
-echo "  gate = keep-vs-typed (beat 0.82 head ceiling); facet = 7-way dashboard sections."
+echo "  The architecture unlock: SupCon fine-tune re-sorts the SPACE so kNN reads"
+echo "  the DECISION (instant-learning, guess-free abstain). unified = production"
+echo "  target (_keep + 7 facets, one lookup); gate/facet = ablations."
 pip install -U "sentence-transformers>=3.0" 2>&1 | tail -1
-LABEL_MODE=gate  python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_gate.log
-LABEL_MODE=facet python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_facet.log
+LABEL_MODE=unified python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_unified.log
+LABEL_MODE=gate    python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_gate.log
+LABEL_MODE=facet   python runpod_detector/train_contrastive_encoder_gpu.py 2>&1 | tee _gpu_contrastive_facet.log
 
 echo
 echo "########################  FINAL VERDICTS  ########################"
@@ -31,6 +33,6 @@ grep -E "fine-tuned held-out acc|cutover:|STRONG|BETTER|no gain" _gpu_typehead.l
 echo "--- span taggers #71 (vs frozen, skip bar 0.93) ---"
 grep -E "VERDICT|SKIP UNLOCKS" _gpu_span.log || echo "(see _gpu_span.log)"
 echo "--- contrastive encoder + kNN (vs 0.82 head ceiling) ---"
-grep -E "VERDICT|UNLOCK|best kNN" _gpu_contrastive_gate.log _gpu_contrastive_facet.log || echo "(see _gpu_contrastive_*.log)"
+grep -E "best kNN|GUESS-FREE OPERATING|UNLOCK" _gpu_contrastive_unified.log _gpu_contrastive_gate.log _gpu_contrastive_facet.log || echo "(see _gpu_contrastive_*.log)"
 echo "##################################################################"
 echo "Pull trained weights back:  runpodctl send runs/"

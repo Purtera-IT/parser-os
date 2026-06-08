@@ -1,40 +1,69 @@
 """THE ARCHITECTURE UNLOCK (Layer 1): supervised-CONTRASTIVE encoder + kNN.
 
-Why this (measured this session): a classifier HEAD on the embedding caps ~0.82
-because a head pattern-matches and can't replicate the labeler's reasoning; and
-kNN on the FROZEN space caps ~0.65 because that space is sorted by general meaning
-— neighbors have mixed labels. The fix is NOT a better head; it's a better SPACE.
+This is the BEST practical build for breaking the type-decision ceiling while
+keeping instant-learning (kNN deployment) and guess-free abstain.
 
-This fine-tunes the encoder with a supervised-contrastive (batch-hard triplet)
-loss on the CLEAN rubric labels: pull same-label atoms together, push opposite
-apart. The space is then organized around the keep-vs-typed (or 7-facet) boundary,
-so **kNN over it works** — and kNN is the deployment (instant-learning: a PM
-correction is usable on the next atom, no retrain).
+Why a better SPACE, not a better head (measured this session):
+  - kNN on the FROZEN embedding caps ~0.65: the space is sorted by general
+    meaning, so a point's nearest neighbors have mixed labels.
+  - a classifier HEAD caps ~0.82: it pattern-matches, can't replicate the
+    labeler's reasoning, and FREEZES — a PM correction needs a retrain to land.
+The fix is to fine-tune the representation so the geometry encodes the DECISION;
+then plain kNN reads it, and a PM correction is just a new neighbor (usable on
+the very next atom, zero retrain).
 
-CRITICAL: we eval via **kNN** (the real deployment), NOT a linear probe — else we
-repeat the classifier-head mistake. Every epoch prints held-out-by-deal kNN
-accuracy + precision@coverage (the guess-free confident slice) vs the baselines.
+WHAT MAKES THIS THE BEST BUILD (vs a vanilla triplet fine-tune):
+  1. SupCon loss (Khosla et al.), not single-triplet. Uses ALL same-label points
+     as positives and ALL others as negatives per batch with a temperature — it
+     optimizes exactly the geometry kNN reads, and is far more stable than
+     batch-hard triplet on imbalanced classes. Biggest single quality lever.
+  2. UNIFIED 8-way space (default): _keep + the 7 dashboard facets in ONE space.
+     A single kNN lookup answers both "keep or type?" AND "which facet?" — the
+     whole type decision, one model, one store. (gate/facet modes remain as
+     diagnostic ablations to prove each cut independently.)
+  3. Value-invariance augmentation: each atom is trained as BOTH its raw_text and
+     its masked_text (delexicalized). This bakes the rubric's core principle —
+     role matters, the specific "110 TVs" value does not — into the geometry.
+  4. Gold-priority + class-balanced batches: PM-gold labels win ties over LLM
+     silver; the sampler guarantees same-label positives in every batch so SupCon
+     always has a gradient.
+  5. Deployment-honest eval: kNN (the real runtime) on a held-out-BY-DEAL split,
+     every epoch — accuracy + per-class recall + the precision@coverage curve +
+     the recommended guess-free operating point (smallest tau hitting target
+     precision = max confident coverage). Confidence blends vote-margin with
+     top-1 similarity so out-of-distribution atoms abstain to the LLM.
 
 Modes (LABEL_MODE):
-  gate   — binary keep-vs-typed (the highest-error decision). baseline to beat: 0.82.
-  facet  — 7-way over TYPED atoms (the dashboard sections). baseline: ~0.846 agreement ceiling.
+  unified — _keep + 7 facets (DEFAULT; the production target). beat 0.82.
+  gate    — binary keep-vs-typed (ablation: the highest-error cut). beat 0.82.
+  facet   — 7-way over TYPED atoms only (ablation: dashboard sections). ~0.846 ceiling.
 
-Run on RunPod:
-  pip install -U "sentence-transformers>=3.0" "datasets>=2.20" scikit-learn
+Run on RunPod (A100):
+  pip install -U "sentence-transformers>=3.0" scikit-learn
+  python train_contrastive_encoder_gpu.py                 # unified (default)
   LABEL_MODE=gate  python train_contrastive_encoder_gpu.py
   LABEL_MODE=facet python train_contrastive_encoder_gpu.py
 Inputs: _training_deepseek.db (ship next to this script).
+
+Deployment note: the worker embeds atoms with THIS fine-tuned encoder for the
+type/facet kNN — a small separate model from qwen3-embedding:8b (which stays for
+the general decide() store). Both are cheap to serve.
 """
 import os, sqlite3, hashlib, json, collections
 import numpy as np
 
 DB = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
-MODEL = os.environ.get("BASE_MODEL", "BAAI/bge-small-en-v1.5")
-EPOCHS = int(os.environ.get("EPOCHS", "10"))
-BATCH = int(os.environ.get("BATCH", "64"))
+# bge-base: strong encoder, BERT/WordPiece tokenizer (no sentencepiece gotcha),
+# cheap to serve on CPU at runtime. On an A100 you can afford bge-large via env.
+MODEL = os.environ.get("BASE_MODEL", "BAAI/bge-base-en-v1.5")
+EPOCHS = int(os.environ.get("EPOCHS", "15"))
+BATCH = int(os.environ.get("BATCH", "128"))     # SupCon loves big batches (more negatives)
 K = int(os.environ.get("KNN_K", "15"))
+TEMP = float(os.environ.get("TEMP", "0.07"))
 HOLDOUT = 0.25
-LABEL_MODE = os.environ.get("LABEL_MODE", "gate")
+LABEL_MODE = os.environ.get("LABEL_MODE", "unified")
+SIM_FLOOR = float(os.environ.get("SIM_FLOOR", "0.55"))  # OOD gate: top-1 cosine below this -> abstain
+TARGET_PREC = float(os.environ.get("TARGET_PREC", "0.95"))  # guess-free operating point
 GATE_BASELINE = 0.82      # LoRA classifier-head ceiling (what kNN must beat)
 FACET_BASELINE = 0.846    # two-model facet agreement ceiling
 
@@ -60,109 +89,205 @@ def split(deal_id):
     return "test" if (h % 100) / 100.0 < HOLDOUT else "train"
 
 
+def _map(label):
+    """raw atom_type label -> the class for this LABEL_MODE (or None to drop)."""
+    if LABEL_MODE == "gate":
+        return "_keep" if label == "_keep" else "typed"
+    if LABEL_MODE == "facet":
+        return None if label == "_keep" else FACET.get(label)
+    # unified: _keep + 7 facets
+    return "_keep" if label == "_keep" else FACET.get(label)
+
+
 def load():
+    """Returns rows: (raw_text, masked_text, class, deal_id). Gold (pm) wins ties
+    over silver (llm) for the same text."""
     con = sqlite3.connect(DB)
     rows = con.execute(
-        "SELECT COALESCE(NULLIF(masked_text,''),raw_text) AS t, label, deal_id "
-        "FROM training_rows WHERE relation='atom_type' AND COALESCE(masked_text,raw_text,'')!='' "
-        "AND label IS NOT NULL").fetchall()
+        "SELECT raw_text, COALESCE(masked_text,'') AS m, label, deal_id, "
+        "COALESCE(teacher,'') AS teacher "
+        "FROM training_rows WHERE relation='atom_type' AND label IS NOT NULL "
+        "AND COALESCE(masked_text,raw_text,'')!=''").fetchall()
     con.close()
+    by_text = {}  # text -> (class, deal, is_gold) ; gold overrides silver
     out = []
-    for t, l, d in rows:
-        if not t:
+    for raw, masked, label, deal, teacher in rows:
+        cls = _map(label)
+        if cls is None:
             continue
-        if LABEL_MODE == "gate":
-            out.append((t, "_keep" if l == "_keep" else "typed", d or ""))
-        else:  # facet: only typed atoms, mapped to a facet
-            if l == "_keep" or l not in FACET:
-                continue
-            out.append((t, FACET[l], d or ""))
-    return out
+        key = (raw or masked or "").strip()
+        if not key:
+            continue
+        gold = teacher.lower() in ("pm", "human", "gold")
+        prev = by_text.get(key)
+        if prev and prev[2] and not gold:
+            continue  # keep existing gold over new silver
+        by_text[key] = (cls, deal or "", gold)
+        out.append((raw or "", masked or "", cls, deal or ""))
+    # de-dup on (text, class) but keep gold-resolved class
+    seen = set(); final = []
+    for raw, masked, cls, deal in out:
+        key = (raw or masked).strip()
+        resolved = by_text.get(key)
+        if not resolved:
+            continue
+        cls = resolved[0]
+        sig = (key, cls)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        final.append((raw, masked, cls, deal))
+    return final
 
 
-def knn_eval(model, tr_texts, tr_y, te_texts, te_y, labels):
-    """kNN over the contrastive space = the deployment. Returns (acc, and the
-    precision/coverage curve over confidence). Confidence = winning-label vote share."""
-    import torch
-    tr_emb = model.encode(tr_texts, batch_size=256, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
-    te_emb = model.encode(te_texts, batch_size=256, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
-    sims = te_emb @ tr_emb.T                       # cosine (normalized)
-    idx = np.argpartition(-sims, K, axis=1)[:, :K]
+def knn_eval(model, store_texts, store_y, te_texts, te_y, labels):
+    """kNN over the contrastive space = the deployment. Confidence blends the
+    distance-weighted vote margin with the top-1 similarity (OOD gate)."""
+    s_emb = model.encode(store_texts, batch_size=256, convert_to_numpy=True,
+                         normalize_embeddings=True, show_progress_bar=False)
+    t_emb = model.encode(te_texts, batch_size=256, convert_to_numpy=True,
+                         normalize_embeddings=True, show_progress_bar=False)
+    sims = t_emb @ s_emb.T                       # cosine (normalized)
+    store_y = np.array(store_y)
+    idx = np.argpartition(-sims, min(K, sims.shape[1]-1), axis=1)[:, :K]
     preds, confs = [], []
-    tr_y = np.array(tr_y)
     for i in range(len(te_texts)):
         nb = idx[i]
-        w = sims[i, nb]
-        w = np.clip(w, 1e-6, None)
+        top1 = float(sims[i, nb].max())
         votes = collections.defaultdict(float)
-        for j, lab in zip(nb, tr_y[nb]):
-            votes[lab] += sims[i, j]
-        win = max(votes, key=votes.get)
-        preds.append(win)
-        confs.append(votes[win] / (sum(votes.values()) + 1e-9))
+        for j in nb:
+            votes[store_y[j]] += max(sims[i, j], 0.0)
+        ranked = sorted(votes.items(), key=lambda kv: -kv[1])
+        win = ranked[0][0]
+        total = sum(votes.values()) + 1e-9
+        share = ranked[0][1] / total
+        margin = (ranked[0][1] - (ranked[1][1] if len(ranked) > 1 else 0.0)) / total
+        # confidence: vote margin, hard-gated by OOD (top-1 too far -> abstain)
+        conf = margin if top1 >= SIM_FLOOR else 0.0
+        preds.append(win); confs.append(conf)
     preds = np.array(preds); confs = np.array(confs); te_y = np.array(te_y)
-    acc = float((preds == te_y).mean())
+    correct = (preds == te_y).astype(float)
+    acc = float(correct.mean())
+    # precision@coverage curve
     curve = {}
-    for tau in (0.6, 0.7, 0.8, 0.9, 0.95):
+    for tau in (0.0, 0.2, 0.4, 0.6, 0.8):
         sel = confs >= tau
-        curve[tau] = (float(sel.mean()), float((preds[sel] == te_y[sel]).mean()) if sel.sum() else 0.0)
-    return acc, curve
+        curve[tau] = (float(sel.mean()), float(correct[sel].mean()) if sel.sum() else 0.0)
+    # recommended guess-free operating point: smallest tau hitting TARGET_PREC
+    op = None
+    for tau in np.unique(confs):
+        sel = confs >= tau
+        if sel.sum() and correct[sel].mean() >= TARGET_PREC:
+            op = (float(tau), float(sel.mean()), float(correct[sel].mean()))
+            break
+    # per-class recall
+    rec = {}
+    for c in labels:
+        m = te_y == c
+        rec[c] = float((preds[m] == c).mean()) if m.sum() else 0.0
+    return acc, curve, op, rec
 
 
 def main():
-    from sentence_transformers import SentenceTransformer, losses, InputExample
+    import torch
+    from torch import nn
+    from sentence_transformers import SentenceTransformer, InputExample
     from sentence_transformers.datasets import SentenceLabelDataset
     from torch.utils.data import DataLoader
 
+    class SupConLoss(nn.Module):
+        """Supervised contrastive loss over L2-normalized sentence embeddings."""
+        def __init__(self, model, temperature=0.07):
+            super().__init__(); self.model = model; self.t = temperature
+        def forward(self, sentence_features, labels):
+            z = self.model(sentence_features[0])["sentence_embedding"]
+            z = torch.nn.functional.normalize(z, dim=1)
+            B = z.shape[0]
+            sim = (z @ z.T) / self.t
+            sim = sim - sim.max(dim=1, keepdim=True)[0].detach()  # stability
+            self_mask = torch.eye(B, device=z.device)
+            lab = labels.view(-1, 1)
+            pos = (lab == lab.T).float() - self_mask           # same label, not self
+            exp = torch.exp(sim) * (1 - self_mask)             # exclude self from denom
+            log_prob = sim - torch.log(exp.sum(1, keepdim=True) + 1e-12)
+            pcount = pos.sum(1)
+            mean_lp = (pos * log_prob).sum(1) / torch.clamp(pcount, min=1.0)
+            valid = (pcount > 0).float()
+            return -(mean_lp * valid).sum() / torch.clamp(valid.sum(), min=1.0)
+
     data = load()
-    labels = sorted({l for _, l, _ in data})
-    l2i = {l: i for i, l in enumerate(labels)}
-    tr = [(t, l) for t, l, d in data if split(d) == "train"]
-    te = [(t, l) for t, l, d in data if split(d) == "test"]
-    base = GATE_BASELINE if LABEL_MODE == "gate" else FACET_BASELINE
-    print(f"MODE={LABEL_MODE} | classes={labels} | train={len(tr)} held-out={len(te)} | base={MODEL}")
-    print(f"BASELINE TO BEAT (via kNN, held-out-by-deal): {base:.3f}\n")
+    labels = sorted({c for _, _, c, _ in data})
+    l2i = {c: i for i, c in enumerate(labels)}
+    base = FACET_BASELINE if LABEL_MODE == "facet" else GATE_BASELINE
+
+    # train rows -> BOTH raw and masked as separate points (value-invariance aug).
+    # store/eval use the canonical text (masked if present, else raw) once per atom.
+    train_examples, store_t, store_l, te_t, te_l = [], [], [], [], []
+    dist = collections.Counter()
+    for raw, masked, cls, deal in data:
+        canon = masked or raw
+        if split(deal) == "train":
+            dist[cls] += 1
+            for txt in {t for t in (raw, masked) if t}:
+                train_examples.append(InputExample(texts=[txt], label=l2i[cls]))
+            store_t.append(canon); store_l.append(cls)
+        else:
+            te_t.append(canon); te_l.append(cls)
+
+    print(f"MODE={LABEL_MODE} | classes={labels}")
+    print(f"train atoms={len(store_t)} (aug points={len(train_examples)}) held-out={len(te_t)} | base={MODEL}")
+    print(f"train class balance: {dict(dist)}")
+    print(f"BASELINE TO BEAT (via kNN, held-out-by-deal): {base:.3f}  | target precision {TARGET_PREC:.2f}\n")
 
     model = SentenceTransformer(MODEL)
-    train_examples = [InputExample(texts=[t], label=l2i[l]) for t, l in tr]
     ds = SentenceLabelDataset(train_examples, samples_per_label=2)
     loader = DataLoader(ds, batch_size=BATCH, drop_last=True)
-    loss = losses.BatchHardTripletLoss(model=model)
+    loss = SupConLoss(model, temperature=TEMP)
 
-    tr_t = [t for t, _ in tr]; tr_l = [l for _, l in tr]
-    te_t = [t for t, _ in te]; te_l = [l for _, l in te]
+    def report(ep_label, ep_num):
+        acc, curve, op, rec = knn_eval(model, store_t, store_l, te_t, te_l, labels)
+        delta = acc - base
+        opstr = (f"{op[1]*100:.0f}% @ {op[2]:.3f} (tau {op[0]:.2f})" if op
+                 else f"none reaches {TARGET_PREC:.2f}")
+        worst = min(rec.items(), key=lambda kv: kv[1])
+        tag = ("BEATS BASELINE" if delta > 0 else "approaching" if delta > -0.05 else "below")
+        print(f"  {ep_label} | kNN acc {acc:.3f} ({delta:+.3f} vs {base:.2f}) "
+              f"| guess-free@{TARGET_PREC:.2f}prec: {opstr} "
+              f"| worst-class recall {worst[0]}={worst[1]:.2f} | {tag}", flush=True)
+        return acc
 
     print("=== epoch 0 (frozen, before contrastive fit) ===")
-    acc0, c0 = knn_eval(model, tr_t, tr_l, te_t, te_l, labels)
-    print(f"  kNN acc {acc0:.3f} ({acc0-base:+.3f} vs baseline) | conf>=0.9: {c0[0.9][0]*100:.0f}%@{c0[0.9][1]:.3f}")
+    best = report("epoch  0", 0)
 
-    best = acc0
     for ep in range(1, EPOCHS + 1):
-        model.fit(train_objectives=[(loader, loss)], epochs=1, warmup_steps=int(0.06*len(loader)),
+        model.fit(train_objectives=[(loader, loss)], epochs=1,
+                  warmup_steps=int(0.06 * len(loader)),
                   show_progress_bar=True, optimizer_params={"lr": 2e-5})
-        acc, curve = knn_eval(model, tr_t, tr_l, te_t, te_l, labels)
-        up = acc > best + 1e-6; best = max(best, acc)
-        cov9, p9 = curve[0.9]; cov8, p8 = curve[0.8]
-        delta = acc - base
-        tag = ("BEATS BASELINE ✅ (new best)" if up and delta > 0 else
-               "BEATS BASELINE ✅" if delta > 0 else
-               "approaching" if delta > -0.05 else "below")
-        print(f"  epoch {ep:>2} | kNN acc {acc:.3f} ({delta:+.3f} vs {base:.2f}) "
-              f"| guess-free conf>=0.8: {cov8*100:.0f}%@{p8:.3f}  conf>=0.9: {cov9*100:.0f}%@{p9:.3f} "
-              f"| best {best:.3f} | {tag}", flush=True)
+        acc = report(f"epoch {ep:>2}", ep)
+        best = max(best, acc)
 
+    acc, curve, op, rec = knn_eval(model, store_t, store_l, te_t, te_l, labels)
     print(f"\n=== VERDICT (MODE={LABEL_MODE}) ===")
     print(f"best kNN held-out acc = {best:.3f}  vs classifier-head/agreement baseline {base:.3f}")
+    print(f"per-class recall: { {k: round(v,2) for k,v in rec.items()} }")
+    if op:
+        print(f"GUESS-FREE OPERATING POINT: type {op[1]*100:.0f}% of atoms confidently "
+              f"@ {op[2]:.3f} precision (tau {op[0]:.2f}); rest -> LLM fallback")
     print("UNLOCK ✅ — contrastive space beats the head; ship kNN cascade" if best > base else
-          "matches baseline — the boundary is the irreducible-ambiguity wall (route to LLM)" if best > base - 0.04 else
-          "below — needs cleaner rubric labels / more diverse pairs")
+          "matches baseline — boundary is the irreducible-ambiguity wall (LLM fallback earns its keep)"
+          if best > base - 0.04 else "below — needs cleaner rubric labels / more diverse pairs")
+
     out = f"runs/contrastive_{LABEL_MODE}/best"
     os.makedirs(out, exist_ok=True)
     model.save(out)
-    # persist the labeled store (train embeddings + labels) for runtime kNN
-    tr_emb = model.encode(tr_t, batch_size=256, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
-    np.savez_compressed(f"runs/contrastive_{LABEL_MODE}/store.npz", emb=tr_emb, y=np.array(tr_l))
-    json.dump({"labels": labels, "k": K, "mode": LABEL_MODE}, open(f"{out}/knn_meta.json", "w"))
+    s_emb = model.encode(store_t, batch_size=256, convert_to_numpy=True,
+                         normalize_embeddings=True, show_progress_bar=False)
+    np.savez_compressed(f"runs/contrastive_{LABEL_MODE}/store.npz",
+                        emb=s_emb, y=np.array(store_l), text=np.array(store_t, dtype=object))
+    json.dump({"labels": labels, "k": K, "mode": LABEL_MODE, "sim_floor": SIM_FLOOR,
+               "target_precision": TARGET_PREC,
+               "operating_tau": (op[0] if op else None), "base_model": MODEL},
+              open(f"{out}/knn_meta.json", "w"))
     print(f"saved encoder -> {out} ; kNN store -> runs/contrastive_{LABEL_MODE}/store.npz")
 
 
