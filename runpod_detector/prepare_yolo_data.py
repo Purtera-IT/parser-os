@@ -16,9 +16,19 @@ Output:
 
 Run locally (resumable):  python -X utf8 runpod_detector/prepare_yolo_data.py
 """
-import os, io, glob, json, hashlib, base64, random
+import os, io, sys, glob, json, hashlib, base64, random
+from pathlib import Path
+# Self-contained: add project root to path + load .env (no _dbg dependency).
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 os.environ.setdefault("SOWSMITH_VISION_CACHE_DB", "_vision_rip_out/vcache.db")
-import _dbg_time_deepseek  # noqa
+_envp = _ROOT / ".env"
+if _envp.exists():
+    for _ln in _envp.read_text(encoding="utf-8").splitlines():
+        _ln = _ln.strip()
+        if _ln and not _ln.startswith("#") and "=" in _ln:
+            _k, _, _v = _ln.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
 import fitz
 from PIL import Image
 from app.core import llm_client as L
