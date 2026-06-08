@@ -63,6 +63,7 @@ TEMP = float(os.environ.get("TEMP", "0.07"))
 HOLDOUT = 0.25
 LABEL_MODE = os.environ.get("LABEL_MODE", "unified")
 SIM_FLOOR = float(os.environ.get("SIM_FLOOR", "0.55"))  # OOD gate: top-1 cosine below this -> abstain
+PRIOR_ALPHA = float(os.environ.get("PRIOR_ALPHA", "0.5"))  # class-prior debias in kNN vote (0=raw,1=balanced)
 TARGET_PREC = float(os.environ.get("TARGET_PREC", "0.95"))  # guess-free operating point
 GATE_BASELINE = 0.82      # LoRA classifier-head ceiling (what kNN must beat)
 FACET_BASELINE = 0.846    # two-model facet agreement ceiling
@@ -149,6 +150,11 @@ def knn_eval(model, store_texts, store_y, te_texts, te_y, labels):
                          normalize_embeddings=True, show_progress_bar=False)
     sims = t_emb @ s_emb.T                       # cosine (normalized)
     store_y = np.array(store_y)
+    # class-prior normalization: divide each class's vote by count**alpha so a rare
+    # class (e.g. TIMING) is not auto-zeroed by majority (_keep) neighbors. alpha=0
+    # -> raw kNN; alpha=1 -> fully balanced. Tunable via PRIOR_ALPHA.
+    counts = collections.Counter(store_y.tolist())
+    prior = {c: (counts[c] ** PRIOR_ALPHA) for c in counts}
     idx = np.argpartition(-sims, min(K, sims.shape[1]-1), axis=1)[:, :K]
     preds, confs = [], []
     for i in range(len(te_texts)):
@@ -157,6 +163,7 @@ def knn_eval(model, store_texts, store_y, te_texts, te_y, labels):
         votes = collections.defaultdict(float)
         for j in nb:
             votes[store_y[j]] += max(sims[i, j], 0.0)
+        votes = {c: v / prior.get(c, 1.0) for c, v in votes.items()}
         ranked = sorted(votes.items(), key=lambda kv: -kv[1])
         win = ranked[0][0]
         total = sum(votes.values()) + 1e-9
@@ -250,10 +257,11 @@ def main():
         opstr = (f"{op[1]*100:.0f}% @ {op[2]:.3f} (tau {op[0]:.2f})" if op
                  else f"none reaches {TARGET_PREC:.2f}")
         worst = min(rec.items(), key=lambda kv: kv[1])
+        macro = sum(rec.values()) / max(len(rec), 1)
         tag = ("BEATS BASELINE" if delta > 0 else "approaching" if delta > -0.05 else "below")
-        print(f"  {ep_label} | kNN acc {acc:.3f} ({delta:+.3f} vs {base:.2f}) "
+        print(f"  {ep_label} | kNN acc {acc:.3f} ({delta:+.3f} vs {base:.2f}) | macro-rec {macro:.3f} "
               f"| guess-free@{TARGET_PREC:.2f}prec: {opstr} "
-              f"| worst-class recall {worst[0]}={worst[1]:.2f} | {tag}", flush=True)
+              f"| worst {worst[0]}={worst[1]:.2f} | {tag}", flush=True)
         return acc
 
     print("=== epoch 0 (frozen, before contrastive fit) ===")

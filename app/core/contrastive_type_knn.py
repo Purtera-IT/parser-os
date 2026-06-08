@@ -53,6 +53,7 @@ class ContrastiveTypeKNN:
     k: int = _DEFAULT_K
     sim_floor: float = _DEFAULT_SIM_FLOOR
     tau: float = _DEFAULT_TAU
+    prior_alpha: float = 0.5      # class-prior debias in vote (0=raw kNN, 1=balanced)
     mode: str = "unified"
     text: np.ndarray | None = None        # (N,) store texts (for inspection/dedup)
     embed_fn: Callable[[list[str]], np.ndarray] | None = field(default=None, repr=False)
@@ -78,6 +79,10 @@ class ContrastiveTypeKNN:
         votes: dict[str, float] = {}
         for j in nb:
             votes[self.y[j]] = votes.get(self.y[j], 0.0) + max(float(sims[j]), 0.0)
+        if self.prior_alpha:
+            import collections as _c
+            counts = _c.Counter(self.y.tolist())
+            votes = {c: v / (counts.get(c, 1) ** self.prior_alpha) for c, v in votes.items()}
         ranked = sorted(votes.items(), key=lambda kv: -kv[1])
         total = sum(votes.values()) + 1e-9
         win = ranked[0][0]
