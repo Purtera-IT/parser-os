@@ -55,6 +55,26 @@ span recall (cross 0.93 → SKIP unlocks).
   Remote Ollama http://100.114.102.122:11434 (Tailscale). Text teacher = DeepSeek
   (TEACHER_API_* — user's key).
 
+## Running from a MacBook Pro (the new setup)
+The control machine is now a MacBook Pro (macOS); GPU training runs on a RunPod
+A100. This all works from the Mac — everything is cross-platform:
+- **New Claude chat**: `git clone https://github.com/Purtera-IT/parser-os` then
+  *"read BRAIN_DUMP.md and GPU_HANDOFF.md and continue."* (Chat history does not
+  transfer between machines; these docs are the context.)
+- **Tools to install on the Mac**: `git`, Azure CLI (`brew install azure-cli`,
+  then `az login`), and `runpodctl` (https://github.com/runpod/runpodctl). That's it.
+- **GPU training needs NO Ollama / NO Tailscale.** The fine-tuners embed on the
+  RunPod GPU via `transformers`; the detector uses `ultralytics`. They only need
+  the data (pulled from Azure blob) + the scripts (in the repo). The Mac Studio
+  Ollama (`100.114.102.122`, Tailscale) is only for *local deal compiles* — not
+  for GPU training.
+- **Flow from the Mac**: `az login` → download data from blob (commands above) →
+  `runpodctl send` the bundle to the A100 → on the pod `bash runpod_detector/run_all_gpu.sh`
+  → `runpodctl send runs/` to pull trained weights back.
+- **Local compiles on the Mac (optional)**: need Tailscale to the Mac Studio
+  Ollama + your DeepSeek key in env (`TEACHER_API_BASE/KEY/MODEL`). Not needed
+  for GPU training.
+
 ## Open next steps
 1. Run the A100 session (above) → get the 3 verdicts; promoted heads slot into
    the eval-gated registry + the worker fetches them.
