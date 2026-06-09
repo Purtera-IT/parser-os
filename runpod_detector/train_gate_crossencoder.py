@@ -141,7 +141,7 @@ def main():
         eval_strategy="epoch", save_strategy="epoch", load_best_model_at_end=True,
         metric_for_best_model="acc", greater_is_better=True, save_total_limit=1,
         logging_steps=50, learning_rate=1e-5, warmup_ratio=0.06, weight_decay=0.01,
-        report_to=[], fp16=torch.cuda.is_available(),
+        report_to=[], bf16=torch.cuda.is_available(),   # bf16 (no grad scaler) avoids DeBERTa fp16-unscale crash
         gradient_checkpointing=True, disable_tqdm=False)
     t = Weighted(model=model, args=args, train_dataset=dtr, eval_dataset=dte,
                  compute_metrics=metrics, callbacks=[Watch()],
