@@ -473,6 +473,28 @@ def classify_atoms(atoms: list[Any]) -> int:
         if not promotable:
             return head_deflected
 
+    # Rubric GATE (the 0.864 bge-base keep-vs-typed classifier) — deflects
+    # confidently-_keep atoms off the LLM typing stage; they stay _keep. Guess-free
+    # + safe by direction (only acts on a confident _keep verdict). OFF by default;
+    # abstains (no-op) if torch/transformers or the model are absent.
+    if os.environ.get("SOWSMITH_RUBRIC_GATE", "").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from app.core.rubric_gate import keep_deflect_flags
+
+            flags = keep_deflect_flags([_atom_decide_text(a) for a in promotable])
+            if any(flags):
+                survivors = []
+                for a, deflect in zip(promotable, flags):
+                    if deflect:
+                        head_deflected += 1
+                        continue
+                    survivors.append(a)
+                promotable = survivors
+        except Exception:
+            pass
+        if not promotable:
+            return head_deflected
+
     if not _ollama_reachable():
         return head_deflected
 
