@@ -37,6 +37,8 @@ BATCH = int(os.environ.get("BATCH", "16"))
 MAXLEN = int(os.environ.get("MAXLEN", "256"))
 CONTEXT = os.environ.get("CONTEXT", "1") not in ("0", "false", "no")
 TARGET_PREC = float(os.environ.get("TARGET_PREC", "0.95"))
+LR = float(os.environ.get("LR", "2e-5"))        # 1e-5 was too low -> DeBERTa stayed at random
+GRAD_CKPT = os.environ.get("GRAD_CKPT", "0") in ("1", "true", "yes")  # off by default (it stalled training)
 
 
 def build_context_map():
@@ -140,9 +142,9 @@ def main():
         per_device_train_batch_size=BATCH, per_device_eval_batch_size=32,
         eval_strategy="epoch", save_strategy="epoch", load_best_model_at_end=True,
         metric_for_best_model="acc", greater_is_better=True, save_total_limit=1,
-        logging_steps=50, learning_rate=1e-5, warmup_ratio=0.06, weight_decay=0.01,
+        logging_steps=50, learning_rate=LR, warmup_ratio=0.06, weight_decay=0.01,
         report_to=[], bf16=torch.cuda.is_available(),   # bf16 (no grad scaler) avoids DeBERTa fp16-unscale crash
-        gradient_checkpointing=True, disable_tqdm=False)
+        gradient_checkpointing=GRAD_CKPT, disable_tqdm=False)
     t = Weighted(model=model, args=args, train_dataset=dtr, eval_dataset=dte,
                  compute_metrics=metrics, callbacks=[Watch()],
                  preprocess_logits_for_metrics=lambda logits, labels: logits.float())
@@ -154,9 +156,16 @@ def main():
     print(f"  precision {f.get('eval_prec',0):.3f} | recall {f.get('eval_rec',0):.3f}")
     print(f"  GUESS-FREE: {f.get('eval_op_cov',0)*100:.0f}% of atoms confidently typed @ "
           f"{f.get('eval_op_prec',0):.3f} precision (tau {f.get('eval_op_tau',1):.2f}); rest -> LLM")
-    print("VERDICT:", "BREAKS PAST bge-base ✅ ship the cross-encoder gate" if acc >= 0.86 else
-          f"{acc:.3f} — context+DeBERTa helped" if acc > 0.835 else
-          "no gain over bge-base — 0.83 is the real held-out-by-deal ceiling")
+    rec = f.get("eval_rec", 0); prec = f.get("eval_prec", 0)
+    collapsed = rec >= 0.999 or rec <= 0.001 or acc <= 0.55  # predicted one class / never learned
+    if collapsed:
+        print("VERDICT: ⚠️ TRAINING COLLAPSED — the model never learned (predicted one class, loss"
+              " stayed at random). This is NOT a ceiling. Fix: raise LR (LR=3e-5), keep GRAD_CKPT=0,"
+              " or use BASE_MODEL=microsoft/deberta-v3-base. Re-run before drawing any conclusion.")
+    else:
+        print("VERDICT:", "BREAKS PAST bge-base ✅ ship the cross-encoder gate" if acc >= 0.86 else
+              f"{acc:.3f} — context+DeBERTa helped" if acc > 0.835 else
+              "trained fine but no gain over bge-base — 0.83 looks like the real held-out-by-deal ceiling")
     os.makedirs("runs/gate_crossenc/best", exist_ok=True)
     t.save_model("runs/gate_crossenc/best"); tok.save_pretrained("runs/gate_crossenc/best")
 
