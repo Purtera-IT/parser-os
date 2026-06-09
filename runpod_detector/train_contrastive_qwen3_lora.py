@@ -31,7 +31,7 @@ import numpy as np
 DB = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-Embedding-8B")
 EPOCHS = int(os.environ.get("EPOCHS", "6"))
-BATCH = int(os.environ.get("BATCH", "64"))
+BATCH = int(os.environ.get("BATCH", "16"))   # 8B backprop is activation-heavy; raise only if VRAM allows
 MAXLEN = int(os.environ.get("MAXLEN", "128"))
 K = int(os.environ.get("KNN_K", "15"))
 TEMP = float(os.environ.get("TEMP", "0.07"))
@@ -184,6 +184,10 @@ def main():
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                                       "gate_proj", "up_proj", "down_proj"])
     model = get_peft_model(model, lora)
+    model.config.use_cache = False
+    model.gradient_checkpointing_enable()      # trade compute for VRAM (fixes the 8B OOM)
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()     # needed for grad-checkpointing + LoRA
     model.to(device); model.print_trainable_parameters()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=LR)
 
