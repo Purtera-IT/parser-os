@@ -192,7 +192,20 @@ def knn_eval(model, store_texts, store_y, te_texts, te_y, labels):
     for c in labels:
         m = te_y == c
         rec[c] = float((preds[m] == c).mean()) if m.sum() else 0.0
-    return acc, curve, op, rec
+    # per-class guess-free operating point: among atoms PREDICTED c, the smallest
+    # tau whose precision >= TARGET_PREC, and how much of class c that retains.
+    class_op = {}
+    for c in labels:
+        pc = preds == c
+        if not pc.sum():
+            class_op[c] = None; continue
+        best = None
+        for tau in np.unique(confs[pc]):
+            sel = pc & (confs >= tau)
+            if sel.sum() and correct[sel].mean() >= TARGET_PREC:
+                best = (float(tau), int(sel.sum()), float(correct[sel].mean())); break
+        class_op[c] = best
+    return acc, curve, op, rec, class_op
 
 
 def main():
@@ -252,7 +265,7 @@ def main():
     loss = SupConLoss(model, temperature=TEMP)
 
     def report(ep_label, ep_num):
-        acc, curve, op, rec = knn_eval(model, store_t, store_l, te_t, te_l, labels)
+        acc, curve, op, rec, _cop = knn_eval(model, store_t, store_l, te_t, te_l, labels)
         delta = acc - base
         opstr = (f"{op[1]*100:.0f}% @ {op[2]:.3f} (tau {op[0]:.2f})" if op
                  else f"none reaches {TARGET_PREC:.2f}")
@@ -274,13 +287,19 @@ def main():
         acc = report(f"epoch {ep:>2}", ep)
         best = max(best, acc)
 
-    acc, curve, op, rec = knn_eval(model, store_t, store_l, te_t, te_l, labels)
+    acc, curve, op, rec, class_op = knn_eval(model, store_t, store_l, te_t, te_l, labels)
     print(f"\n=== VERDICT (MODE={LABEL_MODE}) ===")
     print(f"best kNN held-out acc = {best:.3f}  vs classifier-head/agreement baseline {base:.3f}")
     print(f"per-class recall: { {k: round(v,2) for k,v in rec.items()} }")
     if op:
-        print(f"GUESS-FREE OPERATING POINT: type {op[1]*100:.0f}% of atoms confidently "
+        print(f"GUESS-FREE OPERATING POINT (global): type {op[1]*100:.0f}% of atoms confidently "
               f"@ {op[2]:.3f} precision (tau {op[0]:.2f}); rest -> LLM fallback")
+    # per-class guess-free slice: which classes have a confident, deflectable subset
+    print("per-class confident slice @ %.2f precision:" % TARGET_PREC)
+    for c in labels:
+        co = class_op.get(c)
+        print(f"  {c:<12} " + (f"{co[1]} atoms deflectable (tau {co[0]:.2f}, prec {co[2]:.3f})"
+                               if co else "no confident slice -> always LLM"))
     print("UNLOCK ✅ — contrastive space beats the head; ship kNN cascade" if best > base else
           "matches baseline — boundary is the irreducible-ambiguity wall (LLM fallback earns its keep)"
           if best > base - 0.04 else "below — needs cleaner rubric labels / more diverse pairs")
