@@ -291,31 +291,45 @@ def augment_enrich_results(results: dict, atoms: list, force: set | None = None)
     augment_on = os.environ.get("SOWSMITH_SPAN_AUGMENT", "").strip().lower() in ("1", "true", "yes", "on")
     if not augment_on and not force:
         return 0
+    need = [r for r in _VERBATIM_VALUE if augment_on or r in force]
+    if not need:
+        return 0
+
+    # GPU taggers (stronger, recall-certified) are preferred per relation when
+    # present; otherwise fall back to the CPU span head set.
     try:
-        s = SpanExtractorSet(relations=tuple(_VERBATIM_VALUE))
+        from app.core import span_tagger_gpu as _gpu
     except Exception:
-        return 0
-    if not s:
-        return 0
-    caught = s.extract(atoms)
+        _gpu = None
+    cpu_caught = None   # built lazily, only for relations without a GPU tagger
+
     added = 0
-    for rel, field in _VERBATIM_VALUE.items():
-        if not augment_on and rel not in force:
-            continue   # skip-fill only the forced relations when augment is off
-        items = caught.get(rel) or []
-        if not items:
+    for rel in need:
+        field = _VERBATIM_VALUE[rel]
+        if _gpu is not None and _gpu.has(rel):
+            texts = _gpu.gpu_admit(atoms, rel)
+            via = "span_gpu"
+        else:
+            if cpu_caught is None:
+                try:
+                    cpu_caught = SpanExtractorSet(relations=tuple(_VERBATIM_VALUE)).extract(atoms)
+                except Exception:
+                    cpu_caught = {}
+            texts = [(getattr(a, "raw_text", "") or "").strip() for a in (cpu_caught.get(rel) or [])]
+            via = "span_head"
+        if not texts:
             continue
         existing = list(results.get(rel) or [])
         seen = {
             str((it.get(field) or it.get("text") or "")).strip().lower()
             for it in existing if isinstance(it, dict)
         }
-        for a in items:
-            t = (getattr(a, "raw_text", "") or "").strip()
+        for t in texts:
+            t = (t or "").strip()
             if not t or t.lower() in seen:
                 continue
             seen.add(t.lower())
-            existing.append({field: t, "text": t, "_via": "span_head"})
+            existing.append({field: t, "text": t, "_via": via})
             added += 1
         results[rel] = existing
     return added
@@ -346,4 +360,12 @@ def skip_eligible_relations() -> dict[str, float]:
         r = float(m.get("recall", 0.0))
         if r >= SKIP_RECALL_BAR:
             out[rel] = r
+    # GPU taggers (#71 deploy): merge in any relation the fine-tuned head certifies
+    # skippable (recall >= bar). Off unless SOWSMITH_SPAN_GPU + models present.
+    try:
+        from app.core import span_tagger_gpu
+        for rel, r in span_tagger_gpu.gpu_skip_relations().items():
+            out[rel] = max(out.get(rel, 0.0), r)
+    except Exception:
+        pass
     return out

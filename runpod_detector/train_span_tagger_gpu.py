@@ -123,6 +123,17 @@ def main():
               f"({'SKIP UNLOCKS — LLM call dies' if rec >= SKIP_BAR else 'better, not yet skippable' if rec>base+0.05 else 'no gain'})")
         t_.save_model(f"runs/span_{rel}/best")
         tok.save_pretrained(f"runs/span_{rel}/best")   # without this the head loads an all-UNK tokenizer
+        # span_meta.json: the runtime needs the held-out recall (skip-eligibility)
+        # AND the recall-tuned decision threshold (admission). Without this the
+        # runtime loader abstains.
+        import json as _json
+        _json.dump({"relation": rel,
+                    "recall": float(f.get("eval_recall", 0.0)),
+                    "precision": float(f.get("eval_precision", 0.0)),
+                    "threshold": float(f.get("eval_thr", 0.5)),
+                    "skippable": bool(f.get("eval_recall", 0.0) >= SKIP_BAR),
+                    "verbatim": rel in ("requirements", "site_clusters")},
+                   open(f"runs/span_{rel}/best/span_meta.json", "w"))
 
 
 if __name__ == "__main__":
