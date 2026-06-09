@@ -76,6 +76,29 @@ A100. This all works from the Mac — everything is cross-platform:
   Ollama + your DeepSeek key in env (`TEACHER_API_BASE/KEY/MODEL`). Not needed
   for GPU training.
 
+## DEPLOYED — B (typing gate) + C (span taggers), wired behind flags
+The clean-label breakthrough shipped end to end:
+- **B — rubric gate** (`app/core/rubric_gate.py`): bge-base keep-vs-typed, held-out
+  **0.864**, recall 0.96. Deflects confident `_keep` off the ~98s LLM typing stage.
+  Model in blob `gate_rubric_best.tgz`. Flag `SOWSMITH_RUBRIC_GATE`.
+- **C — GPU span taggers** (`app/core/span_tagger_gpu.py`): requirements **0.947**,
+  site_clusters **1.0** (both > 0.93 skip bar) → those enrich LLM calls die;
+  commercial 0.875 stays on the LLM. Routed through the existing #71 skip/augment
+  seam. Model in blob `span_heads_gpu.tgz`. Flag `SOWSMITH_SPAN_GPU`.
+- Both are **guess-free + safe-abstain**: no torch/model -> no-op = byte-identical
+  to the LLM-only path. The worker `fetch_ml.py` unpacks both tarballs on startup.
+
+### To ACTIVATE on the worker (two requirements)
+1. **C needs a re-run**: the uploaded `span_heads_gpu.tgz` predates the
+   `span_meta.json` save, so the loader abstains until you re-run
+   `train_span_tagger_gpu.py` (now saves recall+threshold) and re-upload.
+2. **Worker deps + env**: add `torch`+`transformers` to the image, then set
+   `SOWSMITH_RUBRIC_GATE=1 SOWSMITH_RUBRIC_GATE_DIR=/tmp/ml/_gate_rubric/best`,
+   `SOWSMITH_SPAN_GPU=1 SOWSMITH_SPAN_GPU_DIR=/tmp/ml/_span_gpu/runs`,
+   `SOWSMITH_SPAN_SKIP=1 SOWSMITH_SPAN_AUGMENT=1`.
+The bge models are tiny (CPU inference fine). The lever to lift any ceiling further
+is MORE DEALS (diversity), not bigger models — proven this session.
+
 ## Open next steps
 1. Run the A100 session (above) → get the 3 verdicts; promoted heads slot into
    the eval-gated registry + the worker fetches them.
