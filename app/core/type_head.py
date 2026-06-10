@@ -66,10 +66,15 @@ class TrainedTypeHead:
         abstain (caller falls back to the LLM). Guess-free: abstains on low
         confidence or a ``_keep`` prediction."""
         if self.embed_fn is None:
+            import sys
+            print('{"event":"type_head_abstain","reason":"embed_fn_none"}', file=sys.stderr)
             return None
         try:
             vec = np.asarray(self.embed_fn([text]), dtype=np.float32)
-        except Exception:
+        except Exception as e:
+            import sys
+            print('{"event":"type_head_abstain","reason":"embed_exception","err":"%s"}'
+                  % type(e).__name__, file=sys.stderr)
             return None
         proba = self.model.predict_proba(vec)[0]
         i = int(np.argmax(proba))

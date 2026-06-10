@@ -40,9 +40,27 @@ def norm(t):
     return re.sub(r"\s+", " ", (t or "").strip().lower())
 
 
+try:
+    from _split_util import load_split_map, split_of
+except ImportError:
+    from runpod_detector._split_util import load_split_map, split_of
+
+_SPLIT_MAP = None
+
+
 def split(deal_id):
-    h = int(hashlib.sha256((deal_id or "").encode()).hexdigest(), 16)
-    return "test" if (h % 100) / 100.0 < HOLDOUT else "train"
+    """Canonical split (recorded column, holdout-wins, hash fallback). CRITICAL
+    here: this script DELETES rows where split=='train'. The old hash mislabeled
+    3,773 recorded-HOLDOUT rows as 'train', so cleaning silently deleted ~99% of
+    the recorded holdout (3,773 of 3,796) while printing 'held-out UNTOUCHED'."""
+    global _SPLIT_MAP
+    if _SPLIT_MAP is None:
+        _c = sqlite3.connect(DB)
+        try:
+            _SPLIT_MAP = load_split_map(_c)
+        finally:
+            _c.close()
+    return "test" if split_of(deal_id, _SPLIT_MAP, HOLDOUT) == "holdout" else "train"
 
 
 def embed_batch(texts):
