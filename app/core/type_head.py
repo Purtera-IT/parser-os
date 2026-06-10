@@ -30,12 +30,42 @@ from typing import Any, Callable
 import numpy as np
 
 _DEFAULT_THRESHOLD = 0.85          # confident-typed deflection bar (precision-first)
-_MIN_PRECISION = 0.85              # promotion floor on held-out typed predictions
+_MIN_PRECISION = 0.95             # promotion floor on held-out typed predictions
+                                  # (raised 0.85 -> 0.95 to match the product bar;
+                                  #  per-class conformal thresholds are the proper fix)
 _HOLDOUT = 0.25
 _KEEP = "_keep"
+_SPLIT_MAP: dict[str, str] | None = None
 
 
 def _split(deal_id: str) -> str:
+    """Canonical split: prefer the recorded `split` column in the training log
+    (holdout-wins), hash only as fallback. Replaces the sha256-only split that
+    disagreed with the recorded column by 17.9-97.2% and leaked holdout into train.
+    Inlined (no runpod_detector import from the worker package)."""
+    global _SPLIT_MAP
+    if _SPLIT_MAP is None:
+        _SPLIT_MAP = {}
+        try:
+            import sqlite3
+            db = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "")
+            if db:
+                con = sqlite3.connect(db)
+                for d, s in con.execute(
+                    "SELECT deal_id, split FROM training_rows "
+                    "WHERE split IS NOT NULL AND split != ''"
+                ):
+                    if not d:
+                        continue
+                    norm = "holdout" if s in ("test", "holdout") else "train"
+                    if _SPLIT_MAP.get(d) != "holdout":  # holdout-wins
+                        _SPLIT_MAP[d] = norm
+                con.close()
+        except Exception:
+            _SPLIT_MAP = {}
+    rec = _SPLIT_MAP.get(deal_id)
+    if rec:
+        return rec
     import hashlib
     h = int(hashlib.sha256((deal_id or "").encode()).hexdigest(), 16)
     return "holdout" if (h % 100) / 100.0 < _HOLDOUT else "train"
