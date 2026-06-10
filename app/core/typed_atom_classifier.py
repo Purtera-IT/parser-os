@@ -358,9 +358,14 @@ def classify_atoms(atoms: list[Any]) -> int:
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
     _dfl = {"store": 0, "student": 0, "type_head": 0,
             "contrastive": 0, "rubric_gate": 0}
+    _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0,
+               "contrastive": 0.0, "rubric_gate": 0.0, "post": 0.0}
     _dfl_input = len(promotable)
     _t_start = time.perf_counter()
     _t_llm = 0.0
+
+    def _lap():
+        return time.perf_counter()
 
     def _emit_deflect(*, llm_batch: int, promoted: int, reached_llm: bool) -> None:
         try:
@@ -375,6 +380,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                 "reached_llm": reached_llm,
                 "total_ms": round((time.perf_counter() - _t_start) * 1000, 1),
                 "llm_ms": round(_t_llm * 1000, 1),
+                "layer_ms": {k: round(v * 1000, 1) for k, v in _dfl_ms.items()},
             }, ensure_ascii=True), file=sys.stderr)
         except Exception:
             pass
@@ -389,6 +395,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # it's PM-correctable. OFF by default — production is byte-identical.
     deflect = _atom_type_deflect_enabled()
     if deflect:
+        _t = _lap()
         try:
             from app.core.decide import decide
             kept_by_store = 0
@@ -410,7 +417,9 @@ def classify_atoms(atoms: list[Any]) -> int:
             promotable = survivors
         except Exception:
             pass
+        _dfl_ms["store"] += _lap() - _t
         if not promotable:
+            _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
             return 0
 
     # Grounded-Extractor #70: STUDENT deflection — the trained head fronts the
@@ -424,6 +433,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # replacing; every confident keep here is one fewer atom in the 98s stage.
     student_deflected = 0
     if _typed_student_enabled():
+        _t = _lap()
         student = _get_typed_student()
         if student is not None:
             try:
@@ -441,8 +451,10 @@ def classify_atoms(atoms: list[Any]) -> int:
                 promotable = survivors
             except Exception:
                 pass
-            if not promotable:
-                return 0
+        _dfl_ms["student"] += _lap() - _t
+        if not promotable:
+            _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
+            return 0
 
     # Grounded-Extractor #70 (partial cutover): the TRAINED, learnable type head
     # ASSIGNS a confident specific type and skips the LLM for that atom — but
@@ -454,6 +466,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # default; cold/abstain -> byte-identical to the LLM-only path.
     head_deflected = 0
     if os.environ.get("SOWSMITH_TYPE_HEAD_DEFLECT", "").strip().lower() in ("1", "true", "yes", "on"):
+        _t = _lap()
         try:
             from app.core.schemas import AtomType as _AT
             from app.core.type_head import load_promoted_head
@@ -481,7 +494,9 @@ def classify_atoms(atoms: list[Any]) -> int:
                 promotable = survivors
         except Exception:
             pass
+        _dfl_ms["type_head"] += _lap() - _t
         if not promotable:
+            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
 
     # Contrastive kNN keep-gate (Layer 2 of the cascade) — confidently-_keep atoms
@@ -490,6 +505,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # wrong abstain just falls through to the LLM as before. Instant-learning store;
     # OFF by default; cold/abstain -> byte-identical to the LLM-only path.
     if os.environ.get("SOWSMITH_CONTRASTIVE_TYPE", "").strip().lower() in ("1", "true", "yes", "on"):
+        _t = _lap()
         try:
             from app.core.contrastive_type_knn import load_promoted as _load_cknn
 
@@ -506,7 +522,9 @@ def classify_atoms(atoms: list[Any]) -> int:
                 promotable = survivors
         except Exception:
             pass
+        _dfl_ms["contrastive"] += _lap() - _t
         if not promotable:
+            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
 
     # Rubric GATE (the 0.864 bge-base keep-vs-typed classifier) — deflects
@@ -514,6 +532,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # + safe by direction (only acts on a confident _keep verdict). OFF by default;
     # abstains (no-op) if torch/transformers or the model are absent.
     if os.environ.get("SOWSMITH_RUBRIC_GATE", "").strip().lower() in ("1", "true", "yes", "on"):
+        _t = _lap()
         try:
             from app.core.rubric_gate import keep_deflect_flags
 
@@ -529,7 +548,9 @@ def classify_atoms(atoms: list[Any]) -> int:
                 promotable = survivors
         except Exception:
             pass
+        _dfl_ms["rubric_gate"] += _lap() - _t
         if not promotable:
+            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
 
     if not _ollama_reachable():
@@ -553,6 +574,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                 results_by_atom_id[atom_id] = payload
     _t_llm = time.perf_counter() - _t_llm0
     _llm_batch_size = len(promotable)
+    _t_post = _lap()
 
     promoted = 0
     # upgrade #3: APPLIED outcome per atom (the verdict actually enacted, after
@@ -670,6 +692,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
 
+    _dfl_ms["post"] += _lap() - _t_post
     _emit_deflect(llm_batch=_llm_batch_size, promoted=promoted, reached_llm=True)
     return promoted + head_deflected
 
