@@ -68,27 +68,13 @@ TARGET_PREC = float(os.environ.get("TARGET_PREC", "0.95"))  # guess-free operati
 GATE_BASELINE = 0.82      # LoRA classifier-head ceiling (what kNN must beat)
 FACET_BASELINE = 0.846    # two-model facet agreement ceiling
 
-# 41 micro-types -> 7 dashboard facets (from RUBRIC.md).
-FACET = {}
-for fac, types in {
-    "SITE": "physical_site site_attribute site_access_restriction site_room_mix site_infrastructure",
-    "COMMERCIAL": "service_line bom_line payment_term commercial_total pricing_assumption site_budget",
-    "WORK": "requirement task deliverable acceptance_criterion milestone_phase cutover_step "
-            "electrical_acceptance_test site_implementation_note site_access_window exclusion integration_checkpoint",
-    "COMPLIANCE": "compliance_rule compliance_classification approval_authority submission_req "
-                  "change_order_rule bonding_insurance",
-    "TIMING": "blackout_date_range lead_time_constraint deadline dependency",
-    "META": "deal_metadata eval_criterion approval_decision signatory",
-    "PARTY": "stakeholder",
-}.items():
-    for t in types.split():
-        FACET[t] = fac
-
-
+# micro -> facet: import the CANONICAL map (no local stale copy — boss audit #8).
 try:
     from _split_util import load_split_map, split_of
+    from taxonomy import to_facet as _to_facet
 except ImportError:  # when run as a module
     from runpod_detector._split_util import load_split_map, split_of
+    from runpod_detector.taxonomy import to_facet as _to_facet
 
 _SPLIT_MAP = None
 
@@ -109,35 +95,51 @@ def split(deal_id):
 
 
 def _map(label):
-    """raw atom_type label -> the class for this LABEL_MODE (or None to drop)."""
+    """raw teacher MICRO label -> the class for this LABEL_MODE (or None to drop).
+    Canonical map; unmapped -> None (surfaced via taxonomy audit, not silent)."""
+    fac = "_keep" if label == "_keep" else _to_facet(label)
+    if fac == "REVIEW":
+        return None
     if LABEL_MODE == "gate":
         return "_keep" if label == "_keep" else "typed"
     if LABEL_MODE == "facet":
-        return None if label == "_keep" else FACET.get(label)
-    # unified: _keep + 7 facets
-    return "_keep" if label == "_keep" else FACET.get(label)
+        return None if fac == "_keep" else fac
+    return fac  # unified: _keep + 7 facets
+
+
+def _facet_to_class(fc):
+    """A rubric-cleaned facet_clean value (FACET / _keep / AMBIGUOUS) -> class.
+    AMBIGUOUS is a REAL class in facet/unified modes (trains abstention)."""
+    if LABEL_MODE == "gate":
+        return None if fc == "AMBIGUOUS" else ("_keep" if fc == "_keep" else "typed")
+    if LABEL_MODE == "facet":
+        return None if fc == "_keep" else fc
+    return fc  # unified
 
 
 def load():
     """Returns rows: (raw_text, masked_text, class, deal_id). Gold (pm) wins ties
     over silver (llm) for the same text."""
     con = sqlite3.connect(DB)
+    has_fc = any(r[1] == "facet_clean" for r in con.execute("PRAGMA table_info(training_rows)"))
+    fc_sel = "COALESCE(facet_clean,'')" if has_fc else "''"
     rows = con.execute(
         "SELECT raw_text, COALESCE(masked_text,'') AS m, label, deal_id, "
-        "COALESCE(teacher,'') AS teacher "
+        f"COALESCE(teacher,'') AS teacher, {fc_sel} AS fc "
         "FROM training_rows WHERE relation='atom_type' AND label IS NOT NULL "
         "AND COALESCE(masked_text,raw_text,'')!=''").fetchall()
     con.close()
-    by_text = {}  # text -> (class, deal, is_gold) ; gold overrides silver
+    by_text = {}  # text -> (class, deal, is_gold) ; gold/clean overrides raw silver
     out = []
-    for raw, masked, label, deal, teacher in rows:
-        cls = _map(label)
+    for raw, masked, label, deal, teacher, fc in rows:
+        # Prefer the rubric-cleaned facet (facet_clean) over the raw teacher label.
+        cls = _facet_to_class(fc) if fc else _map(label)
         if cls is None:
             continue
         key = (raw or masked or "").strip()
         if not key:
             continue
-        gold = teacher.lower() in ("pm", "human", "gold")
+        gold = teacher.lower() in ("pm", "human", "gold") or bool(fc)
         prev = by_text.get(key)
         if prev and prev[2] and not gold:
             continue  # keep existing gold over new silver
@@ -295,16 +297,24 @@ def main():
               f"| worst {worst[0]}={worst[1]:.2f} | {tag}", flush=True)
         return acc
 
+    out = f"runs/contrastive_{LABEL_MODE}/best"
+    os.makedirs(out, exist_ok=True)
+
     print("=== epoch 0 (frozen, before contrastive fit) ===")
     best = report("epoch  0", 0)
+    model.save(out)  # checkpoint the BEST model, not the last (boss audit #4)
 
     for ep in range(1, EPOCHS + 1):
         model.fit(train_objectives=[(loader, loss)], epochs=1,
                   warmup_steps=int(0.06 * len(loader)),
                   show_progress_bar=True, optimizer_params={"lr": 2e-5})
         acc = report(f"epoch {ep:>2}", ep)
-        best = max(best, acc)
+        if acc > best:
+            best = acc
+            model.save(out)  # new best -> persist this checkpoint
 
+    # reload the BEST checkpoint so VERDICT + store.npz reflect the saved artifact
+    model = SentenceTransformer(out)
     acc, curve, op, rec, class_op = knn_eval(model, store_t, store_l, te_t, te_l, labels)
     print(f"\n=== VERDICT (MODE={LABEL_MODE}) ===")
     print(f"best kNN held-out acc = {best:.3f}  vs classifier-head/agreement baseline {base:.3f}")
@@ -322,9 +332,7 @@ def main():
           "matches baseline — boundary is the irreducible-ambiguity wall (LLM fallback earns its keep)"
           if best > base - 0.04 else "below — needs cleaner rubric labels / more diverse pairs")
 
-    out = f"runs/contrastive_{LABEL_MODE}/best"
-    os.makedirs(out, exist_ok=True)
-    model.save(out)
+    # (model already saved as the best checkpoint above; just write the kNN store)
     s_emb = model.encode(store_t, batch_size=256, convert_to_numpy=True,
                          normalize_embeddings=True, show_progress_bar=False)
     np.savez_compressed(f"runs/contrastive_{LABEL_MODE}/store.npz",
