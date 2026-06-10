@@ -97,6 +97,10 @@ class ContrastiveTypeKNN:
         if qs is None:
             return None
         label, conf = self._vote(qs[0])
+        # AMBIGUOUS is a trained abstain target: a confident AMBIGUOUS vote means
+        # "this neighborhood is genuinely undecidable" -> abstain to the LLM, never deflect.
+        if label == "AMBIGUOUS":
+            return None
         return (label, conf) if conf >= self.tau else None
 
     def classify_batch(self, texts: list[str]) -> list[tuple[str, float] | None]:
@@ -106,7 +110,10 @@ class ContrastiveTypeKNN:
         out: list[tuple[str, float] | None] = []
         for i in range(len(texts)):
             label, conf = self._vote(qs[i])
-            out.append((label, conf) if conf >= self.tau else None)
+            if label == "AMBIGUOUS":          # trained abstain target -> LLM
+                out.append(None)
+            else:
+                out.append((label, conf) if conf >= self.tau else None)
         return out
 
     # ── instant-learning ────────────────────────────────────────────────────────

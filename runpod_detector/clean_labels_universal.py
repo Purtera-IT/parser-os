@@ -156,23 +156,29 @@ def main():
                 drop_axis[axis] += 1
 
     flagged_txt = {uniq[uid] for uid in flagged_uids}
-    drop_rows = [rid[i] for i in range(len(rows)) if spl[i] == "train" and txt[i] in flagged_txt]
+    flag_rows = [rid[i] for i in range(len(rows)) if spl[i] == "train" and txt[i] in flagged_txt]
     n_train = sum(1 for s in spl if s == "train")
     print(f"\nflagged unique texts : {len(flagged_uids)}")
     print(f"  by axis            : {dict(drop_axis)}")
-    print(f"train rows dropped   : {len(drop_rows)} / {n_train} = {len(drop_rows)/n_train:.1%}")
+    print(f"train rows flagged   : {len(flag_rows)} / {n_train} = {len(flag_rows)/n_train:.1%}")
     print(f"held-out rows        : UNTOUCHED (honest eval preserved)")
 
-    # write cleaned DB
-    import shutil
-    shutil.copy2(DB, OUT_DB)
-    con = sqlite3.connect(OUT_DB)
-    con.executemany("DELETE FROM training_rows WHERE id=?", [(i,) for i in drop_rows])
-    con.commit()
-    left = con.execute("SELECT COUNT(*) FROM training_rows WHERE relation='atom_type'").fetchone()[0]
-    con.close()
-    print(f"\nwrote {OUT_DB}: atom_type rows now {left}")
-    print(f"train with:  SOWSMITH_TRAINING_LOG_DB={OUT_DB} python runpod_detector/train_type_head_v2.py")
+    # DEFAULT = flag-exporter (boss audit #12): export contradictory train-row ids for
+    # build_gold_eval --flagged + (later) AMBIGUOUS relabel. NEVER deletes by default,
+    # because a text-only kNN vote cannot tell "mislabeled" from "label varies with
+    # context" (rubric rules 4-5) — deleting both would make the model confidently wrong
+    # on the context-dependent family. Set CLEAN_DELETE=1 only for a deliberate ablation.
+    flag_path = os.environ.get("FLAG_OUT", "_cl_flagged_ids.json")
+    json.dump(sorted(flag_rows), open(flag_path, "w"))
+    print(f"\nwrote {flag_path}: {len(flag_rows)} flagged train-row ids "
+          f"(feed to build_gold_eval --flagged / route to AMBIGUOUS relabel)")
+    if os.environ.get("CLEAN_DELETE", "").strip().lower() in ("1", "true", "yes", "on"):
+        import shutil
+        shutil.copy2(DB, OUT_DB)
+        con = sqlite3.connect(OUT_DB)
+        con.executemany("DELETE FROM training_rows WHERE id=?", [(i,) for i in flag_rows])
+        con.commit(); con.close()
+        print(f"CLEAN_DELETE=1 -> also wrote {OUT_DB} with those rows deleted (ablation only)")
 
 
 if __name__ == "__main__":

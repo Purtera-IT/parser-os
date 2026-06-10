@@ -176,7 +176,20 @@ def wilson_lcb(k: int, nn: int, z: float = 1.96) -> float:
     return max(0.0, (center - margin) / denom)
 
 
-def score(gold_csv: str, pred_csv: str, key_csv: str = ""):
+def _facet_prior(db: str) -> dict:
+    """Canonical facet distribution over the FULL corpus (the production mix) for
+    reweighting gold-mix coverage to a deployable number (boss #6)."""
+    con = sqlite3.connect(db)
+    counts = Counter()
+    for (label,) in con.execute(
+        "SELECT label FROM training_rows WHERE relation='atom_type' AND label IS NOT NULL"):
+        counts["_keep" if label == "_keep" else to_facet(label)] += 1
+    con.close()
+    tot = sum(counts[c] for c in CLASSES) or 1
+    return {c: counts.get(c, 0) / tot for c in CLASSES}
+
+
+def score(gold_csv: str, pred_csv: str, key_csv: str = "", prior_db: str = ""):
     def _gf(row):
         for k in row:
             if k.startswith("gold_facet"):
@@ -233,8 +246,14 @@ def score(gold_csv: str, pred_csv: str, key_csv: str = ""):
           f"coverage {per[KEEP]['deflected']/max(per[KEEP]['gold_total'],1):.3f}")
     print(f"confident-on-AMBIGUOUS rate = {amb_confident}/{amb_total} "
           f"({amb_confident/max(amb_total,1):.1%})  <- guess-free target ~0")
-    print("NOTE: cite precLCB, not the point estimate. Coverage here is gold-mix; "
-          "reweight per-class by the production facet prior for the deployable number.")
+    if prior_db and os.path.exists(prior_db):
+        prior = _facet_prior(prior_db)
+        prod_cov = sum(prior[c] * (per[c]["deflected"] / per[c]["gold_total"] if per[c]["gold_total"] else 0.0)
+                       for c in CLASSES)
+        print(f"PRODUCTION-REWEIGHTED coverage (by {prior_db} facet prior) = {prod_cov:.3f} "
+              f"<- the deployable number (vs gold-mix {gold_cov:.3f})")
+    print("NOTE: cite precLCB, not the point estimate. Pass --prior-db for the "
+          "production-reweighted coverage (the goal-band number).")
 
 
 def main():
@@ -251,13 +270,14 @@ def main():
     s.add_argument("--gold", required=True)
     s.add_argument("--pred", required=True)
     s.add_argument("--key", default="")
+    s.add_argument("--prior-db", default="", help="DB for the production facet prior (reweighted coverage)")
     a = ap.parse_args()
     if a.cmd == "build":
         dbs = [a.db] + ([a.extra_db] if a.extra_db else [])
         flagged = set(json.load(open(a.flagged))) if a.flagged and os.path.exists(a.flagged) else None
         build(dbs, a.n, a.min_per_facet, a.novel_frac, flagged)
     else:
-        score(a.gold, a.pred, a.key)
+        score(a.gold, a.pred, a.key, a.prior_db)
 
 
 if __name__ == "__main__":

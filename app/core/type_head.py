@@ -117,13 +117,21 @@ class TrainedTypeHead:
 def _load_rows(log_db: str):
     import sqlite3
     con = sqlite3.connect(log_db)
+    # Prefer the rubric-cleaned facet (facet_clean) when SOWSMITH_TYPE_HEAD_FACET=1 and
+    # the column exists — this trains the step-5 facet LR head on clean labels. Default
+    # stays on the micro `label` so the current value-light runtime contract is unchanged.
+    use_facet = os.environ.get("SOWSMITH_TYPE_HEAD_FACET", "").strip().lower() in ("1", "true", "yes", "on")
+    has_fc = use_facet and any(
+        r[1] == "facet_clean" for r in con.execute("PRAGMA table_info(training_rows)"))
+    label_expr = "COALESCE(NULLIF(facet_clean,''), label)" if has_fc else "label"
     rows = con.execute(
-        "SELECT COALESCE(NULLIF(masked_text,''), raw_text) AS feat, label, deal_id "
+        f"SELECT COALESCE(NULLIF(masked_text,''), raw_text) AS feat, {label_expr} AS lbl, deal_id "
         "FROM training_rows WHERE relation='atom_type' "
         "AND COALESCE(masked_text,raw_text,'')!='' AND label IS NOT NULL"
     ).fetchall()
     con.close()
-    return [(f, l, d or "") for f, l, d in rows if f]
+    # AMBIGUOUS never trains a positive prediction (it's the abstain target).
+    return [(f, l, d or "") for f, l, d in rows if f and l != "AMBIGUOUS"]
 
 
 def train_type_head(
