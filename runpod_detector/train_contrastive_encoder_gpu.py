@@ -85,9 +85,27 @@ for fac, types in {
         FACET[t] = fac
 
 
+try:
+    from _split_util import load_split_map, split_of
+except ImportError:  # when run as a module
+    from runpod_detector._split_util import load_split_map, split_of
+
+_SPLIT_MAP = None
+
+
 def split(deal_id):
-    h = int(hashlib.sha256((deal_id or "").encode()).hexdigest(), 16)
-    return "test" if (h % 100) / 100.0 < HOLDOUT else "train"
+    """Canonical split: prefer the recorded `split` column (holdout-wins for
+    mixed deals), hash only as fallback. Replaces the old sha256-only derivation
+    that disagreed with the recorded split by 17.9% (coarse) / 97.2% (cloud) and
+    leaked 3,773 held-out rows into train."""
+    global _SPLIT_MAP
+    if _SPLIT_MAP is None:
+        _c = sqlite3.connect(DB)
+        try:
+            _SPLIT_MAP = load_split_map(_c)
+        finally:
+            _c.close()
+    return "test" if split_of(deal_id, _SPLIT_MAP, HOLDOUT) == "holdout" else "train"
 
 
 def _map(label):
