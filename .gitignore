@@ -48,3 +48,10 @@ _gold_keep_boundary.jsonl
 _rubric_agreement.jsonl
 _type_agreement.jsonl
 runs/
+
+# gold-eval generated artifacts (regenerated, not source)
+gold_eval_v1_*.csv
+gold_eval_v1_manifest.json
+_atoms_*.json
+_cid*.txt
+_lastcid*.txt
