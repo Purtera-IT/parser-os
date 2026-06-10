@@ -47,6 +47,8 @@ import concurrent.futures
 import json
 import os
 import re
+import sys
+import time
 import urllib.request
 from typing import Any
 
@@ -347,6 +349,36 @@ def classify_atoms(atoms: list[Any]) -> int:
     if not promotable:
         return 0
 
+    # --- #70 deflect-layer instrumentation ---------------------------------
+    # Each cascade layer below removes confidently-_keep atoms from the LLM
+    # batch, but historically NONE logged how many — so we could not tell which
+    # layer (if any) was firing, nor how the typing wall-time split between
+    # deflection and the LLM. This emits one structured event per call so a
+    # compile shows, per layer: deflected counts, the residual LLM batch size,
+    # promoted count, and total vs LLM-only milliseconds. Pure observability.
+    _dfl = {"store": 0, "student": 0, "type_head": 0,
+            "contrastive": 0, "rubric_gate": 0}
+    _dfl_input = len(promotable)
+    _t_start = time.perf_counter()
+    _t_llm = 0.0
+
+    def _emit_deflect(*, llm_batch: int, promoted: int, reached_llm: bool) -> None:
+        try:
+            print(json.dumps({
+                "event": "typed_atom_deflect",
+                "stage": "typed_atom_classification",
+                "input": _dfl_input,
+                "deflected": dict(_dfl),
+                "deflected_total": sum(_dfl.values()),
+                "llm_batch": llm_batch,
+                "promoted": promoted,
+                "reached_llm": reached_llm,
+                "total_ms": round((time.perf_counter() - _t_start) * 1000, 1),
+                "llm_ms": round(_t_llm * 1000, 1),
+            }, ensure_ascii=True), file=sys.stderr)
+        except Exception:
+            pass
+
     # upgrade #3: warm-store deflection on the atom-TYPE decision. STORE-ONLY
     # (llm=False) pre-filter: an atom the store CONFIDENTLY classifies ``_keep``
     # (no taxonomy entry fits → keep current type) is dropped from the LLM batch
@@ -372,6 +404,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                 )
                 if d.source == "store" and d.verdict == "_keep":
                     kept_by_store += 1
+                    _dfl["store"] += 1
                     continue
                 survivors.append(a)
             promotable = survivors
@@ -402,6 +435,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                     )
                     if not pred.abstained and pred.label == "_keep":
                         student_deflected += 1
+                        _dfl["student"] += 1
                         continue
                     survivors.append(a)
                 promotable = survivors
@@ -439,6 +473,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                         try:
                             a.atom_type = _AT(res[0])
                             head_deflected += 1
+                            _dfl["type_head"] += 1
                             continue
                         except (ValueError, ImportError):
                             pass
@@ -465,6 +500,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                 for a, res in zip(promotable, verdicts):
                     if res is not None and res[0] == "_keep":
                         head_deflected += 1
+                        _dfl["contrastive"] += 1
                         continue
                     survivors.append(a)
                 promotable = survivors
@@ -487,6 +523,7 @@ def classify_atoms(atoms: list[Any]) -> int:
                 for a, deflect in zip(promotable, flags):
                     if deflect:
                         head_deflected += 1
+                        _dfl["rubric_gate"] += 1
                         continue
                     survivors.append(a)
                 promotable = survivors
@@ -496,12 +533,14 @@ def classify_atoms(atoms: list[Any]) -> int:
             return head_deflected
 
     if not _ollama_reachable():
+        _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
         return head_deflected
 
     batch_size = int(os.environ.get("SOWSMITH_TYPED_CLASSIFIER_BATCH", str(DEFAULT_BATCH_SIZE)))
     parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
     batches = [promotable[i:i + batch_size] for i in range(0, len(promotable), batch_size)]
 
+    _t_llm0 = time.perf_counter()
     results_by_atom_id: dict[str, dict[str, Any]] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         future_to_batch = {pool.submit(_classify_batch, b): b for b in batches}
@@ -512,6 +551,8 @@ def classify_atoms(atoms: list[Any]) -> int:
                 continue
             for atom_id, payload in batch_results.items():
                 results_by_atom_id[atom_id] = payload
+    _t_llm = time.perf_counter() - _t_llm0
+    _llm_batch_size = len(promotable)
 
     promoted = 0
     # upgrade #3: APPLIED outcome per atom (the verdict actually enacted, after
@@ -629,6 +670,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
 
+    _emit_deflect(llm_batch=_llm_batch_size, promoted=promoted, reached_llm=True)
     return promoted + head_deflected
 
 
