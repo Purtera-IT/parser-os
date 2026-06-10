@@ -59,10 +59,20 @@ WORK       : an action/service/task/requirement/deliverable/milestone/acceptance
 COMPLIANCE : a rule, certification, approval authority, insurance/bonding, change-order process,
              or regulatory/contractual obligation.
 PARTY      : a person/org that ACTS in this deal's execution (PM, site contact, approver).
-             A bare name/contact on a header with no action -> META (not _keep, not PARTY).
 TIMING     : a deadline, blackout window, or lead-time/sequencing/dependency constraint.
-META       : deal-level IDENTITY metadata (project name, provider name, deal id, a bare
-             contact on a header). NOT schema/field DEFINITIONS — those are _keep.
+META       : deal-level IDENTITY metadata only — project name, provider name, deal id.
+             NOT schema/field DEFINITIONS, NOT email contacts (those are _keep).
+
+RULINGS for the most common confusions (apply these exactly):
+- A token NAMING a specific site/room/building/location ("Site 637", "Room Suez Canal",
+  "Building A") -> SITE — even with no other attributes. META is ONLY deal-level identity,
+  never a per-site name. An empty site form-label ("Site Name:") with no value -> _keep.
+- Email scaffolding -> _keep: greetings ("Hi Brandon,"), subject lines, To/From/CC headers,
+  signatures, URLs/safelinks — EVEN IF they contain a person's name, title, or address.
+  A person is PARTY only when named as a deal ACTOR (site contact, approver, PM), never just
+  because they appear in an email header or contact block.
+- Bare fragments -> _keep: a lone phone number ("M: 770..."), a lone job title
+  ("Account Director"), or a column-header row ("Name | Address | Phone").
 
 Use the PREV/NEXT context to judge ROLE. If after the rules it is genuinely multi-bucket or
 50/50, answer "ambiguous" rather than guessing.
@@ -82,6 +92,13 @@ FEWSHOT = [
     ("All work must be UL-listed and meet NEC 2020", "COMPLIANCE"),
     ("Cutover blackout: no changes Dec 20 - Jan 2", "TIMING"),
     ("Project Name: Marriott Downtown Tower", "META"),
+    ("Site 637", "SITE"),
+    ("Room Suez Canal", "SITE"),
+    ("Hi Brandon,", "_keep"),
+    ("To: Russ Forbes <russfor@cdw.com>", "_keep"),
+    ("M: 770.298.1564", "_keep"),
+    ("Sub-Contractor Name | Address | Phone # | E-Mail", "_keep"),
+    ("Account Director", "_keep"),
 ]
 FEWSHOT_BLOCK = "\n".join(f'EXAMPLE: {t}\n{{"facet":"{d}"}}' for t, d in FEWSHOT)
 
@@ -154,17 +171,26 @@ def main():
             train.append((rid, text, prev, nxt, label))
     if MAX_TRAIN:
         train = train[:MAX_TRAIN]
-    print(f"facet-relabel: {len(train)} TRAIN atoms (holdout untouched) | model={MODEL} "
-          f"| VOTES={VOTES} agree>={AGREE_FRAC} | taxonomy {TAXONOMY_VERSION}")
+    # DEDUP by text: relabel each UNIQUE text once, apply to all rows sharing it
+    # (~halves API cost/time — boilerplate repeats heavily).
+    uniq_ctx, text_rids = {}, collections.defaultdict(list)
+    for rid, text, prev, nxt, _m in train:
+        text_rids[text].append(rid)
+        uniq_ctx.setdefault(text, (prev, nxt))
+    uniq_texts = list(uniq_ctx)
+    print(f"facet-relabel: {len(train)} TRAIN rows, {len(uniq_texts)} unique texts "
+          f"(holdout untouched) | model={MODEL} | VOTES={VOTES} agree>={AGREE_FRAC} "
+          f"| taxonomy {TAXONOMY_VERSION}")
 
-    results = {}
+    text_facet = {}
     with cf.ThreadPoolExecutor(max_workers=PAR) as pool:
-        futs = {pool.submit(judge, t, p, n): rid for rid, t, p, n, _ in train}
+        futs = {pool.submit(judge, t, *uniq_ctx[t]): t for t in uniq_texts}
         done = 0
         for fut in cf.as_completed(futs):
-            results[futs[fut]] = fut.result(); done += 1
+            text_facet[futs[fut]] = fut.result(); done += 1
             if done % 250 == 0:
-                print(f"  {done}/{len(train)}", flush=True)
+                print(f"  {done}/{len(uniq_texts)}", flush=True)
+    results = {rid: text_facet.get(text) for text, rids in text_rids.items() for rid in rids}
 
     shutil.copy2(DB, OUT_DB)
     out = sqlite3.connect(OUT_DB)
