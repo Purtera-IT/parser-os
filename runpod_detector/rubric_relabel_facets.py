@@ -59,9 +59,10 @@ WORK       : an action/service/task/requirement/deliverable/milestone/acceptance
 COMPLIANCE : a rule, certification, approval authority, insurance/bonding, change-order process,
              or regulatory/contractual obligation.
 PARTY      : a person/org that ACTS in this deal's execution (PM, site contact, approver).
-             A bare name/contact on a header with no action -> _keep.
+             A bare name/contact on a header with no action -> META (not _keep, not PARTY).
 TIMING     : a deadline, blackout window, or lead-time/sequencing/dependency constraint.
-META       : deal-level metadata (project name, provider name, document field definitions).
+META       : deal-level IDENTITY metadata (project name, provider name, deal id, a bare
+             contact on a header). NOT schema/field DEFINITIONS — those are _keep.
 
 Use the PREV/NEXT context to judge ROLE. If after the rules it is genuinely multi-bucket or
 50/50, answer "ambiguous" rather than guessing.
@@ -100,11 +101,13 @@ def ask(text, prev, nxt, temp):
                 f = json.loads(c[c.index("{"):c.rindex("}") + 1]).get("facet", "")
             except Exception:
                 f = c
-            f = f.strip()
-            for cand in VALID:  # tolerant match
-                if cand.lower() in f.lower():
-                    return "ambiguous" if cand == "ambiguous" else cand
-            return None
+            f = f.strip().lower()
+            order = [*FACETS, "_keep", "ambiguous"]  # FIXED order (no set iteration)
+            for cand in order:                        # exact match wins
+                if f == cand.lower():
+                    return cand
+            hits = [cand for cand in order if cand.lower() in f]
+            return hits[0] if len(hits) == 1 else None  # ambiguous/multi-match -> None, never a coin flip
         except Exception:
             continue
     return None
