@@ -1694,6 +1694,25 @@ class QuoteParser(BaseParser):
             vli_value,
             raw_text=f"{part_number} {description} {material_spec} {notes}".strip(),
         )
+        # Bound (header: value) view so the classifier sees a RICH line — SKU,
+        # qty, unit price, extended, lead time — instead of the thin "NetWave
+        # AP-9700" raw_text. _atom_bound_text renders these at decide-time;
+        # raw_text is left untouched so the vendor-mismatch graph / commercial
+        # packet logic that reads it is unaffected.
+        vli_value["cells"] = {
+            k: str(v).strip()
+            for k, v in (
+                ("SKU/Part", part_number),
+                ("Description", description),
+                ("Material", material_spec),
+                ("Qty", qty_obj.get("quantity_raw") or quantity_raw),
+                ("Unit Price", unit_price_raw),
+                ("Extended", extended_raw),
+                ("Lead Time", lead_time),
+                ("Notes", notes),
+            )
+            if str(v or "").strip()
+        }
 
         has_line = bool(
             part_number
