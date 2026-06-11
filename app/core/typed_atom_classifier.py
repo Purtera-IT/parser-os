@@ -354,12 +354,41 @@ def _atom_bound_text(atom: Any) -> str | None:
     return " | ".join(pairs)[:600] if pairs else None
 
 
+def _atom_table_ref(atom: Any) -> str:
+    """A stable table-group ref (+ row) for a table-row atom, read from whatever
+    the parser already stamped in the locator: pdf -> table ``block_id``,
+    xlsx -> ``sheet``, docx/schema -> ``table_index``. Rows of the SAME table
+    share this ref, so the head knows the row is structured tabular data (one of
+    a group) and downstream can re-assemble the table by grouping on it. Returns
+    '' for non-table atoms (prose/bullets)."""
+    for r in (getattr(atom, "source_refs", None) or []):
+        loc = getattr(r, "locator", None)
+        if not isinstance(loc, dict):
+            continue
+        tid = loc.get("block_id") or loc.get("sheet")
+        if tid is None and loc.get("table_index") is not None:
+            tid = f"t{loc.get('table_index')}"
+        if tid is None:
+            continue
+        row = loc.get("row")
+        if row is None:
+            row = loc.get("row_index")
+        return f"{str(tid)[:24]} r{row}" if row is not None else str(tid)[:24]
+    val = getattr(atom, "value", None) or {}
+    if isinstance(val, dict) and val.get("_table_idx") is not None:
+        return f"t{val.get('_table_idx')} r{val.get('_row_idx')}"
+    return ""
+
+
 def _atom_decide_text(atom: Any) -> str:
     bound = None
     if os.environ.get("SOWSMITH_ATOM_BIND_HEADERS", "1") != "0":
         bound = _atom_bound_text(atom)
     text = bound or _atom_text(atom).replace("\n", " ").strip()
+    table_ref = _atom_table_ref(atom)
     section = _atom_section_path(atom)
+    if table_ref:
+        text = f"{text} [table: {table_ref}]"
     return f"{text} [section: {section}]" if section else text
 
 
