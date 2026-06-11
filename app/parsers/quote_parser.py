@@ -1278,6 +1278,15 @@ class QuoteParser(BaseParser):
 
     def _parse_xlsx(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
         workbook = load_workbook(path, read_only=True, data_only=True)
+        # Evaluate uncalculated formula cells (subtotals, grand totals, extended
+        # cost = qty*price) so a workbook Excel never recalculated doesn't ship
+        # blank "Amount" cells. Keyed (sheet, col, row) -> value; overlaid onto
+        # None cells below. Best-effort: unparseable formulas stay blank.
+        try:
+            from app.parsers.xlsx_formula_eval import evaluate_workbook_formulas
+            _formula_vals = evaluate_workbook_formulas(str(path))
+        except Exception:
+            _formula_vals = {}
         atoms: list[EvidenceAtom] = []
         # Build a fallback XlsxParser once so per-sheet "no quote
         # shape" sheets (Pricing tables, Site lists, Notes tabs) can
@@ -1290,6 +1299,13 @@ class QuoteParser(BaseParser):
             fallback_parser = None
         for sheet in workbook.worksheets:
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+            if _formula_vals:
+                for _ri, _row in enumerate(rows, 1):
+                    for _ci in range(len(_row)):
+                        if _row[_ci] is None:
+                            _fv = _formula_vals.get((sheet.title, _ci + 1, _ri))
+                            if _fv is not None:
+                                _row[_ci] = int(_fv) if float(_fv).is_integer() else _fv
             sheet_atoms = self._parse_sheet(
                 project_id=project_id,
                 artifact_id=artifact_id,
