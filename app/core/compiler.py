@@ -940,6 +940,35 @@ def compile_project(
         telemetry.end_stage(stage, output_count=atoms_enriched, warnings=enrich_warnings)
     warnings.extend(enrich_warnings)
 
+    # Pre-classification shadow collapse: a single table row is emitted as
+    # multiple atoms (raw_table_row intermediate + docx_table_row_v1 scope_item
+    # + any schema-enriched type). Without this, the classifier sees each fact
+    # 2-3x and may assign the copies conflicting types before the post-dedup
+    # stage collapses them. Collapsing the same-text cross-type duplicates HERE
+    # means the classifier sees ONE clean atom per fact (the most-specific type).
+    # Pure/deterministic (no embedder); the later semantic_dedup stage still runs.
+    with telemetry.stage("pre_classify_dedup", input_count=len(atoms)) as stage:
+        _before_pcd = list(atoms)
+        try:
+            from app.core.semantic_dedup import cross_type_dedup_atoms
+            atoms = cross_type_dedup_atoms(atoms)
+            _dropped_pcd = len(_before_pcd) - len(atoms)
+            if _dropped_pcd > 0:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        _before_pcd, atoms,
+                        stage="pre_classify_dedup",
+                        reason="same-text cross-type shadow collapsed before classification",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: pre_classify_dedup collapsed {_dropped_pcd} duplicate-row shadow atoms"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: pre_classify_dedup failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
     # commercial_total, payment_term, requirement, acceptance_criterion,
