@@ -571,6 +571,17 @@ def _vendor_quote_like(atom: EvidenceAtom) -> bool:
     return atom.authority_class == AuthorityClass.vendor_quote
 
 
+def _is_unconfirmed_prose_fallback(atom: EvidenceAtom) -> bool:
+    """A docx paragraph captured fail-open as a PLACEHOLDER scope_item (flagged
+    prose_fallback_capture) that the classifier never promoted to a real type. It
+    is an un-reviewed guess — narrative/purpose/background prose, not a confirmed
+    scope inclusion — so it must not inflate the scope packet or scorecard. The
+    atom is still retained (not dropped); it just doesn't count as scope until the
+    head promotes it (which changes its type off scope_item) or a PM confirms it."""
+    flags = getattr(atom, "review_flags", None) or []
+    return "prose_fallback_capture" in flags and atom.atom_type == AtomType.scope_item
+
+
 def _can_act_as_scope_inclusion_governor(atom: EvidenceAtom) -> bool:
     """Written scope / roster / customer current, or explicitly approved meeting notes only."""
     if not is_governing_candidate(atom):
@@ -1660,6 +1671,7 @@ def build_packets(
         for a in atoms
         if a.atom_type in {AtomType.scope_item, AtomType.quantity}
         and a.id not in consumed_by_conflict_or_exclusion
+        and not _is_unconfirmed_prose_fallback(a)
     ]
     for atom in inclusion_candidates:
         diversion = _vendor_scope_diversion_kind(atom)
@@ -1765,6 +1777,7 @@ def build_packets(
         for a in atoms
         if a.atom_type in {AtomType.scope_item, AtomType.quantity}
         and a.id not in consumed_by_conflict_or_exclusion
+        and not _is_unconfirmed_prose_fallback(a)
     ]
     grouped_inclusions: dict[str, list[EvidenceAtom]] = defaultdict(list)
     for atom in inclusion_candidates:
