@@ -7,6 +7,8 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docx import Document
+from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph as _DocxParagraph
 
 from app.core.ids import stable_id
 from app.core.normalizers import normalize_entity_key, normalize_text
@@ -109,6 +111,10 @@ class DocxParser(BaseParser):
         del domain_pack
         document = Document(path)
         atoms: list[EvidenceAtom] = []
+        # Universal reading-order section map: every paragraph/table learns the
+        # heading chain it lives under, so site/section attribution has real
+        # signal instead of empty section_path.
+        para_section, table_section, _heading_paras = self._build_section_index(document)
 
         # v54 ROOT-CAUSE FIX: skip paragraphs that belong to a table cell so
         # their content is handled by the table loop below with proper row
@@ -146,6 +152,7 @@ class DocxParser(BaseParser):
                     tracked_change=None,
                     heading=is_heading,
                     is_list_item=is_list_item,
+                    section_path=para_section.get(idx, []),
                 )
             )
 
@@ -221,7 +228,7 @@ class DocxParser(BaseParser):
                         artifact_id=artifact_id,
                         artifact_type=ArtifactType.docx,
                         filename=path.name,
-                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2"},
+                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2", "section_path": table_section.get(table_idx, [])},
                         extraction_method="raw_table_row_v49_2",
                         parser_version=self.parser_version,
                     )
@@ -267,6 +274,7 @@ class DocxParser(BaseParser):
                         "table_index": table_idx,
                         "row": row_idx,
                         "extraction": "docx_table_row_v1",
+                        "section_path": table_section.get(table_idx, []),
                     },
                     extraction_method="docx_table_row_v1",
                     parser_version=self.parser_version,
@@ -844,6 +852,70 @@ class DocxParser(BaseParser):
         # content-derived (a multi-word line), not a keyword whitelist.
         return True
 
+    @staticmethod
+    def _heading_level(style_name: str | None) -> int | None:
+        """Heading depth from a paragraph style name, layout-agnostic.
+        'Heading 1'->1, 'Heading 2'->2, 'Title'->0; non-headings -> None."""
+        s = (style_name or "").strip().lower()
+        if s in ("title", "subtitle"):
+            return 0
+        if s.startswith("heading"):
+            m = re.search(r"(\d+)", s)
+            return int(m.group(1)) if m else 1
+        return None
+
+    def _build_section_index(
+        self, document: Any
+    ) -> tuple[dict[int, list[str]], dict[int, list[str]], dict[int, tuple[int, list[str]]]]:
+        """ONE reading-order pass over the document body, maintaining a heading
+        stack, so EVERY paragraph and table knows the section (heading chain) it
+        lives under — universal across any layout (heading→table, heading→prose→
+        table, nested sub-headings, etc.). python-docx exposes paragraphs and
+        tables as separate sequences, which is exactly why section context was
+        being lost; walking ``body.iterchildren()`` restores true document order.
+
+        Returns ``(para_section, table_section, heading_paras)``:
+          - para_section[i]   = section_path for the i-th body paragraph
+          - table_section[i]  = section_path for the i-th table
+          - heading_paras[i]  = (level, ancestor_section_path) for heading paras
+        Indices align with ``document.paragraphs`` / ``document.tables`` order.
+        """
+        para_section: dict[int, list[str]] = {}
+        table_section: dict[int, list[str]] = {}
+        heading_paras: dict[int, tuple[int, list[str]]] = {}
+        stack: list[tuple[int, str]] = []  # (level, heading_text)
+        pidx = -1
+        tidx = -1
+        try:
+            children = list(document.element.body.iterchildren())
+        except Exception:
+            return para_section, table_section, heading_paras
+        for child in children:
+            tag = child.tag
+            if tag == qn("w:p"):
+                pidx += 1
+                try:
+                    para = _DocxParagraph(child, document)
+                    text = (para.text or "").strip()
+                    style = (para.style.name or "") if para.style is not None else ""
+                except Exception:
+                    para_section[pidx] = [t for _, t in stack]
+                    continue
+                lvl = self._heading_level(style)
+                if lvl is not None and text:
+                    while stack and stack[-1][0] >= lvl:
+                        stack.pop()
+                    ancestors = [t for _, t in stack]
+                    heading_paras[pidx] = (lvl, ancestors)
+                    para_section[pidx] = ancestors
+                    stack.append((lvl, text))
+                else:
+                    para_section[pidx] = [t for _, t in stack]
+            elif tag == qn("w:tbl"):
+                tidx += 1
+                table_section[tidx] = [t for _, t in stack]
+        return para_section, table_section, heading_paras
+
     def _emit_atoms_for_text(
         self,
         project_id: str,
@@ -858,6 +930,7 @@ class DocxParser(BaseParser):
         heading: bool,
         tracked_index: int | None = None,
         is_list_item: bool = False,
+        section_path: list[str] | None = None,
     ) -> list[EvidenceAtom]:
         # Span-provenance ledger (passive side-channel; only active when a
         # ledger is attached). Register this raw unit so the lost-content
@@ -876,6 +949,7 @@ class DocxParser(BaseParser):
         # dropped at parse time. Headings stay out of the fallback — they are
         # short titles, not facts.
         prose_fallback = False
+        heading_capture = False
         if not atom_types:
             # Bullet list items are deliberate, load-bearing content (deliverables,
             # assumptions, checklists) — fail OPEN regardless of length, even when
@@ -884,6 +958,14 @@ class DocxParser(BaseParser):
             if not heading and (self._is_substantive_prose(text) or is_list_item):
                 atom_types = [AtomType.scope_item]
                 prose_fallback = True
+            elif heading and text:
+                # Section headings are the PARENT label for everything beneath
+                # them ("ATL-HQ - Atlanta Headquarters - Innovation Tower"). They
+                # MUST be captured as atoms so they exist as attribution
+                # candidates — otherwise nothing can learn that the rows below
+                # belong to that site. Flagged section_heading; low base conf.
+                atom_types = [AtomType.scope_item]
+                heading_capture = True
             else:
                 if ledger is not None:
                     from app.core.span_ledger import StageKind
@@ -904,6 +986,8 @@ class DocxParser(BaseParser):
             "row": row,
             "cell": cell,
             "tracked_change": tracked_change,
+            "section_path": list(section_path) if section_path else [],
+            "is_section_heading": heading_capture,
         }
         source_ref = SourceRef(
             id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index),
@@ -934,6 +1018,11 @@ class DocxParser(BaseParser):
                 # reclassify/prune. Provenance preserved, data not lost.
                 confidence = 0.5
                 review_flags = ["prose_fallback_capture"]
+            elif heading_capture:
+                # A section heading captured as an attribution candidate.
+                authority_class = AuthorityClass.contractual_scope
+                confidence = 0.6
+                review_flags = ["section_heading"]
             atoms.append(
                 EvidenceAtom(
                     id=stable_id(
