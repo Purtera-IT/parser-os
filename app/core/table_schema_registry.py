@@ -541,7 +541,7 @@ def emit_atoms_for_schema(
             atoms.append(_atom(
                 "acceptance_criterion",
                 AtomType.acceptance_criterion,
-                criterion,
+                row_text,  # full row, not just the area — carries context AND dedups
                 {"criterion": criterion, "method": method, "threshold": threshold, "raw": row_text},
             ))
 
@@ -645,7 +645,7 @@ def emit_atoms_for_schema(
         atoms.append(_atom(
             "milestone",
             AtomType.milestone_phase,
-            name or phase_id or row_text,
+            row_text,  # full row, not just the name — carries context AND dedups
             {"phase_id": phase_id, "name": name, "start": start, "end": end,
              "owner": owner, "exit_criteria": exit_criteria, "raw": row_text},
         ))
@@ -658,23 +658,17 @@ def emit_atoms_for_schema(
         owner = _find_col_value(row_dict, ("owner", "assigned", "raid owner"))
         mitigation = _find_col_value(row_dict, ("mitigation", "response plan", "treatment", "action"))
         if description or risk_id:
+            # Full row, not just the description — carries context AND dedups
+            # with the bound row. Mitigation stays as a value field (no separate
+            # context-less mitigation atom).
             atoms.append(_atom(
                 "risk_register",
                 AtomType.risk,
-                description or row_text,
+                row_text,
                 {"risk_id": risk_id, "description": description,
                  "probability": probability, "impact": impact,
                  "owner": owner, "mitigation": mitigation, "raw": row_text},
             ))
-            # Emit a separate mitigation atom paired to the risk
-            if mitigation:
-                atoms.append(_atom(
-                    "risk_mit",
-                    AtomType.mitigation,
-                    mitigation,
-                    {"risk_id": risk_id, "mitigation_text": mitigation,
-                     "owner": owner, "raw": row_text},
-                ))
 
     elif schema_name == "site_roster":
         # v53.2: emit a physical_site atom per row. Captures EVERY site
