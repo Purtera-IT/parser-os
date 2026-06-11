@@ -922,12 +922,28 @@ def _cross_type_text_key(atom: Any) -> str:
 
 
 def _atom_cell_locator(atom: Any) -> str:
-    """Return 'artifact:tT:rR' for a table-cell atom, else '' (prose/other)."""
+    """Return 'artifact:table:row' for a table/sheet-cell atom, else '' (prose).
+
+    Covers both shapes: docx tables (``table_index``) and xlsx sheets
+    (``sheet`` + ``row``/``row_index``), so identical-looking rows from
+    different cells/sites/sheets never collapse into one another.
+    """
     for ref in (getattr(atom, "source_refs", None) or []):
         loc = getattr(ref, "locator", None) or {}
-        if isinstance(loc, dict) and loc.get("table_index") is not None and loc.get("row") is not None:
-            art = getattr(atom, "artifact_id", "") or ""
-            return f"{art}:t{loc['table_index']}:r{loc['row']}"
+        if not isinstance(loc, dict):
+            continue
+        row = loc.get("row")
+        if row is None:
+            row = loc.get("row_index")
+        if row is None:
+            continue
+        table = loc.get("sheet")
+        if table is None and loc.get("table_index") is not None:
+            table = f"t{loc['table_index']}"
+        if table is None:
+            continue
+        art = getattr(atom, "artifact_id", "") or ""
+        return f"{art}:{table}:r{row}"
     return ""
 
 
