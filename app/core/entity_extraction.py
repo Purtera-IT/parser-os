@@ -3929,6 +3929,19 @@ def _enrich_table_atoms(
         if not schema_name:
             continue
         schema_hits += 1
+        # Carry the source row's section/heading chain (sheet name, site heading,
+        # etc.) onto the typed atoms so section/site attribution survives the
+        # schema-routing step instead of being reset to empty.
+        _src_section: list[Any] = list(val.get("section_path") or [])
+        if not _src_section:
+            try:
+                for _r in (getattr(atom, "source_refs", None) or []):
+                    _loc = getattr(_r, "locator", None) or {}
+                    if isinstance(_loc, dict) and _loc.get("section_path"):
+                        _src_section = list(_loc["section_path"])
+                        break
+            except Exception:
+                _src_section = []
         try:
             schema_atoms = emit_atoms_for_schema(
                 schema_name=schema_name,
@@ -3939,6 +3952,7 @@ def _enrich_table_atoms(
                 project_id=project_id,
                 artifact_id=getattr(atom, "artifact_id", "") or "",
                 filename=str(val.get("_filename") or ""),
+                section_path=_src_section,
             )
             if schema_atoms:
                 new_atoms.extend(schema_atoms)

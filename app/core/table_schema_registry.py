@@ -280,10 +280,17 @@ def emit_atoms_for_schema(
     artifact_id: str,
     filename: str,
     parser_version: str = "table_schema_v49",
+    section_path: list[str] | None = None,
 ) -> list[EvidenceAtom]:
-    """Given a recognized schema, header list, and one data row, emit typed atoms."""
+    """Given a recognized schema, header list, and one data row, emit typed atoms.
+
+    ``section_path`` (the heading/sheet chain the source row lives under) is
+    carried onto every emitted atom's locator so section/site attribution
+    survives the schema-routing step instead of being reset to empty.
+    """
     if not row or not columns:
         return []
+    _section_path = list(section_path) if section_path else []
 
     row_dict = dict(zip(columns, row + [""] * max(0, len(columns) - len(row))))
     row_text = " | ".join(v for v in row if v.strip())
@@ -302,6 +309,7 @@ def emit_atoms_for_schema(
                 "row": row_idx,
                 "schema": schema_name,
                 "extraction": "table_schema_v49",
+                "section_path": _section_path,
             },
             extraction_method="table_schema_v49",
             parser_version=parser_version,

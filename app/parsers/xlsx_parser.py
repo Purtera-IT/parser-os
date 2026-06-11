@@ -2281,7 +2281,7 @@ class XlsxParser(BaseParser):
                     artifact_id=artifact_id,
                     artifact_type=artifact_type,
                     filename=filename,
-                    locator={"sheet": sheet_name, "row": row_idx + 1, "columns": _rtr_columns, "extraction": "raw_table_row_v49_2"},
+                    locator={"sheet": sheet_name, "row": row_idx + 1, "columns": _rtr_columns, "extraction": "raw_table_row_v49_2", "section_path": [sheet_name] if sheet_name else []},
                     extraction_method="raw_table_row_v49_2",
                     parser_version=self.parser_version,
                 )
