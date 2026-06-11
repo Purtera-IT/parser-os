@@ -34,9 +34,22 @@ def _norm_col(s: str) -> str:
 
 
 def _col_matches(header: str, patterns: tuple[str, ...]) -> bool:
-    """True when any pattern appears as a substring of the normalized header."""
+    """True when any pattern matches the normalized header on WORD boundaries.
+
+    Word-boundary (not raw substring) so a short pattern like ``id`` matches
+    "Requirement ID" but NOT "Validation Test" (where it was substring-matching
+    inside "valIDation"). That false positive made the requirements schema fire
+    on room-mix tables (Room Type / Count / Standard Build / Validation Test),
+    scrambling room rows into requirement atoms. Patterns are normalized the same
+    way as the header so multi-word and punctuated patterns ("requirement id",
+    "sv-") still match their tokens.
+    """
     h = _norm_col(header)
-    return any(p in h for p in patterns)
+    for p in patterns:
+        pn = _norm_col(p)
+        if pn and re.search(r"\b" + re.escape(pn) + r"\b", h):
+            return True
+    return False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -94,6 +107,19 @@ _SCHEMAS: list[tuple[str, tuple[tuple[str, ...], ...], int]] = [
             ("step", "t minus", "t-", "timing", "day", "cutover step"),
             ("owner", "responsible", "assigned", "who"),
             ("activity", "description", "action", "task", "what", "checklist item"),
+        ),
+        2,
+    ),
+    # ─── Per-site room mix (its OWN schema so greedy schemas like acceptance
+    # / requirements don't grab it via "Validation Test" → "test"/"id"). A
+    # room-mix row is Room Type | Count | Standard Build | Validation Test. ───
+    (
+        "site_room_mix",
+        (
+            ("room type", "room", "space type"),
+            ("count", "rooms", "qty", "quantity"),
+            ("standard build", "build", "equipment", "spec", "fit out"),
+            ("validation test", "validation", "acceptance test"),
         ),
         2,
     ),
@@ -464,6 +490,19 @@ def emit_atoms_for_schema(
             description or row_text,
             {"step_id": step_id, "timing": timing, "owner": owner, "description": description},
         ))
+
+    elif schema_name == "site_room_mix":
+        room_type = _find_col_value(row_dict, ("room type", "room", "space type"))
+        count = _find_col_value(row_dict, ("count", "rooms", "qty", "quantity"))
+        build = _find_col_value(row_dict, ("standard build", "build", "equipment", "spec", "fit out"))
+        validation = _find_col_value(row_dict, ("validation test", "validation", "acceptance test", "test"))
+        if room_type or count:
+            atoms.append(_atom(
+                "site_room_mix",
+                AtomType.site_room_mix,
+                f"{room_type} | {count}" if room_type else row_text,
+                {"room_type": room_type, "count": count, "build_spec": build, "validation": validation},
+            ))
 
     elif schema_name == "requirements":
         req_id = _find_col_value(row_dict, ("req", "id", "ref", "requirement id", "#"))
