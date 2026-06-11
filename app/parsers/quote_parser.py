@@ -1810,6 +1810,21 @@ class QuoteParser(BaseParser):
                 qval,
                 raw_text=f"{description} {material_spec} {notes} {quantity_raw}".strip(),
             )
+            # Context view so the head sees WHY this isolated quantity exists:
+            # it's the vendor-proposed quantity for THIS item, the unit the
+            # cross-doc quantity-contradiction check reconciles against the
+            # scoped / approved-roster quantity. Renders as
+            # "Item: ... | Vendor Qty: 94 | Reconcile against: scoped quantity".
+            qval["cells"] = {
+                k: str(v).strip()
+                for k, v in (
+                    ("Item", part_number or description or mat.get("normalized_item")),
+                    ("Vendor Qty", qty_obj.get("quantity_raw") or quantity_raw),
+                    ("Site", site_id_value),
+                    ("Reconcile against", "scoped / approved-roster quantity for this item"),
+                )
+                if str(v or "").strip()
+            }
             append_atom(
                 AtomType.quantity,
                 (f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}"
