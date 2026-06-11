@@ -247,7 +247,50 @@ _SCHEMAS: list[tuple[str, tuple[tuple[str, ...], ...], int]] = [
         ),
         2,
     ),
+    # ─── Key-value metadata table (Field | Value) ───
+    # Universal "key fields" block: a 2-col Field|Value table — the deal
+    # header, "Appendix A - Parser-Friendly Key Fields", or a per-site spec
+    # sheet. Placed LAST so it is the lowest-priority match: any richer schema
+    # (roster, bom, milestone…) wins, and this only fires when the table is
+    # genuinely just keys+values. The ROW'S OWN KEY decides the atom type
+    # (deal_id -> deal_metadata, Address -> site_attribute), so the same
+    # Field|Value shape routes correctly whether it's deal- or site-scoped
+    # without sniffing the section.
+    (
+        "key_value",
+        (
+            ("field", "key", "attribute", "parameter", "property"),
+            ("value", "detail", "setting", "entry"),
+        ),
+        2,
+    ),
 ]
+
+# Field-key vocabulary for the key_value schema. The row's declared key (its
+# "Field" cell) is the table's own self-description, so matching on it — by
+# whole token, not substring, so "po" hits "Mock PO" but not "deposit" — is a
+# reliable, deal-agnostic router. This is a FLOOR: the head can override.
+_KV_DEAL_KEYS = frozenset({
+    "deal", "quote", "po", "customer", "client", "company", "domain",
+    "contract", "msa", "sow", "hubspot", "azure", "container", "parser",
+    "orbitbrief", "workspace", "batch", "prepared", "notice", "amount",
+    "total", "currency", "close", "opportunity", "account", "vendor",
+})
+_KV_SITE_KEYS = frozenset({
+    "address", "users", "occupancy", "rooms", "room", "sqft", "square",
+    "feet", "floors", "floor", "priority", "access", "facility", "city",
+    "zip", "headcount", "seats", "building", "suite",
+})
+
+
+def _kv_route_type(field: str) -> "AtomType":
+    """Route a key-value row to a type by its declared key (whole-token match)."""
+    tokens = set(re.findall(r"[a-z]+", (field or "").lower()))
+    if tokens & _KV_DEAL_KEYS:
+        return AtomType.deal_metadata
+    if tokens & _KV_SITE_KEYS:
+        return AtomType.site_attribute
+    return AtomType.scope_item
 
 
 def identify_schema(columns: list[str]) -> str | None:
@@ -754,6 +797,24 @@ def emit_atoms_for_schema(
                 {"name": name, "title": title, "role": role, "email": email,
                  "phone": phone, "org": org, "approval_domain": approval_domain,
                  "raw": row_text},
+            ))
+
+    elif schema_name == "key_value":
+        field = _find_col_value(row_dict, ("field", "key", "attribute", "parameter", "property"))
+        value = _find_col_value(row_dict, ("value", "detail", "setting", "entry"))
+        # Fall back to the first two cells when the key/value columns are
+        # positional (unlabeled 2-col table that still matched the headers).
+        if not field and not value and len(row) >= 2:
+            field, value = row[0].strip(), row[1].strip()
+        if field or value:
+            atoms.append(_atom(
+                "key_value",
+                _kv_route_type(field),
+                # Pipe-join matches the docx per-row blob's text exactly, so
+                # cross_type_dedup collapses the generic scope_item twin into
+                # this typed atom.
+                row_text,
+                {"field_name": field, "value": value, "raw": row_text},
             ))
 
     return atoms

@@ -877,6 +877,8 @@ def _merge_values(winner: Any, loser: Any) -> None:
 _CROSS_TYPE_PRIORITY: dict[str, int] = {
     "raw_table_row": 0,
     "scope_item": 2,
+    "site_attribute": 5,
+    "deal_metadata": 6,
     "deliverable": 4,
     "task": 4,
     "open_question": 4,
