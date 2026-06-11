@@ -295,6 +295,40 @@ _FORM_FIELD_KEYWORDS = (
 )
 
 
+# A run of "key = value" lines (field-mapping / blob-metadata blocks) the PDF
+# extractor glued into one paragraph. Match on '=' ONLY (not ':') so prose with
+# colons ("Classification: Mock...") is never split. Key is one identifier token;
+# the value runs until the next "identifier =" or end of text.
+_PDF_KV_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]{1,40})\s*=\s*(.+?)(?=\s+[A-Za-z_][A-Za-z0-9_]{1,40}\s*=|$)"
+)
+# An all-caps section heading (>=3 caps words) glued mid-paragraph, followed by
+# sentence-case body. Avoids single acronyms (PDF/DOCX/CRM) — needs a multi-word
+# run. The (?<=[a-z.]) keeps it from firing at the very start of the text.
+_PDF_EMBEDDED_HEADING_RE = re.compile(
+    r"(?<=[a-z.])\s+([A-Z][A-Z]{2,}(?:\s+(?:AND|OR|OF|&|[A-Z][A-Z-]{2,})){1,5})\s+(?=[A-Z][a-z])"
+)
+
+
+def _split_pdf_kv_blob(text: str) -> list[str] | None:
+    """Split a glued 'key = value' paragraph into one chunk per pair, else None."""
+    pairs = list(_PDF_KV_RE.finditer(text))
+    if len(pairs) < 3:
+        return None
+    return [f"{m.group(1).strip()} = {m.group(2).strip()}" for m in pairs]
+
+
+def _split_pdf_embedded_heading(text: str) -> tuple[str, str, str] | None:
+    """(before, HEADING, after) when an all-caps heading is glued mid-text, else None."""
+    m = _PDF_EMBEDDED_HEADING_RE.search(text)
+    if not m:
+        return None
+    before, heading, after = text[: m.start()].strip(), m.group(1).strip(), text[m.end():].strip()
+    if len(before) < 10 or len(after) < 10:
+        return None
+    return before, heading, after
+
+
 def _looks_like_form_field(text: str) -> bool:
     """Detect vendor-info form-field templates.
 
@@ -2250,6 +2284,47 @@ def _atoms_for_block(
                         "qa_chunk_count": len(qa_chunks),
                     },
                     value={"kind": "paragraph", "qa_split": True},
+                )
+            return
+        # A field-mapping / metadata block is a run of "key = value" lines the
+        # extractor glued into one paragraph — split into one deal_metadata atom
+        # per key so the head gets clean facts, not a 9-field blob.
+        kv_chunks = _split_pdf_kv_blob(text)
+        if kv_chunks:
+            _, kv_auth = _classify_text_block(text=text, section_path=section_path, kind="paragraph")
+            for kv_idx, chunk in enumerate(kv_chunks):
+                yield _make_atom(
+                    text=chunk,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=AtomType.deal_metadata,
+                    authority_class=kv_auth,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={**base_locator, "kv_index": kv_idx, "kv_count": len(kv_chunks)},
+                    value={"kind": "key_value"},
+                )
+            return
+        # An all-caps section heading the extractor missed, glued mid-paragraph:
+        # split so its body becomes its own sectioned atom instead of trailing
+        # the previous paragraph.
+        heading_split = _split_pdf_embedded_heading(text)
+        if heading_split:
+            before, heading, after = heading_split
+            for chunk, sp in ((before, section_path), (after, section_path + [heading])):
+                at, auth = _classify_text_block(text=chunk, section_path=sp, kind="paragraph")
+                yield _make_atom(
+                    text=chunk,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=at,
+                    authority_class=auth,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={**base_locator, "section_path": sp},
+                    value={"kind": "paragraph"},
                 )
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="paragraph")
