@@ -970,21 +970,30 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
             order.append(key)
         groups[key].append(atom)
 
-    kept: list[Any] = []
+    # Decide survivors per group (and merge losers' provenance into the winner)
+    # WITHOUT building a new order: a dedup pass must not shuffle the atoms it
+    # keeps. Clustering members at the first-occurrence position previously
+    # reordered identical-text prose (e.g. the same site note under 3 sites all
+    # jumped adjacent), so the stream stopped reading in document order even
+    # though nothing was dropped.
+    survivors: set[int] = set()
     for key in order:
         members = groups[key]
         if len(members) == 1 or len({_atom_type_value(a) for a in members}) == 1:
-            # Single atom, or all one type — not a cross-type duplicate.
-            kept.extend(members)
+            # Single atom, or all one type — not a cross-type duplicate; keep all.
+            survivors.update(id(m) for m in members)
             continue
         winner = max(members, key=lambda a: (_cross_type_priority(a), _confidence(a)))
         for loser in members:
             if loser is winner:
                 continue
             _merge_atom_metadata(winner, loser)
-        kept.append(winner)
+        survivors.add(id(winner))
 
-    return kept + passthrough
+    # Emit in ORIGINAL input order: each atom survives if it's a passthrough
+    # (open_question / unkeyed) or the kept member of its group.
+    passthrough_ids = {id(a) for a in passthrough}
+    return [a for a in atoms if id(a) in passthrough_ids or id(a) in survivors]
 
 
 def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
