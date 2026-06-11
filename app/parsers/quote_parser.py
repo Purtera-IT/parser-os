@@ -1432,6 +1432,8 @@ class QuoteParser(BaseParser):
                     values=values,
                     row_kind=rk,
                     diagnostics=diag,
+                    raw_columns=_raw_headers or None,
+                    raw_row=[str(c or "").strip() for c in row] if _raw_headers else None,
                 )
             )
             # v49.2: emit raw_table_row for centralized post-parse
@@ -1546,6 +1548,8 @@ class QuoteParser(BaseParser):
         values: dict[str, str],
         row_kind: RowKind,
         diagnostics: list[str],
+        raw_columns: list[str] | None = None,
+        raw_row: list[str] | None = None,
     ) -> list[EvidenceAtom]:
         part_number = values.get("part_number", "")
         description = values.get("description", "")
@@ -1699,25 +1703,32 @@ class QuoteParser(BaseParser):
             vli_value,
             raw_text=f"{part_number} {description} {material_spec} {notes}".strip(),
         )
-        # Bound (header: value) view so the classifier sees a RICH line — SKU,
-        # qty, unit price, extended, lead time — instead of the thin "NetWave
-        # AP-9700" raw_text. _atom_bound_text renders these at decide-time;
-        # raw_text is left untouched so the vendor-mismatch graph / commercial
-        # packet logic that reads it is unaffected.
-        vli_value["cells"] = {
-            k: str(v).strip()
-            for k, v in (
-                ("SKU/Part", part_number),
-                ("Description", description),
-                ("Material", material_spec),
-                ("Qty", qty_obj.get("quantity_raw") or quantity_raw),
-                ("Unit Price", unit_price_raw),
-                ("Extended", extended_raw),
-                ("Lead Time", lead_time),
-                ("Notes", notes),
-            )
-            if str(v or "").strip()
-        }
+        # Bound (header: value) view so the classifier sees a RICH line instead
+        # of the thin "NetWave AP-9700" raw_text. Bind the FULL raw row — EVERY
+        # column the sheet has (Item ID, Unit, Purpose, Requires Serial Capture,
+        # ...), not a hardcoded canonical subset that silently drops the rest.
+        # _atom_bound_text renders these at decide-time; raw_text is left
+        # untouched so the vendor-mismatch graph / commercial packet logic is
+        # unaffected. Fall back to the canonical fields only when the raw row
+        # wasn't threaded in (csv/txt paths).
+        if raw_columns and raw_row:
+            vli_value["_columns"] = list(raw_columns)
+            vli_value["_row"] = list(raw_row)
+        else:
+            vli_value["cells"] = {
+                k: str(v).strip()
+                for k, v in (
+                    ("SKU/Part", part_number),
+                    ("Description", description),
+                    ("Material", material_spec),
+                    ("Qty", qty_obj.get("quantity_raw") or quantity_raw),
+                    ("Unit Price", unit_price_raw),
+                    ("Extended", extended_raw),
+                    ("Lead Time", lead_time),
+                    ("Notes", notes),
+                )
+                if str(v or "").strip()
+            }
 
         has_line = bool(
             part_number
