@@ -350,6 +350,7 @@ def emit_atoms_for_schema(
     filename: str,
     parser_version: str = "table_schema_v49",
     section_path: list[str] | None = None,
+    sheet: str | None = None,
 ) -> list[EvidenceAtom]:
     """Given a recognized schema, header list, and one data row, emit typed atoms.
 
@@ -376,6 +377,11 @@ def emit_atoms_for_schema(
             locator={
                 "table_index": table_idx,
                 "row": row_idx,
+                # xlsx rows carry a sheet name — preserve it so the typed atom
+                # shares the same (sheet,row) cell key as its scope/raw twins
+                # (so cross_type_dedup collapses them) and so its table-ref
+                # reads "[table: <sheet> rN]" instead of a bare "t0".
+                **({"sheet": sheet} if sheet else {}),
                 "schema": schema_name,
                 "extraction": "table_schema_v49",
                 "section_path": _section_path,

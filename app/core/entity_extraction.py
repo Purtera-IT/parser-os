@@ -3942,6 +3942,11 @@ def _enrich_table_atoms(
                         break
             except Exception:
                 _src_section = []
+        # xlsx rows: the sheet IS the section. Fall back to it so the typed
+        # atom references its sheet (docx headings ≈ xlsx sheets).
+        _sheet = val.get("_sheet") or None
+        if not _src_section and _sheet:
+            _src_section = [_sheet]
         try:
             schema_atoms = emit_atoms_for_schema(
                 schema_name=schema_name,
@@ -3953,6 +3958,7 @@ def _enrich_table_atoms(
                 artifact_id=getattr(atom, "artifact_id", "") or "",
                 filename=str(val.get("_filename") or ""),
                 section_path=_src_section,
+                sheet=_sheet,
             )
             if schema_atoms:
                 new_atoms.extend(schema_atoms)

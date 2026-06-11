@@ -3041,7 +3041,7 @@ class XlsxParser(BaseParser):
             # Render the row as "col: value | col: value" — same shape
             # the canonical line-item emitter uses, so OrbitBrief and
             # entity_extraction get a familiar structure.
-            parts: list[str] = []
+            bare: list[str] = []
             cell_columns: dict[str, str] = {}
             for col_idx, col_name in enumerate(columns):
                 if col_idx >= len(row):
@@ -3052,9 +3052,15 @@ class XlsxParser(BaseParser):
                 value_str = str(value).strip()
                 if not value_str:
                     continue
-                parts.append(f"{col_name}: {value_str}")
+                bare.append(value_str)
                 cell_columns[col_name] = get_column_letter(col_idx + 1)
-            raw_text = " | ".join(parts).strip()
+            # raw_text is the bare pipe-join of cell VALUES (not "col: value"),
+            # matching the docx per-row blob and the schema row_text — so when a
+            # raw_table_row routes this same row to a typed atom (deal_metadata,
+            # etc.), cross_type_dedup collapses this scope twin into it. Column
+            # meaning is preserved in value.cells and rendered back by
+            # _atom_bound_text at decide-time, so nothing is lost for display.
+            raw_text = " | ".join(bare).strip()
             if not raw_text:
                 continue
             # Skip the header row itself so it doesn't reappear as data.
@@ -3121,6 +3127,64 @@ class XlsxParser(BaseParser):
                     parser_version=self.parser_version,
                 )
             )
+
+            # v50: also emit a raw_table_row so the central schema registry can
+            # TYPE this row (Field/Value -> deal_metadata, BOM -> bom_line, etc.)
+            # — the same path the canonical-header and quote emitters already
+            # use. Only when a real header row was found (col_N placeholders
+            # can't match a schema). The scope_item above stays as the fail-open
+            # fallback for rows that match no schema; when one DOES match,
+            # cross_type_dedup collapses the scope twin into the typed atom
+            # (shared (sheet,row) cell key + identical bare-pipe raw_text).
+            if header_idx >= 0:
+                _rtr_id = stable_id("atm", artifact_id, "raw_table_row", sheet_name, row_idx)
+                _rtr_src = SourceRef(
+                    id=stable_id("src", _rtr_id),
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    locator={
+                        "sheet": sheet_name,
+                        "row": row_idx + 1,
+                        "columns": cell_columns,
+                        "extraction": "raw_table_row_v49_2",
+                        "section_path": [sheet_name] if sheet_name else [],
+                    },
+                    extraction_method="raw_table_row_v49_2",
+                    parser_version=self.parser_version,
+                )
+                atoms.append(
+                    EvidenceAtom(
+                        id=_rtr_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.raw_table_row,
+                        raw_text=raw_text[:4000],
+                        normalized_text=raw_text.lower()[:4000],
+                        value={
+                            "_columns": list(columns),
+                            "_row": [str(c).strip() if c is not None else "" for c in row],
+                            "_table_idx": 0,
+                            # 1-based to match the scope_item's locator row
+                            # (row_idx+1), so the typed atom shares the scope
+                            # twin's (sheet,row) cell key and they collapse.
+                            "_row_idx": row_idx + 1,
+                            "_filename": filename,
+                            "_sheet": sheet_name,
+                            "_artifact_type": "xlsx",
+                        },
+                        entity_keys=[],
+                        source_refs=[_rtr_src],
+                        receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.80,
+                        confidence_raw=0.80,
+                        calibrated_confidence=0.80,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    )
+                )
 
             # Cell-level sub-atoms — emit exclusion / risk atoms for
             # any cells whose text matches the cell-fact patterns.
