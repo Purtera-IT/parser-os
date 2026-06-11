@@ -130,7 +130,9 @@ class DocxParser(BaseParser):
             text = paragraph.text.strip()
             if not text:
                 continue
-            is_heading = bool(paragraph.style and paragraph.style.name.lower().startswith("heading"))
+            style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
+            is_heading = style_name.startswith("heading")
+            is_list_item = ("list" in style_name) or ("bullet" in style_name)
             atoms.extend(
                 self._emit_atoms_for_text(
                     project_id=project_id,
@@ -143,6 +145,7 @@ class DocxParser(BaseParser):
                     cell=None,
                     tracked_change=None,
                     heading=is_heading,
+                    is_list_item=is_list_item,
                 )
             )
 
@@ -854,6 +857,7 @@ class DocxParser(BaseParser):
         tracked_change: str | None,
         heading: bool,
         tracked_index: int | None = None,
+        is_list_item: bool = False,
     ) -> list[EvidenceAtom]:
         # Span-provenance ledger (passive side-channel; only active when a
         # ledger is attached). Register this raw unit so the lost-content
@@ -873,7 +877,11 @@ class DocxParser(BaseParser):
         # short titles, not facts.
         prose_fallback = False
         if not atom_types:
-            if not heading and self._is_substantive_prose(text):
+            # Bullet list items are deliberate, load-bearing content (deliverables,
+            # assumptions, checklists) — fail OPEN regardless of length, even when
+            # they are too short to pass the substantive-prose heuristic. Otherwise
+            # a 3-word bullet like "Hardware order tracking" is silently dropped.
+            if not heading and (self._is_substantive_prose(text) or is_list_item):
                 atom_types = [AtomType.scope_item]
                 prose_fallback = True
             else:
