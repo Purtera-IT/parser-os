@@ -9,6 +9,7 @@ of typed atoms for each row so every fact gets its own typed atom.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -471,27 +472,42 @@ def emit_atoms_for_schema(
             {
                 "item_id": item_id, "description": description, "sku": sku,
                 "qty": qty, "unit_cost": unit_cost, "category": category,
+                # The per-site split + lead time live AS FIELDS on the line, so
+                # the row stays one atom. Structured per-site reconciliation is
+                # a deal-level computation off this field, not 3 parse atoms.
+                "site_allocation": [
+                    {"site": a["site"], "qty": a["qty"]}
+                    for a in _parse_site_allocation(site_alloc_raw)
+                ],
                 "row_text": row_text,
             },
         ))
 
-        for alloc in _parse_site_allocation(site_alloc_raw):
-            site_code = alloc["site"]
-            site_qty = alloc["qty"]
-            alloc_text = f"{description or item_id or sku} | site: {site_code} | qty: {site_qty}"
-            atoms.append(_atom(
-                f"site_alloc_{site_code}",
-                AtomType.site_allocation,
-                alloc_text,
-                {"site": site_code, "item_id": item_id, "description": description,
-                 "sku": sku, "qty": site_qty},
-            ))
+        # One atom per ROW. The per-site allocation breakdown is a sub-field of
+        # the row, not its own fact — exploding it into N site_allocation atoms
+        # is over-extraction (same mistake as a standalone quantity atom). Folded
+        # onto the line above; emit the split atoms only when explicitly asked.
+        if os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") != "1":
+            for alloc in _parse_site_allocation(site_alloc_raw):
+                site_code = alloc["site"]
+                site_qty = alloc["qty"]
+                alloc_text = f"{description or item_id or sku} | site: {site_code} | qty: {site_qty}"
+                atoms.append(_atom(
+                    f"site_alloc_{site_code}",
+                    AtomType.site_allocation,
+                    alloc_text,
+                    {"site": site_code, "item_id": item_id, "description": description,
+                     "sku": sku, "qty": site_qty},
+                ))
 
         # GAP B FIX: lead_time_constraint from "Lead Time Days" column.
         lead_time_raw = _find_col_value(
             row_dict, ("lead time", "lead_time", "lead time days", "weeks", "procurement days")
         )
-        if lead_time_raw:
+        # Lead time is also a sub-field of the row (already on the line). Same
+        # one-atom-per-row rule: emit the separate constraint atom only when
+        # explicitly asked.
+        if lead_time_raw and os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") != "1":
             lt_days = None
             m = re.search(r"(\d+)", lead_time_raw)
             if m:
