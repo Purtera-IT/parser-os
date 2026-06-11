@@ -975,6 +975,14 @@ def _emit_scope_constraint_atoms(
 ) -> None:
     cols = context_columns
 
+    # These are per-row KEYWORD sub-facts: a word in the row ("after-hours",
+    # "badge", "access") mints a thin, context-less "X access constraint" atom
+    # that just restates something already on the row. In one-atom-per-row mode
+    # they fold onto the row (same rule as site_allocation / column-entities);
+    # the brittle keyword typing they encode is the head's job, not the parser's.
+    if os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") == "1":
+        return
+
     def ap(
         atom_type: AtomType,
         raw_text: str,
