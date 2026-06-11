@@ -114,7 +114,7 @@ class DocxParser(BaseParser):
         # Universal reading-order section map: every paragraph/table learns the
         # heading chain it lives under, so site/section attribution has real
         # signal instead of empty section_path.
-        para_section, table_section, _heading_paras = self._build_section_index(document)
+        para_section, table_section, _heading_paras, para_order, table_order = self._build_section_index(document)
 
         # v54 ROOT-CAUSE FIX: skip paragraphs that belong to a table cell so
         # their content is handled by the table loop below with proper row
@@ -351,6 +351,28 @@ class DocxParser(BaseParser):
                 path=path,
             )
         )
+
+        # Reading-order sort: python-docx yields all paragraphs then all tables,
+        # so a table that sits right under a heading in the document otherwise
+        # surfaces far down the atom list. Re-order atoms to true document order
+        # using the body sequence computed in _build_section_index. Stable sort
+        # preserves the emission sub-order within one paragraph/table (e.g. the
+        # raw_table_row alongside its row blob) and parks order-less atoms
+        # (comments, tracked changes, recovered/embedded regions) at the end.
+        def _body_key(a: Any) -> tuple[int, int]:
+            try:
+                refs = getattr(a, "source_refs", None) or []
+                loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+            except Exception:
+                loc = {}
+            pi = loc.get("paragraph_index") if isinstance(loc, dict) else None
+            ti = loc.get("table_index") if isinstance(loc, dict) else None
+            if pi is not None and pi in para_order:
+                return (para_order[pi], 0)
+            if ti is not None and ti in table_order:
+                return (table_order[ti], 1)
+            return (10**9, 2)
+        atoms.sort(key=_body_key)
 
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
@@ -883,17 +905,25 @@ class DocxParser(BaseParser):
         para_section: dict[int, list[str]] = {}
         table_section: dict[int, list[str]] = {}
         heading_paras: dict[int, tuple[int, list[str]]] = {}
+        # global reading-order sequence per body paragraph / table, so atoms can
+        # be emitted/sorted into true document order (python-docx otherwise yields
+        # all paragraphs, then all tables — losing the interleave).
+        para_order: dict[int, int] = {}
+        table_order: dict[int, int] = {}
         stack: list[tuple[int, str]] = []  # (level, heading_text)
         pidx = -1
         tidx = -1
+        seq = 0
         try:
             children = list(document.element.body.iterchildren())
         except Exception:
-            return para_section, table_section, heading_paras
+            return para_section, table_section, heading_paras, para_order, table_order
         for child in children:
             tag = child.tag
             if tag == qn("w:p"):
                 pidx += 1
+                para_order[pidx] = seq
+                seq += 1
                 try:
                     para = _DocxParagraph(child, document)
                     text = (para.text or "").strip()
@@ -913,8 +943,10 @@ class DocxParser(BaseParser):
                     para_section[pidx] = [t for _, t in stack]
             elif tag == qn("w:tbl"):
                 tidx += 1
+                table_order[tidx] = seq
+                seq += 1
                 table_section[tidx] = [t for _, t in stack]
-        return para_section, table_section, heading_paras
+        return para_section, table_section, heading_paras, para_order, table_order
 
     def _emit_atoms_for_text(
         self,
