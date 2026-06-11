@@ -946,10 +946,12 @@ class DocxParser(BaseParser):
         # Fail OPEN, not closed: a paragraph that matches no lexical pattern
         # but is substantive narrative prose is captured as a scope_item
         # (lower confidence, flagged) so no load-bearing fact is silently
-        # dropped at parse time. Headings stay out of the fallback — they are
-        # short titles, not facts.
+        # dropped at parse time. Headings stay out — they are NOT facts, they
+        # are structure: their text is preserved as section_path on every child
+        # atom beneath them, so a heading never needs to be its own (content)
+        # atom. (Matches the PDF parser, which treats headings as section
+        # context only.)
         prose_fallback = False
-        heading_capture = False
         if not atom_types:
             # Bullet list items are deliberate, load-bearing content (deliverables,
             # assumptions, checklists) — fail OPEN regardless of length, even when
@@ -958,14 +960,6 @@ class DocxParser(BaseParser):
             if not heading and (self._is_substantive_prose(text) or is_list_item):
                 atom_types = [AtomType.scope_item]
                 prose_fallback = True
-            elif heading and text:
-                # Section headings are the PARENT label for everything beneath
-                # them ("ATL-HQ - Atlanta Headquarters - Innovation Tower"). They
-                # MUST be captured as atoms so they exist as attribution
-                # candidates — otherwise nothing can learn that the rows below
-                # belong to that site. Flagged section_heading; low base conf.
-                atom_types = [AtomType.scope_item]
-                heading_capture = True
             else:
                 if ledger is not None:
                     from app.core.span_ledger import StageKind
@@ -987,7 +981,6 @@ class DocxParser(BaseParser):
             "cell": cell,
             "tracked_change": tracked_change,
             "section_path": list(section_path) if section_path else [],
-            "is_section_heading": heading_capture,
         }
         source_ref = SourceRef(
             id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index),
@@ -1018,11 +1011,6 @@ class DocxParser(BaseParser):
                 # reclassify/prune. Provenance preserved, data not lost.
                 confidence = 0.5
                 review_flags = ["prose_fallback_capture"]
-            elif heading_capture:
-                # A section heading captured as an attribution candidate.
-                authority_class = AuthorityClass.contractual_scope
-                confidence = 0.6
-                review_flags = ["section_heading"]
             atoms.append(
                 EvidenceAtom(
                     id=stable_id(

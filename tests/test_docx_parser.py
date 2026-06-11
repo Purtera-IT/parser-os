@@ -74,16 +74,12 @@ def test_overview_prose_without_scope_verb_is_captured_not_dropped() -> None:
     assert "110" in a.raw_text
 
 
-def test_section_heading_captured_as_attribution_candidate() -> None:
-    # Section headings are the PARENT label for everything beneath them, so they
-    # are captured as atoms (flagged section_heading) to serve as attribution
-    # candidates for site/section resolution — NOT dropped. Non-heading short
-    # fragments still drop so the graph is not flooded.
-    atoms = _emit("Project Overview", heading=True)
-    assert len(atoms) == 1
-    assert "section_heading" in atoms[0].review_flags
-    assert atoms[0].atom_type == AtomType.scope_item
-    # A non-heading bare label still fails the prose/list gate and is dropped.
+def test_section_heading_not_emitted_as_content_atom() -> None:
+    # A section heading is structure, not a fact. It is NOT emitted as a content
+    # atom — its text is preserved as section_path context on every child atom
+    # beneath it instead (matching the PDF parser). So the graph is never flooded
+    # with header labels masquerading as scope_items.
+    assert _emit("Project Overview", heading=True) == []
     assert _emit("Scope") == []
 
 
