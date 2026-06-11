@@ -2111,25 +2111,29 @@ def build_bill_of_materials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
                     "rows": rows,
                 })
 
-    # Per-line bom_line atoms (if any parser emits them) become their own
-    # one-row-per-atom section so nothing is lost.
-    bom_rows: list[dict[str, Any]] = []
-    for atom in atoms:
-        if _atom_type_str(atom) != "bom_line":
-            continue
-        value = atom.value if isinstance(atom.value, dict) else {}
-        bom_rows.append({
-            "label": (value.get("description") or atom.raw_text or "")[:300],
-            "cells": value.get("cells") or [],
-            "atom_id": atom.id,
-        })
-    if bom_rows:
-        total_lines += len(bom_rows)
-        sections.append({
-            "sheet_name": "bom_line atoms",
-            "line_count": len(bom_rows),
-            "rows": bom_rows,
-        })
+    # Per-line atoms (bom_line from the schema registry, vendor_line_item from
+    # the quote parser) each become a one-row-per-atom section so nothing is
+    # lost. vendor_line_item is the consolidated line for xlsx quote sheets
+    # (the redundant bom_line double is suppressed upstream); bom_line still
+    # carries docx BOM tables that have no vendor_line_item.
+    for _line_type in ("bom_line", "vendor_line_item"):
+        line_rows: list[dict[str, Any]] = []
+        for atom in atoms:
+            if _atom_type_str(atom) != _line_type:
+                continue
+            value = atom.value if isinstance(atom.value, dict) else {}
+            line_rows.append({
+                "label": (value.get("description") or atom.raw_text or "")[:300],
+                "cells": value.get("cells") or [],
+                "atom_id": atom.id,
+            })
+        if line_rows:
+            total_lines += len(line_rows)
+            sections.append({
+                "sheet_name": f"{_line_type} atoms",
+                "line_count": len(line_rows),
+                "rows": line_rows,
+            })
 
     return {
         "sections": sections,

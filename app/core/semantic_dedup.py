@@ -1009,7 +1009,40 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
     # Emit in ORIGINAL input order: each atom survives if it's a passthrough
     # (open_question / unkeyed) or the kept member of its group.
     passthrough_ids = {id(a) for a in passthrough}
-    return [a for a in atoms if id(a) in passthrough_ids or id(a) in survivors]
+    result = [a for a in atoms if id(a) in passthrough_ids or id(a) in survivors]
+    return _suppress_line_item_doubles(result)
+
+
+def _suppress_line_item_doubles(atoms: list[Any]) -> list[Any]:
+    """Drop the bom_line/service_line DOUBLE of a quote row that also produced a
+    vendor_line_item.
+
+    A quote sheet routes through BOTH the quote parser (vendor_line_item — feeds
+    the commercial summary + the vendor-mismatch contradiction graph) and the
+    schema registry (bom_line/service_line — feeds the BOM section). They are
+    two rich, full-row copies of the same line at the same (sheet,row) cell.
+    Keep vendor_line_item (the BOM renderer reads it too now) and drop the
+    registry double, merging its provenance in so nothing is lost. docx BOM
+    tables have no vendor_line_item, so their bom_line is untouched.
+    """
+    vli_by_cell: dict[str, Any] = {}
+    for a in atoms:
+        if _atom_type_value(a) == "vendor_line_item":
+            cell = _atom_cell_locator(a)
+            if cell:
+                vli_by_cell.setdefault(cell, a)
+    if not vli_by_cell:
+        return atoms
+    out: list[Any] = []
+    for a in atoms:
+        if _atom_type_value(a) in ("bom_line", "service_line"):
+            cell = _atom_cell_locator(a)
+            winner = vli_by_cell.get(cell) if cell else None
+            if winner is not None:
+                _merge_atom_metadata(winner, a)
+                continue
+        out.append(a)
+    return out
 
 
 def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:

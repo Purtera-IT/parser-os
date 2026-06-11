@@ -1460,7 +1460,12 @@ class QuoteParser(BaseParser):
                         "_columns": list(_raw_headers),
                         "_row": _row_cells,
                         "_table_idx": 0,
-                        "_row_idx": row_idx,
+                        # 1-based so the typed atom (bom_line/service_line) shares
+                        # the (sheet,row) cell key with the vendor_line_item /
+                        # quantity emitted for this same row (which use
+                        # row_idx+1) — lets the line-item-double suppressor and
+                        # cross_type_dedup line them up.
+                        "_row_idx": row_idx + 1,
                         "_filename": filename,
                         "_sheet": sheet_name,
                         "_artifact_type": "xlsx",
