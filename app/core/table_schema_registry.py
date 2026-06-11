@@ -565,7 +565,9 @@ def emit_atoms_for_schema(
         atoms.append(_atom(
             "cutover_step",
             AtomType.cutover_step,
-            description or row_text,
+            # Full row (carries step/timing/owner/checklist/evidence) AND matches
+            # the generic scope twin so cross_type_dedup collapses it.
+            row_text,
             {"step_id": step_id, "timing": timing, "owner": owner, "description": description},
         ))
 
@@ -646,7 +648,7 @@ def emit_atoms_for_schema(
             atoms.append(_atom(
                 "deliverable",
                 AtomType.deliverable,
-                name,
+                row_text,  # full row → dedups the scope twin, carries every column
                 {"name": name, "due": due, "owner": owner, "description": description, "raw": row_text},
             ))
 
@@ -659,7 +661,7 @@ def emit_atoms_for_schema(
             atoms.append(_atom(
                 "integration_checkpoint",
                 AtomType.integration_checkpoint,
-                f"{ic_id} | {system} | {test}" if ic_id else test,
+                row_text,  # full row → dedups the scope twin, carries every column
                 {"ic_id": ic_id, "system": system, "test": test, "criteria": criteria, "raw": row_text},
             ))
 
@@ -711,14 +713,15 @@ def emit_atoms_for_schema(
             atoms.append(_atom(
                 "task",
                 AtomType.task,
-                name or row_text,
+                row_text,  # full row → dedups the scope twin, carries every column
                 {"task_id": task_id, "site": site, "phase": phase, "name": name,
                  "owner": owner, "start": start, "due": due, "dependency": dependency,
                  "status": status, "raw": row_text},
             ))
-            # Also emit a dependency atom when the row carries one — gives PM
-            # an explicit Gantt-style predecessor link.
-            if dependency:
+            # The predecessor link is a SUB-FIELD of the task row (already on the
+            # task's value.dependency). Emit the separate Gantt-edge atom only
+            # when explicitly asked — same one-atom-per-row rule as site_allocation.
+            if dependency and os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") != "1":
                 atoms.append(_atom(
                     "task_dep",
                     AtomType.dependency,

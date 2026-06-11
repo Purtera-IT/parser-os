@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -3563,8 +3564,13 @@ class XlsxParser(BaseParser):
                 )
             )
 
-        # Entities: precise types, not everything as site
-        for field, etype, label in (
+        # Entities: precise types, not everything as site. These are per-row
+        # SUB-FIELD extractions (the Site/Floor/Room column already lives on the
+        # row atom) used for entity resolution — emit them only when not in
+        # one-atom-per-row mode, same rule as site_allocation / dependency.
+        for field, etype, label in () if os.environ.get(
+            "SOWSMITH_DROP_DERIVED_SUBATOMS"
+        ) == "1" else (
             ("site", "site", "Site"),
             ("building", "building", "Building"),
             ("floor", "floor", "Floor"),
