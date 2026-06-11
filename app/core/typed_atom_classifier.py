@@ -878,6 +878,13 @@ def _atom_section_path(atom: Any) -> str:
                 sp = loc.get("section_path")
                 if isinstance(sp, list) and sp:
                     return " > ".join(str(x) for x in sp if x)[:200]
+                # xlsx rows carry no heading chain, but the SHEET is their
+                # section: it's the structural context a spreadsheet groups by
+                # (docx headings ≈ xlsx sheets). Surface it so a BOM / deal-
+                # summary row tells the head which sheet it came from.
+                sheet = loc.get("sheet")
+                if sheet:
+                    return str(sheet)[:200]
     except Exception:
         pass
     return ""
