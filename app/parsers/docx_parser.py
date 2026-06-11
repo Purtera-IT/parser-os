@@ -45,12 +45,18 @@ WORD_TBL_TAG = f"{{{WORD_NS['w']}}}tbl"
 
 SCOPE_PATTERNS = [r"\bscope includes\b", r"\binclude\b", r"\binstallation\b", r"\binstall\b"]
 EXCLUSION_PATTERNS = [r"\bexclude\b", r"\bexcluded\b", r"\bout of scope\b", r"\bnot in scope\b"]
-CONSTRAINT_PATTERNS = [
-    r"\baccess\b",
+# Strong constraint cues: load-bearing phrases that are reliably a constraint.
+STRONG_CONSTRAINT_PATTERNS = [
     r"\bcustomer is responsible\b",
     r"\bescort required\b",
     r"\bbadge required\b",
 ]
+# Weak constraint cues: single common words that fire on any mention (e.g.
+# "access windows" in a descriptive list). On their own these are low-trust —
+# they are typed provisionally and routed to the label queue, not shipped
+# confident. See _weak_lexical_types.
+WEAK_CONSTRAINT_PATTERNS = [r"\baccess\b"]
+CONSTRAINT_PATTERNS = STRONG_CONSTRAINT_PATTERNS + WEAK_CONSTRAINT_PATTERNS
 ASSUMPTION_PATTERNS = [r"\bassum(?:e|ption|ing)\b"]
 
 
@@ -810,6 +816,28 @@ class DocxParser(BaseParser):
                 atom_types.append(AtomType.scope_item)
         return atom_types
 
+    def _weak_lexical_types(self, text: str) -> set[AtomType]:
+        """Lexical types that rest ONLY on a brittle single-word cue.
+
+        ``constraint`` and ``assumption`` are the two flip-floppy lexical types:
+        a bare "access" (in e.g. "…access windows…") fires the constraint rule,
+        and a lone "assume" fires the assumption rule, even in descriptive prose
+        that is neither. These guesses are low-trust — the parser ships them
+        PROVISIONAL (weak_label -> needs_review, low confidence) so they (a)
+        stop polluting the brief as confident facts and (b) become rows in the
+        PM labelling queue that trains the eventual supervised type head. Strong
+        constraint phrases ("escort required", "badge required") are unaffected.
+        """
+        lowered = normalize_text(text)
+        weak: set[AtomType] = set()
+        if any(re.search(p, lowered) for p in WEAK_CONSTRAINT_PATTERNS) and not any(
+            re.search(p, lowered) for p in STRONG_CONSTRAINT_PATTERNS
+        ):
+            weak.add(AtomType.constraint)
+        if any(re.search(p, lowered) for p in ASSUMPTION_PATTERNS):
+            weak.add(AtomType.assumption)
+        return weak
+
     @staticmethod
     def _paragraph_in_table(paragraph: Any) -> bool:
         """Whether a python-docx paragraph lives inside a table cell.
@@ -1042,6 +1070,11 @@ class DocxParser(BaseParser):
         # polluting the output and (b) becomes a candidate for PM hand-labelling,
         # i.e. the training queue for the eventual supervised type head.
         weak_label = False
+        # Per-type weak lexical cues (bare "access" -> constraint, lone "assume"
+        # -> assumption). Computed from the lexical match; only applied below to
+        # types that actually came from the lexical classifier (not section_typed
+        # / prose_fallback, which carry their own confidence + flags).
+        weak_lexical = self._weak_lexical_types(text) if atom_types else set()
         if atom_types:
             _shint = self._section_type_hint(section_path)
             if _shint is not None and _shint not in atom_types:
@@ -1130,9 +1163,16 @@ class DocxParser(BaseParser):
                 # reclassify/prune. Provenance preserved, data not lost.
                 confidence = 0.5
                 review_flags = ["prose_fallback_capture"]
-            if weak_label:
-                # Lexical type contradicts the section — provisional, route to
-                # review + the PM labelling queue rather than ship as confident.
+            # A type is weak when it contradicts the section heading OR rests on
+            # a brittle single-word lexical cue. The latter only counts for types
+            # that came straight from the lexical classifier (section_typed /
+            # prose_fallback have their own provenance + confidence).
+            is_weak = weak_label or (
+                not section_typed and not prose_fallback and atom_type in weak_lexical
+            )
+            if is_weak:
+                # Low-trust guess — provisional: route to review + the PM
+                # labelling queue rather than ship as a confident fact.
                 review_flags = review_flags + ["weak_label"]
                 review_status = ReviewStatus.needs_review
                 confidence = min(confidence, 0.45)
