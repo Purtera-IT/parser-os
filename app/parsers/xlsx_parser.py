@@ -1537,6 +1537,15 @@ class XlsxParser(BaseParser):
                         "occupancy": site_row.occupancy,
                         "notes": site_row.notes,
                         "extras": dict(site_row.extra_fields),
+                        # Bind the FULL raw row so EVERY column surfaces (Users,
+                        # Rooms, Hardware/Services/Logistics budgets, Notes, ...),
+                        # not just the canonical roster fields. _atom_bound_text
+                        # renders these "Header: value | ..." at decide-time.
+                        "cells": (
+                            dict(data_rows[site_row.row_index])
+                            if 0 <= site_row.row_index < len(data_rows)
+                            else {}
+                        ),
                     },
                     entity_keys=sorted(set(entity_keys)),
                     source_refs=[source_ref],
