@@ -543,24 +543,38 @@ def emit_atoms_for_schema(
             atoms.append(_atom(
                 "site_room_mix",
                 AtomType.site_room_mix,
-                f"{room_type} | {count}" if room_type else row_text,
-                {"room_type": room_type, "count": count, "build_spec": build, "validation": validation},
+                # Full row, not just "Room | Count" — carries the build spec +
+                # validation columns AND matches the docx per-row blob so
+                # cross_type_dedup collapses the context-less scope twin.
+                row_text,
+                {"room_type": room_type, "count": count, "build_spec": build,
+                 "validation": validation, "raw": row_text},
             ))
 
     elif schema_name == "requirements":
-        req_id = _find_col_value(row_dict, ("req", "id", "ref", "requirement id", "#"))
-        description = _find_col_value(row_dict, ("description", "requirement", "shall", "must", "text"))
-        if not description:
-            description = row_text
+        req_id = _find_col_value(row_dict, ("requirement id", "req id", "req #", "req", "ref", "id", "#"))
+        # The description column is the requirement TEXT, not the ID — but
+        # "requirement" also matches the "Requirement ID" header, which sorts
+        # first and would hand back "REQ-001". Skip id/ref columns explicitly.
+        description = ""
+        for col, val in row_dict.items():
+            toks = re.findall(r"[a-z]+", col.lower())
+            if "id" in toks or "ref" in toks:
+                continue
+            if _col_matches(col, ("requirement", "description", "shall", "must", "scope", "text")):
+                description = (val or "").strip()
+                break
         priority = _find_col_value(row_dict, ("priority", "criticality", "must have", "p1", "p2"))
-        site = _find_col_value(row_dict, ("site", "location", "scope", "applicable to"))
+        site = _find_col_value(row_dict, ("site", "location", "scope", "applicable to", "applies to"))
         category = _find_col_value(row_dict, ("category", "type", "domain", "area"))
         atoms.append(_atom(
             "requirement",
             AtomType.requirement,
-            description or row_text,
+            # Full row — carries id + text + applies-to + owner + verification,
+            # and matches the docx row blob so the scope twin dedups away.
+            row_text,
             {"req_id": req_id, "description": description, "priority": priority,
-             "site": site, "category": category},
+             "site": site, "category": category, "raw": row_text},
         ))
 
     elif schema_name == "signatory":

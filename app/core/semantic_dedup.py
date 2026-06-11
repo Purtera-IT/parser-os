@@ -904,10 +904,31 @@ def _cross_type_text_key(atom: Any) -> str:
     raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
     norm = _CROSS_TYPE_STRIP_RE.sub(" ", str(raw).lower())
     norm = re.sub(r"\s+", " ", norm).strip()
+    # Structure-aware scoping: a table cell is identified by (artifact, table,
+    # row). When the atom comes from a table, prefix the key with that cell so
+    # the same-cell twins (raw_table_row + scope_item + typed schema atom)
+    # collapse, but identical-looking rows from DIFFERENT cells/sites never do.
+    # This matters because the key strips quantities — without the cell prefix,
+    # "Large conference | 4" (HQ) and "| 2" (WEST) and "| 2" (AIR) would share
+    # one key and three sites' room counts would collapse to one. The cell
+    # prefix keeps each site's per-row payload distinct.
+    cell = _atom_cell_locator(atom)
+    if cell:
+        return f"{cell}|{norm[:80]}"
     if len(norm) < 8:
         return ""
     # Cap so trailing paraphrase divergence doesn't split a shared fact.
     return norm[:80]
+
+
+def _atom_cell_locator(atom: Any) -> str:
+    """Return 'artifact:tT:rR' for a table-cell atom, else '' (prose/other)."""
+    for ref in (getattr(atom, "source_refs", None) or []):
+        loc = getattr(ref, "locator", None) or {}
+        if isinstance(loc, dict) and loc.get("table_index") is not None and loc.get("row") is not None:
+            art = getattr(atom, "artifact_id", "") or ""
+            return f"{art}:t{loc['table_index']}:r{loc['row']}"
+    return ""
 
 
 def _cross_type_priority(atom: Any) -> int:
