@@ -1013,6 +1013,18 @@ class DocxParser(BaseParser):
             ledger.register_span(span_id, text)
 
         atom_types = self._classify_text(text)
+        # Weak-label flag: when the lexical regex assigns a type that CONTRADICTS
+        # the governing section heading (e.g. "...provides site access..." -> the
+        # \baccess\b pattern says constraint, but the heading is "Assumptions and
+        # Dependencies"), that word-level guess is low-trust. Don't ship it as a
+        # confident fact — flag it weak_label / needs_review so it (a) stops
+        # polluting the output and (b) becomes a candidate for PM hand-labelling,
+        # i.e. the training queue for the eventual supervised type head.
+        weak_label = False
+        if atom_types:
+            _shint = self._section_type_hint(section_path)
+            if _shint is not None and _shint not in atom_types:
+                weak_label = True
         # Fail OPEN, not closed: a paragraph that matches no lexical pattern
         # but is substantive narrative prose is captured as a scope_item
         # (lower confidence, flagged) so no load-bearing fact is silently
@@ -1097,6 +1109,12 @@ class DocxParser(BaseParser):
                 # reclassify/prune. Provenance preserved, data not lost.
                 confidence = 0.5
                 review_flags = ["prose_fallback_capture"]
+            if weak_label:
+                # Lexical type contradicts the section — provisional, route to
+                # review + the PM labelling queue rather than ship as confident.
+                review_flags = review_flags + ["weak_label"]
+                review_status = ReviewStatus.needs_review
+                confidence = min(confidence, 0.45)
             atoms.append(
                 EvidenceAtom(
                     id=stable_id(
