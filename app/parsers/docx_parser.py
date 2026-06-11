@@ -456,9 +456,22 @@ class DocxParser(BaseParser):
                 ("mdf_idf", site_row.mdf_idf),
                 ("access", site_row.access_window),
                 ("escort", site_row.escort_owner),
+                ("contact", site_row.contact),
+                ("phone", site_row.phone),
+                ("email", site_row.email),
+                ("city_state", site_row.city_state),
+                ("zip", site_row.zip),
+                ("sqft", site_row.sqft),
+                ("users", site_row.occupancy),
+                ("notes", site_row.notes),
             ]:
                 if val:
                     text_parts.append(f"{label}: {val}")
+            # Surface every remaining column the extractor could not map to a
+            # canonical field (e.g. "Rooms") so NO column is invisible to the head.
+            for _k, _v in (site_row.extra_fields or ()):
+                if _v and str(_v).strip():
+                    text_parts.append(f"{_k}: {_v}")
             row_text = " | ".join(text_parts) or canon_id
             entity_keys: list[str] = []
             if sid:
@@ -503,6 +516,8 @@ class DocxParser(BaseParser):
                         "mdf_idf": site_row.mdf_idf,
                         "access_window": site_row.access_window,
                         "escort_owner": site_row.escort_owner,
+                        "sqft": site_row.sqft,
+                        "occupancy": site_row.occupancy,
                         "contact": site_row.contact,
                         "phone": site_row.phone,
                         "email": site_row.email,
