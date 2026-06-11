@@ -1012,6 +1012,27 @@ class DocxParser(BaseParser):
         if ledger is not None:
             ledger.register_span(span_id, text)
 
+        # A heading is STRUCTURE, never a content atom — even when its title text
+        # happens to match a lexical pattern (e.g. "7. Out of Scope" matches the
+        # exclusion regex, "2. Sites and Scope" the scope regex). Its text is
+        # already preserved as section_path on every child beneath it, so it never
+        # needs to be its own atom. Drop it here (recorded) BEFORE lexical typing,
+        # so a heading can't leak in as content just because of a title keyword.
+        if heading and text:
+            if ledger is not None:
+                from app.core.span_ledger import StageKind
+
+                ledger.record_drop(
+                    span_id=span_id,
+                    stage="docx_parse.heading_is_structure",
+                    kind=StageKind.GATE,
+                    rule="heading_not_content",
+                    reason="section heading preserved as section_path on children, not a content atom",
+                    raw_text=text,
+                    artifact=artifact_id,
+                )
+            return []
+
         atom_types = self._classify_text(text)
         # Weak-label flag: when the lexical regex assigns a type that CONTRADICTS
         # the governing section heading (e.g. "...provides site access..." -> the
