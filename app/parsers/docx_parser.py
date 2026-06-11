@@ -968,6 +968,24 @@ class DocxParser(BaseParser):
                 table_section[tidx] = [t for _, t in stack]
         return para_section, table_section, heading_paras, para_order, table_order
 
+    # Section-heading -> atom type. The document's OWN heading is the authority:
+    # an unmatched bullet under a "Deliverables" heading IS a deliverable, under
+    # "Acceptance Criteria" IS an acceptance criterion, etc. Applied only to
+    # fail-open prose (the unsure bucket); the head can still override. Universal
+    # (keys on the structural heading the author wrote, not on content tokens).
+    _SECTION_TYPE_HINTS: tuple[tuple[str, "AtomType"], ...] = (
+        ("deliverable", AtomType.deliverable),
+        ("acceptance criteria", AtomType.acceptance_criterion),
+        ("assumptions and dependencies", AtomType.assumption),
+    )
+
+    def _section_type_hint(self, section_path: list[str] | None) -> "AtomType | None":
+        joined = " > ".join(str(s) for s in (section_path or [])).lower()
+        for kw, atom_type in self._SECTION_TYPE_HINTS:
+            if kw in joined:
+                return atom_type
+        return None
+
     def _emit_atoms_for_text(
         self,
         project_id: str,
@@ -1004,14 +1022,23 @@ class DocxParser(BaseParser):
         # atom. (Matches the PDF parser, which treats headings as section
         # context only.)
         prose_fallback = False
+        section_typed = False
         if not atom_types:
             # Bullet list items are deliberate, load-bearing content (deliverables,
             # assumptions, checklists) — fail OPEN regardless of length, even when
             # they are too short to pass the substantive-prose heuristic. Otherwise
             # a 3-word bullet like "Hardware order tracking" is silently dropped.
             if not heading and (self._is_substantive_prose(text) or is_list_item):
-                atom_types = [AtomType.scope_item]
-                prose_fallback = True
+                hint = self._section_type_hint(section_path)
+                if hint is not None:
+                    # The governing heading names the type (Deliverables ->
+                    # deliverable, etc.) — propose it instead of an unsure
+                    # scope_item. Still flagged section_typed so the head may revise.
+                    atom_types = [hint]
+                    section_typed = True
+                else:
+                    atom_types = [AtomType.scope_item]
+                    prose_fallback = True
             else:
                 if ledger is not None:
                     from app.core.span_ledger import StageKind
@@ -1057,6 +1084,13 @@ class DocxParser(BaseParser):
                 confidence = 0.2
             elif tracked_change == "inserted":
                 confidence = 0.72
+            elif section_typed:
+                # Typed from the governing section heading (e.g. a bullet under
+                # "Deliverables" -> deliverable). Moderate confidence, flagged so
+                # the head can revise; authority is the written doc structure.
+                authority_class = AuthorityClass.contractual_scope
+                confidence = 0.7
+                review_flags = ["section_typed"]
             elif prose_fallback:
                 # Captured by fail-open prose rule, not a lexical match:
                 # lower confidence and flag so downstream semantic stages
