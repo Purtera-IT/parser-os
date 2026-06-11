@@ -182,6 +182,7 @@ class DocxParser(BaseParser):
                 table_index=table_idx,
                 rows=table_rows,
                 surrounding_text=document_text,
+                section_path=table_section.get(table_idx, []),
             )
             if roster_atoms:
                 atoms.extend(roster_atoms)
@@ -390,10 +391,13 @@ class DocxParser(BaseParser):
         table_index: int,
         rows: list[list[str]],
         surrounding_text: str,
+        section_path: list[str] | None = None,
     ) -> list[EvidenceAtom]:
         """Emit ``physical_site`` entity atoms when a DOCX table looks
         like a site roster (header row with Site ID + Facility +
-        Address / MDF / Access / Escort columns).
+        Address / MDF / Access / Escort columns). ``section_path`` (the heading
+        chain the roster table lives under) is stamped on each atom so roster
+        sites carry their section like every other table row.
         """
         try:
             from app.parsers.site_roster_extractor import (
@@ -474,6 +478,7 @@ class DocxParser(BaseParser):
                     "table_index": table_index,
                     "row": row_index,
                     "extraction": "docx_site_roster_v1",
+                    "section_path": list(section_path) if section_path else [],
                 },
                 extraction_method="docx_site_roster_v1",
                 parser_version=self.parser_version,
