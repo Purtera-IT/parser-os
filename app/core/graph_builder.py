@@ -222,9 +222,28 @@ def _quantity_value(atom: EvidenceAtom) -> float | None:
         return None
 
 
+def _is_qty_node(atom: EvidenceAtom) -> bool:
+    """A node that carries a reconcilable quantity.
+
+    Reconciliation used to require a standalone `quantity` atom. The
+    `vendor_line_item` carries the same value fields (quantity / normalized_item
+    / comparison_key / inclusion status), so it IS the quantity node now — the
+    quote parser no longer mints a redundant `quantity` atom. Accept both so the
+    existing quantity-atom fixtures (and any roster-side quantity atoms) still
+    reconcile while the vendor side hangs off the line.
+    """
+    at = getattr(atom, "atom_type", None)
+    if at == AtomType.quantity:
+        return True
+    if at == AtomType.vendor_line_item:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        return v.get("quantity") is not None or v.get("quantity_parsed") is not None
+    return False
+
+
 def _quantity_material_identity(atom: EvidenceAtom) -> str | None:
     """Stable material/line identity from atom value (normalized_item preferred)."""
-    if atom.atom_type != AtomType.quantity:
+    if not _is_qty_node(atom):
         return None
     v = atom.value if isinstance(atom.value, dict) else {}
     ni = v.get("normalized_item")
@@ -239,7 +258,7 @@ def _quantity_material_identity(atom: EvidenceAtom) -> str | None:
 
 def _canonical_material_key(atom: EvidenceAtom) -> str | None:
     """Map roster and vendor quantity identities onto one comparison key."""
-    if atom.atom_type != AtomType.quantity:
+    if not _is_qty_node(atom):
         return None
     key = canonical_material_key(atom)
     if key:
@@ -274,7 +293,7 @@ _VENDOR_PRIMARY_FILTER_LABEL = (
 
 def _vendor_quote_line_counts_for_primary_total(atom: EvidenceAtom) -> bool:
     """Vendor lines included in primary quote totals (delegates to item_identity)."""
-    if atom.authority_class != AuthorityClass.vendor_quote or atom.atom_type != AtomType.quantity:
+    if atom.authority_class != AuthorityClass.vendor_quote or not _is_qty_node(atom):
         return False
     v = atom.value if isinstance(atom.value, dict) else {}
     return is_primary_vendor_quantity(v, raw_text=atom.raw_text)
@@ -298,7 +317,7 @@ def _roster_vendor_material_totals(
         a
         for a in ordered
         if a.authority_class == AuthorityClass.approved_site_roster
-        and a.atom_type == AtomType.quantity
+        and _is_qty_node(a)
         and _canonical_material_key(a) == identity
         and _quantity_value(a) is not None
     ]
@@ -306,7 +325,7 @@ def _roster_vendor_material_totals(
         a
         for a in ordered
         if a.authority_class == AuthorityClass.vendor_quote
-        and a.atom_type == AtomType.quantity
+        and _is_qty_node(a)
         and _canonical_material_key(a) == identity
         and _quantity_value(a) is not None
     ]
@@ -1252,7 +1271,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             ident
             for atom in ordered
             if (ident := _canonical_material_key(atom)) is not None
-            and atom.atom_type == AtomType.quantity
+            and _is_qty_node(atom)
             and atom.authority_class
             in {AuthorityClass.approved_site_roster, AuthorityClass.vendor_quote}
         }

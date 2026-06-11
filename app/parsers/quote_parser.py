@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -1825,16 +1826,26 @@ class QuoteParser(BaseParser):
                 )
                 if str(v or "").strip()
             }
-            append_atom(
-                AtomType.quantity,
-                (f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}"
-                 + (f" {part_number}" if part_number else "")
-                 + (f" at {site_id_value}" if site_id_value else "")).strip(),
-                qval,
-                0.88 if not qty_obj.get("uncertain") else 0.7,
-                list(flags),
-                review_status,
-            )
+            # The vendor_line_item now carries the quantity (qty is a FIELD on
+            # the line, and graph_builder's _is_qty_node treats the line as the
+            # reconciliation node). The standalone `quantity` atom is therefore a
+            # redundant comparison node — reconciliation is a deal-level EDGE
+            # between lines, not a parse-time fact. We still EMIT it (its full
+            # pipeline removal — parser contract + quantity_claim packet across
+            # every deal — is the Phase-2 conflicts/verify refactor), but it is
+            # suppressed from the head's view as a reconciliation-only input.
+            # Set SOWSMITH_DROP_QUANTITY_ATOM=1 to stop emitting entirely.
+            if os.environ.get("SOWSMITH_DROP_QUANTITY_ATOM") != "1":
+                append_atom(
+                    AtomType.quantity,
+                    (f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}"
+                     + (f" {part_number}" if part_number else "")
+                     + (f" at {site_id_value}" if site_id_value else "")).strip(),
+                    qval,
+                    0.88 if not qty_obj.get("uncertain") else 0.7,
+                    list(flags),
+                    review_status,
+                )
 
         if lead_time:
             append_atom(
