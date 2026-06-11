@@ -318,8 +318,47 @@ def _atom_type_candidates() -> list[str]:
     return list(_TAXONOMY) + ["_keep"]
 
 
+def _atom_row_view(atom: Any) -> tuple[list[str], list[Any]] | None:
+    """(headers, values) for a per-row table atom, handling both emitted shapes
+    (``value._columns``/``value._row`` and ``value.cells``); else ``None``."""
+    val = getattr(atom, "value", None)
+    if not isinstance(val, dict):
+        return None
+    cells = val.get("cells")
+    if isinstance(cells, dict) and cells:
+        return [str(k) for k in cells], [cells[k] for k in cells]
+    cols = val.get("_columns") or val.get("columns")
+    row = val.get("_row")
+    if cols and row is not None:
+        return [str(c) for c in cols], list(row)
+    return None
+
+
+def _atom_bound_text(atom: Any) -> str | None:
+    """Render a table row as ``Header: value | Header: value`` so every cell carries
+    its column meaning to the classifier. A bare ``Focus/phone room | 6 | ...`` row
+    becomes ``Room Type: Focus/phone room | Count: 6 | ...`` — the values stop being
+    a meaningless pipe-string. Returns ``None`` when the atom is not a recoverable
+    table row (prose/bullet atoms fall through to raw text)."""
+    rv = _atom_row_view(atom)
+    if not rv:
+        return None
+    headers, values = rv
+    pairs: list[str] = []
+    for k, v in zip(headers, values):
+        k = str(k).strip()
+        v = str(v).replace("\n", " ").strip()
+        if not k or not v or k.lower().startswith("col_") or k.startswith("_"):
+            continue
+        pairs.append(f"{k}: {v}")
+    return " | ".join(pairs)[:600] if pairs else None
+
+
 def _atom_decide_text(atom: Any) -> str:
-    text = _atom_text(atom).replace("\n", " ").strip()
+    bound = None
+    if os.environ.get("SOWSMITH_ATOM_BIND_HEADERS", "1") != "0":
+        bound = _atom_bound_text(atom)
+    text = bound or _atom_text(atom).replace("\n", " ").strip()
     section = _atom_section_path(atom)
     return f"{text} [section: {section}]" if section else text
 
