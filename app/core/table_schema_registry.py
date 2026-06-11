@@ -390,18 +390,22 @@ def emit_atoms_for_schema(
             parser_version=parser_version,
         )
 
-    # Aligned (header, cell) view carried on EVERY schema atom so the classifier
-    # renders "Header: value | Header: value" (via _atom_bound_text) instead of a
-    # meaning-less "Boardroom | 1 | Video bar... | Calendar..." pipe-string. The
+    # Aligned (header, cell) view carried on each WHOLE-ROW schema atom so the
+    # classifier renders "Header: value | Header: value" (via _atom_bound_text)
+    # instead of a meaning-less "Boardroom | 1 | Video bar..." pipe-string. The
     # raw_text stays the bare pipe-join (dedup keys on it); binding happens at
-    # decide-time from these fields, so the head sees the columns without
-    # breaking the twin collapse.
+    # decide-time. Sub-fact atoms derived from ONE column (site_allocation = a
+    # single site's split, lead_time_constraint = the lead-time cell) carry their
+    # OWN focused text and must NOT be rebound to the full row — that would make
+    # all three per-site allocations render identically.
     _row_padded = list(row) + [""] * max(0, len(columns) - len(row))
+    _SUBFACT_TYPES = {AtomType.site_allocation, AtomType.lead_time_constraint}
 
     def _atom(suffix: str, atom_type: AtomType, text: str, value: dict) -> EvidenceAtom:
         aid = stable_id("atm", artifact_id, "schema_row", table_idx, row_idx, suffix)
         src = _make_src(suffix)
-        value = {**value, "_columns": list(columns), "_row": list(_row_padded)}
+        if atom_type not in _SUBFACT_TYPES:
+            value = {**value, "_columns": list(columns), "_row": list(_row_padded)}
         receipt = EvidenceReceipt(
             atom_id=aid,
             artifact_id=artifact_id,
