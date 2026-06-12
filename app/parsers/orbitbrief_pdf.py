@@ -365,6 +365,13 @@ def _split_pdf_embedded_heading(text: str) -> tuple[str, str, str] | None:
 # roster apart from an empty form template.
 _FILLED_FIELD_RE = re.compile(r"[A-Za-z][A-Za-z ]{2,40}:\s*[A-Za-z][A-Za-z.\-]{2,}")
 
+# A signature / sign-off line: a role label, blanks to sign on, and a Date
+# field — "OPTBOT - Director, Workplace Technology: ____  Date: ____". Even
+# unsigned, the ROLE is governance content (who approves), so it's kept.
+_SIGNOFF_RE = re.compile(
+    r"[A-Za-z][A-Za-z ,/&'\-]{4,60}:\s*_{2,}.*\bDate\b\s*:", re.IGNORECASE
+)
+
 
 def _looks_like_form_field(text: str) -> bool:
     """Detect vendor-info form-field templates.
@@ -391,6 +398,11 @@ def _looks_like_form_field(text: str) -> bool:
     # rescues those. (Threshold is 1, not 2, so a single split-out signature
     # line still survives.)
     if len(_FILLED_FIELD_RE.findall(text)) >= 1:
+        return False
+    # A signature / sign-off line ("OPTBOT - Director, Workplace Technology:
+    # ____  Date: ____") carries the approver role even unsigned — keep it. A
+    # blank vendor data-collection template has no role+Date sign-off line.
+    if _SIGNOFF_RE.search(text):
         return False
     text_lower = text.lower()
     strong_hits = sum(1 for m in _FORM_FIELD_STRONG_MARKERS if m in text_lower)
@@ -466,6 +478,11 @@ def _looks_like_page_footer(text: str) -> bool:
         return False
     if len(text) > 240:
         return False  # Real footers are short; long blocks are scope.
+    # A signature / sign-off line ("Role: ____  Date: ____") is governance
+    # content, not page furniture — its blanks + "Date" must not read as a
+    # footer band.
+    if _SIGNOFF_RE.search(text):
+        return False
     if _PAGE_NUMBER_PATTERN.search(text):
         return True
     text_lower = text.lower()
@@ -3826,23 +3843,31 @@ def _split_structured_records(lines: list[str]) -> list[str] | None:
     # Pipe-delimited roster.
     if all(ln.count("|") >= 2 for ln in rows):
         return rows
+    # A leading "<label>:" intro (ends with a colon, no value of its own) can
+    # sit directly above the records — "Approved for SOW incorporation:" over
+    # the signature lines. Keep it as its own chunk and split the records below.
+    prefix: list[str] = []
+    body = rows
+    if rows[0].endswith(":") and len(rows) >= 3 and _RECORD_LABEL_RE.match(rows[1]):
+        prefix = [rows[0]]
+        body = rows[1:]
     # Label-prefixed records.
-    if not _RECORD_LABEL_RE.match(rows[0]):
+    if not _RECORD_LABEL_RE.match(body[0]):
         return None
     records: list[str] = []
-    for ln in rows:
+    for ln in body:
         if _RECORD_LABEL_RE.match(ln):
             records.append(ln)
         elif records:
             records[-1] += " " + ln
         else:
             return None
-    label_starts = sum(1 for ln in rows if _RECORD_LABEL_RE.match(ln))
+    label_starts = sum(1 for ln in body if _RECORD_LABEL_RE.match(ln))
     # Need ≥2 real records and every record genuinely label-opened (guards
     # against one stray "Word:" opener in an otherwise prose paragraph).
     if len(records) < 2 or label_starts < len(records):
         return None
-    return records
+    return prefix + records
 
 
 # A numbered section heading: "1. Authoritative physical site roster …".
