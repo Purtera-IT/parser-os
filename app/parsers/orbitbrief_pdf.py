@@ -2783,10 +2783,14 @@ def _atoms_for_block(
                 # duplicate scope_item atoms covering the same cells.
                 return
 
+        truncated_cells = block.get("truncated_cells") or []
         for row_index, row in enumerate(rows):
             row_text = _row_to_text(row)
             if not row_text:
                 continue
+            row_trunc = (
+                truncated_cells[row_index] if row_index < len(truncated_cells) else []
+            )
             # P1.2: skip table rows that are obviously vendor-info form
             # templates (the VT-CAM "FULL LEGAL NAME (PRINT) ... |
             # CONTACT NAME/TITLE | FEDERAL TAXPAYER NUMBER (ID#)"
@@ -2805,6 +2809,13 @@ def _atoms_for_block(
             # part_number entities and confuse the quantity_conflict rule.
             if isinstance(row, dict) and _looks_like_fused_table_row(row):
                 continue
+            value: dict[str, Any] = {
+                "kind": "table_row",
+                "columns": columns,
+                "cells": dict(row),
+            }
+            if row_trunc:
+                value["truncated_cols"] = list(row_trunc)
             yield _make_atom(
                 text=row_text,
                 project_id=project_id,
@@ -2815,11 +2826,8 @@ def _atoms_for_block(
                 authority_class=authority,
                 confidence=TABLE_ROW_CONFIDENCE,
                 locator={**base_locator, "row_index": row_index},
-                value={
-                    "kind": "table_row",
-                    "columns": columns,
-                    "cells": dict(row),
-                },
+                value=value,
+                review_flags=(["truncated_cell"] if row_trunc else []),
             )
         return
 
@@ -2992,6 +3000,7 @@ def _make_atom(
     confidence: float,
     locator: dict[str, Any],
     value: dict[str, Any],
+    review_flags: list[str] | None = None,
 ) -> EvidenceAtom:
     src_id = stable_id(
         "src",
@@ -3035,7 +3044,7 @@ def _make_atom(
         authority_class=authority_class,
         confidence=confidence,
         review_status=ReviewStatus.auto_accepted,
-        review_flags=[],
+        review_flags=list(review_flags or []),
         parser_version=parser_version,
     )
 
@@ -3633,6 +3642,47 @@ _HEADING_LINE_RE = re.compile(
 )
 
 
+def _detect_truncated_cells(
+    columns: list[str], rows: list[dict[str, str]]
+) -> list[list[str]]:
+    """Per-row list of columns whose cell value is truncated in the source.
+
+    Two signals (the source data itself is cut, not a render clip):
+      * an unbalanced opening bracket — "Core data switches (Cisco C930";
+      * a fixed-width truncation — the cell is at the column's max length, that
+        max is shared by >=2 cells (a fixed character cap), and it ends
+        mid-word (lowercase letter). "Fiber patch panels / MPO casse" (30) and
+        "Custom millwork / furniture in" (30) alongside shorter complete cells.
+    """
+    lengths: dict[str, list[int]] = {c: [] for c in columns}
+    for r in rows:
+        for c in columns:
+            v = r.get(c)
+            if v:
+                lengths[c].append(len(v))
+    col_max = {c: (max(ls) if ls else 0) for c, ls in lengths.items()}
+    col_max_n = {c: sum(1 for L in lengths[c] if L == col_max[c]) for c in columns}
+    out: list[list[str]] = []
+    for r in rows:
+        trunc: list[str] = []
+        for c in columns:
+            v = r.get(c)
+            if not v:
+                continue
+            unbalanced = v.count("(") > v.count(")") or v.count("[") > v.count("]")
+            fixed_width = (
+                len(v) == col_max[c]
+                and col_max[c] >= 15
+                and col_max_n[c] >= 2
+                and v[-1].isalpha()
+                and v[-1].islower()
+            )
+            if unbalanced or fixed_width:
+                trunc.append(c)
+        out.append(trunc)
+    return out
+
+
 def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[str, Any]], list[Any]]:
     """Recover vector-ruled tables on a text-rich page.
 
@@ -3697,7 +3747,11 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                         rows.append(cells)
                 if not rows:
                     continue
-                table_blocks.append({"kind": "table", "columns": columns, "rows": rows})
+                block: dict[str, Any] = {"kind": "table", "columns": columns, "rows": rows}
+                trunc_by_row = _detect_truncated_cells(columns, rows)
+                if any(trunc_by_row):
+                    block["truncated_cells"] = trunc_by_row
+                table_blocks.append(block)
                 try:
                     bboxes.append(fitz.Rect(table.bbox))
                 except Exception:
