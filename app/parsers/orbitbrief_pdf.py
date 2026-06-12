@@ -302,6 +302,10 @@ _FORM_FIELD_KEYWORDS = (
 _PDF_KV_RE = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]{1,40})\s*=\s*(.+?)(?=\s+[A-Za-z_][A-Za-z0-9_]{1,40}\s*=|$)"
 )
+# Per-line form: one whole line that is exactly "identifier = value". Used when
+# the original line structure survives, so a value is bounded by its real line
+# instead of running to the next '=' (which swallows trailing prose lines).
+_PDF_KV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]{1,40})\s*=\s*(\S.*)$")
 # An all-caps section heading (>=3 caps words) glued mid-paragraph, followed by
 # sentence-case body. Avoids single acronyms (PDF/DOCX/CRM) — needs a multi-word
 # run. The (?<=[a-z.]) keeps it from firing at the very start of the text.
@@ -310,12 +314,39 @@ _PDF_EMBEDDED_HEADING_RE = re.compile(
 )
 
 
-def _split_pdf_kv_blob(text: str) -> list[str] | None:
-    """Split a glued 'key = value' paragraph into one chunk per pair, else None."""
+def _split_pdf_kv_blob(
+    text: str, lines: list[str] | None = None
+) -> tuple[list[str], list[str]] | None:
+    """Split a glued 'key = value' paragraph into one chunk per pair.
+
+    Returns ``(kv_chunks, prose_lines)`` when the block is a metadata run
+    (≥3 pairs), else ``None``.
+
+    When the original per-line structure survives (``lines``), each pair is
+    bounded by its real line, so a trailing non-``key=value`` line (e.g.
+    ``contentType should preserve …``) is returned in ``prose_lines`` instead
+    of being swallowed into the last value. Without ``lines`` (layout-pipeline
+    pages) it falls back to the flattened-text regex.
+    """
+    if lines:
+        kv: list[str] = []
+        prose: list[str] = []
+        for ln in lines:
+            stripped = ln.strip()
+            if not stripped:
+                continue
+            m = _PDF_KV_LINE_RE.match(stripped)
+            if m:
+                kv.append(f"{m.group(1).strip()} = {m.group(2).strip()}")
+            else:
+                prose.append(stripped)
+        if len(kv) >= 3:
+            return kv, prose
+        return None
     pairs = list(_PDF_KV_RE.finditer(text))
     if len(pairs) < 3:
         return None
-    return [f"{m.group(1).strip()} = {m.group(2).strip()}" for m in pairs]
+    return [f"{m.group(1).strip()} = {m.group(2).strip()}" for m in pairs], []
 
 
 def _split_pdf_embedded_heading(text: str) -> tuple[str, str, str] | None:
@@ -2289,8 +2320,9 @@ def _atoms_for_block(
         # A field-mapping / metadata block is a run of "key = value" lines the
         # extractor glued into one paragraph — split into one deal_metadata atom
         # per key so the head gets clean facts, not a 9-field blob.
-        kv_chunks = _split_pdf_kv_blob(text)
-        if kv_chunks:
+        kv_split = _split_pdf_kv_blob(text, lines=block.get("lines"))
+        if kv_split:
+            kv_chunks, kv_prose = kv_split
             _, kv_auth = _classify_text_block(text=text, section_path=section_path, kind="paragraph")
             for kv_idx, chunk in enumerate(kv_chunks):
                 yield _make_atom(
@@ -2304,6 +2336,27 @@ def _atoms_for_block(
                     confidence=DEFAULT_BLOCK_CONFIDENCE,
                     locator={**base_locator, "kv_index": kv_idx, "kv_count": len(kv_chunks)},
                     value={"kind": "key_value"},
+                )
+            # A trailing prose line that isn't a key=value pair (a note glued
+            # under the metadata run) becomes its own classified atom instead of
+            # being absorbed into the last value.
+            for prose in kv_prose:
+                if len(prose) < 10:
+                    continue
+                p_type, p_auth = _classify_text_block(
+                    text=prose, section_path=section_path, kind="paragraph"
+                )
+                yield _make_atom(
+                    text=prose,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=p_type,
+                    authority_class=p_auth,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator=base_locator,
+                    value={"kind": "paragraph"},
                 )
             return
         # An all-caps section heading the extractor missed, glued mid-paragraph:
@@ -3486,9 +3539,13 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         nonlocal paragraph_lines
         if not paragraph_lines:
             return
-        text = " ".join(x.strip() for x in paragraph_lines if x.strip()).strip()
+        kept = [x.strip() for x in paragraph_lines if x.strip()]
+        text = " ".join(kept).strip()
         if text:
-            current_blocks.append({"kind": "paragraph", "text": text})
+            # Keep the per-line structure alongside the joined text: a glued
+            # "key = value" metadata block needs the real line boundaries so a
+            # trailing prose line isn't swallowed into the last value.
+            current_blocks.append({"kind": "paragraph", "text": text, "lines": kept})
         paragraph_lines = []
 
     def flush_bullets() -> None:
