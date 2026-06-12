@@ -851,6 +851,7 @@ class OrbitBriefPdfParser(BaseParser):
             pass
 
         atoms = _repair_clipped_site_ids(atoms)
+        atoms = _weak_label_prose_line_items(atoms)
 
         return ParserOutput(
             atoms=atoms,
@@ -1781,6 +1782,36 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             del nxt_sections[0]
 
 
+def _weak_label_prose_line_items(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Demote a vendor_line_item that the classifier pinned on a prose block.
+
+    ``vendor_line_item`` is a structured table-row type (SKU / qty / price). When
+    section/keyword heuristics stamp it on a prose paragraph or bullet (a pricing
+    section makes "Taxes: Excluded" look commercial), it's a brittle guess, not a
+    real line item — flag weak_label and lower confidence so the type head
+    re-decides instead of trusting it.
+    """
+    for a in atoms:
+        if getattr(getattr(a, "atom_type", None), "value", None) != "vendor_line_item":
+            continue
+        v = a.value if isinstance(a.value, dict) else {}
+        if v.get("kind") not in ("paragraph", "bullet", "bullet_item"):
+            continue  # a genuine table row keeps full confidence
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "weak_label" not in flags:
+            flags.append("weak_label")
+            try:
+                a.review_flags = flags
+            except Exception:  # pragma: no cover — frozen atom
+                pass
+        try:
+            if a.confidence and a.confidence > 0.5:
+                a.confidence = 0.45
+        except Exception:  # pragma: no cover
+            pass
+    return atoms
+
+
 def _repair_clipped_site_ids(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     """Reconcile a site_id that a narrow table column clipped against its full
     form found elsewhere in the document.
@@ -2294,21 +2325,36 @@ def atoms_from_structured_doc(
     """
     # Root every atom's section_path at the document's main section (its
     # title), so a sub-heading renders as a path ("<main section> > <heading>")
-    # rather than a flat sibling label.
+    # rather than a flat sibling label. Add it for DISPLAY only (after the
+    # atom is classified) — a broad title like "Commercial, Pricing &
+    # Acceptance" must not feed the section-rule classifier, or it would stamp
+    # vendor_line_item on every paragraph in the doc (electrical test specs
+    # included). Classification runs on the sub-headings; the root is prepended
+    # to the locator afterward.
     doc_title = (structured_doc.get("document") or {}).get("title")
-    root_path: list[str] = [doc_title] if doc_title else []
+
+    def _root_atom(atom: EvidenceAtom) -> EvidenceAtom:
+        if doc_title and getattr(atom, "source_refs", None):
+            loc = getattr(atom.source_refs[0], "locator", None)
+            if isinstance(loc, dict):
+                sp = loc.get("section_path") or []
+                if not sp or sp[0] != doc_title:
+                    loc["section_path"] = [doc_title, *sp]
+        return atom
+
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
         sections = page.get("sections", []) or []
-        yield from _atoms_for_sections(
+        for _atom in _atoms_for_sections(
             sections=sections,
-            section_path=list(root_path),
+            section_path=[],
             page_index=page_index,
             project_id=project_id,
             artifact_id=artifact_id,
             filename=filename,
             parser_version=parser_version,
-        )
+        ):
+            yield _root_atom(_atom)
         # Metadata-fallback path: when the structured extractor was
         # unable to assemble any sections from the page (heading
         # classifier misfired on short-paragraph PDFs, weak heading
@@ -2333,21 +2379,23 @@ def atoms_from_structured_doc(
                 atom_type, authority = _classify_text_block(
                     text=text, section_path=[], kind="paragraph"
                 )
-                yield _make_atom(
-                    text=text,
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=filename,
-                    parser_version=parser_version,
-                    atom_type=atom_type,
-                    authority_class=authority,
-                    confidence=DEFAULT_BLOCK_CONFIDENCE,
-                    locator={
-                        "page": page_index,
-                        "block_kind": "metadata_fallback",
-                        "meta_index": meta_index,
-                    },
-                    value={"kind": "paragraph", "fallback": "page_metadata"},
+                yield _root_atom(
+                    _make_atom(
+                        text=text,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=filename,
+                        parser_version=parser_version,
+                        atom_type=atom_type,
+                        authority_class=authority,
+                        confidence=DEFAULT_BLOCK_CONFIDENCE,
+                        locator={
+                            "page": page_index,
+                            "block_kind": "metadata_fallback",
+                            "meta_index": meta_index,
+                        },
+                        value={"kind": "paragraph", "fallback": "page_metadata"},
+                    )
                 )
 
 
