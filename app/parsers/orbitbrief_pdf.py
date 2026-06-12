@@ -2066,6 +2066,12 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                     "subsections": [],
                 }
             )
+        # The page title becomes the document's main section. A heading is
+        # structure, not a fact — drop its content block so the title isn't
+        # both the section root AND its own atom.
+        page_title = _detect_text_title(prose_text)
+        if page_title:
+            _strip_title_block(sections, page_title)
         _stamp_section_and_block_ids(sections, page_index)
         metadata = [
             "[text-rich page — heavyweight layout pipeline skipped; "
@@ -2079,7 +2085,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             )
         return {
             "page": page_index,
-            "title": _detect_text_title(prose_text),
+            "title": page_title,
             "metadata": metadata,
             "outline": [
                 {"level": s.get("level", 2), "heading": s.get("heading"),
@@ -3739,6 +3745,10 @@ def _detect_text_title(page_text: str) -> str | None:
         line = raw.strip()
         if not line or len(line) > 90:
             continue
+        # A title is a label, not a sentence — never strip real prose as if it
+        # were the title.
+        if line[-1] in ".!?,;:":
+            continue
         low = line.lower()
         if "hubspot" in low and re.search(r"\d{4,}", line):
             continue  # CRM deal-id band, not the title
@@ -3746,6 +3756,22 @@ def _detect_text_title(page_text: str) -> str | None:
             continue
         return line
     return None
+
+
+def _strip_title_block(sections: list[dict[str, Any]], title: str) -> None:
+    """Remove the paragraph block whose text is the document title.
+
+    Once the title is promoted to the main section (section_path root), keeping
+    it as a content atom too is redundant — a heading is structure, not a fact.
+    Mutates ``sections`` in place, removing only the first exact match.
+    """
+    want = title.strip()
+    for sec in sections:
+        blocks = sec.get("blocks") or []
+        for bi, blk in enumerate(blocks):
+            if blk.get("kind") == "paragraph" and (blk.get("text") or "").strip() == want:
+                del blocks[bi]
+                return
 
 
 def _looks_like_section_heading(stripped: str) -> bool:
