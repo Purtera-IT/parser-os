@@ -416,8 +416,9 @@ def _looks_like_form_field(text: str) -> bool:
 _PAGE_NUMBER_PATTERN = re.compile(
     # Match real "Page 3 of 12" AND the unrendered template version
     # "Page X of Y" / "Page X of N" (reportlab footers sometimes leave
-    # placeholders unresolved when the doc is generated quickly).
-    r"\bpage\s+(?:\d+|[xn])\s+of\s+(?:\d+|[xny])\b",
+    # placeholders unresolved when the doc is generated quickly), plus the
+    # slash form "Page 1/1" common in tool-generated footers.
+    r"\bpage\s+(?:(?:\d+|[xn])\s+of\s+(?:\d+|[xny])|\d+\s*/\s*\d+)\b",
     re.IGNORECASE,
 )
 # Standalone "Page N" / "Page X" without "of" — only counts as a
