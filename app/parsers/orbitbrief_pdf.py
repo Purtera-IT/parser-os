@@ -3948,23 +3948,37 @@ def _looks_like_section_heading(stripped: str) -> bool:
     return True
 
 
-def _is_list_intro_label(text: str) -> bool:
-    """A short "<label>:" line that introduces a list (e.g. "Milestone billing
-    schedule:", "Change order pricing (Time & Materials):"). A group label, not
-    a fact — promoted to a sub-section over the bullets it heads. Long
-    sentence-intros are excluded by length."""
+def _is_list_intro(text: str) -> bool:
+    """A line that ends with a colon and so introduces the list below it
+    ("Milestone billing schedule:", "PurTera will perform … new circuits:"). The
+    trailing colon (whole line, nothing after) is the signal — length-agnostic,
+    since a real intro ends with ":" whether it's a short label or a sentence. A
+    "Label: value" fact does NOT end with a colon, so it's never an intro."""
     s = (text or "").strip()
-    if len(s) < 4 or len(s) > 55:
+    return len(s) >= 4 and s.endswith(":")
+
+
+def _is_group_item(block: dict[str, Any]) -> bool:
+    """A block that reads as one item of an intro's list: a bullet list, or a
+    label-style paragraph ("Megger (insulation resistance): …") — a colon early
+    in the line — that isn't itself a list intro."""
+    kind = block.get("kind")
+    if kind == "bullet_list":
+        return True
+    if kind != "paragraph":
         return False
-    if not s.endswith(":"):
+    txt = (block.get("text") or "").strip()
+    if not txt or _is_list_intro(txt):
         return False
-    return s.count(":") == 1  # one trailing colon, not a "Label: value" fact
+    head = txt[:45]
+    return ":" in head and not head.startswith("http")
 
 
 def _promote_list_intros_to_subsections(sections: list[dict[str, Any]]) -> None:
-    """Turn a "<label>:" paragraph that sits directly above a bullet list into a
-    sub-section wrapping that list, so the bullets nest under the label (and the
-    label stops being a standalone atom). Mutates ``sections`` in place."""
+    """Turn a colon-terminated intro line that sits above a group of list items
+    into a sub-section wrapping that group, so the items nest under the intro
+    (and the bare intro stops being a standalone atom). Handles both dash-bullet
+    lists and runs of label-style paragraphs. Mutates ``sections`` in place."""
     for sec in sections:
         blocks = sec.get("blocks") or []
         kept: list[dict[str, Any]] = []
@@ -3972,21 +3986,23 @@ def _promote_list_intros_to_subsections(sections: list[dict[str, Any]]) -> None:
         i = 0
         while i < len(blocks):
             b = blocks[i]
-            nxt = blocks[i + 1] if i + 1 < len(blocks) else None
-            if (
-                b.get("kind") == "paragraph"
-                and _is_list_intro_label(b.get("text") or "")
-                and nxt is not None
-                and nxt.get("kind") == "bullet_list"
-            ):
-                subs.append({
-                    "heading": (b.get("text") or "").strip().rstrip(":").strip(),
-                    "level": 3,
-                    "blocks": [nxt],
-                    "subsections": [],
-                })
-                i += 2
-                continue
+            if b.get("kind") == "paragraph" and _is_list_intro(b.get("text") or ""):
+                grouped: list[dict[str, Any]] = []
+                count = 0
+                j = i + 1
+                while j < len(blocks) and _is_group_item(blocks[j]):
+                    grouped.append(blocks[j])
+                    count += len(blocks[j].get("items") or []) if blocks[j].get("kind") == "bullet_list" else 1
+                    j += 1
+                if count >= 2:
+                    subs.append({
+                        "heading": (b.get("text") or "").strip().rstrip(":").strip(),
+                        "level": 3,
+                        "blocks": grouped,
+                        "subsections": [],
+                    })
+                    i = j
+                    continue
             kept.append(b)
             i += 1
         sec["blocks"] = kept
