@@ -849,6 +849,8 @@ class OrbitBriefPdfParser(BaseParser):
         except Exception:  # pragma: no cover — never fail the parse
             pass
 
+        atoms = _repair_clipped_site_ids(atoms)
+
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files,
@@ -1776,6 +1778,65 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
         del nblocks[0]
         if not nblocks:
             del nxt_sections[0]
+
+
+def _repair_clipped_site_ids(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Reconcile a site_id that a narrow table column clipped against its full
+    form found elsewhere in the document.
+
+    A ruled-table roster row can lose the tail of its site_id when the PDF
+    visually clips the cell ("ATL-WEST-02" -> "ATL-WEST-0"), while the full id
+    still appears in prose. The prose site scanner then emits a bare id-only
+    physical_site for the full id — a phantom duplicate of the real row.
+
+    When a bare id-mention is a short (≤2 char) extension of a full roster
+    row's clipped id, repair the roster row to the full id and drop the
+    phantom. Cross-doc joins key on site_id, so the clipped id would otherwise
+    fail to match the same site in the other documents.
+    """
+    sites = [
+        a for a in atoms
+        if isinstance(a.value, dict) and a.value.get("kind") == "physical_site"
+    ]
+    if len(sites) < 2:
+        return atoms
+
+    def _is_bare(a: EvidenceAtom) -> bool:
+        v = a.value
+        sid = v.get("site_id") or ""
+        return bool(sid) and (v.get("name") or "") == sid and (v.get("facility_name") or "") == sid
+
+    drop_ids: set[int] = set()
+    for bare in sites:
+        if id(bare) in drop_ids or not _is_bare(bare):
+            continue
+        full = bare.value.get("site_id") or ""
+        if len(full) < 8:
+            continue
+        for row in sites:
+            if row is bare or _is_bare(row):
+                continue
+            clipped = row.value.get("site_id") or ""
+            if (
+                len(clipped) >= 8
+                and full.startswith(clipped)
+                and 0 < len(full) - len(clipped) <= 2
+            ):
+                row.value["site_id"] = full
+                row.value["id"] = full
+                # Repair the rendered identity too (the address / access cells
+                # stay clipped — the source PDF has no full form of those).
+                rt = getattr(row, "raw_text", None)
+                if isinstance(rt, str) and f"site_id: {clipped}" in rt:
+                    try:
+                        row.raw_text = rt.replace(f"site_id: {clipped}", f"site_id: {full}", 1)
+                    except Exception:  # pragma: no cover — frozen atom
+                        pass
+                drop_ids.add(id(bare))
+                break
+    if not drop_ids:
+        return atoms
+    return [a for a in atoms if id(a) not in drop_ids]
 
 
 def build_structured_document(pdf_path: Path) -> dict[str, Any]:
