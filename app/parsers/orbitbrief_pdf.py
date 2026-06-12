@@ -360,6 +360,12 @@ def _split_pdf_embedded_heading(text: str) -> tuple[str, str, str] | None:
     return before, heading, after
 
 
+# A "Label: Value" pair whose value is real text (≥3 letters), not blanks/
+# underscores — e.g. "Business Sponsor: Jordan Ames". Used to tell a filled
+# roster apart from an empty form template.
+_FILLED_FIELD_RE = re.compile(r"[A-Za-z][A-Za-z ]{2,40}:\s*[A-Za-z][A-Za-z.\-]{2,}")
+
+
 def _looks_like_form_field(text: str) -> bool:
     """Detect vendor-info form-field templates.
 
@@ -377,6 +383,13 @@ def _looks_like_form_field(text: str) -> bool:
     were emitting at 0.92 confidence with 0 entity keys.
     """
     if not text:
+        return False
+    # A filled roster (signature / approval block: "Role: Name | Signature: ___
+    # | Date: ___") carries real content — the role→name pairs — even though
+    # its Signature/Date fields are blank. Don't discard it as an empty
+    # template. A genuinely blank vendor template has no filled label:value
+    # pairs, so this never rescues those.
+    if len(_FILLED_FIELD_RE.findall(text)) >= 2:
         return False
     text_lower = text.lower()
     strong_hits = sum(1 for m in _FORM_FIELD_STRONG_MARKERS if m in text_lower)
@@ -1715,6 +1728,55 @@ def _fitz_generic_table_fallback(
     return out
 
 
+def _last_block_if_paragraph(page: dict[str, Any]) -> dict[str, Any] | None:
+    """The page's final content block, but only if it's a paragraph."""
+    for sec in reversed(page.get("sections") or []):
+        blocks = sec.get("blocks") or []
+        if not blocks:
+            continue
+        last = blocks[-1]
+        return last if last.get("kind") == "paragraph" else None
+    return None
+
+
+def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
+    """Re-join a paragraph that the PDF wrapped across a page boundary.
+
+    When a page's last paragraph ends mid-sentence (no terminal punctuation)
+    and the next page opens with a lowercase continuation paragraph *before*
+    any heading, the sentence was split by the page break. Splice the
+    continuation back onto the previous block so it doesn't orphan into a
+    fragment atom (e.g. "and payment schedule."). Mutates ``pages`` in place.
+    """
+    for i in range(len(pages) - 1):
+        prev_block = _last_block_if_paragraph(pages[i])
+        if prev_block is None:
+            continue
+        ptext = (prev_block.get("text") or "").rstrip()
+        if not ptext or ptext[-1] in ".!?:":
+            continue  # previous page ended a sentence cleanly — no wrap
+        nxt_sections = pages[i + 1].get("sections") or []
+        if not nxt_sections:
+            continue
+        first_sec = nxt_sections[0]
+        if (first_sec.get("heading") or "").strip():
+            continue  # a heading precedes the text — a new section, not a wrap
+        nblocks = first_sec.get("blocks") or []
+        if not nblocks or nblocks[0].get("kind") != "paragraph":
+            continue
+        cont = nblocks[0]
+        ctext = (cont.get("text") or "").strip()
+        if not ctext or not ctext[0].islower():
+            continue  # continuation must start lowercase (mid-sentence)
+        prev_block["text"] = f"{ptext} {ctext}".strip()
+        prev_lines = prev_block.get("lines")
+        if isinstance(prev_lines, list):
+            prev_lines.extend(cont.get("lines") or [ctext])
+        del nblocks[0]
+        if not nblocks:
+            del nxt_sections[0]
+
+
 def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     """Build the full multi-page OrbitBrief structured document for a PDF.
 
@@ -1803,6 +1865,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # touching the layout pipeline (which costs 5–10 s/page).
     page_text_lengths: list[int] = []
     page_texts: list[str] = []
+    page_image_counts: list[int] = []
     with fitz.open(str(pdf_path)) as doc:
         # Encrypted PDF detection — explicit signal for PM_HANDOFF so
         # the file gets routed to manual unlock rather than silently
@@ -1853,6 +1916,10 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 page_text = ""
             page_texts.append(page_text)
             page_text_lengths.append(len(page_text.strip()))
+            try:
+                page_image_counts.append(len(doc[page_idx].get_images()))
+            except Exception:  # pragma: no cover — bad page shouldn't kill compile
+                page_image_counts.append(0)
 
     # Page bucketing thresholds:
     #   < LOW_TEXT_PAGE_THRESHOLD       → marker page only (scanned)
@@ -1988,6 +2055,14 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             return _build_low_text_page(page_index)
         if page_text_lengths[page_index] >= TEXT_RICH_PAGE_THRESHOLD:
             return _build_text_rich_page(page_index)
+        # Mid-band (80–1199 chars): the heavyweight layout pipeline is only
+        # needed when a page carries visual structure (figures, scanned
+        # drawings). A pure-text page with no raster images — e.g. a short
+        # continuation page with a signature roster — is parsed correctly and
+        # far more cheaply by the prose splitter, which also recovers any
+        # line-ruled tables. The 1200 cutoff is a perf guard, not correctness.
+        if page_image_counts[page_index] == 0:
+            return _build_text_rich_page(page_index)
         return _build_heavyweight_page(page_index)
 
     # NOTE: PyMuPDF is NOT thread-safe — running the page loop on a
@@ -1998,6 +2073,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # with each worker opening its own fitz doc), at the cost of
     # ~2 s per-fork startup on macOS.
     pages: list[dict[str, Any]] = [_build_one_page(i) for i in range(page_count)]
+    _stitch_cross_page_continuations(pages)
 
     # Aggregate document title + metadata across pages (in order).
     for p in pages:
@@ -3506,6 +3582,29 @@ def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[A
         return None
 
 
+def _looks_like_section_heading(stripped: str) -> bool:
+    """True when an all-caps line is a real section heading, not a sentence tail
+    or an identifier code.
+
+    A heading is a short label ("PACKET SUMMARY", "BUDGET AND APPROVAL MATRIX").
+    The bare ``str.isupper()`` test also fires on all-caps identifiers like
+    ``MOCK-MSA-2026-OPTBOT-001.`` (the tail of a sentence) — which would both
+    truncate the preceding paragraph and stamp a garbage section on the next.
+    """
+    if stripped.startswith("#"):
+        return True
+    if not (stripped.isupper() and len(stripped) >= 3):
+        return False
+    # Headings don't end with sentence punctuation.
+    if stripped[-1] in ".,;":
+        return False
+    # Reject single-token identifier codes (part/MSA/PO numbers) like
+    # "MOCK-MSA-2026-OPTBOT-001": one token, with digits and hyphens.
+    if " " not in stripped and "-" in stripped and any(c.isdigit() for c in stripped):
+        return False
+    return True
+
+
 def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     """Lightweight prose splitter for text-rich PDF pages.
 
@@ -3588,10 +3687,7 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
 
         # heading guess (all caps or markdown-style #)
         stripped = line.strip()
-        if (
-            len(stripped) <= 80
-            and (stripped.startswith("#") or (stripped.isupper() and len(stripped) >= 3))
-        ):
+        if len(stripped) <= 80 and _looks_like_section_heading(stripped):
             flush_section()
             current_heading = stripped.lstrip("# ").strip()
             continue
