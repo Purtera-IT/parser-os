@@ -384,12 +384,13 @@ def _looks_like_form_field(text: str) -> bool:
     """
     if not text:
         return False
-    # A filled roster (signature / approval block: "Role: Name | Signature: ___
-    # | Date: ___") carries real content — the role→name pairs — even though
-    # its Signature/Date fields are blank. Don't discard it as an empty
-    # template. A genuinely blank vendor template has no filled label:value
-    # pairs, so this never rescues those.
-    if len(_FILLED_FIELD_RE.findall(text)) >= 2:
+    # A filled roster line (signature / approval block: "Role: Name |
+    # Signature: ___ | Date: ___") carries real content — the role→name pair —
+    # even though its Signature/Date fields are blank. One filled label:value
+    # pair is enough: a genuinely blank vendor template has none, so this never
+    # rescues those. (Threshold is 1, not 2, so a single split-out signature
+    # line still survives.)
+    if len(_FILLED_FIELD_RE.findall(text)) >= 1:
         return False
     text_lower = text.lower()
     strong_hits = sum(1 for m in _FORM_FIELD_STRONG_MARKERS if m in text_lower)
@@ -3582,6 +3583,50 @@ def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[A
         return None
 
 
+# A record label: a short "Name:" / "Role:" prefix that opens a list record
+# ("Jordan Ames: Approved …", "OPTBOT Business Sponsor: Jordan Ames | …").
+_RECORD_LABEL_RE = re.compile(r"^[A-Z][A-Za-z0-9 .,'&/-]{1,40}:\s+\S")
+
+
+def _split_structured_records(lines: list[str]) -> list[str] | None:
+    """Split a block that is an unambiguous record-list into one string per
+    record, else ``None``.
+
+    Two structures only (deliberately conservative — prose and imperative
+    checklists are left whole):
+
+      * pipe-delimited rows — every line carries ≥2 ``|`` field separators
+        (signature / sign-off rosters);
+      * label-prefixed records — every record opens with a ``Name:`` / ``Role:``
+        label; lines without a label are continuations of the preceding record
+        (so a sentence wrapped across lines, or stitched across a page break,
+        stays in one record).
+    """
+    rows = [ln.strip() for ln in lines if ln.strip()]
+    if len(rows) < 2:
+        return None
+    # Pipe-delimited roster.
+    if all(ln.count("|") >= 2 for ln in rows):
+        return rows
+    # Label-prefixed records.
+    if not _RECORD_LABEL_RE.match(rows[0]):
+        return None
+    records: list[str] = []
+    for ln in rows:
+        if _RECORD_LABEL_RE.match(ln):
+            records.append(ln)
+        elif records:
+            records[-1] += " " + ln
+        else:
+            return None
+    label_starts = sum(1 for ln in rows if _RECORD_LABEL_RE.match(ln))
+    # Need ≥2 real records and every record genuinely label-opened (guards
+    # against one stray "Word:" opener in an otherwise prose paragraph).
+    if len(records) < 2 or label_starts < len(records):
+        return None
+    return records
+
+
 def _looks_like_section_heading(stripped: str) -> bool:
     """True when an all-caps line is a real section heading, not a sentence tail
     or an identifier code.
@@ -3639,13 +3684,22 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         if not paragraph_lines:
             return
         kept = [x.strip() for x in paragraph_lines if x.strip()]
+        paragraph_lines = []
+        if not kept:
+            return
+        # An unambiguous record-list (signature roster, "Name: decision."
+        # approval notes) becomes one atom per record — one fact, one atom.
+        records = _split_structured_records(kept)
+        if records:
+            for rec in records:
+                current_blocks.append({"kind": "paragraph", "text": rec, "lines": [rec]})
+            return
         text = " ".join(kept).strip()
         if text:
             # Keep the per-line structure alongside the joined text: a glued
             # "key = value" metadata block needs the real line boundaries so a
             # trailing prose line isn't swallowed into the last value.
             current_blocks.append({"kind": "paragraph", "text": text, "lines": kept})
-        paragraph_lines = []
 
     def flush_bullets() -> None:
         nonlocal bullet_buffer
