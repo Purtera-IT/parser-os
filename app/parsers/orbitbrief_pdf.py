@@ -2058,13 +2058,8 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
 
         sections = _text_rich_sections(prose_text)
         if table_blocks:
-            sections.append(
-                {
-                    "heading": "",
-                    "level": 2,
-                    "blocks": list(table_blocks),
-                    "subsections": [],
-                }
+            _place_tables_in_sections(
+                pdf_path, page_index, sections, table_blocks, table_bboxes
             )
         # The page title becomes the document's main section. A heading is
         # structure, not a fact — drop its content block so the title isn't
@@ -3756,6 +3751,66 @@ def _detect_text_title(page_text: str) -> str | None:
             continue
         return line
     return None
+
+
+def _place_tables_in_sections(
+    pdf_path: Path,
+    page_index: int,
+    sections: list[dict[str, Any]],
+    table_blocks: list[dict[str, Any]],
+    table_bboxes: list[Any],
+) -> None:
+    """Insert recovered ruled-table blocks into the section whose heading they
+    fall under (by vertical position), instead of a trailing heading-less
+    section — so a roster table stays under its "Site roster" heading and
+    inherits the section_path, rather than floating at the document root.
+    """
+    import fitz  # type: ignore[import-not-found]
+
+    def _append_trailing() -> None:
+        sections.append(
+            {"heading": "", "level": 2, "blocks": list(table_blocks), "subsections": []}
+        )
+
+    try:
+        with fitz.open(str(pdf_path)) as doc:
+            page = doc[page_index]
+            # y0 of each section's heading on the page.
+            heading_y: list[tuple[float, int]] = []
+            for si, sec in enumerate(sections):
+                h = (sec.get("heading") or "").strip()
+                if not h:
+                    continue
+                try:
+                    rects = page.search_for(h)
+                except Exception:
+                    rects = []
+                if rects:
+                    heading_y.append((min(r.y0 for r in rects), si))
+            heading_y.sort()
+            if not heading_y:
+                _append_trailing()
+                return
+            for blk, bbox in zip(table_blocks, table_bboxes):
+                try:
+                    ty = float(bbox.y0)
+                except Exception:
+                    ty = 0.0
+                # The last heading that starts above the table top owns it.
+                target_si: int | None = None
+                for hy, si in heading_y:
+                    if hy <= ty:
+                        target_si = si
+                    else:
+                        break
+                if target_si is None:
+                    sections.append(
+                        {"heading": "", "level": 2, "blocks": [blk], "subsections": []}
+                    )
+                else:
+                    sections[target_si].setdefault("blocks", []).append(blk)
+    except Exception:  # pragma: no cover — never fail the parse over placement
+        _append_trailing()
 
 
 def _strip_title_block(sections: list[dict[str, Any]], title: str) -> None:
