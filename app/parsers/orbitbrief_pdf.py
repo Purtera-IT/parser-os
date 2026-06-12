@@ -3689,6 +3689,39 @@ def _split_structured_records(lines: list[str]) -> list[str] | None:
     return records
 
 
+# A numbered section heading: "1. Authoritative physical site roster …".
+_NUMBERED_HEADING_RE = re.compile(r"^\d+\.\s+([A-Z].{2,68})$")
+
+
+def _numbered_heading(line: str) -> str | None:
+    """Heading text of a short numbered section heading, else None.
+
+    Distinguishes "1. Authoritative physical site roster (site_roster v5)" (a
+    heading) from a numbered list item, which is a full sentence ending in
+    terminal punctuation. Returns the heading without its number.
+    """
+    m = _NUMBERED_HEADING_RE.match(line.strip())
+    if not m:
+        return None
+    text = m.group(1).strip()
+    if text and text[-1] in ".!?,;:":
+        return None
+    return text
+
+
+def _next_content_is_body(lines: list[str], idx: int) -> bool:
+    """True when the next non-blank line after ``idx`` is body text, not another
+    numbered item — so a numbered line is a section heading over a body, not one
+    entry in a numbered list.
+    """
+    for j in range(idx + 1, len(lines)):
+        nxt = lines[j].strip()
+        if not nxt:
+            continue
+        return _NUMBERED_HEADING_RE.match(nxt) is None
+    return False
+
+
 def _looks_like_section_heading(stripped: str) -> bool:
     """True when an all-caps line is a real section heading, not a sentence tail
     or an identifier code.
@@ -3788,11 +3821,21 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         current_heading = None
         current_blocks = []
 
-    for raw in lines:
+    for idx, raw in enumerate(lines):
         line = raw.rstrip()
         if not line.strip():
             flush_paragraph()
             flush_bullets()
+            continue
+
+        # Numbered section heading ("1. Authoritative physical site roster") —
+        # checked before the bullet rule (which would otherwise strip the
+        # number and treat the title as a list item). Only when a body line,
+        # not another numbered item, follows — so a numbered list stays a list.
+        num_head = _numbered_heading(line)
+        if num_head and _next_content_is_body(lines, idx):
+            flush_section()
+            current_heading = num_head
             continue
 
         bullet_m = _BULLET_LINE_RE.match(line)
