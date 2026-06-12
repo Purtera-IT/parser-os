@@ -3948,6 +3948,51 @@ def _looks_like_section_heading(stripped: str) -> bool:
     return True
 
 
+def _is_list_intro_label(text: str) -> bool:
+    """A short "<label>:" line that introduces a list (e.g. "Milestone billing
+    schedule:", "Change order pricing (Time & Materials):"). A group label, not
+    a fact — promoted to a sub-section over the bullets it heads. Long
+    sentence-intros are excluded by length."""
+    s = (text or "").strip()
+    if len(s) < 4 or len(s) > 55:
+        return False
+    if not s.endswith(":"):
+        return False
+    return s.count(":") == 1  # one trailing colon, not a "Label: value" fact
+
+
+def _promote_list_intros_to_subsections(sections: list[dict[str, Any]]) -> None:
+    """Turn a "<label>:" paragraph that sits directly above a bullet list into a
+    sub-section wrapping that list, so the bullets nest under the label (and the
+    label stops being a standalone atom). Mutates ``sections`` in place."""
+    for sec in sections:
+        blocks = sec.get("blocks") or []
+        kept: list[dict[str, Any]] = []
+        subs = list(sec.get("subsections") or [])
+        i = 0
+        while i < len(blocks):
+            b = blocks[i]
+            nxt = blocks[i + 1] if i + 1 < len(blocks) else None
+            if (
+                b.get("kind") == "paragraph"
+                and _is_list_intro_label(b.get("text") or "")
+                and nxt is not None
+                and nxt.get("kind") == "bullet_list"
+            ):
+                subs.append({
+                    "heading": (b.get("text") or "").strip().rstrip(":").strip(),
+                    "level": 3,
+                    "blocks": [nxt],
+                    "subsections": [],
+                })
+                i += 2
+                continue
+            kept.append(b)
+            i += 1
+        sec["blocks"] = kept
+        sec["subsections"] = subs
+
+
 def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     """Lightweight prose splitter for text-rich PDF pages.
 
@@ -4067,9 +4112,12 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         paragraph_lines.append(line)
 
     flush_section()
+    # A "<label>:" line directly above a bullet list becomes a sub-section over
+    # those bullets, so they nest under the label instead of floating.
+    _promote_list_intros_to_subsections(sections)
     # Drop empty sections that may have been created by trailing
     # whitespace.
-    return [s for s in sections if s.get("blocks") or s.get("heading")]
+    return [s for s in sections if s.get("blocks") or s.get("heading") or s.get("subsections")]
 
 
 def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int) -> None:
