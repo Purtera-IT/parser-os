@@ -592,6 +592,10 @@ def _looks_like_fragment(text: str) -> bool:
     stripped = text.strip()
     if not stripped or len(stripped) > 45:
         return False
+    # A "Label: value" line ("Currency: United States Dollars (USD).") is a
+    # real fact, not a bare bullet-fragment label ("Cost Proposal") — keep it.
+    if re.search(r"\w:\s+\S", stripped):
+        return False
     # Numbers usually indicate quantitative scope.
     if re.search(r"\d", stripped):
         return False
@@ -3741,8 +3745,11 @@ def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[A
 
 
 # A record label: a short "Name:" / "Role:" prefix that opens a list record
-# ("Jordan Ames: Approved …", "OPTBOT Business Sponsor: Jordan Ames | …").
-_RECORD_LABEL_RE = re.compile(r"^[A-Z][A-Za-z0-9 .,'&/-]{1,40}:\s+\S")
+# ("Jordan Ames: Approved …", "OPTBOT Business Sponsor: Jordan Ames | …",
+# "Grand Total (not-to-exceed for defined scope): USD …"). Allows parens and a
+# longer label so a parenthetical qualifier doesn't glue the record onto the
+# previous one.
+_RECORD_LABEL_RE = re.compile(r"^[A-Z][A-Za-z0-9 .,'&/()-]{1,60}:\s+\S")
 
 
 def _split_structured_records(lines: list[str]) -> list[str] | None:
