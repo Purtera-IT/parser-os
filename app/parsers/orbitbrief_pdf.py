@@ -4121,7 +4121,13 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         nonlocal paragraph_lines
         if not paragraph_lines:
             return
-        kept = [x.strip() for x in paragraph_lines if x.strip()]
+        # Drop a page-footer line ("Page 2/2 | PurPulse ...") that got swept into
+        # a paragraph — it's furniture, and must not glue onto the last record.
+        kept = [
+            x.strip()
+            for x in paragraph_lines
+            if x.strip() and not _looks_like_page_footer(x.strip())
+        ]
         paragraph_lines = []
         if not kept:
             return
