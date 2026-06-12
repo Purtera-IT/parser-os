@@ -2079,7 +2079,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             )
         return {
             "page": page_index,
-            "title": None,
+            "title": _detect_text_title(prose_text),
             "metadata": metadata,
             "outline": [
                 {"level": s.get("level", 2), "heading": s.get("heading"),
@@ -2291,12 +2291,17 @@ def atoms_from_structured_doc(
     (``section_path``) on the atoms beneath them so OrbitBrief can
     re-classify or re-aggregate without re-parsing.
     """
+    # Root every atom's section_path at the document's main section (its
+    # title), so a sub-heading renders as a path ("<main section> > <heading>")
+    # rather than a flat sibling label.
+    doc_title = (structured_doc.get("document") or {}).get("title")
+    root_path: list[str] = [doc_title] if doc_title else []
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
         sections = page.get("sections", []) or []
         yield from _atoms_for_sections(
             sections=sections,
-            section_path=[],
+            section_path=list(root_path),
             page_index=page_index,
             project_id=project_id,
             artifact_id=artifact_id,
@@ -3720,6 +3725,27 @@ def _next_content_is_body(lines: list[str], idx: int) -> bool:
             continue
         return _NUMBERED_HEADING_RE.match(nxt) is None
     return False
+
+
+def _detect_text_title(page_text: str) -> str | None:
+    """First prominent line of a text page — the document's main section.
+
+    Skips CRM id / reference bands ("000087 - … | HubSpot 60355665326") and
+    footer furniture so the returned line is the human title ("08 - Site Roster
+    & Facilities (Authoritative)"). Used to root every atom's section_path so
+    a sub-heading renders as a path ("<main section> > <sub heading>").
+    """
+    for raw in page_text.splitlines():
+        line = raw.strip()
+        if not line or len(line) > 90:
+            continue
+        low = line.lower()
+        if "hubspot" in low and re.search(r"\d{4,}", line):
+            continue  # CRM deal-id band, not the title
+        if _looks_like_page_footer(line):
+            continue
+        return line
+    return None
 
 
 def _looks_like_section_heading(stripped: str) -> bool:
