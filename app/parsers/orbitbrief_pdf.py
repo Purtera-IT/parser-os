@@ -852,6 +852,7 @@ class OrbitBriefPdfParser(BaseParser):
 
         atoms = _repair_clipped_site_ids(atoms)
         atoms = _weak_label_prose_line_items(atoms)
+        atoms = _drop_repeated_header_bands(atoms)
 
         return ParserOutput(
             atoms=atoms,
@@ -1780,6 +1781,46 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
         del nblocks[0]
         if not nblocks:
             del nxt_sections[0]
+
+
+def _drop_repeated_header_bands(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Drop a running header/footer band that repeats verbatim across pages.
+
+    A short line ("000087 - OPTBOT … | HubSpot 60355665326") printed at the top
+    of every page is furniture, not per-page content. Keep the first occurrence
+    (it carries the deal id once) and drop the repeats.
+    """
+    from collections import defaultdict
+
+    def _page(a: EvidenceAtom) -> Any:
+        refs = getattr(a, "source_refs", None) or []
+        if refs:
+            loc = getattr(refs[0], "locator", None)
+            if isinstance(loc, dict):
+                return loc.get("page")
+        return None
+
+    pages_by_text: dict[str, set] = defaultdict(set)
+    for a in atoms:
+        txt = (getattr(a, "raw_text", "") or "").strip()
+        if 0 < len(txt) <= 90:
+            pages_by_text[txt].add(_page(a))
+    repeated = {
+        t for t, pgs in pages_by_text.items()
+        if len([p for p in pgs if p is not None]) >= 2
+    }
+    if not repeated:
+        return atoms
+    seen: set[str] = set()
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        txt = (getattr(a, "raw_text", "") or "").strip()
+        if txt in repeated:
+            if txt in seen:
+                continue
+            seen.add(txt)
+        out.append(a)
+    return out
 
 
 def _weak_label_prose_line_items(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
@@ -4004,6 +4045,13 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         if len(stripped) <= 80 and _looks_like_section_heading(stripped):
             flush_section()
             current_heading = stripped.lstrip("# ").strip()
+            continue
+
+        # A lowercase line right after a bullet is that bullet wrapped across
+        # lines (the PDF broke a long item) — append it to the last bullet
+        # instead of orphaning it as a separate fragment paragraph.
+        if bullet_buffer and not paragraph_lines and stripped[:1].islower():
+            bullet_buffer[-1] = f"{bullet_buffer[-1]} {stripped}".strip()
             continue
 
         # Paragraph continuation. Flush any pending bullets first so a
