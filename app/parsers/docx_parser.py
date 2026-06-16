@@ -1138,7 +1138,7 @@ class DocxParser(BaseParser):
                     is_list = self._paragraph_is_list_item(para)
                 except Exception:
                     para_section[pidx] = [t for _, t, _, _ in stack if t]
-                    para_lead_in[pidx] = [li for _, _, _, li in stack if li]
+                    para_lead_in[pidx] = []
                     continue
                 lvl = self._heading_level(style)
                 if lvl is None and text and not is_list and self._is_bold_subheading(para):
@@ -1178,7 +1178,10 @@ class DocxParser(BaseParser):
                         stack.pop()
                     ancestors = [t for _, t, _, _ in stack if t]
                     para_section[pidx] = ancestors
-                    para_lead_in[pidx] = [li for _, _, _, li in stack if li]
+                    # a framing lead-in governs the LIST it introduces, not sibling
+                    # prose — so it's lifted onto list items only (this branch is
+                    # structure/heading paras, which never carry it).
+                    para_lead_in[pidx] = []
                     if is_framing:
                         # connective lead-in: structure (no atom); carried as
                         # lead_in for children, with an EMPTY breadcrumb label so
@@ -1204,7 +1207,13 @@ class DocxParser(BaseParser):
                         while stack and stack[-1][2]:
                             stack.pop()
                     para_section[pidx] = [t for _, t, _, _ in stack if t]
-                    para_lead_in[pidx] = [li for _, _, _, li in stack if li]
+                    # lift the governing framing lead-in onto LIST ITEMS only —
+                    # the bullets ARE "the following services". Sibling prose (a
+                    # trailing "...is limited to..." exclusion) is separate and
+                    # must not inherit it.
+                    para_lead_in[pidx] = (
+                        [li for _, _, _, li in stack if li] if is_list else []
+                    )
             elif kind == "tbl":
                 tidx += 1
                 table_order[tidx] = seq
