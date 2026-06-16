@@ -2289,6 +2289,7 @@ class XlsxParser(BaseParser):
         sheet_name: str,
         rows: list[list[Any]],
         reason: str,
+        role: str = "",
     ) -> EvidenceAtom:
         """A retained marker for a whole sheet the role-router classified DROP.
 
@@ -2300,6 +2301,16 @@ class XlsxParser(BaseParser):
         # Cap retained rows — a DROP sheet is noise; we keep enough to localize
         # an omission complaint without bloating the envelope.
         capped = [[("" if c is None else str(c)) for c in r] for r in rows[:500]]
+        # Plain-English "why" so the dropped marker reads as a deliberate skip,
+        # not a parser miss (a reviewer seeing a full grid on the left and one
+        # line on the right otherwise assumes the parser broke).
+        why = {
+            "reference": "lookup / rate-backing sheet - feeds the pricing tabs by formula, "
+            "not this deal's content",
+            "empty": "empty sheet - no data",
+            "instructions": "instructions / cover / terms - no deal data",
+        }.get(role, "backing data, not deal content")
+        marker_text = f"[skipped: {why}] '{sheet_name}', {len(rows)} rows"
         atom_id = stable_id("atm", artifact_id, "dropped_sheet", sheet_name)
         src = SourceRef(
             id=stable_id("src", atom_id),
@@ -2315,7 +2326,7 @@ class XlsxParser(BaseParser):
             project_id=project_id,
             artifact_id=artifact_id,
             atom_type=AtomType.dropped_sheet,
-            raw_text=f"[dropped sheet: {sheet_name}] {len(rows)} rows",
+            raw_text=marker_text,
             normalized_text=f"dropped sheet {sheet_name}".lower(),
             value={
                 "sheet_name": sheet_name,
@@ -2372,6 +2383,7 @@ class XlsxParser(BaseParser):
                     sheet_name=sheet_name,
                     rows=rows,
                     reason=getattr(classification, "reason", "") or "sheet_role=DROP",
+                    role=getattr(getattr(classification, "role", None), "value", ""),
                 )
             ]
         if classification.destination is SheetDestination.COMMERCIAL:
