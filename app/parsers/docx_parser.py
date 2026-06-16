@@ -970,6 +970,44 @@ class DocxParser(BaseParser):
             return False
         return cls._lead_in_rule().fires(t)
 
+    _SUBSECTION_BLOCK_RE = re.compile(
+        r"out\s*of\s*scope|exclusion|excluded|not\s+included|"
+        r"customer\s+(?:responsib|oblig)|client\s+(?:responsib|oblig)|by\s+others",
+        re.I,
+    )
+    _SUBSECTION_BLOCK_RULE = None
+
+    @classmethod
+    def _subsection_blocks_lift(cls, heading: str) -> bool:
+        """Does this sub-heading CONTRADICT a 'vendor will provide' preamble — i.e.
+        is it an exclusion ('Out of Scope') or other-party ('Customer
+        Responsibilities') section? If so, the section preamble must NOT lift onto
+        its bullets. Semantic (fires=True means BLOCK): positives are contradiction
+        headings, negatives are vendor/service headings; the nearest wins. Falls
+        back to a keyword check offline."""
+        h = (heading or "").strip()
+        if not h or len(h) > 120:
+            return False
+        if cls._SUBSECTION_BLOCK_RULE is None:
+            from app.core.semantic_rules import SemanticRule
+
+            cls._SUBSECTION_BLOCK_RULE = SemanticRule(
+                name="docx_subsection_blocks_lift",
+                positives=[  # contradiction sections -> BLOCK the vendor preamble
+                    "Out of Scope", "Exclusions", "Not Included",
+                    "Items provided by others", "Customer Responsibilities",
+                    "Client Obligations", "Customer will provide",
+                ],
+                negatives=[  # vendor / service sections -> allow the lift
+                    "Vendor scope of work", "Services the provider performs",
+                    "Installation and configuration tasks",
+                    "Deliverables the vendor provides", "Provider responsibilities",
+                ],
+                threshold=0.50,
+                lexical_fallback=lambda t: bool(cls._SUBSECTION_BLOCK_RE.search(t)),
+            )
+        return cls._SUBSECTION_BLOCK_RULE.fires(h)
+
     @staticmethod
     def _is_bold_subheading(paragraph: Any) -> bool:
         """A short, fully-bold, non-list line that Word left on the ``Normal``
@@ -1152,28 +1190,18 @@ class DocxParser(BaseParser):
             return False
 
         def _list_follows_within(k: int, n: int) -> bool:
-            """Does a bullet DIRECTLY follow this sentence within ``n`` paragraphs,
-            with NO intervening heading/sub-heading? If a heading sits between the
-            sentence and the bullets, the sentence is a SECTION PREAMBLE (it frames
-            a whole subsection tree), not a tight list-intro — and a preamble must
-            NOT be lifted, because it would bleed across sibling subsections that
-            mean the opposite ('Out of Scope', 'Customer Responsibilities'). Telling
-            a consistent preamble from a contradictory one is semantic — the head's
-            job, not the parser's — so we only lift the tightly-coupled case."""
+            """A bullet appears within the next ``n`` paragraphs — headings ALLOWED
+            in between, because a section PREAMBLE ('PurTera will provide field
+            technicians to perform the following services.') sits a sub-heading
+            above its list. What stops the preamble bleeding into a contradictory
+            subsection ('Out of Scope', 'Customer Responsibilities') is the SEMANTIC
+            contradiction gate applied at lift time, not this structural scan."""
             j, seen = k + 1, 0
             while j < len(children) and seen < n:
                 if children[j][0] == "p":
                     try:
-                        para = _DocxParagraph(children[j][1], document)
-                        if self._paragraph_is_list_item(para):
+                        if self._paragraph_is_list_item(_DocxParagraph(children[j][1], document)):
                             return True
-                        txt = (para.text or "").strip()
-                        style = (para.style.name or "") if para.style is not None else ""
-                        if txt and (
-                            self._heading_level(style) is not None
-                            or self._is_bold_subheading(para)
-                        ):
-                            return False  # preamble, not a tight list-intro
                     except Exception:
                         pass
                     seen += 1
@@ -1191,7 +1219,7 @@ class DocxParser(BaseParser):
                     style = (para.style.name or "") if para.style is not None else ""
                     is_list = self._paragraph_is_list_item(para)
                 except Exception:
-                    para_section[pidx] = [t for _, t, _, _ in stack if t]
+                    para_section[pidx] = [t for _, t, _, _, _ in stack if t]
                     para_lead_in[pidx] = []
                     continue
                 lvl = self._heading_level(style)
@@ -1227,7 +1255,7 @@ class DocxParser(BaseParser):
                     lvl is None
                     and bool(text)
                     and not is_list
-                    and _list_follows_within(k, 5)
+                    and _list_follows_within(k, 8)
                     and self._is_framing_lead_in(text)
                 )
                 if is_framing:
@@ -1235,19 +1263,16 @@ class DocxParser(BaseParser):
                 if lvl is not None and text:
                     while stack and stack[-1][0] >= lvl:
                         stack.pop()
-                    ancestors = [t for _, t, _, _ in stack if t]
+                    ancestors = [t for _, t, _, _, _ in stack if t]
                     para_section[pidx] = ancestors
-                    # a framing lead-in governs the LIST it introduces, not sibling
-                    # prose — so it's lifted onto list items only (this branch is
-                    # structure/heading paras, which never carry it).
                     para_lead_in[pidx] = []
                     if is_framing:
-                        # connective lead-in: structure (no atom); carried as
-                        # lead_in for children, with an EMPTY breadcrumb label so
-                        # the long sentence never enters the section path.
+                        # section preamble / list lead-in: structure (no atom),
+                        # lifted onto descendant list items as lead_in. Empty
+                        # breadcrumb label so the sentence never enters the path.
                         heading_paras[pidx] = (lvl, ancestors)
                         structure_idxs.add(pidx)
-                        stack.append((lvl, "", False, text))
+                        stack.append((lvl, "", False, text, False))
                     else:
                         if not is_intro or intro_section_only:
                             # real heading or short label -> structure (no atom)
@@ -1255,7 +1280,13 @@ class DocxParser(BaseParser):
                             structure_idxs.add(pidx)
                         # else: long intro sentence stays an atom (not structure)
                         label = text.rstrip(":").strip() if is_intro else text
-                        stack.append((lvl, label, is_intro, None))
+                        # CONTRADICTION GATE: a real sub-heading meaning the OPPOSITE
+                        # of a "vendor will provide" preamble ("Out of Scope",
+                        # "Customer Responsibilities") blocks that preamble from being
+                        # lifted onto its bullets. Semantic + cached; colon list-intros
+                        # ("Services include:") never block.
+                        blocks = (not is_intro) and self._subsection_blocks_lift(label)
+                        stack.append((lvl, label, is_intro, None, blocks))
                 else:
                     # plain content: if we've left the bullet list, close any open
                     # tight list-intro sub-section(s) so a following paragraph doesn't
@@ -1265,19 +1296,20 @@ class DocxParser(BaseParser):
                     if not is_list:
                         while stack and stack[-1][2]:
                             stack.pop()
-                    para_section[pidx] = [t for _, t, _, _ in stack if t]
-                    # lift the governing framing lead-in onto LIST ITEMS only —
-                    # the bullets ARE "the following services". Sibling prose (a
-                    # trailing "...is limited to..." exclusion) is separate and
-                    # must not inherit it.
-                    para_lead_in[pidx] = (
-                        [li for _, _, _, li in stack if li] if is_list else []
-                    )
+                    para_section[pidx] = [t for _, t, _, _, _ in stack if t]
+                    # Lift the governing preamble onto LIST ITEMS — UNLESS a
+                    # contradiction subsection is active (an exclusion / other-party
+                    # section), in which case a vendor "will provide" preamble must
+                    # not apply to these bullets.
+                    if is_list and not any(b for *_, b in stack):
+                        para_lead_in[pidx] = [li for _, _, _, li, _ in stack if li]
+                    else:
+                        para_lead_in[pidx] = []
             elif kind == "tbl":
                 tidx += 1
                 table_order[tidx] = seq
                 seq += 1
-                table_section[tidx] = [t for _, t, _, _ in stack if t]
+                table_section[tidx] = [t for _, t, _, _, _ in stack if t]
         self._structure_idxs = structure_idxs
         self._para_lead_in = para_lead_in
         return para_section, table_section, heading_paras, para_order, table_order
