@@ -935,6 +935,9 @@ class DocxParser(BaseParser):
 
             cls._LEAD_IN_RULE = SemanticRule(
                 name="docx_list_lead_in",
+                # POLARITY-AGNOSTIC: "does this announce a following list" — true for
+                # service, exclusion, customer, deliverable intros alike. (Polarity
+                # is handled separately by the contradiction gate, not here.)
                 positives=[
                     "PurTera will provide field technicians to perform the following services.",
                     "Subject to the other provisions of this SOW, Provider will perform the following services.",
@@ -944,13 +947,21 @@ class DocxParser(BaseParser):
                     "The contractor will perform the work as follows:",
                     "PurTera will provide the following deliverables:",
                     "The vendor's responsibilities encompass the items below:",
+                    "The following items are excluded from this SOW unless separately quoted:",
+                    "The following are out of scope:",
+                    "Customer responsibilities include the following:",
+                    "The customer is responsible for the following:",
                 ],
+                # standalone facts that are NOT list-intros (any polarity) — a bullet
+                # does NOT follow as the sentence's whole point.
                 negatives=[
                     "This SOW does not include predictive wireless design or spectrum analysis.",
                     "The school currently receives 5 Gbps of internet bandwidth.",
                     "Access point placement validation is limited to confirming locations align with floor plans.",
                     "All work will be performed during normal business hours.",
                     "The vendor agrees to hold the client harmless from any liability.",
+                    "Payment is due within thirty days of invoice receipt.",
+                    "The total contract value is fixed at the agreed amount.",
                 ],
                 threshold=0.62,
                 lexical_fallback=cls._lead_in_lexical,
@@ -1237,7 +1248,14 @@ class DocxParser(BaseParser):
                 intro_section_only = False
                 if is_intro:
                     words = len(re.findall(r"[A-Za-z][A-Za-z'\-]*", text))
-                    intro_section_only = is_list or words <= 8
+                    # Structure-only (no standalone atom) when it's PURELY a list
+                    # header: a short label, OR SEMANTICALLY a list-intro — so a long
+                    # header like "The following items are excluded from this SOW...:"
+                    # becomes only a breadcrumb, not also a duplicate atom. The
+                    # word-count cutoff is just a cheap fast-path under the meaning test.
+                    intro_section_only = (
+                        is_list or words <= 8 or self._is_framing_lead_in(text)
+                    )
                     lvl = (stack[-1][0] if stack else 0) + 1
                 # FRAMING LEAD-IN: a non-heading sentence that announces a following
                 # list / sub-section ("...will perform the following services.").
