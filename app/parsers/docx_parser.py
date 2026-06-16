@@ -913,21 +913,62 @@ class DocxParser(BaseParser):
     # "The scope is as follows."). It carries no standalone fact — it frames its
     # children — so it's lifted onto them as lead_in context rather than emitted.
     _FRAMING_LEAD_IN_RE = re.compile(r"\b(the following|as follows)\b", re.I)
+    _LEAD_IN_RULE = None  # lazily-built SemanticRule (see _lead_in_rule)
+
+    @classmethod
+    def _lead_in_lexical(cls, t: str) -> bool:
+        """Keyword fallback for the lead-in judgment, used ONLY when the embedder
+        is offline. Presence of the 'the following'/'as follows' cue — the
+        structural gate (a bullet directly follows, no intervening heading) is
+        what actually constrains it, so the offline net just needs the cue."""
+        return bool(cls._FRAMING_LEAD_IN_RE.search(t))
+
+    @classmethod
+    def _lead_in_rule(cls):
+        """SEMANTIC lead-in detector: fires on MEANING, not keywords, so a lead-in
+        worded "the vendor's responsibilities encompass:" fires the same as "...the
+        following services." Falls back to the keyword rule when embeddings are
+        down, so a parse never breaks. Examples are the only knob — a correction
+        becomes a new example, not a new regex."""
+        if cls._LEAD_IN_RULE is None:
+            from app.core.semantic_rules import SemanticRule
+
+            cls._LEAD_IN_RULE = SemanticRule(
+                name="docx_list_lead_in",
+                positives=[
+                    "PurTera will provide field technicians to perform the following services.",
+                    "Subject to the other provisions of this SOW, Provider will perform the following services.",
+                    "The vendor shall complete the following tasks:",
+                    "Services include:",
+                    "Scope of work consists of the following activities:",
+                    "The contractor will perform the work as follows:",
+                    "PurTera will provide the following deliverables:",
+                    "The vendor's responsibilities encompass the items below:",
+                ],
+                negatives=[
+                    "This SOW does not include predictive wireless design or spectrum analysis.",
+                    "The school currently receives 5 Gbps of internet bandwidth.",
+                    "Access point placement validation is limited to confirming locations align with floor plans.",
+                    "All work will be performed during normal business hours.",
+                    "The vendor agrees to hold the client harmless from any liability.",
+                ],
+                threshold=0.62,
+                lexical_fallback=cls._lead_in_lexical,
+            )
+        return cls._LEAD_IN_RULE
 
     @classmethod
     def _is_framing_lead_in(cls, text: str) -> bool:
         t = (text or "").strip()
+        # Cheap structural prefilter: bounds what we embed, and is the SHAPE any
+        # list lead-in has regardless of wording. The lead-in judgment itself is
+        # semantic (embedding) with a keyword fallback when the embedder is down.
         if not t or len(t) > 200 or not t.endswith((".", ":")):
             return False
         words = re.findall(r"[A-Za-z][A-Za-z'\-]*", t)
         if not (3 <= len(words) <= 25):
             return False
-        m = cls._FRAMING_LEAD_IN_RE.search(t)
-        if not m:
-            return False
-        # The cue must sit in the back half — it introduces what FOLLOWS, so a
-        # sentence merely mentioning "the following" mid-clause isn't a lead-in.
-        return m.start() >= len(t) // 2
+        return cls._lead_in_rule().fires(t)
 
     @staticmethod
     def _is_bold_subheading(paragraph: Any) -> bool:
@@ -1177,12 +1218,17 @@ class DocxParser(BaseParser):
                 # governs as lead_in context. Scoped like a heading (persists across
                 # an intervening sub-heading until the section closes), not like a
                 # tight list-intro (which pops on the first non-bullet).
+                # NB ordering: the cheap STRUCTURAL gates (not a heading/list, a
+                # bullet directly follows) run first so the EXPENSIVE semantic
+                # lead-in test (it embeds the text) only runs for the handful of
+                # paragraphs that actually sit just above a list — never every
+                # prose paragraph.
                 is_framing = (
                     lvl is None
                     and bool(text)
                     and not is_list
-                    and self._is_framing_lead_in(text)
                     and _list_follows_within(k, 5)
+                    and self._is_framing_lead_in(text)
                 )
                 if is_framing:
                     lvl = (stack[-1][0] if stack else 0) + 1
