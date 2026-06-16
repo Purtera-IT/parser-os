@@ -1304,20 +1304,27 @@ class XlsxParser(BaseParser):
         return out
 
     @staticmethod
-    def _drop_hidden(
-        rows: list[list[Any]], hidden_cols: set[int], hidden_rows: set[int]
+    def _blank_hidden_cols(
+        rows: list[list[Any]], hidden_cols: set[int]
     ) -> list[list[Any]]:
-        """Blank author-hidden cells to None (geometry-preserving so column-index
-        locators stay valid). Blanked cells are skipped everywhere a None cell is."""
-        out: list[list[Any]] = []
-        for ri, row in enumerate(rows):
-            if ri in hidden_rows:
-                out.append([None] * len(row))
-                continue
-            if hidden_cols:
-                row = [None if ci in hidden_cols else v for ci, v in enumerate(row)]
-            out.append(row)
-        return out
+        """Blank author-hidden COLUMNS to None for the commercial/financial path.
+
+        Scoped deliberately:
+          * Columns only, never rows. A hidden column in a deal workbook is
+            helper/formula scaffolding (a Gantt's "Country Multiplier", "Sell
+            Helper", "Cost Helper"); a hidden ROW is usually outline-collapsed
+            *real* content (LoE line items), so dropping rows loses data.
+          * Commercial path only, never the SCOPE block atomizer. The commercial
+            emitters bind by column index, so a blanked column simply doesn't
+            bind. The block atomizer splits tables on empty columns, so blanking
+            there would fragment a real table — hence we leave scope rows raw.
+        Geometry-preserving (blank, not remove) so column-index locators hold."""
+        if not hidden_cols:
+            return rows
+        return [
+            [None if ci in hidden_cols else v for ci, v in enumerate(row)]
+            for row in rows
+        ]
 
     def _parse_xlsx(
         self, project_id: str, artifact_id: str, path: Path
@@ -1341,9 +1348,7 @@ class XlsxParser(BaseParser):
             except Exception:
                 pass
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
-            hc, hr = hidden.get(sheet.title, (set(), set()))
-            if hc or hr:
-                rows = self._drop_hidden(rows, hc, hr)
+            hc, _hr = hidden.get(sheet.title, (set(), set()))
             atoms.extend(
                 self._parse_sheet_rows(
                     project_id=project_id,
@@ -1352,6 +1357,7 @@ class XlsxParser(BaseParser):
                     artifact_type=ArtifactType.xlsx,
                     sheet_name=sheet.title,
                     rows=rows,
+                    hidden_cols=hc,
                 )
             )
             sheets.append({"name": sheet.title, "rows": rows})
@@ -2096,11 +2102,14 @@ class XlsxParser(BaseParser):
             )
             if not values:
                 # Header / label rows with no dollar figure carry no pricing
-                # signal — skip so the commercial view stays clean. But a row
-                # OUTSIDE the main header span (a side calc block beside the
-                # table) is a real label->value fact with no money of its own;
-                # keep it so it isn't silently dropped.
-                if _aligned or not _is_side_label_value(cells):
+                # signal — skip so the commercial view stays clean. But on a
+                # per-line financial-summary sheet (not a collapsed catalog), a
+                # row OUTSIDE the main header span — a side calc block beside the
+                # table (e.g. a travel breakdown's "Team | 4") — is a real
+                # label->value fact with no money of its own; keep it so it
+                # isn't silently dropped. Catalogs stay strict (money only) so
+                # their rollup counts don't drift.
+                if collapse_to_summary or _aligned or not _is_side_label_value(cells):
                     continue
             all_values.extend(values)
             money_keys = sorted({f"money:{int(round(v))}" for v in values})
@@ -2354,6 +2363,7 @@ class XlsxParser(BaseParser):
         artifact_type: ArtifactType,
         sheet_name: str,
         rows: list[list[Any]],
+        hidden_cols: set[int] | None = None,
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
@@ -2387,6 +2397,10 @@ class XlsxParser(BaseParser):
                 )
             ]
         if classification.destination is SheetDestination.COMMERCIAL:
+            # Blank author-hidden helper columns (Country Multiplier / Sell
+            # Helper / Cost Helper …) so they can't leak as unlabeled atoms.
+            # Scoped to the commercial path only — see _blank_hidden_cols.
+            comm_rows = self._blank_hidden_cols(rows, hidden_cols or set())
             # Deal-financials / P&L sheets get a structured label→value
             # extractor (clean deal header + per-category P&L atoms);
             # rate cards / catalogs stay on the row/rollup path.
@@ -2397,7 +2411,7 @@ class XlsxParser(BaseParser):
                     artifact_type=artifact_type,
                     filename=filename,
                     sheet_name=sheet_name,
-                    rows=rows,
+                    rows=comm_rows,
                 )
             return self._emit_commercial_sheet_rows(
                 project_id=project_id,
@@ -2405,7 +2419,7 @@ class XlsxParser(BaseParser):
                 artifact_type=artifact_type,
                 filename=filename,
                 sheet_name=sheet_name,
-                rows=rows,
+                rows=comm_rows,
                 classification=classification,
             )
 
