@@ -392,6 +392,24 @@ def _atom_table_ref(atom: Any) -> str:
     return ""
 
 
+def _atom_lead_in(atom: Any) -> str:
+    """The governing connective lead-in(s) above this atom — the framing sentence
+    ("…will perform the following services.") that tells a head WHAT the atom is.
+    Lifted onto children at parse time; surfaced here as part of the context the
+    Type/Span/Norm heads decide from."""
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        if refs:
+            loc = getattr(refs[0], "locator", None) or {}
+            if isinstance(loc, dict):
+                li = loc.get("lead_in")
+                if isinstance(li, list) and li:
+                    return " › ".join(str(x) for x in li if x)[:300]
+    except Exception:
+        pass
+    return ""
+
+
 def _atom_decide_text(atom: Any) -> str:
     bound = None
     if os.environ.get("SOWSMITH_ATOM_BIND_HEADERS", "1") != "0":
@@ -399,9 +417,14 @@ def _atom_decide_text(atom: Any) -> str:
     text = bound or _atom_text(atom).replace("\n", " ").strip()
     table_ref = _atom_table_ref(atom)
     section = _atom_section_path(atom)
+    lead_in = _atom_lead_in(atom)
     if table_ref:
         text = f"{text} [table: {table_ref}]"
-    return f"{text} [section: {section}]" if section else text
+    if section:
+        text = f"{text} [section: {section}]"
+    if lead_in:
+        text = f"{text} [intro: {lead_in}]"
+    return text
 
 
 def classify_atoms(atoms: list[Any]) -> int:

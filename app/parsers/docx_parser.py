@@ -202,6 +202,7 @@ class DocxParser(BaseParser):
                     heading=is_heading,
                     is_list_item=is_list_item,
                     section_path=para_section.get(idx, []),
+                    lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
                 )
             )
 
@@ -907,6 +908,27 @@ class DocxParser(BaseParser):
         pPr = el.find(qn("w:pPr"))
         return pPr is not None and pPr.find(qn("w:numPr")) is not None
 
+    # A sentence whose grammatical job is to ANNOUNCE a following list / section
+    # ("PurTera will provide field technicians to perform the following services.",
+    # "The scope is as follows."). It carries no standalone fact — it frames its
+    # children — so it's lifted onto them as lead_in context rather than emitted.
+    _FRAMING_LEAD_IN_RE = re.compile(r"\b(the following|as follows)\b", re.I)
+
+    @classmethod
+    def _is_framing_lead_in(cls, text: str) -> bool:
+        t = (text or "").strip()
+        if not t or len(t) > 200 or not t.endswith((".", ":")):
+            return False
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", t)
+        if not (3 <= len(words) <= 25):
+            return False
+        m = cls._FRAMING_LEAD_IN_RE.search(t)
+        if not m:
+            return False
+        # The cue must sit in the back half — it introduces what FOLLOWS, so a
+        # sentence merely mentioning "the following" mid-clause isn't a lead-in.
+        return m.start() >= len(t) // 2
+
     @staticmethod
     def _is_bold_subheading(paragraph: Any) -> bool:
         """A short, fully-bold, non-list line that Word left on the ``Normal``
@@ -1049,6 +1071,11 @@ class DocxParser(BaseParser):
         para_section: dict[int, list[str]] = {}
         table_section: dict[int, list[str]] = {}
         heading_paras: dict[int, tuple[int, list[str]]] = {}
+        # Connective tissue: the governing lead-in sentence(s) above an atom
+        # ("PurTera will provide field technicians to perform the following
+        # services.") that frame what its children ARE. Attached to every child
+        # so the heads see the framing without it being a wasted standalone atom.
+        para_lead_in: dict[int, list[str]] = {}
         # global reading-order sequence per body paragraph / table, so atoms can
         # be emitted/sorted into true document order (python-docx otherwise yields
         # all paragraphs, then all tables — losing the interleave).
@@ -1058,7 +1085,10 @@ class DocxParser(BaseParser):
         # not content — the single source of truth the main loop uses to decide
         # which paragraphs are dropped as atoms (so it never diverges from here).
         structure_idxs: set[int] = set()
-        stack: list[tuple[int, str, bool]] = []  # (level, heading_text, is_list_intro)
+        # (level, breadcrumb_label, is_list_intro, lead_in_text). breadcrumb_label
+        # is "" for a pure framing lead-in (it must NOT pollute the section path);
+        # lead_in_text is None for a normal heading/short label.
+        stack: list[tuple[int, str, bool, str | None]] = []
         pidx = -1
         tidx = -1
         seq = 0
@@ -1068,6 +1098,7 @@ class DocxParser(BaseParser):
             children = list(_iter_block_items(document.element.body))
         except Exception:
             self._structure_idxs = structure_idxs
+            self._para_lead_in = para_lead_in
             return para_section, table_section, heading_paras, para_order, table_order
 
         def _next_is_bullet(k: int) -> bool:
@@ -1077,6 +1108,22 @@ class DocxParser(BaseParser):
                     return self._paragraph_is_list_item(_DocxParagraph(children[j][1], document))
                 except Exception:
                     return False
+            return False
+
+        def _list_follows_within(k: int, n: int) -> bool:
+            """Does a bullet appear within the next ``n`` paragraphs? A framing
+            lead-in often sits a sub-heading + a sentence above its list, so the
+            tight next-bullet test misses it; this scans a small window."""
+            j, seen = k + 1, 0
+            while j < len(children) and seen < n:
+                if children[j][0] == "p":
+                    try:
+                        if self._paragraph_is_list_item(_DocxParagraph(children[j][1], document)):
+                            return True
+                    except Exception:
+                        pass
+                    seen += 1
+                j += 1
             return False
 
         for k, (kind, child) in enumerate(children):
@@ -1090,7 +1137,8 @@ class DocxParser(BaseParser):
                     style = (para.style.name or "") if para.style is not None else ""
                     is_list = self._paragraph_is_list_item(para)
                 except Exception:
-                    para_section[pidx] = [t for _, t, _ in stack]
+                    para_section[pidx] = [t for _, t, _, _ in stack if t]
+                    para_lead_in[pidx] = [li for _, _, _, li in stack if li]
                     continue
                 lvl = self._heading_level(style)
                 if lvl is None and text and not is_list and self._is_bold_subheading(para):
@@ -1109,32 +1157,61 @@ class DocxParser(BaseParser):
                     words = len(re.findall(r"[A-Za-z][A-Za-z'\-]*", text))
                     intro_section_only = is_list or words <= 8
                     lvl = (stack[-1][0] if stack else 0) + 1
+                # FRAMING LEAD-IN: a non-heading sentence that announces a following
+                # list / sub-section ("...will perform the following services.").
+                # It's connective tissue, not a standalone fact — so it becomes
+                # structure (no wasted atom) but is LIFTED onto every child it
+                # governs as lead_in context. Scoped like a heading (persists across
+                # an intervening sub-heading until the section closes), not like a
+                # tight list-intro (which pops on the first non-bullet).
+                is_framing = (
+                    lvl is None
+                    and bool(text)
+                    and not is_list
+                    and self._is_framing_lead_in(text)
+                    and _list_follows_within(k, 5)
+                )
+                if is_framing:
+                    lvl = (stack[-1][0] if stack else 0) + 1
                 if lvl is not None and text:
                     while stack and stack[-1][0] >= lvl:
                         stack.pop()
-                    ancestors = [t for _, t, _ in stack]
+                    ancestors = [t for _, t, _, _ in stack if t]
                     para_section[pidx] = ancestors
-                    if not is_intro or intro_section_only:
-                        # real heading or short label -> structure (no atom)
+                    para_lead_in[pidx] = [li for _, _, _, li in stack if li]
+                    if is_framing:
+                        # connective lead-in: structure (no atom); carried as
+                        # lead_in for children, with an EMPTY breadcrumb label so
+                        # the long sentence never enters the section path.
                         heading_paras[pidx] = (lvl, ancestors)
                         structure_idxs.add(pidx)
-                    # else: long intro sentence stays an atom (not in structure_idxs)
-                    label = text.rstrip(":").strip() if is_intro else text
-                    stack.append((lvl, label, is_intro))
+                        stack.append((lvl, "", False, text))
+                    else:
+                        if not is_intro or intro_section_only:
+                            # real heading or short label -> structure (no atom)
+                            heading_paras[pidx] = (lvl, ancestors)
+                            structure_idxs.add(pidx)
+                        # else: long intro sentence stays an atom (not structure)
+                        label = text.rstrip(":").strip() if is_intro else text
+                        stack.append((lvl, label, is_intro, None))
                 else:
                     # plain content: if we've left the bullet list, close any open
-                    # list-intro sub-section(s) so a following paragraph doesn't
-                    # wrongly inherit "...> PMO Responsibilities".
+                    # tight list-intro sub-section(s) so a following paragraph doesn't
+                    # wrongly inherit "...> PMO Responsibilities". Framing lead-ins
+                    # (is_list_intro=False) are NOT popped here — they're section
+                    # scoped and close only when their heading level closes.
                     if not is_list:
                         while stack and stack[-1][2]:
                             stack.pop()
-                    para_section[pidx] = [t for _, t, _ in stack]
+                    para_section[pidx] = [t for _, t, _, _ in stack if t]
+                    para_lead_in[pidx] = [li for _, _, _, li in stack if li]
             elif kind == "tbl":
                 tidx += 1
                 table_order[tidx] = seq
                 seq += 1
-                table_section[tidx] = [t for _, t, _ in stack]
+                table_section[tidx] = [t for _, t, _, _ in stack if t]
         self._structure_idxs = structure_idxs
+        self._para_lead_in = para_lead_in
         return para_section, table_section, heading_paras, para_order, table_order
 
     # Section-heading -> atom type. The document's OWN heading is the authority:
@@ -1170,6 +1247,7 @@ class DocxParser(BaseParser):
         tracked_index: int | None = None,
         is_list_item: bool = False,
         section_path: list[str] | None = None,
+        lead_in: list[str] | None = None,
     ) -> list[EvidenceAtom]:
         # Span-provenance ledger (passive side-channel; only active when a
         # ledger is attached). Register this raw unit so the lost-content
@@ -1268,6 +1346,8 @@ class DocxParser(BaseParser):
             "tracked_change": tracked_change,
             "section_path": list(section_path) if section_path else [],
         }
+        if lead_in:
+            locator["lead_in"] = list(lead_in)
         source_ref = SourceRef(
             id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index),
             artifact_id=artifact_id,
