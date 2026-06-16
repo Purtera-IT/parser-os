@@ -276,6 +276,21 @@ def _row_money_values(row: list[Any], money_cols: set[int]) -> list[float]:
     return vals
 
 
+def _is_side_label_value(cells: list[str]) -> bool:
+    """A short ``label -> number`` fact sitting in a side calc block beside the
+    main priced table (e.g. a travel breakdown's "Team | 4", "Weeks per tech |
+    3"). It carries no money of its own, so the money gate would drop it — but
+    it's real content, so keep it when it pairs a text label with a number."""
+    nonblank = [c for c in cells if c]
+    if not (2 <= len(nonblank) <= 6):
+        return False
+
+    def _numeric(c: str) -> bool:
+        return c.replace(",", "").replace(".", "").replace("$", "").lstrip("-").isdigit()
+
+    return any(not _numeric(c) for c in nonblank) and any(_numeric(c) for c in nonblank)
+
+
 # ── Financial-summary (Deal Kit / P&L) structured extraction ─────────
 # Deal-kit / estimating workbooks lay the deal economics out as a 2-D
 # label→value grid, not a row table, so the generic row emitter mashes
@@ -1255,6 +1270,55 @@ class XlsxParser(BaseParser):
             return "corrupt_csv"
         return f"{tabular}_read_error"
 
+    @staticmethod
+    def _hidden_dims(path: Path) -> dict[str, tuple[set[int], set[int]]]:
+        """Map sheet title -> (hidden 0-based column indices, hidden 0-based row
+        indices). Author-hidden columns/rows in a deal spreadsheet are helper /
+        formula scaffolding — multipliers, lookup helpers, intermediate math —
+        not deal content (e.g. a Gantt's "Country Multiplier", "Sell Helper",
+        "Cost Helper"). They must not become atoms. Read from a non-read_only
+        load because read_only worksheets don't expose column/row dimensions."""
+        out: dict[str, tuple[set[int], set[int]]] = {}
+        try:
+            wb = load_workbook(path, read_only=False, data_only=True)
+        except Exception:
+            return out
+        try:
+            from openpyxl.utils import column_index_from_string
+
+            for ws in wb.worksheets:
+                hc = {
+                    column_index_from_string(c) - 1
+                    for c, d in ws.column_dimensions.items()
+                    if d.hidden
+                }
+                hr = {i - 1 for i, d in ws.row_dimensions.items() if d.hidden}
+                out[ws.title] = (hc, hr)
+        except Exception:
+            return out
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+        return out
+
+    @staticmethod
+    def _drop_hidden(
+        rows: list[list[Any]], hidden_cols: set[int], hidden_rows: set[int]
+    ) -> list[list[Any]]:
+        """Blank author-hidden cells to None (geometry-preserving so column-index
+        locators stay valid). Blanked cells are skipped everywhere a None cell is."""
+        out: list[list[Any]] = []
+        for ri, row in enumerate(rows):
+            if ri in hidden_rows:
+                out.append([None] * len(row))
+                continue
+            if hidden_cols:
+                row = [None if ci in hidden_cols else v for ci, v in enumerate(row)]
+            out.append(row)
+        return out
+
     def _parse_xlsx(
         self, project_id: str, artifact_id: str, path: Path
     ) -> tuple[list[EvidenceAtom], list[dict[str, Any]], str | None]:
@@ -1263,6 +1327,7 @@ class XlsxParser(BaseParser):
         except Exception as exc:
             code = self._tabular_read_error_code(exc, tabular="xlsx")
             return [], [], f"{code}:{type(exc).__name__}:{exc}"
+        hidden = self._hidden_dims(path)
         atoms: list[EvidenceAtom] = []
         sheets: list[dict[str, Any]] = []
         for sheet in workbook.worksheets:
@@ -1276,6 +1341,9 @@ class XlsxParser(BaseParser):
             except Exception:
                 pass
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+            hc, hr = hidden.get(sheet.title, (set(), set()))
+            if hc or hr:
+                rows = self._drop_hidden(rows, hc, hr)
             atoms.extend(
                 self._parse_sheet_rows(
                     project_id=project_id,
@@ -2020,18 +2088,22 @@ class XlsxParser(BaseParser):
             if _headers and row_idx == _hdr_idx:
                 continue  # the header row itself is structure, not a priced line
             values = _row_money_values(row, money_cols)
-            if not values:
-                # Header / label rows with no dollar figure carry no
-                # pricing signal — skip so the commercial view stays clean.
-                continue
-            all_values.extend(values)
-            money_keys = sorted({f"money:{int(round(v))}" for v in values})
             _aligned = (
                 _headers
                 and _first_hdr_col is not None
                 and _first_hdr_col < len(cells)
                 and cells[_first_hdr_col]
             )
+            if not values:
+                # Header / label rows with no dollar figure carry no pricing
+                # signal — skip so the commercial view stays clean. But a row
+                # OUTSIDE the main header span (a side calc block beside the
+                # table) is a real label->value fact with no money of its own;
+                # keep it so it isn't silently dropped.
+                if _aligned or not _is_side_label_value(cells):
+                    continue
+            all_values.extend(values)
+            money_keys = sorted({f"money:{int(round(v))}" for v in values})
             if _aligned:
                 _bound = [
                     f"{_headers[ci]}: {cells[ci]}"
