@@ -1732,8 +1732,39 @@ class XlsxParser(BaseParser):
 
         atoms: list[EvidenceAtom] = []
 
+        # Left-column section titles ("Deal Summary", "Project Financials") — a
+        # col-A text cell with an empty col B. Gives every emitted atom a
+        # universal "sheet > title" breadcrumb instead of just the sheet name.
+        _left_titles: list[tuple[int, str]] = []
+        for _ri, _row in enumerate(rows):
+            _a = _row[0] if len(_row) > 0 else None
+            _b = _row[1] if len(_row) > 1 else None
+            _at = re.sub(r"\s+", " ", str(_a).strip()) if _a is not None else ""
+            _bt = "" if _b is None else str(_b).strip()
+            if _at and not _bt and 1 <= len(_at.split()) <= 6 and not _is_money_number(_a):
+                _left_titles.append((_ri + 1, _at))   # 1-based to match locator rows
+
+        def _title_for_row(r: Any) -> str | None:
+            if not isinstance(r, int) or r <= 0:
+                return None
+            t = None
+            for rr, tt in _left_titles:
+                if rr <= r:
+                    t = tt
+            return t
+
+        # The P&L lines (Deal/Labor/PMO/…) all belong to the financials section,
+        # not the deal-header block — the overall "Deal" total is pulled from the
+        # right-side summary whose rows line up with the left "Deal Summary"
+        # title, so a row-based lookup mis-files it. Pin them to the financials
+        # title explicitly (the one named like "…Financials"/"P&L", else last).
+        _fin_title = next((tt for _, tt in _left_titles if re.search(r"financ|p&l", tt, re.I)),
+                          (_left_titles[-1][1] if _left_titles else None))
+
         def _src(tag: str, locator: dict[str, Any]) -> SourceRef:
             loc = {"sheet": sheet_name, "extraction": "financial_summary", **locator}
+            _title = loc.pop("section_title", None) or _title_for_row(locator.get("row"))
+            loc["section_path"] = [sheet_name] + ([_title] if _title and _title != sheet_name else [])
             return SourceRef(
                 id=stable_id("src", artifact_id, sheet_name, tag),
                 artifact_id=artifact_id,
@@ -1767,7 +1798,7 @@ class XlsxParser(BaseParser):
                     value={"kind": "deal_header", "fields": header,
                            "field_locators": header_locators, "sheet_name": sheet_name},
                     entity_keys=ent_keys,
-                    source_refs=[_src("deal_metadata", {})],
+                    source_refs=[_src("deal_metadata", {"row": min((l.get("row", 0) for l in header_locators.values()), default=1)})],
                     receipts=[],
                     authority_class=AuthorityClass.vendor_quote,
                     confidence=0.8,
@@ -1827,7 +1858,7 @@ class XlsxParser(BaseParser):
                         "sheet_name": sheet_name,
                     },
                     entity_keys=money_keys,
-                    source_refs=[_src(f"pl_{ckey}", {"row": slot.get("row", 0)})],
+                    source_refs=[_src(f"pl_{ckey}", {"row": slot.get("row", 0), "section_title": _fin_title})],
                     receipts=[],
                     authority_class=AuthorityClass.vendor_quote,
                     confidence=0.78,
