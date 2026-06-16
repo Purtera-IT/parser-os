@@ -1111,15 +1111,28 @@ class DocxParser(BaseParser):
             return False
 
         def _list_follows_within(k: int, n: int) -> bool:
-            """Does a bullet appear within the next ``n`` paragraphs? A framing
-            lead-in often sits a sub-heading + a sentence above its list, so the
-            tight next-bullet test misses it; this scans a small window."""
+            """Does a bullet DIRECTLY follow this sentence within ``n`` paragraphs,
+            with NO intervening heading/sub-heading? If a heading sits between the
+            sentence and the bullets, the sentence is a SECTION PREAMBLE (it frames
+            a whole subsection tree), not a tight list-intro — and a preamble must
+            NOT be lifted, because it would bleed across sibling subsections that
+            mean the opposite ('Out of Scope', 'Customer Responsibilities'). Telling
+            a consistent preamble from a contradictory one is semantic — the head's
+            job, not the parser's — so we only lift the tightly-coupled case."""
             j, seen = k + 1, 0
             while j < len(children) and seen < n:
                 if children[j][0] == "p":
                     try:
-                        if self._paragraph_is_list_item(_DocxParagraph(children[j][1], document)):
+                        para = _DocxParagraph(children[j][1], document)
+                        if self._paragraph_is_list_item(para):
                             return True
+                        txt = (para.text or "").strip()
+                        style = (para.style.name or "") if para.style is not None else ""
+                        if txt and (
+                            self._heading_level(style) is not None
+                            or self._is_bold_subheading(para)
+                        ):
+                            return False  # preamble, not a tight list-intro
                     except Exception:
                         pass
                     seen += 1
