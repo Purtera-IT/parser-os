@@ -363,7 +363,7 @@ def _atom_bound_text(atom: Any) -> str | None:
         if not k:
             continue
         pairs.append(f"{k}: {v}")
-    return " | ".join(pairs)[:600] if pairs else None
+    return " | ".join(pairs)[:2000] if pairs else None
 
 
 def _atom_table_ref(atom: Any) -> str:
@@ -878,7 +878,7 @@ def _atom_text(atom: Any) -> str:
         val = getattr(atom, "value", None)
         if isinstance(val, dict):
             text = val.get("text") or val.get("content") or ""
-    return str(text or "")[:600]
+    return str(text or "")[:2000]
 
 
 def _atom_section_path(atom: Any) -> str:
