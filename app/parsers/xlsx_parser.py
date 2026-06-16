@@ -235,6 +235,51 @@ _MONEY_CONCEPT_RE = re.compile(
     r"|\brate\b|charge|expense|extended|unit\s*price|total",
     re.I,
 )
+
+# SEMANTIC augmentation of the money-header judgment: a column header names a
+# money concept by MEANING, not keyword — "MSRP", "Burdened Rate", "Line Extended"
+# all mean money but dodge the keyword list. Union-only (can ADD a money column
+# the regex missed, never remove one), so it cannot regress existing extraction;
+# falls back to the regex when the embedder is offline.
+_MONEY_HEADER_RULE = None
+
+
+def _money_header_rule():
+    global _MONEY_HEADER_RULE
+    if _MONEY_HEADER_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+
+        _MONEY_HEADER_RULE = SemanticRule(
+            name="xlsx_money_header",
+            positives=[
+                "Unit Price", "Sell Price", "Unit Cost", "Extended Price",
+                "Line Total", "Burdened Rate", "MSRP", "List Price",
+                "Total Amount", "Labor Cost", "As-Sold Revenue", "Gross Margin",
+                "Monthly Recurring Charge", "Discount", "Sell Rate",
+            ],
+            negatives=[
+                "Site", "Quantity", "Description", "Job Description", "Notes",
+                "City", "Building", "Contact", "SKU", "Part Number", "Country",
+                "Unit", "Status", "Date", "Owner",
+            ],
+            threshold=0.60,
+            lexical_fallback=lambda t: bool(_MONEY_CONCEPT_RE.search(t)),
+        )
+    return _MONEY_HEADER_RULE
+
+
+def _is_money_header(text: str) -> bool:
+    """Money-concept header: keyword fast-path (also the offline fallback), then a
+    SEMANTIC second chance for short header-like labels the keyword list misses."""
+    t = str(text or "").strip()
+    if not t or "%" in t:
+        return False
+    if _MONEY_CONCEPT_RE.search(t):
+        return True
+    # bound the embedding to short, non-numeric, header-shaped cells
+    if any(ch.isdigit() for ch in t) or not (0 < len(t.split()) <= 5):
+        return False
+    return _money_header_rule().fires(t)
 # Floor that rejects tax multipliers (1.09 / 1.34), margin ratios (0.27),
 # and other sub-dollar line noise while keeping genuine prices/totals.
 _MIN_MONEY_VALUE = 5.0
@@ -255,6 +300,14 @@ def _money_columns(rows: list[list[Any]]) -> set[int]:
         for idx, c in enumerate(row):
             t = str(c or "").strip()
             if t and "%" not in t and _MONEY_CONCEPT_RE.search(t):
+                cols.add(idx)
+    # Semantic second chance — catch money headers the keyword list misses
+    # ("MSRP", "Burdened Rate", "Extended"), scoped to the header row only so the
+    # embedding cost is bounded (~10-20 cells, cached). Union-only: never removes.
+    hdr = _first_nonblank_header_row(rows)
+    if hdr is not None and 0 <= hdr < len(rows):
+        for idx, c in enumerate(rows[hdr]):
+            if idx not in cols and _is_money_header(str(c or "").strip()):
                 cols.add(idx)
     return cols
 
