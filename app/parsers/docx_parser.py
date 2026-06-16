@@ -9,6 +9,7 @@ from xml.etree import ElementTree as ET
 from docx import Document
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph as _DocxParagraph
+from docx.table import Table as _DocxTable
 
 from app.core.ids import stable_id
 from app.core.normalizers import normalize_entity_key, normalize_text
@@ -42,6 +43,45 @@ STRUCTURED_SCHEMA_DOCX = "orbitbrief.docx.structured.v1"
 
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 WORD_TBL_TAG = f"{{{WORD_NS['w']}}}tbl"
+
+
+def _iter_block_items(parent):
+    """Yield ``("p", element)`` / ``("tbl", element)`` for the block-level
+    paragraphs and tables under ``parent``, IN READING ORDER, **descending into
+    ``w:sdt`` content controls**.
+
+    Root-cause fix: python-docx's ``document.paragraphs`` / ``document.tables``
+    only iterate direct ``w:body`` children and silently skip everything wrapped
+    in a ``<w:sdt>`` structured-document-tag (Word content control / template
+    cover-page block). Templated SOWs routinely wrap their entire first page
+    (intro, exec summary, contact tables) in one ``w:sdt`` — so the standard
+    iterators never see it and the content is lost (or recovered header-less by a
+    lossy fallback). Walking ``iterchildren`` and recursing through
+    ``w:sdtContent`` restores that content in true document order. Universal:
+    any docx, any layout, any nesting depth of content controls."""
+    P, TBL, SDT, SDTC = qn("w:p"), qn("w:tbl"), qn("w:sdt"), qn("w:sdtContent")
+    for child in parent.iterchildren():
+        tag = child.tag
+        if tag == P:
+            yield ("p", child)
+        elif tag == TBL:
+            yield ("tbl", child)
+        elif tag == SDT:
+            content = child.find(SDTC)
+            if content is not None:
+                yield from _iter_block_items(content)
+
+
+def _all_paragraphs(document):
+    """All body paragraphs in reading order, including those inside content
+    controls (drop-in replacement for ``document.paragraphs``)."""
+    return [_DocxParagraph(el, document) for kind, el in _iter_block_items(document.element.body) if kind == "p"]
+
+
+def _all_tables(document):
+    """All body tables in reading order, including those inside content controls
+    (drop-in replacement for ``document.tables``)."""
+    return [_DocxTable(el, document) for kind, el in _iter_block_items(document.element.body) if kind == "tbl"]
 
 SCOPE_PATTERNS = [r"\bscope includes\b", r"\binclude\b", r"\binstallation\b", r"\binstall\b"]
 EXCLUSION_PATTERNS = [r"\bexclude\b", r"\bexcluded\b", r"\bout of scope\b", r"\bnot in scope\b"]
@@ -136,15 +176,18 @@ class DocxParser(BaseParser):
         # silently skipped as if they were table cells. We now decide table
         # membership STRUCTURALLY by walking the lxml element's ancestors,
         # which is stable and correct across python-docx versions.
-        for idx, paragraph in enumerate(document.paragraphs):
+        for idx, paragraph in enumerate(_all_paragraphs(document)):
             if self._paragraph_in_table(paragraph):
                 continue
             text = paragraph.text.strip()
             if not text:
                 continue
-            style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
-            is_heading = style_name.startswith("heading")
-            is_list_item = ("list" in style_name) or ("bullet" in style_name)
+            is_list_item = self._paragraph_is_list_item(paragraph)
+            # _build_section_index is the single source of truth for what's
+            # structure (style heading / bold sub-heading / short colon list-intro)
+            # vs content, so the heading-drop decision can never diverge from the
+            # section-path computation.
+            is_heading = idx in getattr(self, "_structure_idxs", set())
             atoms.extend(
                 self._emit_atoms_for_text(
                     project_id=project_id,
@@ -167,11 +210,11 @@ class DocxParser(BaseParser):
         # accurate (otherwise table text bleeds in twice).
         document_text = " ".join(
             (p.text or "").strip()
-            for p in document.paragraphs
+            for p in _all_paragraphs(document)
             if not self._paragraph_in_table(p)
         )
 
-        for table_idx, table in enumerate(document.tables):
+        for table_idx, table in enumerate(_all_tables(document)):
             # Build a column/rows view of the table for the site_roster
             # extractor (and a per-row atom emitter below).
             table_rows: list[list[str]] = []
@@ -215,11 +258,17 @@ class DocxParser(BaseParser):
                 cell_texts = [c.text.strip() for c in row_cells.cells if c.text.strip()]
                 if not cell_texts:
                     continue
-                # Skip the header row (first row) when it looks like
-                # column labels — its cells are repeated below as
-                # data labels.
-                if row_idx == 0 and len(cell_texts) >= 2 and all(
-                    len(c) <= 30 for c in cell_texts
+                # Skip the header row (first row) ONLY when its cells are PURE
+                # COLUMN LABELS — short AND value-free (no digit / @ / $). A
+                # header-less table whose first row is real data ("Dan Pratt |
+                # dan@x.com", "V1 | 5/27/26") must NOT be skipped, or that row is
+                # silently lost. Real headers ("FULL NAME | JOB TITLE | EMAIL",
+                # "SOW VERSION | QUOTED BY | DATE") carry no values, so they skip.
+                if (
+                    row_idx == 0
+                    and len(cell_texts) >= 2
+                    and all(len(c) <= 30 for c in cell_texts)
+                    and not any(re.search(r"[\d@$]", c) for c in cell_texts)
                 ):
                     continue
                 row_text = " | ".join(cell_texts)
@@ -582,7 +631,7 @@ class DocxParser(BaseParser):
                 )
             current_blocks = []
 
-        for paragraph in document.paragraphs:
+        for paragraph in _all_paragraphs(document):
             text = (paragraph.text or "").strip()
             style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
             is_heading = style_name.startswith("heading")
@@ -603,7 +652,7 @@ class DocxParser(BaseParser):
                 flush_bullets()
                 current_blocks.append(make_paragraph(text))
 
-        for table in document.tables:
+        for table in _all_tables(document):
             try:
                 cells = [[(c.text or "").strip() for c in row.cells] for row in table.rows]
             except Exception:
@@ -839,6 +888,53 @@ class DocxParser(BaseParser):
         return weak
 
     @staticmethod
+    def _paragraph_is_list_item(paragraph: Any) -> bool:
+        """Whether a paragraph is a bullet/numbered list item.
+
+        Decided STRUCTURALLY via the ``w:numPr`` numbering reference, not just
+        the style name: Word frequently leaves list paragraphs on the ``Normal``
+        style while carrying real numbering (``<w:pPr><w:numPr>``). The old
+        style-name-only check missed those, so the prose gate then dropped short
+        bullets like "Connecting power where available" (4 words, no digit).
+        List items are deliberate scope content and must fail OPEN regardless of
+        length — this restores that for every numbering-driven bullet."""
+        style = (paragraph.style.name or "").lower() if paragraph.style else ""
+        if "list" in style or "bullet" in style:
+            return True
+        el = getattr(paragraph, "_p", None)
+        if el is None:
+            return False
+        pPr = el.find(qn("w:pPr"))
+        return pPr is not None and pPr.find(qn("w:numPr")) is not None
+
+    @staticmethod
+    def _is_bold_subheading(paragraph: Any) -> bool:
+        """A short, fully-bold, non-list line that Word left on the ``Normal``
+        style is a VISUAL sub-heading (e.g. "Configuration Support") the author
+        used to open a sub-section. The style-name heading check misses it, so it
+        was dropped by the prose gate AND failed to open a section for the bullets
+        beneath it. Detect it structurally (whole line bold, few words, not a
+        sentence/label) so it becomes section structure like any other heading.
+        Conservative on purpose: bold emphasis inside a real sentence (which ends
+        with terminal punctuation, or is long) is not promoted."""
+        text = (paragraph.text or "").strip()
+        if not text or text.endswith((".", ":", ";", "?", "!")):
+            return False
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
+        if not (1 <= len(words) <= 8):
+            return False
+        runs = [r for r in paragraph.runs if (r.text or "").strip()]
+        if not runs:
+            return False
+
+        def _bold(r: Any) -> bool:
+            if r.bold is not None:
+                return bool(r.bold)
+            return bool(r.font is not None and r.font.bold)
+
+        return all(_bold(r) for r in runs)
+
+    @staticmethod
     def _paragraph_in_table(paragraph: Any) -> bool:
         """Whether a python-docx paragraph lives inside a table cell.
 
@@ -958,17 +1054,33 @@ class DocxParser(BaseParser):
         # all paragraphs, then all tables — losing the interleave).
         para_order: dict[int, int] = {}
         table_order: dict[int, int] = {}
-        stack: list[tuple[int, str]] = []  # (level, heading_text)
+        # paragraph indices that are STRUCTURE (a heading / section-only label),
+        # not content — the single source of truth the main loop uses to decide
+        # which paragraphs are dropped as atoms (so it never diverges from here).
+        structure_idxs: set[int] = set()
+        stack: list[tuple[int, str, bool]] = []  # (level, heading_text, is_list_intro)
         pidx = -1
         tidx = -1
         seq = 0
         try:
-            children = list(document.element.body.iterchildren())
+            # descend into w:sdt content controls so indices align with
+            # _all_paragraphs / _all_tables (the main extraction loops).
+            children = list(_iter_block_items(document.element.body))
         except Exception:
+            self._structure_idxs = structure_idxs
             return para_section, table_section, heading_paras, para_order, table_order
-        for child in children:
-            tag = child.tag
-            if tag == qn("w:p"):
+
+        def _next_is_bullet(k: int) -> bool:
+            j = k + 1
+            if j < len(children) and children[j][0] == "p":
+                try:
+                    return self._paragraph_is_list_item(_DocxParagraph(children[j][1], document))
+                except Exception:
+                    return False
+            return False
+
+        for k, (kind, child) in enumerate(children):
+            if kind == "p":
                 pidx += 1
                 para_order[pidx] = seq
                 seq += 1
@@ -976,24 +1088,53 @@ class DocxParser(BaseParser):
                     para = _DocxParagraph(child, document)
                     text = (para.text or "").strip()
                     style = (para.style.name or "") if para.style is not None else ""
+                    is_list = self._paragraph_is_list_item(para)
                 except Exception:
-                    para_section[pidx] = [t for _, t in stack]
+                    para_section[pidx] = [t for _, t, _ in stack]
                     continue
                 lvl = self._heading_level(style)
+                if lvl is None and text and not is_list and self._is_bold_subheading(para):
+                    # bold sub-heading Word left on Normal style — nest it below
+                    # style headings so its following bullets inherit the section.
+                    lvl = 3
+                # LIST-INTRO: a colon-ending label/bullet immediately followed by
+                # sub-bullets ("PMO Responsibilities:", "Services include:") is a
+                # sub-section over those bullets — promote it so the bullets carry
+                # the "...> PMO Responsibilities" path the heads need. A SHORT label
+                # is structure only (no atom); a longer intro sentence stays an atom
+                # AND opens the section (keeps its clause, still organizes children).
+                is_intro = lvl is None and bool(text) and text.endswith(":") and _next_is_bullet(k)
+                intro_section_only = False
+                if is_intro:
+                    words = len(re.findall(r"[A-Za-z][A-Za-z'\-]*", text))
+                    intro_section_only = is_list or words <= 8
+                    lvl = (stack[-1][0] if stack else 0) + 1
                 if lvl is not None and text:
                     while stack and stack[-1][0] >= lvl:
                         stack.pop()
-                    ancestors = [t for _, t in stack]
-                    heading_paras[pidx] = (lvl, ancestors)
+                    ancestors = [t for _, t, _ in stack]
                     para_section[pidx] = ancestors
-                    stack.append((lvl, text))
+                    if not is_intro or intro_section_only:
+                        # real heading or short label -> structure (no atom)
+                        heading_paras[pidx] = (lvl, ancestors)
+                        structure_idxs.add(pidx)
+                    # else: long intro sentence stays an atom (not in structure_idxs)
+                    label = text.rstrip(":").strip() if is_intro else text
+                    stack.append((lvl, label, is_intro))
                 else:
-                    para_section[pidx] = [t for _, t in stack]
-            elif tag == qn("w:tbl"):
+                    # plain content: if we've left the bullet list, close any open
+                    # list-intro sub-section(s) so a following paragraph doesn't
+                    # wrongly inherit "...> PMO Responsibilities".
+                    if not is_list:
+                        while stack and stack[-1][2]:
+                            stack.pop()
+                    para_section[pidx] = [t for _, t, _ in stack]
+            elif kind == "tbl":
                 tidx += 1
                 table_order[tidx] = seq
                 seq += 1
-                table_section[tidx] = [t for _, t in stack]
+                table_section[tidx] = [t for _, t, _ in stack]
+        self._structure_idxs = structure_idxs
         return para_section, table_section, heading_paras, para_order, table_order
 
     # Section-heading -> atom type. The document's OWN heading is the authority:
@@ -1270,14 +1411,20 @@ class DocxParser(BaseParser):
         tr_tag = f"{{{WORD_NS['w']}}}tr"
         tc_tag = f"{{{WORD_NS['w']}}}tc"
 
-        base_tbl = len(document.tables)
-        base_p = len(document.paragraphs)
+        base_tbl = len(_all_tables(document))
+        base_p = len(_all_paragraphs(document))
 
         # --- orphan tables (e.g. the SALES / CUSTOMER CONTACTS blocks) ------
         orphan_tbl_idx = 0
         for tbl in body.iter(tbl_tag):
             anc = _nested_ancestors(tbl)
-            if not ({"sdtContent", "txbxContent"} & anc):
+            # sdt content controls are now walked by the MAIN path
+            # (_iter_block_items descends into them) — with header-row skipping,
+            # cross-type dedup and reading order. This lossy fallback must only
+            # cover TEXT BOXES (txbxContent), which the main path can't reach;
+            # re-scraping sdt here re-emitted bare header rows and duplicated the
+            # executive summary (the exact issues Benjamin reported).
+            if "txbxContent" not in anc:
                 continue
             if "tbl" in anc:  # nested table; outer one already handled it
                 continue
@@ -1341,7 +1488,13 @@ class DocxParser(BaseParser):
         orphan_p_idx = 0
         for p in body.iter(p_tag):
             anc = _nested_ancestors(p)
-            if not ({"sdtContent", "txbxContent"} & anc):
+            # sdt content controls are now walked by the MAIN path
+            # (_iter_block_items descends into them) — with header-row skipping,
+            # cross-type dedup and reading order. This lossy fallback must only
+            # cover TEXT BOXES (txbxContent), which the main path can't reach;
+            # re-scraping sdt here re-emitted bare header rows and duplicated the
+            # executive summary (the exact issues Benjamin reported).
+            if "txbxContent" not in anc:
                 continue
             if "tbl" in anc:  # already covered by its table region above
                 continue

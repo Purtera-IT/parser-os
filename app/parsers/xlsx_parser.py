@@ -1266,6 +1266,15 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         sheets: list[dict[str, Any]] = []
         for sheet in workbook.worksheets:
+            # read_only mode trusts the file's cached <dimension> tag; when that
+            # is missing/stale (common when the source tool didn't update it, or
+            # openpyxl strips a data-validation extension on read) iter_rows can
+            # nondeterministically yield NOTHING. Force a real cell scan so the
+            # parse is deterministic and never silently drops a whole sheet.
+            try:
+                sheet.reset_dimensions()
+            except Exception:
+                pass
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
             atoms.extend(
                 self._parse_sheet_rows(
@@ -1278,7 +1287,19 @@ class XlsxParser(BaseParser):
                 )
             )
             sheets.append({"name": sheet.title, "rows": rows})
-        return atoms, sheets, None
+        # Dedup identical UNANSWERED questionnaire questions (e.g. a blank
+        # "Phone Number" field repeated in Origin + Destination sections) —
+        # they carry the same training signal; keep the first.
+        seen_q: set[str] = set()
+        deduped: list[EvidenceAtom] = []
+        for a in atoms:
+            if (a.value or {}).get("kind") == "qa_question":
+                key = a.normalized_text or a.raw_text
+                if key in seen_q:
+                    continue
+                seen_q.add(key)
+            deduped.append(a)
+        return deduped, sheets, None
 
     def _parse_csv(
         self, project_id: str, artifact_id: str, path: Path
@@ -1831,7 +1852,72 @@ class XlsxParser(BaseParser):
                 rows=rows,
                 classification=classify_sheet(sheet_name, rows),
             )
+        # Right-side summary sub-tables ("Overall Deal Kit Summary", "Deal Kit
+        # Excluding Expenses…", "Gross Margin Deal Kit") sit in their OWN titled
+        # blocks the P&L category scan above never reaches. Pull them via the
+        # block atomizer so each is captured under its title — deduped by dollar
+        # amount so a block that merely restates the main P&L isn't doubled.
+        atoms += self._emit_financial_summary_supplements(
+            project_id, artifact_id, artifact_type, filename, sheet_name, rows, atoms
+        )
         return atoms
+
+    def _emit_financial_summary_supplements(
+        self, project_id, artifact_id, artifact_type, filename, sheet_name, rows, existing,
+    ) -> list[EvidenceAtom]:
+        """Capture titled financial summary BLOCKS the P&L scan missed (the
+        stacked right-side summaries). Emits one ``commercial_total`` per titled
+        keyval block carrying >=2 numbers, skipping the deal-header block and any
+        block whose dollar figures are already represented by ``existing`` (so
+        the main P&L isn't duplicated). section_path = [sheet, title]."""
+        from app.parsers.xlsx_blocks import sheet_blocks
+        try:
+            blocks = sheet_blocks(rows)
+        except Exception:
+            return []
+        seen = set()
+        for a in existing:
+            for m in re.findall(r"\d{4,}", (getattr(a, "raw_text", "") or "").replace(",", "")):
+                seen.add(m)
+        out: list[EvidenceAtom] = []
+        for bi, b in enumerate(blocks):
+            title = b.get("title")
+            if not title or b.get("kind") != "keyval":
+                continue
+            tl = title.lower()
+            if "deal summary" in tl or "project financials" in tl:
+                continue
+            pairs = b["pairs"]
+            nums = [str(v).replace(",", "").replace("$", "").rstrip("%")
+                    for _, v in pairs if re.match(r"^-?[\d,]+(\.\d+)?%?$", str(v).replace("$", "").strip())]
+            if len(nums) < 2:
+                continue
+            big = {n.split(".")[0] for n in nums if len(n.split(".")[0]) >= 4}
+            if big and big <= seen:
+                continue  # all dollar figures already represented -> pure restatement
+            body = (" | ".join(f"{k}: {v}" for k, v in pairs if v))[:4000]
+            if not body.strip():
+                continue
+            sp = [sheet_name, title]
+            aid = stable_id("atm", artifact_id, "fin_summary_block", sheet_name, bi)
+            out.append(EvidenceAtom(
+                id=aid, project_id=project_id, artifact_id=artifact_id,
+                atom_type=AtomType.commercial_total, raw_text=body, normalized_text=body.lower(),
+                value={"kind": "financial_summary_block", "title": title, "pairs": list(pairs)},
+                entity_keys=[],
+                source_refs=[SourceRef(
+                    id=stable_id("src", aid), artifact_id=artifact_id, artifact_type=artifact_type,
+                    filename=filename,
+                    locator={"sheet": sheet_name, "section_path": sp, "extraction": "fin_summary_block_v1"},
+                    extraction_method="fin_summary_block_v1", parser_version=self.parser_version)],
+                receipts=[], authority_class=AuthorityClass.contractual_scope,
+                confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
+                review_status=ReviewStatus.auto_accepted, review_flags=[],
+                parser_version=self.parser_version,
+            ))
+            for n in big:
+                seen.add(n)
+        return out
 
     def _emit_commercial_sheet_rows(
         self,
@@ -1878,10 +1964,30 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         all_values: list[float] = []
         folded_rows: list[dict[str, Any]] = []
+        # Detect the column-header row so each row renders as "Header: value"
+        # bound pairs instead of a bare pipe blob, and the hidden COMPUTED tail
+        # columns (the formula cells beyond the visible header — the unlabeled
+        # "1 | 82 | 63.5" Benjamin flagged) are dropped from the display. The
+        # dollar figures in those columns still flow through ``money_keys`` /
+        # ``value`` below, so the commercial pipeline is unchanged.
+        _hdr_idx = _first_nonblank_header_row(rows)
+        _headers = (
+            [("" if c is None else str(c).strip()) for c in rows[_hdr_idx]]
+            if _hdr_idx is not None and 0 <= _hdr_idx < len(rows)
+            else []
+        )
+        # index of the first labelled column — a row only header-binds if it has
+        # a value there (i.e. it belongs to THIS table). A side block living in
+        # far-right columns (e.g. a travel calc next to the main pricing table)
+        # has that column empty, so it falls back to its plain form instead of
+        # being mis-mapped onto the main table's headers.
+        _first_hdr_col = next((i for i, h in enumerate(_headers) if h), None)
         for row_idx, row in enumerate(rows):
             cells = [("" if c is None else str(c).strip()) for c in row]
             if not any(cells):
                 continue
+            if _headers and row_idx == _hdr_idx:
+                continue  # the header row itself is structure, not a priced line
             values = _row_money_values(row, money_cols)
             if not values:
                 # Header / label rows with no dollar figure carry no
@@ -1889,7 +1995,21 @@ class XlsxParser(BaseParser):
                 continue
             all_values.extend(values)
             money_keys = sorted({f"money:{int(round(v))}" for v in values})
-            row_text = " | ".join(c for c in cells if c)[:4000]
+            _aligned = (
+                _headers
+                and _first_hdr_col is not None
+                and _first_hdr_col < len(cells)
+                and cells[_first_hdr_col]
+            )
+            if _aligned:
+                _bound = [
+                    f"{_headers[ci]}: {cells[ci]}"
+                    for ci in range(len(_headers))
+                    if ci < len(cells) and _headers[ci] and cells[ci]
+                ]
+                row_text = (" | ".join(_bound) or " | ".join(c for c in cells if c))[:4000]
+            else:
+                row_text = " | ".join(c for c in cells if c)[:4000]
             label = " ".join(
                 c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
             ).strip()[:300]
@@ -2241,6 +2361,26 @@ class XlsxParser(BaseParser):
                 return ops_atoms
             # Fall through to the legacy path if the ops emitter
             # produced nothing (e.g. blank sheet).
+
+        # Block-structured emission: a single sheet often holds MULTIPLE tables
+        # under their own titles (a Deal Kit "Summary" tab = a "Detailed Level of
+        # Effort" table + a side "Key Unit Metrics" table), plus key-value header
+        # blocks. The legacy single-header-per-sheet model picks ONE header and
+        # drops the rest (the LOE table vanished, titles were lost). The block
+        # atomizer splits the sheet into title/header/rows blocks, so every atom
+        # carries a real path (sheet > title) and each row is keyed to ITS block's
+        # column headers — the organization signal the heads need.
+        if os.environ.get("SOWSMITH_XLSX_BLOCKS", "1") != "0":
+            block_atoms = self._emit_block_structured_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                rows=rows,
+            )
+            if block_atoms:
+                return block_atoms
 
         model = _detect_header(rows)
         if model.header_idx < 0:
@@ -2981,6 +3121,131 @@ class XlsxParser(BaseParser):
             )
         return out
 
+    def _emit_block_structured_rows(
+        self,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+    ) -> list[EvidenceAtom]:
+        """Emit atoms for a sheet split into title/header/rows BLOCKS.
+
+        For each table block: one ``raw_table_row`` per data row (so the schema
+        classifier types it AND binds its OWN block's column headers) PLUS a
+        generic ``scope_item`` fallback (kept only for rows the classifier can't
+        type — the provenance-aware dedup collapses the matched ones). Key-value
+        blocks emit a single ``scope_item`` of ``label: value | …`` pairs. EVERY
+        atom carries ``section_path=[sheet, title]`` so the head sees which table
+        under which title the fact came from. A globally-unique per-sheet row
+        counter keeps each block's cells at a distinct provenance cell."""
+        from app.parsers.xlsx_blocks import sheet_blocks
+        try:
+            blocks = sheet_blocks(rows)
+        except Exception:
+            return []
+        # Take over ONLY genuinely multi-block sheets (>=2 substantive table/
+        # key-value blocks) — exactly the case the single-header-per-sheet model
+        # provably cannot handle (it picks one header and drops the other tables,
+        # e.g. Summary's "Detailed Level of Effort" + "Key Unit Metrics"). A
+        # single-table sheet stays on the tuned legacy model so its quantity /
+        # money / wide-column extraction is preserved.
+        substantive = [b for b in blocks if b.get("kind") in ("table", "keyval")]
+        if len(substantive) < 2:
+            return []
+
+        atoms: list[EvidenceAtom] = []
+        seq = 0
+
+        def _section_path(title: str | None) -> list[str]:
+            return [sheet_name, title] if (sheet_name and title) else ([sheet_name] if sheet_name else [])
+
+        def _src(rid: str, sp: list[str], extraction: str) -> SourceRef:
+            return SourceRef(
+                id=stable_id("src", rid),
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                locator={"sheet": sheet_name, "row": seq, "section_path": sp, "extraction": extraction},
+                extraction_method=extraction,
+                parser_version=self.parser_version,
+            )
+
+        for bi, b in enumerate(blocks):
+            sp = _section_path(b.get("title"))
+            if b["kind"] == "table":
+                header = b["header"]
+                for row_cells in b["rows"]:
+                    seq += 1
+                    # Summary / total rows ("Subtotal", "Recommended fixed fee
+                    # hours", "Safer bid hours", "Grand Total") are NOT task rows —
+                    # don't force the first column's header ("Task Category") onto
+                    # them. Render the row label bare, then the remaining columns
+                    # header-bound, so it reads "Subtotal | Labor Hours: 458.5".
+                    first = (row_cells[0] if row_cells else "").strip()
+                    is_total = bool(re.match(
+                        r"^(sub-?\s*totals?|totals?|grand total|safer bid\b|.*\bfixed fee\b)",
+                        first, re.I)) and (len([c for c in row_cells[1:] if c]) <= 3)
+                    if is_total:
+                        pairs = [first] + [
+                            f"{header[j]}: {row_cells[j]}"
+                            for j in range(1, min(len(header), len(row_cells)))
+                            if row_cells[j] != ""
+                        ]
+                    else:
+                        pairs = [f"{header[j]}: {row_cells[j]}" for j in range(min(len(header), len(row_cells))) if row_cells[j] != ""]
+                    for j in range(len(header), len(row_cells)):
+                        if row_cells[j] != "":
+                            pairs.append(f"col{j+1}: {row_cells[j]}")
+                    if not pairs:
+                        continue
+                    body = " | ".join(pairs)[:4000]
+                    # raw_table_row -> schema classifier types it + binds headers
+                    rtr_id = stable_id("atm", artifact_id, "xlsx_block_rtr", sheet_name, bi, seq)
+                    atoms.append(EvidenceAtom(
+                        id=rtr_id, project_id=project_id, artifact_id=artifact_id,
+                        atom_type=AtomType.raw_table_row, raw_text=body, normalized_text=body.lower(),
+                        value={"_columns": list(header), "_row": list(row_cells), "_table_idx": bi,
+                               "_row_idx": seq, "_filename": filename, "_sheet": sheet_name,
+                               "section_path": sp, "_artifact_type": "xlsx"},
+                        entity_keys=[], source_refs=[_src(rtr_id, sp, "xlsx_block_raw_table_row")], receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
+                        review_status=ReviewStatus.auto_accepted, review_flags=[],
+                        parser_version=self.parser_version,
+                    ))
+                    # generic fallback (survives only if the classifier can't type the row)
+                    si_id = stable_id("atm", artifact_id, "xlsx_block_row", sheet_name, bi, seq)
+                    atoms.append(EvidenceAtom(
+                        id=si_id, project_id=project_id, artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item, raw_text=body, normalized_text=body.lower(),
+                        value={"kind": "table_row", "columns": list(header),
+                               "cells": {header[j]: row_cells[j] for j in range(min(len(header), len(row_cells))) if row_cells[j] != ""}},
+                        entity_keys=[], source_refs=[_src(si_id, sp, "xlsx_block_row_v1")], receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
+                        review_status=ReviewStatus.auto_accepted, review_flags=[],
+                        parser_version=self.parser_version,
+                    ))
+            elif b["kind"] == "keyval":
+                seq += 1
+                body = " | ".join(f"{k}: {v}".strip().rstrip(":") if not v else f"{k}: {v}" for k, v in b["pairs"])[:4000]
+                if not body.strip():
+                    continue
+                kv_id = stable_id("atm", artifact_id, "xlsx_block_kv", sheet_name, bi, seq)
+                atoms.append(EvidenceAtom(
+                    id=kv_id, project_id=project_id, artifact_id=artifact_id,
+                    atom_type=AtomType.scope_item, raw_text=body, normalized_text=body.lower(),
+                    value={"kind": "key_value_block", "pairs": list(b["pairs"])},
+                    entity_keys=[], source_refs=[_src(kv_id, sp, "xlsx_block_keyval_v1")], receipts=[],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
+                    review_status=ReviewStatus.auto_accepted, review_flags=[],
+                    parser_version=self.parser_version,
+                ))
+        return atoms
+
     def _emit_generic_rows(
         self,
         project_id: str,
@@ -3285,63 +3550,72 @@ class XlsxParser(BaseParser):
         if q_col_idx is None or a_col_idx is None or q_col_idx == a_col_idx:
             return []
 
-        out: list[EvidenceAtom] = []
-        for kind, col_idx, atom_type, authority in (
-            ("question", q_col_idx, AtomType.open_question, AuthorityClass.contractual_scope),
-            ("answer", a_col_idx, AtomType.customer_instruction, AuthorityClass.customer_current_authored),
-        ):
-            if col_idx >= len(row):
-                continue
-            value = row[col_idx]
-            if value is None:
-                continue
-            value_str = str(value).strip()
-            if len(value_str) < 10:
-                continue
-            col_name = columns[col_idx]
-            sub_text = f"{col_name}: {value_str}"
-            sub_source_ref = self._build_source_ref(
+        def _cell(idx: int | None) -> str:
+            if idx is None or idx >= len(row):
+                return ""
+            v = row[idx]
+            if v is None:
+                return ""
+            if hasattr(v, "isoformat"):              # date/datetime -> date-only at midnight
+                try:
+                    s = v.isoformat()
+                    return s[:10] if "00:00:00" in s else s
+                except Exception:
+                    pass
+            return str(v).strip()
+
+        q_val, a_val = _cell(q_col_idx), _cell(a_col_idx)
+        if not q_val:
+            return []
+        # An ANSWERED questionnaire row is ONE field->value fact (the head types
+        # it: deal_metadata / site_attribute / site_infrastructure / ...), kept
+        # together so neither half is an orphan. An UNANSWERED row is a genuine
+        # open question to put back to the customer. (Short answers like "NYC"
+        # are real values — no length filter.)
+        if a_val:
+            sub_text = f"{q_val}: {a_val}"
+            kind, atom_type, authority = "qa_pair", AtomType.customer_instruction, AuthorityClass.customer_current_authored
+            anchor_col = columns[a_col_idx]
+        else:
+            sub_text = f"Question: {q_val}"
+            kind, atom_type, authority = "qa_question", AtomType.open_question, AuthorityClass.contractual_scope
+            anchor_col = columns[q_col_idx]
+        sub_source_ref = self._build_source_ref(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            sheet_name=sheet_name,
+            row_number=row_idx + 1,
+            columns={anchor_col: cell_columns.get(anchor_col, "")},
+        )
+        sub_atom_id = stable_id(
+            "atm", artifact_id, sheet_name, str(row_idx + 1), kind, normalize_text(sub_text)[:120],
+        )
+        return [
+            EvidenceAtom(
+                id=sub_atom_id,
+                project_id=project_id,
                 artifact_id=artifact_id,
-                artifact_type=artifact_type,
-                filename=filename,
-                sheet_name=sheet_name,
-                row_number=row_idx + 1,
-                columns={col_name: cell_columns.get(col_name, "")},
+                atom_type=atom_type,
+                raw_text=sub_text,
+                normalized_text=normalize_text(sub_text),
+                value={
+                    "kind": kind,
+                    "question": q_val,
+                    "answer": a_val,
+                    "sheet": sheet_name,
+                    "row": row_idx + 1,
+                },
+                entity_keys=[],
+                source_refs=[sub_source_ref],
+                receipts=[],
+                authority_class=authority,
+                confidence=0.85,
+                review_status=ReviewStatus.auto_accepted,
+                review_flags=[],
+                parser_version=self.parser_version,
             )
-            sub_atom_id = stable_id(
-                "atm",
-                artifact_id,
-                sheet_name,
-                str(row_idx + 1),
-                kind,
-                normalize_text(value_str)[:120],
-            )
-            out.append(
-                EvidenceAtom(
-                    id=sub_atom_id,
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    atom_type=atom_type,
-                    raw_text=sub_text,
-                    normalized_text=normalize_text(sub_text),
-                    value={
-                        "kind": "qa_subatom",
-                        "qa_side": kind,
-                        "sheet": sheet_name,
-                        "row": row_idx + 1,
-                        "column": col_name,
-                    },
-                    entity_keys=[],
-                    source_refs=[sub_source_ref],
-                    receipts=[],
-                    authority_class=authority,
-                    confidence=0.85,
-                    review_status=ReviewStatus.auto_accepted,
-                    review_flags=[],
-                    parser_version=self.parser_version,
-                )
-            )
-        return out
+        ]
 
     def _extract_row_values(self, row: list[Any], header_map: dict[str, int]) -> dict[str, str]:
         extracted: dict[str, str] = {}

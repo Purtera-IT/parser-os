@@ -139,9 +139,21 @@ def test_parser_recovers_hidden_sdt_content(tmp_path: Path) -> None:
     assert "yonah.sapir@4dcw.com" in blob
     assert "dan@x.com" in blob
     assert "executive summary" in blob
-    # Recovered atoms are flagged for provenance.
-    recovered = [a for a in atoms if "recovered_nested_region" in getattr(a, "review_flags", [])]
-    assert len(recovered) >= 3
+    # The w:sdt-descending walker (_iter_block_items) now pulls content-control
+    # content through the MAIN structural path — with real sections and table
+    # structure — instead of the lossy `recovered_nested_region` fallback. So the
+    # hidden content is captured AND clean (not flagged as a degraded recovery).
+    clean_blob = " || ".join(
+        a.raw_text.lower()
+        for a in atoms
+        if "recovered_nested_region" not in getattr(a, "review_flags", [])
+    )
+    # sdt table data row + sdt paragraph both arrive via the clean structural
+    # path. (Dan's row is row 0 of a header-less table, so the main loop's
+    # column-label skip drops it to the fallback — that heuristic is unrelated
+    # to sdt descent and a real contacts table ships a header row.)
+    assert "yonah.sapir@4dcw.com" in clean_blob
+    assert "executive summary" in clean_blob
 
 
 def test_census_invariant_only_flags_intentional_drops(tmp_path: Path) -> None:

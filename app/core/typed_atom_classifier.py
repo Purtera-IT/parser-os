@@ -345,10 +345,22 @@ def _atom_bound_text(atom: Any) -> str | None:
         return None
     headers, values = rv
     pairs: list[str] = []
-    for k, v in zip(headers, values):
+    for idx, (k, v) in enumerate(zip(headers, values)):
         k = str(k).strip()
         v = str(v).replace("\n", " ").strip()
-        if not k or not v or k.lower().startswith("col_") or k.startswith("_"):
+        if not v or k.lower().startswith("col_") or k.startswith("_"):
+            continue
+        # Summary / total rows ("Subtotal", "Recommended fixed fee hours",
+        # "Safer bid hours", "Grand Total") are NOT a value of the first column's
+        # header — render the label BARE so it reads "Subtotal | Labor Hours: 458.5"
+        # instead of "Task Category: Subtotal …".
+        if idx == 0 and re.match(
+            r"^(sub-?\s*totals?|totals?|grand total|safer bid\b|.*\bfixed fee\b)",
+            v, re.I,
+        ):
+            pairs.append(v)
+            continue
+        if not k:
             continue
         pairs.append(f"{k}: {v}")
     return " | ".join(pairs)[:600] if pairs else None

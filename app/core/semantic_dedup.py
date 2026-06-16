@@ -1010,7 +1010,53 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
     # (open_question / unkeyed) or the kept member of its group.
     passthrough_ids = {id(a) for a in passthrough}
     result = [a for a in atoms if id(a) in passthrough_ids or id(a) in survivors]
-    return _suppress_line_item_doubles(result)
+    return _suppress_line_item_doubles(_suppress_table_row_blob_doubles(result))
+
+
+def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
+    """Drop the GENERIC ``scope_item`` "row blob" (and any leftover
+    ``raw_table_row``) a parser emits for a table row, WHEN a richer-typed atom
+    (stakeholder, bom_line, requirement, …) was produced for the SAME cell by the
+    schema classifier.
+
+    Every docx/xlsx table row is emitted twice: a structured row (which the schema
+    registry classifies into a specific type) AND a generic blob fallback. The
+    blob exists for rows the classifier does NOT recognize — so it is kept ONLY
+    when no richer sibling exists at that cell. Result: matched rows lose the
+    duplicate (one clean typed atom), unmatched rows keep their blob (no data
+    loss), multi-fact rows keep every rich atom. Text-agnostic — keys on the
+    physical cell ``(artifact, table/sheet, row)`` via :func:`_atom_cell_locator`,
+    so the header-bound structured text and the bare blob text no longer have to
+    match for the duplicate to collapse. Universal across docx tables + xlsx
+    sheets; provenance of the dropped blob is merged into the survivor."""
+    rich_by_cell: dict[str, Any] = {}
+    for a in atoms:
+        if _atom_type_value(a) in ("scope_item", "raw_table_row"):
+            continue
+        cell = _atom_cell_locator(a)
+        if cell:
+            rich_by_cell.setdefault(cell, a)
+    if not rich_by_cell:
+        return atoms
+
+    def _is_row_blob(a: Any) -> bool:
+        t = _atom_type_value(a)
+        if t == "raw_table_row":
+            return True
+        if t != "scope_item":
+            return False
+        val = getattr(a, "value", None)
+        return isinstance(val, dict) and val.get("kind") == "table_row"
+
+    out: list[Any] = []
+    for a in atoms:
+        if _is_row_blob(a):
+            winner = rich_by_cell.get(_atom_cell_locator(a))
+            if winner is not None:
+                _merge_atom_metadata(winner, a)
+                continue
+        out.append(a)
+    return out
 
 
 def _suppress_line_item_doubles(atoms: list[Any]) -> list[Any]:
