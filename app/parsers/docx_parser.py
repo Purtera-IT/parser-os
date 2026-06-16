@@ -951,9 +951,12 @@ class DocxParser(BaseParser):
                     "The following are out of scope:",
                     "Customer responsibilities include the following:",
                     "The customer is responsible for the following:",
+                    # short section labels (a header over a following list)
+                    "Deliverables:", "Assumptions:", "Requirements:",
+                    "Notes:", "Exclusions:", "Scope of work:",
                 ],
-                # standalone facts that are NOT list-intros (any polarity) — a bullet
-                # does NOT follow as the sentence's whole point.
+                # NOT list-intros (any polarity): standalone facts, AND key->value
+                # lines that also end in ':' but carry a value, not a list header.
                 negatives=[
                     "This SOW does not include predictive wireless design or spectrum analysis.",
                     "The school currently receives 5 Gbps of internet bandwidth.",
@@ -962,6 +965,8 @@ class DocxParser(BaseParser):
                     "The vendor agrees to hold the client harmless from any liability.",
                     "Payment is due within thirty days of invoice receipt.",
                     "The total contract value is fixed at the agreed amount.",
+                    "Address: 123 Main Street, Macon GA",
+                    "Phone: 555-0100", "Total: $5,000", "Date: January 1, 2026",
                 ],
                 threshold=0.62,
                 lexical_fallback=cls._lead_in_lexical,
@@ -977,7 +982,9 @@ class DocxParser(BaseParser):
         if not t or len(t) > 200 or not t.endswith((".", ":")):
             return False
         words = re.findall(r"[A-Za-z][A-Za-z'\-]*", t)
-        if not (3 <= len(words) <= 25):
+        # floor of 1 so short section labels ("Deliverables:", "Assumptions:")
+        # also get the semantic judgment instead of a word-count shortcut.
+        if not (1 <= len(words) <= 25):
             return False
         return cls._lead_in_rule().fires(t)
 
@@ -1247,15 +1254,12 @@ class DocxParser(BaseParser):
                 is_intro = lvl is None and bool(text) and text.endswith(":") and _next_is_bullet(k)
                 intro_section_only = False
                 if is_intro:
-                    words = len(re.findall(r"[A-Za-z][A-Za-z'\-]*", text))
-                    # Structure-only (no standalone atom) when it's PURELY a list
-                    # header: a short label, OR SEMANTICALLY a list-intro — so a long
-                    # header like "The following items are excluded from this SOW...:"
-                    # becomes only a breadcrumb, not also a duplicate atom. The
-                    # word-count cutoff is just a cheap fast-path under the meaning test.
-                    intro_section_only = (
-                        is_list or words <= 8 or self._is_framing_lead_in(text)
-                    )
+                    # Structure-only (no standalone atom) when it's a list HEADER by
+                    # MEANING (embedding), short or long, any polarity — so neither a
+                    # bare "Deliverables:" nor a long "The following items are
+                    # excluded ...:" becomes a duplicate atom alongside its breadcrumb.
+                    # No word-count heuristic: the semantic rule is the judge.
+                    intro_section_only = is_list or self._is_framing_lead_in(text)
                     lvl = (stack[-1][0] if stack else 0) + 1
                 # FRAMING LEAD-IN: a non-heading sentence that announces a following
                 # list / sub-section ("...will perform the following services.").
