@@ -1792,6 +1792,8 @@ class XlsxParser(BaseParser):
                         # Store as a percentage; deal-kit fractions (0.2857)
                         # become 28.57, explicit percents pass through.
                         slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
+                        slot["margin_pct_label"] = orig   # faithful raw row label
+                        slot["margin_pct_pos"] = (ri + 1, ci + 1)
                     continue
 
                 # ── P&L revenue / cost / margin line ──
@@ -1803,6 +1805,8 @@ class XlsxParser(BaseParser):
                     slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
                     if n is not None and slot.get(metric) is None:
                         slot[metric] = round(n, 2)
+                        slot[metric + "_label"] = orig   # faithful raw row label
+                        slot[metric + "_pos"] = (ri + 1, ci + 1)
 
         # Confidence gate: only trust the structured P&L view when the grid
         # actually reads like a deal-kit financial summary — at least two
@@ -1881,6 +1885,10 @@ class XlsxParser(BaseParser):
                 _right = _row[_ci + 1] if _ci + 1 < len(_row) else None
                 if _right is not None and str(_right).strip():
                     continue   # a value sits to the right -> this is a label, not a title
+                _left = _row[_ci - 1] if _ci > 0 else None
+                if _left is not None and str(_left).strip():
+                    continue   # a label sits to the LEFT -> this is a VALUE (e.g. "PK"
+                    #            next to "Sales Rep"), not a banner title
                 _low = _at.lower()
                 if _low in _DEAL_HEADER_LABELS or _PL_METRIC_RE.match(_at) or _PL_MARGIN_PCT_RE.match(_at):
                     continue
@@ -1958,65 +1966,42 @@ class XlsxParser(BaseParser):
                 )
             )
 
-        # ── P&L category atoms ──
-        # Order: grand-total Deal first, then by source row.
-        def _cat_sort(item: tuple[str, dict[str, Any]]):
-            k, v = item
-            return (0 if k == "deal" else 1, v.get("row", 1_000_000))
+        # ── P&L line atoms — ONE atom PER ROW (uniform with PDF/docx tables): each
+        # financial figure ("Total Labor Revenue: $47,150") is its own atom with
+        # its FAITHFUL row label, titled by its own 2-D block. The PM brief regroups
+        # them per category at render time (build_deal_financials). ──
+        def _fmt(v: Any) -> str:
+            return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
 
-        for ckey, slot in sorted(pl.items(), key=_cat_sort):
-            rev = slot.get("revenue")
-            cost = slot.get("cost")
-            margin = slot.get("margin")
-            mpct = slot.get("margin_pct")
-            # Skip a category that carries no numeric content at all.
-            if all(x is None for x in (rev, cost, margin, mpct)):
-                continue
+        def _pl_atom(ckey, slot, metric, label, val, text):
+            prow, pcol = slot.get(metric + "_pos", (slot.get("row", 0), slot.get("col", 1)))
+            aid = stable_id("atm", artifact_id, "pl", sheet_name, ckey, metric)
+            return EvidenceAtom(
+                id=aid, project_id=project_id, artifact_id=artifact_id,
+                atom_type=AtomType.commercial_total, raw_text=text, normalized_text=text.lower(),
+                value={"kind": "pl_metric", "category": slot["display"], "category_key": ckey,
+                       "metric": metric, "value": val, "sheet_name": sheet_name},
+                entity_keys=([f"money:{int(round(val))}"]
+                             if isinstance(val, (int, float)) and abs(val) >= _MIN_MONEY_VALUE
+                             and metric != "margin_pct" else []),
+                source_refs=[_src(f"pl_{ckey}_{metric}", {"row": prow, "col": pcol})],
+                receipts=[], authority_class=AuthorityClass.vendor_quote,
+                confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
+                review_status=ReviewStatus.needs_review, review_flags=[],
+                parser_version=self.parser_version)
+
+        for ckey, slot in sorted(pl.items(), key=lambda kv: (kv[1].get("col", 1), kv[1].get("row", 1_000_000))):
             disp = slot["display"]
-            money_keys = sorted(
-                {f"money:{int(round(v))}" for v in (rev, cost, margin)
-                 if isinstance(v, (int, float)) and abs(v) >= _MIN_MONEY_VALUE}
-            )
-
-            def _fmt(v: Any) -> str:
-                return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
-
-            text = (
-                f"{disp}: revenue {_fmt(rev)}, cost {_fmt(cost)}, "
-                f"margin {_fmt(margin)}"
-                + (f" ({mpct:g}%)" if isinstance(mpct, (int, float)) else "")
-            )
-            atom_id = stable_id("atm", artifact_id, "pl", sheet_name, ckey)
-            atoms.append(
-                EvidenceAtom(
-                    id=atom_id,
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    atom_type=AtomType.commercial_total,
-                    raw_text=text,
-                    normalized_text=text.lower(),
-                    value={
-                        "kind": "pl_line",
-                        "category": disp,
-                        "category_key": ckey,
-                        "revenue": rev,
-                        "cost": cost,
-                        "margin": margin,
-                        "margin_pct": mpct,
-                        "sheet_name": sheet_name,
-                    },
-                    entity_keys=money_keys,
-                    source_refs=[_src(f"pl_{ckey}", {"row": slot.get("row", 0), "col": slot.get("col", 1)})],
-                    receipts=[],
-                    authority_class=AuthorityClass.vendor_quote,
-                    confidence=0.78,
-                    confidence_raw=0.78,
-                    calibrated_confidence=0.78,
-                    review_status=ReviewStatus.needs_review,
-                    review_flags=[],
-                    parser_version=self.parser_version,
-                )
-            )
+            for metric in ("revenue", "cost", "margin"):
+                val = slot.get(metric)
+                if val is None:
+                    continue
+                label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
+                atoms.append(_pl_atom(ckey, slot, metric, label, val, f"{label}: {_fmt(val)}"))
+            mpct = slot.get("margin_pct")
+            if mpct is not None:
+                label = slot.get("margin_pct_label") or f"Margin % on {disp}"
+                atoms.append(_pl_atom(ckey, slot, "margin_pct", label, mpct, f"{label}: {mpct:g}%"))
 
         # If the structured pass found nothing usable (an oddly-shaped
         # sheet), fall back to the generic commercial emitter so we never
@@ -2074,9 +2059,6 @@ class XlsxParser(BaseParser):
                         return ri + 1, ci + 1
             return 1_000_000, 1_000_000
 
-        def _fmt(v: Any) -> str:
-            return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
-
         out: list[EvidenceAtom] = []
         for bi, b in enumerate(blocks):
             title = b.get("title")
@@ -2087,38 +2069,55 @@ class XlsxParser(BaseParser):
                 continue
             pairs = b["pairs"]
             trow, tcol = _title_pos(title)
-            # Group the block's pairs into P&L categories (revenue/cost/margin/%),
-            # SAME shape as the main P&L — so every financial block is uniform
-            # (no whole-block dumps), faithful labels preserved.
-            pl: dict[str, dict[str, Any]] = {}
-            order: list[str] = []
-            for k, v in pairs:
+            # Block-level dedup: skip a block whose big dollar figures are ALL
+            # already represented (a pure restatement of the main P&L).
+            blk_big = set()
+            for _, v in pairs:
+                vs = str(v).replace(",", "").replace("$", "").strip().rstrip("%")
+                if re.match(r"^-?\d+(\.\d+)?$", vs) and abs(float(vs)) >= 1000:
+                    blk_big.add(str(int(round(float(vs)))))
+            if blk_big and blk_big <= seen:
+                continue
+            # ONE atom PER ROW (uniform with the main P&L + PDF/docx tables): each
+            # label->value pair is its own faithful atom, titled by this block.
+            emitted = False
+            for pj, (k, v) in enumerate(pairs):
                 kk = re.sub(r"\s+", " ", str(k).strip())
+                if not kk or v in (None, ""):
+                    continue
+                vs = str(v).replace(",", "").replace("$", "").strip().rstrip("%")
+                if not re.match(r"^-?\d+(\.\d+)?$", vs):
+                    continue
+                num = float(vs)
                 mm = _PL_METRIC_RE.match(kk)
                 mp = _PL_MARGIN_PCT_RE.match(kk)
                 if mm and mm.group("metric").lower() in _PL_METRIC_WORDS:
-                    ckey, disp = _norm_pl_category(mm.group("cat"))
-                    n = _coerce_pl_number(v)
-                    slot = pl.setdefault(ckey, {"display": disp})
-                    if ckey not in order:
-                        order.append(ckey)
-                    if n is not None and slot.get(mm.group("metric").lower()) is None:
-                        slot[mm.group("metric").lower()] = round(n, 2)
+                    ckey, _d = _norm_pl_category(mm.group("cat"))
+                    metric = mm.group("metric").lower()
                 elif mp:
-                    ckey, disp = _norm_pl_category(mp.group("cat"))
-                    n = _coerce_pl_number(v)
-                    slot = pl.setdefault(ckey, {"display": disp})
-                    if ckey not in order:
-                        order.append(ckey)
-                    if n is not None and slot.get("margin_pct") is None:
-                        slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
-
-            def _emit(aid_tag, text, val, big):
-                aid = stable_id("atm", artifact_id, aid_tag, sheet_name, bi)
+                    ckey, _d = _norm_pl_category(mp.group("cat"))
+                    metric = "margin_pct"
+                else:
+                    ckey, metric = "other", "value"
+                # format uniformly with the main P&L: $ for money, % for margins
+                if metric == "margin_pct":
+                    pct = num * 100 if abs(num) <= 1.5 else num
+                    disp_v, store_v = f"{round(pct, 2):g}%", round(pct, 2)
+                elif metric in ("revenue", "cost", "margin"):
+                    disp_v, store_v = f"${int(round(num)):,}", round(num, 2)
+                else:
+                    disp_v, store_v = str(v), num
+                text = f"{kk}: {disp_v}"
+                aid = stable_id("atm", artifact_id, "fin_block", sheet_name, bi, pj)
                 out.append(EvidenceAtom(
                     id=aid, project_id=project_id, artifact_id=artifact_id,
                     atom_type=AtomType.commercial_total, raw_text=text[:4000],
-                    normalized_text=text[:4000].lower(), value=val, entity_keys=[],
+                    normalized_text=text[:4000].lower(),
+                    value={"kind": "pl_metric", "category": title, "category_key": ckey,
+                           "metric": metric, "value": store_v, "block_title": title,
+                           "sheet_name": sheet_name},
+                    entity_keys=([f"money:{int(round(num))}"]
+                                 if abs(num) >= _MIN_MONEY_VALUE and metric != "margin_pct" else []),
                     source_refs=[SourceRef(
                         id=stable_id("src", aid), artifact_id=artifact_id, artifact_type=artifact_type,
                         filename=filename,
@@ -2129,39 +2128,10 @@ class XlsxParser(BaseParser):
                     confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
                     review_status=ReviewStatus.auto_accepted, review_flags=[],
                     parser_version=self.parser_version))
-                for n in big:
+                emitted = True
+            if emitted:
+                for n in blk_big:
                     seen.add(n)
-
-            if pl:
-                for ckey in order:
-                    slot = pl[ckey]
-                    rev, cost, margin, mpct = (slot.get("revenue"), slot.get("cost"),
-                                               slot.get("margin"), slot.get("margin_pct"))
-                    if all(x is None for x in (rev, cost, margin, mpct)):
-                        continue
-                    big = {str(int(round(x))) for x in (rev, cost, margin)
-                           if isinstance(x, (int, float)) and abs(x) >= 1000}
-                    if big and big <= seen:
-                        continue  # numbers already represented -> restatement
-                    text = (f"{slot['display']}: revenue {_fmt(rev)}, cost {_fmt(cost)}, "
-                            f"margin {_fmt(margin)}"
-                            + (f" ({mpct:g}%)" if isinstance(mpct, (int, float)) else ""))
-                    _emit(f"pl_{ckey}", text, {"kind": "pl_line", "category": slot["display"],
-                          "category_key": ckey, "revenue": rev, "cost": cost, "margin": margin,
-                          "margin_pct": mpct, "sheet_name": sheet_name, "block_title": title}, big)
-            else:
-                # non-P&L summary block -> keep it whole (no metric structure to split)
-                nums = [str(v).replace(",", "").replace("$", "").rstrip("%")
-                        for _, v in pairs if re.match(r"^-?[\d,]+(\.\d+)?%?$", str(v).replace("$", "").strip())]
-                if len(nums) < 2:
-                    continue
-                big = {n.split(".")[0] for n in nums if len(n.split(".")[0]) >= 4}
-                if big and big <= seen:
-                    continue
-                body = (" | ".join(f"{k}: {v}" for k, v in pairs if v))
-                if body.strip():
-                    _emit("fin_summary_block", body,
-                          {"kind": "financial_summary_block", "title": title, "pairs": list(pairs)}, big)
         return out
 
     def _emit_commercial_sheet_rows(

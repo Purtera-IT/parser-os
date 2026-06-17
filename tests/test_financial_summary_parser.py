@@ -25,6 +25,24 @@ def _emit(rows, sheet_name="Deal Kit"):
     )
 
 
+def _pl_grouped(atoms):
+    """Regroup the per-row ``pl_metric`` atoms (one per sheet row) back into
+    {category_key: {revenue, cost, margin, margin_pct}} for assertions — first
+    value per (category, metric) wins, same as the PM brief's render-time roll-up."""
+    pl: dict = {}
+    for a in atoms:
+        v = a.value if isinstance(a.value, dict) else {}
+        if v.get("kind") != "pl_metric":
+            continue
+        ck, m = v.get("category_key"), v.get("metric")
+        if not ck or m not in ("revenue", "cost", "margin", "margin_pct"):
+            continue
+        slot = pl.setdefault(ck, {"revenue": None, "cost": None, "margin": None, "margin_pct": None})
+        if slot.get(m) is None:
+            slot[m] = v.get("value")
+    return pl
+
+
 # A compact deal-kit grid: header fields on the left, P&L block below.
 _GRID = [
     ["OPPTY #", 126, "Total Deal Revenue", 21560],
@@ -58,11 +76,7 @@ def test_deal_header_extracted():
 
 def test_pl_categories_extracted_clean():
     atoms = _emit(_GRID)
-    pl = {
-        a.value["category_key"]: a.value
-        for a in atoms
-        if a.value.get("kind") == "pl_line"
-    }
+    pl = _pl_grouped(atoms)
     assert pl["deal"]["revenue"] == 21560
     assert pl["deal"]["cost"] == 15660
     assert pl["deal"]["margin"] == 5900
@@ -106,7 +120,7 @@ def test_div_zero_and_text_values_ignored():
         ["End User", "TBD", None, None],
     ]
     atoms = _emit(rows)
-    pl = {a.value["category_key"]: a.value for a in atoms if a.value.get("kind") == "pl_line"}
+    pl = _pl_grouped(atoms)
     assert pl["deal"]["margin_pct"] is None  # #DIV/0! dropped, not crashed
 
 

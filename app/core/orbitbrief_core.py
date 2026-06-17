@@ -1942,34 +1942,33 @@ def _round2(v: Any) -> Any:
 
 
 def build_deal_financials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
-    """Assemble the deal P&L from ``commercial_total`` atoms whose value
-    is a structured ``pl_line`` (category + revenue/cost/margin/margin%).
+    """Assemble the deal P&L from the per-row ``pl_metric`` atoms (one atom per
+    sheet row: category + a single metric/value). Atoms are now individual for
+    fidelity; the P&L table is GROUPED here at render time — per (category, metric),
+    first value wins (so the main Project-Financials/Deal lines lead).
 
-    Returns an ordered line list (grand-total "Deal" first), the rolled-up
-    totals (the Deal line when present, else summed), and presence so the
-    PM surface can render a financial table + headline margin."""
+    Returns an ordered line list (grand-total "Deal" first), the rolled-up totals
+    (the Deal line when present, else summed), and presence so the PM surface can
+    render a financial table + headline margin."""
     by_key: dict[str, dict[str, Any]] = {}
     for atom in atoms:
         if _atom_type_str(atom) != "commercial_total":
             continue
         value = atom.value if isinstance(atom.value, dict) else {}
-        if value.get("kind") != "pl_line":
+        if value.get("kind") != "pl_metric":
             continue
         ckey = value.get("category_key")
-        if not ckey:
-            import re as _re_pl
-            ckey = _re_pl.sub(r"[^a-z0-9]+", "_", str(value.get("category", "")).lower()).strip("_")
-        if not ckey or ckey in by_key:
+        metric = value.get("metric")
+        if not ckey or metric not in ("revenue", "cost", "margin", "margin_pct"):
             continue
-        by_key[ckey] = {
+        slot = by_key.setdefault(ckey, {
             "category": value.get("category", ckey.title()),
             "category_key": ckey,
-            "revenue": _round2(value.get("revenue")),
-            "cost": _round2(value.get("cost")),
-            "margin": _round2(value.get("margin")),
-            "margin_pct": _round2(value.get("margin_pct")),
+            "revenue": None, "cost": None, "margin": None, "margin_pct": None,
             "atom_id": atom.id,
-        }
+        })
+        if slot.get(metric) is None:
+            slot[metric] = _round2(value.get("value"))
 
     def _order(k: str) -> tuple[int, str]:
         return (_PL_CATEGORY_ORDER.index(k) if k in _PL_CATEGORY_ORDER else 99, k)

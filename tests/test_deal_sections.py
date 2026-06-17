@@ -64,19 +64,26 @@ def _header_atom(fields):
 
 
 def _pl_atom(category, category_key, *, revenue=None, cost=None, margin=None, margin_pct=None):
-    return _atom(
-        AtomType.commercial_total,
-        value={
-            "kind": "pl_line",
-            "category": category,
-            "category_key": category_key,
-            "revenue": revenue,
-            "cost": cost,
-            "margin": margin,
-            "margin_pct": margin_pct,
-            "sheet_name": "Deal Kit",
-        },
-    )
+    """Per-row ``pl_metric`` atoms — one per non-None metric, mirroring the
+    parser's individual financial atoms (build_deal_financials regroups them).
+    Returns a LIST; callers concatenate."""
+    out = []
+    for metric, val in (("revenue", revenue), ("cost", cost),
+                        ("margin", margin), ("margin_pct", margin_pct)):
+        if val is None:
+            continue
+        out.append(_atom(
+            AtomType.commercial_total,
+            value={
+                "kind": "pl_metric",
+                "category": category,
+                "category_key": category_key,
+                "metric": metric,
+                "value": val,
+                "sheet_name": "Deal Kit",
+            },
+        ))
+    return out
 
 
 # ───────────────────────── deal_header ─────────────────────────
@@ -115,7 +122,7 @@ def test_deal_header_first_wins_across_atoms():
 
 
 def test_deal_header_absent_when_no_metadata():
-    h = build_deal_header(atoms=[_pl_atom("Deal", "deal", revenue=100)])
+    h = build_deal_header(atoms=_pl_atom("Deal", "deal", revenue=100))
     assert h["present"] is False
     assert h["fields"] == {}
 
@@ -124,11 +131,11 @@ def test_deal_header_absent_when_no_metadata():
 
 
 def test_pl_lines_ordered_and_totals_prefer_deal_line():
-    atoms = [
-        _pl_atom("PMO", "pmo", revenue=0, cost=260, margin=-260),
-        _pl_atom("Labor", "labor", revenue=21560, cost=15400, margin=6160, margin_pct=28.57),
-        _pl_atom("Deal", "deal", revenue=21560, cost=15660, margin=5900, margin_pct=27.37),
-    ]
+    atoms = (
+        _pl_atom("PMO", "pmo", revenue=0, cost=260, margin=-260)
+        + _pl_atom("Labor", "labor", revenue=21560, cost=15400, margin=6160, margin_pct=28.57)
+        + _pl_atom("Deal", "deal", revenue=21560, cost=15660, margin=5900, margin_pct=27.37)
+    )
     f = build_deal_financials(atoms=atoms)
     assert f["present"] is True
     assert f["category_count"] == 3
@@ -142,10 +149,10 @@ def test_pl_lines_ordered_and_totals_prefer_deal_line():
 
 
 def test_totals_summed_when_no_deal_line():
-    atoms = [
-        _pl_atom("Labor", "labor", revenue=1000, cost=600, margin=400),
-        _pl_atom("PMO", "pmo", revenue=0, cost=100, margin=-100),
-    ]
+    atoms = (
+        _pl_atom("Labor", "labor", revenue=1000, cost=600, margin=400)
+        + _pl_atom("PMO", "pmo", revenue=0, cost=100, margin=-100)
+    )
     f = build_deal_financials(atoms=atoms)
     assert f["totals"]["revenue"] == 1000
     assert f["totals"]["cost"] == 700

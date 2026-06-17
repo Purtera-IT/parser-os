@@ -82,18 +82,20 @@ def test_financial_summary_emits_commercial_totals(tmp_path) -> None:
     assert f["billing_type"] == "T&M"
     assert "deal:126" in (headers[0].entity_keys or [])
 
-    # ── P&L economics as a structured commercial_total ``pl_line`` ──
+    # ── P&L economics as per-row commercial_total ``pl_metric`` atoms (one per
+    #    sheet row, faithful label; the PM brief regroups them at render time) ──
     totals = [a for a in atoms if a.atom_type == AtomType.commercial_total]
     assert totals
-    deal_line = next(
-        a.value for a in totals
-        if a.value.get("kind") == "pl_line" and a.value.get("category_key") == "deal"
-    )
-    assert deal_line["revenue"] == 21560
-    assert deal_line["cost"] == 15660
-    assert deal_line["margin"] == 5900
+    deal = {
+        a.value.get("metric"): a.value.get("value")
+        for a in totals
+        if a.value.get("kind") == "pl_metric" and a.value.get("category_key") == "deal"
+    }
+    assert deal["revenue"] == 21560
+    assert deal["cost"] == 15660
+    assert deal["margin"] == 5900
     # 0.27 fraction normalized to a 27% margin (a ratio, never a money key).
-    assert deal_line["margin_pct"] == 27.0
+    assert deal["margin_pct"] == 27.0
     keys = {k for a in atoms for k in (a.entity_keys or [])}
     assert "money:0" not in keys
     # Tagged as vendor/internal pricing.
