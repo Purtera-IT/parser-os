@@ -2441,22 +2441,26 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
 
     # Aggregate document title + metadata across pages (in order).
     for p in pages:
-        page_title = p.get("title")
-        # A SECTION heading ("INTRODUCTION", "General Conditions") is NOT the
-        # document title — it's a sibling of every other section. Crowning it
-        # as the title force-nests all other sections beneath it
-        # ("INTRODUCTION > General Conditions"). Reject it, and fall back to the
-        # page's first real (non-section) heading — the cover org/project name.
-        if page_title and _is_section_title(page_title):
-            page_title = None
-        if not page_title:
-            for s in (p.get("sections") or []):
-                h = (s.get("heading") or "").strip()
-                if h and len(h.split()) >= 2 and not _is_section_title(h):
-                    page_title = h
-                    break
-        if not document_title and page_title:
-            document_title = page_title
+        # Pick the document title from the FIRST page that yields one, then stop
+        # embedding — the semantic section-vs-title check only needs to run until
+        # a title is found, not on every page (keeps the embedder calls bounded).
+        if not document_title:
+            page_title = p.get("title")
+            # A SECTION heading ("INTRODUCTION", "General Conditions") is NOT the
+            # document title — it's a sibling of every other section. Crowning it
+            # as the title force-nests all other sections beneath it
+            # ("INTRODUCTION > General Conditions"). Reject it, and fall back to
+            # the page's first real (non-section) heading — the cover org name.
+            if page_title and _is_section_title(page_title):
+                page_title = None
+            if not page_title:
+                for s in (p.get("sections") or []):
+                    h = (s.get("heading") or "").strip()
+                    if h and len(h.split()) >= 2 and not _is_section_title(h):
+                        page_title = h
+                        break
+            if page_title:
+                document_title = page_title
         for entry in p.get("metadata") or []:
             if not entry:
                 continue
