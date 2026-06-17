@@ -1884,6 +1884,54 @@ def _operative_date_rule():
 
 
 _OPERATIVE_DATE = None
+_SECTION_TITLE = None
+
+
+def _section_title_rule():
+    """Is a heading a generic document SECTION (Introduction / General
+    Conditions / Scope of Work / Insurance / Payments…) versus a real document
+    or deal TITLE (an org / project / proposal name)?
+
+    Needed because the doc-title picker grabs the first page heading — and when
+    the cover page has no clean title, that's a SECTION heading like
+    "INTRODUCTION", which then gets force-prepended as the root of EVERY other
+    section ("INTRODUCTION > General Conditions"). A section is a sibling of the
+    other sections, never their parent. This is a meaning judgment (a section
+    name vs a proper title), so it's a SemanticRule, not a keyword list."""
+    from app.core.semantic_rules import SemanticRule
+    return SemanticRule(
+        name="section_title",
+        positives=[
+            "introduction", "general information", "general conditions",
+            "scope of work", "proposal format", "evaluation criteria",
+            "insurance requirements", "payment terms", "warranty",
+            "terms and conditions", "definitions", "background", "addenda",
+            "indemnification", "company responsibility", "specifications",
+        ],
+        negatives=[
+            "The Academy for Classical Education", "Request for Proposal for network infrastructure",
+            "ACME Corporation wireless upgrade project", "Statement of Work - data center migration",
+            "City of Macon broadband initiative",
+        ],
+        threshold=0.60,
+        lexical_fallback=lambda t: any(
+            w in t.lower() for w in (
+                "introduction", "general", "scope", "conditions", "proposal",
+                "evaluation", "insurance", "payment", "warranty", "terms",
+                "definition", "background", "addend", "indemnif", "responsibilit",
+                "specification", "requirement", "overview", "purpose",
+            )
+        ),
+    )
+
+
+def _is_section_title(text: str) -> bool:
+    global _SECTION_TITLE
+    if not text:
+        return False
+    if _SECTION_TITLE is None:
+        _SECTION_TITLE = _section_title_rule()
+    return _SECTION_TITLE.fires(text.strip())
 
 
 def _demote_decorative_dates(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
@@ -2394,6 +2442,19 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # Aggregate document title + metadata across pages (in order).
     for p in pages:
         page_title = p.get("title")
+        # A SECTION heading ("INTRODUCTION", "General Conditions") is NOT the
+        # document title — it's a sibling of every other section. Crowning it
+        # as the title force-nests all other sections beneath it
+        # ("INTRODUCTION > General Conditions"). Reject it, and fall back to the
+        # page's first real (non-section) heading — the cover org/project name.
+        if page_title and _is_section_title(page_title):
+            page_title = None
+        if not page_title:
+            for s in (p.get("sections") or []):
+                h = (s.get("heading") or "").strip()
+                if h and len(h.split()) >= 2 and not _is_section_title(h):
+                    page_title = h
+                    break
         if not document_title and page_title:
             document_title = page_title
         for entry in p.get("metadata") or []:
