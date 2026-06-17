@@ -938,6 +938,42 @@ def _is_total_label(text: str) -> bool:
     return bool(re.match(r"^(totals?|subtotal|grand\s*total)\b", t, re.I))
 
 
+def _unlabeled_sum_row(rows: list[list[Any]], ri: int, lookback: int = 15) -> bool:
+    """UNIVERSAL, arithmetic total-detection: a row that carries numbers but NO
+    text label, whose value in each column equals the SUM of the contiguous
+    numeric rows immediately above it, IS a totals row. The arithmetic proves it —
+    no keyword, no guess, no invention — so a bare '14175 | 12375' summing the
+    rows above is recognized as a Total on ANY sheet, not just one we hand-tagged."""
+    if not (0 <= ri < len(rows)):
+        return False
+    row = rows[ri]
+    # must have NO text label (a labeled total is handled by _is_total_label)
+    if any(isinstance(v, str) and v.strip() for v in row):
+        return False
+    nums = {
+        ci: float(v)
+        for ci, v in enumerate(row)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) >= 1
+    }
+    if not nums:
+        return False
+    matched = 0
+    for ci, val in nums.items():
+        s, n = 0.0, 0
+        for rj in range(ri - 1, max(-1, ri - 1 - lookback), -1):
+            cell = rows[rj][ci] if ci < len(rows[rj]) else None
+            if isinstance(cell, (int, float)) and not isinstance(cell, bool):
+                s += float(cell)
+                n += 1
+            elif _is_blank_row(rows[rj]):
+                if n:
+                    break
+        # need >=2 summed rows and a tight match (allow float rounding)
+        if n >= 2 and abs(s - val) <= max(0.5, abs(val) * 0.001):
+            matched += 1
+    return matched == len(nums)  # EVERY numeric cell must be a column sum
+
+
 def _row_kind(
     row: list[Any],
     header_map: dict[str, int],
@@ -2241,6 +2277,10 @@ class XlsxParser(BaseParser):
                 row_text = (" | ".join(_bound) or " | ".join(c for c in cells if c))[:4000]
             else:
                 row_text = " | ".join(c for c in cells if c)[:4000]
+            # A label-less row whose numbers SUM the rows above is a totals row —
+            # give the orphan a "Total" label (arithmetic-proven, universal).
+            if _unlabeled_sum_row(rows, row_idx):
+                row_text = f"Total | {row_text}"
             label = " ".join(
                 c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
             ).strip()[:300]
