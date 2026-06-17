@@ -908,6 +908,29 @@ class DocxParser(BaseParser):
         pPr = el.find(qn("w:pPr"))
         return pPr is not None and pPr.find(qn("w:numPr")) is not None
 
+    @staticmethod
+    def _list_level(paragraph: Any) -> int:
+        """Nesting depth of a list item (0 = top bullet, 1 = sub-bullet, ...), read
+        STRUCTURALLY from ``w:numPr/w:ilvl``. This is the parent->child relation
+        between a bullet and its sub-bullets — it lives in the indent level, not the
+        words, so it's structural (no embedding)."""
+        el = getattr(paragraph, "_p", None)
+        if el is None:
+            return 0
+        pPr = el.find(qn("w:pPr"))
+        if pPr is None:
+            return 0
+        numPr = pPr.find(qn("w:numPr"))
+        if numPr is None:
+            return 0
+        ilvl = numPr.find(qn("w:ilvl"))
+        if ilvl is not None:
+            try:
+                return max(0, int(ilvl.get(qn("w:val"))))
+            except Exception:
+                return 0
+        return 0
+
     # A sentence whose grammatical job is to ANNOUNCE a following list / section
     # ("PurTera will provide field technicians to perform the following services.",
     # "The scope is as follows."). It carries no standalone fact — it frames its
@@ -1186,6 +1209,11 @@ class DocxParser(BaseParser):
         # is "" for a pure framing lead-in (it must NOT pollute the section path);
         # lead_in_text is None for a normal heading/short label.
         stack: list[tuple[int, str, bool, str | None]] = []
+        # Bullet hierarchy: last bullet text seen at each list level, so a sub-bullet
+        # ("After Hours: 50% increase") carries its PARENT bullet ("All Services will
+        # be performed during normal Business Hours...") as context instead of
+        # reading in isolation. Cleared when the list ends (heading / non-list line).
+        bullet_by_level: dict[int, str] = {}
         pidx = -1
         tidx = -1
         seq = 0
@@ -1288,6 +1316,9 @@ class DocxParser(BaseParser):
                     ancestors = [t for _, t, _, _, _ in stack if t]
                     para_section[pidx] = ancestors
                     para_lead_in[pidx] = []
+                    # a heading / list-intro starts a fresh bullet context — a
+                    # sub-bullet's parent must come from the SAME list, not a prior one.
+                    bullet_by_level.clear()
                     if is_framing:
                         # section preamble / list lead-in: structure (no atom),
                         # lifted onto descendant list items as lead_in. Empty
@@ -1323,10 +1354,31 @@ class DocxParser(BaseParser):
                     # contradiction subsection is active (an exclusion / other-party
                     # section), in which case a vendor "will provide" preamble must
                     # not apply to these bullets.
-                    if is_list and not any(b for *_, b in stack):
-                        para_lead_in[pidx] = [li for _, _, _, li, _ in stack if li]
+                    leads = (
+                        [li for _, _, _, li, _ in stack if li]
+                        if (is_list and not any(b for *_, b in stack))
+                        else []
+                    )
+                    if is_list:
+                        # PARENT BULLET (structural list hierarchy): a sub-bullet
+                        # carries its nearest shallower bullet so it doesn't read in
+                        # isolation. Always valid (local hierarchy) — independent of
+                        # the contradiction gate.
+                        lev = self._list_level(para)
+                        if lev > 0:
+                            parent = next(
+                                (bullet_by_level[l] for l in range(lev - 1, -1, -1)
+                                 if l in bullet_by_level),
+                                None,
+                            )
+                            if parent:
+                                leads = leads + [parent]
+                        bullet_by_level[lev] = text
+                        for _l in [x for x in bullet_by_level if x > lev]:
+                            del bullet_by_level[_l]
                     else:
-                        para_lead_in[pidx] = []
+                        bullet_by_level.clear()
+                    para_lead_in[pidx] = leads
             elif kind == "tbl":
                 tidx += 1
                 table_order[tidx] = seq
