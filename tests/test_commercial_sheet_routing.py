@@ -143,10 +143,14 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     assert "money:339" in (summary.entity_keys or [])
 
 
-# ── pure backing data is still dropped ──────────────────────────────
+# ── pure backing data is dropped (but never silently) ───────────────
 
 
-def test_helper_sheet_drops_to_nothing(tmp_path) -> None:
+def test_helper_sheet_drops_to_marker(tmp_path) -> None:
+    # A helper / backing sheet carries no customer scope and no PM-facing
+    # pricing, so it is dropped — but "no silent data loss" means the drop
+    # leaves exactly one self-explaining ``dropped_sheet`` marker (auditable
+    # in the labeler), never zero atoms and never a scope/commercial atom.
     path = tmp_path / "Deal_Kit.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -156,4 +160,6 @@ def test_helper_sheet_drops_to_nothing(tmp_path) -> None:
     ws.append(["L2"])
     wb.save(path)
 
-    assert _atoms(path) == []
+    atoms = _atoms(path)
+    assert [a.atom_type for a in atoms] == [AtomType.dropped_sheet]
+    assert not [a for a in atoms if a.atom_type == AtomType.scope_item]

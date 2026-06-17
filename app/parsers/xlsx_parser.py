@@ -2310,6 +2310,11 @@ class XlsxParser(BaseParser):
                 locator={
                     "sheet": sheet_name,
                     "row": row_idx + 1,
+                    # Every atom carries a breadcrumb — uniform with the
+                    # financial-summary / scope emitters and raw_table_row.
+                    # A commercial sheet has no in-sheet banner titles, so the
+                    # breadcrumb is the sheet itself (never blank).
+                    "section_path": [sheet_name] if sheet_name else [],
                     "extraction": "commercial_sheet_routing",
                 },
                 extraction_method="commercial_sheet_routing",
@@ -2351,11 +2356,16 @@ class XlsxParser(BaseParser):
         if line_count == 0:
             return []
 
-        # Roll-up banner: a single summary atom per pricing sheet so the
-        # OrbitBrief pricing view can render one readable line (count +
-        # $-range + total). For collapsed sheets it also carries the full
-        # row matrix in ``value.rows`` for drill-down; for financial-summary
-        # sheets the granular rows follow as their own atoms.
+        # Roll-up banner: only for COLLAPSED sheets (rate cards / catalogs),
+        # where it IS the sheet's single atom — it carries the full row matrix
+        # for drill-down and is the atom the pricing_rollup packet consumes.
+        # On a per-row financial-summary sheet the granular rows ARE the atoms,
+        # so a synthetic "N pricing lines, $lo-$hi" banner is redundant noise
+        # that nothing downstream consumes (not packetized, not in
+        # build_deal_financials) — the very "Gantt Financials: 12 pricing
+        # lines, $-1,908-$26,450" atom the PM flagged as confusing. Drop it.
+        if not collapse_to_summary:
+            return atoms
         summary = self._commercial_summary_atom(
             project_id=project_id,
             artifact_id=artifact_id,
@@ -2366,7 +2376,7 @@ class XlsxParser(BaseParser):
             atom_type=atom_type,
             line_count=line_count,
             values=all_values,
-            folded_rows=folded_rows if collapse_to_summary else None,
+            folded_rows=folded_rows,
         )
         return [summary, *atoms]
 
@@ -2407,6 +2417,7 @@ class XlsxParser(BaseParser):
             filename=filename,
             locator={
                 "sheet": sheet_name,
+                "section_path": [sheet_name] if sheet_name else [],
                 "extraction": "commercial_sheet_routing",
                 "rollup": True,
             },
