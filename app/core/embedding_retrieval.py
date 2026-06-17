@@ -53,6 +53,13 @@ _DEFAULT_MODEL = "qwen3-embedding:8b"
 _DEFAULT_DIM = 4096  # qwen3-embedding:8b native dim; only used when no embed succeeds
 _DEFAULT_TIMEOUT = 60
 _BATCH_SIZE = 8  # parallel HTTP calls; ollama queues internally
+# Keep the model resident on the box between calls. ollama unloads a model after
+# ~5 min idle by default; the next call then pays a multi-second reload that can
+# blow the request timeout and come back as a ZERO vector — the "embedder
+# flicker". Sending keep_alive on every request resets that timer, so the model
+# stays warm as long as we're parsing. Override with OLLAMA_KEEP_ALIVE ("-1" =
+# never unload). Stack this with `caffeinate` + OLLAMA_KEEP_ALIVE=-1 on the box.
+_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 
 # ────────────────────────────────────────────────────────────────────
 # SESSION CACHE (per-artifact embeddings, by text hash)
@@ -209,7 +216,7 @@ def _embed_one(text: str) -> list[float] | None:
     try:
         r = requests.post(
             f"{host}/api/embeddings",
-            json={"model": model, "prompt": text},
+            json={"model": model, "prompt": text, "keep_alive": _KEEP_ALIVE},
             timeout=timeout,
         )
         if r.status_code != 200:
@@ -246,7 +253,7 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
     try:
         r = requests.post(
             f"{host}/api/embed",
-            json={"model": model, "input": texts},
+            json={"model": model, "input": texts, "keep_alive": _KEEP_ALIVE},
             timeout=timeout,
         )
         if r.status_code == 404:

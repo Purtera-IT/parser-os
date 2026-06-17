@@ -2694,44 +2694,58 @@ def _atoms_for_sections(
     filename: str,
     parser_version: str,
 ) -> Iterator[EvidenceAtom]:
+    from app.core.semantic_rules import lead_in_rule as _lead_in_rule_fn
     for section in sections:
         heading = section.get("heading")
         path = section_path + ([heading] if heading else [])
         blocks = section.get("blocks", []) or []
-        pending: tuple[dict[str, Any], str] | None = None  # an un-consumed lead-in
-        for block in blocks:
+
+        def _emit(b, lead=None):
+            yield from _atoms_for_block(
+                block=b, section_path=path, page_index=page_index,
+                project_id=project_id, artifact_id=artifact_id,
+                filename=filename, parser_version=parser_version, lead_in=lead,
+            )
+
+        def _enum(b) -> bool:
+            return b.get("kind") == "paragraph" and bool(
+                _ITEM_ENUM_RE.match((b.get("text") or "").strip()))
+
+        pending: tuple[dict[str, Any], str] | None = None  # single un-consumed lead-in
+        sticky: str | None = None                          # intro governing an enumerated list
+        for idx, block in enumerate(blocks):
+            nxt = blocks[idx + 1] if idx + 1 < len(blocks) else None
             if pending is not None:
-                # The previous block was a framing lead-in — lift it onto THIS
-                # block as [intro:] context instead of emitting it standalone.
-                yield from _atoms_for_block(
-                    block=block, section_path=path, page_index=page_index,
-                    project_id=project_id, artifact_id=artifact_id,
-                    filename=filename, parser_version=parser_version,
-                    lead_in=[pending[1]],
-                )
+                # Previous block was a framing lead-in — lift onto THIS block.
+                yield from _emit(block, [pending[1]])
                 pending = None
                 continue
-            btext = (block.get("text") or "").strip() if block.get("kind") == "paragraph" else ""
-            if btext and _pdf_is_framing_lead_in(btext):
-                pending = (block, btext)   # hold; attach to the next block
+            # A sticky list-intro rides onto every enumerated item it governs.
+            if sticky and _enum(block):
+                yield from _emit(block, [sticky])
                 continue
-            yield from _atoms_for_block(
-                block=block,
-                section_path=path,
-                page_index=page_index,
-                project_id=project_id,
-                artifact_id=artifact_id,
-                filename=filename,
-                parser_version=parser_version,
-            )
+            if sticky and not _enum(block):
+                sticky = None  # the enumerated list ended
+            btext = (block.get("text") or "").strip() if block.get("kind") == "paragraph" else ""
+            # A (possibly long) framing intro directly above an enumerated list
+            # governs the WHOLE list ("The intent … all responses follow the same
+            # format" over a–g). SEMANTIC, not regex: the 'next block is
+            # enumerated' STRUCTURE finds the candidate and bounds the embed; the
+            # lead-in rule confirms it reads as an intro. Keep it standalone (it
+            # carries content) AND lift it as [intro:] onto each item below.
+            if (btext and nxt is not None and _enum(nxt) and len(btext.split()) >= 6
+                    and _lead_in_rule_fn().fires(btext)):
+                sticky = btext
+                yield from _emit(block)
+                continue
+            if btext and _pdf_is_framing_lead_in(btext):
+                pending = (block, btext)   # short lead-in: attach to the next block
+                continue
+            yield from _emit(block)
         if pending is not None:
             # Nothing followed it — a lead-in with no governed block is just a
             # statement; emit it normally (never drop it).
-            yield from _atoms_for_block(
-                block=pending[0], section_path=path, page_index=page_index,
-                project_id=project_id, artifact_id=artifact_id,
-                filename=filename, parser_version=parser_version,
-            )
+            yield from _emit(pending[0])
         yield from _atoms_for_sections(
             sections=section.get("subsections", []) or [],
             section_path=path,

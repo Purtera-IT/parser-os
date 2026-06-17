@@ -62,6 +62,9 @@ class SemanticRule:
         except Exception:
             return False
 
+    def _lexical(self, text: str) -> bool:
+        return bool(self.lexical_fallback(text)) if self.lexical_fallback else False
+
     # -- prototype embedding (cached) -------------------------------------
     def _protos(self):
         cached = _PROTO_CACHE.get(self.name)
@@ -71,10 +74,16 @@ class SemanticRule:
         np = _np()
         texts = self.positives + self.negatives
         vecs = np.array(embed_texts(texts), dtype="float32")
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        vecs = vecs / (norms + 1e-9)
         pos = vecs[: len(self.positives)]
         neg = vecs[len(self.positives) :]
-        _PROTO_CACHE[self.name] = (pos, neg)
+        # Cache ONLY healthy prototypes. If the embedder is reachable-but-broken
+        # (a transient down returns ZERO vectors with no exception), caching them
+        # would poison every rule for the whole process — so skip the cache and
+        # let the next call retry once the embedder recovers.
+        if float(norms.min()) > 1e-6:
+            _PROTO_CACHE[self.name] = (pos, neg)
         return pos, neg
 
     # -- the decision -----------------------------------------------------
@@ -84,19 +93,26 @@ class SemanticRule:
             return False
         # offline / disabled -> deterministic lexical fallback (never break a parse)
         if self._disabled() or not self._reachable():
-            return bool(self.lexical_fallback(text)) if self.lexical_fallback else False
+            return self._lexical(text)
         try:
             from app.core.embedding_retrieval import embed_texts
             np = _np()
             pos, neg = self._protos()
             q = np.array(embed_texts([text])[0], dtype="float32")
-            q /= np.linalg.norm(q) + 1e-9
+            qn = float(np.linalg.norm(q))
+            # A zero / degenerate embedding means the embedder is
+            # reachable-but-broken (returns zeros, no exception). Computing cosine
+            # on it makes EVERY rule silently False and BYPASSES the fallback — so
+            # detect it and degrade to the lexical net like a normal outage.
+            if qn < 1e-6 or float(np.linalg.norm(pos)) < 1e-6:
+                return self._lexical(text)
+            q /= qn
             best_pos = float((pos @ q).max())
             best_neg = float((neg @ q).max()) if len(neg) else -1.0
             # fire iff the nearest prototype is a POSITIVE and it clears the floor
             return best_pos >= self.threshold and best_pos > best_neg
         except Exception:
-            return bool(self.lexical_fallback(text)) if self.lexical_fallback else False
+            return self._lexical(text)
 
     def score(self, text: str) -> tuple[float, float]:
         """(nearest-positive cosine, nearest-negative cosine) — for calibration."""
@@ -157,6 +173,13 @@ def lead_in_rule() -> "SemanticRule":
                 "Customer responsibilities include the following:",
                 "The customer is responsible for the following:",
                 "The following are the General Conditions for the work to be performed as outlined in the Specifications.",
+                # FRAMING INTROS — a (possibly long) sentence that announces the
+                # structured list/sections that follow, without a "following:" cue.
+                "The intent is that all responses follow the same format described in the sections below.",
+                "Each response must be organized into the following sections.",
+                "Proposals will be evaluated on the criteria listed below.",
+                "All submissions should be structured as outlined below.",
+                "Responses must include each of the components described below.",
                 "Deliverables:", "Assumptions:", "Requirements:",
                 "Notes:", "Exclusions:", "Scope of work:",
                 "The estimated Fees for Services outlined below are Fixed Fee.",
