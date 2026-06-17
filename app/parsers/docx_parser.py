@@ -949,77 +949,16 @@ class DocxParser(BaseParser):
 
     @classmethod
     def _lead_in_rule(cls):
-        """SEMANTIC lead-in detector: fires on MEANING, not keywords, so a lead-in
-        worded "the vendor's responsibilities encompass:" fires the same as "...the
-        following services." Falls back to the keyword rule when embeddings are
-        down, so a parse never breaks. Examples are the only knob — a correction
-        becomes a new example, not a new regex."""
-        if cls._LEAD_IN_RULE is None:
-            from app.core.semantic_rules import SemanticRule
-
-            cls._LEAD_IN_RULE = SemanticRule(
-                name="docx_list_lead_in",
-                # POLARITY-AGNOSTIC: "does this announce a following list" — true for
-                # service, exclusion, customer, deliverable intros alike. (Polarity
-                # is handled separately by the contradiction gate, not here.)
-                positives=[
-                    "PurTera will provide field technicians to perform the following services.",
-                    "Subject to the other provisions of this SOW, Provider will perform the following services.",
-                    "The vendor shall complete the following tasks:",
-                    "Services include:",
-                    "Scope of work consists of the following activities:",
-                    "The contractor will perform the work as follows:",
-                    "PurTera will provide the following deliverables:",
-                    "The vendor's responsibilities encompass the items below:",
-                    "The following items are excluded from this SOW unless separately quoted:",
-                    "The following are out of scope:",
-                    "Customer responsibilities include the following:",
-                    "The customer is responsible for the following:",
-                    # short section labels (a header over a following list)
-                    "Deliverables:", "Assumptions:", "Requirements:",
-                    "Notes:", "Exclusions:", "Scope of work:",
-                    # FORWARD-REFERENCE QUALIFIERS — a sentence that qualifies the
-                    # items below it ("the fees below are Fixed Fee") so the
-                    # qualifier rides down onto those items.
-                    "The estimated Fees for Services outlined below are Fixed Fee.",
-                    "The fees set forth below are firm fixed price.",
-                    "The rates listed below apply to all Services.",
-                    "All pricing shown in the table below is fixed.",
-                    "The amounts detailed below are Time and Materials.",
-                ],
-                # NOT list-intros (any polarity): standalone facts, AND key->value
-                # lines that also end in ':' but carry a value, not a list header.
-                negatives=[
-                    "This SOW does not include predictive wireless design or spectrum analysis.",
-                    "The school currently receives 5 Gbps of internet bandwidth.",
-                    "Access point placement validation is limited to confirming locations align with floor plans.",
-                    "All work will be performed during normal business hours.",
-                    "The vendor agrees to hold the client harmless from any liability.",
-                    "Payment is due within thirty days of invoice receipt.",
-                    "The total contract value is fixed at the agreed amount.",
-                    "Address: 123 Main Street, Macon GA",
-                    "Phone: 555-0100", "Total: $5,000", "Date: January 1, 2026",
-                    "Rates in USD.", "Fees are in USD.",
-                ],
-                threshold=0.62,
-                lexical_fallback=cls._lead_in_lexical,
-            )
-        return cls._LEAD_IN_RULE
+        """Delegates to the SHARED registry rule (app/core/semantic_rules.py) —
+        single source of truth, so the same lead-in rule + examples cover docx,
+        pdf, and any future parser. Improve it once, every format benefits."""
+        from app.core.semantic_rules import lead_in_rule
+        return lead_in_rule()
 
     @classmethod
     def _is_framing_lead_in(cls, text: str) -> bool:
-        t = (text or "").strip()
-        # Cheap structural prefilter: bounds what we embed, and is the SHAPE any
-        # list lead-in has regardless of wording. The lead-in judgment itself is
-        # semantic (embedding) with a keyword fallback when the embedder is down.
-        if not t or len(t) > 200 or not t.endswith((".", ":")):
-            return False
-        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", t)
-        # floor of 1 so short section labels ("Deliverables:", "Assumptions:")
-        # also get the semantic judgment instead of a word-count shortcut.
-        if not (1 <= len(words) <= 25):
-            return False
-        return cls._lead_in_rule().fires(t)
+        from app.core.semantic_rules import is_framing_lead_in
+        return is_framing_lead_in(text)
 
     _SUBSECTION_BLOCK_RE = re.compile(
         r"out\s*of\s*scope|exclusion|excluded|not\s+included|"

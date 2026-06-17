@@ -1850,37 +1850,11 @@ _BARE_DATE_LINE = re.compile(
 )
 
 
+# operative_date / section_title rules now live in the shared registry
+# (app/core/semantic_rules.py) so docx/xlsx can pull the same rule + examples.
 def _operative_date_rule():
-    """Semantic gate: is a date OPERATIVE (a deadline / milestone / effective /
-    award / timeline date) versus a decorative cover-letterhead date?
-
-    A bare date is the same SHAPE whether it's "the day this letter was written"
-    or "proposals are due by". Only MEANING separates them, so this is an
-    embedding judgment over the date's CONTEXT (its text + section), not a regex
-    over the digits. Offline-safe: falls back to an operative-keyword check."""
-    from app.core.semantic_rules import SemanticRule
-    return SemanticRule(
-        name="operative_date",
-        positives=[
-            "proposals are due by this date", "submission deadline",
-            "bids must be received by", "contract award date",
-            "effective date of the agreement", "project timeline and key dates",
-            "projected schedule of events and dates", "milestone completion date",
-            "questions due date", "vendor interview date", "responses due no later than",
-        ],
-        negatives=[
-            "the date this document/letter was prepared", "cover page letterhead date",
-            "memo header date", "date printed at the top of the page",
-        ],
-        threshold=0.58,
-        lexical_fallback=lambda t: any(
-            w in t.lower() for w in (
-                "due", "deadline", "award", "effective", "timeline", "milestone",
-                "completion", "submit", "no later than", "projected", "schedule",
-                "interview", "question", "closing", "start", "end date", "by ",
-            )
-        ),
-    )
+    from app.core.semantic_rules import operative_date_rule
+    return operative_date_rule()
 
 
 _OPERATIVE_DATE = None
@@ -1888,41 +1862,8 @@ _SECTION_TITLE = None
 
 
 def _section_title_rule():
-    """Is a heading a generic document SECTION (Introduction / General
-    Conditions / Scope of Work / Insurance / Payments…) versus a real document
-    or deal TITLE (an org / project / proposal name)?
-
-    Needed because the doc-title picker grabs the first page heading — and when
-    the cover page has no clean title, that's a SECTION heading like
-    "INTRODUCTION", which then gets force-prepended as the root of EVERY other
-    section ("INTRODUCTION > General Conditions"). A section is a sibling of the
-    other sections, never their parent. This is a meaning judgment (a section
-    name vs a proper title), so it's a SemanticRule, not a keyword list."""
-    from app.core.semantic_rules import SemanticRule
-    return SemanticRule(
-        name="section_title",
-        positives=[
-            "introduction", "general information", "general conditions",
-            "scope of work", "proposal format", "evaluation criteria",
-            "insurance requirements", "payment terms", "warranty",
-            "terms and conditions", "definitions", "background", "addenda",
-            "indemnification", "company responsibility", "specifications",
-        ],
-        negatives=[
-            "The Academy for Classical Education", "Request for Proposal for network infrastructure",
-            "ACME Corporation wireless upgrade project", "Statement of Work - data center migration",
-            "City of Macon broadband initiative",
-        ],
-        threshold=0.60,
-        lexical_fallback=lambda t: any(
-            w in t.lower() for w in (
-                "introduction", "general", "scope", "conditions", "proposal",
-                "evaluation", "insurance", "payment", "warranty", "terms",
-                "definition", "background", "addend", "indemnif", "responsibilit",
-                "specification", "requirement", "overview", "purpose",
-            )
-        ),
-    )
+    from app.core.semantic_rules import section_title_rule
+    return section_title_rule()
 
 
 def _is_section_title(text: str) -> bool:
@@ -2696,22 +2637,12 @@ def atoms_from_structured_doc(
 def _pdf_is_framing_lead_in(text: str) -> bool:
     """Is a paragraph a FRAMING lead-in ("The following are the General
     Conditions…", "Services include:") that introduces the block(s) after it?
-
-    Connective tissue, not a standalone fact — lifted onto what it governs as
-    [intro:] context (the universal lead-in handling, ported from docx so it
-    fires on PDFs too). Cheap structural/lexical prefilter gates the embedder
-    so we don't embed every paragraph — only short, colon/cue-bearing
-    candidates reach the semantic rule."""
-    words = text.split()
-    if not (1 <= len(words) <= 40):
-        return False
+    Connective tissue lifted onto what it governs as [intro:] context. Delegates
+    to the shared registry rule (same one docx uses), so PDF + docx stay in
+    lockstep and there's no cross-parser import."""
     try:
-        from app.parsers.docx_parser import DocxParser
-        # Prefilter: a real lead-in either ends with ':' or carries a forward
-        # cue ("the following"/"as follows"). Anything else never embeds.
-        if not (text.rstrip().endswith(":") or DocxParser._lead_in_lexical(text)):
-            return False
-        return bool(DocxParser._lead_in_rule().fires(text))
+        from app.core.semantic_rules import is_framing_lead_in
+        return bool(is_framing_lead_in(text))
     except Exception:
         return text.rstrip().endswith(":")
 

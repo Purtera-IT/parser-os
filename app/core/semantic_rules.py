@@ -108,3 +108,155 @@ class SemanticRule:
         bp = float((pos @ q).max())
         bn = float((neg @ q).max()) if len(neg) else -1.0
         return bp, bn
+
+
+# ════════════════════════════════════════════════════════════════════
+# SHARED RULE REGISTRY — one source of truth for the CROSS-CUTTING rules.
+#
+# These judge the MEANING of a line (is it a list lead-in? a cover vs deadline
+# date? a section heading vs a document title?), so they apply to ANY format.
+# Defining them here — instead of inside one parser — means every parser pulls
+# the SAME rule + examples with one import: a rule improved for one format
+# instantly covers the others, and the "fires on docx but not pdf/xlsx" class
+# of bug can't recur (lead-in used to be defined in docx_parser only).
+#
+# Format-STRUCTURAL rules stay in their parser (xlsx money-column header, docx
+# subsection lift) — they key off that format's geometry, not meaning.
+# ════════════════════════════════════════════════════════════════════
+import re as _re
+
+_RULE_CACHE: dict = {}
+_FRAMING_LEAD_IN_RE = _re.compile(r"\b(the following|as follows)\b", _re.I)
+
+
+def lead_in_lexical(text: str) -> bool:
+    """Offline keyword net for the lead-in judgment (the structural prefilter is
+    what really constrains it; this just needs the forward cue)."""
+    return bool(_FRAMING_LEAD_IN_RE.search(text or ""))
+
+
+def lead_in_rule() -> "SemanticRule":
+    """Does a line ANNOUNCE a following list ('the vendor will perform the
+    following services.', 'Deliverables:', 'The following are out of scope:')?
+    Polarity-agnostic — scope / exclusion / customer / deliverable intros alike."""
+    r = _RULE_CACHE.get("list_lead_in")
+    if r is None:
+        r = SemanticRule(
+            name="list_lead_in",
+            positives=[
+                "PurTera will provide field technicians to perform the following services.",
+                "Subject to the other provisions of this SOW, Provider will perform the following services.",
+                "The vendor shall complete the following tasks:",
+                "Services include:",
+                "Scope of work consists of the following activities:",
+                "The contractor will perform the work as follows:",
+                "PurTera will provide the following deliverables:",
+                "The vendor responsibilities encompass the items below:",
+                "The following items are excluded from this SOW unless separately quoted:",
+                "The following are out of scope:",
+                "Customer responsibilities include the following:",
+                "The customer is responsible for the following:",
+                "The following are the General Conditions for the work to be performed as outlined in the Specifications.",
+                "Deliverables:", "Assumptions:", "Requirements:",
+                "Notes:", "Exclusions:", "Scope of work:",
+                "The estimated Fees for Services outlined below are Fixed Fee.",
+                "The fees set forth below are firm fixed price.",
+                "The rates listed below apply to all Services.",
+                "All pricing shown in the table below is fixed.",
+                "The amounts detailed below are Time and Materials.",
+            ],
+            negatives=[
+                "This SOW does not include predictive wireless design or spectrum analysis.",
+                "The school currently receives 5 Gbps of internet bandwidth.",
+                "Access point placement validation is limited to confirming locations align with floor plans.",
+                "All work will be performed during normal business hours.",
+                "The vendor agrees to hold the client harmless from any liability.",
+                "Payment is due within thirty days of invoice receipt.",
+                "The total contract value is fixed at the agreed amount.",
+                "Address: 123 Main Street, Macon GA",
+                "Phone: 555-0100", "Total: $5,000", "Date: January 1, 2026",
+                "Rates in USD.", "Fees are in USD.",
+            ],
+            threshold=0.62,
+            lexical_fallback=lead_in_lexical,
+        )
+        _RULE_CACHE["list_lead_in"] = r
+    return r
+
+
+def is_framing_lead_in(text: str) -> bool:
+    """Structural prefilter (bounds what we embed) + the semantic lead-in rule.
+    A list lead-in ends with '.'/':' and is short, regardless of wording."""
+    t = (text or "").strip()
+    if not t or len(t) > 200 or not t.endswith((".", ":")):
+        return False
+    words = _re.findall(r"[A-Za-z][A-Za-z'\-]*", t)
+    if not (1 <= len(words) <= 25):
+        return False
+    return lead_in_rule().fires(t)
+
+
+def operative_date_rule() -> "SemanticRule":
+    """Is a date OPERATIVE (deadline / milestone / effective / award / timeline)
+    versus a decorative cover-letterhead date? Judge the date's CONTEXT
+    (section / surrounding text), never the bare digits."""
+    r = _RULE_CACHE.get("operative_date")
+    if r is None:
+        r = SemanticRule(
+            name="operative_date",
+            positives=[
+                "proposals are due by this date", "submission deadline",
+                "bids must be received by", "contract award date",
+                "effective date of the agreement", "project timeline and key dates",
+                "projected schedule of events and dates", "milestone completion date",
+                "questions due date", "vendor interview date", "responses due no later than",
+            ],
+            negatives=[
+                "the date this document or letter was prepared", "cover page letterhead date",
+                "memo header date", "date printed at the top of the page",
+            ],
+            threshold=0.58,
+            lexical_fallback=lambda t: any(
+                w in (t or "").lower() for w in (
+                    "due", "deadline", "award", "effective", "timeline", "milestone",
+                    "completion", "submit", "no later than", "projected", "schedule",
+                    "interview", "question", "closing", "start", "end date", "by ",
+                )
+            ),
+        )
+        _RULE_CACHE["operative_date"] = r
+    return r
+
+
+def section_title_rule() -> "SemanticRule":
+    """Is a heading a generic document SECTION (Introduction / General Conditions
+    / Scope of Work) versus a real document/deal TITLE (an org / project name)?
+    Stops a section heading from being crowned the document root."""
+    r = _RULE_CACHE.get("section_title")
+    if r is None:
+        r = SemanticRule(
+            name="section_title",
+            positives=[
+                "introduction", "general information", "general conditions",
+                "scope of work", "proposal format", "evaluation criteria",
+                "insurance requirements", "payment terms", "warranty",
+                "terms and conditions", "definitions", "background", "addenda",
+                "indemnification", "company responsibility", "specifications",
+            ],
+            negatives=[
+                "The Academy for Classical Education", "Request for Proposal for network infrastructure",
+                "ACME Corporation wireless upgrade project", "Statement of Work data center migration",
+                "City of Macon broadband initiative",
+            ],
+            threshold=0.60,
+            lexical_fallback=lambda t: any(
+                w in (t or "").lower() for w in (
+                    "introduction", "general", "scope", "conditions", "proposal",
+                    "evaluation", "insurance", "payment", "warranty", "terms",
+                    "definition", "background", "addend", "indemnif", "responsibilit",
+                    "specification", "requirement", "overview", "purpose",
+                )
+            ),
+        )
+        _RULE_CACHE["section_title"] = r
+    return r
