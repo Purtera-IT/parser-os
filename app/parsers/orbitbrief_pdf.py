@@ -2401,7 +2401,15 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # continuation page with a signature roster — is parsed correctly and
         # far more cheaply by the prose splitter, which also recovers any
         # line-ruled tables. The 1200 cutoff is a perf guard, not correctness.
-        if page_image_counts[page_index] == 0:
+        #
+        # ALSO take the prose path when the page is clearly multi-paragraph prose
+        # even if it carries an image (a cover letter with a letterhead logo):
+        # the heavyweight pipeline MERGES the blank-line-separated paragraphs into
+        # one glued mega-atom (solicitation + award + rejection rights + contact
+        # all in one), whereas the prose splitter respects the paragraph breaks.
+        # The letterhead image is still captured by the separate image-marker pass.
+        if page_image_counts[page_index] == 0 \
+                or _is_multi_paragraph_prose(page_texts[page_index]):
             return _build_text_rich_page(page_index)
         return _build_heavyweight_page(page_index)
 
@@ -4544,6 +4552,27 @@ def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
             or heading[-1] in ".!?" or len(body.split()) < 4 or not body[:1].isupper()):
         return None
     return heading, body
+
+
+def _is_multi_paragraph_prose(page_text: str) -> bool:
+    """True when a page reads as several blank-line-separated prose paragraphs.
+
+    Used to route a short cover-letter / intro page (which carries a letterhead
+    image, so it would otherwise hit the heavyweight layout pipeline that MERGES
+    paragraphs into one glued atom) through the prose splitter instead, which
+    keeps each paragraph a separate fact. A "prose paragraph" here is a chunk of
+    >=40 chars containing a sentence (has spaces and ends with terminal
+    punctuation, or is long); >=3 of them = clear prose page.
+    """
+    if not page_text:
+        return False
+    chunks = re.split(r"\n\s*\n", page_text)
+    prose = 0
+    for c in chunks:
+        s = " ".join(c.split())
+        if len(s) >= 40 and " " in s and (s.rstrip()[-1:] in ".!?:" or len(s) >= 120):
+            prose += 1
+    return prose >= 3
 
 
 def _detect_text_title(page_text: str) -> str | None:
