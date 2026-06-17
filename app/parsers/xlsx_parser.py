@@ -356,7 +356,10 @@ def _is_side_label_value(cells: list[str]) -> bool:
 # P&L line metric: "<Category> Revenue|Cost|Margin" (with optional
 # leading "Total"). Captures the category and which metric.
 _PL_METRIC_RE = re.compile(
-    r"^(?:total\s+)?(?P<cat>.+?)\s+(?P<metric>revenue|cost|margin)$", re.I
+    # keep a leading "Total" INSIDE the category so the display label stays
+    # faithful to the sheet ("Total Deal", "Total Labor"); _norm_pl_category
+    # drops it for the grouping KEY only.
+    r"^(?P<cat>(?:total\s+)?.+?)\s+(?P<metric>revenue|cost|margin)$", re.I
 )
 # Margin-percent line: "Margin % on <Category>".
 _PL_MARGIN_PCT_RE = re.compile(r"^margin\s*%\s*on\s+(?P<cat>.+)$", re.I)
@@ -429,16 +432,16 @@ def _coerce_pl_number(value: Any) -> float | None:
 def _norm_pl_category(raw: str) -> tuple[str, str]:
     """Return (key, display) for a P&L category label.
 
-    ``key`` is a slug for grouping; ``display`` is a cleaned human label.
-    'Total Deal' / 'Deal' collapse to the same key so the summary line and
-    the detail block don't split into two categories."""
-    disp = re.sub(r"\s+", " ", raw.strip())
-    disp = re.sub(r"^total\s+", "", disp, flags=re.I).strip() or disp
-    key = re.sub(r"[^a-z0-9]+", "_", disp.lower()).strip("_")
-    # 'deal' is the grand-total category — normalize a few synonyms.
+    ``display`` is the RAW label as written in the sheet (kept faithful — "Total
+    Deal", "Total Labor", "Materials"). ``key`` is a normalized slug for grouping
+    only: it drops a leading "Total" so the summary line and the detail block
+    collapse to one category, but that normalization never touches what's shown."""
+    disp = re.sub(r"\s+", " ", raw.strip())   # faithful label, e.g. "Total Deal"
+    key = re.sub(r"^total\s+", "", disp.lower(), flags=re.I).strip() or disp.lower()
+    key = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
+    # 'deal' is the grand-total category — normalize a few synonyms (KEY only).
     if key in {"deal", "overall_deal", "project"}:
         key = "deal"
-        disp = "Deal"
     return key, disp
 
 
@@ -2036,6 +2039,13 @@ class XlsxParser(BaseParser):
         atoms += self._emit_financial_summary_supplements(
             project_id, artifact_id, artifact_type, filename, sheet_name, rows, atoms
         )
+        # Emit one SECTION at a time, column-major (left blocks top-to-bottom, then
+        # right) so a block's atoms stay contiguous instead of interleaving — sort
+        # by the cell's (col, row), the figure's true position on the sheet.
+        def _pos(a: EvidenceAtom) -> tuple[int, int]:
+            loc = a.source_refs[0].locator if a.source_refs else {}
+            return (loc.get("col", 1) or 1, loc.get("row", 0) or 0)
+        atoms.sort(key=_pos)
         return atoms
 
     def _emit_financial_summary_supplements(
@@ -2055,6 +2065,18 @@ class XlsxParser(BaseParser):
         for a in existing:
             for m in re.findall(r"\d{4,}", (getattr(a, "raw_text", "") or "").replace(",", "")):
                 seen.add(m)
+        # position of each block's title cell (row,col) so supplement atoms sort
+        # block-contiguous with the main P&L (column-major: left side, then right).
+        def _title_pos(t: str) -> tuple[int, int]:
+            for ri, row in enumerate(rows):
+                for ci, c in enumerate(row):
+                    if str(c or "").strip() == t:
+                        return ri + 1, ci + 1
+            return 1_000_000, 1_000_000
+
+        def _fmt(v: Any) -> str:
+            return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
+
         out: list[EvidenceAtom] = []
         for bi, b in enumerate(blocks):
             title = b.get("title")
@@ -2064,35 +2086,82 @@ class XlsxParser(BaseParser):
             if "deal summary" in tl or "project financials" in tl:
                 continue
             pairs = b["pairs"]
-            nums = [str(v).replace(",", "").replace("$", "").rstrip("%")
-                    for _, v in pairs if re.match(r"^-?[\d,]+(\.\d+)?%?$", str(v).replace("$", "").strip())]
-            if len(nums) < 2:
-                continue
-            big = {n.split(".")[0] for n in nums if len(n.split(".")[0]) >= 4}
-            if big and big <= seen:
-                continue  # all dollar figures already represented -> pure restatement
-            body = (" | ".join(f"{k}: {v}" for k, v in pairs if v))[:4000]
-            if not body.strip():
-                continue
-            sp = [sheet_name, title]
-            aid = stable_id("atm", artifact_id, "fin_summary_block", sheet_name, bi)
-            out.append(EvidenceAtom(
-                id=aid, project_id=project_id, artifact_id=artifact_id,
-                atom_type=AtomType.commercial_total, raw_text=body, normalized_text=body.lower(),
-                value={"kind": "financial_summary_block", "title": title, "pairs": list(pairs)},
-                entity_keys=[],
-                source_refs=[SourceRef(
-                    id=stable_id("src", aid), artifact_id=artifact_id, artifact_type=artifact_type,
-                    filename=filename,
-                    locator={"sheet": sheet_name, "section_path": sp, "extraction": "fin_summary_block_v1"},
-                    extraction_method="fin_summary_block_v1", parser_version=self.parser_version)],
-                receipts=[], authority_class=AuthorityClass.contractual_scope,
-                confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
-                review_status=ReviewStatus.auto_accepted, review_flags=[],
-                parser_version=self.parser_version,
-            ))
-            for n in big:
-                seen.add(n)
+            trow, tcol = _title_pos(title)
+            # Group the block's pairs into P&L categories (revenue/cost/margin/%),
+            # SAME shape as the main P&L — so every financial block is uniform
+            # (no whole-block dumps), faithful labels preserved.
+            pl: dict[str, dict[str, Any]] = {}
+            order: list[str] = []
+            for k, v in pairs:
+                kk = re.sub(r"\s+", " ", str(k).strip())
+                mm = _PL_METRIC_RE.match(kk)
+                mp = _PL_MARGIN_PCT_RE.match(kk)
+                if mm and mm.group("metric").lower() in _PL_METRIC_WORDS:
+                    ckey, disp = _norm_pl_category(mm.group("cat"))
+                    n = _coerce_pl_number(v)
+                    slot = pl.setdefault(ckey, {"display": disp})
+                    if ckey not in order:
+                        order.append(ckey)
+                    if n is not None and slot.get(mm.group("metric").lower()) is None:
+                        slot[mm.group("metric").lower()] = round(n, 2)
+                elif mp:
+                    ckey, disp = _norm_pl_category(mp.group("cat"))
+                    n = _coerce_pl_number(v)
+                    slot = pl.setdefault(ckey, {"display": disp})
+                    if ckey not in order:
+                        order.append(ckey)
+                    if n is not None and slot.get("margin_pct") is None:
+                        slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
+
+            def _emit(aid_tag, text, val, big):
+                aid = stable_id("atm", artifact_id, aid_tag, sheet_name, bi)
+                out.append(EvidenceAtom(
+                    id=aid, project_id=project_id, artifact_id=artifact_id,
+                    atom_type=AtomType.commercial_total, raw_text=text[:4000],
+                    normalized_text=text[:4000].lower(), value=val, entity_keys=[],
+                    source_refs=[SourceRef(
+                        id=stable_id("src", aid), artifact_id=artifact_id, artifact_type=artifact_type,
+                        filename=filename,
+                        locator={"sheet": sheet_name, "section_path": [sheet_name, title],
+                                 "row": trow, "col": tcol, "extraction": "fin_summary_block_v1"},
+                        extraction_method="fin_summary_block_v1", parser_version=self.parser_version)],
+                    receipts=[], authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
+                    review_status=ReviewStatus.auto_accepted, review_flags=[],
+                    parser_version=self.parser_version))
+                for n in big:
+                    seen.add(n)
+
+            if pl:
+                for ckey in order:
+                    slot = pl[ckey]
+                    rev, cost, margin, mpct = (slot.get("revenue"), slot.get("cost"),
+                                               slot.get("margin"), slot.get("margin_pct"))
+                    if all(x is None for x in (rev, cost, margin, mpct)):
+                        continue
+                    big = {str(int(round(x))) for x in (rev, cost, margin)
+                           if isinstance(x, (int, float)) and abs(x) >= 1000}
+                    if big and big <= seen:
+                        continue  # numbers already represented -> restatement
+                    text = (f"{slot['display']}: revenue {_fmt(rev)}, cost {_fmt(cost)}, "
+                            f"margin {_fmt(margin)}"
+                            + (f" ({mpct:g}%)" if isinstance(mpct, (int, float)) else ""))
+                    _emit(f"pl_{ckey}", text, {"kind": "pl_line", "category": slot["display"],
+                          "category_key": ckey, "revenue": rev, "cost": cost, "margin": margin,
+                          "margin_pct": mpct, "sheet_name": sheet_name, "block_title": title}, big)
+            else:
+                # non-P&L summary block -> keep it whole (no metric structure to split)
+                nums = [str(v).replace(",", "").replace("$", "").rstrip("%")
+                        for _, v in pairs if re.match(r"^-?[\d,]+(\.\d+)?%?$", str(v).replace("$", "").strip())]
+                if len(nums) < 2:
+                    continue
+                big = {n.split(".")[0] for n in nums if len(n.split(".")[0]) >= 4}
+                if big and big <= seen:
+                    continue
+                body = (" | ".join(f"{k}: {v}" for k, v in pairs if v))
+                if body.strip():
+                    _emit("fin_summary_block", body,
+                          {"kind": "financial_summary_block", "title": title, "pairs": list(pairs)}, big)
         return out
 
     def _emit_commercial_sheet_rows(
