@@ -1839,6 +1839,35 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             del nxt_sections[0]
 
 
+def _carry_cross_page_section_headings(pages: list[dict[str, Any]]) -> None:
+    """Root a page's heading-less opening content under the clause it continues.
+
+    A numbered RFP clause often spills across a page break: item 8 "Contract
+    Award and Interpretations" continues onto the next page, item 23 "Proposal
+    Format" sub-items land on the following page, etc. The next page then opens
+    with a *heading-less* section (content before any heading) that would
+    otherwise float at the document root (wrong section_path). Carry the last
+    real section heading across the page boundary so that opening content
+    inherits its true clause. Blocks stay on their own page (provenance intact);
+    only the section heading is inherited. Mutates ``pages`` in place. Runs
+    AFTER ``_stitch_cross_page_continuations`` (which first merges mid-sentence
+    wraps), so this only attributes genuine full-paragraph continuations.
+    """
+    last_heading = ""
+    for page in pages:
+        secs = page.get("sections") or []
+        if not secs:
+            continue
+        first = secs[0]
+        if last_heading and not (first.get("heading") or "").strip() \
+                and (first.get("blocks") or []):
+            first["heading"] = last_heading
+        for s in secs:
+            h = (s.get("heading") or "").strip()
+            if h:
+                last_heading = h
+
+
 _COL_PLACEHOLDER_LABEL = re.compile(r"\bcol_\d+:\s*")
 
 # A line whose ENTIRE content is a date (cover/letterhead "May 14,2026",
@@ -2385,6 +2414,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # ~2 s per-fork startup on macOS.
     pages: list[dict[str, Any]] = [_build_one_page(i) for i in range(page_count)]
     _stitch_cross_page_continuations(pages)
+    _carry_cross_page_section_headings(pages)
 
     # Aggregate document title + metadata across pages (in order).
     for p in pages:
@@ -4425,17 +4455,93 @@ def _numbered_heading(line: str) -> str | None:
     return text
 
 
+# A list-item opener: a numbered ("3.") or lettered ("a.", "iv)") marker. Used to
+# tell a numbered SECTION HEADING (followed by a prose body) apart from a numbered
+# LIST ITEM (immediately followed by the next list item — a Pricing Summary line,
+# a requirements list). The strict heading regex misses long/lettered siblings.
+_LIST_ITEM_OPENER_RE = re.compile(r"^(?:\d{1,2}|[a-zA-Z]|[ivxIVX]{1,4})[.)]\s+\S")
+
+
 def _next_content_is_body(lines: list[str], idx: int) -> bool:
-    """True when the next non-blank line after ``idx`` is body text, not another
-    numbered item — so a numbered line is a section heading over a body, not one
-    entry in a numbered list.
+    """True when the next non-blank line after ``idx`` is a PROSE body — so a
+    numbered line is a section heading over a body, not one entry in a list.
+
+    A numbered line whose next sibling is ANOTHER list item (numbered or lettered)
+    is a list member, not a heading: e.g. "1. Total Cost of Hardware / 2. Cost for
+    configuration…" under a Pricing Summary, or "7. … coverage in these areas / a.
+    main office". A General-Conditions clause ("1. Scope of Work") is instead
+    followed by a prose paragraph, so it still promotes.
     """
     for j in range(idx + 1, len(lines)):
         nxt = lines[j].strip()
         if not nxt:
             continue
-        return _NUMBERED_HEADING_RE.match(nxt) is None
+        return _LIST_ITEM_OPENER_RE.match(nxt) is None
     return False
+
+
+# Function/stop words that may sit inside a Title-Case clause heading.
+_CLAUSE_TITLE_FUNC = {"and", "of", "the", "for", "to", "in", "a", "an", "or",
+                      "on", "with", "by", "&", "/", "-", "from", "at"}
+_RUNON_CLAUSE_RE = re.compile(r"^\d{1,2}\.\s+(.+)$")
+
+
+def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
+    """A numbered clause whose Title-Case heading runs straight into its body on
+    ONE line — e.g. ``"8.  Contract Award and Interpretations ACE may accept …"``
+    — which ``_numbered_heading`` misses (it only fires when the whole line is the
+    title). Returns ``(heading, body)`` so the heading becomes its own section and
+    the body its content; else ``None``.
+
+    Boundary rule: the heading is the leading run of Title-Case words (capitalized
+    words + small function words). A trailing capitalized word that is immediately
+    followed by a lowercase word is the *subject of the body sentence*, not part of
+    the title, so it's trimmed ("…Interpretations | ACE may accept"). Conservative:
+    needs ≥2 capitalized CONTENT words of title and a ≥4-word body, so a normal
+    numbered sentence item ("1. The Owner will not be responsible…") never fires.
+    """
+    m = _RUNON_CLAUSE_RE.match(line.strip())
+    if not m:
+        return None
+    toks = m.group(1).split()
+    if len(toks) < 5:
+        return None
+
+    def _bare(t: str) -> str:
+        return t.strip(".,;:()")
+
+    # Longest leading run of Title-Case words (capitalized or small function word).
+    i = 0
+    while i < len(toks):
+        w = _bare(toks[i])
+        if w and (w[0].isupper() or w.lower() in _CLAUSE_TITLE_FUNC):
+            i += 1
+        else:
+            break
+    # Find where the body sentence actually begins inside that run:
+    #   (a) a capitalized determiner ("The"/"A"/"An") mid-run starts a new
+    #       sentence ("Company Responsibility | The Company shall…"); take the
+    #       LAST such — the title never contains a sentence-starting determiner;
+    #   (b) else a trailing capitalized CONTENT word immediately before a
+    #       lowercase word is the body's subject ("…Interpretations | ACE may…").
+    cut = i
+    for k in range(1, i):
+        w = _bare(toks[k])
+        if w[:1].isupper() and w.lower() in {"the", "a", "an"}:
+            cut = k
+    if cut == i and i >= 1 and i < len(toks) and toks[i][:1].islower():
+        w = _bare(toks[i - 1])
+        if w[:1].isupper() and w.lower() not in _CLAUSE_TITLE_FUNC:
+            cut = i - 1
+    title_toks = toks[:cut]
+    content_caps = [t for t in title_toks
+                    if _bare(t)[:1].isupper() and _bare(t).lower() not in _CLAUSE_TITLE_FUNC]
+    heading = " ".join(title_toks).strip().rstrip(".,;:")
+    body = " ".join(toks[cut:]).strip()
+    if (len(content_caps) < 2 or not heading or len(heading) > 60
+            or heading[-1] in ".!?" or len(body.split()) < 4 or not body[:1].isupper()):
+        return None
+    return heading, body
 
 
 def _detect_text_title(page_text: str) -> str | None:
@@ -4720,6 +4826,19 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         if num_head and _next_content_is_body(lines, idx):
             flush_section()
             current_heading = num_head
+            continue
+
+        # Run-on numbered clause: "8.  Contract Award and Interpretations ACE may
+        # accept…" — the title is glued to the body on one line, so the clean
+        # heading rule above misses it and the bullet rule below would strip the
+        # number and bury it under the previous section. Split the title into its
+        # own section so the clause (and everything under it until the next
+        # number) roots correctly.
+        runon = _split_runon_numbered_clause(line)
+        if runon:
+            flush_section()
+            current_heading = runon[0]
+            paragraph_lines.append(runon[1])
             continue
 
         bullet_m = _BULLET_LINE_RE.match(line)
