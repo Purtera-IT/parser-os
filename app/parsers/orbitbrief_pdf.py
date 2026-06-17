@@ -875,6 +875,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _weak_label_prose_line_items(atoms)
         atoms = _drop_repeated_header_bands(atoms)
         atoms = _strip_placeholder_table_labels(atoms)
+        atoms = _demote_decorative_dates(atoms)
 
         return ParserOutput(
             atoms=atoms,
@@ -1839,6 +1840,85 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
 
 
 _COL_PLACEHOLDER_LABEL = re.compile(r"\bcol_\d+:\s*")
+
+# A line whose ENTIRE content is a date (cover/letterhead "May 14,2026",
+# "June 5, 2026", "5/14/2026", "2026-05-14").
+_BARE_DATE_LINE = re.compile(
+    r"^\s*(?:[A-Z][a-z]+\.?\s+\d{1,2},?\s*\d{4}"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+    r"|\d{4}-\d{2}-\d{2})\s*$"
+)
+
+
+def _operative_date_rule():
+    """Semantic gate: is a date OPERATIVE (a deadline / milestone / effective /
+    award / timeline date) versus a decorative cover-letterhead date?
+
+    A bare date is the same SHAPE whether it's "the day this letter was written"
+    or "proposals are due by". Only MEANING separates them, so this is an
+    embedding judgment over the date's CONTEXT (its text + section), not a regex
+    over the digits. Offline-safe: falls back to an operative-keyword check."""
+    from app.core.semantic_rules import SemanticRule
+    return SemanticRule(
+        name="operative_date",
+        positives=[
+            "proposals are due by this date", "submission deadline",
+            "bids must be received by", "contract award date",
+            "effective date of the agreement", "project timeline and key dates",
+            "projected schedule of events and dates", "milestone completion date",
+            "questions due date", "vendor interview date", "responses due no later than",
+        ],
+        negatives=[
+            "the date this document/letter was prepared", "cover page letterhead date",
+            "memo header date", "date printed at the top of the page",
+        ],
+        threshold=0.58,
+        lexical_fallback=lambda t: any(
+            w in t.lower() for w in (
+                "due", "deadline", "award", "effective", "timeline", "milestone",
+                "completion", "submit", "no later than", "projected", "schedule",
+                "interview", "question", "closing", "start", "end date", "by ",
+            )
+        ),
+    )
+
+
+_OPERATIVE_DATE = None
+
+
+def _demote_decorative_dates(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Re-type a bare cover/letterhead date from a scope atom to document
+    metadata — it's *when the doc was made*, not deal scope. Operative dates
+    (deadlines, timeline/award dates) are KEPT untouched. Conservative: a bare
+    date is only demoted when the operative-date rule does NOT fire on its
+    context, so a real deadline is never silently relegated. No drop — the date
+    survives as ``deal_metadata`` (kind=document_date)."""
+    global _OPERATIVE_DATE
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        rt = (getattr(a, "raw_text", "") or "").strip()
+        if a.atom_type in (AtomType.assumption, AtomType.scope_item) and _BARE_DATE_LINE.match(rt):
+            refs = getattr(a, "source_refs", None) or []
+            loc = getattr(refs[0], "locator", None) if refs else None
+            sec = " ".join(loc.get("section_path") or []) if isinstance(loc, dict) else ""
+            if _OPERATIVE_DATE is None:
+                _OPERATIVE_DATE = _operative_date_rule()
+            # Judge the SECTION the date lives under, not the bare digits — a
+            # date in a "Projected Timeline / Key Dates / Submission Deadlines"
+            # section is operative; one under a generic cover heading is not.
+            # (The digits carry no meaning and only dilute the embedding.) Fall
+            # back to the date's own text when it has no section.
+            if not _OPERATIVE_DATE.fires((sec or rt).strip()):
+                try:
+                    a = a.model_copy(update={
+                        "atom_type": AtomType.deal_metadata,
+                        "value": {**(a.value or {}), "kind": "document_date", "date": rt},
+                        "review_flags": sorted(set((a.review_flags or []) + ["demoted_decorative_date"])),
+                    })
+                except Exception:
+                    pass
+        out.append(a)
+    return out
 
 
 def _strip_placeholder_table_labels(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
