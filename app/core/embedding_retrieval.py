@@ -51,7 +51,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_HOST = "http://100.114.102.122:11434"
 _DEFAULT_MODEL = "qwen3-embedding:8b"
 _DEFAULT_DIM = 4096  # qwen3-embedding:8b native dim; only used when no embed succeeds
-_DEFAULT_TIMEOUT = 60
+_DEFAULT_TIMEOUT = 180  # was 60 — give a cold model load (after an idle unload /
+                        # VRAM eviction) room to finish instead of timing out into
+                        # a zero vector. keep_alive then holds it warm, so only the
+                        # FIRST call after an unload pays this; the rest are fast.
 _BATCH_SIZE = 8  # parallel HTTP calls; ollama queues internally
 # Keep the model resident on the box between calls. ollama unloads a model after
 # ~5 min idle by default; the next call then pays a multi-second reload that can
