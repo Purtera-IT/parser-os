@@ -2693,6 +2693,29 @@ def atoms_from_structured_doc(
                 )
 
 
+def _pdf_is_framing_lead_in(text: str) -> bool:
+    """Is a paragraph a FRAMING lead-in ("The following are the General
+    Conditions…", "Services include:") that introduces the block(s) after it?
+
+    Connective tissue, not a standalone fact — lifted onto what it governs as
+    [intro:] context (the universal lead-in handling, ported from docx so it
+    fires on PDFs too). Cheap structural/lexical prefilter gates the embedder
+    so we don't embed every paragraph — only short, colon/cue-bearing
+    candidates reach the semantic rule."""
+    words = text.split()
+    if not (1 <= len(words) <= 40):
+        return False
+    try:
+        from app.parsers.docx_parser import DocxParser
+        # Prefilter: a real lead-in either ends with ':' or carries a forward
+        # cue ("the following"/"as follows"). Anything else never embeds.
+        if not (text.rstrip().endswith(":") or DocxParser._lead_in_lexical(text)):
+            return False
+        return bool(DocxParser._lead_in_rule().fires(text))
+    except Exception:
+        return text.rstrip().endswith(":")
+
+
 def _atoms_for_sections(
     *,
     sections: Iterable[dict[str, Any]],
@@ -2706,7 +2729,24 @@ def _atoms_for_sections(
     for section in sections:
         heading = section.get("heading")
         path = section_path + ([heading] if heading else [])
-        for block in section.get("blocks", []) or []:
+        blocks = section.get("blocks", []) or []
+        pending: tuple[dict[str, Any], str] | None = None  # an un-consumed lead-in
+        for block in blocks:
+            if pending is not None:
+                # The previous block was a framing lead-in — lift it onto THIS
+                # block as [intro:] context instead of emitting it standalone.
+                yield from _atoms_for_block(
+                    block=block, section_path=path, page_index=page_index,
+                    project_id=project_id, artifact_id=artifact_id,
+                    filename=filename, parser_version=parser_version,
+                    lead_in=[pending[1]],
+                )
+                pending = None
+                continue
+            btext = (block.get("text") or "").strip() if block.get("kind") == "paragraph" else ""
+            if btext and _pdf_is_framing_lead_in(btext):
+                pending = (block, btext)   # hold; attach to the next block
+                continue
             yield from _atoms_for_block(
                 block=block,
                 section_path=path,
@@ -2715,6 +2755,14 @@ def _atoms_for_sections(
                 artifact_id=artifact_id,
                 filename=filename,
                 parser_version=parser_version,
+            )
+        if pending is not None:
+            # Nothing followed it — a lead-in with no governed block is just a
+            # statement; emit it normally (never drop it).
+            yield from _atoms_for_block(
+                block=pending[0], section_path=path, page_index=page_index,
+                project_id=project_id, artifact_id=artifact_id,
+                filename=filename, parser_version=parser_version,
             )
         yield from _atoms_for_sections(
             sections=section.get("subsections", []) or [],
@@ -2736,6 +2784,7 @@ def _atoms_for_block(
     artifact_id: str,
     filename: str,
     parser_version: str,
+    lead_in: list[str] | None = None,
 ) -> Iterator[EvidenceAtom]:
     kind = block.get("kind")
     block_id = block.get("id") or stable_id("blk", page_index, kind or "?", id(block))
@@ -2744,6 +2793,10 @@ def _atoms_for_block(
         "block_id": block_id,
         "block_kind": kind,
         "section_path": section_path,
+        # Governing lead-in lifted from a preceding framing sentence ("The
+        # following are…") — connective-tissue context the heads see as
+        # [intro:], same as the docx path.
+        "lead_in": lead_in or [],
     }
 
     if kind == "paragraph":
