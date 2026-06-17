@@ -874,6 +874,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _repair_clipped_site_ids(atoms)
         atoms = _weak_label_prose_line_items(atoms)
         atoms = _drop_repeated_header_bands(atoms)
+        atoms = _strip_placeholder_table_labels(atoms)
 
         return ParserOutput(
             atoms=atoms,
@@ -1835,6 +1836,38 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
         del nblocks[0]
         if not nblocks:
             del nxt_sections[0]
+
+
+_COL_PLACEHOLDER_LABEL = re.compile(r"\bcol_\d+:\s*")
+
+
+def _strip_placeholder_table_labels(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Drop ``col_N:`` placeholder labels from a table row that the extractor
+    couldn't header.
+
+    When pdfplumber finds no header row, the table emitter falls back to
+    ``col_0``, ``col_3`` … placeholders, so a row renders as the meaningless
+    ``col_0: Price | col_3: 50%``. The labels are parser-generated noise, not
+    document text, so strip them and keep the faithful values (``Price | 50%``).
+    Only fires when EVERY labeled segment is a placeholder — a table that found
+    real headers (``Site: ATL | Qty: 5``) is left untouched. (Regex is the right
+    tool here: ``col_N:`` is a fixed sentinel WE emit, not a fuzzy judgment.)"""
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        rt = getattr(a, "raw_text", "") or ""
+        if "col_" in rt and _COL_PLACEHOLDER_LABEL.search(rt):
+            segs = [s.strip() for s in rt.split(" | ") if s.strip()]
+            labeled = [s for s in segs if ": " in s]
+            if labeled and all(_COL_PLACEHOLDER_LABEL.match(s) for s in labeled):
+                new = " | ".join(_COL_PLACEHOLDER_LABEL.sub("", s) for s in segs).strip()
+                if new and new != rt:
+                    try:
+                        a = a.model_copy(update={
+                            "raw_text": new, "normalized_text": normalize_text(new)})
+                    except Exception:
+                        pass
+        out.append(a)
+    return out
 
 
 def _drop_repeated_header_bands(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
