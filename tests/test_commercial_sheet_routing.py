@@ -124,16 +124,17 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
     pricing = [a for a in atoms if a.atom_type == AtomType.pricing_assumption]
     assert pricing
-    # Bulk pricing sheets (catalogs / rate cards) collapse to a SINGLE
-    # rollup atom — the granular rows are folded into value.rows, not
-    # emitted as per-row atoms that bloat the envelope and never packetize.
-    assert len(atoms) == 1
+    # Catalogs / rate cards emit one atom PER ROW (every line is a first-class
+    # fact the heads + reconciliation must see — e.g. to check a quoted price
+    # against the catalog), PLUS a single rollup summary atom that the PM-facing
+    # pricing_rollup packet renders. So: 2 rows + 1 summary = 3 atoms.
+    assert len(atoms) == 3
     summary = atoms[0]
     assert summary.atom_type == AtomType.pricing_assumption
     assert summary.value.get("is_summary") is True
     assert "pricing_rollup" in (summary.review_flags or [])
     assert summary.value["line_count"] == 2
-    # Rows preserved losslessly for drill-down, with their money keys.
+    # Rows preserved losslessly in the rollup for drill-down, with money keys.
     folded = summary.value["rows"]
     assert len(folded) == 2
     folded_keys = {k for r in folded for k in r["money_keys"]}
@@ -141,6 +142,13 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     # The rollup's own aggregate money keys cover the $-range (lo/hi).
     assert "money:661" in (summary.entity_keys or [])
     assert "money:339" in (summary.entity_keys or [])
+    # The two granular rows are real per-row atoms (not is_summary), each
+    # carrying its SKU text and its own money key.
+    rows = [a for a in pricing if not a.value.get("is_summary")]
+    assert len(rows) == 2
+    assert any("CAT6 Plenum" in (a.raw_text or "") for a in rows)
+    row_keys = {k for a in rows for k in (a.entity_keys or [])}
+    assert "money:661" in row_keys and "money:339" in row_keys
 
 
 # ── pure backing data is dropped (but never silently) ───────────────

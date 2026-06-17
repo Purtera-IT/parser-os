@@ -273,6 +273,13 @@ PACKET_ANCHOR_ELIGIBLE: dict[AtomType, PacketFamily] = {
     # v57.16 — deal economics now reach the deliverable.
     AtomType.commercial_total: PacketFamily.commercial_summary,
     AtomType.pricing_assumption: PacketFamily.commercial_summary,
+    # Procurement line-item types (added with the procurement-deal schema) are
+    # priced commercial facts — route them to the deal-economics family rather
+    # than leave them orphaned (the exact gap this contract guards against).
+    AtomType.material: PacketFamily.commercial_summary,
+    AtomType.license_subscription: PacketFamily.commercial_summary,
+    AtomType.expense: PacketFamily.commercial_summary,
+    AtomType.pmo: PacketFamily.commercial_summary,
 }
 
 # Types that are first-class evidence in the envelope but do not anchor a

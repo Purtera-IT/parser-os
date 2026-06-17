@@ -59,19 +59,31 @@ def _marker_atom(
     kind: str,
     label: str,
     size: int,
+    saved_path: str | None = None,
 ) -> EvidenceAtom:
-    text = (
-        f"[{label.capitalize()} awaiting OCR / vision / OLE extraction] "
-        f"{region_ref} in {filename} — {size:,} bytes. A vision or embedded-"
-        f"object pass is required to recover its content."
-    )
+    if saved_path:
+        # The bytes have been cropped out and written to disk — a later OCR /
+        # vision pass reads that file. The marker now points AT the saved image
+        # instead of reporting "0 bytes", so nothing is lost and the region is
+        # ready for downstream extraction.
+        text = (
+            f"[{label.capitalize()} extracted - saved to {saved_path} "
+            f"({size:,} bytes), awaiting OCR / vision] {region_ref} in {filename}."
+        )
+    else:
+        text = (
+            f"[{label.capitalize()} awaiting OCR / vision / OLE extraction] "
+            f"{region_ref} in {filename} — {size:,} bytes. A vision or embedded-"
+            f"object pass is required to recover its content."
+        )
     atom_id = stable_id("atm", artifact_id, "binary_marker", region_ref)
     src = SourceRef(
         id=stable_id("src", atom_id),
         artifact_id=artifact_id,
         artifact_type=artifact_type,
         filename=filename,
-        locator={"region_ref": region_ref, "extraction": "binary_region_marker_v1"},
+        locator={"region_ref": region_ref, "extraction": "binary_region_marker_v1",
+                 **({"saved_path": saved_path} if saved_path else {})},
         extraction_method="binary_region_marker_v1",
         parser_version=parser_version,
     )
@@ -82,7 +94,8 @@ def _marker_atom(
         atom_type=AtomType.open_question,
         raw_text=text,
         normalized_text=normalize_text(text),
-        value={"kind": kind, "region_ref": region_ref, "size_bytes": size},
+        value={"kind": kind, "region_ref": region_ref, "size_bytes": size,
+               **({"saved_path": saved_path} if saved_path else {})},
         entity_keys=[],
         source_refs=[src],
         receipts=[],
@@ -107,6 +120,7 @@ def region_marker(
     kind: str = "image_marker",
     label: str = "image",
     size: int = 0,
+    saved_path: str | None = None,
 ) -> EvidenceAtom:
     """A located marker for one referenced (non-zip-embedded) binary region.
 
@@ -126,6 +140,7 @@ def region_marker(
         kind=kind,
         label=label,
         size=size,
+        saved_path=saved_path,
     )
 
 

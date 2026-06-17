@@ -908,6 +908,12 @@ def _pdf_image_markers(
         doc = fitz.open(str(path))
     except Exception:  # pragma: no cover — unreadable PDF
         return []
+    # Crop each embedded image out to a sidecar file so a later OCR / vision
+    # pass can read it (the marker points AT the saved file instead of "0
+    # bytes"). Save dir is env-overridable; defaults to a project-local folder.
+    import os as _os
+    img_root = Path(_os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
+    saved_by_xref: dict[int, tuple[str, int]] = {}  # xref -> (saved_path, size); same image reused across pages
     try:
         for page_index in range(doc.page_count):
             try:
@@ -917,6 +923,25 @@ def _pdf_image_markers(
                 continue
             for ii, img in enumerate(images):
                 xref = img[0] if img else ii
+                saved_path: str | None = None
+                size = 0
+                if xref in saved_by_xref:
+                    saved_path, size = saved_by_xref[xref]
+                else:
+                    try:
+                        info = doc.extract_image(xref) or {}
+                        data = info.get("image") or b""
+                        size = len(data)
+                        if data:
+                            img_root.mkdir(parents=True, exist_ok=True)
+                            ext = (info.get("ext") or "png").lstrip(".")
+                            fn = img_root / f"page{page_index}_image{xref}.{ext}"
+                            with open(fn, "wb") as fh:
+                                fh.write(data)
+                            saved_path = str(fn).replace("\\", "/")
+                            saved_by_xref[xref] = (saved_path, size)
+                    except Exception:
+                        saved_path, size = None, 0  # degrade to plain marker
                 out.append(region_marker(
                     project_id=project_id,
                     artifact_id=artifact_id,
@@ -926,10 +951,18 @@ def _pdf_image_markers(
                     region_ref=f"page{page_index}/image{xref}",
                     kind="image_marker",
                     label="image",
+                    size=size,
+                    saved_path=saved_path,
                 ))
     finally:
         doc.close()
     return out
+
+
+def _safe_stem(stem: str) -> str:
+    """Filesystem-safe folder name from an artifact stem."""
+    import re as _re
+    return _re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "artifact"
 
 
 def _ocr_fallback_atoms(
@@ -2085,7 +2118,20 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     TEXT_RICH_PAGE_THRESHOLD = 1200
 
     def _build_low_text_page(page_index: int) -> dict[str, Any]:
-        # Low-text page = likely scanned. Try the OCR chain
+        # A genuinely sparse text page (a trailing line, a short final page) is
+        # NOT a scanned image. Only treat low-text as scanned when the page
+        # actually carries visual objects (images / vector drawings) worth an
+        # OCR/vision pass. Otherwise emit the little text as a normal page — no
+        # bogus "scanned image / needs_extractor" marker on near-empty pages.
+        try:
+            with fitz.open(str(pdf_path)) as _vd:
+                _pg = _vd[page_index]
+                _has_visual = bool(_pg.get_images(full=True)) or bool(_pg.get_drawings())
+        except Exception:
+            _has_visual = True  # fail-safe: if we can't tell, keep scanned-page behavior
+        if not _has_visual:
+            return _build_text_rich_page(page_index)
+        # Low-text WITH visuals = likely scanned. Try the OCR chain
         # (PyMuPDF Tesseract → pytesseract → easyocr → Ollama vision).
         # If any backend recovers text, treat the page as text-rich.
         # If nothing fires, keep the marker so PM_HANDOFF surfaces it
@@ -2431,6 +2477,14 @@ def atoms_from_structured_doc(
             for meta_index, meta_text in enumerate(page_metadata):
                 text = (str(meta_text or "")).strip()
                 if not text or len(text) < 6:
+                    continue
+                # Parser pipeline-diagnostic breadcrumbs (how the page was
+                # parsed) are not deal facts and not coverage gaps — never emit
+                # them as atoms. Genuine coverage markers ("awaiting OCR",
+                # low-text/visual) DO stay; they're needs_extractor signals.
+                _low = text.lower()
+                if ("heavyweight layout pipeline" in _low
+                        or ("recovered" in _low and "line-ruled table" in _low)):
                     continue
                 if _looks_like_form_field(text) or _looks_like_page_footer(text):
                     continue
@@ -7336,16 +7390,22 @@ def _scan_pdf_for_extras(
                 page_text = ""
             stripped = page_text.strip()
             if len(stripped) < _LOW_TEXT_VISUAL_THRESHOLD:
-                out.append(
-                    _visual_review_atom(
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=path.name,
-                        page_number=page_idx + 1,
-                        parser_version=parser_version,
-                        reason=f"low_text_page_{len(stripped)}_chars",
+                # Only flag "visual evidence" when the page ACTUALLY has images
+                # or vector drawings. A near-empty page (a trailing line, a
+                # short final page) is sparse text, not a scanned diagram —
+                # don't emit a bogus visual-review marker for it.
+                pg = doc[page_idx]
+                if bool(pg.get_images(full=True)) or bool(pg.get_drawings()):
+                    out.append(
+                        _visual_review_atom(
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            page_number=page_idx + 1,
+                            parser_version=parser_version,
+                            reason=f"low_text_page_{len(stripped)}_chars",
+                        )
                     )
-                )
                 continue
             out.extend(
                 _checkbox_atoms_from_text(

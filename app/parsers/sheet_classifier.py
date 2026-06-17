@@ -205,6 +205,32 @@ def _catalog_columns_present(rows: list[list[Any]]) -> bool:
     return False
 
 
+# A priced services / pricing-template table: a header carrying pricing
+# columns. Routes to COMMERCIAL so each priced line becomes a typed commercial
+# atom instead of orphan "Unit of Measure: ..." / "Subtotal: ..." fragments on
+# the SCOPE path. Universal (column phrasing), not domain-specific.
+_PRICED_HEADER_PHRASES: tuple[str, ...] = (
+    "pricing element", "unit of measure", "hourly rate", "labor hours",
+    "subtotal", "unit price", "extended cost", "ext cost", "price per",
+    "materials price", "total cost", "cost per", "rate card",
+)
+_PRICED_STRONG_WORDS: tuple[str, ...] = ("price", "rate", "subtotal", "cost")
+
+
+def _priced_table_header(rows: list[list[Any]]) -> bool:
+    """True when a leading row is a pricing-table header (>=2 pricing column
+    phrases AND a price/rate/cost/subtotal word)."""
+    for row in rows[:6]:
+        toks = [str(c or "").strip().lower() for c in row if str(c or "").strip()]
+        if len(toks) < 2:
+            continue
+        joined = " | ".join(toks)
+        hits = sum(1 for p in _PRICED_HEADER_PHRASES if p in joined)
+        if hits >= 2 and any(w in joined for w in _PRICED_STRONG_WORDS):
+            return True
+    return False
+
+
 def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassification:
     """Classify a worksheet by role for atom-emission gating.
 
@@ -294,6 +320,16 @@ def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassificatio
                 confidence=0.85,
                 signals={"order_qty_empty_fraction": round(empty_frac, 3)},
             )
+
+    # 4b. Priced services / pricing-template table (Pricing Element / Unit of
+    #     Measure / Price, or Labor Hours / Hourly Rate / Subtotal). Routes to
+    #     COMMERCIAL so priced lines emit as typed commercial atoms, not orphan
+    #     label->value fragments on the SCOPE path.
+    if _priced_table_header(rows):
+        return SheetClassification(
+            role=SheetRole.CATALOG, suppress=True,
+            reason="priced_table_header", confidence=0.8, signals={},
+        )
 
     # 5. Instructions / cover / terms-only tab with no data table.
     sample = " ".join(c.lower() for c in cells[:60])

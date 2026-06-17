@@ -173,10 +173,124 @@ def _clean_title(t):
     return (t[:57].rstrip() + "…") if len(t) > 60 else t
 
 
-def sheet_blocks(rows):
+def _synth_keyval_title(pairs):
+    """Synthesize a section heading for a TITLED-less key-value box.
+
+    A highlighted box of label:value rows with no caption still "obviously
+    belongs together" — so when the document gave no title, recover one from
+    the labels' shared leading stem (e.g. "Expected internal cost target, low"
+    + "...target, high" -> "Expected internal cost target"). Honest: only
+    fires when ≥2 labels share a real multi-character word stem; otherwise
+    returns None and the rows stay grouped by section_path + group metadata
+    alone, never by invented text.
+    """
+    labels = [str(k).strip() for k, _ in pairs if str(k).strip()]
+    if len(labels) < 2:
+        return None
+    toks = [re.split(r"\s+", l) for l in labels]
+    common = []
+    for i in range(min(len(t) for t in toks)):
+        w = toks[0][i]
+        if all(len(t) > i and t[i].lower() == w.lower() for t in toks):
+            common.append(w)
+        else:
+            break
+    stem = " ".join(common).strip(" ,:;-")
+    # Need a substantive stem (a real word, not just "the"/"a") shared by the box.
+    return stem if len(stem) >= 4 else None
+
+
+def _lum(rgb):
+    """Perceived luminance (0-255) of an ARGB/RGB hex fill, 255 if unparseable."""
+    try:
+        s = str(rgb)[-6:]
+        r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+        return 0.299 * r + 0.587 * g + 0.114 * b
+    except Exception:
+        return 255.0
+
+
+def _is_dark_fill(rgb):
+    """A dark fill = a banner header bar (white text on a deep color), the
+    universal styling for a section title. Pastel data-box fills are light."""
+    return rgb is not None and _lum(rgb) < 140
+
+
+def _row_first(grid_row, style_row):
+    """First non-empty cell of a row as (text, fill, bold)."""
+    for c, val in enumerate(grid_row):
+        if val != "":
+            if style_row and c < len(style_row):
+                return val, style_row[c][0], style_row[c][1]
+            return val, None, False
+    return None, None, False
+
+
+def _fill_runs(pairs, label_fill):
+    """Split a key-value box into contiguous same-fill runs, so two differently
+    highlighted boxes stacked with NO blank row between them separate into their
+    own groups. Guarded against zebra striping (alternating row colors inside ONE
+    box): if colors change on more than half the row boundaries it is decorative
+    striping, not grouping, so the box stays whole."""
+    if not label_fill or len(pairs) < 2:
+        return [(label_fill.get(pairs[0][0]) if (label_fill and pairs) else None, pairs)]
+    fills = [label_fill.get(k) for k, _ in pairs]
+    changes = sum(1 for i in range(1, len(fills)) if fills[i] != fills[i - 1])
+    if changes > len(pairs) / 2:            # zebra / decorative — do not split
+        return [(fills[0], pairs)]
+    runs, cur, cur_fill = [], [], object()
+    for (k, v), f in zip(pairs, fills):
+        if cur and f != cur_fill:
+            runs.append((cur_fill, cur)); cur = []
+        cur_fill = f; cur.append((k, v))
+    if cur:
+        runs.append((cur_fill, cur))
+    return runs
+
+
+def _style_index(grid, styles):
+    """From the cell-style grid, derive (banner_titles, label_fill):
+
+    * banner_titles — texts of lone-text rows wearing a *header* style (a dark
+      banner fill, or the same fill the sheet's table-header rows use). These
+      are section headers even when they sit flush against the body they title
+      (e.g. "Customer Facing Quote Language" directly above its paragraph).
+    * label_fill — first-column text -> its fill, for same-fill box grouping.
+    """
+    banner_titles, label_fill = set(), {}
+    if not styles:
+        return banner_titles, label_fill
+    header_fills = set()
+    for r, gr in enumerate(grid):
+        if _looks_header(gr):
+            sr = styles[r] if r < len(styles) else None
+            if sr:
+                for c, val in enumerate(gr):
+                    if val != "" and c < len(sr) and sr[c][0]:
+                        header_fills.add(sr[c][0])
+    for r, gr in enumerate(grid):
+        sr = styles[r] if r < len(styles) else None
+        text, fill, bold = _row_first(gr, sr)
+        if text is None:
+            continue
+        label_fill.setdefault(text, fill)
+        nz = [x for x in gr if x != ""]
+        if (len(nz) == 1 and len(text) <= 70 and not _is_num(text)
+                and (_is_dark_fill(fill) or (fill is not None and fill in header_fills))):
+            banner_titles.add(text)
+    return banner_titles, label_fill
+
+
+def sheet_blocks(rows, styles=None):
     """Detect blocks in a sheet's rows. Returns a list of block dicts in reading
-    order, with titles carried onto the table/keyval block they head."""
+    order, with titles carried onto the table/keyval block they head.
+
+    ``styles`` (optional) is a per-cell ``(fill_rgb, bold)`` grid aligned to
+    ``rows``; when present, cell styling is used to title style-banner section
+    headers and to keep same-fill highlighted boxes grouped. Absent it, the
+    detector falls back to pure geometry (blank-row / blank-column banding)."""
     grid = _grid(rows)
+    banner_titles, label_fill = _style_index(grid, styles)
     items = []                              # [band_idx, a, b, block, title, hidx, kind]
     gi = 0
     for band in _band_split(grid):
@@ -226,8 +340,34 @@ def sheet_blocks(rows):
                     pairs.append((nz[0], " ".join(nz[1:])))
                 elif len(nz) == 1:
                     pairs.append((nz[0], ""))
-            if pairs:
-                out.append({"title": title, "kind": "keyval", "pairs": pairs})
+            if not pairs:
+                continue
+            # A styled banner header sitting INSIDE the block (a lone dark-fill
+            # row, e.g. "Customer Facing Quote Language" flush above its
+            # paragraph) is a section title, not a key-value label — split there
+            # so the rows under it group beneath that heading.
+            groups = []                      # (group_title, group_pairs)
+            cur_title, cur = title, []
+            for (kk, vv) in pairs:
+                if banner_titles and vv == "" and kk in banner_titles:
+                    if cur:
+                        groups.append((cur_title, cur))
+                    cur_title, cur = kk, []
+                else:
+                    cur.append((kk, vv))
+            if cur:
+                groups.append((cur_title, cur))
+            for gt, gp in groups:
+                # Same highlight color = one box: split a group into contiguous
+                # same-fill runs so stacked, differently-colored boxes separate.
+                for run_fill, run_pairs in _fill_runs(gp, label_fill):
+                    rt = gt
+                    if not rt:
+                        # No caption anywhere — recover a heading from the
+                        # labels' shared stem so the box still reads as a group.
+                        rt = _synth_keyval_title(run_pairs)
+                    out.append({"title": _clean_title(rt), "kind": "keyval",
+                                "pairs": run_pairs, "fill": run_fill})
         else:
             txt = " ".join(x for r in block for x in r if x != "")
             if txt.strip():
