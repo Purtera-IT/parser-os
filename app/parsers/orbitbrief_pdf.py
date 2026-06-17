@@ -2634,6 +2634,43 @@ def atoms_from_structured_doc(
                 )
 
 
+_ITEM_ENUM_RE = re.compile(r"^\s*\(?(?:[a-zA-Z]|\d{1,2}|[ivxIVX]{1,4})\)?[.)]\s+(?=\S)")
+
+
+def _split_enumerated_item_title(lines: Any) -> tuple[str, str] | None:
+    """A lettered/numbered list item often packs a short TITLE on its first line
+    ("a. Table of Contents") above its body ("Responses shall include …"). Return
+    (title, body) so the title can ride as [intro:] connective tissue instead of
+    being glued into the requirement text. STRUCTURAL (enumeration + line
+    geometry) — the same kind of signal as bullet detection, not a fuzzy meaning
+    judgment — so no embedding needed. Fires only on a real title (short, label-
+    like first line) over a real body (multi-word prose)."""
+    if not lines or len(lines) < 2:
+        return None
+
+    def _txt(l: Any) -> str:
+        return (l if isinstance(l, str) else (l.get("text") if isinstance(l, dict) else "")) or ""
+
+    l0 = _txt(lines[0]).strip()
+    m = _ITEM_ENUM_RE.match(l0)
+    if not m:
+        return None
+    title = l0[m.end():].strip().rstrip(":")
+    tw = title.split()
+    # A title is a short label, not a full sentence (no sentence-ending period).
+    if not (1 <= len(tw) <= 8) or title.endswith("."):
+        return None
+    # If the NEXT line is itself enumerated ("b. …"), this is a FLAT list of
+    # sibling items (a. main office / b. guidance office / …), not a title over a
+    # body — don't mis-title the first item.
+    if _ITEM_ENUM_RE.match(_txt(lines[1]).strip()):
+        return None
+    body = " ".join(t for t in (_txt(x).strip() for x in lines[1:]) if t).strip()
+    if len(body.split()) < 4:   # need a real body beneath the title
+        return None
+    return title, body
+
+
 def _pdf_is_framing_lead_in(text: str) -> bool:
     """Is a paragraph a FRAMING lead-in ("The following are the General
     Conditions…", "Services include:") that introduces the block(s) after it?
@@ -2850,6 +2887,29 @@ def _atoms_for_block(
                     locator={**base_locator, "section_path": sp},
                     value={"kind": "paragraph"},
                 )
+            return
+        # A lettered/numbered list item with a short TITLE on its first line
+        # ("a. Table of Contents") over a body — lift the title as [intro:]
+        # connective tissue so the atom is the requirement, not "a. Table of
+        # Contents Responses shall include …" with the label buried inside.
+        item_split = _split_enumerated_item_title(block.get("lines"))
+        if item_split:
+            it_title, it_body = item_split
+            it_type, it_auth = _classify_text_block(
+                text=it_body, section_path=section_path, kind="paragraph"
+            )
+            yield _make_atom(
+                text=it_body,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=filename,
+                parser_version=parser_version,
+                atom_type=it_type,
+                authority_class=it_auth,
+                confidence=DEFAULT_BLOCK_CONFIDENCE,
+                locator={**base_locator, "lead_in": (base_locator.get("lead_in") or []) + [it_title]},
+                value={"kind": "paragraph", "item_title": it_title},
+            )
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="paragraph")
         yield _make_atom(
