@@ -1758,6 +1758,9 @@ class XlsxParser(BaseParser):
         """
         header: dict[str, Any] = {}
         header_locators: dict[str, dict[str, int]] = {}
+        # canonical key -> RAW sheet label ("OPPTY #", "Project Duration (Months)")
+        # so atoms DISPLAY the faithful label while still keying/merging by canon.
+        header_labels: dict[str, str] = {}
         # category key -> {"display", "revenue", "cost", "margin",
         #                  "margin_pct", "row"}
         pl: dict[str, dict[str, Any]] = {}
@@ -1780,6 +1783,7 @@ class XlsxParser(BaseParser):
                     if sval is not None:
                         header[key] = sval
                         header_locators[key] = {"row": ri + 1, "col": ci + 1}
+                        header_labels[key] = orig   # faithful raw label ("OPPTY #")
                     continue
 
                 # ── P&L margin-percent line ──
@@ -1863,6 +1867,7 @@ class XlsxParser(BaseParser):
                     continue
                 header[gkey] = sval
                 header_locators[gkey] = {"row": ri + 1, "col": ci + 1}
+                header_labels[gkey] = orig   # faithful raw label
 
         atoms: list[EvidenceAtom] = []
 
@@ -1936,7 +1941,7 @@ class XlsxParser(BaseParser):
         #    field-by-field, so each atom carries value.fields = {one field}. ──
         for k, v in header.items():
             loc = header_locators.get(k, {})
-            label = k.replace("_", " ").title()
+            label = header_labels.get(k) or k.replace("_", " ").title()  # RAW label
             text = f"{label}: {v}"[:4000]
             ekeys: list[str] = []
             if k == "opportunity_id" and v:
