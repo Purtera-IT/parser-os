@@ -285,7 +285,7 @@ class DocxParser(BaseParser):
                         artifact_id=artifact_id,
                         artifact_type=ArtifactType.docx,
                         filename=path.name,
-                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2", "section_path": table_section.get(table_idx, [])},
+                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2", "section_path": table_section.get(table_idx, []), "lead_in": getattr(self, "_table_lead_in", {}).get(table_idx, [])},
                         extraction_method="raw_table_row_v49_2",
                         parser_version=self.parser_version,
                     )
@@ -332,6 +332,7 @@ class DocxParser(BaseParser):
                         "row": row_idx,
                         "extraction": "docx_table_row_v1",
                         "section_path": table_section.get(table_idx, []),
+                        "lead_in": getattr(self, "_table_lead_in", {}).get(table_idx, []),
                     },
                     extraction_method="docx_table_row_v1",
                     parser_version=self.parser_version,
@@ -977,6 +978,14 @@ class DocxParser(BaseParser):
                     # short section labels (a header over a following list)
                     "Deliverables:", "Assumptions:", "Requirements:",
                     "Notes:", "Exclusions:", "Scope of work:",
+                    # FORWARD-REFERENCE QUALIFIERS — a sentence that qualifies the
+                    # items below it ("the fees below are Fixed Fee") so the
+                    # qualifier rides down onto those items.
+                    "The estimated Fees for Services outlined below are Fixed Fee.",
+                    "The fees set forth below are firm fixed price.",
+                    "The rates listed below apply to all Services.",
+                    "All pricing shown in the table below is fixed.",
+                    "The amounts detailed below are Time and Materials.",
                 ],
                 # NOT list-intros (any polarity): standalone facts, AND key->value
                 # lines that also end in ':' but carry a value, not a list header.
@@ -990,6 +999,7 @@ class DocxParser(BaseParser):
                     "The total contract value is fixed at the agreed amount.",
                     "Address: 123 Main Street, Macon GA",
                     "Phone: 555-0100", "Total: $5,000", "Date: January 1, 2026",
+                    "Rates in USD.", "Fees are in USD.",
                 ],
                 threshold=0.62,
                 lexical_fallback=cls._lead_in_lexical,
@@ -1190,6 +1200,7 @@ class DocxParser(BaseParser):
         """
         para_section: dict[int, list[str]] = {}
         table_section: dict[int, list[str]] = {}
+        table_lead_in: dict[int, list[str]] = {}
         heading_paras: dict[int, tuple[int, list[str]]] = {}
         # Connective tissue: the governing lead-in sentence(s) above an atom
         # ("PurTera will provide field technicians to perform the following
@@ -1214,6 +1225,11 @@ class DocxParser(BaseParser):
         # be performed during normal Business Hours...") as context instead of
         # reading in isolation. Cleared when the list ends (heading / non-list line).
         bullet_by_level: dict[int, str] = {}
+        # Forward-reference qualifiers active in the current section ("the fees
+        # outlined below are Fixed Fee") — these ride down onto a following TABLE's
+        # rows (a qualifier may be a bullet, so it's caught here, not via is_framing).
+        # Cleared at the section boundary (heading).
+        section_qualifiers: list[str] = []
         pidx = -1
         tidx = -1
         seq = 0
@@ -1250,6 +1266,20 @@ class DocxParser(BaseParser):
                             return True
                     except Exception:
                         pass
+                    seen += 1
+                j += 1
+            return False
+
+        def _table_follows_within(k: int, n: int) -> bool:
+            """A table appears within the next ``n`` blocks — so a qualifier that
+            references a following TABLE ('the fees outlined below are Fixed Fee')
+            also fires, not just one that precedes bullets."""
+            j, seen = k + 1, 0
+            while j < len(children) and seen < n:
+                kind_j = children[j][0]
+                if kind_j == "tbl":
+                    return True
+                if kind_j == "p":
                     seen += 1
                 j += 1
             return False
@@ -1305,7 +1335,7 @@ class DocxParser(BaseParser):
                     lvl is None
                     and bool(text)
                     and not is_list
-                    and _list_follows_within(k, 8)
+                    and (_list_follows_within(k, 8) or _table_follows_within(k, 10))
                     and self._is_framing_lead_in(text)
                 )
                 if is_framing:
@@ -1317,8 +1347,10 @@ class DocxParser(BaseParser):
                     para_section[pidx] = ancestors
                     para_lead_in[pidx] = []
                     # a heading / list-intro starts a fresh bullet context — a
-                    # sub-bullet's parent must come from the SAME list, not a prior one.
+                    # sub-bullet's parent must come from the SAME list, not a prior
+                    # one; a forward-ref qualifier likewise only scopes its section.
                     bullet_by_level.clear()
+                    section_qualifiers.clear()
                     if is_framing:
                         # section preamble / list lead-in: structure (no atom),
                         # lifted onto descendant list items as lead_in. Empty
@@ -1360,6 +1392,11 @@ class DocxParser(BaseParser):
                         else []
                     )
                     if is_list:
+                        # FORWARD-REF QUALIFIER as a bullet ("the fees outlined below
+                        # are Fixed Fee") — record it so it rides onto the following
+                        # TABLE's rows. Cheap table-check FIRST, embed only then.
+                        if _table_follows_within(k, 10) and self._is_framing_lead_in(text):
+                            section_qualifiers.append(text)
                         # PARENT BULLET (structural list hierarchy): a sub-bullet
                         # carries its nearest shallower bullet so it doesn't read in
                         # isolation. Always valid (local hierarchy) — independent of
@@ -1384,8 +1421,18 @@ class DocxParser(BaseParser):
                 table_order[tidx] = seq
                 seq += 1
                 table_section[tidx] = [t for _, t, _, _, _ in stack if t]
+                # a forward-reference qualifier ("the fees outlined below are Fixed
+                # Fee") riding on the stack lifts onto THIS table's rows — unless a
+                # contradiction subsection is active. Non-list prose between the
+                # qualifier and the table is untouched (it's not a list/table row).
+                table_lead_in[tidx] = (
+                    [li for _, _, _, li, _ in stack if li] + list(section_qualifiers)
+                    if not any(b for *_, b in stack)
+                    else []
+                )
         self._structure_idxs = structure_idxs
         self._para_lead_in = para_lead_in
+        self._table_lead_in = table_lead_in
         return para_section, table_section, heading_paras, para_order, table_order
 
     # Section-heading -> atom type. The document's OWN heading is the authority:
