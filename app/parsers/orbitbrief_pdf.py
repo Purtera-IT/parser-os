@@ -2288,7 +2288,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # from the text the splitter sees, then re-attach them as proper
         # table blocks so the roster fast-path in _atoms_for_block emits
         # clean physical_site atoms instead.
-        table_blocks, table_bboxes = _extract_ruled_tables(pdf_path, page_index)
+        ruled_blocks, ruled_bboxes = _extract_ruled_tables(pdf_path, page_index)
+        # Also recover UNRULED column tables (date|event timelines, Factor|Weight
+        # grids, key|value blocks) the prose splitter would otherwise scramble.
+        col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
+        table_blocks, table_bboxes = _merge_table_extractions(
+            ruled_blocks, ruled_bboxes, col_blocks, col_bboxes
+        )
         prose_text = page_texts[page_index]
         if table_blocks:
             stripped = _page_prose_excluding_tables(
@@ -4068,6 +4074,236 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
     return table_blocks, bboxes
 
 
+def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[str, Any]], list[Any]]:
+    """Recover UNRULED column tables on a text-rich page from word geometry.
+
+    Many real tables have NO ruling lines — a ``date | event`` timeline, a
+    ``Factor | Weight`` criteria grid, a two-column ``key | value`` block. PyMuPDF's
+    ``get_text("text")`` flattens these into reading order, so the prose splitter
+    mashes the columns into scrambled paragraphs (the date divorced from its event,
+    a row split across two atoms) and can even drop a cell. ``find_tables(strategy=
+    "lines")`` can't see them (no lines), or sees phantom columns.
+
+    This reconstructs them from the WHITESPACE columns the way a human reads them:
+      1. group ``get_text("words")`` into visual lines (by PDF block/line ids);
+      2. find a *consistent vertical whitespace river* — a column boundary x that
+         several stacked lines all leave empty — establishing the column grid;
+      3. assign every word to a column by that grid, folding wrapped continuation
+         lines (left-cell text with no right-cell word) into the row above;
+      4. emit a clean ``kind="table"`` block + its bbox, same shape as the ruled
+         path, so the existing table→atom emitter turns each row into ONE atom with
+         all columns together (no scramble, no divorced cell, no lost cell).
+
+    Conservative by construction (won't fire on flowing prose): needs ≥2 rows whose
+    boundary aligns within a tight tolerance, both sides populated, columns
+    left-aligned. Returns ``([], [])`` on anything it can't prove tabular.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return [], []
+
+    try:
+        with fitz.open(str(pdf_path)) as doc:
+            page = doc[page_index]
+            page_w = float(page.rect.width) or 612.0
+            try:
+                words = page.get_text("words") or []
+            except Exception:
+                return [], []
+    except Exception:
+        return [], []
+    if len(words) < 4:
+        return [], []
+
+    # 1. group words into VISUAL lines by y-band. PyMuPDF gives each column cell
+    #    its own (block, line) id even when they share a row, so we cluster by
+    #    vertical position instead — words within ~half a line-height of each
+    #    other belong to the same visual row (this is what re-unites a date with
+    #    its event, or a factor with its weight).
+    valid = [w for w in words if len(w) >= 8 and str(w[4]).strip()]
+    if len(valid) < 4:
+        return [], []
+    heights = sorted(w[3] - w[1] for w in valid)
+    line_h = heights[len(heights) // 2] or 10.0
+    y_tol = max(3.0, 0.6 * line_h)
+    valid.sort(key=lambda w: (w[1], w[0]))
+    lines: list[dict[str, Any]] = []
+    cur: list[Any] = []
+    cur_y = None
+    for w in valid:
+        if cur and abs(w[1] - cur_y) <= y_tol:
+            cur.append(w)
+        else:
+            if cur:
+                ws = sorted(cur, key=lambda t: t[0])
+                lines.append({"y0": min(t[1] for t in ws), "y1": max(t[3] for t in ws),
+                              "x0": min(t[0] for t in ws), "x1": max(t[2] for t in ws),
+                              "words": ws})
+            cur = [w]
+            cur_y = w[1]
+    if cur:
+        ws = sorted(cur, key=lambda t: t[0])
+        lines.append({"y0": min(t[1] for t in ws), "y1": max(t[3] for t in ws),
+                      "x0": min(t[0] for t in ws), "x1": max(t[2] for t in ws),
+                      "words": ws})
+    if len(lines) < 2:
+        return [], []
+    GAP_MIN = max(38.0, 0.055 * page_w)   # a real column river, not inter-word space
+    ALIGN_TOL = 10.0                       # how tightly stacked boundaries must agree
+
+    def _gap_boundary(ws: list[Any]) -> float | None:
+        """Left edge of the RIGHT column across the widest inter-word gap, or None.
+        The right column's left edge is the STABLE rail (a left cell of varying
+        width shifts a gap *midpoint*, but the right column starts at a fixed x)."""
+        best = None  # (gap_size, right_col_x0)
+        for a, b in zip(ws, ws[1:]):
+            gap = b[0] - a[2]
+            if gap > GAP_MIN and (best is None or gap > best[0]):
+                best = (gap, b[0])
+        return None if best is None else best[1]
+
+    # 2. anchor lines: a clear internal whitespace river at a fixed right-col rail.
+    anchors: list[tuple[int, float]] = []  # (line_index, right_col_x)
+    for i, L in enumerate(lines):
+        bx = _gap_boundary(L["words"])
+        if bx is not None:
+            anchors.append((i, bx))
+    if len(anchors) < 2:
+        return [], []
+
+    # 3. cluster anchors by their boundary rail (within ALIGN_TOL). Each cluster
+    #    of ≥2 stacked anchors that share a rail is one column region.
+    anchors.sort(key=lambda t: t[1])
+    clusters: list[list[tuple[int, float]]] = []
+    for a in anchors:
+        if clusters and abs(a[1] - clusters[-1][0][1]) <= ALIGN_TOL:
+            clusters[-1].append(a)
+        else:
+            clusters.append([a])
+
+    blocks: list[dict[str, Any]] = []
+    bboxes: list[Any] = []
+
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        X = sorted(c[1] for c in cluster)[len(cluster) // 2]  # median rail
+        anchor_lis = sorted(c[0] for c in cluster)
+        top_li, bot_li = anchor_lis[0], anchor_lis[-1]
+        # 4. build rows over the anchor span. A line with a RIGHT-column word
+        #    opens a row; a left-only line folds into the row above (wrapped
+        #    cell). A line whose word straddles the rail is prose → end the
+        #    region there (this also separates two stacked tables / strips an
+        #    intro sentence that bleeds into the span).
+        rows_lr: list[list[str]] = []
+        region_lis: list[int] = []
+        cont_run = 0
+        for li in range(top_li, bot_li + 1):
+            ws = lines[li]["words"]
+            if any(t[0] < X - 2.0 and t[2] > X + 2.0 for t in ws):
+                break  # a word crosses the rail → not a cell boundary → prose
+            left = [t for t in ws if t[2] <= X + 1.0]
+            right = [t for t in ws if t[0] >= X - 1.0]
+            ltxt = " ".join(t[4] for t in left).strip()
+            rtxt = " ".join(t[4] for t in right).strip()
+            if right:
+                rows_lr.append([ltxt, rtxt])
+                region_lis.append(li)
+                cont_run = 0
+            elif rows_lr and left:
+                cont_run += 1
+                if cont_run > 6:   # a "cell" wrapping >6 lines is really prose
+                    break
+                rows_lr[-1][0] = (rows_lr[-1][0] + " " + ltxt).strip()
+                region_lis.append(li)
+            elif left:
+                break  # left-only line before any 2-col row → not a clean table
+        # require ≥2 rows and both columns genuinely populated across the region.
+        if len(rows_lr) < 2:
+            continue
+        if sum(1 for r in rows_lr if r[0]) < 2 or sum(1 for r in rows_lr if r[1]) < 2:
+            continue
+
+        # 5. header detection: a first row whose cells are short, all-alpha
+        #    labels (no digits) names the columns; otherwise generic col_N.
+        def _is_label(s: str) -> bool:
+            return bool(s) and not any(c.isdigit() for c in s) and len(s.split()) <= 3
+        if _is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1]):
+            columns = [rows_lr[0][0], rows_lr[0][1]]
+            data = rows_lr[1:]
+        else:
+            columns = ["col_0", "col_1"]
+            data = rows_lr
+        out_rows = [{columns[0]: r[0], columns[1]: r[1]} for r in data
+                    if r[0] or r[1]]
+        if len(out_rows) < 1:
+            continue
+        blocks.append({"kind": "table", "columns": columns, "rows": out_rows,
+                       "extraction": "column_whitespace_v1"})
+        x0 = min(lines[li]["x0"] for li in region_lis)
+        y0 = min(lines[li]["y0"] for li in region_lis)
+        x1 = max(lines[li]["x1"] for li in region_lis)
+        y1 = max(lines[li]["y1"] for li in region_lis)
+        try:
+            bboxes.append(fitz.Rect(x0, y0, x1, y1))
+        except Exception:
+            bboxes.append(None)
+
+    bboxes = [b for b in bboxes if b is not None]
+    return blocks, bboxes
+
+
+def _merge_table_extractions(
+    ruled_blocks: list[dict[str, Any]], ruled_bboxes: list[Any],
+    col_blocks: list[dict[str, Any]], col_bboxes: list[Any],
+) -> tuple[list[dict[str, Any]], list[Any]]:
+    """Combine ruled + whitespace-column tables, resolving overlap.
+
+    A whitespace-column table SUPERSEDES an overlapping ruled table only when the
+    ruled one is *degenerate* — ≥2 ``col_N`` phantom columns, the signature of
+    fitz mis-splitting a header into bogus columns (the ACE ``Factor | Weight``
+    grid came out as 6 columns). A CLEAN ruled table (real header names — a site
+    roster, a BOM) always wins, so this never clobbers good ruled extraction.
+    """
+    def _overlaps(a, b) -> bool:
+        try:
+            inter = a & b
+            return inter.is_valid and inter.get_area() > 0.4 * min(
+                max(a.get_area(), 1.0), max(b.get_area(), 1.0))
+        except Exception:
+            return False
+
+    def _degenerate(block: dict[str, Any]) -> bool:
+        cols = block.get("columns") or []
+        return sum(1 for c in cols if str(c).startswith("col_")) >= 2
+
+    keep_ruled: list[tuple[dict, Any]] = []
+    for rb, rbox in zip(ruled_blocks, ruled_bboxes):
+        clobber = False
+        if _degenerate(rb) and rbox is not None:
+            for cbox in col_bboxes:
+                if cbox is not None and _overlaps(rbox, cbox):
+                    clobber = True
+                    break
+        if not clobber:
+            keep_ruled.append((rb, rbox))
+
+    # drop any column table that overlaps a KEPT (clean) ruled table — the ruled
+    # one owns that region.
+    keep_cols: list[tuple[dict, Any]] = []
+    for cb, cbox in zip(col_blocks, col_bboxes):
+        if cbox is not None and any(
+            rbox is not None and _overlaps(cbox, rbox) for _, rbox in keep_ruled
+        ):
+            continue
+        keep_cols.append((cb, cbox))
+
+    blocks = [b for b, _ in keep_ruled] + [b for b, _ in keep_cols]
+    bboxes = [x for _, x in keep_ruled] + [x for _, x in keep_cols]
+    return blocks, bboxes
+
+
 def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[Any]) -> str | None:
     """Return the page's text with any text falling inside a table bbox removed.
 
@@ -4081,26 +4317,35 @@ def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[A
         import fitz  # type: ignore[import-not-found]
         with fitz.open(str(pdf_path)) as doc:
             page = doc[page_index]
-            blocks = page.get_text("blocks") or []
-            kept: list[tuple[float, str]] = []
-            for b in blocks:
-                # block tuple: (x0, y0, x1, y1, text, block_no, block_type)
-                if len(b) < 5:
-                    continue
-                x0, y0, x1, y1, text = b[0], b[1], b[2], b[3], b[4]
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                rect = fitz.Rect(x0, y0, x1, y1)
-                in_table = False
-                for tb in bboxes:
-                    inter = rect & tb  # intersection
-                    if inter.is_valid and inter.get_area() > 0.5 * max(rect.get_area(), 1.0):
-                        in_table = True
-                        break
-                if not in_table:
-                    kept.append((y0, text))
-            kept.sort(key=lambda t: t[0])
-            return "\n".join(t for _, t in kept)
+            # LINE-level exclusion. Block-level was too coarse: PyMuPDF lumps a
+            # heading + an unruled table + the following prose into ONE block, so
+            # an area-overlap test keeps the whole thing and the table text leaks
+            # back as duplicate ghost paragraphs. Dropping individual lines whose
+            # CENTER sits inside a table bbox removes exactly the table region and
+            # nothing else.
+            data = page.get_text("dict") or {}
+            kept: list[tuple[float, float, str]] = []
+            for blk in data.get("blocks", []) or []:
+                for ln in blk.get("lines", []) or []:
+                    spans = ln.get("spans", []) or []
+                    text = "".join(s.get("text", "") for s in spans)
+                    if not text.strip():
+                        continue
+                    lb = ln.get("bbox") or blk.get("bbox") or [0, 0, 0, 0]
+                    cx = (lb[0] + lb[2]) / 2.0
+                    cy = (lb[1] + lb[3]) / 2.0
+                    in_table = False
+                    for tb in bboxes:
+                        try:
+                            if tb.x0 - 1 <= cx <= tb.x1 + 1 and tb.y0 - 1 <= cy <= tb.y1 + 1:
+                                in_table = True
+                                break
+                        except Exception:
+                            continue
+                    if not in_table:
+                        kept.append((round(lb[1], 1), lb[0], text))
+            kept.sort(key=lambda t: (t[0], t[1]))
+            return "\n".join(t for _, _, t in kept)
     except Exception:
         return None
 
