@@ -3225,7 +3225,13 @@ def _atoms_for_bullet(
     if text:
         # Strip page-band prefix that some extractors fold into bullet text.
         text = _strip_page_band_prefix(text)
-    if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text) and not _looks_like_fragment(text):
+    # NOTE: _looks_like_fragment is deliberately NOT applied here. It exists to
+    # drop STANDALONE Title-Case checklist labels emitted as paragraphs ("Cost
+    # Proposal", "Project Description"). A bullet is, by construction, an item of
+    # a real list ("a. main office", "1. Total Cost of Hardware") — a genuine
+    # fact, not a stray fragment — so applying that filter here silently drops
+    # legitimate short list items (intern reports: coverage areas + pricing lines).
+    if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text):
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="bullet")
         yield _make_atom(
             text=text,
