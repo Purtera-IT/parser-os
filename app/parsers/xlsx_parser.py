@@ -1928,33 +1928,37 @@ class XlsxParser(BaseParser):
                 parser_version=self.parser_version,
             )
 
-        # ── deal header atom ──
-        if header:
-            parts = [f"{k.replace('_', ' ').title()}: {v}" for k, v in header.items()]
-            text = " | ".join(parts)[:4000]
-            atom_id = stable_id("atm", artifact_id, "deal_metadata", sheet_name)
-            ent_keys: list[str] = []
-            if header.get("opportunity_id"):
-                ent_keys.append(f"deal:{header['opportunity_id']}")
-            if header.get("customer"):
-                cust_slug = re.sub(r"[^a-z0-9]+", "_", str(header["customer"]).lower()).strip("_")
+        # ── deal header: ONE atom PER FIELD (uniform "row = atom": the deal
+        #    header is a label->value grid, exactly like the P&L). Each field is
+        #    individually typeable for the heads (Billing Type -> billing facet,
+        #    Region -> geo, Customer -> party). The identity record is reassembled
+        #    at render time — build_deal_header already MERGES deal_header atoms
+        #    field-by-field, so each atom carries value.fields = {one field}. ──
+        for k, v in header.items():
+            loc = header_locators.get(k, {})
+            label = k.replace("_", " ").title()
+            text = f"{label}: {v}"[:4000]
+            ekeys: list[str] = []
+            if k == "opportunity_id" and v:
+                ekeys.append(f"deal:{v}")
+            elif k == "customer" and v:
+                cust_slug = re.sub(r"[^a-z0-9]+", "_", str(v).lower()).strip("_")
                 if cust_slug:
-                    ent_keys.append(f"customer:{cust_slug}")
+                    ekeys.append(f"customer:{cust_slug}")
+            aid = stable_id("atm", artifact_id, "deal_metadata", sheet_name, k)
             atoms.append(
                 EvidenceAtom(
-                    id=atom_id,
+                    id=aid,
                     project_id=project_id,
                     artifact_id=artifact_id,
                     atom_type=AtomType.deal_metadata,
                     raw_text=text,
                     normalized_text=text.lower(),
-                    value={"kind": "deal_header", "fields": header,
-                           "field_locators": header_locators, "sheet_name": sheet_name},
-                    entity_keys=ent_keys,
-                    source_refs=[_src("deal_metadata", {
-                        "row": min((l.get("row", 0) for l in header_locators.values()), default=1),
-                        "col": min((l.get("col", 1) for l in header_locators.values()), default=1),
-                    })],
+                    value={"kind": "deal_header", "fields": {k: v}, "field": k,
+                           "sheet_name": sheet_name},
+                    entity_keys=ekeys,
+                    source_refs=[_src(f"deal_{k}", {"row": loc.get("row", 1),
+                                                    "col": loc.get("col", 1)})],
                     receipts=[],
                     authority_class=AuthorityClass.vendor_quote,
                     confidence=0.8,

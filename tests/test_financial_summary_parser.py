@@ -25,6 +25,20 @@ def _emit(rows, sheet_name="Deal Kit"):
     )
 
 
+def _merge_header(atoms):
+    """Merge the per-field ``deal_metadata`` atoms (one atom per header row) into
+    one (fields, entity_keys) — mirrors build_deal_header's render-time reassembly."""
+    fields: dict = {}
+    ekeys: set = set()
+    for a in atoms:
+        if a.atom_type.value != "deal_metadata":
+            continue
+        for k, v in (a.value.get("fields") or {}).items():
+            fields.setdefault(k, v)
+        ekeys.update(a.entity_keys or [])
+    return fields, ekeys
+
+
 def _pl_grouped(atoms):
     """Regroup the per-row ``pl_metric`` atoms (one per sheet row) back into
     {category_key: {revenue, cost, margin, margin_pct}} for assertions — first
@@ -63,15 +77,13 @@ _GRID = [
 
 def test_deal_header_extracted():
     atoms = _emit(_GRID)
-    headers = [a for a in atoms if a.atom_type.value == "deal_metadata"]
-    assert len(headers) == 1
-    f = headers[0].value["fields"]
+    f, ekeys = _merge_header(atoms)   # one atom per field; merge for the record
     assert f["opportunity_id"] == "126"
     assert f["sales_rep"] == "Dan"
     assert f["customer"] == "DCW"
     assert f["billing_type"] == "T&M"
     assert f["region"] == "USA"
-    assert "deal:126" in headers[0].entity_keys
+    assert "deal:126" in ekeys
 
 
 def test_pl_categories_extracted_clean():
@@ -100,9 +112,7 @@ def test_generic_header_fields_captured_beyond_whitelist():
         ["Total Labor Cost", 15400, None, None],
     ]
     atoms = _emit(rows)
-    headers = [a for a in atoms if a.atom_type.value == "deal_metadata"]
-    assert len(headers) == 1
-    f = headers[0].value["fields"]
+    f, _ = _merge_header(atoms)
     # canonical keys preserved
     assert f["opportunity_id"] == "126"
     assert f["customer"] == "DCW"
@@ -139,7 +149,7 @@ def test_sweep_rejects_excel_errors_and_heading_values():
         ["Total Labor Cost", 15400, None, None],
     ]
     atoms = _emit(rows)
-    f = [a for a in atoms if a.atom_type.value == "deal_metadata"][0].value["fields"]
+    f, _ = _merge_header(atoms)
     # atomic non-canonical value captured
     assert f["po_number"] == "PO-4471"
     # heading-like multi-word value rejected

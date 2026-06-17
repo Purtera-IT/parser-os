@@ -72,15 +72,20 @@ def test_financial_summary_emits_commercial_totals(tmp_path) -> None:
     # Never scope.
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
 
-    # ── deal header recovered cleanly (not mashed into row glue) ──
+    # ── deal header recovered cleanly — ONE atom per field (uniform row=atom),
+    #    merged here into the identity record (build_deal_header does this for real) ──
     headers = [a for a in atoms if a.atom_type == AtomType.deal_metadata]
-    assert len(headers) == 1
-    f = headers[0].value["fields"]
+    f: dict = {}
+    ekeys: set = set()
+    for a in headers:
+        for k, v in (a.value.get("fields") or {}).items():
+            f.setdefault(k, v)
+        ekeys.update(a.entity_keys or [])
     assert f["opportunity_id"] == "126"
     assert f["sales_rep"] == "Dan"
     assert f["customer"] == "DCW"
     assert f["billing_type"] == "T&M"
-    assert "deal:126" in (headers[0].entity_keys or [])
+    assert "deal:126" in ekeys
 
     # ── P&L economics as per-row commercial_total ``pl_metric`` atoms (one per
     #    sheet row, faithful label; the PM brief regroups them at render time) ──
