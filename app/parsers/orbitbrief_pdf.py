@@ -3979,7 +3979,9 @@ def _md_cell(value: Any) -> str:
 # ──────────────────────── internals ──────────────────────────────────────
 
 
-_BULLET_LINE_RE = re.compile(r"^\s*([-*•·\u2022]|\d+[.)])\s+(.+?)\s*$")
+_BULLET_LINE_RE = re.compile(
+    r"^\s*([-*•·\u2022]|\d+[.)]|[a-z][.)]|[ivx]{1,4}[.)])\s+(.+?)\s*$"
+)  # bullets, numbered, AND lettered/roman sub-items ("a. main office", "iv) ...").
 _HEADING_LINE_RE = re.compile(
     r"^\s*((?:[A-Z0-9][A-Z0-9 &/\-,()]{2,80})|(?:#{1,6}\s+.{2,80}))\s*$"
 )
