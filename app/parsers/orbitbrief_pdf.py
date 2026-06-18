@@ -2479,7 +2479,20 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         if page_image_counts[page_index] == 0 \
                 or _is_multi_paragraph_prose(page_texts[page_index]):
             return _build_text_rich_page(page_index)
-        return _build_heavyweight_page(page_index)
+        hv = _build_heavyweight_page(page_index)
+        # Coverage backstop — a clean text layer must NEVER be silently dropped.
+        # The heavyweight layout pipeline can return only image markers / nothing
+        # on a form or field-report page that carries embedded photos, losing all
+        # its label:value text (the Burger King HME form: Name / Store # / Site # /
+        # arrival-departure times / the NEXEO Q&A all vanished while 30 photos were
+        # marked). If the page HAS a real text layer but heavyweight produced no
+        # text, fall back to the prose/form splitter; the photos are still captured
+        # by the separate image-marker pass. Fires only when heavyweight emitted
+        # nothing, so pages it handles well (anyWAIR's geometry tables) are untouched.
+        if page_text_lengths[page_index] >= LOW_TEXT_PAGE_THRESHOLD \
+                and not _page_has_text_content(hv):
+            return _build_text_rich_page(page_index)
+        return hv
 
     # NOTE: PyMuPDF is NOT thread-safe — running the page loop on a
     # ThreadPoolExecutor crashes with SIGSEGV inside libmupdf. The
@@ -4814,6 +4827,32 @@ def _is_multi_paragraph_prose(page_text: str) -> bool:
         if len(s) >= 40 and " " in s and (s.rstrip()[-1:] in ".!?:" or len(s) >= 120):
             prose += 1
     return prose >= 3
+
+
+def _page_has_text_content(page: dict[str, Any]) -> bool:
+    """True when a built page carries real textual content (a heading, prose,
+    bullet, table or key-value block) — as opposed to nothing or only image /
+    boilerplate markers. Used as a coverage backstop: if a page HAS a clean text
+    layer but the heavyweight layout pipeline produced no text (a form / field-
+    report page with embedded photos drops its label:value text), we re-run it
+    through the text splitter so the text is never silently lost."""
+    def _walk(sections: list[dict[str, Any]]) -> bool:
+        for sec in sections or []:
+            if (sec.get("heading") or "").strip():
+                return True
+            for b in sec.get("blocks") or []:
+                if b.get("kind") in ("paragraph", "bullet_list", "table", "keyval"):
+                    txt = (b.get("text") or "").strip()
+                    if not txt and b.get("items"):
+                        txt = " ".join(str(x) for x in b["items"])
+                    if not txt and b.get("rows"):
+                        txt = " ".join(str(x) for r in b["rows"] for x in r)
+                    if len(txt.strip()) >= 12:
+                        return True
+            if _walk(sec.get("subsections") or []):
+                return True
+        return False
+    return _walk(page.get("sections") or [])
 
 
 def _detect_text_title(page_text: str) -> str | None:
