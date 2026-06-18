@@ -4359,14 +4359,57 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
         #    labels (no digits) names the columns; otherwise generic col_N.
         def _is_label(s: str) -> bool:
             return bool(s) and not any(c.isdigit() for c in s) and len(s.split()) <= 3
-        if _is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1]):
-            columns = [rows_lr[0][0], rows_lr[0][1]]
-            data = rows_lr[1:]
+
+        # 5a. A LABEL:VALUE FORM has no header — every row is a field pair (Name |
+        #     Austin Coryell, Date | …, BK Store Number | 557). The left column is
+        #     all field labels and the right column is HETEROGENEOUS values (text,
+        #     dates, numbers). Treat each row as a key:value pair so it reads
+        #     "Name: Austin Coryell", not a header cross-product
+        #     ("Name: Site Number | Austin Coryell: 16404"). A real data grid
+        #     (Factor | Weight, all-numeric right column) keeps header behaviour.
+        def _form_label(s: str) -> bool:
+            s = (s or "").strip()
+            return bool(s) and len(s.split()) <= 5 and s[-1:] not in ".!?:" \
+                and any(c.isalpha() for c in s)
+
+        def _numlike(s: str) -> bool:
+            return bool(re.fullmatch(r"[-$(]?[\d.,/: ]+(?:[ap]\.?m\.?)?\)?%?",
+                                     (s or "").strip(), re.I))
+        lefts = [r[0] for r in rows_lr]
+        rights = [r[1] for r in rows_lr if (r[1] or "").strip()]
+        # Require >=4 field rows so this fires on a genuine FORM (Name/Date/Store#/
+        # Site#/Arrival/Departure) and NOT on a 2-3 row data table whose first row
+        # is a real header ("Type | Qty." over "Cameras | 65") — which would
+        # otherwise leak the header pair "Type: Qty." as a noise atom.
+        is_form = (len(rows_lr) >= 4
+                   and sum(1 for ltxt in lefts if _form_label(ltxt)) >= max(2, 0.7 * len(lefts))
+                   and (not rights or sum(1 for v in rights if _numlike(v)) < 0.8 * len(rights)))
+        if is_form:
+            form_rows = rows_lr
+            # Even a form-shaped grid can open with a real COLUMN-HEADER pair
+            # ("Type | Qty.", "Equipment Type | Included in Buildout") — drop it
+            # when the right cell is a generic header word, so it doesn't leak as
+            # a "Type: Qty." noise atom. A genuine field pair (right cell is a
+            # VALUE: "Name | Austin Coryell") is kept.
+            _GENERIC_HEADER_RIGHT = {
+                "qty", "qty.", "quantity", "included in buildout", "total",
+                "number", "total number", "status", "description", "unit",
+                "price", "amount", "value", "notes", "cost", "rate",
+            }
+            if form_rows and (form_rows[0][1] or "").strip().lower().rstrip(":") in _GENERIC_HEADER_RIGHT:
+                form_rows = form_rows[1:]
+            columns = ["col_0"]
+            out_rows = [{"col_0": f"{r[0]}: {r[1]}".strip(" :")}
+                        for r in form_rows if (r[0] or r[1])]
         else:
-            columns = ["col_0", "col_1"]
-            data = rows_lr
-        out_rows = [{columns[0]: r[0], columns[1]: r[1]} for r in data
-                    if r[0] or r[1]]
+            if _is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1]):
+                columns = [rows_lr[0][0], rows_lr[0][1]]
+                data = rows_lr[1:]
+            else:
+                columns = ["col_0", "col_1"]
+                data = rows_lr
+            out_rows = [{columns[0]: r[0], columns[1]: r[1]} for r in data
+                        if r[0] or r[1]]
         if len(out_rows) < 1:
             continue
         blocks.append({"kind": "table", "columns": columns, "rows": out_rows,
@@ -4860,13 +4903,37 @@ def _page_captured_text_len(page: dict[str, Any]) -> int:
     return total
 
 
+_MONTHS_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+_WEEKDAYS_RE = r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*"
+_BARE_DATE_RE = re.compile(
+    r"^(?:" + _WEEKDAYS_RE + r"\.?,?\s*)?"
+    r"(?:" + _MONTHS_RE + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}"   # April 8, 2026
+    r"|\d{1,2}\s+" + _MONTHS_RE + r"\.?,?\s+\d{4}"                      # 8 April 2026
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"                                   # 4/8/2026
+    r"|\d{4}-\d{1,2}-\d{1,2})$",                                        # 2026-04-08
+    re.I,
+)
+
+
+def _is_bare_date_line(text: str) -> bool:
+    """True when a line is JUST a date ('Wednesday, April 8, 2026', '4/8/2026').
+
+    A standalone date at a page corner is timestamp furniture (repeated on every
+    page of a form/field-report export) — it is NOT the document title and NOT a
+    fact, so it must not be promoted to the section heading or emitted as an atom.
+    """
+    s = (text or "").strip()
+    return 6 <= len(s) <= 40 and bool(_BARE_DATE_RE.match(s))
+
+
 def _detect_text_title(page_text: str) -> str | None:
     """First prominent line of a text page — the document's main section.
 
-    Skips CRM id / reference bands ("000087 - … | HubSpot 60355665326") and
-    footer furniture so the returned line is the human title ("08 - Site Roster
-    & Facilities (Authoritative)"). Used to root every atom's section_path so
-    a sub-heading renders as a path ("<main section> > <sub heading>").
+    Skips CRM id / reference bands ("000087 - … | HubSpot 60355665326"), footer
+    furniture, and a bare timestamp ("Wednesday, April 8, 2026" in a form export's
+    page corner) so the returned line is the human title ("Burger King HME
+    Install"). Used to root every atom's section_path so a sub-heading renders as
+    a path ("<main section> > <sub heading>").
     """
     for raw in page_text.splitlines():
         line = raw.strip()
@@ -4876,6 +4943,8 @@ def _detect_text_title(page_text: str) -> str | None:
         # were the title.
         if line[-1] in ".!?,;:":
             continue
+        if _is_bare_date_line(line):
+            continue  # page-corner timestamp furniture, not the title
         low = line.lower()
         if "hubspot" in low and re.search(r"\d{4,}", line):
             continue  # CRM deal-id band, not the title
@@ -5130,6 +5199,17 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     for idx, raw in enumerate(lines):
         line = raw.rstrip()
         if not line.strip():
+            flush_paragraph()
+            flush_bullets()
+            continue
+
+        # A bare page-corner timestamp ("Wednesday, April 8, 2026") is furniture
+        # repeated on every page of a form/field-report export — it is not the
+        # title, not a section, and not a fact. Skip ONLY at the page top (the
+        # corner timestamp position) so it neither glues onto the real title nor
+        # becomes its own atom — a date deeper in the page is a real value (a
+        # "Date:" field, a revision date) and must be kept.
+        if idx <= 1 and _is_bare_date_line(line.strip()):
             flush_paragraph()
             flush_bullets()
             continue
