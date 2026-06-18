@@ -492,6 +492,68 @@ def _is_substantive_annotation(text: str) -> bool:
     return bool(_DIGIT_RE.search(t)) or len(words) >= 3 or len(t) >= 24
 
 
+_HOURS_LABEL_RE = re.compile(r"\b(hour|hrs?\b|total|labor)", re.I)
+_NUMLIKE_RE = re.compile(r"^[-$(]?\s?[\d,]+(?:\.\d+)?\s?%?\)?$")
+
+
+def _sheet_hours_context(rows: list[list[Any]], limit: int = 6) -> str:
+    """A compact digest of the sheet's own hour totals, e.g.
+    'Lead Tech Hrs: 212.75, LV Tech Hrs: 941.06, Helper Hrs: 364.75, total 1148.81'.
+    A side annotation ('Best Buy Quoted 920 hours') only means something against
+    the estimate it benchmarks, so this travels with the annotation as context.
+
+    Estimate totals are COLUMN-aligned: the hour labels are column headers and the
+    totals sit in a numeric row far below, so pair the totals row to its header row
+    by column index (not row adjacency)."""
+    grid = [[("" if c is None else str(c).strip()) for c in r] for r in rows]
+
+    def _num(s: str) -> float | None:
+        if not _NUMLIKE_RE.match(s):
+            return None
+        try:
+            return float(re.sub(r"[,$%()]", "", s))
+        except ValueError:
+            return None
+
+    # header row = a row with >=2 hour/total LABELS (not rate factors)
+    hdr_i = None
+    for i, r in enumerate(grid):
+        labels = [c for c in r if c and _HOURS_LABEL_RE.search(c)
+                  and not _NUMLIKE_RE.match(c) and "per " not in c.lower() and len(c) <= 40]
+        if len(labels) >= 2:
+            hdr_i = i
+            break
+    if hdr_i is None:
+        return ""
+    hdr = grid[hdr_i]
+    hour_cols = [ci for ci, h in enumerate(hdr)
+                 if h and _HOURS_LABEL_RE.search(h) and "per " not in h.lower() and len(h) <= 40]
+    # The TOTALS row is the column-sum row — same hour columns, largest magnitudes,
+    # and (unlike a task row) no leading text label. Across all candidate rows pick
+    # the one whose hour-column values sum largest; that's the estimate total.
+    best_pairs: list[str] = []
+    best_grand: float | None = None
+    best_sum = 0.0
+    for r in grid[hdr_i + 1:]:
+        vals = {ci: _num(r[ci]) for ci in hour_cols if ci < len(r) and _num(r[ci]) is not None}
+        if not vals:
+            continue
+        s = sum(abs(v) for v in vals.values())
+        if s <= best_sum:
+            continue
+        pairs = [f"{hdr[ci].rstrip(':')}: {v:g}" for ci, v in vals.items() if abs(v) >= 1]
+        if not pairs:
+            continue
+        row_nums = [v for v in (_num(c) for c in r) if v is not None]
+        best_sum, best_pairs = s, pairs[:limit]
+        best_grand = max(row_nums, key=abs) if row_nums else None
+    if not best_pairs:
+        return ""
+    if best_grand is not None and not any(("%g" % best_grand) in p for p in best_pairs):
+        best_pairs.append(f"total ~{best_grand:g}")
+    return ", ".join(best_pairs)
+
+
 def _is_label_cell(text: str) -> bool:
     """True when a cell reads like a label (a header/P&L term), so it is
     never mistaken for the *value* of the label to its left."""
@@ -3843,6 +3905,30 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         seq = 0
 
+        # ── Merge fragmented side-annotations + attach their neighbourhood ──
+        # A loose annotation often lands split across cells — "Best Buy Quoted"
+        # (label) in one cell, "920 hours" (value) two columns over — so it came
+        # through as two meaningless fragments. Stitch a label-only annotation to
+        # the value-only one that follows it (reading order), so the atom reads as
+        # one fact ("Best Buy Quoted 920 hours"). Then compute the sheet's own
+        # hour/total figures ONCE: a side note benchmarking our estimate is
+        # meaningless without the estimate, so every annotation carries it as
+        # context (this is what lets a reader — or the reconciliation head — see
+        # "competitor quote vs our number").
+        _ann_idx = [i for i, b in enumerate(blocks)
+                    if b.get("kind") == "text" and not b.get("title")
+                    and _is_substantive_annotation(str(b.get("text") or ""))]
+        _consumed_ann: set[int] = set()
+        for k, i in enumerate(_ann_idx):
+            txt = str(blocks[i].get("text") or "").strip()
+            if not _DIGIT_RE.search(txt) and k + 1 < len(_ann_idx):
+                j = _ann_idx[k + 1]
+                vtxt = str(blocks[j].get("text") or "").strip()
+                if _DIGIT_RE.search(vtxt) and len(vtxt) <= 18:   # value-only fragment
+                    blocks[i]["text"] = f"{txt} {vtxt}"
+                    _consumed_ann.add(j)
+        _sheet_ctx = _sheet_hours_context(rows)
+
         def _section_path(title: str | None) -> list[str]:
             return [sheet_name, title] if (sheet_name and title) else ([sheet_name] if sheet_name else [])
 
@@ -3968,20 +4054,27 @@ class XlsxParser(BaseParser):
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
                         parser_version=self.parser_version,
                     ))
+                elif bi in _consumed_ann:
+                    continue   # value fragment already stitched onto its label
                 elif txt and _is_substantive_annotation(txt):
                     # Titleless free-text that still carries a FACT — a side note
-                    # like "Best Buy quoted 950 hours" / "920 hours" sitting beside
-                    # an estimate table (competitive-quote intel). Dropping it is
-                    # silent data loss; capture it as a low-confidence loose
-                    # annotation, flagged for review, so a reviewer can keep or
-                    # discard it. Decorative one-word captions still fall through.
+                    # like "Best Buy quoted 950 hours" / "Best Buy Quoted 920 hours"
+                    # beside an estimate table (competitive-quote intel). Dropping it
+                    # is silent data loss; capture it as a low-confidence loose
+                    # annotation, flagged for review. Attach the sheet's own hour
+                    # figures as neighbour context so the note is legible on its own
+                    # (their 920 hrs vs our estimate) and the reconciliation head
+                    # has the number to compare against.
                     seq += 1
                     an_id = stable_id("atm", artifact_id, "xlsx_block_note", sheet_name, bi, seq)
+                    disp = f"{txt}  [annotation on '{sheet_name}'; sheet hours: {_sheet_ctx}]" if _sheet_ctx else txt
                     atoms.append(EvidenceAtom(
                         id=an_id, project_id=project_id, artifact_id=artifact_id,
-                        atom_type=AtomType.scope_item, raw_text=txt[:4000],
-                        normalized_text=txt[:4000].lower(),
-                        value={"kind": "sheet_annotation", "box_label": (sp[-1] if len(sp) > 1 else None)},
+                        atom_type=AtomType.scope_item, raw_text=disp[:4000],
+                        normalized_text=disp[:4000].lower(),
+                        value={"kind": "sheet_annotation", "annotation": txt,
+                               "neighbor_context": _sheet_ctx, "sheet_name": sheet_name,
+                               "box_label": (sp[-1] if len(sp) > 1 else None)},
                         entity_keys=[], source_refs=[_src(an_id, sp, "xlsx_block_note_v1")], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.55, confidence_raw=0.55, calibrated_confidence=0.55,
