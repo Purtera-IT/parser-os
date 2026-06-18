@@ -4531,6 +4531,150 @@ _CLAUSE_TITLE_FUNC = {"and", "of", "the", "for", "to", "in", "a", "an", "or",
 _RUNON_CLAUSE_RE = re.compile(r"^\d{1,2}\.\s+(.+)$")
 
 
+# ── Title-Case scope sub-headings ────────────────────────────────────────
+# A SOW lists each work activity as a short Title-Case label ("Unit Wiring",
+# "Media Panel Installation", "Camera Rough and Install", "MDF and IDF Closet
+# Buildout"), immediately followed by either a "<Provider> will …" sentence or a
+# "Type / Qty." mini-table. These are NOT all-caps, so _looks_like_section_heading
+# misses them and their content mis-roots under the previous heading (anyWAIR: 17
+# atoms dumped under "SOW VERSION"). The detector below is structural-first (a
+# short, terminal-punctuation-free, colon-free Title-Case line whose NEXT content
+# line is a provider sentence or a table header), with a SemanticRule confirming
+# the line actually NAMES a scope activity (so a stray Title-Case prose line such
+# as "Athens Georgia" or "First Second" doesn't get promoted).
+_SCOPE_PROVIDER_SENTENCE_RE = re.compile(
+    r"^(?:PurTera|Provider|Vendor|Contractor|Customer|Subcontractor|The\s+\w+)\b.*?\b"
+    r"(?:will|shall|may|is|are|provides?|installs?|completes?|performs?)\b",
+    re.I,
+)
+# Tabular header tokens that open a scope work-item's "Type / Qty." mini-table.
+_SCOPE_TABLE_HEADER_TOKENS = {
+    "type", "qty", "qty.", "quantity", "qty of homeruns", "closet type",
+    "equipment type", "from", "hr location", "number of idfs",
+}
+
+
+def _is_titlecase_heading_line(stripped: str) -> bool:
+    """A short Title-Case label that reads as a heading, not a sentence/fact.
+
+    Every alphabetic word must be Capitalized or a known joiner (and/of/the…); a
+    lowercase content word means it's a sentence fragment, not a heading. Excludes
+    all-caps (handled by _looks_like_section_heading), bullets, "Label: value"
+    facts, and terminal-punctuation lines.
+    """
+    if not (2 <= len(stripped) <= 48):
+        return False
+    if stripped[-1] in ".!?,;:":
+        return False
+    if ":" in stripped:                       # "Closet Type: MDF" — a fact, not a heading
+        return False
+    if stripped.isupper():                    # ALL-CAPS handled elsewhere
+        return False
+    if _BULLET_LINE_RE.match(stripped):
+        return False
+    words = stripped.split()
+    if not (1 <= len(words) <= 6):
+        return False
+    if not stripped[0].isupper():
+        return False
+    alpha_words = [w for w in words if any(c.isalpha() for c in w)]
+    if not alpha_words:
+        return False
+    digit_words = sum(1 for w in words if any(c.isdigit() for c in w))
+    if digit_words:                           # "V1 Chase Smith", "106" rows aren't headings
+        return False
+    for w in alpha_words:
+        first = next((c for c in w if c.isalpha()), "")
+        if first.isupper():
+            continue
+        if w.strip("-/&.").lower() in _CLAUSE_TITLE_FUNC:
+            continue
+        return False                          # a lowercase content word → it's prose
+    return True
+
+
+def _next_content_is_scope_anchor(lines: list[str], idx: int) -> bool:
+    """True when the line after ``idx`` anchors a scope work-item: a provider
+    sentence ("PurTera will install …") or a "Type / Qty." table header token."""
+    for j in range(idx + 1, len(lines)):
+        nxt = lines[j].strip()
+        if not nxt:
+            continue
+        low = nxt.lower().rstrip(".")
+        if low in _SCOPE_TABLE_HEADER_TOKENS:
+            return True
+        return bool(_SCOPE_PROVIDER_SENTENCE_RE.match(nxt))
+    return False
+
+
+# Table summary-row / column-header words that are NEVER a scope activity name —
+# "Total Drop", "Total Number", "Quantity", "Type" are tabular furniture, not
+# work-item headings. Used by the offline lexical fallback (and as a hard guard).
+_SCOPE_HEADING_STOPWORDS = {
+    "total", "number", "count", "quantity", "qty", "qty.", "type", "location",
+    "subtotal", "amount", "sum", "from", "included",
+}
+
+
+def _scope_heading_lexical(text: str) -> bool:
+    """Offline net for the scope-activity judgment: a structurally-gated Title-Case
+    line is a work-item heading UNLESS it opens with tabular-summary vocabulary
+    ("Total Drop", "Quantity", "Type")."""
+    words = (text or "").strip().lower().split()
+    if not words:
+        return False
+    return words[0] not in _SCOPE_HEADING_STOPWORDS
+
+
+_SCOPE_SUBHEADING_RULE = None
+
+
+def _scope_subheading_rule():
+    """SemanticRule: does this short Title-Case line NAME a scope work activity
+    (an install / buildout / wiring task), as opposed to a stray capitalized line
+    (a place name, a person, a date label)? Structural gating already constrains
+    the candidates, so the lexical fallback fires whenever the structure matched."""
+    global _SCOPE_SUBHEADING_RULE
+    if _SCOPE_SUBHEADING_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _SCOPE_SUBHEADING_RULE = SemanticRule(
+            name="scope_work_item_heading",
+            positives=[
+                "Unit Wiring", "Media Panel Installation", "Common Area",
+                "Fiber backbone", "Unit AP Installation",
+                "MDF and IDF Closet Buildout", "Camera Rough and Install",
+                "Access Control Rough and Install", "Speaker Rough and Install",
+                "Door Lock Installation", "Rack Buildout", "Cable Pull",
+                "Access Point Installation", "Cabling and Termination",
+                "Demolition and Removal", "Fiber Backbone Installation",
+            ],
+            negatives=[
+                "Athens Georgia", "Chase Smith", "First Second",
+                "Executive Summary", "Revision History", "Project Overview",
+                "Total Number", "Full Name", "Job Title",
+            ],
+            threshold=0.55,
+            lexical_fallback=_scope_heading_lexical,
+        )
+    return _SCOPE_SUBHEADING_RULE
+
+
+def _looks_like_scope_subheading(stripped: str, lines: list[str], idx: int) -> bool:
+    """A Title-Case scope work-item heading: short Title-Case label, anchored by a
+    provider sentence or Type/Qty table on the next line, confirmed by the
+    scope-activity SemanticRule. Universal across SOW formats."""
+    if not _is_titlecase_heading_line(stripped):
+        return False
+    if not _scope_heading_lexical(stripped):   # hard guard: never a tabular word
+        return False
+    if not _next_content_is_scope_anchor(lines, idx):
+        return False
+    try:
+        return _scope_subheading_rule().fires(stripped)
+    except Exception:
+        return True
+
+
 def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
     """A numbered clause whose Title-Case heading runs straight into its body on
     ONE line — e.g. ``"8.  Contract Award and Interpretations ACE may accept …"``
@@ -4936,8 +5080,18 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             bullet_buffer.append(bullet_m.group(2).strip())
             continue
 
-        # heading guess (all caps or markdown-style #)
+        # Title-Case scope work-item heading ("Media Panel Installation",
+        # "Camera Rough and Install") — not all-caps, so the heading rule below
+        # misses it and its table/description would mis-root under the previous
+        # section. Anchored by a provider sentence or Type/Qty table on the next
+        # line + confirmed by the scope-activity SemanticRule.
         stripped = line.strip()
+        if _looks_like_scope_subheading(stripped, lines, idx):
+            flush_section()
+            current_heading = stripped
+            continue
+
+        # heading guess (all caps or markdown-style #)
         if len(stripped) <= 80 and _looks_like_section_heading(stripped):
             flush_section()
             current_heading = stripped.lstrip("# ").strip()
