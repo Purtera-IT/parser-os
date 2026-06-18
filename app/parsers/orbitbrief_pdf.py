@@ -916,6 +916,7 @@ def _pdf_image_markers(
     import os as _os
     img_root = Path(_os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
     saved_by_xref: dict[int, tuple[str, int]] = {}  # xref -> (saved_path, size); same image reused across pages
+    emitted_xrefs: set[int] = set()  # one marker atom per UNIQUE image, not per page
     try:
         for page_index in range(doc.page_count):
             try:
@@ -925,6 +926,13 @@ def _pdf_image_markers(
                 continue
             for ii, img in enumerate(images):
                 xref = img[0] if img else ii
+                # A logo/letterhead embedded once but referenced on every page is
+                # ONE image — emit a single marker for it (on first sight), not a
+                # duplicate "needs_extractor" atom per page (was flooding scan-heavy
+                # PDFs with 10+ identical logo markers).
+                if xref in emitted_xrefs:
+                    continue
+                emitted_xrefs.add(xref)
                 saved_path: str | None = None
                 size = 0
                 if xref in saved_by_xref:
