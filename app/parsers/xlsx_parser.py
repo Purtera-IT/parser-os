@@ -393,6 +393,85 @@ _DEAL_HEADER_LABELS: dict[str, str] = {
 _PL_METRIC_WORDS = frozenset({"revenue", "cost", "margin"})
 
 
+# A margin-percent label doesn't always read "Margin % on <Category>". Deal kits
+# phrase it many ways ("Net Margin (%)", "Gross Margin %", bare "Margin %") and
+# sometimes carry a garbled template label ("Lift/Rental on Miscellaneous" in the
+# margin-% slot). Recognise the MEANING by embedding instead of one rigid regex,
+# so the recogniser generalises across every estimating workbook. Offline, the
+# lexical fallback fires on the universal cue (a "margin" label with a percent
+# marker); the embedder (dev/prod) additionally catches phrasings with neither.
+_PL_MARGIN_PCT_RULE = None
+_PCT_CUE_RE = re.compile(r"%|percent|\bpct\b", re.I)
+
+
+def _margin_pct_lexical(text: str) -> bool:
+    t = (text or "").lower()
+    return "margin" in t and bool(_PCT_CUE_RE.search(t))
+
+
+def _pl_margin_pct_rule():
+    global _PL_MARGIN_PCT_RULE
+    if _PL_MARGIN_PCT_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _PL_MARGIN_PCT_RULE = SemanticRule(
+            name="pl_margin_pct_label",
+            positives=[
+                "Margin % on Total Deal", "Margin % on Labor", "Margin % on PMO",
+                "Margin % on Materials", "Net Margin (%)", "Net Margin %",
+                "Gross Margin %", "Gross Margin (%)", "Margin %", "GM %",
+                "Profit Margin %", "Margin Percent", "% Margin",
+            ],
+            negatives=[
+                "Total Deal Revenue", "Total Labor Cost", "Total Deal Margin",
+                "Net Profit ($)", "Net Profit", "Margin $", "Margin Dollars",
+                "Customer", "PO Number", "Sales Rep", "Total PMO Revenue",
+                # other percent-bearing labels that are NOT a margin %
+                "% Complete", "% of Total", "Tax %", "Discount %",
+                "Markup %", "% Allocation",
+            ],
+            threshold=0.60,
+            lexical_fallback=_margin_pct_lexical,
+        )
+    return _PL_MARGIN_PCT_RULE
+
+
+def _is_margin_pct_label(orig: str) -> tuple[bool, str | None]:
+    """(is_margin_pct, explicit_category_or_None). Tries the strict "Margin % on
+    <cat>" regex first (which also yields the category), then the semantic rule
+    for the many category-less phrasings ("Net Margin (%)", "Margin %")."""
+    m = _PL_MARGIN_PCT_RE.match(orig)
+    if m:
+        return True, m.group("cat")
+    low = orig.lower()
+    # structural prefilter: a margin-% label always carries a PERCENT cue. This is
+    # what separates it from the bare "<Category> Margin" dollar row (which has no
+    # %, matches the metric regex below, and must NOT be read as a percentage). It
+    # also bounds the embedder to plausible candidates. The semantic rule then
+    # disambiguates among percent-bearing labels ("Net Margin (%)" → yes,
+    # "% Complete" / "Tax %" → no).
+    if not _PCT_CUE_RE.search(low):
+        return False, None
+    try:
+        if _pl_margin_pct_rule().fires(orig):
+            return True, None
+    except Exception:
+        pass
+    return False, None
+
+
+def _looks_like_pct_or_error(value: Any) -> bool:
+    """A cell value that reads as a margin-percent result: a fraction/percent, or
+    a failed formula (#DIV/0!) — the value shape that sits in a margin-% slot."""
+    if _excel_error_str(value) is not None:
+        return True
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return -1.5 <= float(value) <= 1.5      # a fraction (0.2737), not a $ figure
+    s = str(value).strip()
+    return bool(s) and s.endswith("%")
+
+
 def _norm_label(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
 
@@ -1985,6 +2064,26 @@ class XlsxParser(BaseParser):
         # category key -> {"display", "revenue", "cost", "margin",
         #                  "margin_pct", "row"}
         pl: dict[str, dict[str, Any]] = {}
+        # per-column running category, so a margin-% row whose label carries no
+        # category ("Net Margin (%)", or a garbled "Lift/Rental on Miscellaneous")
+        # inherits the category of the P&L block it sits in.
+        last_cat: dict[int, tuple[str, str]] = {}
+
+        def _store_margin_pct(slot, rv, orig, ri, ci):
+            """Store a margin-% value (or its #DIV/0! error) on a category slot,
+            faithfully — a fraction becomes a percent, a failed formula is kept."""
+            n = _coerce_pl_number(rv)
+            if n is not None and slot.get("margin_pct") is None:
+                slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
+                slot["margin_pct_label"] = orig
+                slot["margin_pct_pos"] = (ri + 1, ci + 1)
+            elif n is None and slot.get("margin_pct") is None \
+                    and slot.get("margin_pct_error") is None:
+                err = _excel_error_str(rv)
+                if err:
+                    slot["margin_pct_error"] = err
+                    slot["margin_pct_label"] = orig
+                    slot["margin_pct_pos"] = (ri + 1, ci + 1)
 
         for ri, row in enumerate(rows):
             for ci, cell in enumerate(row):
@@ -2007,28 +2106,21 @@ class XlsxParser(BaseParser):
                         header_labels[key] = orig   # faithful raw label ("OPPTY #")
                     continue
 
-                # ── P&L margin-percent line ──
-                mp = _PL_MARGIN_PCT_RE.match(orig)
-                if mp:
-                    ckey, disp = _norm_pl_category(mp.group("cat"))
-                    rv = _right_neighbor_value(row, ci)
-                    n = _coerce_pl_number(rv)
-                    slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
-                    if n is not None and slot.get("margin_pct") is None:
-                        # Store as a percentage; deal-kit fractions (0.2857)
-                        # become 28.57, explicit percents pass through.
-                        slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
-                        slot["margin_pct_label"] = orig   # faithful raw row label
-                        slot["margin_pct_pos"] = (ri + 1, ci + 1)
-                    elif n is None and slot.get("margin_pct") is None \
-                            and slot.get("margin_pct_error") is None:
-                        # A failed formula (#DIV/0!) is faithful content, not noise.
-                        err = _excel_error_str(rv)
-                        if err:
-                            slot["margin_pct_error"] = err
-                            slot["margin_pct_label"] = orig
-                            slot["margin_pct_pos"] = (ri + 1, ci + 1)
-                    continue
+                # ── P&L margin-percent line (regex OR semantic) ──
+                is_mpct, cat_txt = _is_margin_pct_label(orig)
+                if is_mpct:
+                    if cat_txt:
+                        ckey, disp = _norm_pl_category(cat_txt)
+                    elif ci in last_cat:          # "Net Margin (%)" — inherit block
+                        ckey, disp = last_cat[ci]
+                    else:
+                        ckey = disp = None
+                    if ckey is not None:
+                        rv = _right_neighbor_value(row, ci)
+                        slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
+                        last_cat[ci] = (ckey, disp)
+                        _store_margin_pct(slot, rv, orig, ri, ci)
+                        continue
 
                 # ── P&L revenue / cost / margin line ──
                 mm = _PL_METRIC_RE.match(orig)
@@ -2038,6 +2130,7 @@ class XlsxParser(BaseParser):
                     rv = _right_neighbor_value(row, ci)
                     n = _coerce_pl_number(rv)
                     slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
+                    last_cat[ci] = (ckey, disp)
                     if n is not None and slot.get(metric) is None:
                         slot[metric] = round(n, 2)
                         slot[metric + "_label"] = orig   # faithful raw row label
@@ -2049,6 +2142,24 @@ class XlsxParser(BaseParser):
                             slot[metric + "_error"] = err
                             slot[metric + "_label"] = orig
                             slot[metric + "_pos"] = (ri + 1, ci + 1)
+                    continue
+
+                # ── Structural backstop: a garbled label in the margin-% slot ──
+                # An unclassified P&L-block row whose value reads as a percent or a
+                # failed formula, sitting right after the category's Margin row
+                # (which has a margin but no margin-% yet), IS that category's
+                # margin %. Catches template typos ("Lift/Rental on Miscellaneous")
+                # universally — by position, no customer-specific label needed.
+                if ci in last_cat:
+                    ckey, disp = last_cat[ci]
+                    slot = pl.get(ckey)
+                    if slot and slot.get("margin_pct") is None \
+                            and slot.get("margin_pct_error") is None \
+                            and (slot.get("margin") is not None or slot.get("margin_error") is not None):
+                        rv = _right_neighbor_value(row, ci)
+                        if _looks_like_pct_or_error(rv):
+                            _store_margin_pct(slot, rv, orig, ri, ci)
+                            continue
 
         # Confidence gate: only trust the structured P&L view when the grid
         # actually reads like a deal-kit financial summary — at least two
