@@ -487,6 +487,17 @@ _EXCEL_ERROR_RE = re.compile(
 )
 
 
+def _excel_error_str(value: Any) -> str | None:
+    """The Excel error literal (``#DIV/0!``, ``#REF!``, …) the cell carries, else
+    None. A failed formula is still FAITHFUL content — ``Margin % on PMO`` showing
+    ``#DIV/0!`` tells the PM the metric is undefined because PMO revenue is $0 — so
+    a P&L row whose value is an error is captured (flagged), never silently dropped."""
+    if value is None or isinstance(value, bool):
+        return None
+    s = re.sub(r"\s+", " ", str(value).strip())
+    return s if s and _EXCEL_ERROR_RE.match(s) else None
+
+
 def _coerce_header_value(val: Any) -> str | None:
     """Normalize a header *value* cell to a string, or None when it isn't a
     usable value (blank, an Excel error literal, or itself a label/P&L term)."""
@@ -2000,7 +2011,8 @@ class XlsxParser(BaseParser):
                 mp = _PL_MARGIN_PCT_RE.match(orig)
                 if mp:
                     ckey, disp = _norm_pl_category(mp.group("cat"))
-                    n = _coerce_pl_number(_right_neighbor_value(row, ci))
+                    rv = _right_neighbor_value(row, ci)
+                    n = _coerce_pl_number(rv)
                     slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
                     if n is not None and slot.get("margin_pct") is None:
                         # Store as a percentage; deal-kit fractions (0.2857)
@@ -2008,6 +2020,14 @@ class XlsxParser(BaseParser):
                         slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
                         slot["margin_pct_label"] = orig   # faithful raw row label
                         slot["margin_pct_pos"] = (ri + 1, ci + 1)
+                    elif n is None and slot.get("margin_pct") is None \
+                            and slot.get("margin_pct_error") is None:
+                        # A failed formula (#DIV/0!) is faithful content, not noise.
+                        err = _excel_error_str(rv)
+                        if err:
+                            slot["margin_pct_error"] = err
+                            slot["margin_pct_label"] = orig
+                            slot["margin_pct_pos"] = (ri + 1, ci + 1)
                     continue
 
                 # ── P&L revenue / cost / margin line ──
@@ -2015,12 +2035,20 @@ class XlsxParser(BaseParser):
                 if mm and mm.group("metric").lower() in _PL_METRIC_WORDS:
                     ckey, disp = _norm_pl_category(mm.group("cat"))
                     metric = mm.group("metric").lower()
-                    n = _coerce_pl_number(_right_neighbor_value(row, ci))
+                    rv = _right_neighbor_value(row, ci)
+                    n = _coerce_pl_number(rv)
                     slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
                     if n is not None and slot.get(metric) is None:
                         slot[metric] = round(n, 2)
                         slot[metric + "_label"] = orig   # faithful raw row label
                         slot[metric + "_pos"] = (ri + 1, ci + 1)
+                    elif n is None and slot.get(metric) is None \
+                            and slot.get(metric + "_error") is None:
+                        err = _excel_error_str(rv)
+                        if err:
+                            slot[metric + "_error"] = err
+                            slot[metric + "_label"] = orig
+                            slot[metric + "_pos"] = (ri + 1, ci + 1)
 
         # Confidence gate: only trust the structured P&L view when the grid
         # actually reads like a deal-kit financial summary — at least two
@@ -2192,35 +2220,51 @@ class XlsxParser(BaseParser):
         def _fmt(v: Any) -> str:
             return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
 
-        def _pl_atom(ckey, slot, metric, label, val, text):
+        def _pl_atom(ckey, slot, metric, label, val, text, flags=None, is_error=False):
             prow, pcol = slot.get(metric + "_pos", (slot.get("row", 0), slot.get("col", 1)))
             aid = stable_id("atm", artifact_id, "pl", sheet_name, ckey, metric)
+            value = {"kind": "pl_metric", "category": slot["display"], "category_key": ckey,
+                     "metric": metric, "value": val, "sheet_name": sheet_name}
+            if is_error:
+                value["formula_error"] = val
             return EvidenceAtom(
                 id=aid, project_id=project_id, artifact_id=artifact_id,
                 atom_type=AtomType.commercial_total, raw_text=text, normalized_text=text.lower(),
-                value={"kind": "pl_metric", "category": slot["display"], "category_key": ckey,
-                       "metric": metric, "value": val, "sheet_name": sheet_name},
+                value=value,
                 entity_keys=([f"money:{int(round(val))}"]
                              if isinstance(val, (int, float)) and abs(val) >= _MIN_MONEY_VALUE
                              and metric != "margin_pct" else []),
                 source_refs=[_src(f"pl_{ckey}_{metric}", {"row": prow, "col": pcol})],
                 receipts=[], authority_class=AuthorityClass.vendor_quote,
                 confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
-                review_status=ReviewStatus.needs_review, review_flags=[],
+                review_status=ReviewStatus.needs_review, review_flags=list(flags or []),
                 parser_version=self.parser_version)
 
         for ckey, slot in sorted(pl.items(), key=lambda kv: (kv[1].get("col", 1), kv[1].get("row", 1_000_000))):
             disp = slot["display"]
             for metric in ("revenue", "cost", "margin"):
                 val = slot.get(metric)
-                if val is None:
+                if val is not None:
+                    label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
+                    atoms.append(_pl_atom(ckey, slot, metric, label, val, f"{label}: {_fmt(val)}"))
                     continue
-                label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
-                atoms.append(_pl_atom(ckey, slot, metric, label, val, f"{label}: {_fmt(val)}"))
+                # A formula that failed (#DIV/0!) is faithful, meaningful content —
+                # emit it (flagged) so the metric isn't a silent gap in the P&L.
+                err = slot.get(metric + "_error")
+                if err:
+                    label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
+                    atoms.append(_pl_atom(ckey, slot, metric, label, err, f"{label}: {err}",
+                                          flags=["xlsx_parser:formula_error"], is_error=True))
             mpct = slot.get("margin_pct")
             if mpct is not None:
                 label = slot.get("margin_pct_label") or f"Margin % on {disp}"
                 atoms.append(_pl_atom(ckey, slot, "margin_pct", label, mpct, f"{label}: {mpct:g}%"))
+            else:
+                err = slot.get("margin_pct_error")
+                if err:
+                    label = slot.get("margin_pct_label") or f"Margin % on {disp}"
+                    atoms.append(_pl_atom(ckey, slot, "margin_pct", label, err, f"{label}: {err}",
+                                          flags=["xlsx_parser:formula_error"], is_error=True))
 
         # If the structured pass found nothing usable (an oddly-shaped
         # sheet), fall back to the generic commercial emitter so we never
