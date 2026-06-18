@@ -140,6 +140,83 @@ def _peel_next_question(segment: str) -> tuple[str, str]:
     return segment[: m.start()].strip(), segment[m.start() :].strip()
 
 
+_FORM_INTERROG_RE = re.compile(
+    r"^(?:did|is|are|was|were|have|has|had|do|does|can|could|will|would|should|"
+    r"how|what|where|when|why|which|who)\b", re.I,
+)
+_FORM_INSTRUCTION_RE = re.compile(
+    r"^(?:upload|attach|provide|take\b|see\b|please\b|enter\b|select\b|note:|"
+    r"photo of|photos of|showing\b)", re.I,
+)
+
+
+def _looks_like_form_answer(line: str) -> bool:
+    """A short value that answers a form question — 'Yes', 'No', 'New Tablet',
+    '8' — not itself a question, instruction, or long sentence."""
+    s = (line or "").strip()
+    if not s or len(s.split()) > 6 or s.endswith("?"):
+        return False
+    return not _FORM_INTERROG_RE.match(s) and not _FORM_INSTRUCTION_RE.match(s)
+
+
+def _regroup_form_qa(text: str) -> str:
+    """On a questionnaire / field-report page, join each question with its answer
+    so 'Have you installed the NEXEO Box?\\nYes' becomes ONE 'Q?  A' unit instead
+    of a blob that glues the question, its answer, and the next instruction. Gated
+    to pages carrying >=2 question lines, so ordinary prose/scope pages pass
+    through untouched. A multi-line question (\"Is this store a 2 LANE Store for
+    Drive\" + \"Thru?\") is reassembled; instruction lines ('Upload 4 Photos…') stay
+    on their own so they become their own atoms."""
+    raw = [ln.strip() for ln in (text or "").splitlines()]
+    if sum(1 for ln in raw if ln.endswith("?")) < 2:
+        return text
+    units: list[str] = []
+    i, n = 0, len(raw)
+    while i < n:
+        ln = raw[i]
+        if not ln:
+            i += 1
+            continue
+        if _FORM_INTERROG_RE.match(ln) or ln.endswith("?"):
+            # assemble a (possibly multi-line) question ending in '?'
+            parts = [ln]
+            i += 1
+            joined = 0
+            while (not parts[-1].endswith("?") and i < n and raw[i] and joined < 2
+                   and not _FORM_INSTRUCTION_RE.match(raw[i])
+                   and not _looks_like_form_answer(raw[i])):
+                parts.append(raw[i])
+                i += 1
+                joined += 1
+            question = " ".join(parts).strip()
+            answer = ""
+            if i < n and _looks_like_form_answer(raw[i]):
+                answer = raw[i]
+                i += 1
+            units.append(f"{question}  {answer}".strip())
+        elif _FORM_INSTRUCTION_RE.match(ln):
+            # an instruction ("Upload 4 Photos…") wraps across lines — join the
+            # sentence-continuation lines (until the next question / instruction /
+            # short header) so it is one atom, not three fragments.
+            parts = [ln]
+            i += 1
+            while (i < n and raw[i]
+                   and not raw[i].endswith("?") and not _FORM_INTERROG_RE.match(raw[i])
+                   and not _FORM_INSTRUCTION_RE.match(raw[i])
+                   and (raw[i][0].islower() or len(raw[i].split()) >= 4)):
+                parts.append(raw[i])
+                i += 1
+            units.append(" ".join(parts).strip())
+        else:
+            # standalone line — a section header ("HME NEXO Box Install", "BK
+            # Audio", "POS Cabling") or stray value; keep as its own unit.
+            units.append(ln)
+            i += 1
+    # blank-line-separate every unit so the prose splitter emits each Q&A,
+    # instruction and header as its OWN atom instead of gluing them together.
+    return "\n\n".join(units)
+
+
 def _split_form_qa_blob(text: str) -> list[str]:
     """Split a free-form Q&A interview transcript into per-question atoms.
 
@@ -2367,7 +2444,14 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         ruled_blocks, ruled_bboxes = _extract_ruled_tables(pdf_path, page_index)
         # Also recover UNRULED column tables (date|event timelines, Factor|Weight
         # grids, key|value blocks) the prose splitter would otherwise scramble.
-        col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
+        # BUT skip whitespace-column extraction on a questionnaire page: a form's
+        # question and its answer sit in different x-columns, so the column
+        # detector would grab them as a 2-col table and fragment the Q&A — the
+        # Q&A regrouper below owns those pages instead.
+        if _is_questionnaire_page(page_texts[page_index]):
+            col_blocks, col_bboxes = [], []
+        else:
+            col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
         table_blocks, table_bboxes = _merge_table_extractions(
             ruled_blocks, ruled_bboxes, col_blocks, col_bboxes
         )
@@ -2378,6 +2462,12 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             )
             if stripped is not None:
                 prose_text = stripped
+
+        # On a questionnaire / field-report page, join each question with its
+        # answer ("Have you installed the NEXEO Box?\nYes" -> one Q&A unit) before
+        # the prose splitter sees it, so the answer isn't buried in a blob with the
+        # next instruction. No-op on non-form pages (gated on >=2 question lines).
+        prose_text = _regroup_form_qa(prose_text)
 
         sections = _text_rich_sections(prose_text)
         if table_blocks:
@@ -2477,7 +2567,12 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # all in one), whereas the prose splitter respects the paragraph breaks.
         # The letterhead image is still captured by the separate image-marker pass.
         if page_image_counts[page_index] == 0 \
-                or _is_multi_paragraph_prose(page_texts[page_index]):
+                or _is_multi_paragraph_prose(page_texts[page_index]) \
+                or _is_questionnaire_page(page_texts[page_index]):
+            # A questionnaire / field-report page (>=2 question lines) is form text,
+            # NOT a visual layout — the heavyweight pipeline scrambles its Q&A
+            # ("Is this store a 2 LANE Store for Drive  No Thru?"). Send it to the
+            # text/form path even though it carries photos (captured separately).
             return _build_text_rich_page(page_index)
         hv = _build_heavyweight_page(page_index)
         # Coverage backstop — a clean text layer must NEVER be silently dropped.
@@ -4873,6 +4968,15 @@ def _is_multi_paragraph_prose(page_text: str) -> bool:
         if len(s) >= 40 and " " in s and (s.rstrip()[-1:] in ".!?:" or len(s) >= 120):
             prose += 1
     return prose >= 3
+
+
+def _is_questionnaire_page(page_text: str) -> bool:
+    """True when a page is a form / field-report questionnaire — >=2 lines ending
+    in a question mark. Such a page is form TEXT, not a visual figure, so it must
+    take the text/form path (the heavyweight layout pipeline scrambles its Q&A)."""
+    if not page_text:
+        return False
+    return sum(1 for ln in page_text.splitlines() if ln.strip().endswith("?")) >= 2
 
 
 def _page_captured_text_len(page: dict[str, Any]) -> int:
