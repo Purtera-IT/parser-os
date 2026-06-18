@@ -11,10 +11,14 @@ import sys, json, glob, zipfile, os, shutil, re, html as _h
 import numpy as np
 
 def _copy_xlsx_open_first_sheet(src, dst):
-    """Copy an xlsx but make Excel OPEN it on the FIRST sheet (the Deal Kit),
-    not whatever tab the author last left active. Surgical zip edit — only the
-    activeTab pointer + per-sheet tabSelected flags change; every byte of data,
-    formula and formatting is preserved (unlike an openpyxl re-save)."""
+    """Copy an xlsx but (a) UNHIDE every sheet and (b) make Excel OPEN it on the
+    FIRST sheet (the Deal Kit). Deal kits ship with the money sheets hidden — the
+    anyWAIR CALC hides Deal Kit AND Gantt Financials — but the parser reads them
+    and the reviewer must see them; leaving them hidden also made the old
+    activeTab=0 pointer reference a hidden sheet, which Excel treats as a corrupt
+    workbook. Surgical zip edit — only sheet visibility + the activeTab/firstSheet
+    pointers + per-sheet tabSelected flags change; every byte of data, formula and
+    formatting is preserved (unlike an openpyxl re-save)."""
     import zipfile, shutil as _sh
     try:
         zin = zipfile.ZipFile(src)
@@ -23,10 +27,15 @@ def _copy_xlsx_open_first_sheet(src, dst):
                 data = zin.read(it.filename)
                 if it.filename == "xl/workbook.xml":
                     t = data.decode("utf-8", "ignore")
+                    # unhide all sheets so nothing (Deal Kit, Gantt Financials, …)
+                    # is concealed from the reviewer / downloaded copy
+                    t = re.sub(r'\s+state="(?:hidden|veryHidden)"', "", t)
+                    # open on the first sheet (now visible); start the tab strip at it
                     if "activeTab=" in t:
                         t = re.sub(r'activeTab="\d+"', 'activeTab="0"', t)
                     elif "<workbookView" in t:
                         t = t.replace("<workbookView", '<workbookView activeTab="0"', 1)
+                    t = re.sub(r'\s+firstSheet="\d+"', "", t)
                     data = t.encode("utf-8")
                 elif re.match(r"xl/worksheets/sheet\d+\.xml$", it.filename):
                     # drop the "this is the open tab" flag on every sheet; activeTab=0 then wins
