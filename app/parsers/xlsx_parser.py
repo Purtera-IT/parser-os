@@ -476,6 +476,22 @@ def _norm_label(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
 
 
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _is_substantive_annotation(text: str) -> bool:
+    """A titleless free-text cell block worth keeping as a loose annotation, vs a
+    decorative one-word caption. Substantive = carries a quantity ("920 hours",
+    "Best Buy quoted 950 hours") OR reads as a real phrase (>=3 words / >=24
+    chars). Must contain a letter, so a stray number alone (already captured by
+    the numeric extractors) doesn't double-emit here."""
+    t = (text or "").strip()
+    if not t or not any(c.isalpha() for c in t):
+        return False
+    words = t.split()
+    return bool(_DIGIT_RE.search(t)) or len(words) >= 3 or len(t) >= 24
+
+
 def _is_label_cell(text: str) -> bool:
     """True when a cell reads like a label (a header/P&L term), so it is
     never mistaken for the *value* of the label to its left."""
@@ -3950,6 +3966,27 @@ class XlsxParser(BaseParser):
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
+                        parser_version=self.parser_version,
+                    ))
+                elif txt and _is_substantive_annotation(txt):
+                    # Titleless free-text that still carries a FACT — a side note
+                    # like "Best Buy quoted 950 hours" / "920 hours" sitting beside
+                    # an estimate table (competitive-quote intel). Dropping it is
+                    # silent data loss; capture it as a low-confidence loose
+                    # annotation, flagged for review, so a reviewer can keep or
+                    # discard it. Decorative one-word captions still fall through.
+                    seq += 1
+                    an_id = stable_id("atm", artifact_id, "xlsx_block_note", sheet_name, bi, seq)
+                    atoms.append(EvidenceAtom(
+                        id=an_id, project_id=project_id, artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item, raw_text=txt[:4000],
+                        normalized_text=txt[:4000].lower(),
+                        value={"kind": "sheet_annotation", "box_label": (sp[-1] if len(sp) > 1 else None)},
+                        entity_keys=[], source_refs=[_src(an_id, sp, "xlsx_block_note_v1")], receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.55, confidence_raw=0.55, calibrated_confidence=0.55,
+                        review_status=ReviewStatus.needs_review,
+                        review_flags=["xlsx_parser:loose_annotation"],
                         parser_version=self.parser_version,
                     ))
         return atoms
