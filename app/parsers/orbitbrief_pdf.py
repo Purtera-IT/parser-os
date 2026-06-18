@@ -4907,10 +4907,12 @@ _MONTHS_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
 _WEEKDAYS_RE = r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*"
 _BARE_DATE_RE = re.compile(
     r"^(?:" + _WEEKDAYS_RE + r"\.?,?\s*)?"
-    r"(?:" + _MONTHS_RE + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}"   # April 8, 2026
-    r"|\d{1,2}\s+" + _MONTHS_RE + r"\.?,?\s+\d{4}"                      # 8 April 2026
-    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"                                   # 4/8/2026
-    r"|\d{4}-\d{1,2}-\d{1,2})$",                                        # 2026-04-08
+    # ',?\s+' would miss 'May 14,2026' (comma, no space) — use '[,\s]+' so a comma
+    # OR a space (or both) separates day from year.
+    r"(?:" + _MONTHS_RE + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?[,\s]+\d{4}"   # April 8, 2026 / May 14,2026
+    r"|\d{1,2}\s+" + _MONTHS_RE + r"\.?[,\s]+\d{4}"                      # 8 April 2026
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"                                    # 4/8/2026
+    r"|\d{4}-\d{1,2}-\d{1,2})$",                                         # 2026-04-08
     re.I,
 )
 
@@ -4926,31 +4928,80 @@ def _is_bare_date_line(text: str) -> bool:
     return 6 <= len(s) <= 40 and bool(_BARE_DATE_RE.match(s))
 
 
+_TITLE_LINE_RULE = None
+
+
+def _title_line_lexical(text: str) -> bool:
+    """Offline net for 'is this line a document title?': a short, non-sentence
+    label that is NOT a date, page footer, or CRM-id band. This is the structural
+    fallback when the embedder is unreachable (and the deterministic test path)."""
+    s = (text or "").strip()
+    if not s or len(s) > 90 or s[-1] in ".!?,;:":
+        return False
+    if _is_bare_date_line(s):
+        return False
+    if _looks_like_page_footer(s):
+        return False
+    low = s.lower()
+    if "hubspot" in low and re.search(r"\d{4,}", s):
+        return False
+    return True
+
+
+def _title_line_rule():
+    """SemanticRule: does this line read like a DOCUMENT/SECTION TITLE ('Burger
+    King HME Install', 'Statement of Work') rather than an accessory that belongs
+    in the path metadata, not the title — a date, page furniture, an id, a bare
+    value? Recognising title-ness by MEANING generalises past the fixed furniture
+    regexes (a date is 'obviously never a title'); the regex net is the offline
+    fallback."""
+    global _TITLE_LINE_RULE
+    if _TITLE_LINE_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _TITLE_LINE_RULE = SemanticRule(
+            name="document_title_line",
+            positives=[
+                "Burger King HME Install", "Statement of Work", "Project Overview",
+                "Master Services Agreement", "Scope of Work", "Field Service Report",
+                "HME NEXO Box Install", "Installation Checklist", "Site Roster & Facilities",
+                "Network Cabling Proposal", "Deal Kit Summary", "Work Order",
+                "anyWAIR UGA", "Closeout Report", "Executive Summary",
+            ],
+            negatives=[
+                "Wednesday, April 8, 2026", "April 8, 2026", "4/8/2026", "2026-04-08",
+                "Page 1 of 5", "www.purtera-it.com", "Confidential",
+                "000087 - OPTBOT | HubSpot 60355665326", "06:00 AM", "Yes", "557",
+                "Rev 2", "Sheet 1",
+            ],
+            threshold=0.52,
+            lexical_fallback=_title_line_lexical,
+        )
+    return _TITLE_LINE_RULE
+
+
 def _detect_text_title(page_text: str) -> str | None:
     """First prominent line of a text page — the document's main section.
 
-    Skips CRM id / reference bands ("000087 - … | HubSpot 60355665326"), footer
-    furniture, and a bare timestamp ("Wednesday, April 8, 2026" in a form export's
-    page corner) so the returned line is the human title ("Burger King HME
-    Install"). Used to root every atom's section_path so a sub-heading renders as
-    a path ("<main section> > <sub heading>").
+    Returns the human title ("Burger King HME Install"), skipping accessories that
+    belong in path metadata rather than the title — a page-corner timestamp
+    ("Wednesday, April 8, 2026"), CRM id bands, footer furniture. The judgment is
+    semantic (a date is never a title; a SemanticRule that has seen real titles
+    knows that), with the furniture regexes as the offline fallback. Used to root
+    every atom's section_path so a sub-heading renders as a path.
     """
     for raw in page_text.splitlines():
         line = raw.strip()
         if not line or len(line) > 90:
             continue
-        # A title is a label, not a sentence — never strip real prose as if it
-        # were the title.
+        # A title is a label, not a sentence.
         if line[-1] in ".!?,;:":
             continue
-        if _is_bare_date_line(line):
-            continue  # page-corner timestamp furniture, not the title
-        low = line.lower()
-        if "hubspot" in low and re.search(r"\d{4,}", line):
-            continue  # CRM deal-id band, not the title
-        if _looks_like_page_footer(line):
-            continue
-        return line
+        try:
+            if _title_line_rule().fires(line):
+                return line
+        except Exception:
+            if _title_line_lexical(line):
+                return line
     return None
 
 
