@@ -4970,13 +4970,71 @@ def _is_multi_paragraph_prose(page_text: str) -> bool:
     return prose >= 3
 
 
+_FORM_QUESTION_RULE = None
+
+
+def _form_question_lexical(text: str) -> bool:
+    """Offline net for 'is this a fill-out FORM question?': a short standalone
+    prompt ending in '?'. The structural prefilter already required the '?'; this
+    just rejects a long prose/legal sentence that happens to end in one."""
+    s = (text or "").strip()
+    return s.endswith("?") and 2 <= len(s.split()) <= 18
+
+
+def _form_question_rule():
+    """SemanticRule: does this line read like a fill-out FORM / field-report
+    prompt ('Did you install the tablet?', 'Have you installed the NEXEO Box?')
+    rather than a prose / legal / rhetorical question ('What happens in the event
+    of a conflict?')? Distinguishing the two by MEANING keeps the questionnaire
+    router from firing on a contract page that merely contains questions — which
+    would wrongly skip that page's tables. Regex net is the offline fallback."""
+    global _FORM_QUESTION_RULE
+    if _FORM_QUESTION_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _FORM_QUESTION_RULE = SemanticRule(
+            name="form_field_question",
+            positives=[
+                "Have you installed the NEXEO Box?",
+                "Did you install a new tablet at the site?",
+                "Is this store a 2 LANE store for drive thru?",
+                "Did you have any issues with the tablet install?",
+                "Was there a pre-existing audio box next to the old unit?",
+                "Did you pull 2 cables to each POS?",
+                "How many total cables were pulled?",
+                "Are all devices powered on and online?",
+                "Did you complete the closeout checklist?",
+            ],
+            negatives=[
+                "What happens in the event of a conflict between this SOW and the MSA?",
+                "Who bears the risk of loss during transit?",
+                "What is the meaning of force majeure under this agreement?",
+                "Why is network redundancy important for this deployment?",
+                "Shall the contractor be liable for consequential damages?",
+                "What are the payment terms?",
+            ],
+            threshold=0.52,
+            lexical_fallback=_form_question_lexical,
+        )
+    return _FORM_QUESTION_RULE
+
+
 def _is_questionnaire_page(page_text: str) -> bool:
-    """True when a page is a form / field-report questionnaire — >=2 lines ending
-    in a question mark. Such a page is form TEXT, not a visual figure, so it must
-    take the text/form path (the heavyweight layout pipeline scrambles its Q&A)."""
+    """True when a page is a fill-out form / field-report questionnaire. Structural
+    prefilter: >=2 standalone lines ending in '?'. Then a SemanticRule confirms
+    they read like FORM field-prompts (not prose/legal/rhetorical questions), so
+    this never fires on a contract page that merely contains questions (which would
+    wrongly route it off the layout path and skip its tables). Offline -> the
+    lexical net (short standalone question)."""
     if not page_text:
         return False
-    return sum(1 for ln in page_text.splitlines() if ln.strip().endswith("?")) >= 2
+    q_lines = [ln.strip() for ln in page_text.splitlines() if ln.strip().endswith("?")]
+    if len(q_lines) < 2:
+        return False
+    try:
+        rule = _form_question_rule()
+        return sum(1 for q in q_lines if rule.fires(q)) >= 2
+    except Exception:
+        return sum(1 for q in q_lines if _form_question_lexical(q)) >= 2
 
 
 def _page_captured_text_len(page: dict[str, Any]) -> int:
