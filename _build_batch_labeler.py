@@ -11,14 +11,18 @@ import sys, json, glob, zipfile, os, shutil, re, html as _h
 import numpy as np
 
 def _copy_xlsx_open_first_sheet(src, dst):
-    """Copy an xlsx but (a) UNHIDE every sheet and (b) make Excel OPEN it on the
-    FIRST sheet (the Deal Kit). Deal kits ship with the money sheets hidden — the
-    anyWAIR CALC hides Deal Kit AND Gantt Financials — but the parser reads them
-    and the reviewer must see them; leaving them hidden also made the old
-    activeTab=0 pointer reference a hidden sheet, which Excel treats as a corrupt
-    workbook. Surgical zip edit — only sheet visibility + the activeTab/firstSheet
+    """Copy an xlsx but (a) UNHIDE every sheet, (b) UNHIDE every hidden ROW, and
+    (c) make Excel OPEN it on the FIRST sheet (the Deal Kit). Deal kits ship with
+    the money sheets hidden (anyWAIR CALC hides Deal Kit + Gantt Financials) AND
+    with rows hidden inside a sheet (the UGA LoE CALC collapses the Kickoff/PM and
+    the 0-hour copper-termination breakdown rows). The parser reads ALL of them,
+    so the reviewer's downloaded copy must show them too — otherwise the atom list
+    has rows the open workbook doesn't, and you can't tell a real parse from a bug.
+    Surgical zip edit — only sheet/row visibility + the activeTab/firstSheet
     pointers + per-sheet tabSelected flags change; every byte of data, formula and
-    formatting is preserved (unlike an openpyxl re-save)."""
+    formatting is preserved (unlike an openpyxl re-save). Hidden COLUMNS stay
+    hidden: they're helper/formula scaffolding the parser blanks (not atomized),
+    so unhiding them would show math the atom list doesn't."""
     import zipfile, shutil as _sh
     try:
         zin = zipfile.ZipFile(src)
@@ -38,8 +42,13 @@ def _copy_xlsx_open_first_sheet(src, dst):
                     t = re.sub(r'\s+firstSheet="\d+"', "", t)
                     data = t.encode("utf-8")
                 elif re.match(r"xl/worksheets/sheet\d+\.xml$", it.filename):
-                    # drop the "this is the open tab" flag on every sheet; activeTab=0 then wins
-                    data = data.replace(b' tabSelected="1"', b"")
+                    t = data.decode("utf-8", "ignore")
+                    # drop the "this is the open tab" flag; activeTab=0 then wins
+                    t = t.replace(' tabSelected="1"', "")
+                    # unhide hidden ROWS only (so the open sheet == what we parsed);
+                    # scope hidden="..." removal to <row ...> tags so <col> stays hidden
+                    t = re.sub(r'(<row\b[^>]*?)\s+hidden="(?:1|true)"', r"\1", t)
+                    data = t.encode("utf-8")
                 zout.writestr(it, data)
         zin.close()
     except Exception:
