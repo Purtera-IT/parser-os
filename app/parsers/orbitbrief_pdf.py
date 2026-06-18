@@ -2481,16 +2481,19 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             return _build_text_rich_page(page_index)
         hv = _build_heavyweight_page(page_index)
         # Coverage backstop — a clean text layer must NEVER be silently dropped.
-        # The heavyweight layout pipeline can return only image markers / nothing
-        # on a form or field-report page that carries embedded photos, losing all
-        # its label:value text (the Burger King HME form: Name / Store # / Site # /
-        # arrival-departure times / the NEXEO Q&A all vanished while 30 photos were
-        # marked). If the page HAS a real text layer but heavyweight produced no
-        # text, fall back to the prose/form splitter; the photos are still captured
-        # by the separate image-marker pass. Fires only when heavyweight emitted
-        # nothing, so pages it handles well (anyWAIR's geometry tables) are untouched.
-        if page_text_lengths[page_index] >= LOW_TEXT_PAGE_THRESHOLD \
-                and not _page_has_text_content(hv):
+        # The heavyweight layout pipeline can drop most/all of a page's text on a
+        # form or field-report page that carries embedded photos (the Burger King
+        # HME form: Name / Store # / Site # / arrival-departure / the NEXEO Q&A all
+        # vanished while 30 photos were marked). This is OUTCOME-based, not a
+        # predictive router: compare what heavyweight KEPT against the page's real
+        # text layer and, if it kept too little (< 45%), re-run through the prose/
+        # form splitter. Photos are still captured by the separate image-marker
+        # pass. Outcome-checking beats any page-type guesser — a page heavyweight
+        # genuinely handles (anyWAIR geometry tables) keeps ~all its text, so it is
+        # never rerouted; a page it mangles is always caught, even ones unseen.
+        src_len = page_text_lengths[page_index]
+        if src_len >= LOW_TEXT_PAGE_THRESHOLD \
+                and _page_captured_text_len(hv) < 0.45 * src_len:
             return _build_text_rich_page(page_index)
         return hv
 
@@ -4829,17 +4832,18 @@ def _is_multi_paragraph_prose(page_text: str) -> bool:
     return prose >= 3
 
 
-def _page_has_text_content(page: dict[str, Any]) -> bool:
-    """True when a built page carries real textual content (a heading, prose,
-    bullet, table or key-value block) — as opposed to nothing or only image /
-    boilerplate markers. Used as a coverage backstop: if a page HAS a clean text
-    layer but the heavyweight layout pipeline produced no text (a form / field-
-    report page with embedded photos drops its label:value text), we re-run it
-    through the text splitter so the text is never silently lost."""
-    def _walk(sections: list[dict[str, Any]]) -> bool:
+def _page_captured_text_len(page: dict[str, Any]) -> int:
+    """Total chars of real textual content a built page captured (headings, prose,
+    bullets, table cells, key-value pairs) — excluding image / boilerplate markers.
+    Used by the coverage backstop to compare what the layout pipeline KEPT against
+    the page's actual text layer, so a page that drops most of its text (not just
+    all of it) is caught too."""
+    total = 0
+
+    def _walk(sections: list[dict[str, Any]]) -> None:
+        nonlocal total
         for sec in sections or []:
-            if (sec.get("heading") or "").strip():
-                return True
+            total += len((sec.get("heading") or "").strip())
             for b in sec.get("blocks") or []:
                 if b.get("kind") in ("paragraph", "bullet_list", "table", "keyval"):
                     txt = (b.get("text") or "").strip()
@@ -4847,12 +4851,13 @@ def _page_has_text_content(page: dict[str, Any]) -> bool:
                         txt = " ".join(str(x) for x in b["items"])
                     if not txt and b.get("rows"):
                         txt = " ".join(str(x) for r in b["rows"] for x in r)
-                    if len(txt.strip()) >= 12:
-                        return True
-            if _walk(sec.get("subsections") or []):
-                return True
-        return False
-    return _walk(page.get("sections") or [])
+                    if not txt and b.get("pairs"):
+                        txt = " ".join(f"{k} {v}" for k, v in b["pairs"])
+                    total += len(txt.strip())
+            _walk(sec.get("subsections") or [])
+
+    _walk(page.get("sections") or [])
+    return total
 
 
 def _detect_text_title(page_text: str) -> str | None:
