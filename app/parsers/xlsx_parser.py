@@ -492,8 +492,58 @@ def _is_substantive_annotation(text: str) -> bool:
     return bool(_DIGIT_RE.search(t)) or len(words) >= 3 or len(t) >= 24
 
 
-_HOURS_LABEL_RE = re.compile(r"\b(hour|hrs?\b|total|labor)", re.I)
+# Offline fallback for the effort/hours-metric judgment. The embedding rule below
+# generalises beyond these surface words ("Man-Days", "Crew Hours", "Build Time",
+# "FTE-weeks", "Engineering Effort"); this net is what fires when the embedder is
+# unreachable.
+_HOURS_LABEL_RE = re.compile(r"\b(hour|hrs?\b|total|labor|effort|man[- ]?day|fte)", re.I)
 _NUMLIKE_RE = re.compile(r"^[-$(]?\s?[\d,]+(?:\.\d+)?\s?%?\)?$")
+
+_HOURS_METRIC_RULE = None
+
+
+def _hours_metric_lexical(text: str) -> bool:
+    return bool(_HOURS_LABEL_RE.search(text or ""))
+
+
+def _hours_metric_rule():
+    """SemanticRule: does this column header name a LABOR-EFFORT / HOURS metric
+    (the thing a side estimate benchmarks against)? Embedding generalises past the
+    fixed vocabulary — "Man-Days", "Crew Hours", "Engineering Effort", "Build
+    Time", "FTE-weeks" all fire — with the regex as the offline-safe fallback."""
+    global _HOURS_METRIC_RULE
+    if _HOURS_METRIC_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _HOURS_METRIC_RULE = SemanticRule(
+            name="hours_effort_metric_label",
+            positives=[
+                "Lead Tech Hrs", "LV Tech Hrs", "Helper Hrs", "PM Hrs",
+                "Total Base Hrs", "Labor Hours", "Total Hours", "Crew Hours",
+                "Man-Days", "Man Hours", "Engineering Effort", "Build Time",
+                "FTE-weeks", "Field Labor Hours", "Install Hours", "Total Effort",
+            ],
+            negatives=[
+                "Quote Line Item", "Category", "Unit", "Qty", "Drops", "Price",
+                "Total Price", "Material Cost", "Margin %", "Sell Rate",
+                "Per Drop", "Availability", "Product Description",
+            ],
+            threshold=0.58,
+            lexical_fallback=_hours_metric_lexical,
+        )
+    return _HOURS_METRIC_RULE
+
+
+def _is_hours_metric_label(text: str) -> bool:
+    """True when a (non-numeric, non-rate) cell label names an hours/effort metric.
+    Structural prefilter (short, not a 'per <unit>' rate) gates the embedder so it
+    only judges plausible header cells; the semantic rule then decides by meaning."""
+    t = (text or "").strip()
+    if not t or _NUMLIKE_RE.match(t) or len(t) > 40 or "per " in t.lower():
+        return False
+    try:
+        return _hours_metric_rule().fires(t)
+    except Exception:
+        return _hours_metric_lexical(t)
 
 
 def _sheet_hours_context(rows: list[list[Any]], limit: int = 6) -> str:
@@ -515,19 +565,18 @@ def _sheet_hours_context(rows: list[list[Any]], limit: int = 6) -> str:
         except ValueError:
             return None
 
-    # header row = a row with >=2 hour/total LABELS (not rate factors)
+    # header row = a row with >=2 hours/effort-metric LABELS (semantic, not a fixed
+    # word list — "Man-Days"/"Crew Hours"/"Engineering Effort" all qualify)
     hdr_i = None
     for i, r in enumerate(grid):
-        labels = [c for c in r if c and _HOURS_LABEL_RE.search(c)
-                  and not _NUMLIKE_RE.match(c) and "per " not in c.lower() and len(c) <= 40]
+        labels = [c for c in r if c and _is_hours_metric_label(c)]
         if len(labels) >= 2:
             hdr_i = i
             break
     if hdr_i is None:
         return ""
     hdr = grid[hdr_i]
-    hour_cols = [ci for ci, h in enumerate(hdr)
-                 if h and _HOURS_LABEL_RE.search(h) and "per " not in h.lower() and len(h) <= 40]
+    hour_cols = [ci for ci, h in enumerate(hdr) if h and _is_hours_metric_label(h)]
     # The TOTALS row is the column-sum row — same hour columns, largest magnitudes,
     # and (unlike a task row) no leading text label. Across all candidate rows pick
     # the one whose hour-column values sum largest; that's the estimate total.
