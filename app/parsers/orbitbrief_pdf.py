@@ -2399,6 +2399,27 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         }
 
     def _build_one_page(page_index: int) -> dict[str, Any]:
+        # A DocuSign / e-sign "Certificate of Completion" audit page is pure
+        # signature-trail boilerplate — collapse it to ONE marker instead of
+        # minting dozens of junk atoms (anyWAIR: ~46). Checked first so it
+        # applies regardless of the page's text length.
+        if _is_signature_certificate_page(page_texts[page_index]):
+            return {
+                "page": page_index,
+                "title": None,
+                "metadata": ["[signature certificate page — e-signature audit "
+                             "trail; collapsed to one boilerplate marker]"],
+                "outline": [],
+                "sections": [{
+                    "heading": "", "level": 2, "subsections": [],
+                    "blocks": [{
+                        "kind": "note",
+                        "text": ("[Signature certificate of completion — e-signature "
+                                 "audit trail (signer events, envelope id, delivery "
+                                 "timestamps). Boilerplate; no deal content.]"),
+                    }],
+                }],
+            }
         if page_text_lengths[page_index] < LOW_TEXT_PAGE_THRESHOLD:
             return _build_low_text_page(page_index)
         if page_text_lengths[page_index] >= TEXT_RICH_PAGE_THRESHOLD:
@@ -4566,6 +4587,29 @@ def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
             or heading[-1] in ".!?" or len(body.split()) < 4 or not body[:1].isupper()):
         return None
     return heading, body
+
+
+_SIG_CERT_PHRASES = (
+    "certificate of completion", "signer events", "envelope id",
+    "signature adoption", "electronic record and signature", "carbon copy events",
+    "envelope summary events", "hashed/encrypted", "autonav",
+    "envelopeid stamping", "in person signer events", "certified delivery events",
+    "signature timestamp", "status timestamp", "intermediary delivery events",
+)
+
+
+def _is_signature_certificate_page(page_text: str) -> bool:
+    """A DocuSign / Adobe-Sign "Certificate of Completion" audit page appended to a
+    signed document: pure signature-trail boilerplate (Signer Events, Envelope Id,
+    Carbon Copy Events, Hashed/Encrypted timestamps, Notary Events …). It is NOT
+    deal content — parsing it mints dozens of junk atoms (anyWAIR: ~46). Detect it
+    by >=3 distinctive certificate phrases so the page collapses to ONE boilerplate
+    marker. Vendor-agnostic; the phrases are e-signature-platform furniture, not
+    deal language, so it never fires on a real scope/pricing page."""
+    if not page_text:
+        return False
+    low = page_text.lower()
+    return sum(1 for ph in _SIG_CERT_PHRASES if ph in low) >= 3
 
 
 def _is_multi_paragraph_prose(page_text: str) -> bool:
