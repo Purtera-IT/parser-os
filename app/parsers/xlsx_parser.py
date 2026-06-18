@@ -1731,6 +1731,46 @@ class XlsxParser(BaseParser):
         return out
 
     @staticmethod
+    def _flag_hidden_source_atoms(
+        atoms: list[EvidenceAtom], rows: list[list[Any]], hidden_rows: set[int]
+    ) -> list[EvidenceAtom]:
+        """Tag atoms whose row was AUTHOR-HIDDEN in the sheet.
+
+        Hidden rows are still captured (no silent drops), but in the atom list a
+        collapsed / 0-hour / scaffolding row looks identical to a live one — so a
+        reviewer can't tell whether it parsed right. Match each atom's text to a
+        hidden row's distinctive (longest) cell and stamp it with a visible
+        '[hidden row in source sheet]' marker + the xlsx_parser:hidden_in_source
+        flag. Content-match because the block detector discards row indices."""
+        if not hidden_rows or not atoms:
+            return atoms
+        sigs: list[str] = []
+        for i in hidden_rows:
+            if 0 <= i < len(rows):
+                texts = [str(c).strip() for c in rows[i] if c is not None and str(c).strip()]
+                longest = max(texts, key=len) if texts else ""
+                if len(longest) >= 8:                     # distinctive enough to match
+                    sigs.append(longest.lower())
+        if not sigs:
+            return atoms
+        out: list[EvidenceAtom] = []
+        for a in atoms:
+            rt = a.raw_text or ""
+            if any(s in rt.lower() for s in sigs) and "[hidden row in source sheet]" not in rt:
+                flags = list(a.review_flags or [])
+                if "xlsx_parser:hidden_in_source" not in flags:
+                    flags.append("xlsx_parser:hidden_in_source")
+                try:
+                    a = a.model_copy(update={
+                        "raw_text": f"{rt}  [hidden row in source sheet]",
+                        "review_flags": flags,
+                    })
+                except Exception:
+                    pass
+            out.append(a)
+        return out
+
+    @staticmethod
     def _sheet_styles(path: Path) -> dict[str, list[list[tuple[str | None, bool]]]]:
         """Map sheet title -> per-cell ``(fill_rgb_or_None, bold)`` grid, aligned
         row/col to the values grid. Cell STYLE is structure the author used to
@@ -1826,19 +1866,23 @@ class XlsxParser(BaseParser):
             except Exception:
                 pass
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
-            hc, _hr = hidden.get(sheet.title, (set(), set()))
-            atoms.extend(
-                self._parse_sheet_rows(
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=path.name,
-                    artifact_type=ArtifactType.xlsx,
-                    sheet_name=sheet.title,
-                    rows=rows,
-                    hidden_cols=hc,
-                    styles=styles_by_sheet.get(sheet.title),
-                )
+            hc, hr = hidden.get(sheet.title, (set(), set()))
+            sheet_atoms = self._parse_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                artifact_type=ArtifactType.xlsx,
+                sheet_name=sheet.title,
+                rows=rows,
+                hidden_cols=hc,
+                styles=styles_by_sheet.get(sheet.title),
             )
+            # Single chokepoint (path-independent: block / legacy / commercial all
+            # funnel here): mark atoms sourced from author-HIDDEN rows so a reviewer
+            # can tell a collapsed/0-hour row from the live estimate. Captured, not
+            # dropped (no silent loss) — just visibly tagged.
+            sheet_atoms = self._flag_hidden_source_atoms(sheet_atoms, rows, hr)
+            atoms.extend(sheet_atoms)
             sheets.append({"name": sheet.title, "rows": rows})
         # Dedup identical UNANSWERED questionnaire questions (e.g. a blank
         # "Phone Number" field repeated in Origin + Destination sections) —
