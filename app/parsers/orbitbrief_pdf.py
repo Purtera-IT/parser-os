@@ -875,6 +875,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _weak_label_prose_line_items(atoms)
         atoms = _drop_repeated_header_bands(atoms)
         atoms = _strip_placeholder_table_labels(atoms)
+        atoms = _drop_table_header_as_data_rows(atoms)
         atoms = _demote_decorative_dates(atoms)
 
         return ParserOutput(
@@ -1972,6 +1973,44 @@ def _strip_placeholder_table_labels(atoms: list[EvidenceAtom]) -> list[EvidenceA
                             "raw_text": new, "normalized_text": normalize_text(new)})
                     except Exception:
                         pass
+        out.append(a)
+    return out
+
+
+def _drop_table_header_as_data_rows(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Drop a table's HEADER row that leaked back in as a data atom.
+
+    When the layout pipeline can't separate a small table's header from its body
+    it emits the header line as a row, so the column labels render as their own
+    "key: value" atom with key == value: ``Type: Type | Qty.: Qty.`` (anyWAIR
+    page 5). Every cell being ``X: X`` is an unmistakable header-as-data signal —
+    a real data row pairs a label with a DIFFERENT value — so the row is pure
+    duplication of the column headers and carries no fact. Conservative: fires
+    only when ALL labeled cells are key==value."""
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        rt = (getattr(a, "raw_text", "") or "").strip()
+        cells = [s.strip() for s in rt.split(" | ") if s.strip()]
+        labeled = [c for c in cells if ": " in c]
+        if cells and labeled and len(labeled) == len(cells):
+            def _kv_equal(cell: str) -> bool:
+                k, _, v = cell.partition(": ")
+                return k.strip().casefold() == v.strip().casefold() and bool(k.strip())
+            if all(_kv_equal(c) for c in cells):
+                continue  # header row leaked as data — drop
+
+            # A "key: value" cell whose value OPENS with a lowercase coordinating
+            # joiner ("Qty.: and Install") is a column-split heading, not data — a
+            # real tabular value never starts with "and"/"or". This is the layout
+            # pipeline slicing a Title-Case sub-heading ("Access Control Rough and
+            # Install") across the table's column boundary. Drop the fragment row.
+            def _split_header_fragment(cell: str) -> bool:
+                _, _, v = cell.partition(": ")
+                vw = v.strip().split()
+                return bool(vw) and vw[0].lower() in {"and", "or", "of", "the", "to"} \
+                    and len(vw) <= 3
+            if any(_split_header_fragment(c) for c in labeled):
+                continue
         out.append(a)
     return out
 
