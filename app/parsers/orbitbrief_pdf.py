@@ -434,6 +434,25 @@ def _split_pdf_embedded_heading(text: str) -> tuple[str, str, str] | None:
     before, heading, after = text[: m.start()].strip(), m.group(1).strip(), text[m.end():].strip()
     if len(before) < 10 or len(after) < 10:
         return None
+    # The all-caps run may be only PART of a mixed-case heading: 'HME NEXO' is the
+    # caps prefix of the section header 'HME NEXO Box Install'. When the matched
+    # heading is followed by Title-Case words and THEN a question, those words are
+    # the rest of the header (a form section title sits above its Q&A) — pull them
+    # into the heading so it stays whole and 'Box Install' isn't orphaned into the
+    # answer. Gated on a following question, so ordinary prose isn't over-captured.
+    aw = after.split()
+    take = 0
+    while take < 4 and take < len(aw):
+        w = aw[take]
+        if _FORM_INTERROG_RE.match(w) or w.endswith("?"):
+            break
+        if re.fullmatch(r"[A-Z][a-z][\w/&-]*", w):
+            take += 1
+        else:
+            break
+    if take and take < len(aw) and (_FORM_INTERROG_RE.match(aw[take]) or aw[take].endswith("?")):
+        heading = (heading + " " + " ".join(aw[:take])).strip()
+        after = " ".join(aw[take:]).strip()
     return before, heading, after
 
 
@@ -2662,11 +2681,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # The letterhead image is still captured by the separate image-marker pass.
         if page_image_counts[page_index] == 0 \
                 or _is_multi_paragraph_prose(page_texts[page_index]) \
-                or _is_questionnaire_page(page_texts[page_index]):
-            # A questionnaire / field-report page (>=2 question lines) is form text,
-            # NOT a visual layout — the heavyweight pipeline scrambles its Q&A
-            # ("Is this store a 2 LANE Store for Drive  No Thru?"). Send it to the
-            # text/form path even though it carries photos (captured separately).
+                or _is_form_page(page_texts[page_index]):
+            # A questionnaire / field-report page (questions OR a 'Upload N photos'
+            # request) is form text, NOT a visual layout — the heavyweight pipeline
+            # scrambles it: it splits a section header ('HME NEXO Box Install' ->
+            # heading 'HME NEXO' + body 'Box Install'), glues Q&A, and reorders by
+            # geometry. Send it to the text/form path even though it carries photos
+            # (captured separately by the image-marker pass).
             return _build_text_rich_page(page_index)
         hv = _build_heavyweight_page(page_index)
         # Coverage backstop — a clean text layer must NEVER be silently dropped.
@@ -5110,6 +5131,19 @@ def _form_question_rule():
             lexical_fallback=_form_question_lexical,
         )
     return _FORM_QUESTION_RULE
+
+
+def _is_form_page(page_text: str) -> bool:
+    """True when a page is a fill-out form / field-report — a questionnaire (>=2
+    form questions) OR a page carrying a photo-request ('Upload N photos showing
+    X'). Either marks form TEXT that must take the text path, not the heavyweight
+    layout pipeline (which splits the section header, glues the Q&A, and reorders
+    by geometry)."""
+    if not page_text:
+        return False
+    if _is_questionnaire_page(page_text):
+        return True
+    return any(_is_photo_request(ln.strip()) for ln in page_text.splitlines())
 
 
 def _is_questionnaire_page(page_text: str) -> bool:
