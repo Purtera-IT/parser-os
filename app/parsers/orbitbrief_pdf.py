@@ -2494,9 +2494,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         try:
             with fitz.open(str(pdf_path)) as _vd:
                 _pg = _vd[page_index]
-                _has_visual = bool(_pg.get_images(full=True)) or bool(_pg.get_drawings())
+                _has_raster = bool(_pg.get_images(full=True))
+                _has_visual = _has_raster or bool(_pg.get_drawings())
         except Exception:
-            _has_visual = True  # fail-safe: if we can't tell, keep scanned-page behavior
+            # fail-safe: if we can't inspect the page, keep scanned-page behavior
+            # AND keep the review warning (don't suppress when we're unsure).
+            _has_raster = False
+            _has_visual = True
         if not _has_visual:
             return _build_text_rich_page(page_index)
         # Low-text WITH visuals = likely scanned. Try the OCR chain
@@ -2531,6 +2535,21 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 f"text layer was missing; treat as scanned-source evidence]",
             )
             return page_dict
+        # OCR recovered nothing. If the page carries RASTER images, those are
+        # captured by the separate image-marker pass (each saved, captioned with
+        # its 'Upload N photos…' request, and flagged 'awaiting OCR / vision') —
+        # so a page-level "no text, needs manual review" atom would be redundant
+        # AND misleading (the page's content is the photos, not lost). Suppress it;
+        # the image markers carry the page + the vision signal. Only a page with NO
+        # raster images (vector-only / truly unreadable, nothing else captured it)
+        # still gets the manual-review marker.
+        if _has_raster:
+            # Emit NOTHING for the page itself — its content is the embedded
+            # image(s), which the image-marker pass already captures (saved,
+            # captioned with their photo-request, flagged 'awaiting OCR / vision').
+            # A page-level marker here would be a redundant, misleading duplicate.
+            return {"page": page_index, "title": None, "metadata": [],
+                    "outline": [], "sections": []}
         return {
             "page": page_index,
             "title": None,
