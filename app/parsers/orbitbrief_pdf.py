@@ -8819,7 +8819,16 @@ def _scan_pdf_for_extras(
                 # short final page) is sparse text, not a scanned diagram —
                 # don't emit a bogus visual-review marker for it.
                 pg = doc[page_idx]
-                if bool(pg.get_images(full=True)) or bool(pg.get_drawings()):
+                has_raster = bool(pg.get_images(full=True))
+                has_vector = bool(pg.get_drawings())
+                # Raster images on the page already become captioned image
+                # markers (saved_path + "Upload N photos…" caption) AND drive the
+                # vision pass via find_visual_pages_from_image_markers. Emitting a
+                # second "visual evidence not fully extracted" atom for the same
+                # page is redundant noise the reviewer sees stacked on the photos.
+                # Keep the marker ONLY for a vector-drawing page with no raster
+                # (a vector floor-plan / rack diagram that NO image marker covers).
+                if has_vector and not has_raster:
                     out.append(
                         _visual_review_atom(
                             project_id=project_id,
