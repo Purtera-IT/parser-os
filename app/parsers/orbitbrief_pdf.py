@@ -973,6 +973,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _strip_placeholder_table_labels(atoms)
         atoms = _drop_table_header_as_data_rows(atoms)
         atoms = _demote_decorative_dates(atoms)
+        atoms = _collapse_toc_atoms(atoms)
         atoms = _fold_photo_requests_into_images(atoms)
 
         return ParserOutput(
@@ -1035,6 +1036,34 @@ def _is_photo_request(text: str) -> bool:
         return _photo_request_rule().fires(s)
     except Exception:
         return _photo_request_lexical(s)
+
+
+_TOC_LEADER_RE = re.compile(r"\.{4,}|…{2,}|(?:\.\s){4,}")
+
+
+def _collapse_toc_atoms(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Collapse a Table-of-Contents atom to a compact marker. A TOC page is rows
+    of 'Section Title .......... <page>' dotted leaders — navigation furniture, not
+    deal facts, and its entries just duplicate the real section headings that
+    appear later in the document. Left alone it becomes a glued 2000-char atom
+    ('1.0 SCOPE …… 1  2.0 REQUIREMENTS …… 2 …'). Detect >=3 dotted-leader runs and
+    replace the body with a one-line marker (kept, not dropped — no silent loss)."""
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        t = a.raw_text or ""
+        if len(t) > 200 and len(_TOC_LEADER_RE.findall(t)) >= 3:
+            marker = ("[Table of contents — document navigation (section titles -> "
+                      "page numbers); not deal content. The listed sections are "
+                      "captured as their own atoms where they occur.]")
+            try:
+                a = a.model_copy(update={
+                    "raw_text": marker, "normalized_text": marker.lower(),
+                    "review_flags": list(a.review_flags or []) + ["table_of_contents"],
+                })
+            except Exception:
+                pass
+        out.append(a)
+    return out
 
 
 def _fold_photo_requests_into_images(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
