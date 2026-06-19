@@ -954,6 +954,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _strip_placeholder_table_labels(atoms)
         atoms = _drop_table_header_as_data_rows(atoms)
         atoms = _demote_decorative_dates(atoms)
+        atoms = _fold_photo_requests_into_images(atoms)
 
         return ParserOutput(
             atoms=atoms,
@@ -1015,6 +1016,33 @@ def _is_photo_request(text: str) -> bool:
         return _photo_request_rule().fires(s)
     except Exception:
         return _photo_request_lexical(s)
+
+
+def _fold_photo_requests_into_images(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Drop a photo-request text atom ('Upload 4 Photos of the Nexeo …') when the
+    images it asks for already carry it as their caption (expected_content). The
+    request's 'answer' IS those photos, so it belongs as the images' linkage
+    reference, not as a duplicate scope_item. Safe — only drops when a captioned
+    image exists (the linkage target), so nothing is silently lost: if no image
+    carried it, the text atom stays."""
+    captions: set[str] = set()
+    for a in atoms:
+        v = a.value if isinstance(a.value, dict) else {}
+        cap = (v.get("expected_content") or "").strip().lower()
+        if cap:
+            captions.add(cap)
+    if not captions:
+        return atoms
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        v = a.value if isinstance(a.value, dict) else {}
+        txt = (a.raw_text or "").strip()
+        if v.get("kind") != "image_marker" and _is_photo_request(txt):
+            low = txt.lower()
+            if any(low.startswith(c) or c in low for c in captions):
+                continue  # the photos carry this request as their caption — fold in
+        out.append(a)
+    return out
 
 
 def _pdf_image_markers(
@@ -5475,7 +5503,10 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         current_heading = None
         current_blocks = []
 
+    skip_through = -1  # lines consumed by a multi-line photo-request instruction
     for idx, raw in enumerate(lines):
+        if idx <= skip_through:
+            continue
         line = raw.rstrip()
         if not line.strip():
             flush_paragraph()
@@ -5491,6 +5522,32 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         if idx <= 1 and _is_bare_date_line(line.strip()):
             flush_paragraph()
             flush_bullets()
+            continue
+
+        # A photo-request instruction ("Upload 4 Photos of the Nexeo installed at
+        # the site.") is the LINKAGE for the images it asks for — its "answer" is
+        # those photos (already captioned onto the image markers). Break it out of
+        # any glued Q&A as its OWN unit so the question/answer stays clean and the
+        # request reads as the images' reference, not buried text. Multi-line
+        # instructions are gathered (the continuation sentence-lines that follow).
+        if _is_photo_request(line.strip()) and idx > skip_through:
+            flush_paragraph()
+            flush_bullets()
+            req = [line.strip()]
+            j = idx + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                if (not nxt or nxt.endswith("?") or _FORM_INTERROG_RE.match(nxt)
+                        or _is_photo_request(nxt)):
+                    break
+                if nxt[:1].islower() or len(nxt.split()) >= 3:   # sentence continuation
+                    req.append(nxt)
+                    j += 1
+                else:
+                    break
+            skip_through = j - 1
+            paragraph_lines.extend(req)
+            flush_paragraph()
             continue
 
         # Numbered section heading ("1. Authoritative physical site roster") —
