@@ -964,6 +964,59 @@ class OrbitBriefPdfParser(BaseParser):
 # ──────────────────────── public helpers ─────────────────────────────────
 
 
+_PHOTO_REQUEST_RULE = None
+_PHOTO_REQUEST_RE = re.compile(
+    r"\b(?:upload|attach|take|provide|include)\b.*\bphotos?\b"
+    r"|\bphotos?\b.*\b(?:showing|of|install)", re.I,
+)
+
+
+def _photo_request_lexical(text: str) -> bool:
+    return bool(_PHOTO_REQUEST_RE.search(text or ""))
+
+
+def _photo_request_rule():
+    """SemanticRule: is this line a PHOTO-REQUEST instruction ('Upload 4 Photos of
+    the Nexeo', 'Upload a photo showing the rack', 'Take a photo of the install')?
+    Used to caption each extracted image with what it SHOULD show — the form
+    instruction the photo answers — so a reviewer / the vision pass sees expected
+    content, not a bare 'awaiting OCR'. Embedding generalises past the keyword net;
+    regex is the offline fallback."""
+    global _PHOTO_REQUEST_RULE
+    if _PHOTO_REQUEST_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _PHOTO_REQUEST_RULE = SemanticRule(
+            name="photo_request_instruction",
+            positives=[
+                "Upload 4 Photos of the Nexeo installed at the site.",
+                "Upload a photo showing all of the cables terminated and labeled.",
+                "Take a photo of the rack showing the equipment mounted.",
+                "Upload photos showing the IB7000 installed in its location.",
+                "Upload a photo of the drive thru director showing it is working.",
+                "Attach a picture of the completed install.",
+            ],
+            negatives=[
+                "PurTera will install low voltage cabling.",
+                "The vendor shall provide standardized reports upon completion.",
+                "Total Base Hrs: 1148.81", "Have you installed the NEXEO Box?",
+                "BK Store Number: 557", "Network design and configuration.",
+            ],
+            threshold=0.55,
+            lexical_fallback=_photo_request_lexical,
+        )
+    return _PHOTO_REQUEST_RULE
+
+
+def _is_photo_request(text: str) -> bool:
+    s = (text or "").strip()
+    if not s or "photo" not in s.lower():
+        return False
+    try:
+        return _photo_request_rule().fires(s)
+    except Exception:
+        return _photo_request_lexical(s)
+
+
 def _pdf_image_markers(
     *,
     path: Path,
@@ -995,6 +1048,11 @@ def _pdf_image_markers(
     img_root = Path(_os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
     saved_by_xref: dict[int, tuple[str, int]] = {}  # xref -> (saved_path, size); same image reused across pages
     emitted_xrefs: set[int] = set()  # one marker atom per UNIQUE image, not per page
+    # The most recent "Upload N photos showing X" instruction — a field-report's
+    # photos answer the request that precedes them, often spanning pages ("Upload
+    # 4 Photos" -> 2 on this page, 2 on the next). Carry it forward so each photo
+    # is captioned with what it should show.
+    current_request: str | None = None
     try:
         for page_index in range(doc.page_count):
             try:
@@ -1002,6 +1060,13 @@ def _pdf_image_markers(
                 images = page.get_images(full=True)
             except Exception:
                 continue
+            try:
+                for ln in page.get_text().splitlines():
+                    ln = ln.strip()
+                    if ln and _is_photo_request(ln):
+                        current_request = re.sub(r"\s+", " ", ln)[:160]
+            except Exception:
+                pass
             for ii, img in enumerate(images):
                 xref = img[0] if img else ii
                 # A logo/letterhead embedded once but referenced on every page is
@@ -1041,6 +1106,7 @@ def _pdf_image_markers(
                     label="image",
                     size=size,
                     saved_path=saved_path,
+                    caption=current_request,
                 ))
     finally:
         doc.close()

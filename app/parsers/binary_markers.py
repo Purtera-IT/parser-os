@@ -60,6 +60,7 @@ def _marker_atom(
     label: str,
     size: int,
     saved_path: str | None = None,
+    caption: str | None = None,
 ) -> EvidenceAtom:
     if saved_path:
         # The bytes have been cropped out and written to disk — a later OCR /
@@ -76,6 +77,11 @@ def _marker_atom(
             f"{region_ref} in {filename} — {size:,} bytes. A vision or embedded-"
             f"object pass is required to recover its content."
         )
+    # The expected content of the image — e.g. the 'Upload N photos showing X'
+    # form instruction this photo answers. Gives the reviewer (and the vision
+    # pass) what the photo SHOULD show instead of a bare 'awaiting OCR' marker.
+    if caption:
+        text = text.rstrip(".") + f' — expected: "{caption}".'
     atom_id = stable_id("atm", artifact_id, "binary_marker", region_ref)
     src = SourceRef(
         id=stable_id("src", atom_id),
@@ -95,7 +101,8 @@ def _marker_atom(
         raw_text=text,
         normalized_text=normalize_text(text),
         value={"kind": kind, "region_ref": region_ref, "size_bytes": size,
-               **({"saved_path": saved_path} if saved_path else {})},
+               **({"saved_path": saved_path} if saved_path else {}),
+               **({"expected_content": caption} if caption else {})},
         entity_keys=[],
         source_refs=[src],
         receipts=[],
@@ -121,6 +128,7 @@ def region_marker(
     label: str = "image",
     size: int = 0,
     saved_path: str | None = None,
+    caption: str | None = None,
 ) -> EvidenceAtom:
     """A located marker for one referenced (non-zip-embedded) binary region.
 
@@ -141,6 +149,7 @@ def region_marker(
         label=label,
         size=size,
         saved_path=saved_path,
+        caption=caption,
     )
 
 
