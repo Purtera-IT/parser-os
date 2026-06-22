@@ -1246,13 +1246,49 @@ def _is_photo_request(text: str) -> bool:
         return _photo_request_lexical(s)
 
 
-def _is_image_field_label(text: str) -> bool:
+_IMAGE_FIELD_LABEL_RULE = None
+
+
+def _image_field_label_rule():
+    """SemanticRule: is this a short label whose value is the IMAGE directly below
+    it ('Signature', 'Floor Plan', 'Rack Elevation', 'Wiring Diagram', 'Before /
+    After') — so the image is captioned by it rather than a far-off photo request
+    higher on the page? A meaning judgment (generalises past Title-Case to 'floor
+    plan', 'cable test results'); the structural check below is the offline net."""
+    global _IMAGE_FIELD_LABEL_RULE
+    if _IMAGE_FIELD_LABEL_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _IMAGE_FIELD_LABEL_RULE = SemanticRule(
+            name="image_field_label",
+            positives=[
+                "Signature", "Floor Plan", "Rack Elevation", "Site Diagram",
+                "Wiring Diagram", "Equipment Photo", "Network Closet", "Before",
+                "After", "Cable Test Results", "Site Map", "Rack Layout",
+            ],
+            negatives=[
+                "Diedra Kennedy", "Yes", "No", "Did you install a new tablet?",
+                "The contractor shall furnish all materials and labor.",
+                "2.2.10 Cable Pathways", "Country: Albania", "New Tablet",
+            ],
+            threshold=0.50,
+            lexical_fallback=lambda s: _is_image_field_label(s, _lexical_only=True),
+        )
+    return _IMAGE_FIELD_LABEL_RULE
+
+
+def _is_image_field_label(text: str, _lexical_only: bool = False) -> bool:
     """A short labelled field whose value is the image directly below it on a form
     ('Signature' -> the signature image). Used so such an image is captioned by
     the field right above it, not by a far-off photo request higher on the page.
     Conservative: a short Title-Case label / colon-label that is not a question,
-    instruction, sentence, or bare number."""
+    instruction, sentence, or bare number. Embedding-led; the lexical body below
+    is the offline net (and runs directly when _lexical_only)."""
     s = (text or "").strip()
+    if not _lexical_only:
+        try:
+            return _image_field_label_rule().fires(s)
+        except Exception:
+            pass
     if not s or s.endswith((".", "!", "?")):
         return False
     words = s.split()
