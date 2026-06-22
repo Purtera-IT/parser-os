@@ -190,6 +190,63 @@ def _is_discrete_answer(line: str) -> bool:
     return len(words) <= 3
 
 
+_FIELD_LABEL_WORDS = {
+    "name", "date", "time", "title", "number", "no", "by", "email", "phone",
+    "address", "id", "manager", "tech", "technician", "store", "site", "rep",
+}
+_FIELD_LABEL_RULE = None
+
+
+def _field_label_lexical(text: str) -> bool:
+    s = (text or "").strip()
+    if not s or s.endswith((".", "!", "?")) or len(s.split()) > 4:
+        return False
+    if s.endswith(":") or s.endswith("#"):
+        return True
+    last = s.split()[-1].strip(":#").lower()
+    return last in _FIELD_LABEL_WORDS
+
+
+def _field_label_rule():
+    """SemanticRule: is this a form FIELD LABEL whose value follows on the next
+    line ('Managers Name' -> 'Diedra Kennedy', 'Completed By', 'Store #', 'Date'),
+    so the two should merge into one 'label: value' fact — rather than a value, a
+    heading, or a sentence? Label-vs-value is a meaning judgment; the suffix net is
+    the offline fallback."""
+    global _FIELD_LABEL_RULE
+    if _FIELD_LABEL_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _FIELD_LABEL_RULE = SemanticRule(
+            name="form_field_label",
+            positives=[
+                "Managers Name", "Site Name", "Completed By", "Date", "Store #",
+                "Arrival Time", "Technician Name", "Email", "Phone Number", "Site #",
+            ],
+            negatives=[
+                "Diedra Kennedy", "Tablet Install", "BK Audio", "POS Cabling", "Yes",
+                "New Tablet", "CAT6 jacks", "The contractor shall provide all materials",
+                "Upload 4 photos of the unit",
+            ],
+            threshold=0.52,
+            lexical_fallback=_field_label_lexical,
+        )
+    return _FIELD_LABEL_RULE
+
+
+def _is_value_field_label(text: str) -> bool:
+    """A short field label that expects a TEXT value on the next line (so they
+    merge). Cheap precondition, then the semantic rule decides."""
+    s = (text or "").strip()
+    if not s or len(s.split()) > 4 or s.endswith((".", "!", "?")):
+        return False
+    if _FORM_INTERROG_RE.match(s) or _FORM_INSTRUCTION_RE.match(s) or _is_photo_request(s):
+        return False
+    try:
+        return _field_label_rule().fires(s)
+    except Exception:
+        return _field_label_lexical(s)
+
+
 def _page_is_form_lexical(raw: list[str]) -> bool:
     """Structural net for 'is this a form / field-report page?' — the offline
     fallback for the semantic judge below. A form is: >=2 '?'  OR  >=2 form
@@ -347,6 +404,17 @@ def _regroup_form_qa(text: str) -> str:
                 parts.append(raw[i])
                 i += 1
             units.append(" ".join(parts).strip())
+        elif (_is_value_field_label(ln) and i + 1 < n and raw[i + 1]
+              and not _is_value_field_label(raw[i + 1])
+              and not raw[i + 1].endswith("?") and not _FORM_INTERROG_RE.match(raw[i + 1])
+              and not _FORM_INSTRUCTION_RE.match(raw[i + 1]) and not _is_photo_request(raw[i + 1])):
+            # A field label whose value is on the next line ('Managers Name' +
+            # 'Diedra Kennedy' -> 'Managers Name: Diedra Kennedy') — merge into one
+            # label:value fact. Only when the label expects a TEXT value (not
+            # 'Signature', whose value is the image below it) and the next line is
+            # a value, not another label / question / instruction.
+            units.append(f"{ln.rstrip(':')}: {raw[i + 1]}")
+            i += 2
         else:
             # standalone line — a section header ("HME NEXO Box Install", "BK
             # Audio", "POS Cabling") or stray value; keep as its own unit.
