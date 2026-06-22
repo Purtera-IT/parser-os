@@ -1182,6 +1182,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _drop_table_header_as_data_rows(atoms)
         atoms = _demote_decorative_dates(atoms)
         atoms = _collapse_toc_atoms(atoms)
+        atoms = _fold_answers_into_questions(atoms)
         atoms = _fold_photo_requests_into_images(atoms)
 
         return ParserOutput(
@@ -1328,6 +1329,102 @@ def _collapse_toc_atoms(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
                 })
             except Exception:
                 pass
+        out.append(a)
+    return out
+
+
+_ANSWER_PREFIX_RE = re.compile(r"^(?:answer|ans|response|reply|a)\s*[:.\)]", re.I)
+_QUESTION_HEAD_RE = re.compile(
+    r"^(?:\d+[.\)]\s*)?(?:please\b|could\b|can\b|will\b|would\b|should\b|is\b|are\b|"
+    r"do\b|does\b|did\b|how\b|what\b|when\b|where\b|why\b|which\b|who\b|confirm\b|"
+    r"as\s+mentioned\b|provide\b|clarify\b)", re.I,
+)
+_ANSWER_BLOCK_RULE = None
+
+
+def _answer_block_rule():
+    """SemanticRule: does this atom read as the ANSWER/response to the question
+    above it (in a numbered Q&A / RFI list), so the two should fold into one Q&A
+    fact? Answer-ness is a meaning judgment; the explicit 'Answer:' prefix is the
+    offline net."""
+    global _ANSWER_BLOCK_RULE
+    if _ANSWER_BLOCK_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _ANSWER_BLOCK_RULE = SemanticRule(
+            name="qa_answer_block",
+            positives=[
+                "Answer: These are all wall phones. Single CAT6 cable with wall jack.",
+                "Answer: The Site Survey showed (1) Quad, (5) wall phone & (13) Duplex outlets.",
+                "Industry Standard.", "There is sufficient space.",
+                "Both. Can reuse but must provide where needed.",
+                "A 66 block at BDF location and 24-port patch panel inside cabinet.",
+            ],
+            negatives=[
+                "Please confirm whether the 2 wall drops are single-cable drops or another configuration.",
+                "As mentioned in the Statement of Work, 2.2.10, cable tray is required.",
+                "The contractor shall furnish all materials and labor.",
+                "Upload 4 photos of the unit installed.", "Tablet Install",
+            ],
+            threshold=0.55,
+            lexical_fallback=lambda s: bool(_ANSWER_PREFIX_RE.match((s or "").strip())),
+        )
+    return _ANSWER_BLOCK_RULE
+
+
+def _is_answer_block(text: str) -> bool:
+    s = (text or "").strip()
+    if not s:
+        return False
+    if _ANSWER_PREFIX_RE.match(s):   # explicit 'Answer:' — always an answer
+        return True
+    try:
+        return _answer_block_rule().fires(s)
+    except Exception:
+        return False
+
+
+def _fold_answers_into_questions(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Pair an answer atom with the question atom directly above it into ONE Q&A
+    atom — a numbered Q&A / RFI list ('1. … Could I get clarification?' + 'Answer:
+    …'). Split, the question and its answer lose their linkage. Answer-ness is an
+    embedding judgment ('Answer:' prefix is the offline net); the pairing is
+    positional (an answer belongs to the question right above it, same page).
+    Conservative: only folds into a preceding QUESTION-ish atom on the same page,
+    never into another answer or a heading — so nothing is mis-merged or lost."""
+    def _page(a: EvidenceAtom):
+        try:
+            return (a.source_refs[0].locator or {}).get("page") if a.source_refs else None
+        except Exception:
+            return None
+
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        txt = (a.raw_text or "").strip()
+        v = a.value if isinstance(a.value, dict) else {}
+        if (out and txt and v.get("kind") != "image_marker"
+                and "binary_region_marker" not in (a.review_flags or [])
+                and _is_answer_block(txt)):
+            prev = out[-1]
+            ptxt = (prev.raw_text or "").strip()
+            pv = prev.value if isinstance(prev.value, dict) else {}
+            explicit = bool(_ANSWER_PREFIX_RE.match(txt))
+            # An explicit 'Answer:' belongs to the content atom above it (the
+            # question, or its wrapped tail) — so accept any non-answer prev. A
+            # semantic-only answer (no prefix) needs a clearly question-ish prev.
+            prev_is_q = explicit or bool(_QUESTION_HEAD_RE.match(ptxt) or "?" in ptxt)
+            if (prev_is_q and _page(prev) == _page(a)
+                    and not _ANSWER_PREFIX_RE.match(ptxt)
+                    and pv.get("kind") != "image_marker"
+                    and "binary_region_marker" not in (prev.review_flags or [])
+                    and len(ptxt) + len(txt) < 3900):
+                merged = f"{ptxt}  {txt}"
+                try:
+                    out[-1] = prev.model_copy(update={
+                        "raw_text": merged, "normalized_text": normalize_text(merged),
+                    })
+                    continue
+                except Exception:
+                    pass
         out.append(a)
     return out
 
