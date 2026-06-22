@@ -1397,26 +1397,50 @@ def _fold_answers_into_questions(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
         except Exception:
             return None
 
+    def _is_questionish(t: str) -> bool:
+        return bool(t) and (t.endswith("?") or "?" in t or bool(_QUESTION_HEAD_RE.match(t)))
+
+    def _is_declarative_answer(t: str) -> bool:
+        # A response with NO explicit marker: a declarative line that is not itself
+        # a question, instruction, photo request, label, or bullet. Lets a Q&A pair
+        # when the answer doesn't say 'Answer:' ('… needed?' -> 'Industry Standard.')
+        # — works offline, where the answer EMBEDDING is unavailable.
+        if not t or len(t.split()) < 2 or t.endswith("?") or "?" in t:
+            return False
+        if (_QUESTION_HEAD_RE.match(t) or _FORM_INSTRUCTION_RE.match(t)
+                or _is_photo_request(t) or _is_value_field_label(t)):
+            return False
+        return True
+
     out: list[EvidenceAtom] = []
     for a in atoms:
         txt = (a.raw_text or "").strip()
         v = a.value if isinstance(a.value, dict) else {}
         if (out and txt and v.get("kind") != "image_marker"
-                and "binary_region_marker" not in (a.review_flags or [])
-                and _is_answer_block(txt)):
+                and "binary_region_marker" not in (a.review_flags or [])):
             prev = out[-1]
             ptxt = (prev.raw_text or "").strip()
             pv = prev.value if isinstance(prev.value, dict) else {}
             explicit = bool(_ANSWER_PREFIX_RE.match(txt))
-            # An explicit 'Answer:' belongs to the content atom above it (the
-            # question, or its wrapped tail) — so accept any non-answer prev. A
-            # semantic-only answer (no prefix) needs a clearly question-ish prev.
-            prev_is_q = explicit or bool(_QUESTION_HEAD_RE.match(ptxt) or "?" in ptxt)
-            if (prev_is_q and _page(prev) == _page(a)
-                    and not _ANSWER_PREFIX_RE.match(ptxt)
-                    and pv.get("kind") != "image_marker"
-                    and "binary_region_marker" not in (prev.review_flags or [])
-                    and len(ptxt) + len(txt) < 3900):
+            # Three ways to recognise the answer below a question:
+            #   1. explicit 'Answer:'   — folds into any non-answer prev (reliable
+            #      everywhere; the prev is the question or its wrapped tail);
+            #   2. embedding answer      — needs a clearly question-ish prev (online);
+            #   3. positional, no marker — a STRONG question (ends '?') followed by a
+            #      declarative line is the answer (offline-safe; no colon needed).
+            prev_mergeable = (
+                _page(prev) == _page(a)
+                and not _ANSWER_PREFIX_RE.match(ptxt)
+                and pv.get("kind") != "image_marker"
+                and "binary_region_marker" not in (prev.review_flags or [])
+                and len(ptxt) + len(txt) < 3900
+            )
+            do_merge = prev_mergeable and (
+                explicit                                            # 1. 'Answer:' -> any non-answer prev
+                or (_is_answer_block(txt) and _is_questionish(ptxt))  # 2. embedding answer (online)
+                or (ptxt.endswith("?") and _is_declarative_answer(txt))  # 3. positional, no marker
+            )
+            if do_merge:
                 merged = f"{ptxt}  {txt}"
                 try:
                     out[-1] = prev.model_copy(update={
