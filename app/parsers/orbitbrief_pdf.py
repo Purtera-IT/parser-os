@@ -5357,6 +5357,36 @@ def _numbered_heading(line: str) -> str | None:
 _LIST_ITEM_OPENER_RE = re.compile(r"^(?:\d{1,2}|[a-zA-Z]|[ivxIVX]{1,4})[.)]\s+\S")
 
 
+_DOTTED_SECTION_RE = re.compile(r"^(\d+(?:\.\d+)+)\.?\s+(\S.*)$")
+
+
+def _split_dotted_section(line: str) -> tuple[str, str] | None:
+    """Split a dotted-decimal SOW/RFP section heading into (heading, body):
+    '1.0 SCOPE' -> ('1.0 SCOPE', ''); '2.1 GENERAL REQUIREMENTS. The Contractor
+    shall…' -> ('2.1 GENERAL REQUIREMENTS', 'The Contractor shall…'); '2.1.1.1
+    Confined Space. N / A' -> ('2.1.1.1 Confined Space', 'N / A').
+
+    Multi-level section numbers (1.0, 2.1, 2.1.1) are missed by the single-level
+    numbered/run-on rules, and the title ENDS in a period ('REQUIREMENTS.'), which
+    _numbered_heading rejects — so without this every SOW section fell through to
+    body content and stayed under a stale carried heading. Boundary: the title is
+    the text up to its first sentence period; the rest is the body. Guarded so a
+    measurement ('2.5 inch conduit') or a sentence isn't taken as a heading."""
+    m = _DOTTED_SECTION_RE.match((line or "").strip())
+    if not m:
+        return None
+    num, rest = m.group(1), m.group(2).strip()
+    cut = rest.find(". ")
+    if cut == -1:
+        head, body = rest.rstrip("."), ""
+    else:
+        head, body = rest[:cut].strip(), rest[cut + 2:].strip()
+    # a heading is a short title that starts capitalised (not 'inch conduit')
+    if not head or len(head.split()) > 12 or not head[:1].isupper():
+        return None
+    return (f"{num} {head}", body)
+
+
 def _next_content_is_body(lines: list[str], idx: int) -> bool:
     """True when the next non-blank line after ``idx`` is a PROSE body — so a
     numbered line is a section heading over a body, not one entry in a list.
@@ -6259,6 +6289,19 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             skip_through = j - 1
             paragraph_lines.extend(req)
             flush_paragraph()
+            continue
+
+        # Dotted-decimal SOW/RFP section heading ("1.0 SCOPE", "2.1 GENERAL
+        # REQUIREMENTS. The Contractor shall…", "2.1.1.1 Confined Space. N / A")
+        # — multi-level numbers, title often run into the body and ending in '.',
+        # which the single-level rules below miss. Roots the clause under its own
+        # numbered section instead of a stale carried heading ("LIST OF TABLES").
+        dotted = _split_dotted_section(line)
+        if dotted:
+            flush_section()
+            current_heading = dotted[0]
+            if dotted[1]:
+                paragraph_lines.append(dotted[1])
             continue
 
         # Numbered section heading ("1. Authoritative physical site roster") —
