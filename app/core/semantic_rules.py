@@ -22,10 +22,66 @@ Design principles:
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import Callable, Sequence
 
 _PROTO_CACHE: dict[str, object] = {}  # rule-name -> (pos_matrix, neg_matrix)
+
+# ── trained-threshold registry ──────────────────────────────────────────
+# A rule's threshold is hand-set at construction, but the trainer
+# (_train_semantic_rules.py) re-fits it against the rule's labelled examples
+# (its positives/negatives + accumulated labeler corrections) and writes the
+# tuned value here. A rule loads its trained threshold at construction, so
+# retraining shifts behaviour with NO code edit. Absent file -> hand-set default.
+_THRESHOLD_REGISTRY: dict | None = None
+
+
+def _threshold_registry_path() -> Path:
+    return Path(os.environ.get(
+        "SOWSMITH_RULE_THRESHOLDS",
+        str(Path(__file__).resolve().parents[2] / "models" / "semantic_rule_thresholds.json"),
+    ))
+
+
+def _load_threshold_registry() -> dict:
+    global _THRESHOLD_REGISTRY
+    if _THRESHOLD_REGISTRY is None:
+        try:
+            _THRESHOLD_REGISTRY = json.loads(_threshold_registry_path().read_text(encoding="utf-8"))
+        except Exception:
+            _THRESHOLD_REGISTRY = {}
+    return _THRESHOLD_REGISTRY
+
+
+def _trained_threshold(name: str, default: float) -> float:
+    try:
+        ent = _load_threshold_registry().get(name)
+        if isinstance(ent, dict) and isinstance(ent.get("threshold"), (int, float)):
+            return float(ent["threshold"])
+    except Exception:
+        pass
+    return default
+
+
+def _log_decision(name: str, text: str, best_pos: float, best_neg: float,
+                  threshold: float, decision: bool) -> None:
+    """Append one rule decision to the feedback log (JSONL) when
+    ``SOWSMITH_RULE_LOG`` points at a path. The reviewer's accept/reject on the
+    resulting atom is later joined to these rows to label them — that labelled
+    set is what the trainer re-fits the threshold on. Off (no env) -> zero cost."""
+    path = os.environ.get("SOWSMITH_RULE_LOG")
+    if not path:
+        return
+    try:
+        rec = {"rule": name, "text": (text or "")[:400], "best_pos": round(best_pos, 4),
+               "best_neg": round(best_neg, 4), "threshold": round(threshold, 4),
+               "decision": bool(decision)}
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # logging must never break a parse
 
 
 def _np():
@@ -45,7 +101,10 @@ class SemanticRule:
         self.name = name
         self.positives = list(positives)
         self.negatives = list(negatives)
-        self.threshold = threshold
+        self.default_threshold = threshold
+        # A trained threshold (from the eval-gated trainer) overrides the hand-set
+        # default with NO code edit; absent registry -> hand-set default.
+        self.threshold = _trained_threshold(name, threshold)
         self.lexical_fallback = lexical_fallback
 
     # -- env switches -----------------------------------------------------
@@ -110,7 +169,11 @@ class SemanticRule:
             best_pos = float((pos @ q).max())
             best_neg = float((neg @ q).max()) if len(neg) else -1.0
             # fire iff the nearest prototype is a POSITIVE and it clears the floor
-            return best_pos >= self.threshold and best_pos > best_neg
+            decision = best_pos >= self.threshold and best_pos > best_neg
+            # log the decision (+ its scores) for the feedback/training loop —
+            # no-op unless SOWSMITH_RULE_LOG is set, so prod pays nothing.
+            _log_decision(self.name, text, best_pos, best_neg, self.threshold, decision)
+            return decision
         except Exception:
             return self._lexical(text)
 
