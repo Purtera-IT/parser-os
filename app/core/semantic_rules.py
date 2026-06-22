@@ -205,7 +205,15 @@ class SemanticRule:
 import re as _re
 
 _RULE_CACHE: dict = {}
-_FRAMING_LEAD_IN_RE = _re.compile(r"\b(the following|as follows)\b", _re.I)
+# Forward cues that announce a list/section below: 'the following', 'as follows',
+# AND list-announcing verbs ('Services include:', 'Scope consists of:', 'This
+# support is limited to:') — the latter were missed offline, so those lead-ins
+# got emitted as their own atom AND used as the list's section. The structural
+# gate (a bullet/list directly follows) is what actually constrains this, so a
+# non-lead-in 'include' sentence with nothing below it is never lifted.
+_FRAMING_LEAD_IN_RE = _re.compile(
+    r"\b(the following|as follows|includ\w*|consist\w*|compris\w*|"
+    r"limited to|are as|listed below|outlined below|described below)\b", _re.I)
 
 
 def lead_in_lexical(text: str) -> bool:
