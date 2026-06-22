@@ -177,7 +177,30 @@ def _regroup_form_qa(text: str) -> str:
         if not ln:
             i += 1
             continue
-        if _FORM_INTERROG_RE.match(ln) or ln.endswith("?"):
+        if _is_photo_request(ln):
+            # A photo request wraps across lines ("Upload Photo of Tablet
+            # installed and" / "showing the correct screen loaded to" / "show
+            # activity."). Gather the whole thing as ONE unit. The generic
+            # instruction branch below breaks on a continuation that happens to
+            # start with an instruction word ('showing' is in _FORM_INSTRUCTION_RE)
+            # — splitting the request — so photo requests get their own gather
+            # that joins any non-question wrapped tail and stops at sentence end
+            # (so it never swallows the following section header).
+            parts = [ln]
+            i += 1
+            while i < n and raw[i]:
+                nxt = raw[i]
+                if nxt.endswith("?") or _FORM_INTERROG_RE.match(nxt) or _is_photo_request(nxt):
+                    break
+                if nxt[0].islower() or len(nxt.split()) >= 3:
+                    parts.append(nxt)
+                    i += 1
+                    if nxt.rstrip().endswith((".", "!", ":")):
+                        break  # sentence complete — don't absorb the next header
+                else:
+                    break
+            units.append(" ".join(parts).strip())
+        elif _FORM_INTERROG_RE.match(ln) or ln.endswith("?"):
             # assemble a (possibly multi-line) question ending in '?'
             parts = [ln]
             i += 1
