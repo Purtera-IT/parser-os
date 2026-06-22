@@ -354,9 +354,16 @@ def _regroup_form_qa(text: str) -> str:
             i += 1
             while i < n and raw[i]:
                 nxt = raw[i]
-                if nxt.endswith("?") or _FORM_INTERROG_RE.match(nxt) or _is_photo_request(nxt):
+                # a new question / photo request / footer page-number ends it
+                if (nxt.endswith("?") or _FORM_INTERROG_RE.match(nxt)
+                        or _is_photo_request(nxt) or nxt.isdigit()):
                     break
-                if nxt[0].islower() or len(nxt.split()) >= 3:
+                # wrapped tail: lowercase start, a 3+ word sentence line, OR a
+                # short Title-Case fragment that completes the phrase ('Headset
+                # Holder' + 'Mounting', 'Battery' + 'Charger Mounting') — same rule
+                # the text splitter uses, so regroup doesn't leave fragments it can't.
+                if (nxt[0].islower() or len(nxt.split()) >= 3
+                        or re.match(r"^[A-Z][\w/&-]*( [A-Z][\w/&-]*){0,2}$", nxt)):
                     parts.append(nxt)
                     i += 1
                     if nxt.rstrip().endswith((".", "!", ":")):
@@ -765,6 +772,10 @@ _PAGE_FOOTER_HINTS = (
 )
 
 
+_BARE_URL_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/?", re.I)
+
+
 def _looks_like_page_footer(text: str) -> bool:
     """Detect repeating page-footer / page-header band text.
 
@@ -780,6 +791,11 @@ def _looks_like_page_footer(text: str) -> bool:
     """
     if not text:
         return False
+    # A standalone URL / bare domain ('www.purtera-it.com', 'WWW.X.COM',
+    # 'https://x.com') is a footer / letterhead band, never deal content — strip
+    # it so it can't glue onto the start of a real clause.
+    if _BARE_URL_RE.fullmatch(text.strip()):
+        return True
     if len(text) > 240:
         return False  # Real footers are short; long blocks are scope.
     # A signature / sign-off line ("Role: ____  Date: ____") is governance
