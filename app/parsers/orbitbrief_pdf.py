@@ -1090,28 +1090,57 @@ def _collapse_toc_atoms(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
 
 
 def _fold_photo_requests_into_images(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
-    """Drop a photo-request text atom ('Upload 4 Photos of the Nexeo …') when the
-    images it asks for already carry it as their caption (expected_content). The
-    request's 'answer' IS those photos, so it belongs as the images' linkage
-    reference, not as a duplicate scope_item. Safe — only drops when a captioned
-    image exists (the linkage target), so nothing is silently lost: if no image
-    carried it, the text atom stays."""
-    captions: set[str] = set()
+    """Fold a photo-request text atom ('Upload 4 Photos of the Nexeo …') into the
+    images it asks for: the request's 'answer' IS those photos, so it belongs as
+    the images' linkage reference, not a duplicate scope_item.
+
+    The images are extracted in a separate pass and appended at the END of the
+    atom list, so they sink below all text. Here we MOVE each matching image to
+    its request's position (reading order — under the right section header) and
+    give it the request's section_path, then drop the request text. Images with
+    no local request (a multi-page request's continuation photos) stay where they
+    are. Safe: only folds when a captioned image exists, so nothing is lost."""
+    img_by_caption: dict[str, list[EvidenceAtom]] = {}
     for a in atoms:
         v = a.value if isinstance(a.value, dict) else {}
-        cap = (v.get("expected_content") or "").strip().lower()
-        if cap:
-            captions.add(cap)
-    if not captions:
+        if v.get("kind") == "image_marker":
+            cap = (v.get("expected_content") or "").strip().lower()
+            if cap:
+                img_by_caption.setdefault(cap, []).append(a)
+    if not img_by_caption:
         return atoms
+
+    def _with_section(img: EvidenceAtom, req: EvidenceAtom) -> EvidenceAtom:
+        # Give the image the request's section_path so it files under the same
+        # header (e.g. 'Tablet Install') instead of floating section-less.
+        try:
+            rsec = (req.source_refs[0].locator or {}).get("section_path") if req.source_refs else None
+            if rsec and img.source_refs:
+                loc = dict(img.source_refs[0].locator or {})
+                loc["section_path"] = rsec
+                newref = img.source_refs[0].model_copy(update={"locator": loc})
+                return img.model_copy(update={"source_refs": [newref, *img.source_refs[1:]]})
+        except Exception:
+            pass
+        return img
+
+    placed: set[int] = set()
     out: list[EvidenceAtom] = []
     for a in atoms:
         v = a.value if isinstance(a.value, dict) else {}
         txt = (a.raw_text or "").strip()
         if v.get("kind") != "image_marker" and _is_photo_request(txt):
             low = txt.lower()
-            if any(low.startswith(c) or c in low for c in captions):
-                continue  # the photos carry this request as their caption — fold in
+            cap = next((c for c in img_by_caption if low.startswith(c) or c in low), None)
+            if cap:
+                # place the matching image(s) HERE, in the request's slot
+                for img in img_by_caption[cap]:
+                    if id(img) not in placed:
+                        placed.add(id(img))
+                        out.append(_with_section(img, a))
+                continue  # the request itself folds into those images
+        if v.get("kind") == "image_marker" and id(a) in placed:
+            continue  # already moved up to its request slot — drop the trailing dup
         out.append(a)
     return out
 
@@ -5334,6 +5363,11 @@ def _title_line_lexical(text: str) -> bool:
     fallback when the embedder is unreachable (and the deterministic test path)."""
     s = (text or "").strip()
     if not s or len(s) > 90 or s[-1] in ".!?,;:":
+        return False
+    # A line containing '?' is a question (or a regrouped 'Q?  A' unit), never a
+    # document title. Without this the first form question ('Is this store a 2
+    # LANE Store for Drive Thru?  No') was picked as the page title and dropped.
+    if "?" in s:
         return False
     if _is_bare_date_line(s):
         return False
