@@ -159,6 +159,37 @@ def _looks_like_form_answer(line: str) -> bool:
     return not _FORM_INTERROG_RE.match(s) and not _FORM_INSTRUCTION_RE.match(s)
 
 
+# Connector words: if a question line ENDS on one, the next line completes the
+# question ("...were pulled to" + "POS"), so it's a continuation, not the answer.
+_CONNECTOR_WORDS = {
+    "to", "of", "for", "in", "on", "at", "the", "a", "an", "and", "or", "with",
+    "each", "by", "from", "into", "per", "your", "their", "any", "all",
+}
+
+
+def _is_discrete_answer(line: str) -> bool:
+    """A DISCRETE form answer — a self-contained value: 'Yes', 'No', '8', '$300',
+    'New Tablet'. Distinct from a question's wrapped continuation ('Talking POS in
+    the store'), which is a sentence fragment carrying lowercase function words.
+    Used to find where a multi-line question (one with no '?') ends and its answer
+    begins, so the answer doesn't get mistaken for question text (and dropped)."""
+    s = (line or "").strip()
+    if not s or s.endswith("?") or _FORM_INTERROG_RE.match(s) or _FORM_INSTRUCTION_RE.match(s):
+        return False
+    words = s.split()
+    if len(words) > 4:
+        return False
+    if s.lower() in {"yes", "no", "n/a", "na", "tbd", "none", "true", "false"}:
+        return True
+    if re.fullmatch(r"[-+]?[\d.,$%]+\w{0,6}", s):  # 8, 950, $300, 12.5, 950ft
+        return True
+    # a short noun-phrase value with NO lowercase function words is an answer
+    # ('New Tablet'); one WITH them ('Talking POS in the store') is continuation.
+    if any(w.lower() in _CONNECTOR_WORDS for w in words):
+        return False
+    return len(words) <= 3
+
+
 def _regroup_form_qa(text: str) -> str:
     """On a questionnaire / field-report page, join each question with its answer
     so 'Have you installed the NEXEO Box?\\nYes' becomes ONE 'Q?  A' unit instead
@@ -201,19 +232,29 @@ def _regroup_form_qa(text: str) -> str:
                     break
             units.append(" ".join(parts).strip())
         elif _FORM_INTERROG_RE.match(ln) or ln.endswith("?"):
-            # assemble a (possibly multi-line) question ending in '?'
+            # Assemble a (possibly multi-line) question, then its answer. The
+            # question may wrap WITHOUT a '?' ("Did you pull 2 cables to each Cash"
+            # + "Talking POS in the store" + "Yes"): keep joining continuation
+            # lines until a DISCRETE answer ('Yes'/'8'/'New Tablet'). A line that
+            # looks discrete is still a continuation when the question dangles on a
+            # connector word ("...pulled to" + "POS"). Without this the question's
+            # tail was taken as the answer and the real answer was orphaned + lost.
             parts = [ln]
             i += 1
             joined = 0
-            while (not parts[-1].endswith("?") and i < n and raw[i] and joined < 2
-                   and not _FORM_INSTRUCTION_RE.match(raw[i])
-                   and not _looks_like_form_answer(raw[i])):
+            while (not parts[-1].endswith("?") and i < n and raw[i] and joined < 4
+                   and not _FORM_INTERROG_RE.match(raw[i])
+                   and not _FORM_INSTRUCTION_RE.match(raw[i])):
+                last_word = parts[-1].rstrip().split()[-1].lower() if parts[-1].split() else ""
+                dangling = last_word in _CONNECTOR_WORDS
+                if _is_discrete_answer(raw[i]) and not dangling:
+                    break
                 parts.append(raw[i])
                 i += 1
                 joined += 1
             question = " ".join(parts).strip()
             answer = ""
-            if i < n and _looks_like_form_answer(raw[i]):
+            if i < n and _is_discrete_answer(raw[i]):
                 answer = raw[i]
                 i += 1
             units.append(f"{question}  {answer}".strip())
