@@ -479,6 +479,16 @@ def _norm_label(text: Any) -> str:
 _DIGIT_RE = re.compile(r"\d")
 
 
+def _is_bare_numeric(s: str) -> bool:
+    """True if the cell is just a number (with optional $/%/,/./()/sign/space) —
+    no letters. Such a string is never a real field LABEL, and a label-less bare
+    number is a stray table cell, not a fact. Used to drop keyval junk like
+    '70: 0.3684' (an unlabeled cost/sell/margin totals row paired as a fake
+    'label: value') and lone '1.15' / '69.0' cells."""
+    t = (s or "").strip()
+    return bool(t) and re.fullmatch(r"[-+]?[\d.,$%()\s]+", t) is not None
+
+
 def _is_substantive_annotation(text: str) -> bool:
     """A titleless free-text cell block worth keeping as a loose annotation, vs a
     decorative one-word caption. Substantive = carries a quantity ("920 hours",
@@ -4110,6 +4120,12 @@ class XlsxParser(BaseParser):
                     seq += 1
                     line = (f"{k}: {v}" if v else k).strip()
                     if not line:
+                        continue
+                    # A numeric LABEL ('70: 0.3684') is not a field — it's two
+                    # stray cells from an unlabeled totals row; and a label-less
+                    # bare number ('1.15') is a loose cell, not a fact. Drop both
+                    # (the real BOM rows in the same sheet are kept as table rows).
+                    if (_is_bare_numeric(k) and _is_bare_numeric(v)) or (not v and _is_bare_numeric(k)):
                         continue
                     kv_id = stable_id("atm", artifact_id, "xlsx_block_kv", sheet_name, bi, seq)
                     atoms.append(EvidenceAtom(
