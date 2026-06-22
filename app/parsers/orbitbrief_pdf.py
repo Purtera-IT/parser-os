@@ -5376,6 +5376,80 @@ def _title_line_rule():
     return _TITLE_LINE_RULE
 
 
+_SECTION_HEADER_RULE = None
+
+
+def _section_header_lexical(line: str) -> bool:
+    """Offline net for 'is this standalone line a form SECTION header?'
+    (the embedder is the primary judge; this fires when it's unreachable / in
+    the deterministic test + offline-labeler path). A form sub-header is a short
+    Title-Case label naming a subsystem ('BK Audio', 'POS Cabling', 'Tablet
+    Install', 'Drive Thru Lane 2'). Distinguish it from the other standalone
+    short lines on a form page — bare answers ('Yes', '8') and question
+    continuations ('Talking POS in the store', which carry lowercase words) —
+    by requiring most ALPHA words to be capitalised and rejecting bare values."""
+    s = (line or "").strip()
+    if not s or s[-1] in "?.,;:!" or not any(c.isalpha() for c in s):
+        return False
+    words = s.split()
+    if not (1 <= len(words) <= 6):
+        return False
+    if s.lower() in {"yes", "no", "n/a", "na", "tbd", "none", "true", "false"}:
+        return False
+    if _is_photo_request(s) or _FORM_INTERROG_RE.match(s):
+        return False
+    alpha = [w for w in words if any(c.isalpha() for c in w)]
+    if not alpha:
+        return False
+    capped = sum(1 for w in alpha if w[0].isupper())
+    return capped / len(alpha) >= 0.8
+
+
+def _section_header_rule():
+    """SemanticRule: is this standalone line a form/field-report SECTION header
+    ('Tablet Install', 'BK Audio', 'POS Cabling') — a divider the following
+    questions belong UNDER — rather than content (a question, a bare answer, a
+    material/tool line)? Header-ness is a meaning judgment, so the embedder leads
+    and ``_section_header_lexical`` is the offline net."""
+    global _SECTION_HEADER_RULE
+    if _SECTION_HEADER_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _SECTION_HEADER_RULE = SemanticRule(
+            name="form_section_header",
+            positives=[
+                "Tablet Install", "BK Audio", "POS Cabling", "Drive Thru Lane 2",
+                "Headset Install", "Site Information", "Network Configuration",
+                "Power and Grounding", "Equipment Installation", "Menu Board",
+                "Speaker Post", "Drive Thru", "Cabling", "Server Rack",
+            ],
+            negatives=[
+                "Did you install a new tablet at the site?", "New Tablet", "Yes", "No",
+                "8", "Talking POS in the store", "CAT6 jacks", "Tape measure",
+                "10 ft ladder", "Cable tester", "Upload 4 photos of the unit",
+                "Was there a pre-existing BK Audio Box next to the old HME unit?",
+                "The contractor shall provide all materials",
+            ],
+            threshold=0.50,
+            lexical_fallback=_section_header_lexical,
+        )
+    return _SECTION_HEADER_RULE
+
+
+def _is_form_section_header(line: str) -> bool:
+    """A standalone line on a form page that heads the questions below it. Cheap
+    textual preconditions, then the semantic rule (embedding online / lexical
+    offline) makes the call."""
+    s = (line or "").strip()
+    if not s or len(s.split()) > 6 or s[-1] in "?.,;:!":
+        return False
+    if _looks_like_page_footer(s) or _is_bare_date_line(s):
+        return False
+    try:
+        return _section_header_rule().fires(s)
+    except Exception:
+        return _section_header_lexical(s)
+
+
 def _detect_text_title(page_text: str) -> str | None:
     """First prominent line of a text page — the document's main section.
 
@@ -5590,6 +5664,12 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     current_blocks: list[dict[str, Any]] = []
     paragraph_lines: list[str] = []
     bullet_buffer: list[str] = []
+    # A field-report / questionnaire page (>=2 '?') stacks Q&A under short visual
+    # sub-headers ("Tablet Install", "BK Audio", "POS Cabling"). Recognise those
+    # as SECTION headers so the questions below nest under them — instead of the
+    # header leaking as a junk scope_item or vanishing. Gated to form pages so an
+    # ordinary prose page's short Title-Case lines aren't promoted.
+    _is_form_pg = (page_text or "").count("?") >= 2
 
     def flush_paragraph() -> None:
         nonlocal paragraph_lines
@@ -5672,6 +5752,16 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
                 and (idx == len(lines) - 1 or not lines[idx + 1].strip())):
             flush_paragraph()
             flush_bullets()
+            continue
+
+        # A form sub-header ("Tablet Install", "BK Audio", "POS Cabling") on a
+        # questionnaire page is a SECTION divider: start a new section so the
+        # questions below nest under it, and DON'T emit it as its own atom
+        # (breadcrumb only). After _regroup_form_qa answers are joined to their
+        # questions, so a standalone short Title-Case line here is a header.
+        if _is_form_pg and _is_form_section_header(line.strip()):
+            flush_section()
+            current_heading = line.strip()
             continue
 
         # A photo-request instruction ("Upload 4 Photos of the Nexeo installed at
