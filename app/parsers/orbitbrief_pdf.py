@@ -1290,9 +1290,16 @@ def _pdf_image_markers(
                 caption = current_request
                 y = img_y.get(xref)
                 if page_requests and y is not None:
+                    # A request introduces the images BELOW it (until the next
+                    # request), so an image is owned by the nearest request AT OR
+                    # ABOVE its top edge. If nothing is above it on this page, the
+                    # image precedes every request here — it CONTINUES the carried
+                    # request from a prior page; never grab a request below it
+                    # (that one introduces later images, e.g. a cable-test photo
+                    # at the page top vs a 'POS 3' request lower down).
                     above = [r for r in page_requests if r[0] <= y + 2.0]
-                    caption = (above[-1][1] if above
-                               else min(page_requests, key=lambda r: abs(r[0] - y))[1])
+                    if above:
+                        caption = above[-1][1]
                 elif page_requests:
                     caption = page_requests[min(ii, len(page_requests) - 1)][1]
                 out.append(region_marker(
