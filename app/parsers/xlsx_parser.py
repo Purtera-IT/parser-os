@@ -721,7 +721,10 @@ def _coerce_header_value(val: Any) -> str | None:
         return None
     if hasattr(val, "isoformat"):
         try:
-            val = val.isoformat()
+            iso = val.isoformat()
+            # a date cell read as a midnight datetime -> show the date only
+            # ('2026-05-27', not '2026-05-27T00:00:00').
+            val = iso[:10] if "T00:00:00" in iso else iso
         except Exception:
             val = str(val)
     sval = re.sub(r"\s+", " ", str(val).strip())
@@ -865,7 +868,8 @@ def _cell_to_text_op(value: Any) -> str:
         return ""
     if hasattr(value, "isoformat"):
         try:
-            return value.isoformat()
+            iso = value.isoformat()
+            return iso[:10] if "T00:00:00" in iso else iso  # date-only at midnight
         except Exception:
             pass
     return str(value).strip()
