@@ -1136,11 +1136,30 @@ def _pdf_image_markers(
                 images = page.get_images(full=True)
             except Exception:
                 continue
+            # Collect photo-request BLOCKS with their vertical position. Reading
+            # blocks (not raw lines) joins a request wrapped across lines
+            # ("Upload photo showing Battery \nCharger Mounting" -> one request)
+            # and skips footer page numbers a line-split would leak.
+            page_requests: list[tuple[float, str]] = []   # (y0, request text)
             try:
-                for ln in page.get_text().splitlines():
-                    ln = ln.strip()
-                    if ln and _is_photo_request(ln):
-                        current_request = re.sub(r"\s+", " ", ln)[:160]
+                for b in page.get_text("blocks"):
+                    joined = re.sub(r"\s+", " ", (b[4] or "")).strip()
+                    if joined and _is_photo_request(joined):
+                        page_requests.append((float(b[1]), joined[:160]))
+            except Exception:
+                pass
+            page_requests.sort(key=lambda r: r[0])
+            # Map each image xref to its top-edge Y so we can pair it to the
+            # request directly above it. A field report stacks request-then-photo
+            # down the page; two requests + two photos must NOT all collapse onto
+            # the last request (the old line-scan kept only the most recent one).
+            img_y: dict[int, float] = {}
+            try:
+                for info in page.get_image_info(xrefs=True):
+                    xr = info.get("xref")
+                    bb = info.get("bbox")
+                    if xr and bb:
+                        img_y[xr] = float(bb[1])
             except Exception:
                 pass
             for ii, img in enumerate(images):
@@ -1171,6 +1190,18 @@ def _pdf_image_markers(
                             saved_by_xref[xref] = (saved_path, size)
                     except Exception:
                         saved_path, size = None, 0  # degrade to plain marker
+                # Pair this image to the request directly above it: the last
+                # request whose block top is at/above the image top. No request
+                # above (photo continues a request from a prior page) -> use the
+                # carried request. No position info -> fall back to order/last.
+                caption = current_request
+                y = img_y.get(xref)
+                if page_requests and y is not None:
+                    above = [r for r in page_requests if r[0] <= y + 2.0]
+                    caption = (above[-1][1] if above
+                               else min(page_requests, key=lambda r: abs(r[0] - y))[1])
+                elif page_requests:
+                    caption = page_requests[min(ii, len(page_requests) - 1)][1]
                 out.append(region_marker(
                     project_id=project_id,
                     artifact_id=artifact_id,
@@ -1182,8 +1213,13 @@ def _pdf_image_markers(
                     label="image",
                     size=size,
                     saved_path=saved_path,
-                    caption=current_request,
+                    caption=caption,
                 ))
+            # Carry the LAST request on this page forward: a multi-page request
+            # ("Upload 4 Photos" -> 2 here, 2 on the next page) captions the
+            # following page's photos when that page has no request line of its own.
+            if page_requests:
+                current_request = page_requests[-1][1]
     finally:
         doc.close()
     return out
@@ -5606,6 +5642,15 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             flush_bullets()
             continue
 
+        # A lone page-number line ("4") at the page foot is furniture — drop it
+        # so it never surfaces as a junk numeric atom. Guarded to an isolated /
+        # trailing short-digit line so a real numbered list item is untouched.
+        if (line.strip().isdigit() and len(line.strip()) <= 3
+                and (idx == len(lines) - 1 or not lines[idx + 1].strip())):
+            flush_paragraph()
+            flush_bullets()
+            continue
+
         # A photo-request instruction ("Upload 4 Photos of the Nexeo installed at
         # the site.") is the LINKAGE for the images it asks for — its "answer" is
         # those photos (already captioned onto the image markers). Break it out of
@@ -5619,10 +5664,18 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             j = idx + 1
             while j < len(lines):
                 nxt = lines[j].strip()
-                if (not nxt or nxt.endswith("?") or _FORM_INTERROG_RE.match(nxt)
-                        or _is_photo_request(nxt)):
+                # A bare number is a footer page number, not a continuation — and
+                # a new question / request / blank ends the wrapped instruction.
+                if (not nxt or nxt.isdigit() or nxt.endswith("?")
+                        or _FORM_INTERROG_RE.match(nxt) or _is_photo_request(nxt)):
                     break
-                if nxt[:1].islower() or len(nxt.split()) >= 3:   # sentence continuation
+                # Wrapped continuation: a lowercase-start tail, a 3+ word sentence
+                # line, OR a short Title-Case fragment that completes the request
+                # phrase ("Upload photo showing Battery" + "Charger Mounting").
+                # Without the Title-Case case the tail leaked as a junk atom
+                # ("Mounting 4") and the caption was left truncated.
+                if (nxt[:1].islower() or len(nxt.split()) >= 3
+                        or re.match(r"^[A-Z][\w/&-]*( [A-Z][\w/&-]*){0,2}$", nxt)):
                     req.append(nxt)
                     j += 1
                 else:
