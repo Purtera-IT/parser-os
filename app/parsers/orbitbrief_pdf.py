@@ -190,6 +190,82 @@ def _is_discrete_answer(line: str) -> bool:
     return len(words) <= 3
 
 
+def _page_is_form_lexical(raw: list[str]) -> bool:
+    """Structural net for 'is this a form / field-report page?' — the offline
+    fallback for the semantic judge below. A form is: >=2 '?'  OR  >=2 form
+    signals (question-start / instruction / photo-request) on a page that is
+    mostly short lines (so a prose page of long sentences with an occasional
+    'Provide …' is NOT a form). Detects forms whose questions are phrased as
+    statements ('Have you train the MOD … units.', zero '?')."""
+    nonblank = [l.strip() for l in raw if l.strip()]
+    if len(nonblank) < 3:
+        return False
+    if sum(1 for l in nonblank if l.endswith("?")) >= 2:
+        return True
+    signals = sum(
+        1 for l in nonblank
+        if l.endswith("?") or _FORM_INTERROG_RE.match(l)
+        or _FORM_INSTRUCTION_RE.match(l) or _is_photo_request(l)
+    )
+    short = sum(1 for l in nonblank if len(l.split()) <= 12)
+    return signals >= 2 and short >= 0.75 * len(nonblank)
+
+
+_FORM_PAGE_RULE = None
+
+
+def _form_page_rule():
+    """SemanticRule: does this page READ like a form / field-report (questions +
+    labelled fields + photo requests + signatures) rather than flowing prose, a
+    contract clause, or a rate-card/BOM table? Form-vs-prose is a MEANING judgment
+    — and real pages are hybrids (a field report mixes Q&A, a photo, a signature,
+    sometimes a paragraph) — so the embedder leads and the structural heuristic is
+    the offline net. Worth-regrouping is what we're really asking."""
+    global _FORM_PAGE_RULE
+    if _FORM_PAGE_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _FORM_PAGE_RULE = SemanticRule(
+            name="form_field_report_page",
+            positives=[
+                "Have you installed the NEXEO Box? Yes  Upload 4 Photos of the unit installed.",
+                "Did you pull 2 cables to each POS? Yes  How many total Cables were pulled? 8",
+                "Is this store a 2 LANE Store for Drive Thru? No  Tablet Install  Did you install a new Tablet?",
+                "Name:  Store #:  Site #:  Arrival Time: 06:00 AM  Departure Time: 09:30 AM",
+                "Upload Photo of Tablet installed.  Signature  Managers Name  Diedra Kennedy",
+                "Was there a pre-existing BK Audio Box? No  POS Cabling  Upload Photo showing the label",
+            ],
+            negatives=[
+                "The Contractor shall furnish all materials, tools, and labor necessary to complete the installation in accordance with the project specifications and applicable codes.",
+                "This Project Services Statement of Work is made by and between Norvet MSP and PurTera LLC and shall become effective on the date of last signature.",
+                "Payment terms are net thirty (30) days from the date of invoice; late payments accrue interest at 1.5% per month.",
+                "Country: Albania | Networking L1 Technician 2 hr min: 83.3 | Networking L2 Technician: 110.0",
+                "ID #: 11 | Material Description: 24-Port CAT6 Patch Panel | Quantity: 5 | Unit Cost: $120",
+                "2.2.10 Cable Pathways. The Contractor shall install cable support hardware such as cable trays, J-hooks, and conduit as required.",
+            ],
+            threshold=0.50,
+            # offline / embedder-down: fall back to the structural heuristic
+            # (re-split the joined representation back into lines).
+            lexical_fallback=lambda s: _page_is_form_lexical(
+                [x for x in s.split("  ") if x.strip()]
+            ),
+        )
+    return _FORM_PAGE_RULE
+
+
+def _page_is_form(raw: list[str]) -> bool:
+    """Is this page a form / field-report worth Q&A-regrouping + column-skip +
+    short-field retention — vs flowing prose / a contract / a rate-card table?
+    Embedding-led (handles hybrid pages by MEANING), structural heuristic offline."""
+    nonblank = [l.strip() for l in raw if l.strip()]
+    if len(nonblank) < 3:
+        return False
+    rep = "  ".join(nonblank[:40])[:800]
+    try:
+        return _form_page_rule().fires(rep)
+    except Exception:
+        return _page_is_form_lexical(raw)
+
+
 def _regroup_form_qa(text: str) -> str:
     """On a questionnaire / field-report page, join each question with its answer
     so 'Have you installed the NEXEO Box?\\nYes' becomes ONE 'Q?  A' unit instead
@@ -199,7 +275,7 @@ def _regroup_form_qa(text: str) -> str:
     Drive\" + \"Thru?\") is reassembled; instruction lines ('Upload 4 Photos…') stay
     on their own so they become their own atoms."""
     raw = [ln.strip() for ln in (text or "").splitlines()]
-    if sum(1 for ln in raw if ln.endswith("?")) < 2:
+    if not _page_is_form(raw):
         return text
     units: list[str] = []
     i, n = 0, len(raw)
@@ -1102,6 +1178,28 @@ def _is_photo_request(text: str) -> bool:
         return _photo_request_lexical(s)
 
 
+def _is_image_field_label(text: str) -> bool:
+    """A short labelled field whose value is the image directly below it on a form
+    ('Signature' -> the signature image). Used so such an image is captioned by
+    the field right above it, not by a far-off photo request higher on the page.
+    Conservative: a short Title-Case label / colon-label that is not a question,
+    instruction, sentence, or bare number."""
+    s = (text or "").strip()
+    if not s or s.endswith((".", "!", "?")):
+        return False
+    words = s.split()
+    if not (1 <= len(words) <= 4) or not any(c.isalpha() for c in s):
+        return False
+    if _FORM_INTERROG_RE.match(s) or _FORM_INSTRUCTION_RE.match(s) or _is_photo_request(s):
+        return False
+    if s.endswith(":"):
+        return True
+    if s.lower() in {"yes", "no", "n/a", "na", "tbd", "none"}:
+        return False
+    alpha = [w for w in words if any(c.isalpha() for c in w)]
+    return bool(alpha) and sum(1 for w in alpha if w[0].isupper()) / len(alpha) >= 0.8
+
+
 _TOC_LEADER_RE = re.compile(r"\.{4,}|…{2,}|(?:\.\s){4,}")
 
 
@@ -1233,15 +1331,25 @@ def _pdf_image_markers(
             # blocks (not raw lines) joins a request wrapped across lines
             # ("Upload photo showing Battery \nCharger Mounting" -> one request)
             # and skips footer page numbers a line-split would leak.
-            page_requests: list[tuple[float, str]] = []   # (y0, request text)
+            page_requests: list[tuple[float, str]] = []   # (y0, request text) — carry-forward
+            page_captions: list[tuple[float, str]] = []   # requests + field labels — per-image caption
             try:
                 for b in page.get_text("blocks"):
                     joined = re.sub(r"\s+", " ", (b[4] or "")).strip()
-                    if joined and _is_photo_request(joined):
+                    if not joined:
+                        continue
+                    if _is_photo_request(joined):
                         page_requests.append((float(b[1]), joined[:160]))
+                        page_captions.append((float(b[1]), joined[:160]))
+                    elif _is_image_field_label(joined):
+                        # a labelled field whose value is the image below it
+                        # ('Signature' -> the signature image) — caption the image
+                        # with the field, not the far-off photo request above.
+                        page_captions.append((float(b[1]), joined[:160]))
             except Exception:
                 pass
             page_requests.sort(key=lambda r: r[0])
+            page_captions.sort(key=lambda r: r[0])
             # Map each image xref to its top-edge Y so we can pair it to the
             # request directly above it. A field report stacks request-then-photo
             # down the page; two requests + two photos must NOT all collapse onto
@@ -1289,15 +1397,16 @@ def _pdf_image_markers(
                 # carried request. No position info -> fall back to order/last.
                 caption = current_request
                 y = img_y.get(xref)
-                if page_requests and y is not None:
-                    # A request introduces the images BELOW it (until the next
-                    # request), so an image is owned by the nearest request AT OR
-                    # ABOVE its top edge. If nothing is above it on this page, the
-                    # image precedes every request here — it CONTINUES the carried
-                    # request from a prior page; never grab a request below it
-                    # (that one introduces later images, e.g. a cable-test photo
-                    # at the page top vs a 'POS 3' request lower down).
-                    above = [r for r in page_requests if r[0] <= y + 2.0]
+                if page_captions and y is not None:
+                    # A request/label introduces the image(s) BELOW it, so an image
+                    # is owned by the nearest caption (photo request OR field label
+                    # like 'Signature') AT OR ABOVE its top edge — that's the thing
+                    # it illustrates. If nothing is above it on this page, the image
+                    # precedes every caption here — it CONTINUES the carried request
+                    # from a prior page; never grab a caption below it (that one
+                    # introduces later images: a cable-test photo at the page top
+                    # vs a 'POS 3' request lower down).
+                    above = [r for r in page_captions if r[0] <= y + 2.0]
                     if above:
                         caption = above[-1][1]
                 elif page_requests:
@@ -2745,7 +2854,8 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # question and its answer sit in different x-columns, so the column
         # detector would grab them as a 2-col table and fragment the Q&A — the
         # Q&A regrouper below owns those pages instead.
-        if _is_questionnaire_page(page_texts[page_index]):
+        if (_is_questionnaire_page(page_texts[page_index])
+                or _page_is_form(page_texts[page_index].splitlines())):
             col_blocks, col_bboxes = [], []
         else:
             col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
@@ -2771,9 +2881,21 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             _place_tables_in_sections(
                 pdf_path, page_index, sections, table_blocks, table_bboxes
             )
+        # A field-report / form page has no prose title — its content is Q&A and
+        # labelled fields. Tag its blocks so the short-fragment drops in
+        # _atoms_for_block (len<10, title-case-label = 'fragment') don't eat real
+        # form values ('Signature', 'Managers Name', 'Diedra Kennedy'), and skip
+        # page-title detection (it was grabbing the first question / a field label
+        # as the 'title' and stripping it).
+        if _page_is_form(prose_text.splitlines()):
+            for _sec in sections:
+                for _blk in _sec.get("blocks") or []:
+                    _blk["form_field"] = True
         # The page title becomes the document's main section. A heading is
         # structure, not a fact — drop its content block so the title isn't
-        # both the section root AND its own atom.
+        # both the section root AND its own atom. (_detect_text_title rejects
+        # questions / field values, so a form page's first Q isn't taken as
+        # the title — while a real title like 'Burger King HME Install' is kept.)
         page_title = _detect_text_title(prose_text)
         if page_title:
             _strip_title_block(sections, page_title)
@@ -3320,12 +3442,23 @@ def _atoms_for_block(
         # header/footer band into the *start* of a real paragraph,
         # strip the band rather than drop the atom.
         text = _strip_page_band_prefix(text)
-        if not text or len(text) < 10:
+        # A form/field-report page's values are legitimately short ('Signature',
+        # 'Yes', 'Diedra Kennedy') and read as Title-Case labels — they are real
+        # captured content, so the proposal-checklist fragment/length drops below
+        # must NOT apply to them. But even on a form page, a bare bullet glyph
+        # ('•', 'o', '▪') or a page-number label ('Page 1') is furniture, never an
+        # atom — keep dropping those.
+        _is_form_field = bool(block.get("form_field"))
+        if not text or len(re.sub(r"[^0-9A-Za-z]", "", text)) < 2:
+            return
+        if re.fullmatch(r"(?i)page\s*\d+", text):
+            return
+        if len(text) < 10 and not _is_form_field:
             return
         # P1.4: skip pure-title-case bullet-fragment labels like "Cost
         # Proposal", "Project Description", "Addendums".  These come
         # from proposal-format checklists and carry no scope data.
-        if _looks_like_fragment(text):
+        if not _is_form_field and _looks_like_fragment(text):
             return
         # P1.1: when a paragraph contains ≥2 Q\d. / A\d. markers, split
         # it into one atom per Q&A pair so packet anchors don't end up
@@ -5412,12 +5545,18 @@ def _title_line_lexical(text: str) -> bool:
     s = (text or "").strip()
     if not s or len(s) > 90 or s[-1] in ".!?,;:":
         return False
-    # A line containing '?' is a question (or a regrouped 'Q?  A' unit), never a
-    # document title. Without this the first form question ('Is this store a 2
-    # LANE Store for Drive Thru?  No') was picked as the page title and dropped.
-    if "?" in s:
+    # A question is never a document title — neither one with a '?' ('Is this
+    # store a 2 LANE Store for Drive Thru?  No') nor a statement-phrased one
+    # ('Have you train the MOD … units.  Yes', no '?'). Without this a form page's
+    # first question was picked as the page title and dropped.
+    if "?" in s or _FORM_INTERROG_RE.match(s):
         return False
     if _is_bare_date_line(s):
+        return False
+    # A bare clock time ('09:30 AM', '06:00') is page furniture (an arrival /
+    # departure stamp), not a title — without this it was picked as a form page's
+    # title once the real questions were (correctly) rejected.
+    if re.fullmatch(r"\d{1,2}:\d{2}(\s*[AP]\.?M\.?)?", s, re.I):
         return False
     if _looks_like_page_footer(s):
         return False
@@ -5525,6 +5664,15 @@ def _is_form_section_header(line: str) -> bool:
     if not s or len(s.split()) > 6 or s[-1] in "?.,;:!":
         return False
     if _looks_like_page_footer(s) or _is_bare_date_line(s):
+        return False
+    # A clock time ('09:30 AM' arrival/departure stamp) is a form VALUE, not a
+    # section header — and it slips past the title-case check (its only alpha
+    # token is the 'AM'/'PM' unit). A real header names a subsystem, so require
+    # at least one substantive word (>=3 alpha chars, not an AM/PM unit).
+    if re.fullmatch(r"\d{1,2}:\d{2}(\s*[AP]\.?M\.?)?", s, re.I):
+        return False
+    if not any(len(w) >= 3 and w.isalpha() and w.upper() not in ("AM", "PM")
+               for w in s.split()):
         return False
     try:
         return _section_header_rule().fires(s)
@@ -5653,6 +5801,14 @@ def _looks_like_section_heading(stripped: str) -> bool:
     # Reject single-token identifier codes (part/MSA/PO numbers) like
     # "MOCK-MSA-2026-OPTBOT-001": one token, with digits and hyphens.
     if " " not in stripped and "-" in stripped and any(c.isdigit() for c in stripped):
+        return False
+    # A clock time ('09:30 AM') passes str.isupper() (digits are uncased, 'AM' is
+    # upper) but is a form VALUE, not a heading. A real heading names something —
+    # require a substantive word (>=3 alpha chars, not an AM/PM unit).
+    if re.fullmatch(r"\d{1,2}:\d{2}(\s*[AP]\.?M\.?)?", stripped, re.I):
+        return False
+    if not any(len(w) >= 3 and w.isalpha() and w.upper() not in ("AM", "PM")
+               for w in stripped.split()):
         return False
     return True
 
