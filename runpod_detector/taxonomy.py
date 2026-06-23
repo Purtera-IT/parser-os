@@ -43,7 +43,9 @@ MICRO_TO_FACET: dict[str, str] = {
     "commercial_total": "COMMERCIAL",   # [R][D]
     "pricing_assumption": "COMMERCIAL", # [R][D]
     "site_budget": "COMMERCIAL",        # [R]
+    "rate_card": "COMMERCIAL",          # [v2] priced rate table
     # --- WORK ---
+    "work_scope_item": "WORK",          # [v2] general scope statement
     "requirement": "WORK",              # [R][D]
     "task": "WORK",                     # [R][D]
     "deliverable": "WORK",              # [R][D]
@@ -67,6 +69,7 @@ MICRO_TO_FACET: dict[str, str] = {
     "change_order_rule": "COMPLIANCE",      # [F][D] governs the contract process
     "bonding_insurance": "COMPLIANCE",      # [F][D] legal/regulatory obligation
     "contract_term": "COMPLIANCE",          # [D] contractual obligation
+    "certification": "COMPLIANCE",          # [v2] required cert/credential
     # --- PARTY ---
     "stakeholder": "PARTY",             # [F][D] acts-in-deal; bare contact -> META (relabel rules)
     # --- TIMING ---
