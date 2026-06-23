@@ -3095,8 +3095,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # question and its answer sit in different x-columns, so the column
         # detector would grab them as a 2-col table and fragment the Q&A — the
         # Q&A regrouper below owns those pages instead.
+        # Also skip on a bulleted-list slide: its bullets sit in a column beside a
+        # diagram, so the column detector grabs them as a 2-col table and scrambles
+        # the BOM list ('• 24 x FS-1024E' -> 'x x x FS-1024E ...'). The bullet
+        # splitter below keeps them in clean reading order.
         if (_is_questionnaire_page(page_texts[page_index])
-                or _page_is_form(page_texts[page_index].splitlines())):
+                or _page_is_form(page_texts[page_index].splitlines())
+                or _is_bulleted_list_page(page_texts[page_index])):
             col_blocks, col_bboxes = [], []
         else:
             col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
@@ -3228,6 +3233,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # The letterhead image is still captured by the separate image-marker pass.
         if page_image_counts[page_index] == 0 \
                 or _is_multi_paragraph_prose(page_texts[page_index]) \
+                or _is_bulleted_list_page(page_texts[page_index]) \
                 or _is_form_page(page_texts[page_index]):
             # A questionnaire / field-report page (questions OR a 'Upload N photos'
             # request) is form text, NOT a visual layout — the heavyweight pipeline
@@ -3693,6 +3699,11 @@ def _atoms_for_block(
         if not text or len(re.sub(r"[^0-9A-Za-z]", "", text)) < 2:
             return
         if re.fullmatch(r"(?i)page\s*\d+", text):
+            return
+        # A paragraph that is only space-separated bare numbers ('32 112 17 14
+        # 296') is diagram / table-label noise (counts lifted off a figure), not a
+        # fact. A single number can be a real answer, so require >=2.
+        if re.fullmatch(r"[\d.,\s]+", text) and len(re.findall(r"\d+", text)) >= 2:
             return
         if len(text) < 10 and not _is_form_field:
             return
@@ -4848,6 +4859,11 @@ def _md_cell(value: Any) -> str:
 _BULLET_LINE_RE = re.compile(
     r"^\s*([-*•·\u2022]|\d+[.)]|[a-z][.)]|[ivx]{1,4}[.)])\s+(.+?)\s*$"
 )  # bullets, numbered, AND lettered/roman sub-items ("a. main office", "iv) ...").
+# A bullet GLYPH alone on its own line — common in slide / docx->PDF exports,
+# where the marker and its text render on separate lines ('•\n74 x FG-30Gs').
+# The next content line is the bullet's text. True bullet glyphs only (not 'o'/'-',
+# ambiguous with the letter o / a dash), so prose is never mis-read.
+_BARE_BULLET_RE = re.compile(r"^\s*[•▪●◦‣]\s*$")
 _HEADING_LINE_RE = re.compile(
     r"^\s*((?:[A-Z0-9][A-Z0-9 &/\-,()]{2,80})|(?:#{1,6}\s+.{2,80}))\s*$"
 )
@@ -5673,6 +5689,25 @@ def _is_multi_paragraph_prose(page_text: str) -> bool:
     return prose >= 3
 
 
+def _is_bulleted_list_page(page_text: str) -> bool:
+    """True when a page is dominated by a BULLETED LIST — e.g. an architecture
+    slide whose body is a bill-of-materials list ('• 74 x FG-30Gs', '• 24 x
+    FS-1024E Core Switches', ...) beside a diagram image. Such a page carries an
+    image so it would otherwise hit the heavyweight layout pipeline, which reorders
+    the bullets by geometry around the diagram and splits 'N x DEVICE' into garbage
+    ('x x x FS-648F-FPOE x FS-1024E ...'). The text layer is already in clean
+    reading order, so route it to the prose/bullet splitter instead. A bullet line
+    is a glyph alone OR a glyph + text; >=5 bullets AND bullets >= 30% of the
+    non-blank lines = a bullet page (a stray bullet in a prose page won't trip it)."""
+    if not page_text:
+        return False
+    lines = [ln.strip() for ln in page_text.splitlines() if ln.strip()]
+    if len(lines) < 6:
+        return False
+    bullets = sum(1 for ln in lines if ln[:1] in "•▪●◦‣*-" or _BULLET_LINE_RE.match(ln))
+    return bullets >= 5 and bullets >= 0.30 * len(lines)
+
+
 _FORM_QUESTION_RULE = None
 
 
@@ -6173,6 +6208,7 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     current_blocks: list[dict[str, Any]] = []
     paragraph_lines: list[str] = []
     bullet_buffer: list[str] = []
+    pending_bullet = False  # saw a lone bullet glyph; next content line is its text
     # A field-report / questionnaire page (>=2 '?') stacks Q&A under short visual
     # sub-headers ("Tablet Install", "BK Audio", "POS Cabling"). Recognise those
     # as SECTION headers so the questions below nest under them — instead of the
@@ -6343,10 +6379,28 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             paragraph_lines.append(runon[1])
             continue
 
+        # A bullet glyph alone on its line ("•") — its text is on the NEXT line(s).
+        # Mark pending so the following content line becomes a bullet item (its
+        # wrapped tail then joins via the lowercase-continuation rule below) — so a
+        # glyph-per-line BOM list separates into items instead of gluing into one
+        # mega-atom (or, with column extraction, scrambling).
+        if _BARE_BULLET_RE.match(line):
+            flush_paragraph()
+            pending_bullet = True
+            continue
+
         bullet_m = _BULLET_LINE_RE.match(line)
         if bullet_m:
             flush_paragraph()
             bullet_buffer.append(bullet_m.group(2).strip())
+            pending_bullet = False
+            continue
+
+        # The content line right after a lone bullet glyph IS that bullet's text.
+        if pending_bullet:
+            flush_paragraph()
+            bullet_buffer.append(line.strip())
+            pending_bullet = False
             continue
 
         # Title-Case scope work-item heading ("Media Panel Installation",
