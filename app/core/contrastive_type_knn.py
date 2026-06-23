@@ -144,11 +144,12 @@ class ContrastiveTypeKNN:
         np.savez_compressed(path, **kw)
 
 
-def _encoder_embed_fn():
+def _encoder_embed_fn(registry_dir: str | None = None):
     """Default embed_fn: lazy-load the saved sentence-transformers encoder once."""
-    enc_dir = os.path.join(_registry_dir(), "best")
+    reg = registry_dir or _registry_dir()
+    enc_dir = os.path.join(reg, "best")
     if not os.path.isdir(enc_dir):
-        enc_dir = _registry_dir()
+        enc_dir = reg
     holder: dict[str, Any] = {}
 
     def _fn(texts: list[str]) -> np.ndarray:
@@ -163,11 +164,14 @@ def _encoder_embed_fn():
     return _fn
 
 
-def load_promoted(embed_fn: Callable[[list[str]], np.ndarray] | None = None) -> ContrastiveTypeKNN | None:
+def load_promoted(embed_fn: Callable[[list[str]], np.ndarray] | None = None,
+                  registry_dir: str | None = None) -> ContrastiveTypeKNN | None:
     """Load the promoted contrastive store + meta from the registry, or None.
     Pass ``embed_fn`` to override the embedder (e.g. a vLLM-backed qwen3-LoRA
-    endpoint); default loads the saved sentence-transformers encoder."""
-    reg = _registry_dir()
+    endpoint); default loads the saved sentence-transformers encoder. Pass
+    ``registry_dir`` to load a SECOND head (e.g. the facet store) from its own dir
+    instead of the default ``SOWSMITH_CONTRASTIVE_TYPE_DIR``."""
+    reg = registry_dir or _registry_dir()
     store_p = os.path.join(reg, "store.npz")
     if not os.path.exists(store_p):
         return None
@@ -189,7 +193,7 @@ def load_promoted(embed_fn: Callable[[list[str]], np.ndarray] | None = None) -> 
                 pass
 
     if embed_fn is None:
-        embed_fn = _encoder_embed_fn()
+        embed_fn = _encoder_embed_fn(reg)
     tau = meta.get("operating_tau")
     return ContrastiveTypeKNN(
         emb=emb, y=y, text=text, embed_fn=embed_fn,

@@ -237,6 +237,15 @@ def build_orbitbrief_envelope(
     envelope["srl_missing_checklist"] = build_srl_missing_checklist(
         atoms=atoms, documents=documents,
     )
+    # Facet dashboard sections — the 7 PM sections (WORK/SITE/COMMERCIAL/...)
+    # assigned by the contrastive facet head (held-out 0.925). Guess-free: atoms the
+    # head can't confidently place go to `uncategorized`. Added ONLY when enabled +
+    # the head is present, so OFF -> the key is absent -> byte-identical envelope.
+    from app.core.facets import build_facet_sections as _build_facet_sections
+
+    _facet_sections = _build_facet_sections(atoms)
+    if _facet_sections.get("enabled"):
+        envelope["facet_sections"] = _facet_sections
     # S+++++ cockpit surfaces — authority-weighted scope truth,
     # chronological change-order audit, per-site readiness rollup,
     # per-stakeholder workload matrix, and a single 0-100 project
