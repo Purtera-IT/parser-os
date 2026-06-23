@@ -393,8 +393,224 @@ _DEAL_HEADER_LABELS: dict[str, str] = {
 _PL_METRIC_WORDS = frozenset({"revenue", "cost", "margin"})
 
 
+# A margin-percent label doesn't always read "Margin % on <Category>". Deal kits
+# phrase it many ways ("Net Margin (%)", "Gross Margin %", bare "Margin %") and
+# sometimes carry a garbled template label ("Lift/Rental on Miscellaneous" in the
+# margin-% slot). Recognise the MEANING by embedding instead of one rigid regex,
+# so the recogniser generalises across every estimating workbook. Offline, the
+# lexical fallback fires on the universal cue (a "margin" label with a percent
+# marker); the embedder (dev/prod) additionally catches phrasings with neither.
+_PL_MARGIN_PCT_RULE = None
+_PCT_CUE_RE = re.compile(r"%|percent|\bpct\b", re.I)
+
+
+def _margin_pct_lexical(text: str) -> bool:
+    t = (text or "").lower()
+    return "margin" in t and bool(_PCT_CUE_RE.search(t))
+
+
+def _pl_margin_pct_rule():
+    global _PL_MARGIN_PCT_RULE
+    if _PL_MARGIN_PCT_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _PL_MARGIN_PCT_RULE = SemanticRule(
+            name="pl_margin_pct_label",
+            positives=[
+                "Margin % on Total Deal", "Margin % on Labor", "Margin % on PMO",
+                "Margin % on Materials", "Net Margin (%)", "Net Margin %",
+                "Gross Margin %", "Gross Margin (%)", "Margin %", "GM %",
+                "Profit Margin %", "Margin Percent", "% Margin",
+            ],
+            negatives=[
+                "Total Deal Revenue", "Total Labor Cost", "Total Deal Margin",
+                "Net Profit ($)", "Net Profit", "Margin $", "Margin Dollars",
+                "Customer", "PO Number", "Sales Rep", "Total PMO Revenue",
+                # other percent-bearing labels that are NOT a margin %
+                "% Complete", "% of Total", "Tax %", "Discount %",
+                "Markup %", "% Allocation",
+            ],
+            threshold=0.60,
+            lexical_fallback=_margin_pct_lexical,
+        )
+    return _PL_MARGIN_PCT_RULE
+
+
+def _is_margin_pct_label(orig: str) -> tuple[bool, str | None]:
+    """(is_margin_pct, explicit_category_or_None). Tries the strict "Margin % on
+    <cat>" regex first (which also yields the category), then the semantic rule
+    for the many category-less phrasings ("Net Margin (%)", "Margin %")."""
+    m = _PL_MARGIN_PCT_RE.match(orig)
+    if m:
+        return True, m.group("cat")
+    low = orig.lower()
+    # structural prefilter: a margin-% label always carries a PERCENT cue. This is
+    # what separates it from the bare "<Category> Margin" dollar row (which has no
+    # %, matches the metric regex below, and must NOT be read as a percentage). It
+    # also bounds the embedder to plausible candidates. The semantic rule then
+    # disambiguates among percent-bearing labels ("Net Margin (%)" → yes,
+    # "% Complete" / "Tax %" → no).
+    if not _PCT_CUE_RE.search(low):
+        return False, None
+    try:
+        if _pl_margin_pct_rule().fires(orig):
+            return True, None
+    except Exception:
+        pass
+    return False, None
+
+
+def _looks_like_pct_or_error(value: Any) -> bool:
+    """A cell value that reads as a margin-percent result: a fraction/percent, or
+    a failed formula (#DIV/0!) — the value shape that sits in a margin-% slot."""
+    if _excel_error_str(value) is not None:
+        return True
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return -1.5 <= float(value) <= 1.5      # a fraction (0.2737), not a $ figure
+    s = str(value).strip()
+    return bool(s) and s.endswith("%")
+
+
 def _norm_label(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _is_bare_numeric(s: str) -> bool:
+    """True if the cell is just a number (with optional $/%/,/./()/sign/space) —
+    no letters. Such a string is never a real field LABEL, and a label-less bare
+    number is a stray table cell, not a fact. Used to drop keyval junk like
+    '70: 0.3684' (an unlabeled cost/sell/margin totals row paired as a fake
+    'label: value') and lone '1.15' / '69.0' cells."""
+    t = (s or "").strip()
+    return bool(t) and re.fullmatch(r"[-+]?[\d.,$%()\s]+", t) is not None
+
+
+def _is_substantive_annotation(text: str) -> bool:
+    """A titleless free-text cell block worth keeping as a loose annotation, vs a
+    decorative one-word caption. Substantive = carries a quantity ("920 hours",
+    "Best Buy quoted 950 hours") OR reads as a real phrase (>=3 words / >=24
+    chars). Must contain a letter, so a stray number alone (already captured by
+    the numeric extractors) doesn't double-emit here."""
+    t = (text or "").strip()
+    if not t or not any(c.isalpha() for c in t):
+        return False
+    words = t.split()
+    return bool(_DIGIT_RE.search(t)) or len(words) >= 3 or len(t) >= 24
+
+
+# Offline fallback for the effort/hours-metric judgment. The embedding rule below
+# generalises beyond these surface words ("Man-Days", "Crew Hours", "Build Time",
+# "FTE-weeks", "Engineering Effort"); this net is what fires when the embedder is
+# unreachable.
+_HOURS_LABEL_RE = re.compile(r"\b(hour|hrs?\b|total|labor|effort|man[- ]?day|fte)", re.I)
+_NUMLIKE_RE = re.compile(r"^[-$(]?\s?[\d,]+(?:\.\d+)?\s?%?\)?$")
+
+_HOURS_METRIC_RULE = None
+
+
+def _hours_metric_lexical(text: str) -> bool:
+    return bool(_HOURS_LABEL_RE.search(text or ""))
+
+
+def _hours_metric_rule():
+    """SemanticRule: does this column header name a LABOR-EFFORT / HOURS metric
+    (the thing a side estimate benchmarks against)? Embedding generalises past the
+    fixed vocabulary — "Man-Days", "Crew Hours", "Engineering Effort", "Build
+    Time", "FTE-weeks" all fire — with the regex as the offline-safe fallback."""
+    global _HOURS_METRIC_RULE
+    if _HOURS_METRIC_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _HOURS_METRIC_RULE = SemanticRule(
+            name="hours_effort_metric_label",
+            positives=[
+                "Lead Tech Hrs", "LV Tech Hrs", "Helper Hrs", "PM Hrs",
+                "Total Base Hrs", "Labor Hours", "Total Hours", "Crew Hours",
+                "Man-Days", "Man Hours", "Engineering Effort", "Build Time",
+                "FTE-weeks", "Field Labor Hours", "Install Hours", "Total Effort",
+            ],
+            negatives=[
+                "Quote Line Item", "Category", "Unit", "Qty", "Drops", "Price",
+                "Total Price", "Material Cost", "Margin %", "Sell Rate",
+                "Per Drop", "Availability", "Product Description",
+            ],
+            threshold=0.58,
+            lexical_fallback=_hours_metric_lexical,
+        )
+    return _HOURS_METRIC_RULE
+
+
+def _is_hours_metric_label(text: str) -> bool:
+    """True when a (non-numeric, non-rate) cell label names an hours/effort metric.
+    Structural prefilter (short, not a 'per <unit>' rate) gates the embedder so it
+    only judges plausible header cells; the semantic rule then decides by meaning."""
+    t = (text or "").strip()
+    if not t or _NUMLIKE_RE.match(t) or len(t) > 40 or "per " in t.lower():
+        return False
+    try:
+        return _hours_metric_rule().fires(t)
+    except Exception:
+        return _hours_metric_lexical(t)
+
+
+def _sheet_hours_context(rows: list[list[Any]], limit: int = 6) -> str:
+    """A compact digest of the sheet's own hour totals, e.g.
+    'Lead Tech Hrs: 212.75, LV Tech Hrs: 941.06, Helper Hrs: 364.75, total 1148.81'.
+    A side annotation ('Best Buy Quoted 920 hours') only means something against
+    the estimate it benchmarks, so this travels with the annotation as context.
+
+    Estimate totals are COLUMN-aligned: the hour labels are column headers and the
+    totals sit in a numeric row far below, so pair the totals row to its header row
+    by column index (not row adjacency)."""
+    grid = [[("" if c is None else str(c).strip()) for c in r] for r in rows]
+
+    def _num(s: str) -> float | None:
+        if not _NUMLIKE_RE.match(s):
+            return None
+        try:
+            return float(re.sub(r"[,$%()]", "", s))
+        except ValueError:
+            return None
+
+    # header row = a row with >=2 hours/effort-metric LABELS (semantic, not a fixed
+    # word list — "Man-Days"/"Crew Hours"/"Engineering Effort" all qualify)
+    hdr_i = None
+    for i, r in enumerate(grid):
+        labels = [c for c in r if c and _is_hours_metric_label(c)]
+        if len(labels) >= 2:
+            hdr_i = i
+            break
+    if hdr_i is None:
+        return ""
+    hdr = grid[hdr_i]
+    hour_cols = [ci for ci, h in enumerate(hdr) if h and _is_hours_metric_label(h)]
+    # The TOTALS row is the column-sum row — same hour columns, largest magnitudes,
+    # and (unlike a task row) no leading text label. Across all candidate rows pick
+    # the one whose hour-column values sum largest; that's the estimate total.
+    best_pairs: list[str] = []
+    best_grand: float | None = None
+    best_sum = 0.0
+    for r in grid[hdr_i + 1:]:
+        vals = {ci: _num(r[ci]) for ci in hour_cols if ci < len(r) and _num(r[ci]) is not None}
+        if not vals:
+            continue
+        s = sum(abs(v) for v in vals.values())
+        if s <= best_sum:
+            continue
+        pairs = [f"{hdr[ci].rstrip(':')}: {v:g}" for ci, v in vals.items() if abs(v) >= 1]
+        if not pairs:
+            continue
+        row_nums = [v for v in (_num(c) for c in r) if v is not None]
+        best_sum, best_pairs = s, pairs[:limit]
+        best_grand = max(row_nums, key=abs) if row_nums else None
+    if not best_pairs:
+        return ""
+    if best_grand is not None and not any(("%g" % best_grand) in p for p in best_pairs):
+        best_pairs.append(f"total ~{best_grand:g}")
+    return ", ".join(best_pairs)
 
 
 def _is_label_cell(text: str) -> bool:
@@ -487,6 +703,17 @@ _EXCEL_ERROR_RE = re.compile(
 )
 
 
+def _excel_error_str(value: Any) -> str | None:
+    """The Excel error literal (``#DIV/0!``, ``#REF!``, …) the cell carries, else
+    None. A failed formula is still FAITHFUL content — ``Margin % on PMO`` showing
+    ``#DIV/0!`` tells the PM the metric is undefined because PMO revenue is $0 — so
+    a P&L row whose value is an error is captured (flagged), never silently dropped."""
+    if value is None or isinstance(value, bool):
+        return None
+    s = re.sub(r"\s+", " ", str(value).strip())
+    return s if s and _EXCEL_ERROR_RE.match(s) else None
+
+
 def _coerce_header_value(val: Any) -> str | None:
     """Normalize a header *value* cell to a string, or None when it isn't a
     usable value (blank, an Excel error literal, or itself a label/P&L term)."""
@@ -494,7 +721,10 @@ def _coerce_header_value(val: Any) -> str | None:
         return None
     if hasattr(val, "isoformat"):
         try:
-            val = val.isoformat()
+            iso = val.isoformat()
+            # a date cell read as a midnight datetime -> show the date only
+            # ('2026-05-27', not '2026-05-27T00:00:00').
+            val = iso[:10] if "T00:00:00" in iso else iso
         except Exception:
             val = str(val)
     sval = re.sub(r"\s+", " ", str(val).strip())
@@ -638,7 +868,8 @@ def _cell_to_text_op(value: Any) -> str:
         return ""
     if hasattr(value, "isoformat"):
         try:
-            return value.isoformat()
+            iso = value.isoformat()
+            return iso[:10] if "T00:00:00" in iso else iso  # date-only at midnight
         except Exception:
             pass
     return str(value).strip()
@@ -1514,6 +1745,46 @@ class XlsxParser(BaseParser):
         return out
 
     @staticmethod
+    def _flag_hidden_source_atoms(
+        atoms: list[EvidenceAtom], rows: list[list[Any]], hidden_rows: set[int]
+    ) -> list[EvidenceAtom]:
+        """Tag atoms whose row was AUTHOR-HIDDEN in the sheet.
+
+        Hidden rows are still captured (no silent drops), but in the atom list a
+        collapsed / 0-hour / scaffolding row looks identical to a live one — so a
+        reviewer can't tell whether it parsed right. Match each atom's text to a
+        hidden row's distinctive (longest) cell and stamp it with a visible
+        '[hidden row in source sheet]' marker + the xlsx_parser:hidden_in_source
+        flag. Content-match because the block detector discards row indices."""
+        if not hidden_rows or not atoms:
+            return atoms
+        sigs: list[str] = []
+        for i in hidden_rows:
+            if 0 <= i < len(rows):
+                texts = [str(c).strip() for c in rows[i] if c is not None and str(c).strip()]
+                longest = max(texts, key=len) if texts else ""
+                if len(longest) >= 8:                     # distinctive enough to match
+                    sigs.append(longest.lower())
+        if not sigs:
+            return atoms
+        out: list[EvidenceAtom] = []
+        for a in atoms:
+            rt = a.raw_text or ""
+            if any(s in rt.lower() for s in sigs) and "[hidden row in source sheet]" not in rt:
+                flags = list(a.review_flags or [])
+                if "xlsx_parser:hidden_in_source" not in flags:
+                    flags.append("xlsx_parser:hidden_in_source")
+                try:
+                    a = a.model_copy(update={
+                        "raw_text": f"{rt}  [hidden row in source sheet]",
+                        "review_flags": flags,
+                    })
+                except Exception:
+                    pass
+            out.append(a)
+        return out
+
+    @staticmethod
     def _sheet_styles(path: Path) -> dict[str, list[list[tuple[str | None, bool]]]]:
         """Map sheet title -> per-cell ``(fill_rgb_or_None, bold)`` grid, aligned
         row/col to the values grid. Cell STYLE is structure the author used to
@@ -1609,19 +1880,23 @@ class XlsxParser(BaseParser):
             except Exception:
                 pass
             rows = [list(row) for row in sheet.iter_rows(values_only=True)]
-            hc, _hr = hidden.get(sheet.title, (set(), set()))
-            atoms.extend(
-                self._parse_sheet_rows(
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=path.name,
-                    artifact_type=ArtifactType.xlsx,
-                    sheet_name=sheet.title,
-                    rows=rows,
-                    hidden_cols=hc,
-                    styles=styles_by_sheet.get(sheet.title),
-                )
+            hc, hr = hidden.get(sheet.title, (set(), set()))
+            sheet_atoms = self._parse_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                artifact_type=ArtifactType.xlsx,
+                sheet_name=sheet.title,
+                rows=rows,
+                hidden_cols=hc,
+                styles=styles_by_sheet.get(sheet.title),
             )
+            # Single chokepoint (path-independent: block / legacy / commercial all
+            # funnel here): mark atoms sourced from author-HIDDEN rows so a reviewer
+            # can tell a collapsed/0-hour row from the live estimate. Captured, not
+            # dropped (no silent loss) — just visibly tagged.
+            sheet_atoms = self._flag_hidden_source_atoms(sheet_atoms, rows, hr)
+            atoms.extend(sheet_atoms)
             sheets.append({"name": sheet.title, "rows": rows})
         # Dedup identical UNANSWERED questionnaire questions (e.g. a blank
         # "Phone Number" field repeated in Origin + Destination sections) —
@@ -1974,6 +2249,26 @@ class XlsxParser(BaseParser):
         # category key -> {"display", "revenue", "cost", "margin",
         #                  "margin_pct", "row"}
         pl: dict[str, dict[str, Any]] = {}
+        # per-column running category, so a margin-% row whose label carries no
+        # category ("Net Margin (%)", or a garbled "Lift/Rental on Miscellaneous")
+        # inherits the category of the P&L block it sits in.
+        last_cat: dict[int, tuple[str, str]] = {}
+
+        def _store_margin_pct(slot, rv, orig, ri, ci):
+            """Store a margin-% value (or its #DIV/0! error) on a category slot,
+            faithfully — a fraction becomes a percent, a failed formula is kept."""
+            n = _coerce_pl_number(rv)
+            if n is not None and slot.get("margin_pct") is None:
+                slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
+                slot["margin_pct_label"] = orig
+                slot["margin_pct_pos"] = (ri + 1, ci + 1)
+            elif n is None and slot.get("margin_pct") is None \
+                    and slot.get("margin_pct_error") is None:
+                err = _excel_error_str(rv)
+                if err:
+                    slot["margin_pct_error"] = err
+                    slot["margin_pct_label"] = orig
+                    slot["margin_pct_pos"] = (ri + 1, ci + 1)
 
         for ri, row in enumerate(rows):
             for ci, cell in enumerate(row):
@@ -1996,31 +2291,60 @@ class XlsxParser(BaseParser):
                         header_labels[key] = orig   # faithful raw label ("OPPTY #")
                     continue
 
-                # ── P&L margin-percent line ──
-                mp = _PL_MARGIN_PCT_RE.match(orig)
-                if mp:
-                    ckey, disp = _norm_pl_category(mp.group("cat"))
-                    n = _coerce_pl_number(_right_neighbor_value(row, ci))
-                    slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
-                    if n is not None and slot.get("margin_pct") is None:
-                        # Store as a percentage; deal-kit fractions (0.2857)
-                        # become 28.57, explicit percents pass through.
-                        slot["margin_pct"] = round(n * 100, 2) if abs(n) <= 1.5 else round(n, 2)
-                        slot["margin_pct_label"] = orig   # faithful raw row label
-                        slot["margin_pct_pos"] = (ri + 1, ci + 1)
-                    continue
+                # ── P&L margin-percent line (regex OR semantic) ──
+                is_mpct, cat_txt = _is_margin_pct_label(orig)
+                if is_mpct:
+                    if cat_txt:
+                        ckey, disp = _norm_pl_category(cat_txt)
+                    elif ci in last_cat:          # "Net Margin (%)" — inherit block
+                        ckey, disp = last_cat[ci]
+                    else:
+                        ckey = disp = None
+                    if ckey is not None:
+                        rv = _right_neighbor_value(row, ci)
+                        slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
+                        last_cat[ci] = (ckey, disp)
+                        _store_margin_pct(slot, rv, orig, ri, ci)
+                        continue
 
                 # ── P&L revenue / cost / margin line ──
                 mm = _PL_METRIC_RE.match(orig)
                 if mm and mm.group("metric").lower() in _PL_METRIC_WORDS:
                     ckey, disp = _norm_pl_category(mm.group("cat"))
                     metric = mm.group("metric").lower()
-                    n = _coerce_pl_number(_right_neighbor_value(row, ci))
+                    rv = _right_neighbor_value(row, ci)
+                    n = _coerce_pl_number(rv)
                     slot = pl.setdefault(ckey, {"display": disp, "row": ri + 1, "col": ci + 1})
+                    last_cat[ci] = (ckey, disp)
                     if n is not None and slot.get(metric) is None:
                         slot[metric] = round(n, 2)
                         slot[metric + "_label"] = orig   # faithful raw row label
                         slot[metric + "_pos"] = (ri + 1, ci + 1)
+                    elif n is None and slot.get(metric) is None \
+                            and slot.get(metric + "_error") is None:
+                        err = _excel_error_str(rv)
+                        if err:
+                            slot[metric + "_error"] = err
+                            slot[metric + "_label"] = orig
+                            slot[metric + "_pos"] = (ri + 1, ci + 1)
+                    continue
+
+                # ── Structural backstop: a garbled label in the margin-% slot ──
+                # An unclassified P&L-block row whose value reads as a percent or a
+                # failed formula, sitting right after the category's Margin row
+                # (which has a margin but no margin-% yet), IS that category's
+                # margin %. Catches template typos ("Lift/Rental on Miscellaneous")
+                # universally — by position, no customer-specific label needed.
+                if ci in last_cat:
+                    ckey, disp = last_cat[ci]
+                    slot = pl.get(ckey)
+                    if slot and slot.get("margin_pct") is None \
+                            and slot.get("margin_pct_error") is None \
+                            and (slot.get("margin") is not None or slot.get("margin_error") is not None):
+                        rv = _right_neighbor_value(row, ci)
+                        if _looks_like_pct_or_error(rv):
+                            _store_margin_pct(slot, rv, orig, ri, ci)
+                            continue
 
         # Confidence gate: only trust the structured P&L view when the grid
         # actually reads like a deal-kit financial summary — at least two
@@ -2192,35 +2516,51 @@ class XlsxParser(BaseParser):
         def _fmt(v: Any) -> str:
             return f"${int(round(v)):,}" if isinstance(v, (int, float)) else "n/a"
 
-        def _pl_atom(ckey, slot, metric, label, val, text):
+        def _pl_atom(ckey, slot, metric, label, val, text, flags=None, is_error=False):
             prow, pcol = slot.get(metric + "_pos", (slot.get("row", 0), slot.get("col", 1)))
             aid = stable_id("atm", artifact_id, "pl", sheet_name, ckey, metric)
+            value = {"kind": "pl_metric", "category": slot["display"], "category_key": ckey,
+                     "metric": metric, "value": val, "sheet_name": sheet_name}
+            if is_error:
+                value["formula_error"] = val
             return EvidenceAtom(
                 id=aid, project_id=project_id, artifact_id=artifact_id,
                 atom_type=AtomType.commercial_total, raw_text=text, normalized_text=text.lower(),
-                value={"kind": "pl_metric", "category": slot["display"], "category_key": ckey,
-                       "metric": metric, "value": val, "sheet_name": sheet_name},
+                value=value,
                 entity_keys=([f"money:{int(round(val))}"]
                              if isinstance(val, (int, float)) and abs(val) >= _MIN_MONEY_VALUE
                              and metric != "margin_pct" else []),
                 source_refs=[_src(f"pl_{ckey}_{metric}", {"row": prow, "col": pcol})],
                 receipts=[], authority_class=AuthorityClass.vendor_quote,
                 confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
-                review_status=ReviewStatus.needs_review, review_flags=[],
+                review_status=ReviewStatus.needs_review, review_flags=list(flags or []),
                 parser_version=self.parser_version)
 
         for ckey, slot in sorted(pl.items(), key=lambda kv: (kv[1].get("col", 1), kv[1].get("row", 1_000_000))):
             disp = slot["display"]
             for metric in ("revenue", "cost", "margin"):
                 val = slot.get(metric)
-                if val is None:
+                if val is not None:
+                    label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
+                    atoms.append(_pl_atom(ckey, slot, metric, label, val, f"{label}: {_fmt(val)}"))
                     continue
-                label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
-                atoms.append(_pl_atom(ckey, slot, metric, label, val, f"{label}: {_fmt(val)}"))
+                # A formula that failed (#DIV/0!) is faithful, meaningful content —
+                # emit it (flagged) so the metric isn't a silent gap in the P&L.
+                err = slot.get(metric + "_error")
+                if err:
+                    label = slot.get(metric + "_label") or f"{disp} {metric.title()}"
+                    atoms.append(_pl_atom(ckey, slot, metric, label, err, f"{label}: {err}",
+                                          flags=["xlsx_parser:formula_error"], is_error=True))
             mpct = slot.get("margin_pct")
             if mpct is not None:
                 label = slot.get("margin_pct_label") or f"Margin % on {disp}"
                 atoms.append(_pl_atom(ckey, slot, "margin_pct", label, mpct, f"{label}: {mpct:g}%"))
+            else:
+                err = slot.get("margin_pct_error")
+                if err:
+                    label = slot.get("margin_pct_label") or f"Margin % on {disp}"
+                    atoms.append(_pl_atom(ckey, slot, "margin_pct", label, err, f"{label}: {err}",
+                                          flags=["xlsx_parser:formula_error"], is_error=True))
 
         # If the structured pass found nothing usable (an oddly-shaped
         # sheet), fall back to the generic commercial emitter so we never
@@ -3672,6 +4012,30 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         seq = 0
 
+        # ── Merge fragmented side-annotations + attach their neighbourhood ──
+        # A loose annotation often lands split across cells — "Best Buy Quoted"
+        # (label) in one cell, "920 hours" (value) two columns over — so it came
+        # through as two meaningless fragments. Stitch a label-only annotation to
+        # the value-only one that follows it (reading order), so the atom reads as
+        # one fact ("Best Buy Quoted 920 hours"). Then compute the sheet's own
+        # hour/total figures ONCE: a side note benchmarking our estimate is
+        # meaningless without the estimate, so every annotation carries it as
+        # context (this is what lets a reader — or the reconciliation head — see
+        # "competitor quote vs our number").
+        _ann_idx = [i for i, b in enumerate(blocks)
+                    if b.get("kind") == "text" and not b.get("title")
+                    and _is_substantive_annotation(str(b.get("text") or ""))]
+        _consumed_ann: set[int] = set()
+        for k, i in enumerate(_ann_idx):
+            txt = str(blocks[i].get("text") or "").strip()
+            if not _DIGIT_RE.search(txt) and k + 1 < len(_ann_idx):
+                j = _ann_idx[k + 1]
+                vtxt = str(blocks[j].get("text") or "").strip()
+                if _DIGIT_RE.search(vtxt) and len(vtxt) <= 18:   # value-only fragment
+                    blocks[i]["text"] = f"{txt} {vtxt}"
+                    _consumed_ann.add(j)
+        _sheet_ctx = _sheet_hours_context(rows)
+
         def _section_path(title: str | None) -> list[str]:
             return [sheet_name, title] if (sheet_name and title) else ([sheet_name] if sheet_name else [])
 
@@ -3761,6 +4125,12 @@ class XlsxParser(BaseParser):
                     line = (f"{k}: {v}" if v else k).strip()
                     if not line:
                         continue
+                    # A numeric LABEL ('70: 0.3684') is not a field — it's two
+                    # stray cells from an unlabeled totals row; and a label-less
+                    # bare number ('1.15') is a loose cell, not a fact. Drop both
+                    # (the real BOM rows in the same sheet are kept as table rows).
+                    if (_is_bare_numeric(k) and _is_bare_numeric(v)) or (not v and _is_bare_numeric(k)):
+                        continue
                     kv_id = stable_id("atm", artifact_id, "xlsx_block_kv", sheet_name, bi, seq)
                     atoms.append(EvidenceAtom(
                         id=kv_id, project_id=project_id, artifact_id=artifact_id,
@@ -3795,6 +4165,34 @@ class XlsxParser(BaseParser):
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
+                        parser_version=self.parser_version,
+                    ))
+                elif bi in _consumed_ann:
+                    continue   # value fragment already stitched onto its label
+                elif txt and _is_substantive_annotation(txt):
+                    # Titleless free-text that still carries a FACT — a side note
+                    # like "Best Buy quoted 950 hours" / "Best Buy Quoted 920 hours"
+                    # beside an estimate table (competitive-quote intel). Dropping it
+                    # is silent data loss; capture it as a low-confidence loose
+                    # annotation, flagged for review. Attach the sheet's own hour
+                    # figures as neighbour context so the note is legible on its own
+                    # (their 920 hrs vs our estimate) and the reconciliation head
+                    # has the number to compare against.
+                    seq += 1
+                    an_id = stable_id("atm", artifact_id, "xlsx_block_note", sheet_name, bi, seq)
+                    disp = f"{txt}  [annotation on '{sheet_name}'; sheet hours: {_sheet_ctx}]" if _sheet_ctx else txt
+                    atoms.append(EvidenceAtom(
+                        id=an_id, project_id=project_id, artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item, raw_text=disp[:4000],
+                        normalized_text=disp[:4000].lower(),
+                        value={"kind": "sheet_annotation", "annotation": txt,
+                               "neighbor_context": _sheet_ctx, "sheet_name": sheet_name,
+                               "box_label": (sp[-1] if len(sp) > 1 else None)},
+                        entity_keys=[], source_refs=[_src(an_id, sp, "xlsx_block_note_v1")], receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.55, confidence_raw=0.55, calibrated_confidence=0.55,
+                        review_status=ReviewStatus.needs_review,
+                        review_flags=["xlsx_parser:loose_annotation"],
                         parser_version=self.parser_version,
                     ))
         return atoms

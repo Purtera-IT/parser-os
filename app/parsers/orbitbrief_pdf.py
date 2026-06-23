@@ -140,6 +140,298 @@ def _peel_next_question(segment: str) -> tuple[str, str]:
     return segment[: m.start()].strip(), segment[m.start() :].strip()
 
 
+_FORM_INTERROG_RE = re.compile(
+    r"^(?:did|is|are|was|were|have|has|had|do|does|can|could|will|would|should|"
+    r"how|what|where|when|why|which|who)\b", re.I,
+)
+_FORM_INSTRUCTION_RE = re.compile(
+    r"^(?:upload|attach|provide|take\b|see\b|please\b|enter\b|select\b|note:|"
+    r"photo of|photos of|showing\b)", re.I,
+)
+
+
+def _looks_like_form_answer(line: str) -> bool:
+    """A short value that answers a form question — 'Yes', 'No', 'New Tablet',
+    '8' — not itself a question, instruction, or long sentence."""
+    s = (line or "").strip()
+    if not s or len(s.split()) > 6 or s.endswith("?"):
+        return False
+    return not _FORM_INTERROG_RE.match(s) and not _FORM_INSTRUCTION_RE.match(s)
+
+
+# Connector words: if a question line ENDS on one, the next line completes the
+# question ("...were pulled to" + "POS"), so it's a continuation, not the answer.
+_CONNECTOR_WORDS = {
+    "to", "of", "for", "in", "on", "at", "the", "a", "an", "and", "or", "with",
+    "each", "by", "from", "into", "per", "your", "their", "any", "all",
+}
+
+
+def _is_discrete_answer(line: str) -> bool:
+    """A DISCRETE form answer — a self-contained value: 'Yes', 'No', '8', '$300',
+    'New Tablet'. Distinct from a question's wrapped continuation ('Talking POS in
+    the store'), which is a sentence fragment carrying lowercase function words.
+    Used to find where a multi-line question (one with no '?') ends and its answer
+    begins, so the answer doesn't get mistaken for question text (and dropped)."""
+    s = (line or "").strip()
+    if not s or s.endswith("?") or _FORM_INTERROG_RE.match(s) or _FORM_INSTRUCTION_RE.match(s):
+        return False
+    words = s.split()
+    if len(words) > 4:
+        return False
+    if s.lower() in {"yes", "no", "n/a", "na", "tbd", "none", "true", "false"}:
+        return True
+    if re.fullmatch(r"[-+]?[\d.,$%]+\w{0,6}", s):  # 8, 950, $300, 12.5, 950ft
+        return True
+    # a short noun-phrase value with NO lowercase function words is an answer
+    # ('New Tablet'); one WITH them ('Talking POS in the store') is continuation.
+    if any(w.lower() in _CONNECTOR_WORDS for w in words):
+        return False
+    return len(words) <= 3
+
+
+_FIELD_LABEL_WORDS = {
+    "name", "date", "time", "title", "number", "no", "by", "email", "phone",
+    "address", "id", "manager", "tech", "technician", "store", "site", "rep",
+}
+_FIELD_LABEL_RULE = None
+
+
+def _field_label_lexical(text: str) -> bool:
+    s = (text or "").strip()
+    if not s or s.endswith((".", "!", "?")) or len(s.split()) > 4:
+        return False
+    if s.endswith(":") or s.endswith("#"):
+        return True
+    last = s.split()[-1].strip(":#").lower()
+    return last in _FIELD_LABEL_WORDS
+
+
+def _field_label_rule():
+    """SemanticRule: is this a form FIELD LABEL whose value follows on the next
+    line ('Managers Name' -> 'Diedra Kennedy', 'Completed By', 'Store #', 'Date'),
+    so the two should merge into one 'label: value' fact — rather than a value, a
+    heading, or a sentence? Label-vs-value is a meaning judgment; the suffix net is
+    the offline fallback."""
+    global _FIELD_LABEL_RULE
+    if _FIELD_LABEL_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _FIELD_LABEL_RULE = SemanticRule(
+            name="form_field_label",
+            positives=[
+                "Managers Name", "Site Name", "Completed By", "Date", "Store #",
+                "Arrival Time", "Technician Name", "Email", "Phone Number", "Site #",
+            ],
+            negatives=[
+                "Diedra Kennedy", "Tablet Install", "BK Audio", "POS Cabling", "Yes",
+                "New Tablet", "CAT6 jacks", "The contractor shall provide all materials",
+                "Upload 4 photos of the unit",
+            ],
+            threshold=0.52,
+            lexical_fallback=_field_label_lexical,
+        )
+    return _FIELD_LABEL_RULE
+
+
+def _is_value_field_label(text: str) -> bool:
+    """A short field label that expects a TEXT value on the next line (so they
+    merge). Cheap precondition, then the semantic rule decides."""
+    s = (text or "").strip()
+    if not s or len(s.split()) > 4 or s.endswith((".", "!", "?")):
+        return False
+    if _FORM_INTERROG_RE.match(s) or _FORM_INSTRUCTION_RE.match(s) or _is_photo_request(s):
+        return False
+    try:
+        return _field_label_rule().fires(s)
+    except Exception:
+        return _field_label_lexical(s)
+
+
+def _page_is_form_lexical(raw: list[str]) -> bool:
+    """Structural net for 'is this a form / field-report page?' — the offline
+    fallback for the semantic judge below. A form is: >=2 '?'  OR  >=2 form
+    signals (question-start / instruction / photo-request) on a page that is
+    mostly short lines (so a prose page of long sentences with an occasional
+    'Provide …' is NOT a form). Detects forms whose questions are phrased as
+    statements ('Have you train the MOD … units.', zero '?')."""
+    nonblank = [l.strip() for l in raw if l.strip()]
+    if len(nonblank) < 3:
+        return False
+    if sum(1 for l in nonblank if l.endswith("?")) >= 2:
+        return True
+    signals = sum(
+        1 for l in nonblank
+        if l.endswith("?") or _FORM_INTERROG_RE.match(l)
+        or _FORM_INSTRUCTION_RE.match(l) or _is_photo_request(l)
+    )
+    short = sum(1 for l in nonblank if len(l.split()) <= 12)
+    return signals >= 2 and short >= 0.75 * len(nonblank)
+
+
+_FORM_PAGE_RULE = None
+
+
+def _form_page_rule():
+    """SemanticRule: does this page READ like a form / field-report (questions +
+    labelled fields + photo requests + signatures) rather than flowing prose, a
+    contract clause, or a rate-card/BOM table? Form-vs-prose is a MEANING judgment
+    — and real pages are hybrids (a field report mixes Q&A, a photo, a signature,
+    sometimes a paragraph) — so the embedder leads and the structural heuristic is
+    the offline net. Worth-regrouping is what we're really asking."""
+    global _FORM_PAGE_RULE
+    if _FORM_PAGE_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _FORM_PAGE_RULE = SemanticRule(
+            name="form_field_report_page",
+            positives=[
+                "Have you installed the NEXEO Box? Yes  Upload 4 Photos of the unit installed.",
+                "Did you pull 2 cables to each POS? Yes  How many total Cables were pulled? 8",
+                "Is this store a 2 LANE Store for Drive Thru? No  Tablet Install  Did you install a new Tablet?",
+                "Name:  Store #:  Site #:  Arrival Time: 06:00 AM  Departure Time: 09:30 AM",
+                "Upload Photo of Tablet installed.  Signature  Managers Name  Diedra Kennedy",
+                "Was there a pre-existing BK Audio Box? No  POS Cabling  Upload Photo showing the label",
+            ],
+            negatives=[
+                "The Contractor shall furnish all materials, tools, and labor necessary to complete the installation in accordance with the project specifications and applicable codes.",
+                "This Project Services Statement of Work is made by and between Norvet MSP and PurTera LLC and shall become effective on the date of last signature.",
+                "Payment terms are net thirty (30) days from the date of invoice; late payments accrue interest at 1.5% per month.",
+                "Country: Albania | Networking L1 Technician 2 hr min: 83.3 | Networking L2 Technician: 110.0",
+                "ID #: 11 | Material Description: 24-Port CAT6 Patch Panel | Quantity: 5 | Unit Cost: $120",
+                "2.2.10 Cable Pathways. The Contractor shall install cable support hardware such as cable trays, J-hooks, and conduit as required.",
+            ],
+            threshold=0.50,
+            # offline / embedder-down: fall back to the structural heuristic
+            # (re-split the joined representation back into lines).
+            lexical_fallback=lambda s: _page_is_form_lexical(
+                [x for x in s.split("  ") if x.strip()]
+            ),
+        )
+    return _FORM_PAGE_RULE
+
+
+def _page_is_form(raw: list[str]) -> bool:
+    """Is this page a form / field-report worth Q&A-regrouping + column-skip +
+    short-field retention — vs flowing prose / a contract / a rate-card table?
+    Embedding-led (handles hybrid pages by MEANING), structural heuristic offline."""
+    nonblank = [l.strip() for l in raw if l.strip()]
+    if len(nonblank) < 3:
+        return False
+    rep = "  ".join(nonblank[:40])[:800]
+    try:
+        return _form_page_rule().fires(rep)
+    except Exception:
+        return _page_is_form_lexical(raw)
+
+
+def _regroup_form_qa(text: str) -> str:
+    """On a questionnaire / field-report page, join each question with its answer
+    so 'Have you installed the NEXEO Box?\\nYes' becomes ONE 'Q?  A' unit instead
+    of a blob that glues the question, its answer, and the next instruction. Gated
+    to pages carrying >=2 question lines, so ordinary prose/scope pages pass
+    through untouched. A multi-line question (\"Is this store a 2 LANE Store for
+    Drive\" + \"Thru?\") is reassembled; instruction lines ('Upload 4 Photos…') stay
+    on their own so they become their own atoms."""
+    raw = [ln.strip() for ln in (text or "").splitlines()]
+    if not _page_is_form(raw):
+        return text
+    units: list[str] = []
+    i, n = 0, len(raw)
+    while i < n:
+        ln = raw[i]
+        if not ln:
+            i += 1
+            continue
+        if _is_photo_request(ln):
+            # A photo request wraps across lines ("Upload Photo of Tablet
+            # installed and" / "showing the correct screen loaded to" / "show
+            # activity."). Gather the whole thing as ONE unit. The generic
+            # instruction branch below breaks on a continuation that happens to
+            # start with an instruction word ('showing' is in _FORM_INSTRUCTION_RE)
+            # — splitting the request — so photo requests get their own gather
+            # that joins any non-question wrapped tail and stops at sentence end
+            # (so it never swallows the following section header).
+            parts = [ln]
+            i += 1
+            while i < n and raw[i]:
+                nxt = raw[i]
+                # a new question / photo request / footer page-number ends it
+                if (nxt.endswith("?") or _FORM_INTERROG_RE.match(nxt)
+                        or _is_photo_request(nxt) or nxt.isdigit()):
+                    break
+                # wrapped tail: lowercase start, a 3+ word sentence line, OR a
+                # short Title-Case fragment that completes the phrase ('Headset
+                # Holder' + 'Mounting', 'Battery' + 'Charger Mounting') — same rule
+                # the text splitter uses, so regroup doesn't leave fragments it can't.
+                if (nxt[0].islower() or len(nxt.split()) >= 3
+                        or re.match(r"^[A-Z][\w/&-]*( [A-Z][\w/&-]*){0,2}$", nxt)):
+                    parts.append(nxt)
+                    i += 1
+                    if nxt.rstrip().endswith((".", "!", ":")):
+                        break  # sentence complete — don't absorb the next header
+                else:
+                    break
+            units.append(" ".join(parts).strip())
+        elif _FORM_INTERROG_RE.match(ln) or ln.endswith("?"):
+            # Assemble a (possibly multi-line) question, then its answer. The
+            # question may wrap WITHOUT a '?' ("Did you pull 2 cables to each Cash"
+            # + "Talking POS in the store" + "Yes"): keep joining continuation
+            # lines until a DISCRETE answer ('Yes'/'8'/'New Tablet'). A line that
+            # looks discrete is still a continuation when the question dangles on a
+            # connector word ("...pulled to" + "POS"). Without this the question's
+            # tail was taken as the answer and the real answer was orphaned + lost.
+            parts = [ln]
+            i += 1
+            joined = 0
+            while (not parts[-1].endswith("?") and i < n and raw[i] and joined < 4
+                   and not _FORM_INTERROG_RE.match(raw[i])
+                   and not _FORM_INSTRUCTION_RE.match(raw[i])):
+                last_word = parts[-1].rstrip().split()[-1].lower() if parts[-1].split() else ""
+                dangling = last_word in _CONNECTOR_WORDS
+                if _is_discrete_answer(raw[i]) and not dangling:
+                    break
+                parts.append(raw[i])
+                i += 1
+                joined += 1
+            question = " ".join(parts).strip()
+            answer = ""
+            if i < n and _is_discrete_answer(raw[i]):
+                answer = raw[i]
+                i += 1
+            units.append(f"{question}  {answer}".strip())
+        elif _FORM_INSTRUCTION_RE.match(ln):
+            # an instruction ("Upload 4 Photos…") wraps across lines — join the
+            # sentence-continuation lines (until the next question / instruction /
+            # short header) so it is one atom, not three fragments.
+            parts = [ln]
+            i += 1
+            while (i < n and raw[i]
+                   and not raw[i].endswith("?") and not _FORM_INTERROG_RE.match(raw[i])
+                   and not _FORM_INSTRUCTION_RE.match(raw[i])
+                   and (raw[i][0].islower() or len(raw[i].split()) >= 4)):
+                parts.append(raw[i])
+                i += 1
+            units.append(" ".join(parts).strip())
+        elif (_is_value_field_label(ln) and i + 1 < n and raw[i + 1]
+              and not _is_value_field_label(raw[i + 1])
+              and not raw[i + 1].endswith("?") and not _FORM_INTERROG_RE.match(raw[i + 1])
+              and not _FORM_INSTRUCTION_RE.match(raw[i + 1]) and not _is_photo_request(raw[i + 1])):
+            # A field label whose value is on the next line ('Managers Name' +
+            # 'Diedra Kennedy' -> 'Managers Name: Diedra Kennedy') — merge into one
+            # label:value fact. Only when the label expects a TEXT value (not
+            # 'Signature', whose value is the image below it) and the next line is
+            # a value, not another label / question / instruction.
+            units.append(f"{ln.rstrip(':')}: {raw[i + 1]}")
+            i += 2
+        else:
+            # standalone line — a section header ("HME NEXO Box Install", "BK
+            # Audio", "POS Cabling") or stray value; keep as its own unit.
+            units.append(ln)
+            i += 1
+    # blank-line-separate every unit so the prose splitter emits each Q&A,
+    # instruction and header as its OWN atom instead of gluing them together.
+    return "\n\n".join(units)
+
+
 def _split_form_qa_blob(text: str) -> list[str]:
     """Split a free-form Q&A interview transcript into per-question atoms.
 
@@ -357,6 +649,25 @@ def _split_pdf_embedded_heading(text: str) -> tuple[str, str, str] | None:
     before, heading, after = text[: m.start()].strip(), m.group(1).strip(), text[m.end():].strip()
     if len(before) < 10 or len(after) < 10:
         return None
+    # The all-caps run may be only PART of a mixed-case heading: 'HME NEXO' is the
+    # caps prefix of the section header 'HME NEXO Box Install'. When the matched
+    # heading is followed by Title-Case words and THEN a question, those words are
+    # the rest of the header (a form section title sits above its Q&A) — pull them
+    # into the heading so it stays whole and 'Box Install' isn't orphaned into the
+    # answer. Gated on a following question, so ordinary prose isn't over-captured.
+    aw = after.split()
+    take = 0
+    while take < 4 and take < len(aw):
+        w = aw[take]
+        if _FORM_INTERROG_RE.match(w) or w.endswith("?"):
+            break
+        if re.fullmatch(r"[A-Z][a-z][\w/&-]*", w):
+            take += 1
+        else:
+            break
+    if take and take < len(aw) and (_FORM_INTERROG_RE.match(aw[take]) or aw[take].endswith("?")):
+        heading = (heading + " " + " ".join(aw[:take])).strip()
+        after = " ".join(aw[take:]).strip()
     return before, heading, after
 
 
@@ -461,6 +772,10 @@ _PAGE_FOOTER_HINTS = (
 )
 
 
+_BARE_URL_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/?", re.I)
+
+
 def _looks_like_page_footer(text: str) -> bool:
     """Detect repeating page-footer / page-header band text.
 
@@ -476,6 +791,11 @@ def _looks_like_page_footer(text: str) -> bool:
     """
     if not text:
         return False
+    # A standalone URL / bare domain ('www.purtera-it.com', 'WWW.X.COM',
+    # 'https://x.com') is a footer / letterhead band, never deal content — strip
+    # it so it can't glue onto the start of a real clause.
+    if _BARE_URL_RE.fullmatch(text.strip()):
+        return True
     if len(text) > 240:
         return False  # Real footers are short; long blocks are scope.
     # A signature / sign-off line ("Role: ____  Date: ____") is governance
@@ -875,7 +1195,11 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _weak_label_prose_line_items(atoms)
         atoms = _drop_repeated_header_bands(atoms)
         atoms = _strip_placeholder_table_labels(atoms)
+        atoms = _drop_table_header_as_data_rows(atoms)
         atoms = _demote_decorative_dates(atoms)
+        atoms = _collapse_toc_atoms(atoms)
+        atoms = _fold_answers_into_questions(atoms)
+        atoms = _fold_photo_requests_into_images(atoms)
 
         return ParserOutput(
             atoms=atoms,
@@ -884,6 +1208,321 @@ class OrbitBriefPdfParser(BaseParser):
 
 
 # ──────────────────────── public helpers ─────────────────────────────────
+
+
+_PHOTO_REQUEST_RULE = None
+_PHOTO_REQUEST_RE = re.compile(
+    r"\b(?:upload|attach|take|provide|include)\b.*\bphotos?\b"
+    r"|\bphotos?\b.*\b(?:showing|of|install)", re.I,
+)
+
+
+def _photo_request_lexical(text: str) -> bool:
+    return bool(_PHOTO_REQUEST_RE.search(text or ""))
+
+
+def _photo_request_rule():
+    """SemanticRule: is this line a PHOTO-REQUEST instruction ('Upload 4 Photos of
+    the Nexeo', 'Upload a photo showing the rack', 'Take a photo of the install')?
+    Used to caption each extracted image with what it SHOULD show — the form
+    instruction the photo answers — so a reviewer / the vision pass sees expected
+    content, not a bare 'awaiting OCR'. Embedding generalises past the keyword net;
+    regex is the offline fallback."""
+    global _PHOTO_REQUEST_RULE
+    if _PHOTO_REQUEST_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _PHOTO_REQUEST_RULE = SemanticRule(
+            name="photo_request_instruction",
+            positives=[
+                "Upload 4 Photos of the Nexeo installed at the site.",
+                "Upload a photo showing all of the cables terminated and labeled.",
+                "Take a photo of the rack showing the equipment mounted.",
+                "Upload photos showing the IB7000 installed in its location.",
+                "Upload a photo of the drive thru director showing it is working.",
+                "Attach a picture of the completed install.",
+            ],
+            negatives=[
+                "PurTera will install low voltage cabling.",
+                "The vendor shall provide standardized reports upon completion.",
+                "Total Base Hrs: 1148.81", "Have you installed the NEXEO Box?",
+                "BK Store Number: 557", "Network design and configuration.",
+            ],
+            threshold=0.55,
+            lexical_fallback=_photo_request_lexical,
+        )
+    return _PHOTO_REQUEST_RULE
+
+
+def _is_photo_request(text: str) -> bool:
+    s = (text or "").strip()
+    if not s or "photo" not in s.lower():
+        return False
+    try:
+        return _photo_request_rule().fires(s)
+    except Exception:
+        return _photo_request_lexical(s)
+
+
+_IMAGE_FIELD_LABEL_RULE = None
+
+
+def _image_field_label_rule():
+    """SemanticRule: is this a short label whose value is the IMAGE directly below
+    it ('Signature', 'Floor Plan', 'Rack Elevation', 'Wiring Diagram', 'Before /
+    After') — so the image is captioned by it rather than a far-off photo request
+    higher on the page? A meaning judgment (generalises past Title-Case to 'floor
+    plan', 'cable test results'); the structural check below is the offline net."""
+    global _IMAGE_FIELD_LABEL_RULE
+    if _IMAGE_FIELD_LABEL_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _IMAGE_FIELD_LABEL_RULE = SemanticRule(
+            name="image_field_label",
+            positives=[
+                "Signature", "Floor Plan", "Rack Elevation", "Site Diagram",
+                "Wiring Diagram", "Equipment Photo", "Network Closet", "Before",
+                "After", "Cable Test Results", "Site Map", "Rack Layout",
+            ],
+            negatives=[
+                "Diedra Kennedy", "Yes", "No", "Did you install a new tablet?",
+                "The contractor shall furnish all materials and labor.",
+                "2.2.10 Cable Pathways", "Country: Albania", "New Tablet",
+            ],
+            threshold=0.50,
+            lexical_fallback=lambda s: _is_image_field_label(s, _lexical_only=True),
+        )
+    return _IMAGE_FIELD_LABEL_RULE
+
+
+def _is_image_field_label(text: str, _lexical_only: bool = False) -> bool:
+    """A short labelled field whose value is the image directly below it on a form
+    ('Signature' -> the signature image). Used so such an image is captioned by
+    the field right above it, not by a far-off photo request higher on the page.
+    Conservative: a short Title-Case label / colon-label that is not a question,
+    instruction, sentence, or bare number. Embedding-led; the lexical body below
+    is the offline net (and runs directly when _lexical_only)."""
+    s = (text or "").strip()
+    if not _lexical_only:
+        try:
+            return _image_field_label_rule().fires(s)
+        except Exception:
+            pass
+    if not s or s.endswith((".", "!", "?")):
+        return False
+    words = s.split()
+    if not (1 <= len(words) <= 4) or not any(c.isalpha() for c in s):
+        return False
+    if _FORM_INTERROG_RE.match(s) or _FORM_INSTRUCTION_RE.match(s) or _is_photo_request(s):
+        return False
+    if s.endswith(":"):
+        return True
+    if s.lower() in {"yes", "no", "n/a", "na", "tbd", "none"}:
+        return False
+    alpha = [w for w in words if any(c.isalpha() for c in w)]
+    return bool(alpha) and sum(1 for w in alpha if w[0].isupper()) / len(alpha) >= 0.8
+
+
+_TOC_LEADER_RE = re.compile(r"\.{4,}|…{2,}|(?:\.\s){4,}")
+
+
+def _collapse_toc_atoms(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Collapse a Table-of-Contents atom to a compact marker. A TOC page is rows
+    of 'Section Title .......... <page>' dotted leaders — navigation furniture, not
+    deal facts, and its entries just duplicate the real section headings that
+    appear later in the document. Left alone it becomes a glued 2000-char atom
+    ('1.0 SCOPE …… 1  2.0 REQUIREMENTS …… 2 …'). Detect >=3 dotted-leader runs and
+    replace the body with a one-line marker (kept, not dropped — no silent loss)."""
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        t = a.raw_text or ""
+        if len(t) > 200 and len(_TOC_LEADER_RE.findall(t)) >= 3:
+            marker = ("[Table of contents — document navigation (section titles -> "
+                      "page numbers); not deal content. The listed sections are "
+                      "captured as their own atoms where they occur.]")
+            try:
+                a = a.model_copy(update={
+                    "raw_text": marker, "normalized_text": marker.lower(),
+                    "review_flags": list(a.review_flags or []) + ["table_of_contents"],
+                })
+            except Exception:
+                pass
+        out.append(a)
+    return out
+
+
+_ANSWER_PREFIX_RE = re.compile(r"^(?:answer|ans|response|reply|a)\s*[:.\)]", re.I)
+_QUESTION_HEAD_RE = re.compile(
+    r"^(?:\d+[.\)]\s*)?(?:please\b|could\b|can\b|will\b|would\b|should\b|is\b|are\b|"
+    r"do\b|does\b|did\b|how\b|what\b|when\b|where\b|why\b|which\b|who\b|confirm\b|"
+    r"as\s+mentioned\b|provide\b|clarify\b)", re.I,
+)
+_ANSWER_BLOCK_RULE = None
+
+
+def _answer_block_rule():
+    """SemanticRule: does this atom read as the ANSWER/response to the question
+    above it (in a numbered Q&A / RFI list), so the two should fold into one Q&A
+    fact? Answer-ness is a meaning judgment; the explicit 'Answer:' prefix is the
+    offline net."""
+    global _ANSWER_BLOCK_RULE
+    if _ANSWER_BLOCK_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _ANSWER_BLOCK_RULE = SemanticRule(
+            name="qa_answer_block",
+            positives=[
+                "Answer: These are all wall phones. Single CAT6 cable with wall jack.",
+                "Answer: The Site Survey showed (1) Quad, (5) wall phone & (13) Duplex outlets.",
+                "Industry Standard.", "There is sufficient space.",
+                "Both. Can reuse but must provide where needed.",
+                "A 66 block at BDF location and 24-port patch panel inside cabinet.",
+            ],
+            negatives=[
+                "Please confirm whether the 2 wall drops are single-cable drops or another configuration.",
+                "As mentioned in the Statement of Work, 2.2.10, cable tray is required.",
+                "The contractor shall furnish all materials and labor.",
+                "Upload 4 photos of the unit installed.", "Tablet Install",
+            ],
+            threshold=0.55,
+            lexical_fallback=lambda s: bool(_ANSWER_PREFIX_RE.match((s or "").strip())),
+        )
+    return _ANSWER_BLOCK_RULE
+
+
+def _is_answer_block(text: str) -> bool:
+    s = (text or "").strip()
+    if not s:
+        return False
+    if _ANSWER_PREFIX_RE.match(s):   # explicit 'Answer:' — always an answer
+        return True
+    try:
+        return _answer_block_rule().fires(s)
+    except Exception:
+        return False
+
+
+def _fold_answers_into_questions(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Pair an answer atom with the question atom directly above it into ONE Q&A
+    atom — a numbered Q&A / RFI list ('1. … Could I get clarification?' + 'Answer:
+    …'). Split, the question and its answer lose their linkage. Answer-ness is an
+    embedding judgment ('Answer:' prefix is the offline net); the pairing is
+    positional (an answer belongs to the question right above it, same page).
+    Conservative: only folds into a preceding QUESTION-ish atom on the same page,
+    never into another answer or a heading — so nothing is mis-merged or lost."""
+    def _page(a: EvidenceAtom):
+        try:
+            return (a.source_refs[0].locator or {}).get("page") if a.source_refs else None
+        except Exception:
+            return None
+
+    def _is_questionish(t: str) -> bool:
+        return bool(t) and (t.endswith("?") or "?" in t or bool(_QUESTION_HEAD_RE.match(t)))
+
+    def _is_declarative_answer(t: str) -> bool:
+        # A response with NO explicit marker: a declarative line that is not itself
+        # a question, instruction, photo request, label, or bullet. Lets a Q&A pair
+        # when the answer doesn't say 'Answer:' ('… needed?' -> 'Industry Standard.')
+        # — works offline, where the answer EMBEDDING is unavailable.
+        if not t or len(t.split()) < 2 or t.endswith("?") or "?" in t:
+            return False
+        if (_QUESTION_HEAD_RE.match(t) or _FORM_INSTRUCTION_RE.match(t)
+                or _is_photo_request(t) or _is_value_field_label(t)):
+            return False
+        return True
+
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        txt = (a.raw_text or "").strip()
+        v = a.value if isinstance(a.value, dict) else {}
+        if (out and txt and v.get("kind") != "image_marker"
+                and "binary_region_marker" not in (a.review_flags or [])):
+            prev = out[-1]
+            ptxt = (prev.raw_text or "").strip()
+            pv = prev.value if isinstance(prev.value, dict) else {}
+            explicit = bool(_ANSWER_PREFIX_RE.match(txt))
+            # Three ways to recognise the answer below a question:
+            #   1. explicit 'Answer:'   — folds into any non-answer prev (reliable
+            #      everywhere; the prev is the question or its wrapped tail);
+            #   2. embedding answer      — needs a clearly question-ish prev (online);
+            #   3. positional, no marker — a STRONG question (ends '?') followed by a
+            #      declarative line is the answer (offline-safe; no colon needed).
+            prev_mergeable = (
+                _page(prev) == _page(a)
+                and not _ANSWER_PREFIX_RE.match(ptxt)
+                and pv.get("kind") != "image_marker"
+                and "binary_region_marker" not in (prev.review_flags or [])
+                and len(ptxt) + len(txt) < 3900
+            )
+            do_merge = prev_mergeable and (
+                explicit                                            # 1. 'Answer:' -> any non-answer prev
+                or (_is_answer_block(txt) and _is_questionish(ptxt))  # 2. embedding answer (online)
+                or (ptxt.endswith("?") and _is_declarative_answer(txt))  # 3. positional, no marker
+            )
+            if do_merge:
+                merged = f"{ptxt}  {txt}"
+                try:
+                    out[-1] = prev.model_copy(update={
+                        "raw_text": merged, "normalized_text": normalize_text(merged),
+                    })
+                    continue
+                except Exception:
+                    pass
+        out.append(a)
+    return out
+
+
+def _fold_photo_requests_into_images(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Fold a photo-request text atom ('Upload 4 Photos of the Nexeo …') into the
+    images it asks for: the request's 'answer' IS those photos, so it belongs as
+    the images' linkage reference, not a duplicate scope_item.
+
+    The images are extracted in a separate pass and appended at the END of the
+    atom list, so they sink below all text. Here we MOVE each matching image to
+    its request's position (reading order — under the right section header) and
+    give it the request's section_path, then drop the request text. Images with
+    no local request (a multi-page request's continuation photos) stay where they
+    are. Safe: only folds when a captioned image exists, so nothing is lost."""
+    img_by_caption: dict[str, list[EvidenceAtom]] = {}
+    for a in atoms:
+        v = a.value if isinstance(a.value, dict) else {}
+        if v.get("kind") == "image_marker":
+            cap = (v.get("expected_content") or "").strip().lower()
+            if cap:
+                img_by_caption.setdefault(cap, []).append(a)
+    if not img_by_caption:
+        return atoms
+
+    def _with_section(img: EvidenceAtom, req: EvidenceAtom) -> EvidenceAtom:
+        # Give the image the request's section_path so it files under the same
+        # header (e.g. 'Tablet Install') instead of floating section-less.
+        try:
+            rsec = (req.source_refs[0].locator or {}).get("section_path") if req.source_refs else None
+            if rsec and img.source_refs:
+                loc = dict(img.source_refs[0].locator or {})
+                loc["section_path"] = rsec
+                newref = img.source_refs[0].model_copy(update={"locator": loc})
+                return img.model_copy(update={"source_refs": [newref, *img.source_refs[1:]]})
+        except Exception:
+            pass
+        return img
+
+    placed: set[int] = set()
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        v = a.value if isinstance(a.value, dict) else {}
+        txt = (a.raw_text or "").strip()
+        if v.get("kind") != "image_marker" and _is_photo_request(txt):
+            low = txt.lower()
+            cap = next((c for c in img_by_caption if low.startswith(c) or c in low), None)
+            if cap:
+                # place the matching image(s) HERE, in the request's slot
+                for img in img_by_caption[cap]:
+                    if id(img) not in placed:
+                        placed.add(id(img))
+                        out.append(_with_section(img, a))
+                continue  # the request itself folds into those images
+        if v.get("kind") == "image_marker" and id(a) in placed:
+            continue  # already moved up to its request slot — drop the trailing dup
+        out.append(a)
+    return out
 
 
 def _pdf_image_markers(
@@ -916,6 +1555,12 @@ def _pdf_image_markers(
     import os as _os
     img_root = Path(_os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
     saved_by_xref: dict[int, tuple[str, int]] = {}  # xref -> (saved_path, size); same image reused across pages
+    emitted_xrefs: set[int] = set()  # one marker atom per UNIQUE image, not per page
+    # The most recent "Upload N photos showing X" instruction — a field-report's
+    # photos answer the request that precedes them, often spanning pages ("Upload
+    # 4 Photos" -> 2 on this page, 2 on the next). Carry it forward so each photo
+    # is captioned with what it should show.
+    current_request: str | None = None
     try:
         for page_index in range(doc.page_count):
             try:
@@ -923,8 +1568,51 @@ def _pdf_image_markers(
                 images = page.get_images(full=True)
             except Exception:
                 continue
+            # Collect photo-request BLOCKS with their vertical position. Reading
+            # blocks (not raw lines) joins a request wrapped across lines
+            # ("Upload photo showing Battery \nCharger Mounting" -> one request)
+            # and skips footer page numbers a line-split would leak.
+            page_requests: list[tuple[float, str]] = []   # (y0, request text) — carry-forward
+            page_captions: list[tuple[float, str]] = []   # requests + field labels — per-image caption
+            try:
+                for b in page.get_text("blocks"):
+                    joined = re.sub(r"\s+", " ", (b[4] or "")).strip()
+                    if not joined:
+                        continue
+                    if _is_photo_request(joined):
+                        page_requests.append((float(b[1]), joined[:160]))
+                        page_captions.append((float(b[1]), joined[:160]))
+                    elif _is_image_field_label(joined):
+                        # a labelled field whose value is the image below it
+                        # ('Signature' -> the signature image) — caption the image
+                        # with the field, not the far-off photo request above.
+                        page_captions.append((float(b[1]), joined[:160]))
+            except Exception:
+                pass
+            page_requests.sort(key=lambda r: r[0])
+            page_captions.sort(key=lambda r: r[0])
+            # Map each image xref to its top-edge Y so we can pair it to the
+            # request directly above it. A field report stacks request-then-photo
+            # down the page; two requests + two photos must NOT all collapse onto
+            # the last request (the old line-scan kept only the most recent one).
+            img_y: dict[int, float] = {}
+            try:
+                for info in page.get_image_info(xrefs=True):
+                    xr = info.get("xref")
+                    bb = info.get("bbox")
+                    if xr and bb:
+                        img_y[xr] = float(bb[1])
+            except Exception:
+                pass
             for ii, img in enumerate(images):
                 xref = img[0] if img else ii
+                # A logo/letterhead embedded once but referenced on every page is
+                # ONE image — emit a single marker for it (on first sight), not a
+                # duplicate "needs_extractor" atom per page (was flooding scan-heavy
+                # PDFs with 10+ identical logo markers).
+                if xref in emitted_xrefs:
+                    continue
+                emitted_xrefs.add(xref)
                 saved_path: str | None = None
                 size = 0
                 if xref in saved_by_xref:
@@ -944,6 +1632,26 @@ def _pdf_image_markers(
                             saved_by_xref[xref] = (saved_path, size)
                     except Exception:
                         saved_path, size = None, 0  # degrade to plain marker
+                # Pair this image to the request directly above it: the last
+                # request whose block top is at/above the image top. No request
+                # above (photo continues a request from a prior page) -> use the
+                # carried request. No position info -> fall back to order/last.
+                caption = current_request
+                y = img_y.get(xref)
+                if page_captions and y is not None:
+                    # A request/label introduces the image(s) BELOW it, so an image
+                    # is owned by the nearest caption (photo request OR field label
+                    # like 'Signature') AT OR ABOVE its top edge — that's the thing
+                    # it illustrates. If nothing is above it on this page, the image
+                    # precedes every caption here — it CONTINUES the carried request
+                    # from a prior page; never grab a caption below it (that one
+                    # introduces later images: a cable-test photo at the page top
+                    # vs a 'POS 3' request lower down).
+                    above = [r for r in page_captions if r[0] <= y + 2.0]
+                    if above:
+                        caption = above[-1][1]
+                elif page_requests:
+                    caption = page_requests[min(ii, len(page_requests) - 1)][1]
                 out.append(region_marker(
                     project_id=project_id,
                     artifact_id=artifact_id,
@@ -955,7 +1663,13 @@ def _pdf_image_markers(
                     label="image",
                     size=size,
                     saved_path=saved_path,
+                    caption=caption,
                 ))
+            # Carry the LAST request on this page forward: a multi-page request
+            # ("Upload 4 Photos" -> 2 here, 2 on the next page) captions the
+            # following page's photos when that page has no request line of its own.
+            if page_requests:
+                current_request = page_requests[-1][1]
     finally:
         doc.close()
     return out
@@ -1839,6 +2553,35 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             del nxt_sections[0]
 
 
+def _carry_cross_page_section_headings(pages: list[dict[str, Any]]) -> None:
+    """Root a page's heading-less opening content under the clause it continues.
+
+    A numbered RFP clause often spills across a page break: item 8 "Contract
+    Award and Interpretations" continues onto the next page, item 23 "Proposal
+    Format" sub-items land on the following page, etc. The next page then opens
+    with a *heading-less* section (content before any heading) that would
+    otherwise float at the document root (wrong section_path). Carry the last
+    real section heading across the page boundary so that opening content
+    inherits its true clause. Blocks stay on their own page (provenance intact);
+    only the section heading is inherited. Mutates ``pages`` in place. Runs
+    AFTER ``_stitch_cross_page_continuations`` (which first merges mid-sentence
+    wraps), so this only attributes genuine full-paragraph continuations.
+    """
+    last_heading = ""
+    for page in pages:
+        secs = page.get("sections") or []
+        if not secs:
+            continue
+        first = secs[0]
+        if last_heading and not (first.get("heading") or "").strip() \
+                and (first.get("blocks") or []):
+            first["heading"] = last_heading
+        for s in secs:
+            h = (s.get("heading") or "").strip()
+            if h:
+                last_heading = h
+
+
 _COL_PLACEHOLDER_LABEL = re.compile(r"\bcol_\d+:\s*")
 
 # A line whose ENTIRE content is a date (cover/letterhead "May 14,2026",
@@ -1935,6 +2678,44 @@ def _strip_placeholder_table_labels(atoms: list[EvidenceAtom]) -> list[EvidenceA
                             "raw_text": new, "normalized_text": normalize_text(new)})
                     except Exception:
                         pass
+        out.append(a)
+    return out
+
+
+def _drop_table_header_as_data_rows(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Drop a table's HEADER row that leaked back in as a data atom.
+
+    When the layout pipeline can't separate a small table's header from its body
+    it emits the header line as a row, so the column labels render as their own
+    "key: value" atom with key == value: ``Type: Type | Qty.: Qty.`` (anyWAIR
+    page 5). Every cell being ``X: X`` is an unmistakable header-as-data signal —
+    a real data row pairs a label with a DIFFERENT value — so the row is pure
+    duplication of the column headers and carries no fact. Conservative: fires
+    only when ALL labeled cells are key==value."""
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        rt = (getattr(a, "raw_text", "") or "").strip()
+        cells = [s.strip() for s in rt.split(" | ") if s.strip()]
+        labeled = [c for c in cells if ": " in c]
+        if cells and labeled and len(labeled) == len(cells):
+            def _kv_equal(cell: str) -> bool:
+                k, _, v = cell.partition(": ")
+                return k.strip().casefold() == v.strip().casefold() and bool(k.strip())
+            if all(_kv_equal(c) for c in cells):
+                continue  # header row leaked as data — drop
+
+            # A "key: value" cell whose value OPENS with a lowercase coordinating
+            # joiner ("Qty.: and Install") is a column-split heading, not data — a
+            # real tabular value never starts with "and"/"or". This is the layout
+            # pipeline slicing a Title-Case sub-heading ("Access Control Rough and
+            # Install") across the table's column boundary. Drop the fragment row.
+            def _split_header_fragment(cell: str) -> bool:
+                _, _, v = cell.partition(": ")
+                vw = v.strip().split()
+                return bool(vw) and vw[0].lower() in {"and", "or", "of", "the", "to"} \
+                    and len(vw) <= 3
+            if any(_split_header_fragment(c) for c in labeled):
+                continue
         out.append(a)
     return out
 
@@ -2228,9 +3009,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         try:
             with fitz.open(str(pdf_path)) as _vd:
                 _pg = _vd[page_index]
-                _has_visual = bool(_pg.get_images(full=True)) or bool(_pg.get_drawings())
+                _has_raster = bool(_pg.get_images(full=True))
+                _has_visual = _has_raster or bool(_pg.get_drawings())
         except Exception:
-            _has_visual = True  # fail-safe: if we can't tell, keep scanned-page behavior
+            # fail-safe: if we can't inspect the page, keep scanned-page behavior
+            # AND keep the review warning (don't suppress when we're unsure).
+            _has_raster = False
+            _has_visual = True
         if not _has_visual:
             return _build_text_rich_page(page_index)
         # Low-text WITH visuals = likely scanned. Try the OCR chain
@@ -2265,6 +3050,21 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 f"text layer was missing; treat as scanned-source evidence]",
             )
             return page_dict
+        # OCR recovered nothing. If the page carries RASTER images, those are
+        # captured by the separate image-marker pass (each saved, captioned with
+        # its 'Upload N photos…' request, and flagged 'awaiting OCR / vision') —
+        # so a page-level "no text, needs manual review" atom would be redundant
+        # AND misleading (the page's content is the photos, not lost). Suppress it;
+        # the image markers carry the page + the vision signal. Only a page with NO
+        # raster images (vector-only / truly unreadable, nothing else captured it)
+        # still gets the manual-review marker.
+        if _has_raster:
+            # Emit NOTHING for the page itself — its content is the embedded
+            # image(s), which the image-marker pass already captures (saved,
+            # captioned with their photo-request, flagged 'awaiting OCR / vision').
+            # A page-level marker here would be a redundant, misleading duplicate.
+            return {"page": page_index, "title": None, "metadata": [],
+                    "outline": [], "sections": []}
         return {
             "page": page_index,
             "title": None,
@@ -2291,7 +3091,20 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         ruled_blocks, ruled_bboxes = _extract_ruled_tables(pdf_path, page_index)
         # Also recover UNRULED column tables (date|event timelines, Factor|Weight
         # grids, key|value blocks) the prose splitter would otherwise scramble.
-        col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
+        # BUT skip whitespace-column extraction on a questionnaire page: a form's
+        # question and its answer sit in different x-columns, so the column
+        # detector would grab them as a 2-col table and fragment the Q&A — the
+        # Q&A regrouper below owns those pages instead.
+        # Also skip on a bulleted-list slide: its bullets sit in a column beside a
+        # diagram, so the column detector grabs them as a 2-col table and scrambles
+        # the BOM list ('• 24 x FS-1024E' -> 'x x x FS-1024E ...'). The bullet
+        # splitter below keeps them in clean reading order.
+        if (_is_questionnaire_page(page_texts[page_index])
+                or _page_is_form(page_texts[page_index].splitlines())
+                or _is_bulleted_list_page(page_texts[page_index])):
+            col_blocks, col_bboxes = [], []
+        else:
+            col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
         table_blocks, table_bboxes = _merge_table_extractions(
             ruled_blocks, ruled_bboxes, col_blocks, col_bboxes
         )
@@ -2303,14 +3116,32 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             if stripped is not None:
                 prose_text = stripped
 
+        # On a questionnaire / field-report page, join each question with its
+        # answer ("Have you installed the NEXEO Box?\nYes" -> one Q&A unit) before
+        # the prose splitter sees it, so the answer isn't buried in a blob with the
+        # next instruction. No-op on non-form pages (gated on >=2 question lines).
+        prose_text = _regroup_form_qa(prose_text)
+
         sections = _text_rich_sections(prose_text)
         if table_blocks:
             _place_tables_in_sections(
                 pdf_path, page_index, sections, table_blocks, table_bboxes
             )
+        # A field-report / form page has no prose title — its content is Q&A and
+        # labelled fields. Tag its blocks so the short-fragment drops in
+        # _atoms_for_block (len<10, title-case-label = 'fragment') don't eat real
+        # form values ('Signature', 'Managers Name', 'Diedra Kennedy'), and skip
+        # page-title detection (it was grabbing the first question / a field label
+        # as the 'title' and stripping it).
+        if _page_is_form(prose_text.splitlines()):
+            for _sec in sections:
+                for _blk in _sec.get("blocks") or []:
+                    _blk["form_field"] = True
         # The page title becomes the document's main section. A heading is
         # structure, not a fact — drop its content block so the title isn't
-        # both the section root AND its own atom.
+        # both the section root AND its own atom. (_detect_text_title rejects
+        # questions / field values, so a form page's first Q isn't taken as
+        # the title — while a real title like 'Burger King HME Install' is kept.)
         page_title = _detect_text_title(prose_text)
         if page_title:
             _strip_title_block(sections, page_title)
@@ -2362,6 +3193,27 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         }
 
     def _build_one_page(page_index: int) -> dict[str, Any]:
+        # A DocuSign / e-sign "Certificate of Completion" audit page is pure
+        # signature-trail boilerplate — collapse it to ONE marker instead of
+        # minting dozens of junk atoms (anyWAIR: ~46). Checked first so it
+        # applies regardless of the page's text length.
+        if _is_signature_certificate_page(page_texts[page_index]):
+            return {
+                "page": page_index,
+                "title": None,
+                "metadata": ["[signature certificate page — e-signature audit "
+                             "trail; collapsed to one boilerplate marker]"],
+                "outline": [],
+                "sections": [{
+                    "heading": "", "level": 2, "subsections": [],
+                    "blocks": [{
+                        "kind": "note",
+                        "text": ("[Signature certificate of completion — e-signature "
+                                 "audit trail (signer events, envelope id, delivery "
+                                 "timestamps). Boilerplate; no deal content.]"),
+                    }],
+                }],
+            }
         if page_text_lengths[page_index] < LOW_TEXT_PAGE_THRESHOLD:
             return _build_low_text_page(page_index)
         if page_text_lengths[page_index] >= TEXT_RICH_PAGE_THRESHOLD:
@@ -2372,9 +3224,41 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # continuation page with a signature roster — is parsed correctly and
         # far more cheaply by the prose splitter, which also recovers any
         # line-ruled tables. The 1200 cutoff is a perf guard, not correctness.
-        if page_image_counts[page_index] == 0:
+        #
+        # ALSO take the prose path when the page is clearly multi-paragraph prose
+        # even if it carries an image (a cover letter with a letterhead logo):
+        # the heavyweight pipeline MERGES the blank-line-separated paragraphs into
+        # one glued mega-atom (solicitation + award + rejection rights + contact
+        # all in one), whereas the prose splitter respects the paragraph breaks.
+        # The letterhead image is still captured by the separate image-marker pass.
+        if page_image_counts[page_index] == 0 \
+                or _is_multi_paragraph_prose(page_texts[page_index]) \
+                or _is_bulleted_list_page(page_texts[page_index]) \
+                or _is_form_page(page_texts[page_index]):
+            # A questionnaire / field-report page (questions OR a 'Upload N photos'
+            # request) is form text, NOT a visual layout — the heavyweight pipeline
+            # scrambles it: it splits a section header ('HME NEXO Box Install' ->
+            # heading 'HME NEXO' + body 'Box Install'), glues Q&A, and reorders by
+            # geometry. Send it to the text/form path even though it carries photos
+            # (captured separately by the image-marker pass).
             return _build_text_rich_page(page_index)
-        return _build_heavyweight_page(page_index)
+        hv = _build_heavyweight_page(page_index)
+        # Coverage backstop — a clean text layer must NEVER be silently dropped.
+        # The heavyweight layout pipeline can drop most/all of a page's text on a
+        # form or field-report page that carries embedded photos (the Burger King
+        # HME form: Name / Store # / Site # / arrival-departure / the NEXEO Q&A all
+        # vanished while 30 photos were marked). This is OUTCOME-based, not a
+        # predictive router: compare what heavyweight KEPT against the page's real
+        # text layer and, if it kept too little (< 45%), re-run through the prose/
+        # form splitter. Photos are still captured by the separate image-marker
+        # pass. Outcome-checking beats any page-type guesser — a page heavyweight
+        # genuinely handles (anyWAIR geometry tables) keeps ~all its text, so it is
+        # never rerouted; a page it mangles is always caught, even ones unseen.
+        src_len = page_text_lengths[page_index]
+        if src_len >= LOW_TEXT_PAGE_THRESHOLD \
+                and _page_captured_text_len(hv) < 0.45 * src_len:
+            return _build_text_rich_page(page_index)
+        return hv
 
     # NOTE: PyMuPDF is NOT thread-safe — running the page loop on a
     # ThreadPoolExecutor crashes with SIGSEGV inside libmupdf. The
@@ -2385,6 +3269,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # ~2 s per-fork startup on macOS.
     pages: list[dict[str, Any]] = [_build_one_page(i) for i in range(page_count)]
     _stitch_cross_page_continuations(pages)
+    _carry_cross_page_section_headings(pages)
 
     # Aggregate document title + metadata across pages (in order).
     for p in pages:
@@ -2804,12 +3689,28 @@ def _atoms_for_block(
         # header/footer band into the *start* of a real paragraph,
         # strip the band rather than drop the atom.
         text = _strip_page_band_prefix(text)
-        if not text or len(text) < 10:
+        # A form/field-report page's values are legitimately short ('Signature',
+        # 'Yes', 'Diedra Kennedy') and read as Title-Case labels — they are real
+        # captured content, so the proposal-checklist fragment/length drops below
+        # must NOT apply to them. But even on a form page, a bare bullet glyph
+        # ('•', 'o', '▪') or a page-number label ('Page 1') is furniture, never an
+        # atom — keep dropping those.
+        _is_form_field = bool(block.get("form_field"))
+        if not text or len(re.sub(r"[^0-9A-Za-z]", "", text)) < 2:
+            return
+        if re.fullmatch(r"(?i)page\s*\d+", text):
+            return
+        # A paragraph that is only space-separated bare numbers ('32 112 17 14
+        # 296') is diagram / table-label noise (counts lifted off a figure), not a
+        # fact. A single number can be a real answer, so require >=2.
+        if re.fullmatch(r"[\d.,\s]+", text) and len(re.findall(r"\d+", text)) >= 2:
+            return
+        if len(text) < 10 and not _is_form_field:
             return
         # P1.4: skip pure-title-case bullet-fragment labels like "Cost
         # Proposal", "Project Description", "Addendums".  These come
         # from proposal-format checklists and carry no scope data.
-        if _looks_like_fragment(text):
+        if not _is_form_field and _looks_like_fragment(text):
             return
         # P1.1: when a paragraph contains ≥2 Q\d. / A\d. markers, split
         # it into one atom per Q&A pair so packet anchors don't end up
@@ -3187,7 +4088,13 @@ def _atoms_for_bullet(
     if text:
         # Strip page-band prefix that some extractors fold into bullet text.
         text = _strip_page_band_prefix(text)
-    if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text) and not _looks_like_fragment(text):
+    # NOTE: _looks_like_fragment is deliberately NOT applied here. It exists to
+    # drop STANDALONE Title-Case checklist labels emitted as paragraphs ("Cost
+    # Proposal", "Project Description"). A bullet is, by construction, an item of
+    # a real list ("a. main office", "1. Total Cost of Hardware") — a genuine
+    # fact, not a stray fragment — so applying that filter here silently drops
+    # legitimate short list items (intern reports: coverage areas + pricing lines).
+    if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text):
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="bullet")
         yield _make_atom(
             text=text,
@@ -3949,7 +4856,14 @@ def _md_cell(value: Any) -> str:
 # ──────────────────────── internals ──────────────────────────────────────
 
 
-_BULLET_LINE_RE = re.compile(r"^\s*([-*•·\u2022]|\d+[.)])\s+(.+?)\s*$")
+_BULLET_LINE_RE = re.compile(
+    r"^\s*([-*•·\u2022]|\d+[.)]|[a-z][.)]|[ivx]{1,4}[.)])\s+(.+?)\s*$"
+)  # bullets, numbered, AND lettered/roman sub-items ("a. main office", "iv) ...").
+# A bullet GLYPH alone on its own line — common in slide / docx->PDF exports,
+# where the marker and its text render on separate lines ('•\n74 x FG-30Gs').
+# The next content line is the bullet's text. True bullet glyphs only (not 'o'/'-',
+# ambiguous with the letter o / a dash), so prose is never mis-read.
+_BARE_BULLET_RE = re.compile(r"^\s*[•▪●◦‣]\s*$")
 _HEADING_LINE_RE = re.compile(
     r"^\s*((?:[A-Z0-9][A-Z0-9 &/\-,()]{2,80})|(?:#{1,6}\s+.{2,80}))\s*$"
 )
@@ -4229,14 +5143,57 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
         #    labels (no digits) names the columns; otherwise generic col_N.
         def _is_label(s: str) -> bool:
             return bool(s) and not any(c.isdigit() for c in s) and len(s.split()) <= 3
-        if _is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1]):
-            columns = [rows_lr[0][0], rows_lr[0][1]]
-            data = rows_lr[1:]
+
+        # 5a. A LABEL:VALUE FORM has no header — every row is a field pair (Name |
+        #     Austin Coryell, Date | …, BK Store Number | 557). The left column is
+        #     all field labels and the right column is HETEROGENEOUS values (text,
+        #     dates, numbers). Treat each row as a key:value pair so it reads
+        #     "Name: Austin Coryell", not a header cross-product
+        #     ("Name: Site Number | Austin Coryell: 16404"). A real data grid
+        #     (Factor | Weight, all-numeric right column) keeps header behaviour.
+        def _form_label(s: str) -> bool:
+            s = (s or "").strip()
+            return bool(s) and len(s.split()) <= 5 and s[-1:] not in ".!?:" \
+                and any(c.isalpha() for c in s)
+
+        def _numlike(s: str) -> bool:
+            return bool(re.fullmatch(r"[-$(]?[\d.,/: ]+(?:[ap]\.?m\.?)?\)?%?",
+                                     (s or "").strip(), re.I))
+        lefts = [r[0] for r in rows_lr]
+        rights = [r[1] for r in rows_lr if (r[1] or "").strip()]
+        # Require >=4 field rows so this fires on a genuine FORM (Name/Date/Store#/
+        # Site#/Arrival/Departure) and NOT on a 2-3 row data table whose first row
+        # is a real header ("Type | Qty." over "Cameras | 65") — which would
+        # otherwise leak the header pair "Type: Qty." as a noise atom.
+        is_form = (len(rows_lr) >= 4
+                   and sum(1 for ltxt in lefts if _form_label(ltxt)) >= max(2, 0.7 * len(lefts))
+                   and (not rights or sum(1 for v in rights if _numlike(v)) < 0.8 * len(rights)))
+        if is_form:
+            form_rows = rows_lr
+            # Even a form-shaped grid can open with a real COLUMN-HEADER pair
+            # ("Type | Qty.", "Equipment Type | Included in Buildout") — drop it
+            # when the right cell is a generic header word, so it doesn't leak as
+            # a "Type: Qty." noise atom. A genuine field pair (right cell is a
+            # VALUE: "Name | Austin Coryell") is kept.
+            _GENERIC_HEADER_RIGHT = {
+                "qty", "qty.", "quantity", "included in buildout", "total",
+                "number", "total number", "status", "description", "unit",
+                "price", "amount", "value", "notes", "cost", "rate",
+            }
+            if form_rows and (form_rows[0][1] or "").strip().lower().rstrip(":") in _GENERIC_HEADER_RIGHT:
+                form_rows = form_rows[1:]
+            columns = ["col_0"]
+            out_rows = [{"col_0": f"{r[0]}: {r[1]}".strip(" :")}
+                        for r in form_rows if (r[0] or r[1])]
         else:
-            columns = ["col_0", "col_1"]
-            data = rows_lr
-        out_rows = [{columns[0]: r[0], columns[1]: r[1]} for r in data
-                    if r[0] or r[1]]
+            if _is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1]):
+                columns = [rows_lr[0][0], rows_lr[0][1]]
+                data = rows_lr[1:]
+            else:
+                columns = ["col_0", "col_1"]
+                data = rows_lr
+            out_rows = [{columns[0]: r[0], columns[1]: r[1]} for r in data
+                        if r[0] or r[1]]
         if len(out_rows) < 1:
             continue
         blocks.append({"kind": "table", "columns": columns, "rows": out_rows,
@@ -4425,41 +5382,633 @@ def _numbered_heading(line: str) -> str | None:
     return text
 
 
+# A list-item opener: a numbered ("3.") or lettered ("a.", "iv)") marker. Used to
+# tell a numbered SECTION HEADING (followed by a prose body) apart from a numbered
+# LIST ITEM (immediately followed by the next list item — a Pricing Summary line,
+# a requirements list). The strict heading regex misses long/lettered siblings.
+_LIST_ITEM_OPENER_RE = re.compile(r"^(?:\d{1,2}|[a-zA-Z]|[ivxIVX]{1,4})[.)]\s+\S")
+
+
+_DOTTED_SECTION_RE = re.compile(r"^(\d+(?:\.\d+)+)\.?\s+(\S.*)$")
+
+
+def _split_dotted_section(line: str) -> tuple[str, str] | None:
+    """Split a dotted-decimal SOW/RFP section heading into (heading, body):
+    '1.0 SCOPE' -> ('1.0 SCOPE', ''); '2.1 GENERAL REQUIREMENTS. The Contractor
+    shall…' -> ('2.1 GENERAL REQUIREMENTS', 'The Contractor shall…'); '2.1.1.1
+    Confined Space. N / A' -> ('2.1.1.1 Confined Space', 'N / A').
+
+    Multi-level section numbers (1.0, 2.1, 2.1.1) are missed by the single-level
+    numbered/run-on rules, and the title ENDS in a period ('REQUIREMENTS.'), which
+    _numbered_heading rejects — so without this every SOW section fell through to
+    body content and stayed under a stale carried heading. Boundary: the title is
+    the text up to its first sentence period; the rest is the body. Guarded so a
+    measurement ('2.5 inch conduit') or a sentence isn't taken as a heading."""
+    m = _DOTTED_SECTION_RE.match((line or "").strip())
+    if not m:
+        return None
+    num, rest = m.group(1), m.group(2).strip()
+    cut = rest.find(". ")
+    if cut == -1:
+        head, body = rest.rstrip("."), ""
+    else:
+        head, body = rest[:cut].strip(), rest[cut + 2:].strip()
+    # a heading is a short title that starts capitalised (not 'inch conduit')
+    if not head or len(head.split()) > 12 or not head[:1].isupper():
+        return None
+    return (f"{num} {head}", body)
+
+
 def _next_content_is_body(lines: list[str], idx: int) -> bool:
-    """True when the next non-blank line after ``idx`` is body text, not another
-    numbered item — so a numbered line is a section heading over a body, not one
-    entry in a numbered list.
+    """True when the next non-blank line after ``idx`` is a PROSE body — so a
+    numbered line is a section heading over a body, not one entry in a list.
+
+    A numbered line whose next sibling is ANOTHER list item (numbered or lettered)
+    is a list member, not a heading: e.g. "1. Total Cost of Hardware / 2. Cost for
+    configuration…" under a Pricing Summary, or "7. … coverage in these areas / a.
+    main office". A General-Conditions clause ("1. Scope of Work") is instead
+    followed by a prose paragraph, so it still promotes.
     """
     for j in range(idx + 1, len(lines)):
         nxt = lines[j].strip()
         if not nxt:
             continue
-        return _NUMBERED_HEADING_RE.match(nxt) is None
+        return _LIST_ITEM_OPENER_RE.match(nxt) is None
     return False
+
+
+# Function/stop words that may sit inside a Title-Case clause heading.
+_CLAUSE_TITLE_FUNC = {"and", "of", "the", "for", "to", "in", "a", "an", "or",
+                      "on", "with", "by", "&", "/", "-", "from", "at"}
+_RUNON_CLAUSE_RE = re.compile(r"^\d{1,2}\.\s+(.+)$")
+
+
+# ── Title-Case scope sub-headings ────────────────────────────────────────
+# A SOW lists each work activity as a short Title-Case label ("Unit Wiring",
+# "Media Panel Installation", "Camera Rough and Install", "MDF and IDF Closet
+# Buildout"), immediately followed by either a "<Provider> will …" sentence or a
+# "Type / Qty." mini-table. These are NOT all-caps, so _looks_like_section_heading
+# misses them and their content mis-roots under the previous heading (anyWAIR: 17
+# atoms dumped under "SOW VERSION"). The detector below is structural-first (a
+# short, terminal-punctuation-free, colon-free Title-Case line whose NEXT content
+# line is a provider sentence or a table header), with a SemanticRule confirming
+# the line actually NAMES a scope activity (so a stray Title-Case prose line such
+# as "Athens Georgia" or "First Second" doesn't get promoted).
+_SCOPE_PROVIDER_SENTENCE_RE = re.compile(
+    r"^(?:PurTera|Provider|Vendor|Contractor|Customer|Subcontractor|The\s+\w+)\b.*?\b"
+    r"(?:will|shall|may|is|are|provides?|installs?|completes?|performs?)\b",
+    re.I,
+)
+# Tabular header tokens that open a scope work-item's "Type / Qty." mini-table.
+_SCOPE_TABLE_HEADER_TOKENS = {
+    "type", "qty", "qty.", "quantity", "qty of homeruns", "closet type",
+    "equipment type", "from", "hr location", "number of idfs",
+}
+
+
+def _is_titlecase_heading_line(stripped: str) -> bool:
+    """A short Title-Case label that reads as a heading, not a sentence/fact.
+
+    Every alphabetic word must be Capitalized or a known joiner (and/of/the…); a
+    lowercase content word means it's a sentence fragment, not a heading. Excludes
+    all-caps (handled by _looks_like_section_heading), bullets, "Label: value"
+    facts, and terminal-punctuation lines.
+    """
+    if not (2 <= len(stripped) <= 48):
+        return False
+    if stripped[-1] in ".!?,;:":
+        return False
+    if ":" in stripped:                       # "Closet Type: MDF" — a fact, not a heading
+        return False
+    if stripped.isupper():                    # ALL-CAPS handled elsewhere
+        return False
+    if _BULLET_LINE_RE.match(stripped):
+        return False
+    words = stripped.split()
+    if not (1 <= len(words) <= 6):
+        return False
+    if not stripped[0].isupper():
+        return False
+    alpha_words = [w for w in words if any(c.isalpha() for c in w)]
+    if not alpha_words:
+        return False
+    digit_words = sum(1 for w in words if any(c.isdigit() for c in w))
+    if digit_words:                           # "V1 Chase Smith", "106" rows aren't headings
+        return False
+    for w in alpha_words:
+        first = next((c for c in w if c.isalpha()), "")
+        if first.isupper():
+            continue
+        if w.strip("-/&.").lower() in _CLAUSE_TITLE_FUNC:
+            continue
+        return False                          # a lowercase content word → it's prose
+    return True
+
+
+def _next_content_is_scope_anchor(lines: list[str], idx: int) -> bool:
+    """True when the line after ``idx`` anchors a scope work-item: a provider
+    sentence ("PurTera will install …") or a "Type / Qty." table header token."""
+    for j in range(idx + 1, len(lines)):
+        nxt = lines[j].strip()
+        if not nxt:
+            continue
+        low = nxt.lower().rstrip(".")
+        if low in _SCOPE_TABLE_HEADER_TOKENS:
+            return True
+        return bool(_SCOPE_PROVIDER_SENTENCE_RE.match(nxt))
+    return False
+
+
+# Table summary-row / column-header words that are NEVER a scope activity name —
+# "Total Drop", "Total Number", "Quantity", "Type" are tabular furniture, not
+# work-item headings. Used by the offline lexical fallback (and as a hard guard).
+_SCOPE_HEADING_STOPWORDS = {
+    "total", "number", "count", "quantity", "qty", "qty.", "type", "location",
+    "subtotal", "amount", "sum", "from", "included",
+}
+
+
+def _scope_heading_lexical(text: str) -> bool:
+    """Offline net for the scope-activity judgment: a structurally-gated Title-Case
+    line is a work-item heading UNLESS it opens with tabular-summary vocabulary
+    ("Total Drop", "Quantity", "Type")."""
+    words = (text or "").strip().lower().split()
+    if not words:
+        return False
+    return words[0] not in _SCOPE_HEADING_STOPWORDS
+
+
+_SCOPE_SUBHEADING_RULE = None
+
+
+def _scope_subheading_rule():
+    """SemanticRule: does this short Title-Case line NAME a scope work activity
+    (an install / buildout / wiring task), as opposed to a stray capitalized line
+    (a place name, a person, a date label)? Structural gating already constrains
+    the candidates, so the lexical fallback fires whenever the structure matched."""
+    global _SCOPE_SUBHEADING_RULE
+    if _SCOPE_SUBHEADING_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _SCOPE_SUBHEADING_RULE = SemanticRule(
+            name="scope_work_item_heading",
+            positives=[
+                "Unit Wiring", "Media Panel Installation", "Common Area",
+                "Fiber backbone", "Unit AP Installation",
+                "MDF and IDF Closet Buildout", "Camera Rough and Install",
+                "Access Control Rough and Install", "Speaker Rough and Install",
+                "Door Lock Installation", "Rack Buildout", "Cable Pull",
+                "Access Point Installation", "Cabling and Termination",
+                "Demolition and Removal", "Fiber Backbone Installation",
+            ],
+            negatives=[
+                "Athens Georgia", "Chase Smith", "First Second",
+                "Executive Summary", "Revision History", "Project Overview",
+                "Total Number", "Full Name", "Job Title",
+            ],
+            threshold=0.55,
+            lexical_fallback=_scope_heading_lexical,
+        )
+    return _SCOPE_SUBHEADING_RULE
+
+
+def _looks_like_scope_subheading(stripped: str, lines: list[str], idx: int) -> bool:
+    """A Title-Case scope work-item heading: short Title-Case label, anchored by a
+    provider sentence or Type/Qty table on the next line, confirmed by the
+    scope-activity SemanticRule. Universal across SOW formats."""
+    if not _is_titlecase_heading_line(stripped):
+        return False
+    if not _scope_heading_lexical(stripped):   # hard guard: never a tabular word
+        return False
+    if not _next_content_is_scope_anchor(lines, idx):
+        return False
+    try:
+        return _scope_subheading_rule().fires(stripped)
+    except Exception:
+        return True
+
+
+def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
+    """A numbered clause whose Title-Case heading runs straight into its body on
+    ONE line — e.g. ``"8.  Contract Award and Interpretations ACE may accept …"``
+    — which ``_numbered_heading`` misses (it only fires when the whole line is the
+    title). Returns ``(heading, body)`` so the heading becomes its own section and
+    the body its content; else ``None``.
+
+    Boundary rule: the heading is the leading run of Title-Case words (capitalized
+    words + small function words). A trailing capitalized word that is immediately
+    followed by a lowercase word is the *subject of the body sentence*, not part of
+    the title, so it's trimmed ("…Interpretations | ACE may accept"). Conservative:
+    needs ≥2 capitalized CONTENT words of title and a ≥4-word body, so a normal
+    numbered sentence item ("1. The Owner will not be responsible…") never fires.
+    """
+    m = _RUNON_CLAUSE_RE.match(line.strip())
+    if not m:
+        return None
+    toks = m.group(1).split()
+    if len(toks) < 5:
+        return None
+
+    def _bare(t: str) -> str:
+        return t.strip(".,;:()")
+
+    # Longest leading run of Title-Case words (capitalized or small function word).
+    i = 0
+    while i < len(toks):
+        w = _bare(toks[i])
+        if w and (w[0].isupper() or w.lower() in _CLAUSE_TITLE_FUNC):
+            i += 1
+        else:
+            break
+    # Find where the body sentence actually begins inside that run:
+    #   (a) a capitalized determiner ("The"/"A"/"An") mid-run starts a new
+    #       sentence ("Company Responsibility | The Company shall…"); take the
+    #       LAST such — the title never contains a sentence-starting determiner;
+    #   (b) else a trailing capitalized CONTENT word immediately before a
+    #       lowercase word is the body's subject ("…Interpretations | ACE may…").
+    cut = i
+    for k in range(1, i):
+        w = _bare(toks[k])
+        if w[:1].isupper() and w.lower() in {"the", "a", "an"}:
+            cut = k
+    if cut == i and i >= 1 and i < len(toks) and toks[i][:1].islower():
+        w = _bare(toks[i - 1])
+        if w[:1].isupper() and w.lower() not in _CLAUSE_TITLE_FUNC:
+            cut = i - 1
+    title_toks = toks[:cut]
+    content_caps = [t for t in title_toks
+                    if _bare(t)[:1].isupper() and _bare(t).lower() not in _CLAUSE_TITLE_FUNC]
+    heading = " ".join(title_toks).strip().rstrip(".,;:")
+    body = " ".join(toks[cut:]).strip()
+    if (len(content_caps) < 2 or not heading or len(heading) > 60
+            or heading[-1] in ".!?" or len(body.split()) < 4 or not body[:1].isupper()):
+        return None
+    return heading, body
+
+
+_SIG_CERT_PHRASES = (
+    "certificate of completion", "signer events", "envelope id",
+    "signature adoption", "electronic record and signature", "carbon copy events",
+    "envelope summary events", "hashed/encrypted", "autonav",
+    "envelopeid stamping", "in person signer events", "certified delivery events",
+    "signature timestamp", "status timestamp", "intermediary delivery events",
+)
+
+
+def _is_signature_certificate_page(page_text: str) -> bool:
+    """A DocuSign / Adobe-Sign "Certificate of Completion" audit page appended to a
+    signed document: pure signature-trail boilerplate (Signer Events, Envelope Id,
+    Carbon Copy Events, Hashed/Encrypted timestamps, Notary Events …). It is NOT
+    deal content — parsing it mints dozens of junk atoms (anyWAIR: ~46). Detect it
+    by >=3 distinctive certificate phrases so the page collapses to ONE boilerplate
+    marker. Vendor-agnostic; the phrases are e-signature-platform furniture, not
+    deal language, so it never fires on a real scope/pricing page."""
+    if not page_text:
+        return False
+    low = page_text.lower()
+    return sum(1 for ph in _SIG_CERT_PHRASES if ph in low) >= 3
+
+
+def _is_multi_paragraph_prose(page_text: str) -> bool:
+    """True when a page reads as several blank-line-separated prose paragraphs.
+
+    Used to route a short cover-letter / intro page (which carries a letterhead
+    image, so it would otherwise hit the heavyweight layout pipeline that MERGES
+    paragraphs into one glued atom) through the prose splitter instead, which
+    keeps each paragraph a separate fact. A "prose paragraph" here is a chunk of
+    >=40 chars containing a sentence (has spaces and ends with terminal
+    punctuation, or is long); >=3 of them = clear prose page.
+    """
+    if not page_text:
+        return False
+    chunks = re.split(r"\n\s*\n", page_text)
+    prose = 0
+    for c in chunks:
+        s = " ".join(c.split())
+        if len(s) >= 40 and " " in s and (s.rstrip()[-1:] in ".!?:" or len(s) >= 120):
+            prose += 1
+    return prose >= 3
+
+
+def _is_bulleted_list_page(page_text: str) -> bool:
+    """True when a page is dominated by a BULLETED LIST — e.g. an architecture
+    slide whose body is a bill-of-materials list ('• 74 x FG-30Gs', '• 24 x
+    FS-1024E Core Switches', ...) beside a diagram image. Such a page carries an
+    image so it would otherwise hit the heavyweight layout pipeline, which reorders
+    the bullets by geometry around the diagram and splits 'N x DEVICE' into garbage
+    ('x x x FS-648F-FPOE x FS-1024E ...'). The text layer is already in clean
+    reading order, so route it to the prose/bullet splitter instead. A bullet line
+    is a glyph alone OR a glyph + text; >=5 bullets AND bullets >= 30% of the
+    non-blank lines = a bullet page (a stray bullet in a prose page won't trip it)."""
+    if not page_text:
+        return False
+    lines = [ln.strip() for ln in page_text.splitlines() if ln.strip()]
+    if len(lines) < 6:
+        return False
+    bullets = sum(1 for ln in lines if ln[:1] in "•▪●◦‣*-" or _BULLET_LINE_RE.match(ln))
+    return bullets >= 5 and bullets >= 0.30 * len(lines)
+
+
+_FORM_QUESTION_RULE = None
+
+
+def _form_question_lexical(text: str) -> bool:
+    """Offline net for 'is this a fill-out FORM question?': a short standalone
+    prompt ending in '?'. The structural prefilter already required the '?'; this
+    just rejects a long prose/legal sentence that happens to end in one."""
+    s = (text or "").strip()
+    return s.endswith("?") and 2 <= len(s.split()) <= 18
+
+
+def _form_question_rule():
+    """SemanticRule: does this line read like a fill-out FORM / field-report
+    prompt ('Did you install the tablet?', 'Have you installed the NEXEO Box?')
+    rather than a prose / legal / rhetorical question ('What happens in the event
+    of a conflict?')? Distinguishing the two by MEANING keeps the questionnaire
+    router from firing on a contract page that merely contains questions — which
+    would wrongly skip that page's tables. Regex net is the offline fallback."""
+    global _FORM_QUESTION_RULE
+    if _FORM_QUESTION_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _FORM_QUESTION_RULE = SemanticRule(
+            name="form_field_question",
+            positives=[
+                "Have you installed the NEXEO Box?",
+                "Did you install a new tablet at the site?",
+                "Is this store a 2 LANE store for drive thru?",
+                "Did you have any issues with the tablet install?",
+                "Was there a pre-existing audio box next to the old unit?",
+                "Did you pull 2 cables to each POS?",
+                "How many total cables were pulled?",
+                "Are all devices powered on and online?",
+                "Did you complete the closeout checklist?",
+            ],
+            negatives=[
+                "What happens in the event of a conflict between this SOW and the MSA?",
+                "Who bears the risk of loss during transit?",
+                "What is the meaning of force majeure under this agreement?",
+                "Why is network redundancy important for this deployment?",
+                "Shall the contractor be liable for consequential damages?",
+                "What are the payment terms?",
+            ],
+            threshold=0.52,
+            lexical_fallback=_form_question_lexical,
+        )
+    return _FORM_QUESTION_RULE
+
+
+def _is_form_page(page_text: str) -> bool:
+    """True when a page is a fill-out form / field-report — a questionnaire (>=2
+    form questions) OR a page carrying a photo-request ('Upload N photos showing
+    X'). Either marks form TEXT that must take the text path, not the heavyweight
+    layout pipeline (which splits the section header, glues the Q&A, and reorders
+    by geometry)."""
+    if not page_text:
+        return False
+    if _is_questionnaire_page(page_text):
+        return True
+    return any(_is_photo_request(ln.strip()) for ln in page_text.splitlines())
+
+
+def _is_questionnaire_page(page_text: str) -> bool:
+    """True when a page is a fill-out form / field-report questionnaire. Structural
+    prefilter: >=2 standalone lines ending in '?'. Then a SemanticRule confirms
+    they read like FORM field-prompts (not prose/legal/rhetorical questions), so
+    this never fires on a contract page that merely contains questions (which would
+    wrongly route it off the layout path and skip its tables). Offline -> the
+    lexical net (short standalone question)."""
+    if not page_text:
+        return False
+    q_lines = [ln.strip() for ln in page_text.splitlines() if ln.strip().endswith("?")]
+    if len(q_lines) < 2:
+        return False
+    try:
+        rule = _form_question_rule()
+        return sum(1 for q in q_lines if rule.fires(q)) >= 2
+    except Exception:
+        return sum(1 for q in q_lines if _form_question_lexical(q)) >= 2
+
+
+def _page_captured_text_len(page: dict[str, Any]) -> int:
+    """Total chars of real textual content a built page captured (headings, prose,
+    bullets, table cells, key-value pairs) — excluding image / boilerplate markers.
+    Used by the coverage backstop to compare what the layout pipeline KEPT against
+    the page's actual text layer, so a page that drops most of its text (not just
+    all of it) is caught too."""
+    total = 0
+
+    def _walk(sections: list[dict[str, Any]]) -> None:
+        nonlocal total
+        for sec in sections or []:
+            total += len((sec.get("heading") or "").strip())
+            for b in sec.get("blocks") or []:
+                if b.get("kind") in ("paragraph", "bullet_list", "table", "keyval"):
+                    txt = (b.get("text") or "").strip()
+                    if not txt and b.get("items"):
+                        txt = " ".join(str(x) for x in b["items"])
+                    if not txt and b.get("rows"):
+                        txt = " ".join(str(x) for r in b["rows"] for x in r)
+                    if not txt and b.get("pairs"):
+                        txt = " ".join(f"{k} {v}" for k, v in b["pairs"])
+                    total += len(txt.strip())
+            _walk(sec.get("subsections") or [])
+
+    _walk(page.get("sections") or [])
+    return total
+
+
+_MONTHS_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+_WEEKDAYS_RE = r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*"
+_BARE_DATE_RE = re.compile(
+    r"^(?:" + _WEEKDAYS_RE + r"\.?,?\s*)?"
+    # ',?\s+' would miss 'May 14,2026' (comma, no space) — use '[,\s]+' so a comma
+    # OR a space (or both) separates day from year.
+    r"(?:" + _MONTHS_RE + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?[,\s]+\d{4}"   # April 8, 2026 / May 14,2026
+    r"|\d{1,2}\s+" + _MONTHS_RE + r"\.?[,\s]+\d{4}"                      # 8 April 2026
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"                                    # 4/8/2026
+    r"|\d{4}-\d{1,2}-\d{1,2})$",                                         # 2026-04-08
+    re.I,
+)
+
+
+def _is_bare_date_line(text: str) -> bool:
+    """True when a line is JUST a date ('Wednesday, April 8, 2026', '4/8/2026').
+
+    A standalone date at a page corner is timestamp furniture (repeated on every
+    page of a form/field-report export) — it is NOT the document title and NOT a
+    fact, so it must not be promoted to the section heading or emitted as an atom.
+    """
+    s = (text or "").strip()
+    return 6 <= len(s) <= 40 and bool(_BARE_DATE_RE.match(s))
+
+
+_TITLE_LINE_RULE = None
+
+
+def _title_line_lexical(text: str) -> bool:
+    """Offline net for 'is this line a document title?': a short, non-sentence
+    label that is NOT a date, page footer, or CRM-id band. This is the structural
+    fallback when the embedder is unreachable (and the deterministic test path)."""
+    s = (text or "").strip()
+    if not s or len(s) > 90 or s[-1] in ".!?,;:":
+        return False
+    # A question is never a document title — neither one with a '?' ('Is this
+    # store a 2 LANE Store for Drive Thru?  No') nor a statement-phrased one
+    # ('Have you train the MOD … units.  Yes', no '?'). Without this a form page's
+    # first question was picked as the page title and dropped.
+    if "?" in s or _FORM_INTERROG_RE.match(s):
+        return False
+    if _is_bare_date_line(s):
+        return False
+    # A bare clock time ('09:30 AM', '06:00') is page furniture (an arrival /
+    # departure stamp), not a title — without this it was picked as a form page's
+    # title once the real questions were (correctly) rejected.
+    if re.fullmatch(r"\d{1,2}:\d{2}(\s*[AP]\.?M\.?)?", s, re.I):
+        return False
+    if _looks_like_page_footer(s):
+        return False
+    low = s.lower()
+    if "hubspot" in low and re.search(r"\d{4,}", s):
+        return False
+    return True
+
+
+def _title_line_rule():
+    """SemanticRule: does this line read like a DOCUMENT/SECTION TITLE ('Burger
+    King HME Install', 'Statement of Work') rather than an accessory that belongs
+    in the path metadata, not the title — a date, page furniture, an id, a bare
+    value? Recognising title-ness by MEANING generalises past the fixed furniture
+    regexes (a date is 'obviously never a title'); the regex net is the offline
+    fallback."""
+    global _TITLE_LINE_RULE
+    if _TITLE_LINE_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _TITLE_LINE_RULE = SemanticRule(
+            name="document_title_line",
+            positives=[
+                "Burger King HME Install", "Statement of Work", "Project Overview",
+                "Master Services Agreement", "Scope of Work", "Field Service Report",
+                "HME NEXO Box Install", "Installation Checklist", "Site Roster & Facilities",
+                "Network Cabling Proposal", "Deal Kit Summary", "Work Order",
+                "anyWAIR UGA", "Closeout Report", "Executive Summary",
+            ],
+            negatives=[
+                "Wednesday, April 8, 2026", "April 8, 2026", "4/8/2026", "2026-04-08",
+                "Page 1 of 5", "www.purtera-it.com", "Confidential",
+                "000087 - OPTBOT | HubSpot 60355665326", "06:00 AM", "Yes", "557",
+                "Rev 2", "Sheet 1",
+            ],
+            threshold=0.52,
+            lexical_fallback=_title_line_lexical,
+        )
+    return _TITLE_LINE_RULE
+
+
+_SECTION_HEADER_RULE = None
+
+
+def _section_header_lexical(line: str) -> bool:
+    """Offline net for 'is this standalone line a form SECTION header?'
+    (the embedder is the primary judge; this fires when it's unreachable / in
+    the deterministic test + offline-labeler path). A form sub-header is a short
+    Title-Case label naming a subsystem ('BK Audio', 'POS Cabling', 'Tablet
+    Install', 'Drive Thru Lane 2'). Distinguish it from the other standalone
+    short lines on a form page — bare answers ('Yes', '8') and question
+    continuations ('Talking POS in the store', which carry lowercase words) —
+    by requiring most ALPHA words to be capitalised and rejecting bare values."""
+    s = (line or "").strip()
+    if not s or s[-1] in "?.,;:!" or not any(c.isalpha() for c in s):
+        return False
+    words = s.split()
+    if not (1 <= len(words) <= 6):
+        return False
+    if s.lower() in {"yes", "no", "n/a", "na", "tbd", "none", "true", "false"}:
+        return False
+    if _is_photo_request(s) or _FORM_INTERROG_RE.match(s):
+        return False
+    alpha = [w for w in words if any(c.isalpha() for c in w)]
+    if not alpha:
+        return False
+    capped = sum(1 for w in alpha if w[0].isupper())
+    return capped / len(alpha) >= 0.8
+
+
+def _section_header_rule():
+    """SemanticRule: is this standalone line a form/field-report SECTION header
+    ('Tablet Install', 'BK Audio', 'POS Cabling') — a divider the following
+    questions belong UNDER — rather than content (a question, a bare answer, a
+    material/tool line)? Header-ness is a meaning judgment, so the embedder leads
+    and ``_section_header_lexical`` is the offline net."""
+    global _SECTION_HEADER_RULE
+    if _SECTION_HEADER_RULE is None:
+        from app.core.semantic_rules import SemanticRule
+        _SECTION_HEADER_RULE = SemanticRule(
+            name="form_section_header",
+            positives=[
+                "Tablet Install", "BK Audio", "POS Cabling", "Drive Thru Lane 2",
+                "Headset Install", "Site Information", "Network Configuration",
+                "Power and Grounding", "Equipment Installation", "Menu Board",
+                "Speaker Post", "Drive Thru", "Cabling", "Server Rack",
+            ],
+            negatives=[
+                "Did you install a new tablet at the site?", "New Tablet", "Yes", "No",
+                "8", "Talking POS in the store", "CAT6 jacks", "Tape measure",
+                "10 ft ladder", "Cable tester", "Upload 4 photos of the unit",
+                "Was there a pre-existing BK Audio Box next to the old HME unit?",
+                "The contractor shall provide all materials",
+            ],
+            threshold=0.50,
+            lexical_fallback=_section_header_lexical,
+        )
+    return _SECTION_HEADER_RULE
+
+
+def _is_form_section_header(line: str) -> bool:
+    """A standalone line on a form page that heads the questions below it. Cheap
+    textual preconditions, then the semantic rule (embedding online / lexical
+    offline) makes the call."""
+    s = (line or "").strip()
+    if not s or len(s.split()) > 6 or s[-1] in "?.,;:!":
+        return False
+    if _looks_like_page_footer(s) or _is_bare_date_line(s):
+        return False
+    # A clock time ('09:30 AM' arrival/departure stamp) is a form VALUE, not a
+    # section header — and it slips past the title-case check (its only alpha
+    # token is the 'AM'/'PM' unit). A real header names a subsystem, so require
+    # at least one substantive word (>=3 alpha chars, not an AM/PM unit).
+    if re.fullmatch(r"\d{1,2}:\d{2}(\s*[AP]\.?M\.?)?", s, re.I):
+        return False
+    if not any(len(w) >= 3 and w.isalpha() and w.upper() not in ("AM", "PM")
+               for w in s.split()):
+        return False
+    try:
+        return _section_header_rule().fires(s)
+    except Exception:
+        return _section_header_lexical(s)
 
 
 def _detect_text_title(page_text: str) -> str | None:
     """First prominent line of a text page — the document's main section.
 
-    Skips CRM id / reference bands ("000087 - … | HubSpot 60355665326") and
-    footer furniture so the returned line is the human title ("08 - Site Roster
-    & Facilities (Authoritative)"). Used to root every atom's section_path so
-    a sub-heading renders as a path ("<main section> > <sub heading>").
+    Returns the human title ("Burger King HME Install"), skipping accessories that
+    belong in path metadata rather than the title — a page-corner timestamp
+    ("Wednesday, April 8, 2026"), CRM id bands, footer furniture. The judgment is
+    semantic (a date is never a title; a SemanticRule that has seen real titles
+    knows that), with the furniture regexes as the offline fallback. Used to root
+    every atom's section_path so a sub-heading renders as a path.
     """
     for raw in page_text.splitlines():
         line = raw.strip()
         if not line or len(line) > 90:
             continue
-        # A title is a label, not a sentence — never strip real prose as if it
-        # were the title.
+        # A title is a label, not a sentence.
         if line[-1] in ".!?,;:":
             continue
-        low = line.lower()
-        if "hubspot" in low and re.search(r"\d{4,}", line):
-            continue  # CRM deal-id band, not the title
-        if _looks_like_page_footer(line):
-            continue
-        return line
+        try:
+            if _title_line_rule().fires(line):
+                return line
+        except Exception:
+            if _title_line_lexical(line):
+                return line
     return None
 
 
@@ -4559,6 +6108,14 @@ def _looks_like_section_heading(stripped: str) -> bool:
     # "MOCK-MSA-2026-OPTBOT-001": one token, with digits and hyphens.
     if " " not in stripped and "-" in stripped and any(c.isdigit() for c in stripped):
         return False
+    # A clock time ('09:30 AM') passes str.isupper() (digits are uncased, 'AM' is
+    # upper) but is a form VALUE, not a heading. A real heading names something —
+    # require a substantive word (>=3 alpha chars, not an AM/PM unit).
+    if re.fullmatch(r"\d{1,2}:\d{2}(\s*[AP]\.?M\.?)?", stripped, re.I):
+        return False
+    if not any(len(w) >= 3 and w.isalpha() and w.upper() not in ("AM", "PM")
+               for w in stripped.split()):
+        return False
     return True
 
 
@@ -4651,6 +6208,13 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     current_blocks: list[dict[str, Any]] = []
     paragraph_lines: list[str] = []
     bullet_buffer: list[str] = []
+    pending_bullet = False  # saw a lone bullet glyph; next content line is its text
+    # A field-report / questionnaire page (>=2 '?') stacks Q&A under short visual
+    # sub-headers ("Tablet Install", "BK Audio", "POS Cabling"). Recognise those
+    # as SECTION headers so the questions below nest under them — instead of the
+    # header leaking as a junk scope_item or vanishing. Gated to form pages so an
+    # ordinary prose page's short Title-Case lines aren't promoted.
+    _is_form_pg = (page_text or "").count("?") >= 2
 
     def flush_paragraph() -> None:
         nonlocal paragraph_lines
@@ -4705,11 +6269,91 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         current_heading = None
         current_blocks = []
 
+    skip_through = -1  # lines consumed by a multi-line photo-request instruction
     for idx, raw in enumerate(lines):
+        if idx <= skip_through:
+            continue
         line = raw.rstrip()
         if not line.strip():
             flush_paragraph()
             flush_bullets()
+            continue
+
+        # A bare page-corner timestamp ("Wednesday, April 8, 2026") is furniture
+        # repeated on every page of a form/field-report export — it is not the
+        # title, not a section, and not a fact. Skip ONLY at the page top (the
+        # corner timestamp position) so it neither glues onto the real title nor
+        # becomes its own atom — a date deeper in the page is a real value (a
+        # "Date:" field, a revision date) and must be kept.
+        if idx <= 1 and _is_bare_date_line(line.strip()):
+            flush_paragraph()
+            flush_bullets()
+            continue
+
+        # A lone page-number line ("4") at the page foot is furniture — drop it
+        # so it never surfaces as a junk numeric atom. Guarded to an isolated /
+        # trailing short-digit line so a real numbered list item is untouched.
+        if (line.strip().isdigit() and len(line.strip()) <= 3
+                and (idx == len(lines) - 1 or not lines[idx + 1].strip())):
+            flush_paragraph()
+            flush_bullets()
+            continue
+
+        # A form sub-header ("Tablet Install", "BK Audio", "POS Cabling") on a
+        # questionnaire page is a SECTION divider: start a new section so the
+        # questions below nest under it, and DON'T emit it as its own atom
+        # (breadcrumb only). After _regroup_form_qa answers are joined to their
+        # questions, so a standalone short Title-Case line here is a header.
+        if _is_form_pg and _is_form_section_header(line.strip()):
+            flush_section()
+            current_heading = line.strip()
+            continue
+
+        # A photo-request instruction ("Upload 4 Photos of the Nexeo installed at
+        # the site.") is the LINKAGE for the images it asks for — its "answer" is
+        # those photos (already captioned onto the image markers). Break it out of
+        # any glued Q&A as its OWN unit so the question/answer stays clean and the
+        # request reads as the images' reference, not buried text. Multi-line
+        # instructions are gathered (the continuation sentence-lines that follow).
+        if _is_photo_request(line.strip()) and idx > skip_through:
+            flush_paragraph()
+            flush_bullets()
+            req = [line.strip()]
+            j = idx + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                # A bare number is a footer page number, not a continuation — and
+                # a new question / request / blank ends the wrapped instruction.
+                if (not nxt or nxt.isdigit() or nxt.endswith("?")
+                        or _FORM_INTERROG_RE.match(nxt) or _is_photo_request(nxt)):
+                    break
+                # Wrapped continuation: a lowercase-start tail, a 3+ word sentence
+                # line, OR a short Title-Case fragment that completes the request
+                # phrase ("Upload photo showing Battery" + "Charger Mounting").
+                # Without the Title-Case case the tail leaked as a junk atom
+                # ("Mounting 4") and the caption was left truncated.
+                if (nxt[:1].islower() or len(nxt.split()) >= 3
+                        or re.match(r"^[A-Z][\w/&-]*( [A-Z][\w/&-]*){0,2}$", nxt)):
+                    req.append(nxt)
+                    j += 1
+                else:
+                    break
+            skip_through = j - 1
+            paragraph_lines.extend(req)
+            flush_paragraph()
+            continue
+
+        # Dotted-decimal SOW/RFP section heading ("1.0 SCOPE", "2.1 GENERAL
+        # REQUIREMENTS. The Contractor shall…", "2.1.1.1 Confined Space. N / A")
+        # — multi-level numbers, title often run into the body and ending in '.',
+        # which the single-level rules below miss. Roots the clause under its own
+        # numbered section instead of a stale carried heading ("LIST OF TABLES").
+        dotted = _split_dotted_section(line)
+        if dotted:
+            flush_section()
+            current_heading = dotted[0]
+            if dotted[1]:
+                paragraph_lines.append(dotted[1])
             continue
 
         # Numbered section heading ("1. Authoritative physical site roster") —
@@ -4722,14 +6366,55 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             current_heading = num_head
             continue
 
+        # Run-on numbered clause: "8.  Contract Award and Interpretations ACE may
+        # accept…" — the title is glued to the body on one line, so the clean
+        # heading rule above misses it and the bullet rule below would strip the
+        # number and bury it under the previous section. Split the title into its
+        # own section so the clause (and everything under it until the next
+        # number) roots correctly.
+        runon = _split_runon_numbered_clause(line)
+        if runon:
+            flush_section()
+            current_heading = runon[0]
+            paragraph_lines.append(runon[1])
+            continue
+
+        # A bullet glyph alone on its line ("•") — its text is on the NEXT line(s).
+        # Mark pending so the following content line becomes a bullet item (its
+        # wrapped tail then joins via the lowercase-continuation rule below) — so a
+        # glyph-per-line BOM list separates into items instead of gluing into one
+        # mega-atom (or, with column extraction, scrambling).
+        if _BARE_BULLET_RE.match(line):
+            flush_paragraph()
+            pending_bullet = True
+            continue
+
         bullet_m = _BULLET_LINE_RE.match(line)
         if bullet_m:
             flush_paragraph()
             bullet_buffer.append(bullet_m.group(2).strip())
+            pending_bullet = False
+            continue
+
+        # The content line right after a lone bullet glyph IS that bullet's text.
+        if pending_bullet:
+            flush_paragraph()
+            bullet_buffer.append(line.strip())
+            pending_bullet = False
+            continue
+
+        # Title-Case scope work-item heading ("Media Panel Installation",
+        # "Camera Rough and Install") — not all-caps, so the heading rule below
+        # misses it and its table/description would mis-root under the previous
+        # section. Anchored by a provider sentence or Type/Qty table on the next
+        # line + confirmed by the scope-activity SemanticRule.
+        stripped = line.strip()
+        if _looks_like_scope_subheading(stripped, lines, idx):
+            flush_section()
+            current_heading = stripped
             continue
 
         # heading guess (all caps or markdown-style #)
-        stripped = line.strip()
         if len(stripped) <= 80 and _looks_like_section_heading(stripped):
             flush_section()
             current_heading = stripped.lstrip("# ").strip()
@@ -7876,7 +9561,16 @@ def _scan_pdf_for_extras(
                 # short final page) is sparse text, not a scanned diagram —
                 # don't emit a bogus visual-review marker for it.
                 pg = doc[page_idx]
-                if bool(pg.get_images(full=True)) or bool(pg.get_drawings()):
+                has_raster = bool(pg.get_images(full=True))
+                has_vector = bool(pg.get_drawings())
+                # Raster images on the page already become captioned image
+                # markers (saved_path + "Upload N photos…" caption) AND drive the
+                # vision pass via find_visual_pages_from_image_markers. Emitting a
+                # second "visual evidence not fully extracted" atom for the same
+                # page is redundant noise the reviewer sees stacked on the photos.
+                # Keep the marker ONLY for a vector-drawing page with no raster
+                # (a vector floor-plan / rack diagram that NO image marker covers).
+                if has_vector and not has_raster:
                     out.append(
                         _visual_review_atom(
                             project_id=project_id,

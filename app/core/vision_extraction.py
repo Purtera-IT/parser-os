@@ -967,13 +967,48 @@ def find_table_pages_via_pymupdf(
     return out
 
 
+def find_visual_pages_from_image_markers(atoms: list[Any]) -> list[tuple[str, int]]:
+    """Pick up pages that carry an extracted image marker (binary_region_marker
+    with region_ref 'page{n}/image{xref}'). These pages hold raster photos /
+    scans saved to disk and awaiting OCR/vision — they're the same pages the
+    parser used to double-flag with a 'visual evidence not fully extracted'
+    text marker. Keying vision off the image markers lets us drop that redundant
+    text marker (raster content IS captured + captioned) without losing vision
+    coverage on photo/scan pages. Returns (pdf_path, page_num) 0-indexed.
+    """
+    pages: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    ref_pat = re.compile(r"page(\d+)/", re.IGNORECASE)
+    for atom in atoms:
+        flags = getattr(atom, "review_flags", None) or []
+        if "binary_region_marker" not in flags:
+            continue
+        refs = getattr(atom, "source_refs", None) or []
+        for ref in refs:
+            fname = getattr(ref, "filename", None) or ""
+            if not fname.lower().endswith(".pdf"):
+                continue
+            loc = getattr(ref, "locator", None) or {}
+            region = str(loc.get("region_ref", ""))
+            m = ref_pat.match(region)
+            if not m:
+                continue
+            page_num = int(m.group(1))  # region_ref page index is already 0-based
+            key = (fname, page_num)
+            if key not in seen:
+                seen.add(key)
+                pages.append(key)
+    return pages
+
+
 def find_all_pages_needing_vision(atoms: list[Any]) -> list[tuple[str, int]]:
     """v45.1 — union of (parser-flagged visual pages) +
-    (pymupdf-detected table pages). Ensures vision-LLM fires on
-    EVERY page with structured visual content, not just pages the
+    (pymupdf-detected table pages) + (image-marker pages). Ensures vision-LLM
+    fires on EVERY page with structured visual content, not just pages the
     text parser couldn't read.
     """
     parser_flagged = find_visual_pages_from_atoms(atoms)
+    image_pages = find_visual_pages_from_image_markers(atoms)
     # Collect all unique PDF paths from atoms
     pdf_paths: set[str] = set()
     for atom in atoms:
@@ -989,7 +1024,7 @@ def find_all_pages_needing_vision(atoms: list[Any]) -> list[tuple[str, int]]:
     # Union
     seen: set[tuple[str, int]] = set()
     out: list[tuple[str, int]] = []
-    for p in parser_flagged + table_pages:
+    for p in parser_flagged + table_pages + image_pages:
         if p not in seen:
             seen.add(p)
             out.append(p)
@@ -1263,6 +1298,7 @@ __all__ = [
     "get_pdf_page_text",
     "extract_visual_pages",
     "find_visual_pages_from_atoms",
+    "find_visual_pages_from_image_markers",
     "find_scanned_pages",
     "ocr_scanned_page",
     "ocr_all_scanned_pages",

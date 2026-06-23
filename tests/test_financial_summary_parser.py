@@ -121,7 +121,11 @@ def test_generic_header_fields_captured_beyond_whitelist():
     assert f["account_manager"] == "Rivera"
 
 
-def test_div_zero_and_text_values_ignored():
+def test_div_zero_pl_metric_captured_faithfully():
+    # A KNOWN P&L metric whose formula failed (#DIV/0!) is meaningful content —
+    # it tells the PM the metric is undefined (e.g. margin% on $0 revenue) — so it
+    # is captured as a faithful, flagged atom, never silently dropped. (An Excel
+    # error in an arbitrary HEADER field is still rejected — see the sweep test.)
     rows = [
         ["Total Deal Revenue", 1000, "Margin % on Total Deal", "#DIV/0!"],
         ["Total Deal Cost", 600, None, None],
@@ -130,8 +134,51 @@ def test_div_zero_and_text_values_ignored():
         ["End User", "TBD", None, None],
     ]
     atoms = _emit(rows)
+    # the #DIV/0! margin row is emitted faithfully (the raw error string, flagged)
+    err = [
+        a for a in atoms
+        if isinstance(a.value, dict) and a.value.get("kind") == "pl_metric"
+        and a.value.get("category_key") == "deal" and a.value.get("metric") == "margin_pct"
+    ]
+    assert len(err) == 1
+    assert err[0].value.get("value") == "#DIV/0!"
+    assert err[0].value.get("formula_error") == "#DIV/0!"
+    assert "xlsx_parser:formula_error" in err[0].review_flags
+    assert "#DIV/0!" in err[0].raw_text
+
+
+def test_margin_pct_label_variants_and_garbled_slot(monkeypatch):
+    # Margin-% labels are recognised by MEANING, not one rigid "Margin % on X"
+    # regex: "Net Margin (%)" (no category — inherits the block) and a garbled
+    # template label sitting in the margin-% slot ("Lift/Rental on Miscellaneous",
+    # right after the Margin row) both resolve. A bare "<Cat> Margin" $ row must
+    # NOT be misread as a percentage. Force the offline path for determinism.
+    monkeypatch.setenv("SOWSMITH_SEMANTIC_RULES", "0")
+    rows = [
+        ["Total Labor Revenue", 1000, None, None],
+        ["Total Labor Cost", 800, None, None],
+        ["Total Labor Margin", 200, None, None],
+        ["Net Margin (%)", 0.20, None, None],          # no category → inherit Labor
+        ["Lift/Rental Revenue", 0, None, None],
+        ["Lift/Rental Cost", 0, None, None],
+        ["Lift/Rental Margin", 0, None, None],
+        ["Lift/Rental on Miscellaneous", "#DIV/0!", None, None],  # garbled slot
+    ]
+    atoms = _emit(rows)
     pl = _pl_grouped(atoms)
-    assert pl["deal"]["margin_pct"] is None  # #DIV/0! dropped, not crashed
+    # "<Cat> Margin" $ rows stay dollar metrics, not percentages
+    assert pl["labor"]["margin"] == 200
+    assert pl["lift_rental"]["margin"] == 0
+    # "Net Margin (%)" captured as Labor's margin %, inheriting the block category
+    assert pl["labor"]["margin_pct"] == 20.0
+    # garbled label in the margin-% slot resolves to Lift/Rental's margin % (the
+    # #DIV/0! kept faithfully, flagged)
+    lr = [a for a in atoms if isinstance(a.value, dict)
+          and a.value.get("category_key") == "lift_rental"
+          and a.value.get("metric") == "margin_pct"]
+    assert len(lr) == 1
+    assert lr[0].value.get("value") == "#DIV/0!"
+    assert "xlsx_parser:formula_error" in lr[0].review_flags
 
 
 def test_sweep_rejects_excel_errors_and_heading_values():

@@ -459,9 +459,9 @@ def classify_atoms(atoms: list[Any]) -> int:
     # deflection and the LLM. This emits one structured event per call so a
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
-    _dfl = {"store": 0, "student": 0, "type_head": 0,
+    _dfl = {"store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
             "contrastive": 0, "rubric_gate": 0}
-    _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0,
+    _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
                "contrastive": 0.0, "rubric_gate": 0.0, "post": 0.0}
     _dfl_input = len(promotable)
     _t_start = time.perf_counter()
@@ -568,6 +568,43 @@ def classify_atoms(atoms: list[Any]) -> int:
     # conf>=0.85), abstains when unsure, retrains as the log grows. OFF by
     # default; cold/abstain -> byte-identical to the LLM-only path.
     head_deflected = 0
+    # Grounded-Extractor #70 (GPU): the FINE-TUNED transformer type head (held-out
+    # 0.814, ~53% deflect @ 0.966) assigns a confident value-light type and skips the
+    # LLM for that atom. Same value-light contract + guess-free abstain as the CPU
+    # head below — this just swaps the sklearn-over-frozen-embeddings backend for the
+    # GPU-fine-tuned encoder. OFF by default; cold/abstain -> byte-identical to LLM-only.
+    if os.environ.get("SOWSMITH_TYPE_HEAD_GPU", "").strip().lower() in ("1", "true", "yes", "on"):
+        _t = _lap()
+        try:
+            from app.core.schemas import AtomType as _AT
+            from app.core import type_head_gpu as _thg
+
+            _VALUE_LIGHT = {
+                "requirement", "exclusion", "contract_term", "deal_metadata",
+                "acceptance_criterion", "task", "change_order_rule", "constraint",
+                "dependency", "mitigation", "compliance_rule", "submission_req",
+                "addendum_qa",
+            }
+            verdicts = _thg.classify_batch([_atom_decide_text(a) for a in promotable])
+            survivors = []
+            for a, res in zip(promotable, verdicts):
+                if res is not None and res[0] in _VALUE_LIGHT:
+                    try:
+                        a.atom_type = _AT(res[0])
+                        head_deflected += 1
+                        _dfl["type_head_gpu"] += 1
+                        continue
+                    except (ValueError, ImportError):
+                        pass
+                survivors.append(a)
+            promotable = survivors
+        except Exception:
+            pass
+        _dfl_ms["type_head_gpu"] += _lap() - _t
+        if not promotable:
+            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
+            return head_deflected
+
     if os.environ.get("SOWSMITH_TYPE_HEAD_DEFLECT", "").strip().lower() in ("1", "true", "yes", "on"):
         _t = _lap()
         try:

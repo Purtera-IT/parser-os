@@ -16,6 +16,7 @@ part is a binary part.
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -60,6 +61,7 @@ def _marker_atom(
     label: str,
     size: int,
     saved_path: str | None = None,
+    caption: str | None = None,
 ) -> EvidenceAtom:
     if saved_path:
         # The bytes have been cropped out and written to disk — a later OCR /
@@ -76,13 +78,25 @@ def _marker_atom(
             f"{region_ref} in {filename} — {size:,} bytes. A vision or embedded-"
             f"object pass is required to recover its content."
         )
+    # The expected content of the image — e.g. the 'Upload N photos showing X'
+    # form instruction this photo answers. Gives the reviewer (and the vision
+    # pass) what the photo SHOULD show instead of a bare 'awaiting OCR' marker.
+    if caption:
+        text = text.rstrip(".") + f' — expected: "{caption}".'
     atom_id = stable_id("atm", artifact_id, "binary_marker", region_ref)
+    # Attribute the marker to its PAGE (0-based) so the review tool files each
+    # image under the page it's actually on — region_ref is "page{n}/image{xref}"
+    # for PDF images. Without this, every image marker had page=None and they all
+    # clustered on one page (page 1 looked like it had dozens, not 2).
+    _pg_m = re.match(r"page(\d+)/", region_ref or "")
+    _page_loc = {"page": int(_pg_m.group(1))} if _pg_m else {}
     src = SourceRef(
         id=stable_id("src", atom_id),
         artifact_id=artifact_id,
         artifact_type=artifact_type,
         filename=filename,
         locator={"region_ref": region_ref, "extraction": "binary_region_marker_v1",
+                 **_page_loc,
                  **({"saved_path": saved_path} if saved_path else {})},
         extraction_method="binary_region_marker_v1",
         parser_version=parser_version,
@@ -95,7 +109,8 @@ def _marker_atom(
         raw_text=text,
         normalized_text=normalize_text(text),
         value={"kind": kind, "region_ref": region_ref, "size_bytes": size,
-               **({"saved_path": saved_path} if saved_path else {})},
+               **({"saved_path": saved_path} if saved_path else {}),
+               **({"expected_content": caption} if caption else {})},
         entity_keys=[],
         source_refs=[src],
         receipts=[],
@@ -121,6 +136,7 @@ def region_marker(
     label: str = "image",
     size: int = 0,
     saved_path: str | None = None,
+    caption: str | None = None,
 ) -> EvidenceAtom:
     """A located marker for one referenced (non-zip-embedded) binary region.
 
@@ -141,6 +157,7 @@ def region_marker(
         label=label,
         size=size,
         saved_path=saved_path,
+        caption=caption,
     )
 
 
