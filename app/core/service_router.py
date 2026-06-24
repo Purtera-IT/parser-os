@@ -22,6 +22,16 @@ from typing import Any
 
 _CAP = 40  # atoms sampled for the scope summary — matches _label_service_types._scope_summary
 
+# Atom types that are BOM/pricing/commercial noise, NOT scope-of-work. The full
+# parser emits XLSX BOM line-items as hundreds of `pricing_assumption` atoms that
+# drown the actual scope (a TV install reads as 313 cabling/wifi material rows vs
+# 52 scope atoms) and flip the route to wireless/cabling. The labeler's parse
+# never surfaced that BOM, so the head learned from scope prose — exclude these
+# at inference so the representation matches training.
+_NOISE_TYPES = frozenset({
+    "pricing_assumption", "commercial_total", "rate_card", "line_item",
+})
+
 
 def _router_dir() -> str:
     return os.environ.get("SOWSMITH_SERVICE_ROUTER_DIR", "_contrastive_router")
@@ -59,8 +69,16 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
         for d in documents
         if d.get("filename")
     )[:200]
+
+    def _atype(a) -> str:
+        return str(getattr(a, "atom_type", None) or (a.get("atom_type") if isinstance(a, dict) else "") or "")
+
+    # Scope-of-work atoms only; BOM/pricing rows dominate the parse and misroute.
+    scope_atoms = [a for a in atoms if _atype(a) not in _NOISE_TYPES]
+    if len(scope_atoms) < 5:  # guard: thin scope -> fall back to all atoms
+        scope_atoms = list(atoms)
     bodies = [
-        t for a in atoms if (t := str(getattr(a, "text", "") or "").strip())
+        t for a in scope_atoms if (t := str(getattr(a, "text", "") or "").strip())
     ]
     if len(bodies) > _CAP:
         bodies = bodies[:: max(1, len(bodies) // _CAP)][:_CAP]
