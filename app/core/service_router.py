@@ -78,13 +78,25 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
             at = a.get("atom_type")
         return at.value if hasattr(at, "value") else str(at or "")
 
+    def _text(a) -> str:
+        # EvidenceAtom stores text under `raw_text` (NOT `text` — `_compact_atom`
+        # maps raw_text->"text" only in the envelope dict). Missing this returned
+        # "" for every real atom -> empty scope summary -> always routed wireless.
+        for attr in ("raw_text", "normalized_text", "text"):
+            v = getattr(a, attr, None)
+            if v:
+                return str(v).strip()
+        if isinstance(a, dict):
+            for k in ("text", "raw_text", "normalized_text", "body"):
+                if a.get(k):
+                    return str(a[k]).strip()
+        return ""
+
     # Scope-of-work atoms only; BOM/pricing rows dominate the parse and misroute.
     scope_atoms = [a for a in atoms if _atype(a) not in _NOISE_TYPES]
     if len(scope_atoms) < 5:  # guard: thin scope -> fall back to all atoms
         scope_atoms = list(atoms)
-    bodies = [
-        t for a in scope_atoms if (t := str(getattr(a, "text", "") or "").strip())
-    ]
+    bodies = [t for a in scope_atoms if (t := _text(a))]
     if len(bodies) > _CAP:
         bodies = bodies[:: max(1, len(bodies) // _CAP)][:_CAP]
     return f"FILES: {names}\nSCOPE ATOMS:\n" + "\n".join(f"- {b[:160]}" for b in bodies)
