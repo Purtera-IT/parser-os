@@ -71,7 +71,12 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
     )[:200]
 
     def _atype(a) -> str:
-        return str(getattr(a, "atom_type", None) or (a.get("atom_type") if isinstance(a, dict) else "") or "")
+        # atom_type is an AtomType *enum* on EvidenceAtom objects (str(enum) would
+        # give "AtomType.pricing_assumption", not "pricing_assumption") — use .value.
+        at = getattr(a, "atom_type", None)
+        if at is None and isinstance(a, dict):
+            at = a.get("atom_type")
+        return at.value if hasattr(at, "value") else str(at or "")
 
     # Scope-of-work atoms only; BOM/pricing rows dominate the parse and misroute.
     scope_atoms = [a for a in atoms if _atype(a) not in _NOISE_TYPES]
