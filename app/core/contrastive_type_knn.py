@@ -195,10 +195,17 @@ def load_promoted(embed_fn: Callable[[list[str]], np.ndarray] | None = None,
     if embed_fn is None:
         embed_fn = _encoder_embed_fn(reg)
     tau = meta.get("operating_tau")
-    return ContrastiveTypeKNN(
+    # prior_alpha can be tuned per head (the router head trains with full
+    # class-balance, 1.0, to fight a dominant majority pack); honor it from
+    # meta so the runtime vote matches the eval that picked the operating_tau.
+    prior_alpha = meta.get("prior_alpha")
+    kw: dict[str, Any] = dict(
         emb=emb, y=y, text=text, embed_fn=embed_fn,
         k=int(meta.get("k", _DEFAULT_K)),
         sim_floor=float(meta.get("sim_floor", _DEFAULT_SIM_FLOOR)),
         tau=float(tau) if tau is not None else _DEFAULT_TAU,
         mode=str(meta.get("mode", "unified")),
     )
+    if prior_alpha is not None:
+        kw["prior_alpha"] = float(prior_alpha)
+    return ContrastiveTypeKNN(**kw)
