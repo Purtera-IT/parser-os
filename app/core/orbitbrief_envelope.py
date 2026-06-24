@@ -246,6 +246,15 @@ def build_orbitbrief_envelope(
     _facet_sections = _build_facet_sections(atoms)
     if _facet_sections.get("enabled"):
         envelope["facet_sections"] = _facet_sections
+    # Trained service-router head: classify the deal SCOPE into its primary
+    # managed-service pack so brief-gen's pack_prior runs the right brain (a TV
+    # install no longer routes to datacenter). Guess-free: abstains -> primary
+    # null. Added ONLY when enabled + head present, so OFF -> key absent.
+    from app.core.service_router import build_service_routing as _build_service_routing
+
+    _routing = _build_service_routing(atoms, documents)
+    if _routing.get("enabled"):
+        envelope["service_routing"] = _routing
     # S+++++ cockpit surfaces — authority-weighted scope truth,
     # chronological change-order audit, per-site readiness rollup,
     # per-stakeholder workload matrix, and a single 0-100 project
