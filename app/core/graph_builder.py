@@ -202,6 +202,25 @@ def _is_unknown_entity_key(key: str) -> bool:
     return key.endswith(":unknown") or key == "device:unknown" or key == "site:unknown"
 
 
+# Entity-key classes that NEVER scope an exclusion. Email/stakeholder/phone/
+# person/date keys are contact + temporal noise: an "exclusion" atom that only
+# shares one of these with a target is not actually excluding it. Filtering them
+# (plus suppressing mis-typed email-header atoms below) collapses the
+# excludes-edge flood produced when email prose is mis-typed as an exclusion.
+_NON_SCOPING_EXCLUSION_PREFIXES = (
+    "email:", "stakeholder:", "phone:", "person:", "contact:", "date:",
+)
+_EMAIL_HEADER_RE = re.compile(
+    r"^\s*(to|from|cc|bcc|sent|subject|reply-to|date)\s*:", re.IGNORECASE
+)
+
+
+def _looks_like_email_header(text: str) -> bool:
+    """True when an atom's text is an email header line (To:/From:/Cc:/...),
+    which the type head often mis-labels as an exclusion."""
+    return bool(_EMAIL_HEADER_RE.match(text or ""))
+
+
 def _meaningful_shared_keys(a: EvidenceAtom, b: EvidenceAtom) -> set[str]:
     """Shared entity keys excluding 'unknown' sentinels.
 
@@ -966,6 +985,10 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     )
     exclusions = sorted({atom.id: atom for atom in exclusions}.values(), key=lambda atom: atom.id)
     for ex in exclusions:
+        # Suppress mis-typed email-header atoms ("To: Nick <...>"): they are not
+        # exclusions and otherwise fan out across every shared contact key.
+        if _looks_like_email_header(ex.raw_text or ""):
+            continue
         ex_keys = {k for k in ex.entity_keys if not _is_unknown_entity_key(k)}
         if not ex_keys:
             continue
@@ -978,8 +1001,25 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             if target.id == ex.id:
                 continue
             shared_keys = ex_keys.intersection(set(target.entity_keys))
-            meaningful = {k for k in shared_keys if not _is_unknown_entity_key(k)}
+            # An exclusion only meaningfully applies through a SCOPING key
+            # (device/site/part/scope). Sharing only a contact/temporal key
+            # (email/stakeholder/phone/date) is the flood — email prose
+            # mis-typed as an exclusion linking to every atom that names the
+            # same person — not a real exclusion.
+            meaningful = {
+                k for k in shared_keys
+                if not _is_unknown_entity_key(k)
+                and not k.startswith(_NON_SCOPING_EXCLUSION_PREFIXES)
+            }
             if meaningful:
+                # Computed confidence (not a flat 0.9): anchor on the exclusion
+                # atom's own confidence and rise with the number of shared
+                # scoping keys, capped. One weak shared key stays low.
+                ex_conf = getattr(ex, "confidence", None)
+                ex_conf = float(ex_conf) if ex_conf is not None else 0.7
+                edge_conf = round(
+                    max(0.35, min(0.9, ex_conf * (0.6 + 0.15 * len(meaningful)))), 3
+                )
                 push(
                     _build_edge(
                         project_id,
@@ -987,7 +1027,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         ex,
                         target,
                         "Exclusion atom applies to target entity context",
-                        0.9,
+                        edge_conf,
                         edge_family=EDGE_FAMILY_EXCLUSION_APPLIES,
                     )
                 )
@@ -1183,22 +1223,15 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 b_qty_keys = {k for k in b.entity_keys if k.startswith(_QUANTITY_PREFIX)}
                 if not a_qty_keys or not b_qty_keys:
                     continue
-                device_canonical = device_key.split(":", 1)[1]
-                pinned_a: int | None = None
-                pinned_b: int | None = None
                 if len(a_devices) > 1 or len(b_devices) > 1 or len(a_qty_keys) > 1 or len(b_qty_keys) > 1:
-                    pinned_a = _noun_anchored_quantity(a.raw_text or "", device_canonical)
-                    pinned_b = _noun_anchored_quantity(b.raw_text or "", device_canonical)
-                    if pinned_a is None or pinned_b is None:
-                        # Couldn't disambiguate — preserve the old
-                        # safety guards. Multi-device or multi-qty
-                        # without a noun-anchor stays skipped.
-                        continue
-                    # Substitute the pinned values into the
-                    # comparison sets so the downstream logic uses
-                    # the device-specific qty for each side.
-                    a_qty_keys = {f"quantity:{pinned_a}"}
-                    b_qty_keys = {f"quantity:{pinned_b}"}
+                    # Multi-device or multi-quantity atom: the quantity binds
+                    # ambiguously to a specific device noun. Noun-proximity
+                    # anchoring proved too unreliable on real messy text and
+                    # manufactured false-positive cross-doc conflicts — and a
+                    # WRONG conflict erodes PM trust far more than a missed one,
+                    # so skip rather than guess. (test_device_quantity_cross_doc:
+                    # multi-device / multi-quantity must not fire.)
+                    continue
                 a_parts = {k for k in a.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
                 b_parts = {k for k in b.entity_keys if k.startswith(_PART_NUMBER_PREFIX)}
                 # Skip when a shared part_number exists — that's the
@@ -1221,12 +1254,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                         return None
                 a_vals = sorted({v for v in (_qty_val(k) for k in a_qty_keys) if v is not None})
                 b_vals = sorted({v for v in (_qty_val(k) for k in b_qty_keys) if v is not None})
-                # Single-digit guard. When binding came from a
-                # noun-anchored pin (pinned_a/pinned_b set above), the
-                # signal is strong enough to keep qty:2..4. Otherwise
-                # the template-row noise risk is real and we keep
-                # qty>=5.
-                min_qty = 2 if (pinned_a is not None or pinned_b is not None) else 5
+                # Single-digit guard: template-row noise makes small counts
+                # unreliable, so require qty >= 5. (Multi-device / multi-qty
+                # atoms — the only case that previously kept qty 2..4 via a
+                # noun-anchored pin — are now skipped above.)
+                min_qty = 5
                 a_vals = [v for v in a_vals if v >= min_qty]
                 b_vals = [v for v in b_vals if v >= min_qty]
                 if not a_vals or not b_vals:

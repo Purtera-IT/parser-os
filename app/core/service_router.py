@@ -102,6 +102,19 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
     return f"FILES: {names}\nSCOPE ATOMS:\n" + "\n".join(f"- {b[:160]}" for b in bodies)
 
 
+def _conf_ceiling() -> float:
+    """Reported-confidence ceiling for the router head. Its raw similarity score
+    saturates near 1.0 while held-out accuracy is far lower, so a raw 1.0 is
+    dangerously overconfident: downstream (OrbitBrief's gap checklist) would
+    treat a confidently-wrong domain label as certain. Clamp the REPORTED
+    confidence until the calibrated contrastive head lands. Configurable via
+    SOWSMITH_ROUTER_CONF_CEILING; default 0.8."""
+    try:
+        return float(os.environ.get("SOWSMITH_ROUTER_CONF_CEILING", "0.8"))
+    except ValueError:
+        return 0.8
+
+
 def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, Any]:
     """Classify the deal scope into its primary service pack, or abstain.
 
@@ -121,15 +134,23 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
     if not res:
         return {"enabled": True, "primary": None, "confidence": 0.0, "abstained": True}
     label, conf = res
+    # Calibration guard: report a CLAMPED confidence (raw kept for transparency).
+    # The head's raw score saturates near 1.0 even though its held-out accuracy
+    # is far lower, so an unclamped 1.0 would make OrbitBrief treat a
+    # confidently-wrong domain label as certain and select the wrong gap
+    # checklist. Real high confidence returns with the calibrated head.
+    raw_conf = round(float(conf), 4)
+    conf = round(min(raw_conf, _conf_ceiling()), 4)
     # The head was trained with an explicit ``other`` class (every service it
     # can't route confidently). Treat that — and the parser's AMBIGUOUS abstain
     # target — as "no opinion" so brief-gen's keyword router stays in charge.
     if str(label).lower() in ("other", "ambiguous"):
-        return {"enabled": True, "primary": None, "confidence": round(float(conf), 4), "abstained": True}
+        return {"enabled": True, "primary": None, "confidence": conf, "raw_confidence": raw_conf, "abstained": True}
     return {
         "enabled": True,
         "primary": label,
         "secondary": [],
-        "confidence": round(float(conf), 4),
+        "confidence": conf,
+        "raw_confidence": raw_conf,
         "source": "service_router_head",
     }

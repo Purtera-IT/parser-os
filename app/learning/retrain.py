@@ -262,6 +262,17 @@ def retrain_all(
 ) -> list[RetrainResult]:
     """Retrain + eval-gate every relation present in the log (or a given subset).
     Records the serving metrics into the shadow-history curve."""
+    # Pull any PM gold rows the SERVICE mirrored to blob into this log first, so
+    # the retrain learns from corrections written on the other container (the
+    # feedback endpoint runs on the service; retrain runs here on the worker).
+    # Gated + best-effort: no-op unless SOWSMITH_FEEDBACK_BLOB is on.
+    try:
+        from app.core import feedback_blob as _fb
+        _n = _fb.sync_training_rows_into_log(log)
+        if _n:
+            print(f"[retrain] imported {_n} PM gold rows from blob")
+    except Exception:
+        pass
     if relations is None:
         relations = sorted({r.relation for r in log.rows()})
     results: list[RetrainResult] = []

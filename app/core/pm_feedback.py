@@ -117,4 +117,42 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
         _fb.upload_correction(corr)
     except Exception:  # pragma: no cover - mirroring must never break a fix
         pass
+    # Durable training signal: store.add() above only makes the fix fire on the
+    # NEXT similar atom (instant learning). For the head to durably LEARN it, the
+    # nightly eval-gated retrain needs a gold TrainingRow — which this path never
+    # wrote (the "+ gold row for the nightly retrain" promise was unkept). Log
+    # one gold row per exemplar, mirroring complaint_intake.confirm, and mirror
+    # the rows to blob so they reach the worker's training log. Never raises;
+    # no-op when SOWSMITH_TRAINING_LOG_DB is unset.
+    try:
+        from app.core.training_log import TEACHER_PM, TrainingRow, log_rows
+
+        _deal_id = corr.scope_key if corr.scope == SCOPE_DEAL else ""
+        _rows = [
+            TrainingRow(
+                relation=corr.relation,
+                label=corr.verdict,
+                raw_text=ex,
+                label_kind="judgment",
+                teacher=TEACHER_PM,
+                confidence=1.0,
+                scope=corr.scope,
+                scope_key=corr.scope_key,
+                deal_id=_deal_id,
+                complaint_id=corr.complaint_id,
+                provenance={"stage": "pm_correction", "instruction": corr.instruction},
+            )
+            for ex in corr.exemplars
+            if ex and ex.strip()
+        ]
+        if _rows:
+            log_rows(_rows)
+            try:
+                from app.core import feedback_blob as _fb2
+
+                _fb2.upload_training_rows(corr.id, _rows)
+            except Exception:  # pragma: no cover
+                pass
+    except Exception:  # pragma: no cover - training-log is additive, never fatal
+        pass
     return corr.id

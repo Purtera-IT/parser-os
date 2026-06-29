@@ -108,3 +108,50 @@ def sync_into_store(store: "FeedbackStore") -> int:
     except Exception:
         return added
     return added
+
+
+# ── Training rows (gold) ─────────────────────────────────────────────────
+# PM corrections also write a gold TrainingRow for the nightly retrain. The
+# retrain runs on the WORKER reading its TrainingLog, while corrections are
+# written on the SERVICE — so mirror the rows to blob too and let the worker's
+# retrain import them before training.
+_TRAIN_PREFIX = "_feedback/training_rows/"
+
+
+def upload_training_rows(correction_id: str, rows) -> bool:
+    """Mirror the gold TrainingRows for one correction to blob. Best-effort."""
+    cc = _container_client()
+    if cc is None or not rows:
+        return False
+    try:
+        payload = [dataclasses.asdict(r) for r in rows]
+        data = json.dumps(payload).encode("utf-8")
+        cc.upload_blob(name=f"{_TRAIN_PREFIX}{correction_id}.json", data=data, overwrite=True)
+        return True
+    except Exception:
+        return False
+
+
+def sync_training_rows_into_log(log) -> int:
+    """Import blob-mirrored PM TrainingRows into ``log`` (the worker's
+    TrainingLog) so the nightly retrain learns from service-written corrections.
+    add_many is INSERT OR REPLACE, so re-imports are idempotent. Best-effort."""
+    cc = _container_client()
+    if cc is None:
+        return 0
+    try:
+        from app.core.training_log import TrainingRow
+    except Exception:
+        return 0
+    added = 0
+    try:
+        for b in cc.list_blobs(name_starts_with=_TRAIN_PREFIX):
+            try:
+                raw = cc.download_blob(b.name).readall()
+                rows = [TrainingRow(**d) for d in json.loads(raw)]
+                added += log.add_many(rows)
+            except Exception:
+                continue
+    except Exception:
+        return added
+    return added
