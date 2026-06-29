@@ -207,12 +207,45 @@ def _page_context(pdf_name: str, page_index: int, neighbor_chars: int):
             pass
 
 
-def _ocr_crop(saved_path: str) -> str:
-    """Neutral OCR of the saved crop (NOT the schematic OCR). Empty on failure."""
+_OCR_VLM_PROMPT = """You are an OCR engine. Transcribe ALL legible text in this
+image EXACTLY as written — every command, IP address, part number, quantity and
+value, preserving line order and grouping. Do not summarise, explain, or add
+anything. Output ONLY the raw transcribed text.
+/no_think
+"""
+
+
+def _ocr_crop(saved_path: str, crop: bytes | None = None, *, allow_vlm: bool = False) -> str:
+    """Neutral OCR of the saved crop (NOT the schematic OCR).
+
+    Tries the dedicated OCR chain first (tesseract / easyocr / a separately-
+    configured Ollama OCR endpoint). When that yields nothing AND ``allow_vlm``
+    is set, it falls back to the SAME ``call_vision_llm`` path the describe/table
+    calls use (teacher API or the configured OLLAMA_HOST). This keeps the
+    transcribe path's verbatim anchor alive on the worker — where no Tesseract
+    binary is installed and the OCR chain's standalone Ollama URL is unset —
+    with no extra env wiring.
+
+    ``allow_vlm`` defaults False so the cheap classify gate never pays for an
+    extra VLM OCR call; only the transcribe/table paths (which need verbatim
+    grounding) opt in. Empty on total failure (caller then abstains)."""
     try:
         from app.parsers._ocr_chain import ocr_image_file
         res = ocr_image_file(Path(saved_path))
-        return (res.get("text") or "").strip() if isinstance(res, dict) else ""
+        text = (res.get("text") or "").strip() if isinstance(res, dict) else ""
+        if text:
+            return text
+    except Exception:
+        pass
+    if not allow_vlm:
+        return ""
+    # VLM OCR fallback over the proven vision path (verbatim anchor).
+    try:
+        data = crop if crop is not None else _load_crop(saved_path)
+        if not data:
+            return ""
+        out = _vlm(data, _OCR_VLM_PROMPT, model=_gate_model(), max_tokens=2000)
+        return (out or "").strip()
     except Exception:
         return ""
 
@@ -357,7 +390,7 @@ def _classify_image(
     *, crop: bytes, caption: str, saved_path: str,
 ) -> tuple[bool, str, str]:
     """Classify one crop. Returns (meaningful, image_kind, via_tag)."""
-    ocr = _ocr_crop(saved_path)
+    ocr = _ocr_crop(saved_path, crop)  # cheap chain only (no VLM cost on the gate)
     try:
         from app.core import pdf_image_gate
         cpu = pdf_image_gate.classify(caption, ocr)
@@ -576,7 +609,7 @@ def _process_one(
     )
 
     if image_kind in _TABLE_KINDS:
-        ocr_text = _ocr_crop(saved_path)
+        ocr_text = _ocr_crop(saved_path, crop, allow_vlm=True)
         return _table_image_atoms(
             marker=marker, pdf_name=pdf_name, page_index=page_index,
             region_ref=region_ref, crop=crop, envelope=envelope,
@@ -651,7 +684,7 @@ def _transcribe(
     *, marker: Any, pdf_name: str, page_index: int, region_ref: str,
     saved_path: str, crop: bytes, envelope: str, image_kind: str,
 ) -> list[EvidenceAtom]:
-    ocr_text = _ocr_crop(saved_path)
+    ocr_text = _ocr_crop(saved_path, crop, allow_vlm=True)
     ocr_norm = " ".join(re.findall(r"[A-Za-z0-9]+", ocr_text.lower()))
     raw = _vlm(
         crop, _TRANSCRIBE_PROMPT.format(envelope=envelope, ocr=ocr_text[:4000]),

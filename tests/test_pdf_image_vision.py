@@ -140,7 +140,7 @@ def test_transcribe_drops_fabricated_steps(monkeypatch, tmp_path):
     monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
     # OCR sees only the real command.
-    monkeypatch.setattr(piv, "_ocr_crop", lambda p: "Step 1 set vlan 10 on port gi0/1")
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "Step 1 set vlan 10 on port gi0/1")
     monkeypatch.setattr(piv, "_vlm", _route_vlm(
         "instructions",
         transcribe='{"summary": "VLAN setup", "steps": ['
@@ -152,6 +152,51 @@ def test_transcribe_drops_fabricated_steps(monkeypatch, tmp_path):
     assert len(steps) == 1                      # fabricated step 2 dropped by verbatim guard
     assert "vlan 10" in steps[0].raw_text
     assert any(a.value["fact_kind"] == "image_instructions_summary" for a in out)
+
+
+def test_ocr_crop_vlm_fallback(monkeypatch, tmp_path):
+    """When the OCR chain yields nothing, the transcribe path falls back to the
+    VLM OCR call (allow_vlm); the gate context must NOT (cost guard)."""
+    monkeypatch.setattr("app.parsers._ocr_chain.ocr_image_file", lambda p: {"text": ""})
+    calls = {"n": 0}
+
+    def _vlm(image_bytes, prompt, **k):
+        calls["n"] += 1
+        return "set vlan 10 on port gi0/1"
+
+    monkeypatch.setattr(piv, "_vlm", _vlm)
+    p = tmp_path / "c.png"
+    p.write_bytes(b"\x89PNG" + b"0" * 5000)
+    # gate context: no VLM OCR
+    assert piv._ocr_crop(str(p), b"x") == ""
+    assert calls["n"] == 0
+    # transcribe context: VLM OCR fires
+    assert "vlan 10" in piv._ocr_crop(str(p), b"x", allow_vlm=True)
+    assert calls["n"] == 1
+
+
+def test_transcribe_uses_vlm_ocr_when_chain_empty(monkeypatch, tmp_path):
+    """End-to-end: empty OCR chain -> VLM OCR anchor -> verbatim step survives."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    monkeypatch.setattr("app.parsers._ocr_chain.ocr_image_file", lambda p: {"text": ""})
+
+    def _vlm(image_bytes, prompt, *, model=None, max_tokens=0):
+        if "triaging" in prompt:
+            return '{"image_kind": "instructions", "has_text": true, "meaningful": true}'
+        if "OCR engine" in prompt:
+            return "Step 1 set vlan 10 on port gi0/1"
+        if "transcribing" in prompt:
+            return ('{"summary": "VLAN setup", "steps": [{"n": 1, '
+                    '"action": "set vlan on port", "command": "set vlan 10 on port gi0/1"}]}')
+        return "{}"
+
+    monkeypatch.setattr(piv, "_vlm", _vlm)
+    out = piv.process_image_markers([_marker(tmp_path)])
+    steps = [a for a in out if a.value["fact_kind"] == "image_instruction_step"]
+    assert len(steps) == 1
+    assert "vlan 10" in steps[0].raw_text
 
 
 def test_dedup_identical_crops(monkeypatch, tmp_path):
@@ -193,7 +238,7 @@ def test_table_image_emits_rows(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
     monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
-    monkeypatch.setattr(piv, "_ocr_crop", lambda p: "2 x Cat6 cable 500ft")
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "2 x Cat6 cable 500ft")
     monkeypatch.setattr(piv, "_vlm", _route_vlm(
         "table_image",
         describe='{"line_items": [{"qty": "2", "description": "Cat6 cable", "total": "500ft"}]}',
