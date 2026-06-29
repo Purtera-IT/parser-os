@@ -99,6 +99,17 @@ The clean-label breakthrough shipped end to end:
 The bge models are tiny (CPU inference fine). The lever to lift any ceiling further
 is MORE DEALS (diversity), not bigger models — proven this session.
 
+## PDF embedded-image vision (separate from schematics)
+- **Path**: `app/core/pdf_image_vision.py` — describes/transcribes raster images
+  embedded in PDFs (photos, install instructions, table screenshots). Wired in
+  compiler stage `pdf_image_vision`. **OFF by default** (`SOWSMITH_PDF_IMAGE_VISION`).
+- **CPU gate** (Phase 4): `app/core/pdf_image_gate.py` — distills VLM triage from
+  `pdf_image_kind` TrainingLog rows. Train: `runpod_detector/train_pdf_image_gate.py`,
+  pack: `pack_gate_pdf_image.sh`, blob: `gate_pdf_image.tgz`. Flag
+  `SOWSMITH_PDF_IMAGE_GATE_CPU=1`, dir `SOWSMITH_PDF_IMAGE_GATE_DIR`.
+- **Activate on worker**: `Platform-infra/.../configure-pdf-image-vision-dev.sh`
+  (`PDF_IMAGE_PHASE=2|3|4`). Phase 3 = 7b gate + 32b describe (recommended live).
+
 ## Open next steps
 1. Run the A100 session (above) → get the 3 verdicts; promoted heads slot into
    the eval-gated registry + the worker fetches them.

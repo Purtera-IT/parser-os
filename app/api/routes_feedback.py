@@ -57,6 +57,7 @@ HEAD_REGISTRY: dict[str, str] = {
     "norm": "value_norm",
     "router": "service_routing",
     "facet": "facet",
+    "image": "pdf_image_kind",
 }
 
 

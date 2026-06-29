@@ -687,6 +687,24 @@ def compile_project(
             warnings.extend(replay_warnings)
         telemetry.end_stage(stage, output_count=len(atoms), warnings=replay_warnings)
 
+    # PDF embedded-image understanding (SEPARATE from schematics). Describes /
+    # transcribes raster images the parser saved as image_marker atoms. Purely
+    # additive + abstain-first; the whole stage is a no-op unless
+    # SOWSMITH_PDF_IMAGE_VISION is set, so the default path is unchanged.
+    try:
+        from app.core import pdf_image_vision
+        if pdf_image_vision.enabled():
+            with telemetry.stage("pdf_image_vision", input_count=len(atoms)) as stage:
+                image_atoms = pdf_image_vision.process_image_markers(atoms)
+                if image_atoms:
+                    atoms.extend(image_atoms)
+                telemetry.end_stage(stage, output_count=len(image_atoms))
+    except Exception as _piv_exc:
+        warnings.append(
+            f"WARNING: pdf_image_vision pass failed (non-fatal): "
+            f"{type(_piv_exc).__name__}: {_piv_exc}"
+        )
+
     # Hardening: enforce a confidence floor so atoms whose extractor was very
     # uncertain can't quietly govern packets.  We intentionally don't drop the
     # atoms — OrbitBrief still benefits from seeing them — we just refuse to
