@@ -262,3 +262,52 @@ def list_feedback_corrections(
         for c in rows
     ]
     return {"total": len(items), "items": items}
+
+
+# ── PM one-tap correction (upgrade: generic across ALL heads) ─────────────────
+class PMCorrectionRequest(BaseModel):
+    head: str = Field(..., description="HEAD_REGISTRY key: type|admission|gap|conflict|site|norm|router|facet|…")
+    deal_id: str = ""
+    compile_id: str = ""
+    target_id: str = ""
+    text: str = Field(..., description="The exemplar the head learns from.")
+    old_value: str = ""
+    new_value: str = Field(..., description="What the PM says it is — the verdict to learn.")
+    scope: str = SCOPE_DEAL
+    context: str = ""
+    relations: dict = Field(default_factory=dict)
+    candidates: list[str] = Field(default_factory=list)
+    pm: str = ""
+
+
+@router.post("/{project_id}/feedback/correction")
+def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
+    """One endpoint for every head. Maps the PM's in-brief fix → a Correction in
+    the store (instant-learning) + a gold row for the nightly retrain. A new head
+    needs no new endpoint — just a row in pm_feedback.HEAD_REGISTRY."""
+    store = _require_store()
+    from app.core.pm_feedback import apply_pm_correction, HEAD_REGISTRY
+    spec = HEAD_REGISTRY.get(req.head)
+    if spec is None:
+        raise HTTPException(status_code=422, detail=f"unknown head {req.head!r}")
+    payload = {
+        "head": req.head, "dealId": req.deal_id or project_id, "compileId": req.compile_id,
+        "targetId": req.target_id, "text": req.text, "oldValue": req.old_value,
+        "newValue": req.new_value, "scope": req.scope, "context": req.context,
+        "relations": req.relations, "pm": req.pm or project_id,
+    }
+    try:
+        cid = apply_pm_correction(store, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    # Does it fire instantly on its own exemplar? (classify heads with candidates.)
+    fired = False
+    if spec.mode == "classify" and req.candidates:
+        try:
+            d = store.resolve(relation=spec.relation, text=req.text, candidates=list(req.candidates),
+                              context=req.context, scope=_scope_obj(req.scope, req.deal_id or project_id),
+                              instruction="", relations=req.relations or None)
+            fired = bool(d and d.verdict == req.new_value)
+        except Exception:
+            fired = False
+    return {"correction_id": cid, "relation": spec.relation, "fired_instantly": fired}
