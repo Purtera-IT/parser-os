@@ -166,10 +166,93 @@ def _iter_image_markers(atoms: list[Any]):
             continue
 
 
-def _load_crop(saved_path: str) -> bytes:
+def _vision_reachable() -> bool:
+    """True when the PDF-image path can actually call a VLM. When forcing Ollama
+    (default), check the Ollama host — NOT the text teacher (DeepSeek is not
+    multimodal and would make vision_endpoint_reachable() lie)."""
+    if _use_ollama_for_pdf_images():
+        host = os.environ.get("OLLAMA_HOST", "").rstrip("/")
+        if not host:
+            return False
+        try:
+            import requests
+            r = requests.get(f"{host}/api/tags", timeout=5)
+            return r.status_code == 200
+        except Exception:
+            return False
     try:
-        with open(saved_path, "rb") as fh:
-            return fh.read()
+        from app.core.vision_extraction import vision_endpoint_reachable
+        return vision_endpoint_reachable()
+    except Exception:
+        return False
+
+
+def _ollama_vision_direct(
+    image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int,
+) -> str:
+    """Call the local Ollama vision host directly — bypasses the text teacher
+    (DeepSeek etc.) which is not multimodal and silently returns empty."""
+    import base64
+    import requests
+    from app.core.vision_extraction import _DEFAULT_HOST, _DEFAULT_VISION_MODEL, _encode_image_b64
+    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    mdl = model or os.environ.get("OLLAMA_VISION_MODEL", _DEFAULT_VISION_MODEL)
+    payload = {
+        "model": mdl,
+        "prompt": prompt,
+        "images": [_encode_image_b64(image_bytes)],
+        "stream": False,
+        "options": {"num_predict": max_tokens, "temperature": 0.1},
+    }
+    try:
+        r = requests.post(f"{host}/api/generate", json=payload, timeout=120)
+        if r.status_code != 200:
+            return ""
+        return r.json().get("response", "") or ""
+    except Exception as e:
+        logger.warning("pdf_image_vision ollama call failed: %s", e)
+        return ""
+
+
+def _use_ollama_for_pdf_images() -> bool:
+    """PDF embedded images always need a real VLM. Default ON so a text-only
+    teacher (DeepSeek) never silently kills the path."""
+    return os.environ.get("SOWSMITH_PDF_IMAGE_FORCE_OLLAMA", "1").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _resolve_crop_path(saved_path: str) -> Path | None:
+    """Resolve a parser-relative crop path to an on-disk file."""
+    raw = Path(saved_path.replace("\\", "/"))
+    candidates = [raw, Path.cwd() / raw]
+    img_root = Path(os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images"))
+    if raw.as_posix().startswith("_extracted_images/"):
+        candidates.append(Path(raw.as_posix()))
+        candidates.append(Path.cwd() / raw.as_posix())
+    else:
+        candidates.append(img_root / raw.name)
+        candidates.append(Path.cwd() / img_root / raw.name)
+    seen: set[str] = set()
+    for c in candidates:
+        key = str(c)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if c.is_file():
+                return c.resolve()
+        except Exception:
+            continue
+    return None
+
+
+def _load_crop(saved_path: str) -> bytes:
+    p = _resolve_crop_path(saved_path)
+    if p is None:
+        return b""
+    try:
+        return p.read_bytes()
     except Exception:
         return b""
 
@@ -260,6 +343,11 @@ def _position_label(page_index: int, page_count: int) -> str:
 
 
 def _vlm(image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int) -> str:
+    if _use_ollama_for_pdf_images():
+        with _vision_model(model):
+            return _ollama_vision_direct(
+                image_bytes, prompt, model=model, max_tokens=max_tokens,
+            ) or ""
     from app.core.vision_extraction import call_vision_llm
     with _vision_model(model):
         return call_vision_llm(image_bytes, prompt, max_tokens=max_tokens) or ""
@@ -540,8 +628,7 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     if not enabled() or not atoms:
         return []
     try:
-        from app.core.vision_extraction import vision_endpoint_reachable
-        if not vision_endpoint_reachable():
+        if not _vision_reachable():
             logger.info("pdf_image_vision: no vision endpoint; abstaining")
             return []
     except Exception:

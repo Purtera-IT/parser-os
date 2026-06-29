@@ -9,6 +9,10 @@ import types
 from app.core import pdf_image_vision as piv
 
 
+def _mock_reachable(monkeypatch):
+    monkeypatch.setattr(piv, "_vision_reachable", lambda: True)
+
+
 def _marker(tmp_path, *, saved_name="page2_image7.png", region="page2/image7",
             caption="Upload photo showing Battery Charger Mounting", size=5000):
     p = tmp_path / saved_name
@@ -36,13 +40,13 @@ def test_disabled_by_default(monkeypatch):
 
 def test_abstains_without_endpoint(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: False)
+    monkeypatch.setattr(piv, "_vision_reachable", lambda: False)
     assert piv.process_image_markers([_marker(tmp_path)]) == []
 
 
 def test_tiny_crop_skipped(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     called = {"n": 0}
     monkeypatch.setattr(piv, "_vlm", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or "{}")
     m = _marker(tmp_path, size=10)  # below SOWSMITH_PDF_IMAGE_MIN_BYTES
@@ -109,7 +113,7 @@ def _route_vlm(gate_kind, *, describe=None, transcribe=None):
 
 def test_describe_emits_grounded_atoms(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))  # no doc on disk
     monkeypatch.setattr(piv, "_vlm", _route_vlm(
         "photo",
@@ -126,7 +130,7 @@ def test_describe_emits_grounded_atoms(monkeypatch, tmp_path):
 
 def test_skip_kind_abstains(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_vlm", lambda image_bytes, prompt, **k:
                         '{"image_kind": "logo", "has_text": false, "meaningful": false}')
     assert piv.process_image_markers([_marker(tmp_path)]) == []
@@ -137,7 +141,7 @@ def test_skip_kind_abstains(monkeypatch, tmp_path):
 
 def test_transcribe_drops_fabricated_steps(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
     # OCR sees only the real command.
     monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "Step 1 set vlan 10 on port gi0/1")
@@ -178,7 +182,7 @@ def test_ocr_crop_vlm_fallback(monkeypatch, tmp_path):
 def test_transcribe_uses_vlm_ocr_when_chain_empty(monkeypatch, tmp_path):
     """End-to-end: empty OCR chain -> VLM OCR anchor -> verbatim step survives."""
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
     monkeypatch.setattr("app.parsers._ocr_chain.ocr_image_file", lambda p: {"text": ""})
 
@@ -201,7 +205,7 @@ def test_transcribe_uses_vlm_ocr_when_chain_empty(monkeypatch, tmp_path):
 
 def test_dedup_identical_crops(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
     calls = {"n": 0}
 
@@ -222,7 +226,7 @@ def test_dedup_identical_crops(monkeypatch, tmp_path):
 
 def test_caption_mismatch_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     page = "Rack elevation diagram for the MDF room."
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: (page, "", "", 1))
     monkeypatch.setattr(piv, "_vlm", _route_vlm(
@@ -234,16 +238,28 @@ def test_caption_mismatch_flags(monkeypatch, tmp_path):
     assert "image_answer_mismatch" in out[0].review_flags
 
 
+def test_resolve_crop_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    img_dir = tmp_path / "_extracted_images" / "deal"
+    img_dir.mkdir(parents=True)
+    p = img_dir / "page0_image1.png"
+    p.write_bytes(b"\x89PNG" + b"x" * 5000)
+    rel = "_extracted_images/deal/page0_image1.png"
+    assert piv._resolve_crop_path(rel) is not None
+    assert len(piv._load_crop(rel)) > 5000
+
+
+def test_force_ollama_default_on(monkeypatch):
+    monkeypatch.delenv("SOWSMITH_PDF_IMAGE_FORCE_OLLAMA", raising=False)
+    assert piv._use_ollama_for_pdf_images() is True
+
+
 def test_table_image_emits_rows(monkeypatch, tmp_path):
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setattr("app.core.vision_extraction.vision_endpoint_reachable", lambda: True)
+    _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
     monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "2 x Cat6 cable 500ft")
-    monkeypatch.setattr(piv, "_vlm", _route_vlm(
-        "table_image",
-        describe='{"line_items": [{"qty": "2", "description": "Cat6 cable", "total": "500ft"}]}',
-    ))
-    # Second VLM call is BOM extract — return JSON the vision parser understands
+
     def _vlm2(image_bytes, prompt, **k):
         if "triaging" in prompt:
             return '{"image_kind": "table_image", "meaningful": true, "has_text": true}'
