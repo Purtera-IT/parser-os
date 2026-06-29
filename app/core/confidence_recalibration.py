@@ -191,8 +191,16 @@ def recalibrate_confidence(
     *,
     artifact_authority: dict[str, str] | None = None,
     edges: list[Any] | None = None,
+    abstain_threshold: float = 0.70,
 ) -> int:
     """Update atom.confidence + atom.calibrated_confidence in place.
+
+    Also serializes a deterministic per-atom review gate: an ``auto_accepted``
+    atom whose recalibrated confidence is below ``abstain_threshold`` is flipped
+    to ``needs_review`` with a ``calibration_abstain`` flag (atomic — validators
+    require the flag iff needs_review). This gives PMs a real "check this" signal
+    with no ML dependency; the trained calibrator (apply_calibration, later in
+    the pipeline) overwrites it with a learned probability when present.
 
     Args:
         atoms: full atom list
@@ -269,13 +277,34 @@ def recalibrate_confidence(
         # Clamp
         final = max(0.05, min(0.99, round(score, 3)))
         prev = getattr(atom, "confidence", None)
-        if prev != final:
-            try:
+        try:
+            # Always reflect the recalibrated value so the envelope's
+            # calibrated_confidence is never null.
+            atom.calibrated_confidence = final
+            if prev != final:
                 atom.confidence = final
-                atom.calibrated_confidence = final
                 updated += 1
-            except Exception:
-                pass
+        except Exception:
+            pass
+
+        # Deterministic review gate: a low calibrated confidence on an
+        # auto_accepted atom becomes a "check this" verdict. Flip status +
+        # add the flag atomically (validators require the flag iff needs_review);
+        # never downgrade rejected/approved/needs_review.
+        if final < abstain_threshold:
+            rs = getattr(atom, "review_status", None)
+            rs_val = rs.value if hasattr(rs, "value") else rs
+            if rs_val == "auto_accepted":
+                try:
+                    from app.core.schemas import ReviewStatus
+
+                    atom.review_status = ReviewStatus.needs_review
+                    flags = getattr(atom, "review_flags", None)
+                    if isinstance(flags, list) and "calibration_abstain" not in flags:
+                        flags.append("calibration_abstain")
+                    updated += 1
+                except Exception:
+                    pass
 
     return updated
 

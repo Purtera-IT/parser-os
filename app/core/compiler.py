@@ -1209,6 +1209,7 @@ def compile_project(
                 )
             recal_count = recalibrate_confidence(
                 atoms, artifact_authority=_artifact_tier, edges=[],
+                abstain_threshold=abstain_threshold,
             )
         except Exception as exc:
             warnings.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")

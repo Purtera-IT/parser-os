@@ -76,6 +76,20 @@ def load_calibrator(model_path: Path) -> dict[str, Any]:
     return payload
 
 
+def default_calibrator_path() -> Path | None:
+    """Serve-time calibrator artifact, from ``SOWSMITH_CALIBRATOR_PATH``.
+
+    Returns ``None`` when the env var is unset or the file is missing, so an
+    unconfigured worker (and tests/local) stay a byte-identical no-op —
+    ``compile_project``'s ``apply_calibration`` is fully guarded by
+    ``calibrator_path is not None``. Point the worker env at the blob-hydrated
+    artifact (e.g. ``/tmp/ml/_calibrator/calibrator.joblib``) to turn it on."""
+    import os
+
+    p = os.environ.get("SOWSMITH_CALIBRATOR_PATH", "").strip()
+    return Path(p) if p and Path(p).is_file() else None
+
+
 def apply_calibration(
     result: CompileResult,
     model_path: Path,

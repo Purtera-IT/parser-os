@@ -1253,6 +1253,14 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         # B6 (per-site pricing rollup), etc.
         "entity_keys": list(atom.entity_keys),
         "structured": dict(atom.value) if atom.value else {},
+        # Per-atom trust signal: the calibrated probability + the accept/
+        # needs_review verdict. Previously dropped on projection, so every
+        # consumer (PM-chip "unsure" gate, truth_gate, auto-accept) read null
+        # and fell back to the raw heuristic. confidence_raw lets consumers tell
+        # the calibrated value apart from the pre-calibration heuristic.
+        "calibrated_confidence": atom.calibrated_confidence,
+        "review_status": atom.review_status.value if hasattr(atom.review_status, "value") else atom.review_status,
+        "confidence_raw": getattr(atom, "confidence_raw", None),
     }
 
 
