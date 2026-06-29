@@ -156,7 +156,16 @@ def build_pm_dashboard(
                 (isinstance(value, dict) and value.get("answered") is True)
                 or ("answered_in_corpus" in (atom.review_flags or []))
             )
-            if not _answered:
+            # Noise filter — keep the blocker count meaningful. OCR-pending image
+            # placeholders and low-signal chatter ("Hey Nick- thoughts?") were
+            # being counted as blockers, inflating the number a PM sees.
+            _lt = (text or "").strip().lower()
+            _noise = (
+                "[image extracted" in _lt
+                or "awaiting ocr" in _lt
+                or (len(_lt) < 25 and ("thought" in _lt or _lt.startswith(("hey ", "hi ", "thanks"))))
+            )
+            if not _answered and not _noise:
                 open_qs.append({
                     "atom_id": atom.id,
                     "artifact_id": atom.artifact_id,
