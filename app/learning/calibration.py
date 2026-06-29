@@ -90,6 +90,60 @@ def default_calibrator_path() -> Path | None:
     return Path(p) if p and Path(p).is_file() else None
 
 
+def _atom_verified(atom: Any) -> bool:
+    recs = getattr(atom, "receipts", None) or []
+    return bool(recs) and all(getattr(r, "replay_status", "") == "verified" for r in recs)
+
+
+def build_calibration_labels(
+    compile_results: list[CompileResult],
+    *,
+    pm_corrected_atom_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Assemble ``{"atom_labels": [...], "reviews": [...]}`` for
+    :func:`train_calibrator`. ``label/correct_packet`` = was the head's output
+    CORRECT (1) or not (0).
+
+    PM gold is the primary, trustworthy signal: an atom a PM corrected was wrong
+    (label 0). Silver labels bootstrap class balance so the fit has both classes
+    before much PM data exists — but they're derived from review_flags /
+    contradictions / verified-high-confidence, so the EVAL-GATE (Brier on a
+    holdout vs the heuristic) is what decides whether the resulting calibrator is
+    actually better than the heuristic; a circular/weak fit simply won't promote."""
+    pm = pm_corrected_atom_ids or set()
+    atom_labels: list[dict[str, Any]] = []
+    reviews: list[dict[str, Any]] = []
+    for result in compile_results:
+        for a in getattr(result, "atoms", []) or []:
+            rs = getattr(a, "review_status", None)
+            rs_val = rs.value if hasattr(rs, "value") else rs
+            flags = getattr(a, "review_flags", None) or []
+            conf = getattr(a, "calibrated_confidence", None)
+            if conf is None:
+                conf = getattr(a, "confidence", 0.0) or 0.0
+            if a.id in pm:
+                atom_labels.append({"atom_id": a.id, "label": 0})        # PM: wrong
+            elif rs_val in ("needs_review", "rejected") or flags:
+                atom_labels.append({"atom_id": a.id, "label": 0})        # silver neg
+            elif conf >= 0.85 and _atom_verified(a):
+                atom_labels.append({"atom_id": a.id, "label": 1})        # silver pos
+            # else: ambiguous mid-band -> omit
+        for p in getattr(result, "packets", []) or []:
+            if getattr(p, "contradicting_atom_ids", None):
+                reviews.append({"packet_id": p.id, "correct_packet": False})
+            elif (getattr(p, "confidence", 0.0) or 0.0) >= 0.80:
+                reviews.append({"packet_id": p.id, "correct_packet": True})
+    return {"atom_labels": atom_labels, "reviews": reviews}
+
+
+def brier_score(probs: list[float], labels: list[int]) -> float:
+    """Mean squared error of probabilities vs 0/1 labels (lower is better).
+    Used to eval-gate a fitted calibrator against the raw-heuristic baseline."""
+    if not probs:
+        return 1.0
+    return sum((pr - y) ** 2 for pr, y in zip(probs, labels)) / len(probs)
+
+
 def apply_calibration(
     result: CompileResult,
     model_path: Path,
