@@ -108,4 +108,13 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
     """
     corr = pm_correction_to_correction(payload)
     store.add(corr)
+    # Mirror to blob so the worker (which runs decide() during compile) and the
+    # nightly retrain see this correction too, and it survives container
+    # recycles. Gated + best-effort: a no-op unless SOWSMITH_FEEDBACK_BLOB is on.
+    try:
+        from app.core import feedback_blob as _fb
+
+        _fb.upload_correction(corr)
+    except Exception:  # pragma: no cover - mirroring must never break a fix
+        pass
     return corr.id

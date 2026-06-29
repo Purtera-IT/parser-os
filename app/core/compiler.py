@@ -376,6 +376,18 @@ def compile_project(
     # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
     # No-op otherwise, so default compiles (and the test suite) are unchanged.
     _maybe_wire_feedback_store()
+    # Cross-container instant learning: pull PM corrections the SERVICE mirrored
+    # to blob into this worker's live store so decide() honors them on THIS
+    # compile. Gated + best-effort; no-op unless SOWSMITH_FEEDBACK_BLOB is on.
+    try:
+        from app.core import feedback_blob as _fb
+        from app.core.decide import get_store as _get_store
+
+        _st = _get_store()
+        if _st is not None:
+            _fb.sync_into_store(_st)
+    except Exception:  # pragma: no cover - sync must never break a compile
+        pass
 
     resolved_project_id = project_id or project_dir.name
 
