@@ -171,6 +171,31 @@ def test_complaint_gated_commits_with_controls(monkeypatch):
     assert body["failed_invariants"] == []
 
 
+def test_correction_chip_commits(monkeypatch):
+    monkeypatch.setattr(
+        rf,
+        "_load_compile_result",
+        lambda pid: CompileResult(project_id=pid, atoms=[], entities=[], edges=[], packets=[]),
+    )
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/correction",
+        json={
+            "head": "type",
+            "text": "Install forty-eight wireless access points",
+            "old_value": "scope_item",
+            "new_value": "work_scope_item",
+            "candidates": ["scope_item", "work_scope_item"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["committed"] is True
+    assert body["relation"] == "atom_type"
+    assert body["verdict"] == "work_scope_item"
+    assert _client().get("/projects/p1/feedback/corrections").json()["total"] == 1
+
+
 def test_endpoints_409_without_store(monkeypatch):
     # Ensure no store and no env-driven wiring.
     set_store(None)
@@ -178,5 +203,10 @@ def test_endpoints_409_without_store(monkeypatch):
     client = _client()
     r1 = client.post("/projects/p1/feedback/rule", json={"sentence": "x"})
     r2 = client.get("/projects/p1/feedback/corrections")
+    r3 = client.post(
+        "/projects/p1/feedback/correction",
+        json={"head": "type", "text": "x", "new_value": "work_scope_item"},
+    )
     assert r1.status_code == 409
     assert r2.status_code == 409
+    assert r3.status_code == 409

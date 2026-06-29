@@ -17,6 +17,8 @@ Three endpoints, all under ``/projects/{project_id}/feedback``:
                           (uncommitted) correction so the PM can add controls —
                           a commit is never made ungated.
 * ``GET  /corrections`` — the learned rules currently in force (provenance).
+* ``POST /correction`` — one-tap PM chip correction (mirrors frontend
+  ``HEAD_CORRECTIONS``): localize → confirm → instant store + gold training row.
 
 The feedback store is shared process-wide via :func:`decide.get_store`; it is
 activated by ``SOWSMITH_FEEDBACK_STORE_DB`` (same switch the compiler uses), so
@@ -31,6 +33,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.complaint_intake import (
+    KIND_MISCLASSIFIED,
     KIND_WRONGLY_KEPT,
     Complaint,
     confirm,
@@ -43,6 +46,18 @@ from app.core.plain_rule_compiler import compile_rule
 from app.storage.repositories import _load_compile_result
 
 router = APIRouter(prefix="/projects", tags=["feedback"])
+
+# Mirrors purpulse-frontend src/lib/orbitbrief/headCorrections.ts HEAD_CORRECTIONS.
+HEAD_REGISTRY: dict[str, str] = {
+    "type": "atom_type",
+    "admission": "admission",
+    "gap": "gap_valid",
+    "conflict": "edge_relation",
+    "site": "same_site",
+    "norm": "value_norm",
+    "router": "service_routing",
+    "facet": "facet",
+}
 
 
 def _require_store():
@@ -116,6 +131,24 @@ class FeedbackResponse(BaseModel):
     diagnosis: str = ""
     preview: str = ""
     failed_invariants: list[str] = Field(default_factory=list)
+    fired_instantly: bool = False
+
+
+class CorrectionRequest(BaseModel):
+    """One-tap chip payload from Scope Cockpit (BFF maps camelCase → snake_case)."""
+
+    head: str
+    deal_id: str = ""
+    compile_id: str = ""
+    target_id: str = ""
+    text: str
+    old_value: str = ""
+    new_value: str
+    scope: str = "deal"
+    context: str = ""
+    relations: dict[str, Any] = Field(default_factory=dict)
+    candidates: list[str] = Field(default_factory=list)
+    pm: str = ""
 
 
 # ── endpoints ─────────────────────────────────────────────────────────
@@ -221,6 +254,92 @@ def feedback_complaint(project_id: str, req: ComplaintRequest) -> FeedbackRespon
         preview=resolution.preview,
         failed_invariants=report.failed(),
     )
+
+
+@router.post("/{project_id}/feedback/correction", response_model=FeedbackResponse)
+def feedback_correction(project_id: str, req: CorrectionRequest) -> FeedbackResponse:
+    """PM one-tap chip → instant FeedbackStore correction + gold training row.
+
+  Chip corrections are explicit PM verdict picks (not free-text rules), so we
+  commit via :func:`complaint_intake.confirm` without the full probe gate —
+  the PM's selection *is* the gold label. Training rows are written inside
+  ``confirm()``; the next compile's ``decide()`` store tier can fire immediately.
+    """
+    store = _require_store()
+    relation = HEAD_REGISTRY.get(req.head.strip().lower())
+    if not relation:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown head '{req.head}'. Expected one of: {sorted(HEAD_REGISTRY)}",
+        )
+    if not req.text.strip():
+        raise HTTPException(status_code=422, detail="text is required")
+    if req.new_value is None or not str(req.new_value).strip():
+        raise HTTPException(status_code=422, detail="new_value is required")
+
+    scope, scope_key = _scope_from_chip(req.scope, project_id)
+    note = (
+        f"chip:{req.head} {req.old_value!r}→{req.new_value!r}"
+        + (f" ctx={req.context}" if req.context else "")
+    )
+    complaint = Complaint(
+        relation=relation,
+        desired_verdict=str(req.new_value).strip(),
+        text=req.text.strip(),
+        atom_id=req.target_id.strip(),
+        kind=KIND_MISCLASSIFIED,
+        scope=scope,
+        scope_key=scope_key,
+        note=note,
+        created_by=req.pm.strip() or project_id,
+    )
+    try:
+        result = _load_compile_result(project_id)
+    except KeyError:
+        result = None
+
+    resolution = intake(complaint, result=result, store=store)
+    try:
+        corr = confirm(store, resolution)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    fired = False
+    exemplar = (corr.exemplars[0] if corr.exemplars else req.text).strip()
+    candidates = req.candidates or [corr.verdict]
+    try:
+        hit = store.resolve(
+            relation=relation,
+            text=exemplar,
+            candidates=list(candidates),
+            context=req.context or "",
+            scope=_scope_obj(scope, scope_key),
+            instruction=corr.instruction,
+            relations=corr.relations or req.relations,
+        )
+        fired = hit is not None and hit.verdict == corr.verdict
+    except Exception:  # pragma: no cover - probe only
+        fired = False
+
+    return FeedbackResponse(
+        committed=True,
+        correction_id=corr.id,
+        relation=corr.relation,
+        verdict=corr.verdict,
+        report="CHIP committed (instant-learning)",
+        diagnosis=resolution.diagnosis,
+        preview=resolution.preview,
+        fired_instantly=fired,
+    )
+
+
+def _scope_from_chip(scope: str, project_id: str) -> tuple[str, str]:
+    s = (scope or "deal").strip().lower()
+    if s == "global":
+        return SCOPE_GLOBAL, ""
+    if s == "pack":
+        return SCOPE_PACK, project_id
+    return SCOPE_DEAL, project_id
 
 
 class CorrectionView(BaseModel):
