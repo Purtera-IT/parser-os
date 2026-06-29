@@ -2724,22 +2724,20 @@ _MONEY_REGEX = re.compile(
 )
 
 
-def _emit_money_keys(text: str) -> set[str]:
-    """Extract monetary amounts as ``money:<normalized>`` entities.
+_CURRENCY_SYMBOL = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
 
-    Normalizes K/M/B suffixes to absolute amounts:
-      ``$1.5M``    → ``money:1500000``
-      ``$250K``    → ``money:250000``
-      ``$1,847,250`` → ``money:1847250``
-      ``USD 100``  → ``money:100``
 
-    The OrbitBrief Core scorecard's "pricing structure" blocker depends
-    on having structured monetary entities to anchor against, not just
-    raw text mentions.
-    """
-    keys: set[str] = set()
+def parse_money(text: str) -> list[dict[str, Any]]:
+    """Structured monetary amounts in ``text``:
+    ``[{"amount": float|int, "currency": str|None, "raw": str}, ...]``.
+
+    The shared matcher behind both :func:`_emit_money_keys` (back-compat
+    ``money:<n>`` keys) and the NORM front (:func:`normalize_atom_value`). Same
+    K/M/B normalization and ``[100, 1e12]`` clamp as the original key emitter;
+    additionally captures the currency (symbol/ISO) and the raw span. No
+    cross-currency conversion (non-deterministic without rates)."""
+    out: list[dict[str, Any]] = []
     for match in _MONEY_REGEX.finditer(text):
-        # Grab whichever capture group fired
         num_str = match.group(1) or match.group(3) or match.group(5)
         suffix = match.group(2) or match.group(4)
         if not num_str:
@@ -2749,21 +2747,128 @@ def _emit_money_keys(text: str) -> set[str]:
         except ValueError:
             continue
         if suffix:
-            multiplier = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(
-                suffix.upper(), 1
-            )
-            num = num * multiplier
-        # Drop fractional cents — money entities are unit dollars.
+            # NB: T intentionally absent (matches the original emitter — a bare
+            # "1.5T" then falls under the <100 clamp and is dropped).
+            num = num * {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(suffix.upper(), 1)
         amount = int(num) if num == int(num) else round(num, 2)
-        # Skip implausibly small amounts (likely false positives —
-        # "5K users" / "$1.99" line noise). Real deal money is ≥ $100.
-        if amount < 100:
+        if amount < 100 or amount > 1_000_000_000_000:
             continue
-        # Skip implausibly large amounts (regex catastrophe / OCR garbage).
-        if amount > 1_000_000_000_000:  # > $1T
-            continue
-        keys.add(f"money:{int(amount) if amount == int(amount) else amount}")
-    return keys
+        raw = match.group(0).strip()
+        currency: str | None = None
+        for sym, code in _CURRENCY_SYMBOL.items():
+            if sym in raw:
+                currency = code
+                break
+        if currency is None:
+            iso = re.search(r"\b([A-Z]{3})\b", raw.upper())
+            if iso:
+                currency = iso.group(1)
+        out.append({"amount": amount, "currency": currency, "raw": raw})
+    return out
+
+
+def _emit_money_keys(text: str) -> set[str]:
+    """Extract monetary amounts as ``money:<normalized>`` entities.
+
+    Normalizes K/M/B suffixes to absolute amounts (``$1.5M`` → ``money:1500000``,
+    ``$250K`` → ``money:250000``, ``USD 100`` → ``money:100``). Back-compat:
+    money_summary / sow_readiness / _money_values_in_row depend on these keys.
+    """
+    return {
+        f"money:{int(m['amount']) if m['amount'] == int(m['amount']) else m['amount']}"
+        for m in parse_money(text)
+    }
+
+
+def parse_quantity_spans(text: str) -> list[dict[str, Any]]:
+    """Structured quantities in ``text``: ``[{"quantity": int, "unit": str,
+    "raw": str}, ...]``. Mirrors :func:`_emit_quantity_keys`'s two matchers
+    (``Qty:/quantity:/count`` + noun-anchored) with the same ``n<=0 / n>100000``
+    guard, but keeps the per-span value shape the NORM front needs. Integers
+    only (the cross-doc conflict's ``quantity:`` key parser is int-only)."""
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for rx, guarded in ((_QUANTITY_REGEX, False), (_QUANTITY_NOUN_REGEX, True)):
+        for match in rx.finditer(text):
+            try:
+                n = int(match.group(1).replace(",", ""))
+            except (ValueError, IndexError):
+                continue
+            if guarded and (n <= 0 or n > 100_000):
+                continue
+            if n in seen:
+                continue
+            seen.add(n)
+            out.append({"quantity": n, "unit": "count", "raw": match.group(0).strip()})
+    return out
+
+
+def normalize_atom_value(atom: Any) -> None:
+    """Deterministic NORM front (the ``value_norm`` relation). Populate
+    ``atom.value`` with a normalized money amount and/or quantity — and emit the
+    ``quantity:<int>`` entity_key — for the common SINGLE-value formats, so
+    deal_financials / money_summary and the cross-doc quantity conflict have a
+    real number to work with (only ~8-14% of value-bearing atoms resolved one
+    before: the extractors parsed the number then discarded it into a slug key).
+
+    Safe in the enrich hot loop: digit fast-guard, module-level compiled regexes,
+    no LLM/embedder. ``setdefault`` discipline throughout — a parser-supplied
+    structured value (table cells, xlsx) is never clobbered. Multi-value rows are
+    left key-only (writing a single scalar would corrupt _money_values_in_row)."""
+    text = getattr(atom, "raw_text", "") or ""
+    if not any(c.isdigit() for c in text):
+        return
+    value = getattr(atom, "value", None)
+    created = False
+    if value is None:
+        value, created = {}, True
+    elif not isinstance(value, dict):
+        return  # non-dict value (rare) — don't touch
+
+    keys = list(getattr(atom, "entity_keys", []) or [])
+    has_device = any(k.startswith("device:") and k != "device:unknown" for k in keys)
+    has_part = any(k.startswith("part_number:") for k in keys)
+
+    # MONEY — only when exactly one amount in the atom; multi-amount rows stay
+    # key-only so the multi-key money form isn't corrupted.
+    money = parse_money(text)
+    if len(money) == 1 and value.get("amount") is None:
+        m = money[0]
+        value["amount"] = m["amount"]
+        if m.get("currency"):
+            value.setdefault("currency", m["currency"])
+        value.setdefault("raw", m["raw"])
+
+    # QUANTITY — only a single clean quantity; guard so table-parser quantities win.
+    qty = parse_quantity_spans(text)
+    if len(qty) == 1 and value.get("quantity") is None:
+        q = qty[0]
+        value["quantity"] = q["quantity"]
+        value.setdefault("unit", q["unit"])
+        value.setdefault("raw", q["raw"])
+        if not value.get("normalized_item") and has_device:
+            dev = next(
+                (k.split(":", 1)[1] for k in keys
+                 if k.startswith("device:") and k != "device:unknown"),
+                None,
+            )
+            if dev:
+                value["normalized_item"] = dev
+        # Emit quantity:<int> — the SOLE source the device_quantity_cross_doc
+        # conflict compares. Anchor on a device/part so it's a real scoped count,
+        # not loose prose. (Survives the parser-keyed common case because we
+        # append directly, not via the augment-prefix filter.)
+        if isinstance(q["quantity"], int) and (has_device or has_part):
+            qk = f"quantity:{q['quantity']}"
+            if qk not in keys:
+                keys.append(qk)
+                atom.entity_keys = keys
+
+    if created and value:
+        try:
+            atom.value = value
+        except Exception:  # pragma: no cover - frozen atom; nothing to do
+            pass
 
 
 # ─── Date / milestone entity extraction ───
@@ -3846,6 +3951,10 @@ _AUGMENT_ALWAYS_PREFIXES: tuple[str, ...] = (
     "milestone:",
     "quarter:",
     "money:",
+    # quantity: belt-and-suspenders with normalize_atom_value's direct emit —
+    # the cross-doc quantity conflict reads ONLY quantity: keys, and they were
+    # being dropped on parser-keyed atoms (only 3/2404 survived).
+    "quantity:",
     "stakeholder:",
     "phone:",
     "email:",
@@ -4869,6 +4978,9 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     atom.entity_keys = new_keys
                     atoms_enriched += 1
                     total_keys_added += len(new_keys)
+            # NORM front: normalize money/qty into atom.value (+ quantity: key)
+            # now that this atom's keys are settled — runs on the no-keys path too.
+            normalize_atom_value(atom)
             continue
 
         # Parser already populated keys. Run hygiene first, then
@@ -4911,6 +5023,9 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 total_keys_added += len(augment)
         elif cleaned != list(getattr(atom, "entity_keys", [])):
             atom.entity_keys = cleaned
+        # NORM front: normalize money/qty into atom.value (+ quantity: key) for
+        # the parser-keyed (augment) path, after keys are settled.
+        normalize_atom_value(atom)
 
     # ─── LLM-DISCOVERED SITE INJECTION ───
     # For each site in the authoritative catalog that no atom's

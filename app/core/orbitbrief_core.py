@@ -2017,6 +2017,38 @@ def build_deal_financials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
         "margin_pct": _round2(mpct),
     }
 
+    # NORM consumer fallback: non-xlsx deals carry no pl_metric atoms, so the
+    # structured P&L above is empty. Roll up the NORM-normalized money amounts
+    # (atom.value.amount, set by entity_extraction.normalize_atom_value on
+    # single-amount atoms) into a best-effort "Quoted amounts" line so the PM
+    # surface isn't dark. The deal total is most often the single LARGEST stated
+    # amount (grand total / not-to-exceed); summing double-counts line items, so
+    # we lead with the max and flag the result as derived (not a structured P&L).
+    if not lines:
+        amounts = [
+            atom.value["amount"]
+            for atom in atoms
+            if isinstance(atom.value, dict)
+            and isinstance(atom.value.get("amount"), (int, float))
+            and not isinstance(atom.value.get("amount"), bool)
+            and atom.value["amount"] > 0
+        ]
+        if amounts:
+            top = max(amounts)
+            return {
+                "lines": [{
+                    "category": "Quoted amounts (derived)",
+                    "category_key": "derived_quoted",
+                    "revenue": _round2(top), "cost": None, "margin": None, "margin_pct": None,
+                    "atom_id": None,
+                }],
+                "category_count": 1,
+                "totals": {"revenue": _round2(top), "cost": None, "margin": None, "margin_pct": None},
+                "present": True,
+                "derived": True,
+                "derived_amount_count": len(amounts),
+            }
+
     return {
         "lines": lines,
         "category_count": len(lines),
