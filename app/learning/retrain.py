@@ -262,6 +262,19 @@ def retrain_all(
 ) -> list[RetrainResult]:
     """Retrain + eval-gate every relation present in the log (or a given subset).
     Records the serving metrics into the shadow-history curve."""
+    # Safety guard: NEVER train on a dead embedder. embed_texts returns
+    # zero-vectors (not an error) when the qwen3-Mac/Ollama host is offline, so
+    # an unguarded scheduled run during an outage would fit + eval-gate heads on
+    # garbage and could promote a degenerate champion. Probe first; abort the
+    # whole run cleanly (no-op) if the embedder is unreachable.
+    try:
+        _probe = np.asarray(embed_fn(["__embed_probe__"]))
+        if _probe.size == 0 or float(np.linalg.norm(_probe.reshape(-1))) == 0.0:
+            print("[retrain] embedder unreachable (zero-vector probe) — aborting; no training this run")
+            return []
+    except Exception as _e:  # pragma: no cover - probe failure must abort, not train
+        print(f"[retrain] embedder probe failed ({_e}) — aborting; no training this run")
+        return []
     # Pull any PM gold rows the SERVICE mirrored to blob into this log first, so
     # the retrain learns from corrections written on the other container (the
     # feedback endpoint runs on the service; retrain runs here on the worker).
