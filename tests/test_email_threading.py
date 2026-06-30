@@ -245,6 +245,43 @@ def test_threading_drops_nothing(tmp_path) -> None:
     assert len(threaded) == len(atoms)
 
 
+def test_reply_gist_skips_greeting_and_signature(tmp_path) -> None:
+    """The 'in reply to' gist must be substantive scope content, not a bare
+    'Hi Hiran,' greeting or a signature line (real #010065 failure shape)."""
+    a = _write_eml(
+        tmp_path, "1.eml",
+        sender="chase@purtera-it.com", subject="010065 AP swap",
+        date="Mon, 01 Jun 2026 09:00:00 -0400",
+        message_id="<g1@purtera-it.com>",
+        body=(
+            "Hi Hiran,\n"
+            "We need to swap 12 access points at the south campus after hours.\n"
+            "Thanks,\n"
+            "Chase\n"
+            "Office: 555-123-4567\n"
+        ),
+    )
+    b = _write_eml(
+        tmp_path, "2.eml",
+        sender="hiran@cdw.com", subject="RE: 010065 AP swap",
+        date="Mon, 01 Jun 2026 12:00:00 -0400",
+        message_id="<g2@cdw.com>", in_reply_to="<g1@purtera-it.com>",
+        references="<g1@purtera-it.com>",
+        body="Approved.",
+    )
+    atoms = _parse([a, b])
+    threaded, _ = thread_emails(atoms, project_id="proj")
+    reply = [
+        _thread_of(x) for x in threaded
+        if x.artifact_id == "art_1" and _thread_of(x)
+    ][0]
+    gist = reply["replied_to"]["gist"]
+    assert "access points" in gist
+    assert not gist.lower().startswith("hi ")
+    assert "thanks" not in gist.lower()
+    assert "555-123-4567" not in gist
+
+
 def test_no_email_atoms_is_noop() -> None:
     out, summary = thread_emails([], project_id="proj")
     assert out == []

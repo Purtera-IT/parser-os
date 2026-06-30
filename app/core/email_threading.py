@@ -23,12 +23,34 @@ Design guarantees
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.core.ids import stable_id
 from app.core.schemas import EvidenceAtom
 
 _GIST_MAX = 160
+
+# Lines that are pure social padding or signature boilerplate carry no scope
+# meaning, so they make a useless "in reply to" gist. We skip them and fall
+# through to the first substantive sentence. Universal — no per-deal vocab.
+_GREETING_RE = re.compile(
+    r"^(hi|hello|hey|dear|good\s+(morning|afternoon|evening)|greetings|team)\b[\s,!:-]*",
+    re.IGNORECASE,
+)
+_CLOSING_RE = re.compile(
+    r"^(thanks?|thank\s+you|thx|regards|best|best\s+regards|sincerely|cheers|"
+    r"warm\s+regards|kind\s+regards|respectfully|talk\s+soon|cordially|"
+    r"sent\s+from\s+my|get\s+outlook|let\s+me\s+know|please\s+let\s+me\s+know)"
+    r"\b[\s,!.:-]*$",
+    re.IGNORECASE,
+)
+# Signature / contact-block lines (phone, title, dept, address fragments).
+_SIGNATURE_RE = re.compile(
+    r"(^\+?\d[\d\s().-]{6,}\d$)|(\b(?:office|cell|mobile|direct|tel|fax|ext)\b\s*[:#]?\s*\+?\d)"
+    r"|(@[\w.-]+\.\w{2,}$)|(\bwww\.)|(https?://)",
+    re.IGNORECASE,
+)
 
 
 class _Union:
@@ -86,7 +108,46 @@ def _gist_for_artifact(atoms: list[EvidenceAtom]) -> str:
     if not pool:
         return ""
     pool.sort(key=lambda t: t[0])
-    gist = pool[0][1]
+
+    # Prefer the first SUBSTANTIVE line: skip greetings ("Hi Hiran,"),
+    # sign-offs ("Thanks,"), and signature/contact lines. A bare greeting
+    # gist is useless context for a reply. If everything is padding (rare),
+    # fall back to the first line so we never return empty.
+    def _is_padding(line: str) -> bool:
+        stripped = line.strip()
+        if _GREETING_RE.match(stripped):
+            # A greeting prefix only — but "Hi, can you confirm 36?" is real.
+            # "Hi Hiran," (greeting + name) is padding; "Hi, please send the
+            # SOW" is substantive. Treat the remainder as padding when it's
+            # empty or just a short name (<=2 capitalized alpha words).
+            remainder = _GREETING_RE.sub("", stripped).strip().rstrip(",.!:")
+            if len(remainder) < 3:
+                return True
+            words = remainder.split()
+            if len(words) <= 2 and all(w.isalpha() and w[:1].isupper() for w in words):
+                return True
+            return False
+        if _CLOSING_RE.match(stripped):
+            return True
+        if _SIGNATURE_RE.search(stripped):
+            return True
+        # Pure name line (1-3 capitalized words, no verb-ish content).
+        if len(stripped) <= 24 and stripped.replace(".", "").replace(",", "").isalpha():
+            words = stripped.split()
+            if len(words) <= 3 and all(w[:1].isupper() for w in words if w):
+                return True
+        return False
+
+    gist = ""
+    for _, line in pool:
+        if not _is_padding(line):
+            # Strip a leading greeting prefix if the substantive content
+            # follows it on the same line ("Hi Hiran, please confirm 36").
+            cleaned = _GREETING_RE.sub("", line).strip() or line.strip()
+            gist = cleaned
+            break
+    if not gist:
+        gist = pool[0][1]
     return gist[: _GIST_MAX - 1] + "\u2026" if len(gist) > _GIST_MAX else gist
 
 
