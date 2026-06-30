@@ -180,12 +180,17 @@ def feedback_rule(project_id: str, req: RuleRequest) -> FeedbackResponse:
 @router.post("/{project_id}/feedback/complaint", response_model=FeedbackResponse)
 def feedback_complaint(project_id: str, req: ComplaintRequest) -> FeedbackResponse:
     store = _require_store()
+    # Compile result is best-effort context for localization. The stateless
+    # service has no local sqlite DB — a missing/unopenable DB must not 500 an
+    # otherwise-valid complaint (same pattern as /feedback/correction).
     try:
         result = _load_compile_result(project_id)
     except KeyError:
         raise HTTPException(
             status_code=404, detail=f"Unknown project '{project_id}'"
         ) from None
+    except Exception:
+        result = None
 
     complaint = Complaint(
         relation=req.relation,

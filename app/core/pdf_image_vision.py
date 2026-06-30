@@ -59,7 +59,11 @@ _TRANSCRIBE_KINDS = {"instructions", "screenshot", "label"}
 _SKIP_KINDS = {"logo", "decorative", "signature", "empty"}
 # Image kinds that get the context-grounded describe path.
 _DESCRIBE_KINDS = {"photo", "diagram", "chart", "map"}
-
+# Closed verdict set for the image head — mirrors headCorrections IMAGE_KINDS.
+_IMAGE_KIND_CANDIDATES = [
+    "skip", "photo", "diagram", "chart", "table_image", "screenshot",
+    "instructions", "label", "map", "logo", "decorative", "signature", "empty",
+]
 
 # ── config ──────────────────────────────────────────────────────────
 
@@ -474,6 +478,47 @@ def _log_gate_silver(caption: str, ocr: str, image_kind: str, *, via: str) -> No
         pass
 
 
+def _store_classify_image(caption: str, ocr: str) -> tuple[bool, str, str] | None:
+    """PM correction store-front for image-kind triage (no VLM cost).
+
+    Tries gate feature text, caption, and OCR snippet so corrections committed
+    via the image chip can override the classify gate on the next compile.
+    Returns None when the store abstains (fall through to VLM gate).
+    """
+    from app.core.decide import decide
+    from app.core.pdf_image_gate import gate_feature_text
+
+    lookups: list[str] = []
+    feat = gate_feature_text(caption, ocr)
+    if feat.strip():
+        lookups.append(feat)
+    cap = (caption or "").strip()
+    if cap and cap not in lookups:
+        lookups.append(cap)
+    ocr_s = (ocr or "").strip()[:500]
+    if ocr_s and ocr_s not in lookups:
+        lookups.append(ocr_s)
+    if not lookups:
+        return None
+
+    instruction = "Classify the embedded PDF image kind for routing."
+    for text in lookups:
+        d = decide(
+            "pdf_image_kind", text, _IMAGE_KIND_CANDIDATES,
+            instruction=instruction, llm=False,
+        )
+        if d.source != "store" or not d.verdict:
+            continue
+        kind = str(d.verdict).strip().lower()
+        if kind == "skip" or kind in _SKIP_KINDS:
+            _log_gate_silver(caption, ocr, kind or "skip", via="store_gate")
+            return False, kind or "skip", "store_gate"
+        if kind in _IMAGE_KIND_CANDIDATES:
+            _log_gate_silver(caption, ocr, kind, via="store_gate")
+            return True, kind, "store_gate"
+    return None
+
+
 def _classify_image(
     *, crop: bytes, caption: str, saved_path: str,
 ) -> tuple[bool, str, str]:
@@ -487,6 +532,12 @@ def _classify_image(
             kind = kind if meaningful else "skip"
             _log_gate_silver(caption, ocr, kind, via="cpu_gate")
             return meaningful, kind, "cpu_gate"
+    except Exception:
+        pass
+    try:
+        store_hit = _store_classify_image(caption, ocr)
+        if store_hit is not None:
+            return store_hit
     except Exception:
         pass
     gate_raw = _vlm(
@@ -716,9 +767,9 @@ def _process_one(
         guard_min=guard_min,
     )
     _apply_caption_mismatch(atoms, caption, min_overlap=caption_min)
-    if atoms and via == "cpu_gate":
+    if atoms and via in ("cpu_gate", "store_gate"):
         for a in atoms:
-            a.value["gate_via"] = "cpu_gate"
+            a.value["gate_via"] = via
     return atoms
 
 

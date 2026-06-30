@@ -171,6 +171,30 @@ def test_complaint_gated_commits_with_controls(monkeypatch):
     assert body["failed_invariants"] == []
 
 
+def test_complaint_ungated_survives_stateless_db(monkeypatch):
+    """Regression: stateless service has no sqlite DB — complaint must not 500."""
+    import sqlite3
+
+    def _boom(_pid):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(rf, "_load_compile_result", _boom)
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/complaint",
+        json={
+            "relation": "atom_type",
+            "desired_verdict": "work_scope_item",
+            "candidates": ["scope_item", "work_scope_item"],
+            "text": "Install forty-eight wireless access points",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["committed"] is False
+    assert "UNGATED" in body["report"]
+
+
 def test_correction_chip_commits(monkeypatch):
     monkeypatch.setattr(
         rf,

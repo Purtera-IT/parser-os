@@ -267,3 +267,47 @@ def test_table_image_emits_rows(monkeypatch, tmp_path):
     monkeypatch.setattr(piv, "_vlm", _vlm2)
     out = piv.process_image_markers([_marker(tmp_path)])
     assert any(a.value["fact_kind"].startswith("table_row:") for a in out)
+
+
+def test_store_correction_overrides_classify_without_vlm(monkeypatch, tmp_path):
+    """PM image-head correction should override the classify gate instantly."""
+    import numpy as np
+    from app.core.decide import set_store
+    from app.core.feedback_store import Correction, FeedbackStore, SCOPE_GLOBAL
+
+    def _embed(texts):
+        out = np.zeros((len(texts), 64), dtype=np.float32)
+        for i, t in enumerate(texts):
+            out[i, 0] = 1.0 if "rack elevation" in t.lower() else 0.1
+        n = np.linalg.norm(out, axis=1, keepdims=True)
+        return out / np.where(n > 1e-9, n, 1.0)
+
+    store = FeedbackStore(":memory:", embed_fn=_embed, reachable_fn=lambda: True)
+    store.add(Correction(
+        id="corr_img_test",
+        relation="pdf_image_kind",
+        verdict="diagram",
+        scope=SCOPE_GLOBAL,
+        exemplars=["MDF rack elevation below"],
+        status="active",
+    ))
+    set_store(store)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "")
+    try:
+        from app.core import pdf_image_gate
+        monkeypatch.setattr(pdf_image_gate, "classify", lambda *a, **k: None)
+    except Exception:
+        pass
+    vlm_called = {"n": 0}
+    monkeypatch.setattr(
+        piv, "_vlm",
+        lambda *a, **k: vlm_called.__setitem__("n", vlm_called["n"] + 1) or "{}",
+    )
+    meaningful, kind, via = piv._classify_image(
+        crop=b"x", caption="MDF rack elevation below", saved_path=str(tmp_path / "x.png"),
+    )
+    set_store(None)
+    assert via == "store_gate"
+    assert kind == "diagram"
+    assert meaningful is True
+    assert vlm_called["n"] == 0
