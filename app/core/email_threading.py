@@ -182,6 +182,12 @@ def thread_emails(
         if mid and mid not in msgid_to_artifact:
             msgid_to_artifact[mid] = aid
 
+    # parent_by_artifact: the TRUE message this one answers, resolved from
+    # In-Reply-To (preferred) or the nearest ancestor in References (last entry
+    # is the most-recent ancestor). Used for parent-accurate reply context so a
+    # branching thread doesn't mislabel "in reply to" as the chronologically
+    # previous email. Falls back to chronological prev when headers are absent.
+    parent_by_artifact: dict[str, str] = {}
     for aid, meta in meta_by_artifact.items():
         refs: list[str] = []
         if meta.get("in_reply_to"):
@@ -191,6 +197,17 @@ def thread_emails(
             other = msgid_to_artifact.get(ref)
             if other and other != aid:
                 uf.union(aid, other)
+        # First resolvable ancestor (In-Reply-To beats References; among
+        # References the last is nearest) becomes the parent for context.
+        in_reply_first = (str(meta.get("in_reply_to") or "").strip(),)
+        refs_nearest_first = tuple(
+            str(r).strip() for r in reversed(meta.get("references") or [])
+        )
+        for ref in in_reply_first + refs_nearest_first:
+            other = msgid_to_artifact.get(ref)
+            if other and other != aid:
+                parent_by_artifact[aid] = other
+                break
 
     # Subject fallback: union all messages sharing a non-empty normalised
     # subject. Within one deal compile this reliably reunites a back-and-forth
@@ -224,6 +241,7 @@ def thread_emails(
             return (has_date, ep, encounter_index[aid])
 
         ordered = sorted(members, key=_sort_key)
+        member_set = set(ordered)
         size = len(ordered)
         if size > 1:
             multi += 1
@@ -254,15 +272,25 @@ def thread_emails(
                 senders.append(sender)
             replied_to: dict[str, str] | None = None
             context = ""
-            if pos > 0:
-                prev_aid = ordered[pos - 1]
-                prev_meta = meta_by_artifact[prev_aid]
+            # Parent-accurate: the message this one actually answers
+            # (In-Reply-To/References), falling back to the chronologically
+            # previous message in the thread when no header parent resolved.
+            parent_aid = parent_by_artifact.get(aid)
+            if parent_aid not in member_set:
+                parent_aid = None
+            via = "in_reply_to"
+            if parent_aid is None and pos > 0:
+                parent_aid = ordered[pos - 1]
+                via = "chronological"
+            if parent_aid is not None:
+                prev_meta = meta_by_artifact[parent_aid]
                 prev_sender = (prev_meta.get("sender") or "").strip()
-                prev_gist = gist_by_artifact.get(prev_aid, "")
+                prev_gist = gist_by_artifact.get(parent_aid, "")
                 replied_to = {
                     "sender": prev_sender,
                     "gist": prev_gist,
                     "date": (prev_meta.get("date_raw") or "").strip(),
+                    "via": via,
                 }
                 if prev_gist:
                     who = prev_sender or "previous message"
@@ -308,4 +336,85 @@ def thread_emails(
     return atoms, summary
 
 
-__all__ = ["thread_emails"]
+def _norm_key(atom: EvidenceAtom) -> str:
+    """Collapse key for quoted-history matching: normalized text, whitespace-
+    folded. Quote markers were already stripped at parse time."""
+    txt = (getattr(atom, "normalized_text", "") or getattr(atom, "raw_text", "") or "").strip()
+    return re.sub(r"\s+", " ", txt).lower()
+
+
+# A quoted line this short is too generic to safely collapse on text alone
+# ("yes", "ok", "thanks") — keep it. Real quoted history that inflates the
+# atom stream is full sentences well above this.
+_MIN_DEDUP_LEN = 12
+
+
+def dedup_quoted_history(
+    atoms: list[EvidenceAtom], *, project_id: str = ""
+) -> tuple[list[EvidenceAtom], list[EvidenceAtom]]:
+    """Drop a QUOTED line in a reply when the same content already exists in the
+    thread as authored (non-quoted) text or an earlier quoted copy.
+
+    In a long back-and-forth every reply re-quotes the whole history, so the
+    same sentence is emitted once per reply (the #010045 9,452-atom flood). The
+    authored original is always kept; only its redundant quoted echoes are
+    diverted. Returns ``(kept, dropped)``; the compiler routes ``dropped`` into
+    the suppression ledger, so nothing is truly lost.
+
+    Guarantees:
+    * Never drops an authored (non-quoted) atom.
+    * Never drops a quoted line whose content is unique to the thread (e.g. a
+      quote of an external email not otherwise present).
+    * Per-thread scoped — a quote only collapses against its OWN conversation,
+      never across deals or unrelated threads.
+    * Order-preserving for the kept list.
+    """
+    def _thread_of(atom: EvidenceAtom):
+        v = atom.value if isinstance(atom.value, dict) else {}
+        et = v.get("email_thread")
+        return et if isinstance(et, dict) else None
+
+    def _is_quoted(atom: EvidenceAtom) -> bool:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        return bool(v.get("quoted"))
+
+    # 1) Per-thread set of AUTHORED content keys (the originals we must keep and
+    # that make a quoted echo redundant).
+    authored_keys: dict[str, set[str]] = {}
+    for atom in atoms:
+        et = _thread_of(atom)
+        if et is None or _is_quoted(atom):
+            continue
+        key = _norm_key(atom)
+        if len(key) >= _MIN_DEDUP_LEN:
+            authored_keys.setdefault(et["thread_id"], set()).add(key)
+
+    # 2) Walk atoms in thread order; drop a quoted atom whose key matches an
+    # authored original OR an earlier-kept quoted copy in the same thread.
+    seen_quoted: dict[str, set[str]] = {}
+    kept: list[EvidenceAtom] = []
+    dropped: list[EvidenceAtom] = []
+    for atom in atoms:
+        et = _thread_of(atom)
+        if et is None or not _is_quoted(atom):
+            kept.append(atom)
+            continue
+        key = _norm_key(atom)
+        if len(key) < _MIN_DEDUP_LEN:
+            kept.append(atom)
+            continue
+        tid = et["thread_id"]
+        if key in authored_keys.get(tid, ()):  # echo of an authored original
+            dropped.append(atom)
+            continue
+        seen = seen_quoted.setdefault(tid, set())
+        if key in seen:  # duplicate quoted copy across replies
+            dropped.append(atom)
+            continue
+        seen.add(key)
+        kept.append(atom)
+
+    return kept, dropped
+
+
+__all__ = ["thread_emails", "dedup_quoted_history"]

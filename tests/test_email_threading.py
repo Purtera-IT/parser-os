@@ -11,8 +11,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.core.email_threading import thread_emails
-from app.parsers.email_parser import EmailParser, normalize_email_subject
+from app.core.email_threading import dedup_quoted_history, thread_emails
+from app.parsers.email_parser import (
+    EmailParser,
+    _parse_date_epoch,
+    normalize_email_subject,
+)
+
+
+def test_parse_date_epoch_handles_rfc2822_and_iso8601() -> None:
+    # RFC 2822 (native mail clients).
+    assert _parse_date_epoch("Mon, 01 Jun 2026 09:00:00 -0400") > 0
+    # ISO 8601 with trailing Z (HubSpot export).
+    assert _parse_date_epoch("2026-06-19T12:43:58Z") > 0
+    # ISO 8601 with milliseconds.
+    assert _parse_date_epoch("2026-06-19T12:15:09.532Z") > 0
+    # Ordering is consistent across the two formats.
+    iso_early = _parse_date_epoch("2026-06-19T12:15:09Z")
+    iso_late = _parse_date_epoch("2026-06-19T12:43:58Z")
+    assert iso_early < iso_late
+    # Unparseable -> 0.0 (degrades to encounter order, never raises).
+    assert _parse_date_epoch("not a date") == 0.0
+    assert _parse_date_epoch("") == 0.0
 
 
 def _write_eml(
@@ -287,3 +307,164 @@ def test_no_email_atoms_is_noop() -> None:
     assert out == []
     assert summary["thread_count"] == 0
     assert summary["threaded_message_count"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Parent-accurate context (In-Reply-To, not just chronological)               #
+# --------------------------------------------------------------------------- #
+
+def test_context_uses_true_parent_on_branching_thread(tmp_path) -> None:
+    """Two replies both answer the ROOT (not each other). The later reply's
+    context must point at the root via In-Reply-To, not at the chronologically
+    previous sibling."""
+    root = _write_eml(
+        tmp_path, "root.eml",
+        sender="client@acme.com", subject="010070 Camera rollout",
+        date="Mon, 01 Jun 2026 09:00:00 -0400",
+        body="Please quote 48 cameras for the West Wing rollout.",
+        message_id="<root@acme.com>",
+    )
+    # Sibling A replies to root at 11:00.
+    sib_a = _write_eml(
+        tmp_path, "a.eml",
+        sender="alice@purtera.com", subject="RE: 010070 Camera rollout",
+        date="Mon, 01 Jun 2026 11:00:00 -0400",
+        body="Alice here, I will own the BOM for this.",
+        message_id="<a@purtera.com>", in_reply_to="<root@acme.com>",
+        references="<root@acme.com>",
+    )
+    # Sibling B ALSO replies to root, but later at 15:00. Chronological prev
+    # would be sibling A; true parent is root.
+    sib_b = _write_eml(
+        tmp_path, "b.eml",
+        sender="bob@purtera.com", subject="RE: 010070 Camera rollout",
+        date="Mon, 01 Jun 2026 15:00:00 -0400",
+        body="Bob here, confirming the West Wing site survey.",
+        message_id="<b@purtera.com>", in_reply_to="<root@acme.com>",
+        references="<root@acme.com>",
+    )
+    atoms = _parse([root, sib_a, sib_b])
+    threaded, _ = thread_emails(atoms, project_id="proj")
+
+    b_block = [
+        _thread_of(x) for x in threaded
+        if x.artifact_id == "art_2" and _thread_of(x)
+    ][0]
+    assert b_block["replied_to"]["via"] == "in_reply_to"
+    # Parent is the ROOT (48 cameras), NOT sibling A (the BOM line).
+    assert "48 cameras" in b_block["replied_to"]["gist"]
+    assert "BOM" not in b_block["replied_to"]["gist"]
+
+
+def test_context_falls_back_to_chronological_without_headers(tmp_path) -> None:
+    """No Message-ID/In-Reply-To (HubSpot export) → context still works via the
+    chronological fallback."""
+    a = _write_eml(
+        tmp_path, "1.eml", sender="client@acme.com", subject="010065 AP swap",
+        date="Mon, 01 Jun 2026 09:00:00 -0400",
+        body="We need to swap 12 access points at the south campus.",
+    )
+    b = _write_eml(
+        tmp_path, "2.eml", sender="pm@purtera.com", subject="RE: 010065 AP swap",
+        date="Mon, 01 Jun 2026 12:00:00 -0400",
+        body="Approved, scheduling now.",
+    )
+    atoms = _parse([a, b])
+    threaded, _ = thread_emails(atoms, project_id="proj")
+    b_block = [
+        _thread_of(x) for x in threaded
+        if x.artifact_id == "art_1" and _thread_of(x)
+    ][0]
+    assert b_block["replied_to"]["via"] == "chronological"
+    assert "access points" in b_block["replied_to"]["gist"]
+
+
+# --------------------------------------------------------------------------- #
+# Thread-aware quoted-history dedup                                            #
+# --------------------------------------------------------------------------- #
+
+def test_quoted_history_dedup_drops_echoes_keeps_authored(tmp_path) -> None:
+    """A reply that re-quotes the prior message must keep its own authored line
+    and drop the quoted echo of content already authored in the thread."""
+    a = _write_eml(
+        tmp_path, "1.eml", sender="client@acme.com", subject="010070 Rollout",
+        date="Mon, 01 Jun 2026 09:00:00 -0400",
+        body="Please quote 48 cameras for the West Wing rollout.",
+        message_id="<m1@acme.com>",
+    )
+    # Reply authors a new line AND quotes the original (parser marks '>' quoted).
+    b = _write_eml(
+        tmp_path, "2.eml", sender="pm@purtera.com", subject="RE: 010070 Rollout",
+        date="Mon, 01 Jun 2026 15:00:00 -0400",
+        message_id="<m2@purtera.com>", in_reply_to="<m1@acme.com>",
+        references="<m1@acme.com>",
+        body=(
+            "Confirmed, scheduling the 48 camera install for next week.\n"
+            "> Please quote 48 cameras for the West Wing rollout.\n"
+        ),
+    )
+    atoms = _parse([a, b])
+    threaded, _ = thread_emails(atoms, project_id="proj")
+    kept, dropped = dedup_quoted_history(threaded, project_id="proj")
+
+    kept_texts = [k.normalized_text for k in kept]
+    # Authored original survives.
+    assert any("please quote 48 cameras for the west wing rollout" in t for t in kept_texts)
+    # The reply's own authored line survives.
+    assert any("scheduling the 48 camera install" in t for t in kept_texts)
+    # The quoted echo was diverted.
+    assert dropped, "expected at least one quoted echo to be dropped"
+    for d in dropped:
+        assert (d.value or {}).get("quoted") is True
+
+
+def test_quoted_history_dedup_keeps_unique_quotes(tmp_path) -> None:
+    """A quoted line with NO authored counterpart in the thread (quote of an
+    external email) must be kept — it may be the only record of that content."""
+    a = _write_eml(
+        tmp_path, "1.eml", sender="client@acme.com", subject="010070 Rollout",
+        date="Mon, 01 Jun 2026 09:00:00 -0400",
+        message_id="<m1@acme.com>",
+        body=(
+            "Forwarding the vendor note below.\n"
+            "> Vendor requires a 30 percent restocking fee on returns.\n"
+        ),
+    )
+    atoms = _parse([a])
+    threaded, _ = thread_emails(atoms, project_id="proj")
+    kept, dropped = dedup_quoted_history(threaded, project_id="proj")
+    kept_texts = [k.normalized_text for k in kept]
+    assert any("restocking fee" in t for t in kept_texts)
+    assert not dropped
+
+
+def test_quoted_history_dedup_is_lossless_partition(tmp_path) -> None:
+    """kept + dropped == input (every atom accounted for; nothing vanishes)."""
+    a = _write_eml(
+        tmp_path, "1.eml", sender="client@acme.com", subject="010070 Rollout",
+        date="Mon, 01 Jun 2026 09:00:00 -0400", message_id="<m1@acme.com>",
+        body="Please quote 48 cameras for the West Wing rollout.",
+    )
+    b = _write_eml(
+        tmp_path, "2.eml", sender="pm@purtera.com", subject="RE: 010070 Rollout",
+        date="Mon, 01 Jun 2026 15:00:00 -0400",
+        message_id="<m2@purtera.com>", in_reply_to="<m1@acme.com>",
+        references="<m1@acme.com>",
+        body=(
+            "Confirmed, scheduling the install.\n"
+            "> Please quote 48 cameras for the West Wing rollout.\n"
+        ),
+    )
+    atoms = _parse([a, b])
+    threaded, _ = thread_emails(atoms, project_id="proj")
+    kept, dropped = dedup_quoted_history(threaded, project_id="proj")
+    assert len(kept) + len(dropped) == len(threaded)
+    kept_ids = {k.id for k in kept}
+    dropped_ids = {d.id for d in dropped}
+    assert kept_ids.isdisjoint(dropped_ids)
+
+
+def test_quoted_history_dedup_noop_without_threads() -> None:
+    out, dropped = dedup_quoted_history([], project_id="proj")
+    assert out == []
+    assert dropped == []

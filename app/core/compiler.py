@@ -669,6 +669,40 @@ def compile_project(
             )
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # Quoted-history dedup: in a long thread every reply re-quotes the whole
+    # history, so the same sentence is emitted once per reply (the #010045
+    # 9,452-atom flood). Drop a QUOTED echo when the same content already exists
+    # in the thread as authored text or an earlier quoted copy — the authored
+    # original is always kept, only redundant echoes are diverted to the ledger.
+    # Runs right after threading so thread membership/order is available and
+    # before the generic dedup stages so they operate on the slim set.
+    with telemetry.stage("quoted_history_dedup", input_count=len(atoms)) as stage:
+        try:
+            from app.core.email_threading import dedup_quoted_history
+
+            before_qh_atoms = list(atoms)
+            atoms, dropped_qh = dedup_quoted_history(
+                atoms, project_id=resolved_project_id
+            )
+            if dropped_qh:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_qh_atoms, atoms,
+                        stage="quoted_history_dedup",
+                        reason="quoted email history already present in the thread (authored original kept)",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: quoted_history_dedup diverted {len(dropped_qh)} "
+                    f"redundant quoted-history atom(s) to the ledger"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: quoted_history_dedup failed: {type(exc).__name__}: {exc}"
+            )
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # Register {artifact_id: Path} with the vision module so its leaf
     # fitz.open() calls — invoked from enrich_entities via atom
     # source_refs, which only carry basenames — can resolve to the

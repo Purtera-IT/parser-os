@@ -118,6 +118,35 @@ def normalize_email_subject(subject: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+def _parse_date_epoch(date_raw: str) -> float:
+    """Epoch seconds from an email Date header, robust to both formats we see:
+    RFC 2822 ("Mon, 01 Jun 2026 09:00:00 -0400") from real mail clients, and
+    ISO 8601 ("2026-06-19T12:43:58Z" / with milliseconds) from HubSpot exports.
+    Returns 0.0 when unparseable so ordering degrades to encounter order."""
+    if not date_raw:
+        return 0.0
+    # RFC 2822 first (native email format).
+    try:
+        from email.utils import parsedate_to_datetime
+
+        dt = parsedate_to_datetime(date_raw)
+        if dt is not None:
+            return dt.timestamp()
+    except Exception:
+        pass
+    # ISO 8601 fallback (HubSpot). Normalise trailing Z -> +00:00 for fromisoformat.
+    try:
+        from datetime import datetime
+
+        iso = date_raw.strip()
+        if iso.endswith("Z"):
+            iso = iso[:-1] + "+00:00"
+        dt = datetime.fromisoformat(iso)
+        return dt.timestamp()
+    except Exception:
+        return 0.0
+
+
 def parse_email_thread_headers(path: Path) -> dict[str, Any]:
     """Extract RFC 5322 threading headers + ordering signal from an .eml.
 
@@ -144,16 +173,7 @@ def parse_email_thread_headers(path: Path) -> dict[str, Any]:
     sender = str(msg.get("from") or "").strip()
 
     date_raw = str(msg.get("date") or "").strip()
-    date_epoch = 0.0
-    if date_raw:
-        try:
-            from email.utils import parsedate_to_datetime
-
-            dt = parsedate_to_datetime(date_raw)
-            if dt is not None:
-                date_epoch = dt.timestamp()
-        except Exception:
-            date_epoch = 0.0
+    date_epoch = _parse_date_epoch(date_raw)
     return {
         "message_id": msg_id_list[0] if msg_id_list else "",
         "in_reply_to": in_reply_to_list[0] if in_reply_to_list else "",
