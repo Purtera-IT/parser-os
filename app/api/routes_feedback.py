@@ -294,9 +294,12 @@ def feedback_correction(project_id: str, req: CorrectionRequest) -> FeedbackResp
         note=note,
         created_by=req.pm.strip() or project_id,
     )
+    # Compile result is best-effort CONTEXT for the correction (intake handles
+    # None). The service is stateless — results live in blob, not a local sqlite
+    # DB — so a missing/unopenable DB must NOT crash an otherwise-valid PM fix.
     try:
         result = _load_compile_result(project_id)
-    except KeyError:
+    except Exception:  # KeyError (unknown project) | sqlite OperationalError | etc.
         result = None
 
     resolution = intake(complaint, result=result, store=store)
