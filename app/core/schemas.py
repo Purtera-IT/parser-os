@@ -34,6 +34,7 @@ class ArtifactType(str, Enum):
     ods = "ods"        # OpenDocument Spreadsheet
     vsdx = "vsdx"      # Microsoft Visio diagrams
     mpp = "mpp"        # Microsoft Project schedule files
+    json = "json"      # Structured JSON intake / manifest / API export / config
 
 
 class AtomType(str, Enum):

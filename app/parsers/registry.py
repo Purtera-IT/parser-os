@@ -25,6 +25,7 @@ def _ensure_defaults() -> None:
     from app.parsers.docx_parser import DocxParser
     from app.parsers.email_parser import EmailParser
     from app.parsers.image_parser import ImageParser
+    from app.parsers.json_parser import JsonParser
     from app.parsers.markdown_parser import MarkdownParser
     from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
     from app.parsers.pptx_parser import PptxParser
@@ -44,6 +45,7 @@ def _ensure_defaults() -> None:
         QuoteParser(),
         EmailParser(),
         TranscriptParser(),
+        JsonParser(),
         DocxParser(),
         PptxParser(),
         ImageParser(),
@@ -106,6 +108,8 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.vsdx
     if suffix == ".mpp":
         return ArtifactType.mpp
+    if suffix in {".json", ".jsonl"}:
+        return ArtifactType.json
     return ArtifactType.txt
 
 
@@ -195,7 +199,7 @@ def choose_parser(
     domain_pack: DomainPack | None = None,
 ) -> tuple[ArtifactParser | None, ParserMatch, list[ParserMatch]]:
     sample_text: str | None = None
-    if path.suffix.lower() in {".txt", ".md", ".eml", ".json", ".csv", ".vtt", ".srt"}:
+    if path.suffix.lower() in {".txt", ".md", ".eml", ".json", ".jsonl", ".csv", ".vtt", ".srt"}:
         try:
             sample_text = path.read_text(encoding="utf-8", errors="ignore")[:4000]
         except Exception:
