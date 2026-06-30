@@ -795,6 +795,17 @@ def seed_default_corrections(store: "FeedbackStore") -> int:
     except Exception:  # pragma: no cover - seed module must never break init
         pass
 
+    # Universal noise-suppression gate (rate-card / materials-catalog rows and
+    # rate-label-as-person). Lazy import; a seed failure must never break init.
+    try:
+        from app.core.noise_suppression_seed import noise_gate_corrections
+
+        for corr in noise_gate_corrections():
+            store.add(corr)
+            seeded += 1
+    except Exception:  # pragma: no cover - seed module must never break init
+        pass
+
     return seeded
 
 

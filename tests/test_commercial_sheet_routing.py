@@ -124,31 +124,42 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
     pricing = [a for a in atoms if a.atom_type == AtomType.pricing_assumption]
     assert pricing
-    # Catalogs / rate cards emit one atom PER ROW (every line is a first-class
-    # fact the heads + reconciliation must see — e.g. to check a quoted price
-    # against the catalog), PLUS a single rollup summary atom that the PM-facing
-    # pricing_rollup packet renders. So: 2 rows + 1 summary = 3 atoms.
-    assert len(atoms) == 3
+    # Master catalogs fold to ONE summary atom — per-row emission was the #010063
+    # flood (300+ pricing_assumption atoms). Full matrix lives in value.rows.
+    assert len(atoms) == 1
     summary = atoms[0]
     assert summary.atom_type == AtomType.pricing_assumption
     assert summary.value.get("is_summary") is True
     assert "pricing_rollup" in (summary.review_flags or [])
     assert summary.value["line_count"] == 2
-    # Rows preserved losslessly in the rollup for drill-down, with money keys.
     folded = summary.value["rows"]
     assert len(folded) == 2
     folded_keys = {k for r in folded for k in r["money_keys"]}
     assert "money:661" in folded_keys and "money:339" in folded_keys
-    # The rollup's own aggregate money keys cover the $-range (lo/hi).
     assert "money:661" in (summary.entity_keys or [])
     assert "money:339" in (summary.entity_keys or [])
-    # The two granular rows are real per-row atoms (not is_summary), each
-    # carrying its SKU text and its own money key.
-    rows = [a for a in pricing if not a.value.get("is_summary")]
-    assert len(rows) == 2
-    assert any("CAT6 Plenum" in (a.raw_text or "") for a in rows)
-    row_keys = {k for a in rows for k in (a.entity_keys or [])}
-    assert "money:661" in row_keys and "money:339" in row_keys
+    assert any("CAT6 Plenum" in (r.get("text") or r.get("label") or "") for r in folded)
+
+
+def test_rate_card_emits_summary_only(tmp_path) -> None:
+    """Per-country rate card → ONE rollup atom, not one atom per country row."""
+    path = tmp_path / "Deal_Kit.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SELL RATES"
+    ws.append(["Country", "Request", "Networking L1 Technician 2 hr. min", "Networking L1 Technician 4hr. Min."])
+    ws.append(["Indonesia", 0.75, 73.5, 69])
+    ws.append(["United Arab Emirates", 1.15, 73.0, 73.0])
+    ws.append(["Hong Kong", 1.5, 147, 138])
+    wb.save(path)
+
+    atoms = _atoms(path)
+    assert len(atoms) == 1
+    (summary,) = atoms
+    assert summary.value.get("is_summary") is True
+    assert summary.value.get("line_count") == 3
+    assert len(summary.value.get("rows") or []) == 3
+    assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
 
 
 # ── pure backing data is dropped (but never silently) ───────────────

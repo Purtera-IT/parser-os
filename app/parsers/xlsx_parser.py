@@ -293,6 +293,51 @@ def _is_money_number(value: Any) -> bool:
     )
 
 
+def _rate_card_value_columns(rows: list[list[Any]]) -> set[int]:
+    """Numeric rate columns on a per-country labor rate table.
+
+    Rate-card sheets label columns ``Networking L1 Technician 2 hr. min`` —
+    not ``$ Cost`` — so :func:`_money_columns` returns empty and the
+    commercial emitter would emit nothing, triggering the coverage backstop
+    that re-floods scope. This keys on the universal table shape: a
+    ``Country`` header + technician/hour/min columns with numeric cells.
+    """
+    hdr_i = _first_nonblank_header_row(rows)
+    if hdr_i is None:
+        return set()
+    hdr = [str(c or "").strip().lower() for c in rows[hdr_i]]
+    if not any(h == "country" or h.startswith("country") for h in hdr):
+        return set()
+    cols: set[int] = set()
+    for idx, h in enumerate(hdr):
+        if not h:
+            continue
+        if re.search(
+            r"technician|hr\.?\s*min|hour\s+minimum|networking\s+l[12]|^request$",
+            h,
+            re.I,
+        ):
+            cols.add(idx)
+    if cols:
+        return cols
+    # Fallback: columns after Country with mostly-numeric data rows.
+    data = [
+        r for r in rows[hdr_i + 1 :]
+        if any(str(c or "").strip() for c in r)
+    ]
+    if len(data) < 2:
+        return set()
+    ncols = max(len(r) for r in data)
+    for ci in range(1, ncols):
+        nums = sum(
+            1 for r in data
+            if ci < len(r) and _is_money_number(r[ci])
+        )
+        if nums >= max(2, int(0.6 * len(data))):
+            cols.add(ci)
+    return cols
+
+
 def _money_columns(rows: list[list[Any]]) -> set[int]:
     """Column indices whose header names a money concept (% columns excluded)."""
     cols: set[int] = set()
@@ -1653,6 +1698,13 @@ class XlsxParser(BaseParser):
                 backstop: list[EvidenceAtom] = []
                 for sh in sheets:
                     rws = sh.get("rows") or []
+                    # Never undo an intentional router decision: a sheet the
+                    # classifier sent to COMMERCIAL or DROP was processed on
+                    # purpose (rate card / catalog / helper). Recovering it as
+                    # generic scope_item atoms was the #010063 flood.
+                    cl = classify_sheet(sh.get("name") or "", rws)
+                    if cl.destination is not SheetDestination.SCOPE:
+                        continue
                     nonempty = [r for r in rws if any(str(c or "").strip() for c in r)]
                     if len(nonempty) >= 3:
                         backstop.extend(self._emit_generic_rows(
@@ -2723,17 +2775,18 @@ class XlsxParser(BaseParser):
             else AtomType.pricing_assumption
         )
 
-        # EVERY money-bearing row becomes its own atom, on every role — a rate
-        # card / catalog line is a first-class fact (the heads + reconciliation
-        # check quoted prices against it), so it must be a real atom, not hidden
-        # behind a summary. RATE_CARD / CATALOG / REFERENCE sheets ADDITIONALLY
-        # get a rollup summary atom (``collapse_to_summary``): the PM-facing
-        # pricing_rollup packet renders one "N lines, $lo-$hi" line from its
-        # folded ``value.rows``. FINANCIAL_SUMMARY sheets emit per-row only (no
-        # rollup — the granular lines are the deal economics the PM reads).
+        # RATE_CARD / CATALOG are master reference pricing — NOT deal scope. They
+        # fold into ONE rollup summary atom (``collapse_to_summary``) whose
+        # ``value.rows`` carries the full matrix for drill-down / reconciliation.
+        # Per-row ``pricing_assumption`` atoms from a 300-line catalog were the
+        # #1 accuracy killer (inflated totals, drowned real deal pricing, tanked
+        # grades). FINANCIAL_SUMMARY sheets emit per-row atoms — those ARE the
+        # deal economics the PM reads.
         collapse_to_summary = role is not SheetRole.FINANCIAL_SUMMARY
 
         money_cols = _money_columns(rows)
+        if role is SheetRole.RATE_CARD and not money_cols:
+            money_cols = _rate_card_value_columns(rows)
         atoms: list[EvidenceAtom] = []
         all_values: list[float] = []
         folded_rows: list[dict[str, Any]] = []
@@ -2832,21 +2885,18 @@ class XlsxParser(BaseParser):
             ).strip()[:300]
 
             if collapse_to_summary:
-                # Drill-down payload folded into the rollup atom too — the
-                # PM-facing pricing_rollup packet renders one "N lines, $lo-$hi"
-                # summary from it. The per-row atoms below are ALSO emitted (a
-                # rate card / catalog line is a first-class fact the heads and
-                # reconciliation must see — e.g. to check a quoted price against
-                # the catalog), so the rows are no longer hidden behind the
-                # summary. No cap: every line becomes its own atom.
+                # Fold into the rollup — summary-only emission for rate cards /
+                # catalogs. No per-row atoms (the flood that broke #010063).
                 folded_rows.append(
                     {
                         "row": row_idx + 1,
                         "label": label,
+                        "text": row_text,
                         "money_keys": money_keys,
                         "cells": [c for c in cells if c],
                     }
                 )
+                continue
 
             atom_id = stable_id(
                 "atm", artifact_id, atom_type.value, sheet_name, row_idx
@@ -2859,11 +2909,6 @@ class XlsxParser(BaseParser):
                 locator={
                     "sheet": sheet_name,
                     "row": row_idx + 1,
-                    # Every atom carries a breadcrumb — uniform with the
-                    # financial-summary / scope emitters and raw_table_row. The
-                    # running category divider (e.g. "CAT6…") becomes the
-                    # sub-section so rows group as Materials > CAT6…; absent one,
-                    # the breadcrumb is the sheet itself (never blank).
                     "section_path": (
                         [sheet_name] + ([current_section] if current_section else [])
                         if sheet_name else []
@@ -2929,7 +2974,8 @@ class XlsxParser(BaseParser):
             values=all_values,
             folded_rows=folded_rows,
         )
-        return [summary, *atoms]
+        # Summary-only: one atom per reference sheet, full matrix in value.rows.
+        return [summary]
 
     def _commercial_summary_atom(
         self,

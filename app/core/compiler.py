@@ -642,6 +642,33 @@ def compile_project(
             f"atom(s) (e.g. whole-sheet drops) to the suppressed sidecar"
         )
 
+    # Email threading: each .eml is a separate artifact, so a short reply
+    # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
+    # Reconstruct the conversation across files (RFC In-Reply-To/References,
+    # subject-norm fallback) and stamp every atom with its thread position +
+    # the gist of the message it replies to. Purely additive: no atom is
+    # removed, retyped, or re-id'd here — runs before dedup so the surviving
+    # copy of a quoted/duplicated line keeps its thread context.
+    with telemetry.stage("email_threading", input_count=len(atoms)) as stage:
+        thread_summary: dict = {}
+        try:
+            from app.core.email_threading import thread_emails
+
+            atoms, thread_summary = thread_emails(atoms, project_id=resolved_project_id)
+            tc = int(thread_summary.get("thread_count", 0))
+            mm = int(thread_summary.get("multi_message_threads", 0))
+            mc = int(thread_summary.get("threaded_message_count", 0))
+            if mc:
+                warnings.append(
+                    f"INFO: email_threading linked {mc} email(s) into {tc} "
+                    f"thread(s) ({mm} multi-message)"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: email_threading failed: {type(exc).__name__}: {exc}"
+            )
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # Register {artifact_id: Path} with the vision module so its leaf
     # fitz.open() calls — invoked from enrich_entities via atom
     # source_refs, which only carry basenames — can resolve to the
@@ -1186,6 +1213,38 @@ def compile_project(
                 ),
             )
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
+    # Noise suppression (learning-loop gate): divert reference/template atoms
+    # (master rate-card / materials-catalog rows, rate-label-as-person) out of
+    # scope using the store-only ``atom_noise_admission`` gate. Guess-free and
+    # opt-in (SOWSMITH_NOISE_SUPPRESSION); a no-op byte-for-byte when disabled,
+    # no store is wired, or the store has nothing confident to say. Runs after
+    # dedup so the gate sees canonical atoms, and before packetization /
+    # scorecards so suppressed noise never inflates totals or stakeholder counts.
+    with telemetry.stage("noise_suppression", input_count=len(atoms)) as stage:
+        try:
+            from app.core.noise_suppression import suppress_noise_atoms
+
+            before_noise_atoms = list(atoms)
+            atoms, dropped_noise = suppress_noise_atoms(
+                atoms, project_id=resolved_project_id
+            )
+            if dropped_noise:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_noise_atoms, atoms,
+                        stage="noise_suppression",
+                        reason="reference/template content (rate-card / catalog row or rate-label-as-person), not deal scope",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: noise_suppression diverted {len(dropped_noise)} "
+                    f"reference/template atom(s) out of scope"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: noise_suppression failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(atoms))
 
     # v53 SMART CONFIDENCE — recalibrate every atom from hardcoded

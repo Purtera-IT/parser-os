@@ -121,3 +121,18 @@ def test_data_header_overrides_rate_code_density():
     ]
     c = classify_sheet("Install Plan", rows)
     assert c.suppress is False
+
+
+def test_country_rate_card_table_suppressed_by_content():
+    """Per-country technician rate matrix — the #010063 Deal Kit shape."""
+    rows = [
+        ["Country", "Request", "Networking L1 Technician 2 hr. min", "Networking L1 Technician 4hr. Min."],
+        ["Indonesia", 0.75, 73.5, 69],
+        ["United Arab Emirates", 1.15, 73.0, 73.0],
+        ["Hong Kong", 1.5, 147, 138],
+        ["Brazil", 1.25, 79.4, 79.4],
+        ["South Africa", 0.8, 50.8, 50.8],
+    ]
+    c = classify_sheet("Labor Rates", rows)
+    assert c.role is SheetRole.RATE_CARD
+    assert c.suppress is True

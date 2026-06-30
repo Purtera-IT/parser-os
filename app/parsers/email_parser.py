@@ -96,6 +96,76 @@ def _extract_email_text(path: Path) -> str:
     return content
 
 
+# Subject prefixes stripped to find the conversation root: Re:, Fwd:, FW:,
+# Aw: (German), Rv: (Spanish/Italian) — repeated, in any case. The HubSpot deal
+# number prefix (e.g. "010065") is KEPT: it is a strong, deliberate thread key.
+_SUBJECT_PREFIX_RE = re.compile(r"^\s*(re|fwd?|fw|aw|rv|tr|wg)\s*(\[\d+\])?\s*:\s*", re.IGNORECASE)
+_MSGID_RE = re.compile(r"<[^>]+>")
+
+
+def normalize_email_subject(subject: str) -> str:
+    """Conversation key from a Subject line: strip reply/forward prefixes
+    (repeatedly), collapse whitespace, lowercase. Universal — no per-deal
+    vocabulary. ``"RE: Fwd: 010065 AP Swap"`` and ``"010065 AP Swap"`` map to
+    the same key so a whole back-and-forth threads together even when the
+    References headers are missing (common in exported / HubSpot .eml)."""
+    s = (subject or "").strip()
+    prev = None
+    # Strip stacked prefixes ("RE: FW: ...") until stable.
+    while s and s != prev:
+        prev = s
+        s = _SUBJECT_PREFIX_RE.sub("", s, count=1).strip()
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def parse_email_thread_headers(path: Path) -> dict[str, Any]:
+    """Extract RFC 5322 threading headers + ordering signal from an .eml.
+
+    Returns a dict with: ``message_id``, ``in_reply_to``, ``references`` (list
+    of message-ids, oldest→newest), ``subject``, ``subject_norm``, ``sender``,
+    ``date_raw``, ``date_epoch`` (float, 0.0 when unparseable). Safe: never
+    raises, returns ``{}`` for non-.eml or unreadable files."""
+    if path.suffix.lower() != ".eml":
+        return {}
+    try:
+        msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+    except Exception:  # pragma: no cover - unreadable
+        return {}
+
+    def _ids(raw: str | None) -> list[str]:
+        if not raw:
+            return []
+        return _MSGID_RE.findall(raw)
+
+    msg_id_list = _ids(msg.get("message-id"))
+    in_reply_to_list = _ids(msg.get("in-reply-to"))
+    references = _ids(msg.get("references"))
+    subject = str(msg.get("subject") or "").strip()
+    sender = str(msg.get("from") or "").strip()
+
+    date_raw = str(msg.get("date") or "").strip()
+    date_epoch = 0.0
+    if date_raw:
+        try:
+            from email.utils import parsedate_to_datetime
+
+            dt = parsedate_to_datetime(date_raw)
+            if dt is not None:
+                date_epoch = dt.timestamp()
+        except Exception:
+            date_epoch = 0.0
+    return {
+        "message_id": msg_id_list[0] if msg_id_list else "",
+        "in_reply_to": in_reply_to_list[0] if in_reply_to_list else "",
+        "references": references,
+        "subject": subject,
+        "subject_norm": normalize_email_subject(subject),
+        "sender": sender,
+        "date_raw": date_raw,
+        "date_epoch": date_epoch,
+    }
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -239,6 +309,11 @@ class EmailParser(BaseParser):
         if not parts:
             return None
         text = " | ".join(parts)
+        # Threading metadata: carried on the header atom so the compiler's
+        # email_threading stage can group this message into its conversation
+        # (RFC In-Reply-To / References, subject_norm fallback) and propagate
+        # context to every atom from this artifact. Purely additive.
+        thread_meta = parse_email_thread_headers(path)
         src = SourceRef(
             id=stable_id("src", artifact_id, "email_header"),
             artifact_id=artifact_id,
@@ -255,7 +330,7 @@ class EmailParser(BaseParser):
             atom_type=AtomType.scope_item,
             raw_text=text,
             normalized_text=normalize_text(text),
-            value={"kind": "email_header", **values},
+            value={"kind": "email_header", **values, "email_thread_meta": thread_meta},
             entity_keys=[],
             source_refs=[src],
             authority_class=AuthorityClass.customer_current_authored,
