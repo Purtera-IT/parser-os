@@ -53,8 +53,10 @@ _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("street_address", ("street address", "physical address", "site address", "address", "street", "addr")),
     # Facility / building name
     ("facility_name", ("facility name", "facility", "site name", "location name", "building name", "premises name", "store name", "name", "location", "use", "building")),
-    # City/state
-    ("city_state", ("city/state", "city, state", "city / state", "city", "state", "region")),
+    # City / state — separate columns BEFORE combined city_state so both can map.
+    ("city", ("city", "town", "municipality")),
+    ("state", ("state", "st", "province")),
+    ("city_state", ("city/state", "city, state", "city / state", "region")),
     # MDF/IDF closet
     ("mdf_idf", ("mdf/idf", "mdf / idf", "mdf", "idf", "closet", "tr ", "main distribution", "telecom room")),
     # Access window / hours
@@ -91,6 +93,8 @@ _ROSTER_HEADER_PRESENCE_SIGNALS = (
     {"site_id", "street_address"},
     {"facility_name", "street_address"},
     {"site_id", "mdf_idf"},
+    {"facility_name", "city"},
+    {"street_address", "city"},
 )
 
 
@@ -133,6 +137,8 @@ class SiteRosterRow:
     phone: str | None = None
     email: str | None = None
     city_state: str | None = None
+    city: str | None = None
+    state: str | None = None
     zip: str | None = None
     sqft: str | None = None
     occupancy: str | None = None
@@ -154,6 +160,8 @@ class SiteRosterRow:
             "phone": self.phone,
             "email": self.email,
             "city_state": self.city_state,
+            "city": self.city,
+            "state": self.state,
             "zip": self.zip,
             "sqft": self.sqft,
             "occupancy": self.occupancy,
@@ -536,6 +544,26 @@ def extract_site_roster(
             extras.append((col_name, val))
 
         confidence = 0.85 if cells.get("site_id") else 0.6
+
+        from app.core.address_parse import enrich_location_fields
+
+        loc = enrich_location_fields(
+            street_address=cells.get("street_address"),
+            city=cells.get("city"),
+            state=cells.get("state"),
+            zip_code=cells.get("zip"),
+            city_state=cells.get("city_state"),
+            facility_name=cells.get("facility_name"),
+        )
+        if loc["street_address"]:
+            cells["street_address"] = loc["street_address"]
+        if loc["city"]:
+            cells["city"] = loc["city"]
+        if loc["state"]:
+            cells["state"] = loc["state"]
+        if loc["zip"]:
+            cells["zip"] = loc["zip"]
+
         out.append(
             SiteRosterRow(
                 row_index=row_index,
@@ -549,6 +577,8 @@ def extract_site_roster(
                 phone=cells.get("phone"),
                 email=cells.get("email"),
                 city_state=cells.get("city_state"),
+                city=cells.get("city"),
+                state=cells.get("state"),
                 zip=cells.get("zip"),
                 sqft=cells.get("sqft"),
                 occupancy=cells.get("occupancy"),

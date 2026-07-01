@@ -4805,6 +4805,29 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         "physical_site",
     }
 
+    def _emit_site_key_from_value(atom: Any) -> bool:
+        """Attach ``site:<slug>`` from structured ``value.site`` / ``site_id`` fields."""
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            return False
+        site_ref = (
+            val.get("site")
+            or val.get("site_id")
+            or val.get("location")
+            or val.get("facility")
+        )
+        if not isinstance(site_ref, str) or not site_ref.strip():
+            return False
+        slug = re.sub(r"[^a-z0-9]+", "_", site_ref.strip().lower()).strip("_")
+        if not slug:
+            return False
+        target = f"site:{slug}"
+        existing = list(getattr(atom, "entity_keys", []) or [])
+        if target in existing:
+            return False
+        atom.entity_keys = sorted(set(existing) | {target})
+        return True
+
     def _emit_one_site_key_from_value(atom: Any) -> bool:
         """v56: for atoms in _SKIP_ENRICHMENT_TYPES that have a
         ``value.site_id`` (physical_site rows specifically), ensure the
@@ -4848,6 +4871,13 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     atoms_enriched += 1
                     total_keys_added += 1
             continue
+
+        # Structured site reference on task / site note atoms (no regex guessing).
+        if _atype_str in {"task", "site_implementation_note"}:
+            if _emit_site_key_from_value(atom):
+                atoms_enriched += 1
+                total_keys_added += 1
+                continue
 
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""

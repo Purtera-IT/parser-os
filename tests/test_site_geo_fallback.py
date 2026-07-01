@@ -34,18 +34,50 @@ def test_santa_fe_anchor_emits_physical_site() -> None:
     assert site.value["city"] == "Santa Fe"
     assert site.value["state"] == "NM"
     assert site.value["zip"] == "87506"
-    assert site.value["site_id"] == "santa_fe_87506"
+    assert site.value["site_id"] == "santa_fe_nm_87506"
     assert site.value["inferred"] is True
-    assert "site:santa_fe_87506" in site.entity_keys
+    assert "site:santa_fe_nm_87506" in site.entity_keys
     assert "geo_fallback_site" in site.review_flags
 
 
-def test_no_fallback_when_real_site_exists() -> None:
+def test_no_fallback_when_two_structured_sites_exist() -> None:
     atoms = [
-        _Atom("physical_site", "Memorial Hospital", value={"id": "MEM-01", "site_id": "MEM-01"}),
+        _Atom(
+            "physical_site",
+            "12575 Oakland Park Blvd, Highland Park, MI 48203",
+            value={
+                "id": "site-a",
+                "site_id": "site-a",
+                "street_address": "12575 Oakland Park Blvd",
+                "city": "Highland Park",
+                "state": "MI",
+                "zip": "48203",
+            },
+        ),
+        _Atom(
+            "physical_site",
+            "200 Main St, Detroit, MI 48201",
+            value={
+                "id": "site-b",
+                "site_id": "site-b",
+                "street_address": "200 Main St",
+                "city": "Detroit",
+                "state": "MI",
+            },
+        ),
+    ]
+    assert geo_fallback_sites(atoms, project_id="p") == []
+
+
+def test_fallback_still_runs_with_one_weak_site() -> None:
+    """MBrany class: one misparsed site must not block discovering more anchors."""
+    atoms = [
+        _Atom("physical_site", "Park BLvd. Highland Park, MI 48203", value={"id": "x", "site_id": "x"}),
         _Atom("open_question", "location Santa Fe, NM 87506"),
     ]
-    assert geo_fallback_sites(atoms, project_id="yonah") == []
+    out = geo_fallback_sites(atoms, project_id="yonah")
+    assert len(out) >= 1
+    assert any(a.value.get("city") == "Santa Fe" for a in out)
 
 
 def test_invalid_state_rejected() -> None:
@@ -54,7 +86,16 @@ def test_invalid_state_rejected() -> None:
     assert geo_fallback_sites(atoms, project_id="p") == []
 
 
-def test_dedup_by_zip() -> None:
+def test_dedup_by_address_not_just_zip() -> None:
+    atoms = [
+        _Atom("note", "12575 Oakland Park Blvd, Highland Park, MI 48203"),
+        _Atom("note", "200 Main St, Highland Park, MI 48203"),
+    ]
+    out = geo_fallback_sites(atoms, project_id="p")
+    assert len(out) == 2
+
+
+def test_dedup_same_address() -> None:
     atoms = [
         _Atom("note", "location Santa Fe, NM 87506 first mention"),
         _Atom("note", "again Santa Fe, NM 87506 second mention"),

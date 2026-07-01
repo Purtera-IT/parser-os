@@ -486,9 +486,12 @@ class DocxParser(BaseParser):
             field_map = map_columns_to_fields(header)
             roster_specific = {
                 "facility_name", "street_address", "mdf_idf",
-                "access_window", "escort_owner", "city_state",
+                "access_window", "escort_owner", "city_state", "city", "state",
             }
-            if not (set(field_map.values()) & roster_specific):
+            mapped = set(field_map.values())
+            has_name = "facility_name" in mapped
+            has_location = bool(mapped & {"street_address", "city", "state", "city_state"})
+            if not (mapped & roster_specific) and not (has_name and has_location):
                 return []
             roster_rows = extract_site_roster(
                 columns=header, rows=data_rows, surrounding_text=surrounding_text
@@ -578,6 +581,8 @@ class DocxParser(BaseParser):
                         "contact": site_row.contact,
                         "phone": site_row.phone,
                         "email": site_row.email,
+                        "city": site_row.city,
+                        "state": site_row.state,
                         "city_state": site_row.city_state,
                         "zip": site_row.zip,
                         "notes": site_row.notes,
