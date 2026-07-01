@@ -227,6 +227,26 @@ def enrich_location_fields(
             if parsed.street_address:
                 street = parsed.street_address
 
+    # Re-parse when upstream already stamped a street token into city (MBrany-class).
+    if out_city and not _city_looks_valid(out_city):
+        for candidate in (street, facility_name):
+            if not candidate:
+                continue
+            parsed = parse_us_address_line(candidate)
+            if parsed.city and parsed.state and _city_looks_valid(parsed.city):
+                out_city, out_state = parsed.city, parsed.state
+                out_zip = out_zip or parsed.zip
+                if parsed.street_address:
+                    street = parsed.street_address
+                break
+        if not _city_looks_valid(out_city) and facility_name:
+            parsed = parse_us_address_line(facility_name)
+            if parsed.city and parsed.state and _city_looks_valid(parsed.city):
+                out_city, out_state = parsed.city, parsed.state
+                out_zip = out_zip or parsed.zip
+                if parsed.street_address:
+                    street = parsed.street_address
+
     return {
         "street_address": street,
         "city": out_city,

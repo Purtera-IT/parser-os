@@ -58,3 +58,15 @@ def test_enrich_separate_city_state_columns() -> None:
     )
     assert loc["city"] == "Highland Park"
     assert loc["state"] == "MI"
+
+
+def test_enrich_repairs_misparsed_city_from_facility_name() -> None:
+    loc = enrich_location_fields(
+        facility_name="Park BLvd. Highland Park, MI 48203",
+        city="Park BLvd. Highland Park",
+        state="MI",
+        zip_code="48203",
+    )
+    assert loc["city"] == "Highland Park"
+    assert loc["state"] == "MI"
+    assert loc["zip"] == "48203"
