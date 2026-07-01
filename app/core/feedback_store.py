@@ -806,6 +806,15 @@ def seed_default_corrections(store: "FeedbackStore") -> int:
     except Exception:  # pragma: no cover - seed module must never break init
         pass
 
+    try:
+        from app.core.parse_quality_seed import parse_quality_corrections
+
+        for corr in parse_quality_corrections():
+            store.add(corr)
+            seeded += 1
+    except Exception:  # pragma: no cover - seed module must never break init
+        pass
+
     return seeded
 
 

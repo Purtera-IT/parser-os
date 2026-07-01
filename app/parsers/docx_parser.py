@@ -100,6 +100,42 @@ CONSTRAINT_PATTERNS = STRONG_CONSTRAINT_PATTERNS + WEAK_CONSTRAINT_PATTERNS
 ASSUMPTION_PATTERNS = [r"\bassum(?:e|ption|ing)\b"]
 
 
+def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, Any]:
+    from app.core.address_parse import enrich_location_fields
+
+    loc = enrich_location_fields(
+        street_address=site_row.street_address,
+        city=site_row.city,
+        state=site_row.state,
+        zip_code=site_row.zip,
+        city_state=site_row.city_state,
+        facility_name=site_row.facility_name,
+    )
+    return {
+        "kind": "physical_site",
+        "id": sid or site_row.site_id,
+        "site_id": sid or site_row.site_id,
+        "name": site_row.facility_name,
+        "facility_name": site_row.facility_name,
+        "address": loc["street_address"] or site_row.street_address,
+        "street_address": loc["street_address"] or site_row.street_address,
+        "mdf_idf": site_row.mdf_idf,
+        "access_window": site_row.access_window,
+        "escort_owner": site_row.escort_owner,
+        "sqft": site_row.sqft,
+        "occupancy": site_row.occupancy,
+        "contact": site_row.contact,
+        "phone": site_row.phone,
+        "email": site_row.email,
+        "city": loc["city"] or site_row.city,
+        "state": loc["state"] or site_row.state,
+        "city_state": site_row.city_state,
+        "zip": loc["zip"] or site_row.zip,
+        "notes": site_row.notes,
+        "extras": dict(site_row.extra_fields),
+    }
+
+
 class DocxParser(BaseParser):
     parser_name = "docx"
     parser_version = "docx_parser_v1"
@@ -565,29 +601,7 @@ class DocxParser(BaseParser):
                     atom_type=AtomType.physical_site,
                     raw_text=row_text,
                     normalized_text=row_text.lower(),
-                    value={
-                        "kind": "physical_site",
-                        "id": sid or site_row.site_id,
-                        "site_id": sid or site_row.site_id,
-                        "name": site_row.facility_name,
-                        "facility_name": site_row.facility_name,
-                        "address": site_row.street_address,
-                        "street_address": site_row.street_address,
-                        "mdf_idf": site_row.mdf_idf,
-                        "access_window": site_row.access_window,
-                        "escort_owner": site_row.escort_owner,
-                        "sqft": site_row.sqft,
-                        "occupancy": site_row.occupancy,
-                        "contact": site_row.contact,
-                        "phone": site_row.phone,
-                        "email": site_row.email,
-                        "city": site_row.city,
-                        "state": site_row.state,
-                        "city_state": site_row.city_state,
-                        "zip": site_row.zip,
-                        "notes": site_row.notes,
-                        "extras": dict(site_row.extra_fields),
-                    },
+                    value=_enriched_physical_site_value(site_row, sid),
                     entity_keys=sorted(set(entity_keys)),
                     source_refs=[src],
                     receipts=[],
