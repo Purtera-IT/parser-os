@@ -232,3 +232,109 @@ def test_post_backfill_dedup_collapses_same_place_mints() -> None:
     ]
     assert len(phys) == 1
     assert phys[0].value["site_id"] == "HIGHLAND-PARK-MI-48203"
+
+
+def test_physical_site_dedup_prefers_address_over_name_only_alias() -> None:
+    from app.core.semantic_dedup import _dedupe_physical_site_atoms
+
+    class _Site:
+        atom_type = "physical_site"
+        source_refs = []
+        artifact_id = "art1"
+        review_flags = []
+
+        def __init__(self, value, raw_text, keys):
+            self.value = value
+            self.raw_text = raw_text
+            self.text = raw_text
+            self.entity_keys = keys
+
+    address_site = _Site(
+        {
+            "site_id": "PITTSBURGH-PA-15212",
+            "id": "PITTSBURGH-PA-15212",
+            "street_address": "100 S COMMONS STE 145",
+            "address": "100 S COMMONS STE 145",
+            "city": "PITTSBURGH",
+            "state": "PA",
+            "zip": "15212",
+            "name": "100 S COMMONS STE 145, PITTSBURGH, PA 15212",
+        },
+        "100 S COMMONS STE 145, PITTSBURGH, PA 15212",
+        ["site:pittsburgh_pa_15212"],
+    )
+    name_only = _Site(
+        {
+            "site_id": "GECKO-ROBOTICS-PITTSBURGH-OFFICE-WORKSHOP",
+            "id": "GECKO-ROBOTICS-PITTSBURGH-OFFICE-WORKSHOP",
+            "name": "gecko robotics pittsburgh office workshop",
+            "facility_name": "gecko robotics pittsburgh office workshop",
+        },
+        "Gecko Robotics requested assistance configuring a new Ubiquiti deployment for a new office/workshop location.",
+        ["site:gecko_robotics_pittsburgh_office_workshop"],
+    )
+
+    phys = [
+        a
+        for a in _dedupe_physical_site_atoms([name_only, address_site])
+        if str(getattr(a, "atom_type", "")).endswith("physical_site")
+        or getattr(a.atom_type, "value", "") == "physical_site"
+    ]
+
+    assert len(phys) == 1
+    assert phys[0].value["site_id"] == "PITTSBURGH-PA-15212"
+    assert phys[0].value["street_address"] == "100 S COMMONS STE 145"
+    assert "gecko robotics pittsburgh office workshop" in phys[0].value.get("aliases", [])
+
+
+def test_physical_site_dedup_keeps_authoritative_name_only_roster_site() -> None:
+    from app.core.semantic_dedup import _dedupe_physical_site_atoms
+
+    class _Ref:
+        filename = "customer_site_roster.xlsx"
+
+    class _Site:
+        atom_type = "physical_site"
+        artifact_id = "art1"
+        review_flags = []
+
+        def __init__(self, value, raw_text, keys, source_refs=None):
+            self.value = value
+            self.raw_text = raw_text
+            self.text = raw_text
+            self.entity_keys = keys
+            self.source_refs = source_refs or []
+
+    address_site = _Site(
+        {
+            "site_id": "PITTSBURGH-PA-15212",
+            "id": "PITTSBURGH-PA-15212",
+            "street_address": "100 S COMMONS STE 145",
+            "city": "PITTSBURGH",
+            "state": "PA",
+            "zip": "15212",
+            "name": "100 S COMMONS STE 145, PITTSBURGH, PA 15212",
+        },
+        "100 S COMMONS STE 145, PITTSBURGH, PA 15212",
+        ["site:pittsburgh_pa_15212"],
+    )
+    roster_site = _Site(
+        {
+            "site_id": "ATL-HQ-01",
+            "id": "ATL-HQ-01",
+            "name": "Atlanta HQ",
+            "facility_name": "Atlanta HQ",
+        },
+        "site roster row: ATL-HQ-01 Atlanta HQ",
+        ["site:atl_hq_01"],
+        [_Ref()],
+    )
+
+    phys = [
+        a
+        for a in _dedupe_physical_site_atoms([address_site, roster_site])
+        if str(getattr(a, "atom_type", "")).endswith("physical_site")
+        or getattr(a.atom_type, "value", "") == "physical_site"
+    ]
+
+    assert {p.value["site_id"] for p in phys} == {"PITTSBURGH-PA-15212", "ATL-HQ-01"}

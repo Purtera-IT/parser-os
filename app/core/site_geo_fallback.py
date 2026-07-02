@@ -172,15 +172,20 @@ def suppress_vendor_sites(
     """Drop ``physical_site`` atoms whose address is the vendor's own
     office / letterhead / billing address rather than a job site.
 
-    Semantic, content-derived (no vendor-name keyword list): each site's
-    address role is classified by a small local LLM. Safe by construction —
-    returns the atoms unchanged when:
+    Deterministic PurTera corporate-address ban runs first and applies even
+    when the banned address is the deal's only site (PurTera HQ is never a
+    job site). Semantic LLM suppression runs afterward. Safe by construction —
+    the LLM path returns the atoms unchanged when:
 
     * the LLM is disabled / unreachable (classify_role yields ``None``), or
     * fewer than two physical_site atoms exist (never remove the deal's only
-      locational anchor), or
+      locational anchor — except known PurTera vendor addresses above), or
     * suppression would remove *every* site (always keep at least one).
     """
+    from app.core.vendor_site_ban import drop_banned_vendor_physical_sites
+
+    atoms, det_dropped = drop_banned_vendor_physical_sites(atoms)
+
     # Route the address-role judgment through the universal decide() chokepoint.
     # Phase 2: the feedback store is not yet wired, so decide() is a transparent
     # pass-through to semantic_role.classify_role (same model, same instruction,
@@ -194,7 +199,7 @@ def suppress_vendor_sites(
 
     sites = [a for a in atoms if _atom_type_str(a) == "physical_site"]
     if len(sites) < 2:
-        return atoms, 0
+        return atoms, det_dropped
 
     scope = DecisionScope(deal_id=project_id or "")
     drop_ids: set[str] = set()
@@ -241,13 +246,13 @@ def suppress_vendor_sites(
             _stamp_decision(a, decision)
 
     if not drop_ids:
-        return atoms, 0
+        return atoms, det_dropped
     # Never strip the deal down to zero sites.
     if len(drop_ids) >= len(sites):
-        return atoms, 0
+        return atoms, det_dropped
 
     kept = [a for a in atoms if getattr(a, "id", None) not in drop_ids]
-    return kept, len(drop_ids)
+    return kept, det_dropped + len(drop_ids)
 
 
 def _existing_address_keys(atoms: list[Any]) -> set[str]:
@@ -290,6 +295,10 @@ def geo_fallback_sites(
             }
             addr_key = normalized_address_key(dedup_fields)
             if not addr_key or addr_key in seen_keys:
+                continue
+            from app.core.vendor_site_ban import is_purtera_vendor_address
+
+            if is_purtera_vendor_address(text=text_s):
                 continue
             seen_keys.add(addr_key)
 

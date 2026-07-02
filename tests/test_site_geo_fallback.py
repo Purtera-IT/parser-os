@@ -40,6 +40,20 @@ def test_santa_fe_anchor_emits_physical_site() -> None:
     assert "geo_fallback_site" in site.review_flags
 
 
+def test_hubspot_note_compact_state_zip_address_emits_physical_site() -> None:
+    atoms = [
+        _Atom("scope_item", "GECKO ROBOTICS 100 S COMMONS STE 145 PITTSBURGH, PA15212-5359")
+    ]
+    out = geo_fallback_sites(atoms, project_id="gecko")
+    assert len(out) == 1
+    site = out[0]
+    assert site.value["street_address"] == "100 S COMMONS STE 145"
+    assert site.value["city"] == "PITTSBURGH"
+    assert site.value["state"] == "PA"
+    assert site.value["zip"] == "15212"
+    assert "site:pittsburgh_pa_15212" in site.entity_keys
+
+
 def test_no_fallback_when_two_structured_sites_exist() -> None:
     atoms = [
         _Atom(

@@ -210,21 +210,52 @@ def _looks_complete_site_id(site_id: str) -> bool:
     return True
 
 
+def _physical_site_location_score(atom: Any) -> int:
+    """Higher means the atom carries a real-world location, not just a label."""
+    val = getattr(atom, "value", None) or {}
+    if not isinstance(val, dict):
+        return 0
+    street = str(val.get("street_address") or val.get("address") or "").strip()
+    city = str(val.get("city") or "").strip()
+    state = str(val.get("state") or "").strip()
+    zipc = str(val.get("zip") or val.get("postal_code") or "").strip()
+    if street and city and state:
+        return 4
+    if street and (city or state or zipc):
+        return 3
+    if street and re.search(r"\b\d{1,6}\b", street):
+        return 2
+    if city and state and zipc:
+        return 2
+    if city and state:
+        return 2
+    return 0
+
+
+def _is_authoritative_physical_site_atom(atom: Any) -> bool:
+    filename_blob = " ".join(
+        str(getattr(ref, "filename", "") or "") for ref in (getattr(atom, "source_refs", None) or [])
+    ).lower()
+    text_blob = str(getattr(atom, "raw_text", "") or "").lower()
+    flags = {str(f).lower() for f in (getattr(atom, "review_flags", None) or [])}
+    return bool(
+        "authoritative" in filename_blob
+        or "site_roster" in filename_blob
+        or "site roster" in filename_blob
+        or "site roster" in text_blob
+        or "kind=physical_site" in text_blob
+        or "site_roster" in flags
+    )
+
+
 def _physical_site_quality(atom: Any, canonical_id: str = "") -> tuple[int, int, float]:
     val = getattr(atom, "value", None) or {}
     if not isinstance(val, dict):
         val = {}
     sid = _physical_site_id(atom)
-    filename_blob = " ".join(
-        str(getattr(ref, "filename", "") or "") for ref in (getattr(atom, "source_refs", None) or [])
-    ).lower()
-    authoritative = int(
-        "authoritative" in filename_blob
-        or "site_roster" in filename_blob
-        or "site roster" in str(getattr(atom, "raw_text", "")).lower()
-        or "kind=physical_site" in str(getattr(atom, "raw_text", "")).lower()
-    )
+    authoritative = int(_is_authoritative_physical_site_atom(atom))
     exact_canonical = int(bool(canonical_id) and sid == canonical_id)
+    location_score = _physical_site_location_score(atom)
     rich_fields = sum(
         1 for k in (
             "facility_name", "name", "address", "street_address",
@@ -233,7 +264,15 @@ def _physical_site_quality(atom: Any, canonical_id: str = "") -> tuple[int, int,
         )
         if val.get(k)
     )
-    return (authoritative * 100 + exact_canonical * 50 + rich_fields, len(str(getattr(atom, "raw_text", "") or "")), _confidence(atom))
+    return (
+        location_score * 1000 + authoritative * 100 + exact_canonical * 50 + rich_fields,
+        len(str(getattr(atom, "raw_text", "") or "")),
+        _confidence(atom),
+    )
+
+
+def _has_structured_site_location(atom: Any) -> bool:
+    return _physical_site_location_score(atom) >= 2
 
 
 def _append_unique(target: list[Any], incoming: list[Any]) -> None:
@@ -373,6 +412,62 @@ def _merge_physical_site_values(winner: Any, loser: Any) -> None:
                     merged.append(x)
             wv[k] = merged
     winner.value = _clean_physical_site_value(wv)
+
+
+def _physical_site_alias_strings(atom: Any) -> list[str]:
+    val = getattr(atom, "value", None) or {}
+    if not isinstance(val, dict):
+        val = {}
+    out: list[str] = []
+    for field in ("facility_name", "name", "site_id", "id"):
+        raw = val.get(field)
+        if not isinstance(raw, str):
+            continue
+        s = raw.strip()
+        if s and len(s) <= 140 and s not in out:
+            out.append(s)
+    return out
+
+
+def _merge_physical_site_alias_metadata(winner: Any, alias_atom: Any) -> None:
+    """Attach a name-only site guess as metadata on the canonical location site."""
+    wv = getattr(winner, "value", None)
+    if not isinstance(wv, dict):
+        return
+    aliases = list(wv.get("aliases") or [])
+    names = list(wv.get("names") or [])
+    for alias in _physical_site_alias_strings(alias_atom):
+        if alias not in aliases:
+            aliases.append(alias)
+        if alias not in names:
+            names.append(alias)
+    if aliases:
+        wv["aliases"] = aliases
+    if names:
+        wv["names"] = names
+    winner.value = _clean_physical_site_value(wv)
+    _merge_atom_metadata(winner, alias_atom)
+
+
+def _pick_alias_merge_target(alias_atom: Any, candidates: list[Any]) -> Any | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    alias_blob = " ".join(_physical_site_alias_strings(alias_atom)).lower()
+    best: tuple[int, Any] | None = None
+    for cand in candidates:
+        val = getattr(cand, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        score = 0
+        for field in ("city", "state", "zip", "postal_code", "name", "facility_name"):
+            token = str(val.get(field) or "").strip().lower()
+            if token and token in alias_blob:
+                score += 1
+        if best is None or score > best[0]:
+            best = (score, cand)
+    return best[1] if best and best[0] > 0 else None
 
 
 def _is_hallucinated_physical_site_value(value: Any) -> bool:
@@ -583,6 +678,30 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         atoms = [a for a in atoms if id(a) not in dropped_ids]
         if not physical:
             return atoms
+
+    # If a real location-backed site exists, weak name-only prose guesses ("new
+    # office/workshop location") are aliases at best and should not become the
+    # canonical site shown to PMs. Authoritative roster-only rows still survive:
+    # some customer rosters carry site codes / facility names without addresses.
+    if any(_has_structured_site_location(a) for a in physical):
+        location_backed = [a for a in physical if _has_structured_site_location(a)]
+        name_only_ids = {
+            id(a)
+            for a in physical
+            if not _has_structured_site_location(a)
+            and not _is_authoritative_physical_site_atom(a)
+        }
+        if name_only_ids:
+            for alias_atom in [a for a in physical if id(a) in name_only_ids]:
+                target = _pick_alias_merge_target(alias_atom, location_backed)
+                if target is not None:
+                    _merge_physical_site_alias_metadata(target, alias_atom)
+            physical = [a for a in physical if id(a) not in name_only_ids]
+            atoms = [
+                a
+                for a in atoms
+                if _atom_type_value(a) != "physical_site" or id(a) not in name_only_ids
+            ]
 
     good_ids = [_physical_site_id(a) for a in physical if not _is_bad_physical_site_id(_physical_site_id(a))]
     complete_ids = sorted({sid for sid in good_ids if _looks_complete_site_id(sid)}, key=len)

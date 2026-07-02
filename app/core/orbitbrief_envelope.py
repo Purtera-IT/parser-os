@@ -1214,6 +1214,13 @@ def _build_indexes(
             if isinstance(key, str) and key.startswith("site:")
         ]
         if atom.atom_type.value == "task":
+            try:
+                from app.core.task_tier_classifier import is_quote_line_task_atom
+
+                if not is_quote_line_task_atom(atom):
+                    continue
+            except Exception:
+                pass
             for slug in site_slugs_for_atom:
                 tasks_by_site[slug].append(atom.id)
         for key in atom.entity_keys:

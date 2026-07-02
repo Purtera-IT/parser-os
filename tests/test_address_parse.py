@@ -33,6 +33,17 @@ def test_santa_fe_bare_city_line() -> None:
     assert parsed.zip == "87506"
 
 
+def test_hubspot_note_address_without_state_zip_space() -> None:
+    parsed = parse_us_address_line(
+        "GECKO ROBOTICS 100 S COMMONS STE 145 PITTSBURGH, PA15212-5359"
+    )
+    assert parsed.street_address == "100 S COMMONS STE 145"
+    assert parsed.city == "PITTSBURGH"
+    assert parsed.state == "PA"
+    assert parsed.zip == "15212"
+    assert parsed.aliases == ("GECKO ROBOTICS",)
+
+
 def test_city_state_field_split() -> None:
     city, state = parse_city_state_field("Highland Park, MI")
     assert city == "Highland Park"

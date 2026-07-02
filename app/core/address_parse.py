@@ -31,7 +31,9 @@ _HOUSE_NUMBER_RE = re.compile(r"^\d{1,6}\b")
 # Embedded or line-ending ``City, ST ZIP`` (not greedy-left across the whole line).
 _CITY_STATE_ZIP_RE = re.compile(
     r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,?\s+"
-    r"([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b"
+    # HubSpot notes are often typed as "PITTSBURGH, PA15212-5359" (no
+    # space between state and ZIP). Accept both "PA 15212" and "PA15212".
+    r"([A-Z]{2})\s*(\d{5})(?:-\d{4})?\b"
 )
 
 
@@ -41,6 +43,7 @@ class ParsedAddress:
     city: str | None = None
     state: str | None = None
     zip: str | None = None
+    aliases: tuple[str, ...] = ()
 
     def has_location(self) -> bool:
         return bool(
@@ -52,6 +55,52 @@ class ParsedAddress:
 def _clean(part: str | None) -> str | None:
     s = re.sub(r"\s+", " ", (part or "").strip())
     return s or None
+
+
+def _clean_leading_alias(part: str | None) -> str | None:
+    alias = _clean(part)
+    if not alias:
+        return None
+    alias = re.sub(r"^(?:hubspot\s+note|note|site|location)\s*:\s*", "", alias, flags=re.I).strip(" ,-:")
+    if not alias:
+        return None
+    tokens = alias.split()
+    if not 1 <= len(tokens) <= 6:
+        return None
+    lowered = {t.lower().strip(".,:;") for t in tokens}
+    if lowered <= {"hubspot", "note", "site", "location", "at", "the"}:
+        return None
+    if any(t.lower().rstrip(".") in _STREET_SUFFIXES for t in tokens):
+        return None
+    if re.search(r"[@/]|\b(?:http|www)\b", alias, flags=re.I):
+        return None
+    return alias
+
+
+def _split_leading_alias_and_street(part: str | None) -> tuple[str | None, str | None]:
+    s = _clean(part)
+    if not s:
+        return None, None
+    m = re.search(r"\b\d{1,6}\b", s)
+    if m and m.start() > 0:
+        alias = _clean_leading_alias(s[: m.start()])
+        return s[m.start():].strip(" ,"), alias
+    return s, None
+
+
+def _clean_street(part: str | None) -> str | None:
+    """Clean a street prefix and drop note/company lead-in before house number.
+
+    HubSpot note titles often concatenate the customer name before the address:
+    ``GECKO ROBOTICS 100 S COMMONS STE 145 PITTSBURGH, PA15212``. The city/ST/ZIP
+    anchor correctly identifies Pittsburgh, but the left prefix contains the
+    company name. Keep the address from the first house number onward.
+    """
+    s = _clean(part)
+    if not s:
+        return None
+    street, _alias = _split_leading_alias_and_street(s)
+    return street
 
 
 def _city_looks_valid(city: str) -> bool:
@@ -79,7 +128,7 @@ def _split_prefix_into_street_and_city(prefix: str) -> tuple[str | None, str | N
     if "," in prefix:
         left, right = prefix.rsplit(",", 1)
         city = _clean(right)
-        street = _clean(left)
+        street = _clean_street(left)
         if city and _city_looks_valid(city):
             return street, city
     words = prefix.split()
@@ -90,8 +139,8 @@ def _split_prefix_into_street_and_city(prefix: str) -> tuple[str | None, str | N
             continue
         if n == 1 and street and not _HOUSE_NUMBER_RE.search(street):
             continue
-        return _clean(street), city
-    return prefix, None
+        return _clean_street(street), city
+    return _clean_street(prefix), None
 
 
 def _parse_trailing_city_state_no_zip(street: str) -> ParsedAddress | None:
@@ -123,11 +172,13 @@ def _parsed_from_city_state_zip_match(
     prefix = raw[: m.start()].strip().rstrip(" ,")
 
     if _city_looks_valid(city_guess):
+        street, alias = _split_leading_alias_and_street(prefix)
         return ParsedAddress(
-            street_address=_clean(prefix) or None,
+            street_address=street or None,
             city=city_guess,
             state=state,
             zip=zipc,
+            aliases=(alias,) if alias else (),
         )
 
     combined = f"{prefix} {city_guess}".strip() if prefix else city_guess

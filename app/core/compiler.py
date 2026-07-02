@@ -1122,14 +1122,34 @@ def compile_project(
     # literal "?" detection. Deterministic, no LLM.
     with telemetry.stage("open_question_resolution", input_count=len(atoms)) as stage:
         resolved_q = 0
+        dropped_noise_q = []
         try:
-            from app.core.open_question_resolution import resolve_open_questions
+            from app.core.open_question_resolution import (
+                filter_unhelpful_open_questions,
+                resolve_open_questions,
+            )
             resolved_q = resolve_open_questions(atoms)
             if resolved_q:
                 warnings.append(f"INFO: open_question_resolution flagged {resolved_q} already-answered question(s)")
+            before_q_filter = list(atoms)
+            atoms, dropped_noise_q = filter_unhelpful_open_questions(atoms)
+            if dropped_noise_q:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_q_filter,
+                        atoms,
+                        stage="open_question_quality_filter",
+                        reason="literal transcript/dialogue question is not a PM-actionable gap",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: open_question_quality_filter diverted {len(dropped_noise_q)} "
+                    f"non-actionable question atom(s)"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: open_question_resolution failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=resolved_q)
+        telemetry.end_stage(stage, output_count=resolved_q + len(dropped_noise_q))
 
     with telemetry.stage("site_geo_fallback", input_count=len(atoms)) as stage:
         added_geo = 0
@@ -1249,6 +1269,26 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # HubSpot notes / short email bullets often carry quote-level work units
+    # before a SOW exists, but the type classifier may leave them as scope_item
+    # or open_question because they are terse or phrased as a request.
+    with telemetry.stage("task_atom_backfill", input_count=len(atoms)) as stage:
+        task_backfill_n = 0
+        try:
+            from app.core.task_atom_backfill import backfill_quote_task_atoms
+
+            atoms, task_backfill_n = backfill_quote_task_atoms(
+                atoms, project_id=resolved_project_id
+            )
+            if task_backfill_n:
+                warnings.append(
+                    f"INFO: task_atom_backfill minted {task_backfill_n} quote-level task atom(s) "
+                    f"from notes/email scope"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: task_atom_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=task_backfill_n)
+
     # Single-facility deals: tasks often parse with device:* keys only.
     # After dedup the roster is final — link orphans to the one confirmed site.
     with telemetry.stage("site_task_anchor", input_count=len(atoms)) as stage:
@@ -1265,6 +1305,22 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: site_task_anchor failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=linked_site)
+
+    # Parent vs child task tiers — quote-level work units vs runbook steps.
+    with telemetry.stage("task_tier_classification", input_count=len(atoms)) as stage:
+        tier_stamped = 0
+        try:
+            from app.core.task_tier_classifier import classify_task_tiers
+
+            atoms, tier_stamped = classify_task_tiers(atoms)
+            if tier_stamped:
+                warnings.append(
+                    f"INFO: task_tier_classification stamped {tier_stamped} task atom(s) "
+                    f"with parent/child quote-line tiers"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: task_tier_classification failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=tier_stamped)
 
     # Noise suppression (learning-loop gate): divert reference/template atoms
     # (master rate-card / materials-catalog rows, rate-label-as-person) out of
@@ -1388,6 +1444,26 @@ def compile_project(
                 warnings.append(
                     f"INFO: post_backfill physical_site dedup collapsed "
                     f"{phys_before} -> {phys_after} site atom(s)"
+                )
+            before_post_vendor = list(atoms)
+            from app.core.site_geo_fallback import suppress_vendor_sites as _suppress_vendor_sites
+
+            atoms, post_vendor_dropped = _suppress_vendor_sites(
+                atoms, project_id=resolved_project_id
+            )
+            if post_vendor_dropped:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_post_vendor,
+                        atoms,
+                        stage="entity_resolution",
+                        reason="vendor / selling-party letterhead address, not a job site",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: post_backfill suppressed {post_vendor_dropped} "
+                    f"vendor/letterhead address(es) misread as job sites"
                 )
         except Exception as exc:
             warnings.append(

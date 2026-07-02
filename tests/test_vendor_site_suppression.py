@@ -21,6 +21,7 @@ from app.core.schemas import (
     SourceRef,
 )
 from app.core.site_geo_fallback import geo_fallback_sites, suppress_vendor_sites
+from app.core.vendor_site_ban import is_banned_vendor_physical_site, is_purtera_vendor_address
 
 
 def _site(atom_id: str, *, raw_text: str, address: str = "") -> EvidenceAtom:
@@ -89,6 +90,11 @@ _VENDOR = _site(
     address="11720 Amber Park Dr #350, Alpharetta, GA 30009",
 )
 _JOBSITE = _site("atm_job", raw_text="Santa Fe, NM 87506", address="Santa Fe, NM 87506")
+_OTHER_VENDOR = _site(
+    "atm_other_vendor",
+    raw_text="Acme Field Services, 500 Market St, San Francisco, CA 94105",
+    address="500 Market St, San Francisco, CA 94105",
+)
 
 
 def _fake_classifier(vendor_substr: str, *, match_context: bool = False):
@@ -117,30 +123,39 @@ def test_vendor_address_dropped_realsite_kept(monkeypatch):
     assert "atm_job" in kept_ids
 
 
-def test_geo_minted_vendor_site_dropped_via_source_context(monkeypatch):
-    # Real-world flow (the Yonah bug): the vendor letterhead and the genuine
-    # site both arrive only as bare "City, ST ZIP" text inside prose atoms.
-    # geo_fallback mints BOTH as physical_site atoms; the discriminating signal
-    # (the company name) survives only in source_context. Suppression must read
-    # that context to drop the letterhead site and keep the real one.
-    monkeypatch.setattr(
-        semantic_role, "classify_role", _fake_classifier("PurTera", match_context=True)
-    )
+def test_geo_minted_vendor_site_not_minted():
+    # geo_fallback must not mint PurTera letterhead as a physical_site.
     vendor_line = _text_atom(
         "atm_v", "PurTera LLC 11720 Amber Park Dr #350, Alpharetta, GA 30009 | DCW"
     )
     site_line = _text_atom("atm_s", "Project location Santa Fe, NM 87506")
 
     minted = geo_fallback_sites([vendor_line, site_line], project_id="p")
-    assert len(minted) == 2  # both anchors became physical_site atoms
-    alpha = next(m for m in minted if m.value.get("zip") == "30009")
-    assert "PurTera" in alpha.value.get("source_context", "")
+    assert len(minted) == 1
+    assert minted[0].value.get("zip") == "87506"
 
-    kept, dropped = suppress_vendor_sites(minted, project_id="p")
+
+def test_geo_minted_vendor_site_dropped_via_source_context(monkeypatch):
+    # When a PurTera letterhead site is already minted (legacy path), suppression
+    # drops it and keeps the real site.
+    monkeypatch.setattr(
+        semantic_role, "classify_role", _fake_classifier("PurTera", match_context=True)
+    )
+    vendor_site = _site(
+        "atm_v_minted",
+        raw_text="Alpharetta, GA 30009",
+        address="11720 Amber Park Dr #350, Alpharetta, GA 30009",
+    )
+    vendor_site.value["source_context"] = (
+        "PurTera LLC 11720 Amber Park Dr #350, Alpharetta, GA 30009 | DCW"
+    )
+    site_line = _site("atm_s", raw_text="Santa Fe, NM 87506", address="Santa Fe, NM 87506")
+
+    kept, dropped = suppress_vendor_sites([vendor_site, site_line], project_id="p")
     assert dropped == 1
-    kept_zips = {a.value.get("zip") for a in kept}
-    assert "30009" not in kept_zips  # vendor letterhead dropped
-    assert "87506" in kept_zips  # real site kept
+    kept_ids = {a.id for a in kept}
+    assert "atm_v_minted" not in kept_ids
+    assert "atm_s" in kept_ids
 
 
 def test_dropped_atom_records_decision_provenance(monkeypatch):
@@ -152,19 +167,75 @@ def test_dropped_atom_records_decision_provenance(monkeypatch):
     assert dropped == 1
     prov = _VENDOR.value.get("_decision")
     assert prov is not None
-    # LLM-driven here (no store wired) → source llm, no correction_id, conf set.
-    assert prov["source"] == "llm"
-    assert prov["correction_id"] is None
+    assert prov["source"] == "deterministic"
+    assert prov["correction_id"] == "global_purtera_self_address"
     assert prov["confidence"] >= 0.6
     # The kept real site is never stamped.
     assert _JOBSITE.value.get("_decision") is None
 
 
-def test_no_op_when_only_one_site(monkeypatch):
-    # Even if the classifier flags it vendor, never strip the deal's only
-    # locational anchor.
-    monkeypatch.setattr(semantic_role, "classify_role", _fake_classifier("Alpharetta"))
+def test_purtera_vendor_dropped_even_when_sole_site():
+    # Deterministic PurTera ban: HQ must never ship as the only job site.
     kept, dropped = suppress_vendor_sites([_VENDOR], project_id="p")
+    assert dropped == 1
+    assert len(kept) == 0
+    prov = _VENDOR.value.get("_decision")
+    assert prov is not None
+    assert prov["source"] == "deterministic"
+    assert prov["correction_id"] == "global_purtera_self_address"
+
+
+def test_docx_acceptance_criteria_row_banned():
+    src = SourceRef(
+        id="src_ac",
+        artifact_id="art_sow",
+        artifact_type=ArtifactType.docx,
+        filename="sow.docx",
+        locator={
+            "table_index": 2,
+            "row": 3,
+            "extraction": "docx_table_row_v1",
+            "section_path": ["ACCEPTANCE CRITERIA"],
+        },
+        extraction_method="docx_table_row_v1",
+        parser_version="test",
+    )
+    atom = EvidenceAtom(
+        id="atm_ac_vendor",
+        project_id="p",
+        artifact_id="art_sow",
+        atom_type=AtomType.physical_site,
+        raw_text="PurTera LLC | 11720 Amber Park Dr #350 | Alpharetta, GA 30009",
+        normalized_text="purtera llc | 11720 amber park dr",
+        value={
+            "kind": "physical_site",
+            "site_id": "alpharetta_ga_30009",
+            "address": "11720 Amber Park Dr #350, Alpharetta, GA 30009",
+            "city": "Alpharetta",
+            "state": "GA",
+            "zip": "30009",
+        },
+        entity_keys=["site:alpharetta_ga_30009"],
+        source_refs=[src],
+        receipts=[],
+        authority_class=AuthorityClass.contractual_scope,
+        confidence=0.95,
+        review_status=ReviewStatus.auto_accepted,
+        review_flags=[],
+        parser_version="test",
+    )
+    assert is_purtera_vendor_address(atom)
+    assert is_banned_vendor_physical_site(atom)
+    kept, dropped = suppress_vendor_sites([atom], project_id="p")
+    assert dropped == 1
+    assert len(kept) == 0
+
+
+def test_no_op_when_only_one_site(monkeypatch):
+    # PurTera is dropped deterministically before the LLM path; use a generic
+    # vendor address to exercise the sole-site LLM no-op guard.
+    monkeypatch.setattr(semantic_role, "classify_role", _fake_classifier("Market St"))
+    kept, dropped = suppress_vendor_sites([_OTHER_VENDOR], project_id="p")
     assert dropped == 0
     assert len(kept) == 1
 
@@ -174,7 +245,7 @@ def test_no_op_when_all_sites_flagged_vendor(monkeypatch):
     def _all_vendor(text, candidates, *, instruction, context="", timeout=None, model=None):
         return ("vendor_or_billing_address", 0.95)
     monkeypatch.setattr(semantic_role, "classify_role", _all_vendor)
-    kept, dropped = suppress_vendor_sites([_VENDOR, _JOBSITE], project_id="p")
+    kept, dropped = suppress_vendor_sites([_OTHER_VENDOR, _JOBSITE], project_id="p")
     assert dropped == 0
     assert len(kept) == 2
 
@@ -183,19 +254,23 @@ def test_low_confidence_not_dropped(monkeypatch):
     def _weak(text, candidates, *, instruction, context="", timeout=None, model=None):
         return ("vendor_or_billing_address", 0.4)  # below threshold
     monkeypatch.setattr(semantic_role, "classify_role", _weak)
-    kept, dropped = suppress_vendor_sites([_VENDOR, _JOBSITE], project_id="p")
+    kept, dropped = suppress_vendor_sites([_OTHER_VENDOR, _JOBSITE], project_id="p")
     assert dropped == 0
     assert len(kept) == 2
 
 
 def test_llm_unreachable_is_safe_noop(monkeypatch):
     # When the LLM is disabled/unreachable, classify_role returns (None, 0.0)
-    # and NOTHING is dropped — no site removed on a guess.
+    # and non-PurTera sites are not dropped on a guess. PurTera is still banned
+    # deterministically.
     monkeypatch.setenv("SOWSMITH_DISABLE_LLM", "1")
     semantic_role.reset_reachability()
-    kept, dropped = suppress_vendor_sites([_VENDOR, _JOBSITE], project_id="p")
+    kept, dropped = suppress_vendor_sites([_OTHER_VENDOR, _JOBSITE], project_id="p")
     assert dropped == 0
     assert len(kept) == 2
+    kept_purtera, dropped_purtera = suppress_vendor_sites([_VENDOR, _JOBSITE], project_id="p")
+    assert dropped_purtera == 1
+    assert len(kept_purtera) == 1
 
 
 def test_classify_role_returns_none_when_disabled(monkeypatch):

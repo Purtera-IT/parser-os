@@ -25,6 +25,7 @@ This module flips that:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Entity-key prefixes that, when shared between an open_question and some
@@ -48,6 +49,23 @@ _ANSWER_BEARING_PREFIXES: tuple[str, ...] = (
 )
 
 ANSWERED_FLAG = "answered_in_corpus"
+NOISE_FLAG = "not_pm_actionable_question"
+
+_TRANSCRIPT_SPEAKER_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\s*\[\d{1,2}:\d{2}\]")
+_UNHELPFUL_QUESTION_RE = re.compile(
+    r"\b("
+    r"have\s+the\s+what|"
+    r"anything\s+else\s+you\s+need|"
+    r"how\s+much\s+is\s+it\s+for|"
+    r"how\s+quickly\s+do\s+you\s+think|"
+    r"did\s+you\s+want\s+this\s+done\s+remotely\s+or\s+on\s+site"
+    r")\b",
+    re.I,
+)
+_ANSWER_AFTER_QUESTION_RE = re.compile(
+    r"\?\s+(?:yeah|yep|yes|no|got it|it'?s|i think|basically|daniel|jacob|eddie)\b",
+    re.I,
+)
 
 
 def _atom_type_str(atom: Any) -> str:
@@ -69,6 +87,57 @@ def is_answered_question(atom: Any) -> bool:
     if isinstance(val, dict) and val.get("answered") is True:
         return True
     return ANSWERED_FLAG in (getattr(atom, "review_flags", None) or [])
+
+
+def is_unhelpful_pm_question(atom: Any) -> bool:
+    """True when a literal question is transcript/dialogue noise, not a PM gap."""
+    if _atom_type_str(atom) != "open_question":
+        return False
+    val = getattr(atom, "value", None) or {}
+    if isinstance(val, dict):
+        if val.get("kind") == "visual_page_marker":
+            return False
+        if val.get("answered") is True:
+            return True
+    text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+    if not text:
+        return False
+    low = text.lower()
+    if len(text) > 300:
+        return True
+    if _TRANSCRIPT_SPEAKER_RE.search(text):
+        return True
+    if _ANSWER_AFTER_QUESTION_RE.search(text):
+        return True
+    if _UNHELPFUL_QUESTION_RE.search(text):
+        return True
+    # "Do you have resources..." is a sales/resource ask that task backfill turns
+    # into scope; it is not a PM blocker once task evidence exists.
+    if low.startswith("do you have resources") and "ubiquiti install" in low:
+        return True
+    return False
+
+
+def filter_unhelpful_open_questions(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Remove non-actionable literal questions from the active atom stream."""
+    from app.core.schemas import ReviewStatus
+
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        if is_unhelpful_pm_question(atom):
+            val = getattr(atom, "value", None)
+            if isinstance(val, dict):
+                val["suppressed_as"] = "not_pm_actionable_question"
+            flags = list(getattr(atom, "review_flags", None) or [])
+            if NOISE_FLAG not in flags:
+                atom.review_flags = sorted(set(flags + [NOISE_FLAG]))
+            if getattr(atom, "review_status", None) == ReviewStatus.needs_review:
+                atom.review_status = ReviewStatus.auto_accepted
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
 
 
 def resolve_open_questions(atoms: list[Any]) -> int:
@@ -249,8 +318,11 @@ def generate_gap_questions(srl_checklist: dict[str, Any]) -> list[dict[str, Any]
 
 __all__ = [
     "resolve_open_questions",
+    "filter_unhelpful_open_questions",
     "generate_gap_questions",
     "universal_head_start",
     "is_answered_question",
+    "is_unhelpful_pm_question",
     "ANSWERED_FLAG",
+    "NOISE_FLAG",
 ]

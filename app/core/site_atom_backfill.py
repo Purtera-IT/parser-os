@@ -331,6 +331,21 @@ def backfill_physical_sites_from_entities(
             geo = _parse_geo_from_text(display.replace("_", " "))
         if _physical_site_covers_location(atoms + added, site_key, geo):
             continue
+        try:
+            from app.core.vendor_site_ban import is_purtera_vendor_address
+
+            anchor_text = ""
+            if anchor is not None:
+                anchor_text = str(
+                    getattr(anchor, "raw_text", None) or getattr(anchor, "text", None) or ""
+                )
+            if is_purtera_vendor_address(
+                text=" ".join(filter(None, [display, anchor_text, site_key])),
+                value=geo,
+            ):
+                continue
+        except Exception:  # pragma: no cover
+            pass
         minted = _mint_physical_site(
             project_id=project_id,
             site_key=site_key,

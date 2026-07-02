@@ -543,6 +543,33 @@ class DocxParser(BaseParser):
             canon_id = sid or site_row.facility_name or ""
             if not canon_id:
                 continue
+            row_preview_parts = [
+                site_row.facility_name,
+                site_row.street_address,
+                site_row.city_state,
+                site_row.city,
+                site_row.state,
+                site_row.zip,
+                canon_id,
+            ]
+            row_preview = " | ".join(p for p in row_preview_parts if p)
+            try:
+                from app.core.vendor_site_ban import is_purtera_vendor_address
+
+                if is_purtera_vendor_address(
+                    text=row_preview,
+                    section_path=list(section_path) if section_path else None,
+                    value={
+                        "street_address": site_row.street_address,
+                        "facility_name": site_row.facility_name,
+                        "city": site_row.city,
+                        "state": site_row.state,
+                        "zip": site_row.zip,
+                    },
+                ):
+                    continue
+            except Exception:  # pragma: no cover
+                pass
             row_index = site_row.row_index + 1  # +1 for header
             text_parts: list[str] = []
             for label, val in [
