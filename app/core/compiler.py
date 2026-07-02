@@ -1249,6 +1249,23 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # Single-facility deals: tasks often parse with device:* keys only.
+    # After dedup the roster is final — link orphans to the one confirmed site.
+    with telemetry.stage("site_task_anchor", input_count=len(atoms)) as stage:
+        linked_site = 0
+        try:
+            from app.core.site_task_anchor import anchor_orphan_atoms_to_confirmed_site
+
+            atoms, linked_site = anchor_orphan_atoms_to_confirmed_site(atoms)
+            if linked_site:
+                warnings.append(
+                    f"INFO: site_task_anchor linked {linked_site} task/note atom(s) "
+                    f"to the sole confirmed job site"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_task_anchor failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=linked_site)
+
     # Noise suppression (learning-loop gate): divert reference/template atoms
     # (master rate-card / materials-catalog rows, rate-label-as-person) out of
     # scope using the store-only ``atom_noise_admission`` gate. Guess-free and
@@ -1335,6 +1352,47 @@ def compile_project(
         entities = fuse_alias_groups(
             entities, site_alias_groups + stakeholder_alias_groups
         )
+        backfill_n = 0
+        try:
+            from app.core.site_atom_backfill import backfill_physical_sites_from_entities
+
+            atoms, backfill_n = backfill_physical_sites_from_entities(
+                atoms, entities, project_id=resolved_project_id
+            )
+            if backfill_n:
+                warnings.append(
+                    f"INFO: site_atom_backfill minted {backfill_n} physical_site atom(s) "
+                    f"from site entities (roster was empty after dedup)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_atom_backfill failed: {type(exc).__name__}: {exc}")
+        try:
+            # Backfill runs after semantic_dedup; minted entity_backfill sites can
+            # duplicate the roster atom for the same address (MBrany-class).
+            from app.core.semantic_dedup import _dedupe_physical_site_atoms
+
+            phys_before = sum(
+                1
+                for a in atoms
+                if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))
+                == "physical_site"
+            )
+            atoms = _dedupe_physical_site_atoms(atoms)
+            phys_after = sum(
+                1
+                for a in atoms
+                if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))
+                == "physical_site"
+            )
+            if phys_after < phys_before:
+                warnings.append(
+                    f"INFO: post_backfill physical_site dedup collapsed "
+                    f"{phys_before} -> {phys_after} site atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: post_backfill physical_site dedup failed: {type(exc).__name__}: {exc}"
+            )
         telemetry.end_stage(stage, output_count=len(entities))
 
     # v48 FIX 6: Cross-doc conflict detection.
@@ -1607,5 +1665,22 @@ def compile_project(
                 ]
             )
         )
+
+    try:
+        from app.core.ml_capabilities import build_compile_capabilities
+
+        result.compile_capabilities = build_compile_capabilities()
+    except Exception:
+        result.compile_capabilities = None
+
+    try:
+        from app.learning.worker_retrain import maybe_retrain_after_compile
+
+        maybe_retrain_after_compile(
+            compile_id=result.compile_id,
+            project_id=result.project_id,
+        )
+    except Exception:
+        pass
 
     return result

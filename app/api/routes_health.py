@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.ml_capabilities import build_version_capabilities
 from app.core.schemas import AUTHORITY_POLICY_VERSION, COMPILER_VERSION, PACKETIZER_VERSION, SCHEMA_VERSION
 from app.storage.db import get_connection
 
@@ -24,10 +25,15 @@ def health_ready() -> dict[str, str]:
 
 
 @router.get("/version")
-def version() -> dict[str, str]:
-    return {
+def version() -> dict[str, object]:
+    base: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "compiler_version": COMPILER_VERSION,
         "packetizer_version": PACKETIZER_VERSION,
         "authority_policy_version": AUTHORITY_POLICY_VERSION,
     }
+    try:
+        base["compile_capabilities"] = build_version_capabilities()
+    except Exception:
+        pass
+    return base

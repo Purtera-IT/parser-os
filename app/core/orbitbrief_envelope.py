@@ -237,6 +237,8 @@ def build_orbitbrief_envelope(
     envelope["srl_missing_checklist"] = build_srl_missing_checklist(
         atoms=atoms, documents=documents,
     )
+    if compile_result.compile_capabilities:
+        envelope["compile_capabilities"] = compile_result.compile_capabilities
     # Facet dashboard sections — the 7 PM sections (WORK/SITE/COMMERCIAL/...)
     # assigned by the contrastive facet head (held-out 0.925). Guess-free: atoms the
     # head can't confidently place go to `uncategorized`. Added ONLY when enabled +
@@ -1194,12 +1196,26 @@ def _build_indexes(
     by_stakeholder: dict[str, list[str]] = defaultdict(list)
     by_device: dict[str, list[str]] = defaultdict(list)
     by_site: dict[str, list[str]] = defaultdict(list)
+    tasks_by_site: dict[str, list[str]] = defaultdict(list)
+    physical_site_slugs: set[str] = set()
     for atom in atoms:
         section_key = " > ".join(_atom_section_path(atom)) or "(root)"
         by_section[section_key].append(atom.id)
         by_type[atom.atom_type.value].append(atom.id)
         by_authority[atom.authority_class.value].append(atom.id)
         by_artifact[atom.artifact_id].append(atom.id)
+        if atom.atom_type.value == "physical_site":
+            for key in atom.entity_keys:
+                if key.startswith("site:"):
+                    physical_site_slugs.add(key[len("site:"):])
+        site_slugs_for_atom = [
+            key[len("site:"):]
+            for key in atom.entity_keys
+            if isinstance(key, str) and key.startswith("site:")
+        ]
+        if atom.atom_type.value == "task":
+            for slug in site_slugs_for_atom:
+                tasks_by_site[slug].append(atom.id)
         for key in atom.entity_keys:
             by_entity_key[key].append(atom.id)
             # Per-entity-prefix specialized indexes: O(1) lookup of
@@ -1227,6 +1243,8 @@ def _build_indexes(
         "atoms_by_stakeholder_slug": {k: sorted(v) for k, v in sorted(by_stakeholder.items())},
         "atoms_by_device_slug": {k: sorted(v) for k, v in sorted(by_device.items())},
         "atoms_by_site_slug": {k: sorted(v) for k, v in sorted(by_site.items())},
+        "tasks_by_site_slug": {k: sorted(v) for k, v in sorted(tasks_by_site.items())},
+        "physical_site_slugs": sorted(physical_site_slugs),
         "edges_by_atom": {k: sorted(v) for k, v in sorted(edges_by_atom.items())},
         "entity_id_by_canonical_key": dict(sorted(entities_by_key.items())),
     }

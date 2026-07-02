@@ -61,6 +61,18 @@ DEFAULT_PARALLEL = 4
 # Types the classifier WILL promote scope_item / entity into.
 # Other existing types (risk, exclusion, decision, assumption,
 # schematic_*, port_vlan_assignment, etc.) are preserved.
+_LAST_DEFLECT_STATS: dict[str, Any] = {}
+
+
+def get_last_deflect_stats() -> dict[str, Any]:
+    return dict(_LAST_DEFLECT_STATS)
+
+
+def _set_last_deflect_stats(payload: dict[str, Any]) -> None:
+    global _LAST_DEFLECT_STATS
+    _LAST_DEFLECT_STATS = dict(payload)
+
+
 _PROMOTABLE_FROM = frozenset({
     "scope_item",
     "entity",
@@ -471,20 +483,22 @@ def classify_atoms(atoms: list[Any]) -> int:
         return time.perf_counter()
 
     def _emit_deflect(*, llm_batch: int, promoted: int, reached_llm: bool) -> None:
+        payload = {
+            "event": "typed_atom_deflect",
+            "stage": "typed_atom_classification",
+            "input": _dfl_input,
+            "deflected": dict(_dfl),
+            "deflected_total": sum(_dfl.values()),
+            "llm_batch": llm_batch,
+            "promoted": promoted,
+            "reached_llm": reached_llm,
+            "total_ms": round((time.perf_counter() - _t_start) * 1000, 1),
+            "llm_ms": round(_t_llm * 1000, 1),
+            "layer_ms": {k: round(v * 1000, 1) for k, v in _dfl_ms.items()},
+        }
+        _set_last_deflect_stats(payload)
         try:
-            print(json.dumps({
-                "event": "typed_atom_deflect",
-                "stage": "typed_atom_classification",
-                "input": _dfl_input,
-                "deflected": dict(_dfl),
-                "deflected_total": sum(_dfl.values()),
-                "llm_batch": llm_batch,
-                "promoted": promoted,
-                "reached_llm": reached_llm,
-                "total_ms": round((time.perf_counter() - _t_start) * 1000, 1),
-                "llm_ms": round(_t_llm * 1000, 1),
-                "layer_ms": {k: round(v * 1000, 1) for k, v in _dfl_ms.items()},
-            }, ensure_ascii=True), file=sys.stderr)
+            print(json.dumps(payload, ensure_ascii=True), file=sys.stderr)
         except Exception:
             pass
 

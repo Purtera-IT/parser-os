@@ -56,6 +56,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.address_parse import normalized_address_key
+
 
 def _norm_key(s: Any) -> str:
     if s is None:
@@ -267,9 +269,47 @@ def _merge_atom_metadata(winner: Any, loser: Any) -> None:
         pass
 
 
+def _strip_location_label_prefix(text: str) -> str:
+    """Remove SOW boilerplate like ``Location: Mobis..., 12575 Oakland Park Blvd``."""
+    s = (text or "").strip()
+    if not s:
+        return s
+    if re.match(r"^location\s*:", s, re.I):
+        s = re.sub(r"^location\s*:\s*", "", s, flags=re.I).strip()
+    # Prefer the street-number segment when a label and address were concatenated.
+    m = re.search(
+        r"(\d{1,6}\s+[A-Za-z0-9][^\n,]{2,80}"
+        r"(?:blvd|boulevard|st|street|ave|avenue|dr|drive|way|ln|lane|rd|road|hwy|ct|court|pl|place)\.?\b)",
+        s,
+        re.I,
+    )
+    if m:
+        return m.group(1).strip()
+    return s
+
+
 def _clean_physical_site_value(value: dict[str, Any]) -> dict[str, Any]:
     cleaned = {k: v for k, v in value.items() if k in _PHYSICAL_SITE_ALLOWED_FIELDS and v not in (None, "", [], {})}
     cleaned["kind"] = "physical_site"
+    for field in ("street_address", "address"):
+        if isinstance(cleaned.get(field), str):
+            cleaned[field] = _strip_location_label_prefix(cleaned[field])
+    # Rebuild bloated name/facility strings that still carry the Location: prefix.
+    city = str(cleaned.get("city") or "").strip()
+    state = str(cleaned.get("state") or "").strip()
+    zipc = str(cleaned.get("zip") or cleaned.get("postal_code") or "").strip()
+    street = str(cleaned.get("street_address") or cleaned.get("address") or "").strip()
+    for field in ("name", "facility_name"):
+        raw = cleaned.get(field)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        if re.match(r"^location\s*:", raw, re.I):
+            if street and city and state:
+                cleaned[field] = f"{street}, {city}, {state} {zipc}".strip()
+            elif city and state:
+                cleaned[field] = f"{city}, {state} {zipc}".strip()
+            else:
+                cleaned[field] = _strip_location_label_prefix(raw)
     # Keep id/site_id/name/facility_name synchronized without importing a
     # heavyweight schema layer into the hot dedup path.
     canonical = cleaned.get("site_id") or cleaned.get("id") or cleaned.get("name") or cleaned.get("facility_name")
@@ -366,6 +406,164 @@ def _is_hallucinated_physical_site_value(value: Any) -> bool:
     return False
 
 
+def _is_geo_fallback_physical_site(atom: Any) -> bool:
+    """True for geo-fallback minted sites — never drop as roster ghosts."""
+    flags = list(getattr(atom, "review_flags", None) or [])
+    if "geo_fallback_site" in flags or "site_entity_backfill" in flags:
+        return True
+    val = getattr(atom, "value", None) or {}
+    if isinstance(val, dict) and val.get("inferred"):
+        return True
+    return False
+
+
+def _bucket_from_site_id_slug(site_id: str) -> str | None:
+    """Derive ``city|STATE|zip`` from geo-fallback slugs like ``highland_park_mi_48203``."""
+    sid = str(site_id or "").strip()
+    if not sid:
+        return None
+    m = re.search(r"[-_]([A-Za-z]{2})[-_](\d{5})(?:[-_]|$)", sid)
+    if not m:
+        return None
+    state = m.group(1).upper()
+    if state not in {
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+        "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+        "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+        "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+        "DC",
+    }:
+        return None
+    zipc = m.group(2)
+    prefix = sid[: m.start()].replace("-", " ").replace("_", " ").strip().lower()
+    prefix = re.sub(r"\s+", " ", prefix)
+    if not prefix:
+        return None
+    return f"{prefix}|{state}|{zipc}"
+
+
+def _zip_from_site_id_slug(site_id: str) -> str:
+    """Extract a 5-digit ZIP from geo-fallback slugs like ``highland_park_mi_48203``."""
+    slug_bucket = _bucket_from_site_id_slug(site_id)
+    if slug_bucket:
+        parts = slug_bucket.split("|")
+        if len(parts) == 3 and re.fullmatch(r"\d{5}", parts[2]):
+            return parts[2]
+    m = re.search(r"(\d{5})(?:\D|$)", str(site_id or ""))
+    return m.group(1) if m else ""
+
+
+def _site_location_buckets(val: dict[str, Any], site_id: str = "") -> set[str]:
+    """Location keys for merging same-place variants (city-only vs street+ city)."""
+    buckets: set[str] = set()
+    if not isinstance(val, dict):
+        val = {}
+    sid = site_id or str(val.get("site_id") or val.get("id") or "")
+    city = str(val.get("city") or "").lower().strip()
+    state = str(val.get("state") or "").upper().strip()
+    zipc = str(val.get("zip") or val.get("zip_code") or "").strip()
+    if city and state and zipc:
+        buckets.add(f"{city}|{state}|{zipc}")
+    ak = normalized_address_key(val)
+    if ak:
+        buckets.add(ak)
+        parts = ak.split("|")
+        if len(parts) == 4:
+            buckets.add("|".join(parts[1:4]))
+        elif len(parts) == 3 and city and state and zipc:
+            buckets.add(ak)
+    slug_bucket = _bucket_from_site_id_slug(sid)
+    if slug_bucket:
+        buckets.add(slug_bucket)
+    zip_slug = _zip_from_site_id_slug(sid)
+    if zip_slug:
+        buckets.add(f"zip:{zip_slug}")
+    name = str(val.get("name") or val.get("facility_name") or "").strip()
+    if name and not city:
+        name_bucket = _bucket_from_site_id_slug(name.replace(" ", "_"))
+        if name_bucket:
+            buckets.add(name_bucket)
+    return buckets
+
+
+def _pick_best_canonical_site_id(candidates: list[str], group_atoms: list[Any]) -> str:
+    """Prefer hyphenated roster ids that carry a street address on the winner."""
+
+    def _score(canon: str) -> tuple[int, ...]:
+        display = _site_display_key(canon)
+        has_street = False
+        for atom in group_atoms:
+            v = getattr(atom, "value", None) or {}
+            if not isinstance(v, dict):
+                continue
+            if _physical_site_id(atom) not in {display, canon, _site_display_key(canon)}:
+                continue
+            if v.get("street_address") or v.get("address"):
+                has_street = True
+                break
+        hyphen_roster = bool(re.match(r"^[A-Z0-9]+(-[A-Z0-9]+)+$", display))
+        return (
+            int(_looks_complete_site_id(display)) * 100,
+            int(has_street and hyphen_roster) * 50,
+            int(hyphen_roster) * 30,
+            int(has_street) * 20,
+            len(display),
+        )
+
+    return max(candidates, key=_score)
+
+
+def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[str, list[Any]]:
+    """Union groups that share any location bucket (MBrany-class same-place variants)."""
+    if len(grouped) <= 1:
+        return grouped
+
+    canon_buckets: dict[str, set[str]] = {}
+    for canon, group in grouped.items():
+        merged_buckets: set[str] = set()
+        merged_buckets |= _site_location_buckets({}, canon)
+        for atom in group:
+            val = getattr(atom, "value", None) or {}
+            if isinstance(val, dict):
+                merged_buckets |= _site_location_buckets(val, canon)
+        if merged_buckets:
+            canon_buckets[canon] = merged_buckets
+
+    canons = list(grouped.keys())
+    parent = {c: c for c in canons}
+
+    def _find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a: str, b: str) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    keyed = [c for c in canons if c in canon_buckets]
+    for i, c1 in enumerate(keyed):
+        for c2 in keyed[i + 1 :]:
+            if canon_buckets[c1] & canon_buckets[c2]:
+                _union(c1, c2)
+
+    clusters: dict[str, list[str]] = {}
+    for c in canons:
+        clusters.setdefault(_find(c), []).append(c)
+
+    merged: dict[str, list[Any]] = {}
+    for members in clusters.values():
+        all_atoms: list[Any] = []
+        for m in members:
+            all_atoms.extend(grouped[m])
+        best = _pick_best_canonical_site_id(members, all_atoms)
+        merged.setdefault(best, []).extend(all_atoms)
+    return merged
+
+
 def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     physical = [a for a in atoms if _atom_type_value(a) == "physical_site"]
     if not physical:
@@ -422,7 +620,28 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             if key and key not in facility_to_canonical:
                 facility_to_canonical[key] = sid_a
 
+    complete_atom_buckets: dict[str, set[str]] = {}
+    for a in physical:
+        sid_a = _physical_site_id(a)
+        if not _looks_complete_site_id(sid_a):
+            continue
+        v = getattr(a, "value", None) or {}
+        if isinstance(v, dict):
+            complete_atom_buckets.setdefault(sid_a, set()).update(
+                _site_location_buckets(v, sid_a)
+            )
+
     def canonical_for(atom: Any) -> str | None:
+        if _is_geo_fallback_physical_site(atom):
+            sid = _physical_site_id(atom)
+            if sid and not _is_bad_physical_site_id(sid):
+                v = getattr(atom, "value", None) or {}
+                if isinstance(v, dict) and complete_ids:
+                    atom_buckets = _site_location_buckets(v, sid)
+                    for full in complete_ids:
+                        if atom_buckets & complete_atom_buckets.get(full, set()):
+                            return full
+                return sid
         sid = _physical_site_id(atom)
         if not sid or _is_bad_physical_site_id(sid):
             return None
@@ -471,6 +690,8 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             dropped_ids.add(id(atom))
             continue
         grouped.setdefault(canon, []).append(atom)
+
+    grouped = _merge_grouped_by_location_buckets(grouped)
 
     merged_physical: list[Any] = []
     consumed_ids: set[int] = set(dropped_ids)
@@ -525,6 +746,35 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     for atom in merged_physical:
         if id(atom) not in emitted_merged and id(atom) not in consumed_ids:
             out.append(atom)
+    phys_out = sum(1 for a in out if _atom_type_value(a) == "physical_site")
+    if phys_out == 0 and physical:
+        # Never leave a deal site-blind — keep best geo-fallback or highest-quality site.
+        geo = [a for a in physical if _is_geo_fallback_physical_site(a)]
+        pool = geo if geo else physical
+        best = max(pool, key=lambda a: _physical_site_quality(a, _physical_site_id(a)))
+        out.append(best)
+        phys_out = 1
+    # Multi-city deals: re-emit consumed geo-fallback sites when location differs
+    # from any surviving winner (extends site-blind safety above).
+    winner_location_buckets: set[str] = set()
+    for a in out:
+        if _atom_type_value(a) != "physical_site":
+            continue
+        val = getattr(a, "value", None) or {}
+        if isinstance(val, dict):
+            winner_location_buckets |= _site_location_buckets(
+                val, _physical_site_id(a)
+            )
+    for atom in physical:
+        if id(atom) not in consumed_ids or not _is_geo_fallback_physical_site(atom):
+            continue
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        atom_buckets = _site_location_buckets(val, _physical_site_id(atom))
+        if atom_buckets and not (atom_buckets & winner_location_buckets):
+            out.append(atom)
+            winner_location_buckets |= atom_buckets
     return out
 
 

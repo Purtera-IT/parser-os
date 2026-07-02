@@ -70,6 +70,12 @@ _KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 
 _EMBEDDING_CACHE: dict[str, tuple[list[str], np.ndarray]] = {}
 _CACHE_MAX = 32  # LRU-evict on overflow
+_LAST_EMBED_STATS: dict[str, int | bool] = {}
+
+
+def get_last_embed_stats() -> dict[str, int | bool]:
+    """Hit/miss counts from the most recent ``embed_texts`` call."""
+    return dict(_LAST_EMBED_STATS)
 
 
 def _artifact_key(artifact_id: str, text: str) -> str:
@@ -308,6 +314,7 @@ def embed_texts(texts: list[str]) -> np.ndarray:
 
     Failed embeds → zero vector at that row (caller filters; never cached).
     """
+    global _LAST_EMBED_STATS
     if not texts:
         return np.zeros((0, _DEFAULT_DIM), dtype=np.float32)
 
@@ -318,15 +325,24 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     from app.core.embedding_cache import get_cache
     cache = get_cache()
     miss_idx: list[int] = []
+    cache_hits = 0
     if cache is not None:
         hits = cache.get_many(model, texts)
         for i, vec in enumerate(hits):
             if vec is not None:
                 out[i] = vec
+                cache_hits += 1
             else:
                 miss_idx.append(i)
     else:
         miss_idx = list(range(len(texts)))
+
+    _LAST_EMBED_STATS = {
+        "total": len(texts),
+        "cache_hits": cache_hits,
+        "cache_misses": len(miss_idx),
+        "cache_enabled": cache is not None,
+    }
 
     # 2) embed only the misses (batched round-trip), then persist ----------
     if miss_idx:

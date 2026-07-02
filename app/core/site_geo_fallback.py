@@ -80,9 +80,11 @@ def _should_skip_geo_fallback(atoms: list[Any]) -> bool:
         return False
     scores = [_site_location_score(getattr(a, "value", None) or {}) for a in sites]
     high = sum(1 for s in scores if s >= 2)
-    if len(sites) >= 2 and high >= 1:
+    # Two well-structured sites — skip fallback. One high + one weak ghost
+    # (typed_atom under full ML) must not block geo inference (MBrany class).
+    if high >= 2:
         return True
-    if len(sites) >= 3:
+    if len(sites) >= 3 and high >= 1:
         return True
     return False
 
