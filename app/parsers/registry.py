@@ -30,6 +30,7 @@ def _ensure_defaults() -> None:
     from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
     from app.parsers.pptx_parser import PptxParser
     from app.parsers.quote_parser import QuoteParser
+    from app.parsers.hubspot_note_parser import HubspotNoteParser
     from app.parsers.transcript_parser import TranscriptParser
     from app.parsers.universal_parsers import (
         HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
@@ -44,6 +45,7 @@ def _ensure_defaults() -> None:
         XlsxParser(),
         QuoteParser(),
         EmailParser(),
+        HubspotNoteParser(),
         TranscriptParser(),
         JsonParser(),
         DocxParser(),
@@ -121,12 +123,16 @@ def _deterministic_tie_break(
     name = path.name.lower()
     lowered = normalize_text(sample_text)
     by_name = {match.parser_name: (parser, match) for parser, match in candidates}
+    if "hubspot_note" in by_name and (
+        "-hs-note-" in name or "hubspot note:" in lowered
+    ):
+        return by_name["hubspot_note"]
     if {"email", "transcript"}.issubset(by_name):
         email_markers = ("from:" in lowered and "sent:" in lowered) or (" wrote:" in lowered)
         meeting_markers = ("decisions:" in lowered) or ("open questions:" in lowered) or ("[00:" in lowered)
         if email_markers and not meeting_markers:
             return by_name["email"]
-        if meeting_markers:
+        if meeting_markers and "hubspot note:" not in lowered:
             return by_name["transcript"]
     if {"quote", "xlsx"}.issubset(by_name):
         from app.parsers.spreadsheet_route_signals import resolve_quote_vs_xlsx_tie

@@ -39,6 +39,151 @@ from app.domain.schemas import DomainPack
 
 STRUCTURED_SCHEMA_EMAIL = "orbitbrief.email.structured.v1"
 
+_CID_REF_RE = re.compile(r"\[cid:([^\]]+)\]", re.I)
+_EQUIPMENT_LINE_RE = re.compile(
+    r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?"
+    r"(e7|u7|udm(?:\s*beast)?|unvr|nvr|g6\s+pro|badge\s*reader|card\s*reader|"
+    r"access\s*point|ap\b|aps\b|switch(?:es)?|camera|doorbell)\b",
+    re.I,
+)
+_WORD_QTY: dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+
+def _parse_email_message(path: Path):
+    if path.suffix.lower() != ".eml":
+        return None
+    try:
+        return BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+    except Exception:
+        return None
+
+
+def _normalize_cid(cid: str) -> str:
+    raw = (cid or "").strip().lower()
+    return raw.strip("<>").strip()
+
+
+def _iter_cid_inline_parts(msg) -> dict[str, dict[str, Any]]:
+    """Map Content-ID -> inline MIME part payload (text or html)."""
+    out: dict[str, dict[str, Any]] = {}
+    if msg is None:
+        return out
+    for part in msg.walk():
+        cid = part.get("Content-ID") or part.get("Content-Id")
+        if not cid:
+            continue
+        key = _normalize_cid(str(cid))
+        if not key:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        ctype = (part.get_content_type() or "").lower()
+        try:
+            text = payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+        except Exception:
+            text = payload.decode("utf-8", errors="ignore")
+        if ctype == "text/html":
+            soup = BeautifulSoup(text, "html.parser")
+            text = soup.get_text(separator="\n", strip=True)
+        out[key] = {
+            "content_id": key,
+            "content_type": ctype,
+            "text": text.strip(),
+            "size": len(payload),
+        }
+    return out
+
+
+def _parse_qty_token(token: str) -> int | None:
+    raw = (token or "").strip().lower()
+    if raw.isdigit():
+        n = int(raw)
+        return n if n > 0 else None
+    return _WORD_QTY.get(raw)
+
+
+def _hardware_atoms_from_equipment_text(
+    *,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    text: str,
+    content_id: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    atoms: list[EvidenceAtom] = []
+    if not text.strip():
+        return atoms
+    src = SourceRef(
+        id=stable_id("src", artifact_id, "cid", content_id),
+        artifact_id=artifact_id,
+        artifact_type=ArtifactType.email,
+        filename=filename,
+        locator={"kind": "email_cid_inline", "content_id": content_id},
+        extraction_method="email_cid_inline",
+        parser_version=parser_version,
+    )
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        for match in _EQUIPMENT_LINE_RE.finditer(cleaned):
+            qty = _parse_qty_token(match.group(1))
+            item = match.group(2)
+            if not qty:
+                continue
+            atoms.append(
+                EvidenceAtom(
+                    id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(qty)),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.scope_item,
+                    raw_text=cleaned,
+                    normalized_text=normalize_text(cleaned),
+                    value={
+                        "text": cleaned,
+                        "kind": "email_cid_equipment_line",
+                        "quantity": qty,
+                        "item": item,
+                        "content_id": content_id,
+                    },
+                    entity_keys=[],
+                    source_refs=[src],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=0.78,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["email_cid_equipment_line"],
+                    parser_version=parser_version,
+                )
+            )
+    if not atoms and any(ch.isalnum() for ch in text):
+        atoms.append(
+            EvidenceAtom(
+                id=stable_id("atm", project_id, artifact_id, "cid_body", content_id, text[:120]),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.scope_item,
+                raw_text=text[:4000],
+                normalized_text=normalize_text(text),
+                value={
+                    "text": text[:4000],
+                    "kind": "email_cid_inline_body",
+                    "content_id": content_id,
+                },
+                entity_keys=[],
+                source_refs=[src],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.7,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["email_cid_inline_body"],
+                parser_version=parser_version,
+            )
+        )
+    return atoms
+
+
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\s?-\s?\d{1,2}(?::\d{2})?\s?(?:am|pm)\b", re.I)
 
@@ -303,6 +448,11 @@ class EmailParser(BaseParser):
                 project_id=project_id, artifact_id=artifact_id, path=path
             )
         )
+        atoms.extend(
+            self._cid_inline_atoms(
+                project_id=project_id, artifact_id=artifact_id, path=path, body_text=text
+            )
+        )
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
@@ -384,6 +534,73 @@ class EmailParser(BaseParser):
                 attachment_name=name, size=size, content_type=att.get_content_type(),
             ))
         return out
+
+    def _cid_inline_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        body_text: str,
+    ) -> list[EvidenceAtom]:
+        if path.suffix.lower() != ".eml":
+            return []
+        msg = _parse_email_message(path)
+        if msg is None:
+            return []
+        inline_parts = _iter_cid_inline_parts(msg)
+        if not inline_parts:
+            return []
+        atoms: list[EvidenceAtom] = []
+        referenced = {_normalize_cid(m.group(1)) for m in _CID_REF_RE.finditer(body_text or "")}
+        targets = referenced or set(inline_parts.keys())
+        for cid in targets:
+            part = inline_parts.get(cid)
+            if not part:
+                continue
+            atoms.extend(
+                _hardware_atoms_from_equipment_text(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    text=str(part.get("text") or ""),
+                    content_id=cid,
+                    parser_version=self.parser_version,
+                )
+            )
+        if referenced and not atoms:
+            src = SourceRef(
+                id=stable_id("src", artifact_id, "cid_missing"),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.email,
+                filename=path.name,
+                locator={"kind": "email_cid_reference", "content_ids": sorted(referenced)},
+                extraction_method="email_cid_reference",
+                parser_version=self.parser_version,
+            )
+            atoms.append(
+                EvidenceAtom(
+                    id=stable_id("atm", project_id, artifact_id, "cid_ref_unresolved"),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.open_question,
+                    raw_text="Referenced inline equipment list attachment could not be resolved from MIME parts.",
+                    normalized_text="referenced inline equipment list attachment could not be resolved from mime parts.",
+                    value={
+                        "text": "Referenced inline equipment list attachment could not be resolved from MIME parts.",
+                        "kind": "email_cid_unresolved",
+                        "content_ids": sorted(referenced),
+                    },
+                    entity_keys=[],
+                    source_refs=[src],
+                    authority_class=AuthorityClass.customer_current_authored,
+                    confidence=0.6,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=["email_cid_unresolved"],
+                    parser_version=self.parser_version,
+                )
+            )
+        return atoms
 
     def _build_structured_doc(
         self,

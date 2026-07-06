@@ -1269,6 +1269,25 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    with telemetry.stage("note_provenance_backfill", input_count=len(atoms)) as stage:
+        note_prov_n = 0
+        try:
+            from app.core.note_provenance_backfill import ensure_hubspot_note_provenance
+
+            atoms, note_prov_n = ensure_hubspot_note_provenance(
+                atoms,
+                project_id=resolved_project_id,
+                artifact_paths=artifact_paths,
+            )
+            if note_prov_n:
+                warnings.append(
+                    f"INFO: note_provenance_backfill minted {note_prov_n} provenance atom(s) "
+                    f"for HubSpot notes that lost atoms in dedup"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: note_provenance_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=note_prov_n)
+
     # HubSpot notes / short email bullets often carry quote-level work units
     # before a SOW exists, but the type classifier may leave them as scope_item
     # or open_question because they are terse or phrased as a request.
@@ -1321,6 +1340,75 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: task_tier_classification failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=tier_stamped)
+
+    # Quote-context head seam — classifies the commercial delivery model
+    # (configuration-only vs install/buildout vs survey/design) with a promoted
+    # neural head when available. Cold start logs a trainable row and uses a
+    # conservative source-grounded fallback, so Deal Kit does not need to encode
+    # this as frontend-only heuristics.
+    with telemetry.stage("quote_context_head", input_count=len(atoms)) as stage:
+        quote_context_n = 0
+        try:
+            from app.core.quote_context_head import annotate_quote_context
+
+            atoms, quote_context_n = annotate_quote_context(
+                atoms, project_id=resolved_project_id
+            )
+            if quote_context_n:
+                warnings.append(
+                    f"INFO: quote_context_head annotated {quote_context_n} quote-level task atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: quote_context_head failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=quote_context_n)
+
+    with telemetry.stage("quote_line_head", input_count=len(atoms)) as stage:
+        quote_line_n = 0
+        try:
+            from app.core.quote_line_head import consolidate_quote_line_tasks
+
+            atoms, quote_line_n = consolidate_quote_line_tasks(
+                atoms, project_id=resolved_project_id
+            )
+            if quote_line_n:
+                warnings.append(
+                    f"INFO: quote_line_head consolidated {quote_line_n} quote-level task atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: quote_line_head failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=quote_line_n)
+
+    with telemetry.stage("hardware_evidence_backfill", input_count=len(atoms)) as stage:
+        hardware_bom_n = 0
+        try:
+            from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+
+            atoms, hardware_bom_n = backfill_hardware_bom_lines(
+                atoms, project_id=resolved_project_id
+            )
+            if hardware_bom_n:
+                warnings.append(
+                    f"INFO: hardware_evidence_backfill minted {hardware_bom_n} bom_line atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: hardware_evidence_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=hardware_bom_n)
+
+    with telemetry.stage("site_facility_head", input_count=len(atoms)) as stage:
+        facility_n = 0
+        try:
+            from app.core.site_facility_head import annotate_site_facility_labels
+
+            atoms, facility_n = annotate_site_facility_labels(
+                atoms, project_id=resolved_project_id
+            )
+            if facility_n:
+                warnings.append(
+                    f"INFO: site_facility_head labeled {facility_n} physical_site atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_facility_head failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=facility_n)
 
     # Noise suppression (learning-loop gate): divert reference/template atoms
     # (master rate-card / materials-catalog rows, rate-label-as-person) out of
@@ -1464,6 +1552,20 @@ def compile_project(
                 warnings.append(
                     f"INFO: post_backfill suppressed {post_vendor_dropped} "
                     f"vendor/letterhead address(es) misread as job sites"
+                )
+            try:
+                from app.core.site_facility_head import annotate_site_facility_labels
+
+                atoms, post_facility_n = annotate_site_facility_labels(
+                    atoms, project_id=resolved_project_id
+                )
+                if post_facility_n:
+                    warnings.append(
+                        f"INFO: site_facility_head labeled {post_facility_n} post-backfill physical_site atom(s)"
+                    )
+            except Exception as exc:
+                warnings.append(
+                    f"WARNING: post_backfill site_facility_head failed: {type(exc).__name__}: {exc}"
                 )
         except Exception as exc:
             warnings.append(
