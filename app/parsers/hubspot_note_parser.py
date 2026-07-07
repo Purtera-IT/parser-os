@@ -79,8 +79,34 @@ def is_hubspot_note_path(path: Path, sample_text: str | None = None) -> bool:
 
 
 def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
-    """Split HubSpot export headers from the note body."""
+    """Split HubSpot export headers from the note body.
+
+    Two artifact shapes exist in the wild:
+
+    1. A full HubSpot export with ``HubSpot Note:`` / ``HubSpot Note ID:`` /
+       ``Date:`` / ``Author:`` header lines followed by the body.
+    2. A header-less ``title`` + blank line + ``body`` (how the deal-uploads
+       pipeline actually writes notes to blob) — or a bare body.
+
+    Shape 2 has no ``HubSpot Note:`` header, so the header state machine below
+    never leaves its pre-body state and drops every line, yielding zero atoms
+    (``ok_empty``) and silently losing address/scope facts (this is why the
+    address note's city never reached ``site_facility_head``). Detect the
+    header-less shape up front and treat the content directly as the body,
+    keeping the first line as the title.
+    """
     lines = [ln.rstrip() for ln in (raw or "").splitlines()]
+    if not _HS_NOTE_HEADER_RE.search(raw or ""):
+        non_empty = [ln.strip() for ln in lines if ln.strip()]
+        title = non_empty[0] if non_empty else ""
+        body = " ".join(non_empty[1:]).strip() if len(non_empty) > 1 else title
+        return {
+            "title": title,
+            "note_id": "",
+            "date_raw": "",
+            "author": "",
+            "body": body,
+        }
     title = ""
     note_id = ""
     date_raw = ""
