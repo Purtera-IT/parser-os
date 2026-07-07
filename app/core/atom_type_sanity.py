@@ -240,6 +240,38 @@ _HEADLINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_COUNT_WORDS: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
+
+_COUNT_NOUN_RE = (
+    r"camera(?:s)?|switch(?:es)?|router(?:s)?|firewall(?:s)?|"
+    r"access\s+point(?:s)?|ap(?:s)?|wap(?:s)?|reader(?:s)?|badge\s+reader(?:s)?|"
+    r"doorbell(?:s)?|nvr(?:s)?|unvr(?:s)?|user(?:s)?|people|person(?:s)?|"
+    r"door(?:s)?|device(?:s)?|endpoint(?:s)?|license(?:s)?|seat(?:s)?|"
+    r"tv(?:s)?|television(?:s)?|display(?:s)?|monitor(?:s)?|unit(?:s)?|"
+    r"room(?:s)?|drop(?:s)?|jack(?:s)?|outlet(?:s)?|rack(?:s)?|server(?:s)?"
+)
+
+_RICH_COUNT_RE = re.compile(
+    rf"\b(?P<num>\d+|{'|'.join(_COUNT_WORDS)})"
+    rf"(?:\s*(?:-|to|or)\s*(?P<num2>\d+|{'|'.join(_COUNT_WORDS)}))?"
+    rf"\s*(?P<descriptor>(?:[A-Za-z0-9][A-Za-z0-9+/.-]*\s+){{0,4}}?)"
+    rf"(?P<noun>{_COUNT_NOUN_RE})\b",
+    re.IGNORECASE,
+)
+
 # Units of measure / time / dimension. When the token IMMEDIATELY after the
 # number is one of these, the number describes a size, duration, weight, or
 # rate — NOT a count of the trailing deliverable noun. This prevents
@@ -260,10 +292,20 @@ _MEASURE_WORDS = frozenset({
     "hz", "khz", "mhz", "ghz", "kbps", "mbps", "gbps",
     "kb", "mb", "gb", "tb", "pb",
     "percent", "pct", "degree", "degrees", "px", "dpi", "ppi",
+    # Port count / interface density is a device attribute in phrases like
+    # "2 48 port switches"; it must not become "48 switches".
+    "port",
 })
 
 _SOURCE_TYPES_FOR_HEADLINE = {"requirement", "scope_item", "service_line"}
 _MIN_HEADLINE_COUNT = 10
+_LOW_COUNT_NOUNS = frozenset({
+    "access point", "access points", "ap", "aps", "wap", "waps",
+    "badge reader", "badge readers", "reader", "readers",
+    "camera", "cameras", "doorbell", "doorbells",
+    "switch", "switches", "router", "routers", "firewall", "firewalls",
+    "nvr", "nvrs", "unvr", "unvrs", "user", "users", "people", "person", "persons",
+})
 
 
 def _existing_quantity_counts(atoms: list[Any]) -> set[int]:
@@ -286,6 +328,84 @@ def _existing_quantity_counts(atoms: list[Any]) -> set[int]:
     return counts
 
 
+def _parse_count_token(raw: str) -> int | None:
+    token = (raw or "").strip().lower().replace(",", "")
+    if not token:
+        return None
+    if token in _COUNT_WORDS:
+        return _COUNT_WORDS[token]
+    try:
+        return int(token)
+    except ValueError:
+        return None
+
+
+def _canonical_quantity_noun(raw: str) -> str:
+    noun = re.sub(r"\s+", " ", (raw or "").strip().lower())
+    if noun in {"ap", "aps", "wap", "waps", "access point", "access points"}:
+        return "access points"
+    if noun in {"reader", "readers", "badge reader", "badge readers"}:
+        return "badge readers"
+    if noun in {"nvr", "nvrs", "unvr", "unvrs"}:
+        return "NVRs"
+    if noun in {"person", "persons", "people", "user", "users"}:
+        return "users"
+    return noun
+
+
+def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
+    mentions: list[tuple[int, str, dict[str, Any]]] = []
+    seen_spans: list[tuple[int, int]] = []
+
+    def _overlaps(start: int, end: int) -> bool:
+        return any(start < e and end > s for s, e in seen_spans)
+
+    for m in _RICH_COUNT_RE.finditer(text):
+        n1 = _parse_count_token(m.group("num"))
+        if n1 is None:
+            continue
+        n2 = _parse_count_token(m.group("num2") or "")
+        descriptor = re.sub(r"\s+", " ", (m.group("descriptor") or "").strip().lower())
+        noun = _canonical_quantity_noun(m.group("noun"))
+        descriptor_tokens = [t.strip(".,;:").lower() for t in descriptor.split() if t.strip()]
+        if descriptor_tokens and descriptor_tokens[0] in _MEASURE_WORDS:
+            continue
+        quantity = max(n1, n2) if n2 is not None else n1
+        if quantity < 1 or quantity > 100_000:
+            continue
+        if quantity < _MIN_HEADLINE_COUNT and noun.lower() not in _LOW_COUNT_NOUNS:
+            continue
+        metadata: dict[str, Any] = {"kind": "quantity", "quantity": quantity, "noun": noun, "inferred": True}
+        if n2 is not None:
+            metadata["range_min"] = min(n1, n2)
+            metadata["range_max"] = max(n1, n2)
+        if descriptor:
+            metadata["descriptor"] = descriptor
+        if re.search(r"\bspare\b", descriptor, re.I) or re.search(r"\bspare\b", m.group(0), re.I):
+            metadata["qualifier"] = "spare"
+        mentions.append((quantity, noun, metadata))
+        seen_spans.append(m.span())
+
+    for m in _HEADLINE_RE.finditer(text):
+        if _overlaps(*m.span()):
+            continue
+        raw = m.group(1).replace(",", "")
+        try:
+            n = int(raw)
+        except ValueError:
+            continue
+        if n < _MIN_HEADLINE_COUNT or n > 100_000:
+            continue
+        filler = (m.group(2) or "").strip().lower()
+        first_token = filler.split()[0] if filler else (m.group(3) or "").strip().lower()
+        if first_token in _MEASURE_WORDS:
+            continue
+        noun = _canonical_quantity_noun(m.group(3))
+        mentions.append((n, noun, {"kind": "quantity", "quantity": n, "noun": noun, "inferred": True}))
+
+    return mentions
+
+
 def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[Any]:
     """Emit a ``quantity`` atom for a strong ``<N> <deliverable>`` count
     stated in prose that no existing quantity atom captures.
@@ -306,33 +426,18 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
     )
 
     have = _existing_quantity_counts(atoms)
-    emitted_counts: set[int] = set()
+    emitted_counts: set[tuple[int, str]] = set()
     out: list[Any] = []
+    train_rows: list[Any] = []
     for atom in atoms:
         if _atom_type_str(atom) not in _SOURCE_TYPES_FOR_HEADLINE:
             continue
         text = _atom_text(atom)
-        for m in _HEADLINE_RE.finditer(text):
-            raw = m.group(1).replace(",", "")
-            try:
-                n = int(raw)
-            except ValueError:
+        for n, noun, metadata in _iter_quantity_mentions(text):
+            emitted_key = (n, noun.lower())
+            if n in have or emitted_key in emitted_counts:
                 continue
-            if n < _MIN_HEADLINE_COUNT or n > 100_000:
-                continue
-            # Reject measurement/duration/dimension contexts: if the token
-            # right after the number is a unit of measure ("65 inch display",
-            # "15 minutes per unit", "10 foot rack"), the number is a size or
-            # duration, not a count of the deliverable. Guess-free: skip rather
-            # than emit a wrong quantity.
-            filler = (m.group(2) or "").strip().lower()
-            first_token = filler.split()[0] if filler else (m.group(3) or "").strip().lower()
-            if first_token in _MEASURE_WORDS:
-                continue
-            if n in have or n in emitted_counts:
-                continue
-            emitted_counts.add(n)
-            noun = re.sub(r"\s+", " ", m.group(3).strip().lower())
+            emitted_counts.add(emitted_key)
             artifact_id = getattr(atom, "artifact_id", "") or ""
             atom_id = stable_id("atm", artifact_id, "quantity_headline", str(n), noun)
             src_refs = list(getattr(atom, "source_refs", None) or [])
@@ -356,7 +461,7 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
                     atom_type=AtomType.quantity,
                     raw_text=f"{n} {noun}",
                     normalized_text=f"{n} {noun}",
-                    value={"kind": "quantity", "quantity": n, "noun": noun, "inferred": True},
+                    value=metadata,
                     entity_keys=[f"quantity:{n}"],
                     source_refs=src_refs,
                     receipts=[],
@@ -369,7 +474,83 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
                     parser_version="atom_type_sanity_v1",
                 )
             )
+            try:
+                from app.core.training_log import TEACHER_STORE, TrainingRow
+
+                train_rows.append(
+                    TrainingRow(
+                        relation="equipment_quantity_context",
+                        label=noun.lower(),
+                        raw_text=text[:4000],
+                        label_kind="span",
+                        teacher=TEACHER_STORE,
+                        confidence=0.55,
+                        deal_id=project_id,
+                        project_id=project_id,
+                        provenance={
+                            "quantity": n,
+                            "noun": noun,
+                            "source": "headline_quantity_fallback",
+                        },
+                    )
+                )
+            except Exception:
+                pass
+    if train_rows:
+        try:
+            from app.core.training_log import log_rows
+
+            log_rows(train_rows)
+        except Exception:
+            pass
     return out
+
+
+_MANIFEST_META_BOM_RE = re.compile(
+    r"^artifacts\[\d+\]\.(?:attachment_id|blob_url|content_sha256|filename|content_type|size_bytes|mime_type)\s*:",
+    re.I,
+)
+
+
+def demote_manifest_metadata_bom_lines(atoms: list[Any]) -> int:
+    """Re-type manifest JSON metadata mis-labelled as ``bom_line`` by the classifier."""
+    from app.core.schemas import AtomType
+
+    demoted = 0
+    for atom in atoms:
+        if _atom_type_str(atom) != "bom_line":
+            continue
+        text = _atom_text(atom)
+        if not _MANIFEST_META_BOM_RE.match(text):
+            continue
+        atom.atom_type = AtomType.scope_item
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if "retyped_manifest_meta_bom_line" not in flags:
+            flags.append("retyped_manifest_meta_bom_line")
+        atom.review_flags = flags
+        demoted += 1
+    return demoted
+
+
+def demote_email_include_list_microtasks(atoms: list[Any]) -> int:
+    """Re-type mistyped ``task`` atoms that are email Include-list micro-labels.
+
+    The typed classifier can promote ``Okta integration`` to ``task`` when the
+    email parser stripped the bullet chrome; those belong in the umbrella
+    quote-line bucket, not as standalone child tasks."""
+    from app.core.schemas import AtomType
+
+    demoted = 0
+    for atom in atoms:
+        if _atom_type_str(atom) != "task":
+            continue
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        if val.get("list_section") == "include" and val.get("kind") == "email_body_line":
+            atom.atom_type = AtomType.scope_item
+            demoted += 1
+    return demoted
 
 
 def apply_type_sanity(atoms: list[Any], *, project_id: str) -> tuple[list[Any], int, int]:
@@ -378,6 +559,8 @@ def apply_type_sanity(atoms: list[Any], *, project_id: str) -> tuple[list[Any], 
     ``atoms`` is returned (possibly extended with surfaced quantities).
     """
     demoted = demote_nondeliverable_quantities(atoms)
+    demoted += demote_manifest_metadata_bom_lines(atoms)
+    demoted += demote_email_include_list_microtasks(atoms)
     # Universal scrub: strip junk quantity: keys off *any* atom (commercial
     # totals, pricing assumptions) — not just quantity-typed ones — so the
     # entity resolver never promotes "260 pmo cost" into a quantity entity.
@@ -390,6 +573,7 @@ def apply_type_sanity(atoms: list[Any], *, project_id: str) -> tuple[list[Any], 
 
 __all__ = [
     "apply_type_sanity",
+    "demote_manifest_metadata_bom_lines",
     "demote_nondeliverable_quantities",
     "scrub_nondeliverable_quantity_keys",
     "surface_headline_quantities",
