@@ -55,6 +55,40 @@ def test_hubspot_note_parser_emits_scope_without_utterance_segmentation(tmp_path
     assert body_atoms
 
 
+def test_hubspot_note_parser_extracts_physical_site_with_city(tmp_path: Path) -> None:
+    # Address-only note (company lead-in + "PA15212-5359" with no space) must ingest as
+    # a physical_site atom carrying structured city/state/zip so site_facility_head can
+    # derive a "<City> Office" facility name. Universal: any address-bearing note works.
+    p = tmp_path / "010058-hs-note-111645120815-GECKO ROBOTICS.txt"
+    p.write_text(
+        "\n".join(
+            [
+                "HubSpot Note: GECKO ROBOTICS",
+                "HubSpot Note ID: 111645120815",
+                "Date: 2026-06-24T16:05:00.000Z",
+                "Author: Patrick Kelly",
+                "",
+                "GECKO ROBOTICS 100 S COMMONS STE 145 PITTSBURGH, PA15212-5359",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("deal-1", "art_addr", p)
+    sites = [a for a in atoms if a.atom_type == AtomType.physical_site]
+    assert len(sites) == 1
+    site = sites[0]
+    assert site.value["city"] == "PITTSBURGH"
+    assert site.value["state"] == "PA"
+    assert site.value["zip"] == "15212"
+    assert site.value["street_address"] == "100 S COMMONS STE 145"
+
+    # End-to-end: the head derives the friendly "<City> Office" name from that locality.
+    from app.core.site_facility_head import decide_site_facility_label
+
+    decision = decide_site_facility_label(site)
+    assert decision.facility_name == "Pittsburgh Office"
+
+
 def test_parse_hubspot_note_text_splits_headers() -> None:
     parsed = parse_hubspot_note_text(
         "HubSpot Note: Title\nHubSpot Note ID: 99\nDate: 2026-01-01\nAuthor: Pat\n\nBody line."

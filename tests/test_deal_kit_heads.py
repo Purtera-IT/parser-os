@@ -10,23 +10,19 @@ class _Atom:
         self.review_flags = []
 
 
-def test_site_facility_head_uses_city_office_for_address_backed_site() -> None:
+def test_site_facility_head_keeps_facility_when_no_locality() -> None:
+    # No city/state parsed (e.g. a transcript-only site whose address note was never
+    # ingested): the head must not invent a city and keeps the existing facility label.
     atom = _Atom(
         {
-            "site_id": "PITTSBURGH-PA-15212",
-            "name": "100 S COMMONS STE 145, PITTSBURGH, PA 15212",
-            "street_address": "100 S COMMONS STE 145",
-            "city": "PITTSBURGH",
-            "state": "PA",
-            "zip": "15212",
-            "aliases": ["gecko robotics pittsburgh office workshop"],
+            "site_id": "GECKO-ROBOTICS-NEW-OFFICE-WORKSHOP",
+            "name": "gecko robotics new office workshop",
+            "facility_name": "gecko robotics new office workshop",
         }
     )
     decision = decide_site_facility_label(atom)
-    assert decision.facility_name == "Pittsburgh Office"
-    atoms, n = annotate_site_facility_labels([atom], project_id="deal-1")
-    assert n == 1
-    assert atoms[0].value["facility_name"] == "Pittsburgh Office"
+    assert decision.label == "keep_facility"
+    assert decision.facility_name == "gecko robotics new office workshop"
 
 
 def test_site_facility_head_uses_city_office_for_address_backed_site() -> None:
