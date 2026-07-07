@@ -227,6 +227,69 @@ CONSTRAINT_PATTERNS = [
 ]
 
 
+# ── Email body hygiene (universal + structural — NO name/vocabulary lists) ──
+#
+# These guards remove *email chrome* (salutations, signature blocks, bullet
+# markers, list headers) so the atoms we emit are the customer's actual scope,
+# not the envelope around it. Every rule keys off STRUCTURE (word count,
+# trailing comma, closing-phrase, bullet glyph, "label:" line) — never a
+# specific person, deal, or domain term — so it generalises to any email.
+
+# A leading list-bullet glyph / ordinal. Stripped so the atom is the ITEM
+# ("Okta integration"), not the marker ("*   Okta integration").
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[*•·▪◦‣o]|[-–—]|\(?\d{1,2}[.)])\s+")
+
+# A greeting/salutation opener led by a greeting word ("Hi", "Dear", …).
+_GREETING_LEAD_RE = re.compile(
+    r"^(?:hi|hey|hiya|hello|dear|greetings|good\s+(?:morning|afternoon|evening))\b",
+    re.IGNORECASE,
+)
+
+# A sign-off phrase that opens the trailing signature block. Everything after
+# it in an AUTHORED message is name/title/contact chrome — the sender identity
+# is already captured as structured email-header metadata, so it is not scope.
+_SIGNOFF_RE = re.compile(
+    r"^(?:thanks|thank\s+you|thanks\s+(?:so\s+much|again|a\s+lot|much)|many\s+thanks|"
+    r"regards|best|best\s+regards|kind\s+regards|warm\s+regards|warmest\s+regards|"
+    r"sincerely|cheers|respectfully|talk\s+soon|appreciate\s+it|much\s+appreciated|"
+    r"all\s+the\s+best|take\s+care|yours(?:\s+(?:truly|sincerely))?)\s*[,.!]*\s*$",
+    re.IGNORECASE,
+)
+
+# A standalone list-section HEADER. The label is not itself an atom; the ITEMS
+# beneath it are, and they inherit its polarity (include → scope, exclude →
+# exclusion). Anchored to the whole line so only a bare label matches — a real
+# sentence that merely contains the word ("please exclude the buildout") still
+# flows through the normal pattern extractor.
+_INCLUDE_LABEL_RE = re.compile(
+    r"^(?:include[ds]?|inclusions?|included\s+items?|in\s+scope|"
+    r"scope|scope\s+of\s+work|in-?scope)\s*:?\s*$",
+    re.IGNORECASE,
+)
+_EXCLUDE_LABEL_RE = re.compile(
+    r"^(?:exclude[ds]?|exclusions?|excluded\s+items?|out\s+of\s+scope|"
+    r"not\s+included|not\s+in\s+scope|out-?of-?scope)\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_greeting_line(cleaned: str) -> bool:
+    """True when a line is a salutation opener ("Eddie,", "Hi John,", "Dear
+    all,"). Structural: a short line (≤4 words) ending in a comma that is
+    either led by a greeting word or is purely name-shaped tokens. Carries no
+    scope, role, or instruction, so it should never become an atom."""
+    if not cleaned.endswith(","):
+        return False
+    words = cleaned.rstrip(",").split()
+    if not (1 <= len(words) <= 4):
+        return False
+    if _GREETING_LEAD_RE.match(cleaned):
+        return True
+    # Pure name-shaped salutation: every token is alphabetic (allowing an
+    # initial's period / hyphen / apostrophe) — "Eddie", "Mr. Smith", "Jean-Luc".
+    return all(re.fullmatch(r"[A-Za-z][A-Za-z.'\-]*", w) for w in words)
+
+
 def _extract_email_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".eml":
@@ -864,12 +927,25 @@ class EmailParser(BaseParser):
         source_ref = self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block)
         confidence = 0.45 if authority == AuthorityClass.quoted_old_email else 0.86
 
+        # Body-hygiene state, per message block. ``in_signature`` latches once
+        # an authored message reaches its sign-off. ``current_section`` carries
+        # an Include/Exclude list header down onto the bullet items beneath it.
+        in_signature = False
+        current_section: str | None = None  # "include" | "exclude" | None
+
         for line in block["lines"]:
-            cleaned = line.lstrip("> ").strip()
+            raw_cleaned = line.lstrip("> ").strip()
+            if not raw_cleaned:
+                continue
+            is_bullet = bool(_BULLET_PREFIX_RE.match(raw_cleaned))
+            cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
             lowered = normalize_text(cleaned)
             entity_keys = self._extract_entity_keys(cleaned)
+            # Site atoms are attempted on EVERY line (an address can appear in a
+            # signature or under any label) — the helper guards vendor
+            # letterhead — so hygiene skips below never lose a real site.
             atoms.extend(
                 self._site_atoms_from_line(
                     project_id=project_id,
@@ -881,6 +957,36 @@ class EmailParser(BaseParser):
                     confidence=confidence,
                 )
             )
+
+            # 0) Bare inline-attachment reference ("[cid:…]") — MIME chrome. The
+            #    referenced part is handled by ``_cid_inline_atoms``; the marker
+            #    line itself is not deal content.
+            if _CID_REF_RE.sub("", cleaned).strip() == "":
+                continue
+            # 1) Signature block: once an authored message signs off, the rest
+            #    is name/title/phone/URL chrome, not deal content.
+            if in_signature:
+                continue
+            if not block["quoted"] and _SIGNOFF_RE.match(cleaned):
+                in_signature = True
+                continue
+            # 2) Salutation opener — no scope/role/instruction.
+            if _is_greeting_line(cleaned):
+                continue
+            # 3) List-section header ("Include:"/"Exclude:") — not an atom; the
+            #    items beneath inherit its polarity.
+            if _INCLUDE_LABEL_RE.match(cleaned):
+                current_section = "include"
+                continue
+            if _EXCLUDE_LABEL_RE.match(cleaned):
+                current_section = "exclude"
+                continue
+            # A bullet item stays inside the active section; any non-bullet
+            # content line ends it (and is typed normally).
+            section_for_line = current_section if is_bullet else None
+            if not is_bullet:
+                current_section = None
+
             atom_types: list[AtomType] = []
             pack = get_active_domain_pack()
             exclusion_patterns = EXCLUSION_PATTERNS + [re.escape(normalize_text(p)) for p in pack.exclusion_patterns]
@@ -893,8 +999,15 @@ class EmailParser(BaseParser):
                 for p in rows
             ]
 
-            if any(re.search(pattern, lowered) for pattern in exclusion_patterns):
+            # A bullet under an "Exclude:" header IS an exclusion even though
+            # the item text itself ("Network buildout") carries no exclusion
+            # keyword — the header supplied the polarity. Likewise an item
+            # under "Include:" is scope (handled by the baseline gate below).
+            if section_for_line == "exclude":
                 atom_types.append(AtomType.exclusion)
+            if any(re.search(pattern, lowered) for pattern in exclusion_patterns):
+                if AtomType.exclusion not in atom_types:
+                    atom_types.append(AtomType.exclusion)
             if any(re.search(pattern, lowered) for pattern in instruction_patterns):
                 atom_types.append(AtomType.customer_instruction)
             # Change-delta presence ("from 48 to 36" anywhere in line)
@@ -932,6 +1045,8 @@ class EmailParser(BaseParser):
                     "message_index": block["message_index"],
                     "quoted": block["quoted"],
                 }
+                if section_for_line:
+                    atom_value["list_section"] = section_for_line
                 if delta_payload and atom_type == AtomType.customer_instruction:
                     atom_value["change_delta"] = delta_payload
                 atoms.append(
@@ -989,6 +1104,7 @@ class EmailParser(BaseParser):
                             "message_index": block["message_index"],
                             "quoted": block["quoted"],
                             "kind": "email_body_line",
+                            **({"list_section": section_for_line} if section_for_line else {}),
                         },
                         entity_keys=entity_keys,
                         source_refs=[source_ref],

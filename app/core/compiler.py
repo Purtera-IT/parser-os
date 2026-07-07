@@ -1091,6 +1091,37 @@ def compile_project(
             warnings.append(f"WARNING: atom_type_sanity failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=sanity_changed)
 
+    # Substance gate: drop context-free atom fragments that mean nothing to a
+    # downstream head — bare-name stakeholders (salutations/sign-offs/speaker
+    # labels mis-typed as people, with no role/affiliation/contact) and
+    # backchannel filler prose ("Yeah.", "Got it."). Runs AFTER classification
+    # so it sees final atom types. Lossless: dropped atoms go to the ledger.
+    with telemetry.stage("substance_gate", input_count=len(atoms)) as stage:
+        gate_dropped = 0
+        try:
+            from app.core.atom_substance_gate import apply_substance_gate
+
+            before_gate = list(atoms)
+            atoms, dropped_gate = apply_substance_gate(atoms)
+            if dropped_gate:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_gate,
+                        atoms,
+                        stage="substance_gate",
+                        reason="context-free fragment (bare-name stakeholder or backchannel filler) — not actionable to any head",
+                    ),
+                )
+                gate_dropped = len(dropped_gate)
+                warnings.append(
+                    f"INFO: substance_gate diverted {gate_dropped} context-free "
+                    f"fragment(s) (bare-name stakeholders / backchannel filler)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: substance_gate failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=gate_dropped)
+
     # Span admission (#span_admission seam): for atoms still sitting in a
     # generic/retained type (scope_item/entity/deal_metadata/site_note), ask the
     # decide() STORE whether they should be re-typed into a recovered specific
