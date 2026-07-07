@@ -193,6 +193,11 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         if _has_role_context(text, value, entity_keys):
             kept.append(atom)
             continue
+        # Transcript QA-split name fragment ("Tom Amble." in a speaker block) —
+        # almost always a sign-off / attribution tail, never a roster record.
+        if value.get("qa_split") and _looks_like_bare_name(text):
+            dropped.append(atom)
+            continue
         if _looks_like_bare_name(text):
             dropped.append(atom)
             continue
