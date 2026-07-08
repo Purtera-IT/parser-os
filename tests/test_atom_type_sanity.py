@@ -16,6 +16,7 @@ from app.core.schemas import (
     ReviewStatus,
     SourceRef,
 )
+from app.core.training_log import TrainingLog, set_training_log
 
 
 def _atom(atom_type, text, *, entity_keys=None, value=None, aid="art_x"):
@@ -145,6 +146,57 @@ def test_measure_word_does_not_block_real_count_in_same_corpus():
     counts = sorted(a.value["quantity"] for a in surfaced)
     assert counts == [50, 110]
     assert 65 not in counts
+
+
+def test_surface_config_equipment_counts_from_compact_notes():
+    log = TrainingLog(":memory:")
+    set_training_log(log)
+    atoms = [
+        _atom(
+            AtomType.scope_item,
+            "4E7 APs. 2 UDM beast for routers. 2 48 port switches and 2nvr. "
+            "Six or seven badge readers. It is worth noting we have 1 spare AP.",
+        )
+    ]
+    try:
+        surfaced = surface_headline_quantities(atoms, project_id="p")
+    finally:
+        set_training_log(None)
+    rows = {(a.value["quantity"], a.value["noun"]): a.value for a in surfaced}
+
+    assert (4, "access points") in rows
+    assert (2, "switches") in rows
+    assert rows[(2, "switches")]["descriptor"] == "48 port"
+    assert (2, "NVRs") in rows
+    assert (7, "badge readers") in rows
+    assert rows[(7, "badge readers")]["range_min"] == 6
+    assert rows[(7, "badge readers")]["range_max"] == 7
+    assert rows[(1, "access points")]["qualifier"] == "spare"
+    assert (48, "switches") not in rows
+    train_labels = {r.label.lower() for r in log.rows(relation="equipment_quantity_context")}
+    assert {"access points", "switches", "nvrs", "badge readers"} <= train_labels
+
+
+def test_surfaced_quantity_carries_context_sentence():
+    # A surfaced quantity must NOT be an orphaned "<N> <noun>" — it carries the
+    # subject and surrounding statement so it is actionable to a head and
+    # verifies against source. Regression guard for the context-free quantity
+    # atoms the user flagged ("12 cameras", "20 users" with no context).
+    sentence = (
+        "And so what we have on site are, I don't know, 12 cameras, "
+        "I don't know, six or seven badge readers."
+    )
+    atoms = [_atom(AtomType.scope_item, sentence)]
+    surfaced = surface_headline_quantities(atoms, project_id="p")
+    by_noun = {a.value["noun"]: a for a in surfaced}
+    cams = by_noun["cameras"]
+    # The atom text is the context sentence, not a bare "12 cameras".
+    assert cams.raw_text == sentence
+    assert cams.raw_text != "12 cameras"
+    assert cams.value["headline"] == "12 cameras"
+    assert "12 cameras" in cams.value["context"]
+    # Verification proxy: the important terms of the atom appear in the source.
+    assert "cameras" in cams.raw_text.lower() and "12" in cams.raw_text
 
 
 def test_scrub_strips_financial_quantity_key_off_commercial_atom():

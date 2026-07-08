@@ -84,7 +84,21 @@ _PHONE_RE = re.compile(r"\b(?:\+?\d[\d().\-\s]{7,}\d)\b")
 # a leading "Speaker Name [mm:ss]" transcript label to strip before the
 # substance test, so "Jacob Vander-Plaats [03:05] Yeah." is judged on "Yeah.".
 _SPEAKER_LABEL_RE = re.compile(
-    r"^[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z.'\-]*){0,3}\s*\[\d{1,2}:\d{2}(?::\d{2})?\]\s*"
+    r"^[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z0-9.'\-]*){0,4}\s*\[\d{1,2}:\d{2}(?::\d{2})?\]\s*"
+)
+
+# The ENTIRE atom text is a transcript speaker header ("Daniel Peterson
+# [00:48]") and nothing else. When a transcript is delivered as a PDF, the
+# color-driven segmenter emits each speaker-turn header as its own paragraph
+# block, which the fail-open PDF atomizer then turns into a standalone
+# scope_item. That atom is pure chrome — the speaker + timestamp are already
+# carried as ``section_path`` context on the real utterance atoms beneath the
+# header — so a bare label is not actionable to any downstream head. STRUCTURAL
+# (name-shaped tokens + a [mm:ss] stamp anchored to the whole line), never a
+# name/deal list, so it generalises to any transcript.
+_SPEAKER_LABEL_ONLY_RE = re.compile(
+    r"^[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z0-9.'\-]*){0,4}\s*"
+    r"\[\d{1,2}:\d{2}(?::\d{2})?\]\s*$"
 )
 
 # backchannel / filler tokens (universal conversational acknowledgements).
@@ -98,6 +112,30 @@ _FILLER_TOKENS: frozenset[str] = frozenset(
         "correct", "indeed", "true", "fine", "good", "alright", "okey",
         "thanks", "thank", "welcome", "please", "sorry", "hi", "hey", "hello",
         "bye", "goodbye", "cheers", "anyway", "anyways", "basically",
+    }
+)
+
+# Closed-class conversational tokens that carry no deal substance on their own:
+# grammatical function words (pronouns, light copular/perception/stance verbs)
+# and social address terms. This is a UNIVERSAL linguistic class — NOT deal,
+# name, or domain vocabulary. It only ever participates in the "every content
+# token is non-substantive" test below, so a single real deal word ("cameras",
+# "switch", "Okta") always keeps the atom. It exists to catch conversational
+# turns the bare-filler set misses — "I see.", "Thank you.", "Thanks, guys.",
+# "Okay, sounds good." — where a pronoun or a light verb sits beside filler.
+_SOCIAL_FUNCTION_TOKENS: frozenset[str] = frozenset(
+    {
+        # pronouns
+        "i", "you", "we", "he", "she", "it", "they", "me", "us", "him",
+        "her", "them", "my", "your", "our", "his", "its", "their", "myself",
+        "yourself", "ourselves",
+        # social address terms
+        "guy", "guys", "everyone", "everybody", "folks", "team", "sir",
+        "maam", "man", "yall",
+        # light perception / linking / stance verbs (only gated when the WHOLE
+        # utterance is function/social/filler words)
+        "see", "saw", "seen", "sound", "sounds", "sounded", "look", "looks",
+        "looking", "think", "guess", "suppose",
     }
 )
 
@@ -210,12 +248,23 @@ def _content_tokens(text: str) -> list[str]:
     return [re.sub(r"[^a-z0-9]", "", t) for t in probe.lower().split() if t.strip()]
 
 
+# The union checked by the "every content token is non-substantive" test.
+_NONCONTENT_TOKENS: frozenset[str] = _FILLER_TOKENS | _SOCIAL_FUNCTION_TOKENS
+
+
 def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Partition into (kept, dropped). A generic-prose atom (scope_item / entity
-    / note) whose entire content — after stripping a leading transcript speaker
-    label — is backchannel/filler is dropped as non-substantive. Conservative:
-    only fires when EVERY content token is filler, so any real deal word keeps
-    the atom."""
+    / note) is dropped as non-substantive when it is either:
+
+    * a bare transcript speaker header ("Daniel Peterson [00:48]") — pure
+      chrome the segmenter should have kept as ``section_path`` context, or
+    * a short utterance whose entire content — after stripping a leading
+      transcript speaker label — is backchannel/filler/social function words
+      ("Yeah.", "I see.", "Thank you.", "Thanks, guys.", "Okay, sounds good.").
+
+    Conservative: the utterance test only fires on short turns where EVERY
+    content token is non-substantive, so a single real deal word ("cameras",
+    "Okta", "switch") always keeps the atom."""
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
@@ -223,12 +272,16 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
             kept.append(atom)
             continue
         text = _atom_text(atom)
+        # A standalone speaker/timestamp header line is chrome, never content.
+        if _SPEAKER_LABEL_ONLY_RE.match(text.strip()):
+            dropped.append(atom)
+            continue
         tokens = [t for t in _content_tokens(text) if t]
         # Only judge short utterances; a long paragraph is never "just filler".
-        if not tokens or len(tokens) > 5:
+        if not tokens or len(tokens) > 6:
             kept.append(atom)
             continue
-        if all(t in _FILLER_TOKENS for t in tokens):
+        if all(t in _NONCONTENT_TOKENS for t in tokens):
             dropped.append(atom)
             continue
         kept.append(atom)

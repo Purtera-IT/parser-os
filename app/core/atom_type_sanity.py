@@ -353,6 +353,38 @@ def _canonical_quantity_noun(raw: str) -> str:
     return noun
 
 
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+
+
+def _context_sentence(text: str, span: tuple[int, int]) -> str:
+    """Return the sentence (or a bounded window) of ``text`` that contains the
+    matched quantity span, so a surfaced quantity atom carries its subject and
+    surrounding statement instead of an orphaned "<N> <noun>". Universal — pure
+    sentence segmentation, no domain vocabulary."""
+    if not text:
+        return ""
+    start, end = span
+    cursor = 0
+    for sentence in _SENTENCE_SPLIT_RE.split(text):
+        seg_start = text.find(sentence, cursor)
+        if seg_start < 0:
+            seg_start = cursor
+        seg_end = seg_start + len(sentence)
+        cursor = seg_end
+        if seg_start <= start < seg_end:
+            picked = sentence.strip()
+            break
+    else:
+        picked = text.strip()
+    # A transcript "sentence" can still be a long multi-clause turn; keep it
+    # bounded but always context-bearing (never shorter than the bare mention).
+    if len(picked) > 320:
+        left = max(0, start - 160)
+        right = min(len(text), end + 160)
+        picked = text[left:right].strip()
+    return picked
+
+
 def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
     mentions: list[tuple[int, str, dict[str, Any]]] = []
     seen_spans: list[tuple[int, int]] = []
@@ -383,6 +415,8 @@ def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
             metadata["descriptor"] = descriptor
         if re.search(r"\bspare\b", descriptor, re.I) or re.search(r"\bspare\b", m.group(0), re.I):
             metadata["qualifier"] = "spare"
+        metadata["headline"] = f"{quantity} {noun}"
+        metadata["context"] = _context_sentence(text, m.span())
         mentions.append((quantity, noun, metadata))
         seen_spans.append(m.span())
 
@@ -401,7 +435,10 @@ def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
         if first_token in _MEASURE_WORDS:
             continue
         noun = _canonical_quantity_noun(m.group(3))
-        mentions.append((n, noun, {"kind": "quantity", "quantity": n, "noun": noun, "inferred": True}))
+        mentions.append((n, noun, {
+            "kind": "quantity", "quantity": n, "noun": noun, "inferred": True,
+            "headline": f"{n} {noun}", "context": _context_sentence(text, m.span()),
+        }))
 
     return mentions
 
@@ -440,6 +477,11 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
             emitted_counts.add(emitted_key)
             artifact_id = getattr(atom, "artifact_id", "") or ""
             atom_id = stable_id("atm", artifact_id, "quantity_headline", str(n), noun)
+            # Carry the surrounding statement so the quantity is actionable to a
+            # head (subject + context), not an orphaned "<N> <noun>". Falls back
+            # to the parent atom text, then to the bare headline.
+            headline = metadata.get("headline") or f"{n} {noun}"
+            context_text = (metadata.get("context") or text or headline).strip() or headline
             src_refs = list(getattr(atom, "source_refs", None) or [])
             if not src_refs:
                 src_refs = [
@@ -459,8 +501,8 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
                     project_id=project_id,
                     artifact_id=artifact_id,
                     atom_type=AtomType.quantity,
-                    raw_text=f"{n} {noun}",
-                    normalized_text=f"{n} {noun}",
+                    raw_text=context_text,
+                    normalized_text=context_text.lower(),
                     value=metadata,
                     entity_keys=[f"quantity:{n}"],
                     source_refs=src_refs,
