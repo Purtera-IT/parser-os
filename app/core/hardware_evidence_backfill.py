@@ -163,6 +163,26 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "UBNT-PROTECT-SENSOR",
+        "Ubiquiti Protect All-In-One Sensor",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?protect(?:\s+all[- ]in[- ]one)?\s+sensors?\b"
+            rf"|protect(?:\s+all[- ]in[- ]one)?\s+sensors?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            r"|protect(?:\s+all[- ]in[- ]one)?\s+sensors?[^\n]{0,40}?\s*[×x]\s*(\d+)\b",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-G6-PTZ-MOUNT",
+        "Ubiquiti G6 PTZ Mount",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?g6\s+ptz\s+mounts?\b"
+            rf"|g6\s+ptz\s+mounts?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            r"|g6\s+ptz\s+mounts?[^\n]{0,40}?\s*[×x]\s*(\d+)\b",
+            re.I | re.M,
+        ),
+    ),
+    (
         "UBNT-AP-GENERIC",
         "Ubiquiti Access Point",
         re.compile(r"(?<![%/\w-])(\d+)\s+(?:x\s*)?(?:access points?|aps?)\b", re.I),

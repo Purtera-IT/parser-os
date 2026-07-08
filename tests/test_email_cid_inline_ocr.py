@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from email import policy
 from email.parser import BytesParser
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +60,87 @@ def _build_multipart_eml(*, cid: str = "07131976-d75d-4133-b5d2-52a8919274ba") -
       "",
   ]
   return "\r\n".join(lines).encode("utf-8")
+
+
+_HUBSPOT_ORDER_TABLE_TEXT = "\n".join(
+    [
+        "Order Details",
+        "Access Card × 10",
+        "Protect All-In-One Sensor × 2",
+        "Switch Pro Max 48 PoE × 2",
+        "Access Point E7 × 6",
+        "Enterprise NVR × 1",
+        "G6 PTZ Mount × 6",
+        "Access G3 Reader × 4",
+        "Dream Machine Beast × 2",
+        "Camera G6 Pro Turret × 9",
+    ]
+)
+
+
+def test_cid_image_ocr_helper_exists() -> None:
+    from app.parsers import email_parser as ep
+
+    assert callable(ep._ocr_text_from_cid_image)
+
+
+def test_transcript_pdf_cid_does_not_emit_spoken_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": (
+            "Meeting Summary and Full Transcript\n"
+            "Jacob Vander-Plaats [07:16]\n"
+            "We have like 4E7 APS. We have two UDM beast for like, their.\n"
+        ),
+    )
+    eml = tmp_path / "transcript-inline.eml"
+    eml.write_bytes(_build_multipart_eml())
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_transcript_pdf", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment == []
+
+
+def test_order_details_table_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": _HUBSPOT_ORDER_TABLE_TEXT,
+    )
+    eml = tmp_path / "order-table.eml"
+    eml.write_bytes(_build_multipart_eml())
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_order_table", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 8
+
+
+def test_order_details_table_mints_full_bom() -> None:
+    class _Scope:
+        def __init__(self, text: str, qty: int):
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": "email_cid_equipment_line", "quantity": qty}
+
+    lines = [
+        _Scope(line, int(line.rsplit("×", 1)[-1].strip()))
+        for line in _HUBSPOT_ORDER_TABLE_TEXT.splitlines()
+        if "×" in line
+    ]
+    out, minted = backfill_hardware_bom_lines(lines, project_id="deal-gecko")
+    assert minted >= 8
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-ACCESS-CARD") == 10
+    assert bom.get("UBNT-PROTECT-SENSOR") == 2
+    assert bom.get("UBNT-SW-PRO") == 2
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-G6-PTZ-MOUNT") == 6
+    assert bom.get("UBNT-BADGE-READER") == 4
+    assert bom.get("UBNT-UDM-BEAST") == 2
 
 
 def test_multipart_eml_cid_pdf_ocr_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -60,12 +60,29 @@ _EQUIPMENT_LINE_RE = re.compile(
     r"g6(?:\s+pro)?(?:\s+(?:turret|360))?|camera\s+g6(?:\s+pro)?(?:\s+(?:turret|360))?|"
     r"(?:access\s+)?g3\s*reader|access\s+reader(?:\s*pro)?|badge\s*reader|card\s*reader|"
     r"access\s*card|enterprise\s+access\s+hub|"
+    r"protect(?:\s+all[- ]in[- ]one)?\s+sensor|g6\s+ptz\s+mount|"
     r"reader\s+g6\s+entry)[^\n]{0,80}?(?:[×x]\s*|(?:\s{2,}|\t))\s*(\d+)\s*$"
+    r"|"
+  # HubSpot order rows with middle-dot or × glyph: "Access Card × 10".
+    r"(?:access\s*card|protect(?:\s+all[- ]in[- ]one)?\s+sensor|"
+    r"switch\s+pro(?:\s+max)?(?:\s+\d+)?(?:\s+poe)?|access\s+point(?:\s+e7)?|"
+    r"enterprise\s+nvr|(?:access\s+)?g3\s*reader|g6\s+ptz\s+mount)"
+    r"[^\n]{0,40}?\s*[×x]\s*(\d+)\b"
     r")",
     re.I | re.M,
 )
 # Prefer digital PDF text when a page already has enough selectable chars.
 _PDF_DIGITAL_TEXT_MIN_CHARS = 40
+_ORDER_DETAILS_HDR_RE = re.compile(r"\border\s+details\b", re.I)
+_TRANSCRIPT_DOC_RE = re.compile(
+    r"\bmeeting\s+summary\s+and\s+full\s+transcript\b|\bfull\s+transcript\b",
+    re.I,
+)
+_TRANSCRIPT_SPEECH_LINE_RE = re.compile(
+    r"\[[0-9]{1,2}:[0-9]{2}\]|"
+    r"^[A-Z][a-z]+(?:\s+[A-Z][a-z'-]+)+\s+\[[0-9]",
+    re.I,
+)
 _WORD_QTY: dict[str, int] = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -101,6 +118,8 @@ def _iter_cid_inline_parts(msg) -> dict[str, dict[str, Any]]:
             continue
         payload = part.get_payload(decode=True) or b""
         ctype = (part.get_content_type() or "").lower()
+        if payload[:5] == b"%PDF-":
+            ctype = "application/pdf"
         if ctype.startswith("image/"):
             out[key] = {
                 "content_id": key,
@@ -173,6 +192,50 @@ def _digital_text_from_pdf_page(page) -> str:
     return text
 
 
+def _slice_order_details_text(text: str) -> str:
+    """Keep HubSpot order-table rows when an Order Details header is present."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    match = _ORDER_DETAILS_HDR_RE.search(raw)
+    if not match:
+        return raw
+    chunk = raw[match.start() :]
+    stop = re.search(
+        r"\n(?:Meeting Summary|Full Transcript|Executive Summary|Action Items)\b",
+        chunk,
+        re.I,
+    )
+    if stop:
+        chunk = chunk[: stop.start()]
+    return chunk.strip()
+
+
+def _focus_cid_equipment_text(text: str) -> str:
+    """Prefer order-table text; ignore spoken transcript counts from wrong embeds."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    order = _slice_order_details_text(raw)
+    if order != raw:
+        return order
+    if _TRANSCRIPT_DOC_RE.search(raw):
+        return ""
+    return raw
+
+
+def _ocr_text_from_cid_image(payload: bytes) -> str:
+    if not payload:
+        return ""
+    try:
+        from app.parsers._ocr_chain import ocr_image_bytes
+
+        result = ocr_image_bytes(payload)
+        return (result.get("text") or "").strip()
+    except Exception:
+        return ""
+
+
 def _ocr_text_from_cid_pdf(payload: bytes) -> str:
     """Prefer PyMuPDF digital text; OCR only pages lacking a usable text layer."""
     if not payload:
@@ -202,6 +265,10 @@ def _ocr_text_from_cid_pdf(payload: bytes) -> str:
 
 
 def _ocr_text_from_cid_inline(payload: bytes, *, content_type: str) -> str:
+    if not payload:
+        return ""
+    if payload[:5] == b"%PDF-":
+        return _ocr_text_from_cid_pdf(payload)
     ctype = (content_type or "").lower()
     if ctype.startswith("image/"):
         return _ocr_text_from_cid_image(payload)
@@ -228,6 +295,7 @@ def _hardware_atoms_from_equipment_text(
     parser_version: str,
 ) -> list[EvidenceAtom]:
     atoms: list[EvidenceAtom] = []
+    text = _focus_cid_equipment_text(text)
     if not text.strip():
         return atoms
     src = SourceRef(
@@ -241,7 +309,7 @@ def _hardware_atoms_from_equipment_text(
     )
     for line in text.splitlines():
         cleaned = line.strip()
-        if not cleaned:
+        if not cleaned or _TRANSCRIPT_SPEECH_LINE_RE.search(cleaned):
             continue
         for match in _EQUIPMENT_LINE_RE.finditer(cleaned):
             qty = None
