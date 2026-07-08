@@ -45,6 +45,8 @@ _EQUIPMENT_LINE_RE = re.compile(
     r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?"
     r"(?:e7|u7)\s*aps?\b"
     r"|"
+    r"(?<![\w/])(\d+)\s*(?:x\s*|×\s*)?e7\s*aps?\b"
+    r"|"
     r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?"
     r"(udm(?:\s*beast)?|enterprise\s+nvr|uni\s*nvr|unvr|nvr|"
     r"g6\s+pro(?:\s+turret)?|badge\s*reader|card\s*reader|access\s*reader|"

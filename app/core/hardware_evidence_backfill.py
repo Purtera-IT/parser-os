@@ -17,6 +17,8 @@ from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
 HARDWARE_EVIDENCE_RELATION = "hardware_evidence_line"
 
 _SOURCE_TYPES = frozenset({"scope_item", "requirement", "customer_instruction", "open_question"})
+_EMAIL_CID_KIND = "email_cid_equipment_line"
+_EMAIL_CID_SOURCE = "email_cid_equipment_line"
 
 _WORD_QTY: dict[str, int] = {
     "one": 1,
@@ -43,6 +45,7 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "Ubiquiti E7 Access Point",
         re.compile(
             r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?(?:e7|u7)\s*aps?\b"
+            r"|(?<![\w/])(\d+)\s*(?:x\s*|×\s*)?e7\s*aps?\b"
             r"|(?:access\s+point\s+)?e7(?:\s+enterprise)?[^\n]{0,40}?\s×\s*(\d+)\b",
             re.I,
         ),
@@ -168,6 +171,27 @@ def _existing_bom_skus(atoms: list[Any]) -> set[str]:
     return out
 
 
+def _value_kind(atom: Any) -> str:
+    val = getattr(atom, "value", None) or {}
+    if isinstance(val, dict):
+        return str(val.get("kind") or "").strip()
+    return ""
+
+
+def _is_email_cid_equipment_atom(atom: Any) -> bool:
+    return _value_kind(atom) == _EMAIL_CID_KIND
+
+
+def _sku_from_equipment_text(text: str) -> tuple[str, str] | None:
+    line = (text or "").strip()
+    if not line:
+        return None
+    for sku, description, pattern in _PATTERNS:
+        if pattern.search(line):
+            return sku, description
+    return None
+
+
 def _mint_bom_line(
     *,
     project_id: str,
@@ -176,6 +200,7 @@ def _mint_bom_line(
     qty: int,
     source_atom: Any,
     notes: str,
+    source: str = "hardware_evidence_backfill",
 ) -> Any:
     from app.core.schemas import ArtifactType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef
 
@@ -208,18 +233,78 @@ def _mint_bom_line(
             "quantity": qty,
             "qty": qty,
             "vendor": "Ubiquiti",
-            "source": "hardware_evidence_backfill",
+            "source": source,
             "notes": notes,
         },
         source_refs=refs[:1],
         authority_class=AuthorityClass.machine_extractor,
-        confidence=0.72,
-        confidence_raw=0.72,
-        calibrated_confidence=0.72,
+        confidence=0.78 if source == _EMAIL_CID_SOURCE else 0.72,
+        confidence_raw=0.78 if source == _EMAIL_CID_SOURCE else 0.72,
+        calibrated_confidence=0.78 if source == _EMAIL_CID_SOURCE else 0.72,
         review_status=ReviewStatus.needs_review,
-        review_flags=["hardware_evidence_backfill", "hardware_evidence_training_row"],
+        review_flags=[source, "hardware_evidence_training_row"],
         parser_version="hardware_evidence_backfill_v1",
     )
+
+
+def _mint_bom_from_email_cid_equipment_lines(
+    atoms: list[Any],
+    *,
+    project_id: str,
+    existing: set[str],
+) -> tuple[list[Any], int]:
+    minted = 0
+    for atom in atoms:
+        if not _is_email_cid_equipment_atom(atom):
+            continue
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        lines = [
+            line.strip()
+            for line in str(val.get("text") or _text(atom) or "").splitlines()
+            if line.strip()
+        ]
+        if not lines:
+            lines = [str(val.get("item") or "").strip()]
+        for line in lines:
+            if not line:
+                continue
+            qty_n = 0
+            for _sku, _description, pattern in _PATTERNS:
+                match = pattern.search(line)
+                if not match:
+                    continue
+                qty_n = _parse_qty_from_match(match) or 0
+                if qty_n > 0:
+                    break
+            if qty_n <= 0:
+                try:
+                    qty_n = int(val.get("quantity") or 0)
+                except (TypeError, ValueError):
+                    qty_n = 0
+            if qty_n <= 0:
+                continue
+            mapped = _sku_from_equipment_text(line) or _sku_from_equipment_text(str(val.get("item") or ""))
+            if not mapped:
+                continue
+            sku, description = mapped
+            if sku.lower() in existing:
+                continue
+            atoms.append(
+                _mint_bom_line(
+                    project_id=project_id,
+                    sku=sku,
+                    description=description,
+                    qty=qty_n,
+                    source_atom=atom,
+                    notes=_EMAIL_CID_SOURCE,
+                    source=_EMAIL_CID_SOURCE,
+                )
+            )
+            existing.add(sku.lower())
+            minted += 1
+    return atoms, minted
 
 
 def _parse_qty_from_match(match: re.Match[str]) -> int | None:
@@ -234,15 +319,18 @@ def _parse_qty_from_match(match: re.Match[str]) -> int | None:
 def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
     """Add bom_line atoms from grounded equipment counts in scope prose."""
     existing = _existing_bom_skus(atoms)
+    atoms, email_minted = _mint_bom_from_email_cid_equipment_lines(
+        atoms, project_id=project_id, existing=existing
+    )
     prose_atoms = [
         a for a in atoms if _atom_type_str(a) in _SOURCE_TYPES and _is_prose_evidence(a)
     ]
     corpus_parts = [_text(a) for a in prose_atoms]
     corpus = "\n".join(x for x in corpus_parts if x)
     if not corpus.strip():
-        return atoms, 0
+        return atoms, email_minted
 
-    minted = 0
+    minted = email_minted
     rows: list[TrainingRow] = []
     for sku, description, pattern in _PATTERNS:
         if sku.lower() in existing:

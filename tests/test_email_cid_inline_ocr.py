@@ -129,6 +129,27 @@ def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
     assert bom.get("UBNT-NVR") == 1
     assert bom.get("UBNT-G6-PRO-DB") == 4
     assert bom.get("UBNT-BADGE-READER") == 3
+    email_bom = [
+        a for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+        and a.value.get("source") == "email_cid_equipment_line"
+    ]
+    assert len(email_bom) >= 4
+
+
+def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": "4E7 APS\nSwitch Pro × 2\nEnterprise NVR × 1",
+    )
+    eml = tmp_path / "garbled-inline.eml"
+    eml.write_bytes(_build_multipart_eml())
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_garbled", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 2
+    qty_by_line = {a.raw_text: a.value.get("quantity") for a in equipment}
+    assert qty_by_line.get("4E7 APS") == 4
 
 
 def test_iter_cid_inline_parts_finds_image_part() -> None:
