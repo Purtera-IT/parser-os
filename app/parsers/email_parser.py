@@ -494,9 +494,10 @@ class EmailParser(BaseParser):
                     authority=authority,
                 )
             )
-        # Header atom — the From/To/Cc/Subject/Date line is real content (and
-        # the content census inventories it). Emit it as a scope_item so the
-        # header is never silently absent from the atom stream. .eml only;
+        # Header atom — the From/To/Cc/Subject/Date line is deal/routing
+        # metadata (and the content census inventories it). Emit it as
+        # ``deal_metadata`` so the header is never silently absent from the atom
+        # stream but is NEVER mistaken for contractual scope. .eml only;
         # headerless .txt/.md bodies have no structured headers to surface.
         header_atom = self._header_atom(
             project_id=project_id, artifact_id=artifact_id, path=path
@@ -561,13 +562,24 @@ class EmailParser(BaseParser):
             id=stable_id("atm", project_id, artifact_id, "email_header", text),
             project_id=project_id,
             artifact_id=artifact_id,
-            atom_type=AtomType.scope_item,
+            # The header block is routing/threading metadata, not scope. Typing
+            # it as deal_metadata (not scope_item) keeps it out of the
+            # contractual-scope surface a quote/scope head reads, while still
+            # surfacing it as a first-class atom the census can reconcile.
+            atom_type=AtomType.deal_metadata,
             raw_text=text,
             normalized_text=normalize_text(text),
-            value={"kind": "email_header", **values, "email_thread_meta": thread_meta},
+            value={
+                "kind": "email_header",
+                "field_name": "email_metadata",
+                **values,
+                "email_thread_meta": thread_meta,
+            },
             entity_keys=[],
             source_refs=[src],
-            authority_class=AuthorityClass.customer_current_authored,
+            # Machine-extracted envelope metadata — lowest authority band so it
+            # never governs a scope packet.
+            authority_class=AuthorityClass.machine_extractor,
             confidence=0.86,
             review_status=ReviewStatus.auto_accepted,
             review_flags=[],

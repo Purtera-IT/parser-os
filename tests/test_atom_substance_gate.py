@@ -195,3 +195,198 @@ def test_short_utterance_with_deal_word_kept():
     ]
     kept, dropped = drop_nonsubstantive_fragments(atoms)
     assert len(kept) == 3 and dropped == []
+
+
+# ── section headers ──
+
+def test_section_header_dropped():
+    from app.core.atom_substance_gate import drop_section_headers
+
+    atoms = [
+        _mk("scope_item", "Meeting Summary and Full Transcript Executive Summary"),
+        _mk("scope_item", "Executive Summary"),
+        _mk("scope_item", "Full Transcript: Daniel Peterson [00:04]"),
+    ]
+    kept, dropped = drop_section_headers(atoms)
+    assert kept == []
+    assert len(dropped) == 3
+
+
+def test_section_header_with_substance_kept():
+    from app.core.atom_substance_gate import drop_section_headers
+
+    atoms = [_mk("scope_item", "Okta integration is a significant requirement.")]
+    kept, dropped = drop_section_headers(atoms)
+    assert len(kept) == 1 and dropped == []
+
+
+# ── email non-scope ──
+
+def _mk_email(text, **value_kw):
+    val = {"text": text, "kind": "email_body_line", **value_kw}
+    return _mk("scope_item", text, value=val)
+
+
+def test_email_label_only_dropped():
+    from app.core.atom_substance_gate import drop_email_non_scope
+
+    atoms = [
+        _mk_email("Customer specifically said:"),
+        _mk_email("By the end of the meeting customer clarified:"),
+    ]
+    kept, dropped = drop_email_non_scope(atoms)
+    assert kept == []
+    assert len(dropped) == 2
+
+
+def test_email_pleasantry_dropped():
+    from app.core.atom_substance_gate import drop_email_non_scope
+
+    atoms = [
+        _mk_email(
+            "Appreciate you hopping on in such short notice. Attached is a summary."
+        ),
+    ]
+    kept, dropped = drop_email_non_scope(atoms)
+    assert kept == []
+    assert len(dropped) == 1
+
+
+def test_email_include_list_item_kept():
+    from app.core.atom_substance_gate import drop_email_non_scope
+
+    atoms = [
+        _mk_email("Okta integration", list_section="include"),
+        _mk_email("Badge/access control setup", list_section="include"),
+    ]
+    kept, dropped = drop_email_non_scope(atoms)
+    assert len(kept) == 2 and dropped == []
+
+
+def test_email_header_metadata_dropped():
+    from app.core.atom_substance_gate import drop_email_non_scope
+
+    atoms = [
+        _mk(
+            "deal_metadata",
+            "From: a@b.com | To: c@d.com | Subject: Test | Date: 2026-01-01",
+            value={"kind": "email_header", "from": "a@b.com"},
+        ),
+    ]
+    kept, dropped = drop_email_non_scope(atoms)
+    assert kept == [] and len(dropped) == 1
+
+
+# ── transcript conversational ──
+
+def _mk_transcript(text, page=1, **loc_kw):
+    atom = _mk("scope_item", text)
+    loc = {"page": page, "block_kind": "paragraph", **loc_kw}
+    atom.source_refs[0].locator = loc
+    return atom
+
+
+def test_transcript_greeting_dropped():
+    from app.core.atom_substance_gate import drop_transcript_conversational
+
+    atoms = [
+        _mk_transcript("I know. It has been a while. Hope life's been treating you well.", page=1),
+        _mk_transcript("Hey, how you doing? Been a while.", page=1),
+        _mk_transcript("I'm not hearing very well. Can you repeat one more time?", page=6),
+    ]
+    kept, dropped = drop_transcript_conversational(atoms)
+    assert kept == []
+    assert len(dropped) == 3
+
+
+def test_transcript_exec_summary_bullet_kept():
+    from app.core.atom_substance_gate import drop_transcript_conversational
+
+    atom = _mk("scope_item", "Okta integration is considered a significant requirement.")
+    atom.source_refs[0].locator = {"page": 0, "block_kind": "bullet_list"}
+    atom.value = {"kind": "bullet", "depth": 1}
+    kept, dropped = drop_transcript_conversational([atom])
+    assert len(kept) == 1 and dropped == []
+
+
+def test_transcript_substantive_turn_kept():
+    from app.core.atom_substance_gate import drop_transcript_conversational
+
+    atoms = [
+        _mk_transcript(
+            "We need to set up badge zones and guest VLAN with Okta integration.",
+            page=4,
+        ),
+    ]
+    kept, dropped = drop_transcript_conversational(atoms)
+    assert len(kept) == 1 and dropped == []
+
+
+# ── risk fragments ──
+
+def test_risk_mid_sentence_clip_dropped():
+    from app.core.atom_substance_gate import drop_risk_fragments
+
+    atoms = [
+        _mk("risk", "consider it but we, if we can't we might."),
+        _mk("risk", "there's going to be a lot more hesitation moving with any other option."),
+    ]
+    kept, dropped = drop_risk_fragments(atoms)
+    assert kept == []
+    assert len(dropped) == 2
+
+
+def test_risk_complete_clause_kept():
+    from app.core.atom_substance_gate import drop_risk_fragments
+
+    atoms = [
+        _mk(
+            "risk",
+            "Network build-out is excluded from the primary scope unless required later.",
+            value={"kind": "bullet", "depth": 1},
+        ),
+        _mk(
+            "risk",
+            "If Okta integration cannot be completed that is a hard requirement "
+            "and we would need to explore alternative options before proceeding.",
+        ),
+    ]
+    kept, dropped = drop_risk_fragments(atoms)
+    assert len(kept) == 2 and dropped == []
+
+
+# ── ambiguous quantity collapse ──
+
+def test_ambiguous_user_quantities_collapsed():
+    from app.core.atom_substance_gate import collapse_ambiguous_user_quantities
+
+    def _qty(q, noun="users", loc_page=5):
+        a = _mk("quantity", f"may be simple since our {q} people.")
+        a.value = {
+            "kind": "quantity",
+            "quantity": q,
+            "noun": noun,
+            "context": f"may be simple since our {q} people.",
+        }
+        a.source_refs[0].locator = {"page": loc_page, "block_id": "blk_same"}
+        return a
+
+    atoms = [_qty(20), _qty(50)]
+    kept, dropped = collapse_ambiguous_user_quantities(atoms)
+    assert len(kept) == 1
+    assert kept[0].value["quantity"] == 50
+    assert len(dropped) == 1
+
+
+def test_different_noun_quantities_not_collapsed():
+    from app.core.atom_substance_gate import collapse_ambiguous_user_quantities
+
+    def _qty(q, noun):
+        a = _mk("quantity", f"{q} {noun}")
+        a.value = {"kind": "quantity", "quantity": q, "noun": noun}
+        a.source_refs[0].locator = {"page": 4, "block_id": "blk_x"}
+        return a
+
+    atoms = [_qty(12, "cameras"), _qty(7, "badge readers")]
+    kept, dropped = collapse_ambiguous_user_quantities(atoms)
+    assert len(kept) == 2 and dropped == []

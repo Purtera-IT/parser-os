@@ -57,6 +57,36 @@ def _clean(part: str | None) -> str | None:
     return s or None
 
 
+def _dedup_repeated_phrase(alias: str) -> str:
+    """Collapse a self-repeated alias into a single copy.
+
+    HubSpot notes commonly repeat the company name in both the title and the
+    body ("GECKO ROBOTICS" + "GECKO ROBOTICS 100 S COMMONS ..."), so after the
+    title/body corpus is concatenated the leading-alias prefix reads as
+    ``"GECKO ROBOTICS GECKO ROBOTICS"``. This collapses (a) a whole-phrase
+    doubling (first half == second half) and (b) any immediately-repeated token
+    run. STRUCTURAL — keys off the repetition itself, never a specific name — so
+    it generalises to any doubled alias from any source.
+    """
+    tokens = alias.split()
+    if not tokens:
+        return alias
+    # (a) whole-phrase doubling: "A B A B" -> "A B"
+    n = len(tokens)
+    if n % 2 == 0:
+        half = n // 2
+        lower = [t.lower() for t in tokens]
+        if lower[:half] == lower[half:]:
+            tokens = tokens[:half]
+    # (b) collapse immediately-repeated single-token runs: "A A B" -> "A B"
+    collapsed: list[str] = []
+    for tok in tokens:
+        if collapsed and collapsed[-1].lower() == tok.lower():
+            continue
+        collapsed.append(tok)
+    return " ".join(collapsed)
+
+
 def _clean_leading_alias(part: str | None) -> str | None:
     alias = _clean(part)
     if not alias:
@@ -64,6 +94,7 @@ def _clean_leading_alias(part: str | None) -> str | None:
     alias = re.sub(r"^(?:hubspot\s+note|note|site|location)\s*:\s*", "", alias, flags=re.I).strip(" ,-:")
     if not alias:
         return None
+    alias = _dedup_repeated_phrase(alias)
     tokens = alias.split()
     if not 1 <= len(tokens) <= 6:
         return None

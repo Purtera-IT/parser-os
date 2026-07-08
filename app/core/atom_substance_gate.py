@@ -7,20 +7,37 @@ useless to every head; transcript backchannel ("Yeah.", "Okay.") is not scope.
 These fragments inflate atom counts, drag quality scores down, and give the
 heads nothing to work with.
 
-This stage removes two classes of context-free fragment, deterministically and
-UNIVERSALLY — it keys off STRUCTURE and general role/substance vocabulary, never
-a specific name, deal, or domain term:
+This stage removes several classes of context-free fragment, deterministically
+and UNIVERSALLY — it keys off STRUCTURE and general role/substance vocabulary,
+never a specific name, deal, or domain term:
 
 1. ``drop_contextless_stakeholders`` — a ``stakeholder`` atom that is just a
    name (no role token, no email, no affiliation, no approval/responsibility
-   cue) is not a usable stakeholder record. The classifier (or a parser) tagged
-   a salutation / sign-off / speaker label as a person; without context it is
-   noise, so it is dropped.
+   cue) is not a usable stakeholder record.
 
 2. ``drop_nonsubstantive_fragments`` — a short prose atom whose entire content
    (after removing a leading "Speaker [mm:ss]" transcript label) is
    backchannel / filler ("Yeah.", "Got it.", "Sounds good.") carries no
    deal substance and is dropped.
+
+3. ``drop_section_headers`` — a scope_item whose text is a document section
+   header ("Executive Summary", "Full Transcript: …") is chrome, not scope.
+
+4. ``drop_email_non_scope`` — email header metadata, label-only lead-ins
+   ("Customer specifically said:"), and pleasantry/sign-off body lines typed
+   as scope are not actionable to any head.
+
+5. ``drop_transcript_conversational`` — raw transcript turns (page ≥ 1) that
+   lack deal substance (no scope verb, no device/vendor entity, no structured
+   bullet) are conversational filler, not contractual scope.
+
+6. ``drop_risk_fragments`` — a ``risk`` atom whose text is a mid-sentence
+   clipping without a complete risk structure (no subject, no consequence) is
+   not actionable to a risk head.
+
+7. ``collapse_ambiguous_user_quantities`` — when multiple ``quantity`` atoms
+   for the same noun (e.g. "users") share the same source locator, keep only
+   the one with the widest range (most context).
 
 Both are LOSSLESS at the compiler level: the compiler routes the dropped set
 into the retained-suppression ledger, so every removed atom stays auditable.
@@ -143,6 +160,109 @@ _STAKEHOLDER = "stakeholder"
 # Types eligible for the filler test — only generic prose buckets, so a typed
 # scope/exclusion/quantity/task/BOM atom is never at risk.
 _FILLER_ELIGIBLE = frozenset({"scope_item", "entity", "note"})
+
+# ── section-header chrome (structural, not a vocabulary list) ──
+# A line that is ONLY a document section label ("Executive Summary",
+# "Full Transcript: …", "Action Items", "Key Decisions") carries no deal
+# substance. Anchored to the whole line; a sentence that merely mentions the
+# phrase ("we discussed the executive summary") still flows through.
+_SECTION_HEADER_RE = re.compile(
+    r"^(?:"
+    r"(?:meeting\s+)?summary(?:\s+and\s+full\s+transcript)?(?:\s+executive\s+summary)?|"
+    r"executive\s+summary|"
+    r"full\s+transcript(?:\s*:\s*.+)?|"
+    r"action\s+items?|"
+    r"key\s+decisions?|"
+    r"decisions?|"
+    r"discussion|"
+    r"attendees?|"
+    r"participants?"
+    r")\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+# ── email label-only lead-ins (structural: ends with colon, no clause) ──
+# "Customer specifically said:", "By the end of the meeting customer clarified:"
+# are attribution labels, not scope. A real sentence that happens to end with
+# a colon ("Include: badge readers and cameras") is kept because it carries
+# content after the colon.
+_LABEL_ONLY_RE = re.compile(
+    r"^[A-Za-z][^.!?]{0,120}:\s*$"
+)
+
+# ── email pleasantry / sign-off openers (closed-class social phrases) ──
+# Same structural class as _SIGNOFF_RE in email_parser — short social lines
+# that carry no deal substance. NOT a name/deal list.
+_EMAIL_PLEASANTRY_RE = re.compile(
+    r"^(?:"
+    r"appreciate\s+(?:you|it|the)|"
+    r"thank(?:s| you)(?:\s+(?:so\s+much|again|a\s+lot|much|everyone|guys))?|"
+    r"looking\s+forward|"
+    r"let\s+(?:me|us)\s+know|"
+    r"feel\s+free\s+to|"
+    r"happy\s+to\s+help|"
+    r"please\s+(?:let|reach|feel)|"
+    r"hope\s+(?:life|you|this|all)|"
+    r"good\s+to\s+(?:meet|see|hear)|"
+    r"nice\s+(?:to\s+)?meet|"
+    r"have\s+a\s+(?:good|great|nice)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# ── transcript conversational markers (closed-class social/logistics) ──
+# Greetings, sign-offs, logistics, and self-introductions on raw transcript
+# turns. A turn that ALSO carries a deal noun/verb is kept (substance check).
+_CONVERSATIONAL_LEAD_RE = re.compile(
+    r"(?:"
+    r"(?:^|\.\s*)(?:hi|hey|hello|good\s+(?:morning|afternoon|evening))\b|"
+    r"(?:how\s+(?:are|you)|been\s+a\s+while|long\s+time\s+no|hope\s+life)|"
+    r"(?:nice\s+to\s+meet|good\s+to\s+meet|pleased\s+to\s+meet)|"
+    r"(?:i(?:'m|\s+am)\s+\w+.*(?:co-?founder|engineer|manager|director))|"
+    r"(?:thank(?:s| you)|appreciate\s+it|all\s+right.*thank)|"
+    r"(?:we(?:'re| are)\s+(?:waiting|expecting|ready))|"
+    r"(?:sorry|apolog|no\s+worries|excuse\s+me)|"
+    r"(?:can\s+you\s+repeat|i(?:'m| am)\s+not\s+hearing)|"
+    r"(?:just\s+busy|not\s+too\s+bad|can(?:'t|not)\s+complain)|"
+    r"(?:all\s+right.*thanks?\s+everyone)|"
+    r"(?:i(?:'ll| will)\s+(?:sit|send|do\s+that|ping))|"
+    r"(?:hey,?\s+how\s+you\s+doing)"
+    r")",
+    re.IGNORECASE,
+)
+
+# ── deal-substance signals (universal closed-class, not domain vocabulary) ──
+# A transcript turn that matches ANY of these carries enough context for a head.
+_SCOPE_VERB_RE = re.compile(
+    r"\b(?:install|configure|deploy|integrat|setup|set\s+up|provision|"
+    r"require|exclud|build|survey|upgrade|replace|implement|onboard|"
+    r"walk\s+(?:through|him|her|them)|white\s+glove|badge\s+zone|"
+    r"vlan|ssid|radius|access\s+control|badging|camera|firewall|"
+    r"switch|router|access\s+point|reader|doorbell|okta|unifi|"
+    r"uid\s+enterprise|equipment|hardware|parts?\s+list|sow|quote)\b",
+    re.IGNORECASE,
+)
+
+# ── risk structure: a risk atom needs subject + consequence, not a clip ──
+_RISK_CONSEQUENCE_RE = re.compile(
+    r"\b(?:risk\s+of|delay|blocker|show[\s-]?stopper|deal[\s-]?breaker|"
+    r"hard\s+requirement|"
+    r"consequence|mitigat|contingenc|liability|penalty|"
+    r"unable\s+to\s+(?:proceed|complete|deliver)|"
+    r"would\s+(?:delay|block|prevent|impact))\b",
+    re.IGNORECASE,
+)
+
+# Mid-sentence clippings that start a risk atom without anchoring context.
+_RISK_FRAGMENT_START_RE = re.compile(
+    r"^(?:there'?s|it'?s|if\s+we|consider|but\s+we|and\s+if|that\s+would|"
+    r"really\s+good\s+if|long\s+as|may\s+be|then\s+walk|will\s+be\s+easy)\b",
+    re.IGNORECASE,
+)
+
+# Exec-summary page (page 0 bullets) is always kept — high-authority synthesis.
+_EXEC_SUMMARY_PAGE = 0
+
 
 
 def _atom_type_str(atom: Any) -> str:
@@ -288,16 +408,303 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
     return kept, dropped
 
 
+def _atom_page(atom: Any) -> int | None:
+    """Page number from the first source_ref locator, if present."""
+    refs = getattr(atom, "source_refs", None) or []
+    if not refs:
+        return None
+    loc = getattr(refs[0], "locator", None) or {}
+    if not isinstance(loc, dict):
+        return None
+    page = loc.get("page")
+    if page is None:
+        return None
+    try:
+        return int(page)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_exec_summary_bullet(atom: Any) -> bool:
+    """True when the atom is a page-0 bullet from an executive-summary section."""
+    page = _atom_page(atom)
+    if page != _EXEC_SUMMARY_PAGE:
+        return False
+    val = _atom_value(atom)
+    if val.get("kind") == "bullet":
+        return True
+    refs = getattr(atom, "source_refs", None) or []
+    if refs:
+        loc = getattr(refs[0], "locator", None) or {}
+        if isinstance(loc, dict) and loc.get("block_kind") == "bullet_list":
+            return True
+    return False
+
+
+def _has_deal_substance(text: str, entity_keys: list[str]) -> bool:
+    """True when text or entity_keys carry enough deal context for a head."""
+    if _SCOPE_VERB_RE.search(text):
+        return True
+    for k in entity_keys or []:
+        ks = str(k)
+        if ks.startswith(("device:", "vendor:", "quantity:", "site:", "req")):
+            return True
+    return False
+
+
+def _is_email_atom(atom: Any) -> bool:
+    val = _atom_value(atom)
+    kind = str(val.get("kind") or "")
+    if kind in {"email_body_line", "email_header"}:
+        return True
+    refs = getattr(atom, "source_refs", None) or []
+    if refs:
+        loc = getattr(refs[0], "locator", None) or {}
+        if isinstance(loc, dict) and loc.get("kind") == "email_header":
+            return True
+    return False
+
+
+def drop_section_headers(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Drop scope_item atoms whose entire text is a document section header."""
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        if _atom_type_str(atom) != "scope_item":
+            kept.append(atom)
+            continue
+        text = _atom_text(atom).strip()
+        if _SECTION_HEADER_RE.match(text):
+            dropped.append(atom)
+            continue
+        # "Full Transcript: Daniel Peterson [00:04]" — section header + speaker
+        if re.match(r"^full\s+transcript\s*:\s*.+\[\d{1,2}:\d{2}", text, re.I):
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
+def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Drop email chrome mis-typed as scope: headers, label-only lead-ins,
+    pleasantry/sign-off body lines. Real include/exclude list items (with
+    ``list_section`` set) are always kept."""
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        at = _atom_type_str(atom)
+        if at not in {"scope_item", "deal_metadata"}:
+            kept.append(atom)
+            continue
+        val = _atom_value(atom)
+        kind = str(val.get("kind") or "")
+        # Email header metadata — never scope (retyped at parse time to
+        # deal_metadata, but catch any legacy scope_item headers too).
+        if kind == "email_header":
+            dropped.append(atom)
+            continue
+        if not _is_email_atom(atom):
+            kept.append(atom)
+            continue
+        text = _atom_text(atom).strip()
+        # Include/exclude list items are real scope — always keep.
+        if val.get("list_section") in {"include", "exclude"}:
+            kept.append(atom)
+            continue
+        # Label-only lead-in ("Customer specifically said:")
+        if _LABEL_ONLY_RE.match(text):
+            dropped.append(atom)
+            continue
+        # Pleasantry / sign-off opener with no deal substance
+        if _EMAIL_PLEASANTRY_RE.match(text) and not _has_deal_substance(
+            text, list(getattr(atom, "entity_keys", None) or [])
+        ):
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
+def drop_transcript_conversational(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Drop raw transcript turns (page ≥ 1) that lack deal substance.
+
+  Executive-summary bullets (page 0) and substantive turns are always kept.
+  A turn with scope verbs, device/vendor entity_keys, or structured bullets
+  passes the substance check."""
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        at = _atom_type_str(atom)
+        if at != "scope_item":
+            kept.append(atom)
+            continue
+        if _is_exec_summary_bullet(atom):
+            kept.append(atom)
+            continue
+        page = _atom_page(atom)
+        # Only gate raw transcript body turns (page ≥ 1). Page-0 content
+        # (executive summary bullets + action-items paragraph) is handled
+        # separately; unknown-page atoms are kept conservatively.
+        if page is None or page < 1:
+            kept.append(atom)
+            continue
+        text = _atom_text(atom)
+        entity_keys = list(getattr(atom, "entity_keys", None) or [])
+        if _has_deal_substance(text, entity_keys):
+            kept.append(atom)
+            continue
+        # Strip speaker labels for the conversational test
+        probe = _SPEAKER_LABEL_RE.sub("", text).strip()
+        # Multi-speaker QA-split blocks with substantive content are kept
+        if val := _atom_value(atom):
+            if val.get("qa_split") and len(probe.split()) > 15:
+                kept.append(atom)
+                continue
+        # Conversational opener with no deal substance — match anywhere in
+        # the utterance (multi-sentence greetings like "I know. Been a while.
+        # Hope life's been treating you well." are still social, not scope).
+        if _CONVERSATIONAL_LEAD_RE.search(probe):
+            dropped.append(atom)
+            continue
+        # Short fragment without substance (< 8 words, no entity keys)
+        tokens = [t for t in _content_tokens(probe) if t]
+        if len(tokens) < 8 and not entity_keys:
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
+def drop_risk_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Drop risk atoms that are mid-sentence clippings without risk structure.
+
+    A risk atom must carry enough context for a head to act: an explicit
+    consequence/risk marker, a structured exec-summary bullet, or a complete
+    anchored clause. Bare paragraph clippings ("consider it but we, if we
+    can't we might...") are dropped even when wordy."""
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        if _atom_type_str(atom) != "risk":
+            kept.append(atom)
+            continue
+        text = _atom_text(atom)
+        val = _atom_value(atom)
+        # Exec-summary bullets typed as risk are complete statements — keep.
+        if val.get("kind") == "bullet":
+            kept.append(atom)
+            continue
+        if _RISK_CONSEQUENCE_RE.search(text):
+            kept.append(atom)
+            continue
+        # Mid-sentence clipping without consequence structure — drop.
+        if _RISK_FRAGMENT_START_RE.match(text.strip()):
+            dropped.append(atom)
+            continue
+        # Short clause without any risk anchor — drop.
+        if len(text.split()) < 10:
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
+def _quantity_locator_key(atom: Any) -> str:
+    """Stable key for grouping quantity atoms from the same source utterance."""
+    refs = getattr(atom, "source_refs", None) or []
+    if not refs:
+        return str(getattr(atom, "id", ""))
+    loc = getattr(refs[0], "locator", None) or {}
+    if not isinstance(loc, dict):
+        return str(getattr(atom, "id", ""))
+    parts = [
+        str(loc.get("page", "")),
+        str(loc.get("block_id", "")),
+        str(loc.get("line_start", "")),
+        str(loc.get("message_index", "")),
+    ]
+    return "|".join(parts)
+
+
+def collapse_ambiguous_user_quantities(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """When multiple quantity atoms for the same noun share a source locator,
+    keep the one with the widest range (most context) and drop the rest.
+
+    E.g. "12 or 20 people or up to 50 people" emits quantity:20 and
+    quantity:50 from the same sentence — keep quantity:50 (widest upper bound)
+    and suppress the narrower duplicate. STRUCTURAL: keys off noun + locator,
+    not a specific number or deal."""
+    from collections import defaultdict
+
+    qty_by_group: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    non_qty: list[Any] = []
+    for atom in atoms:
+        if _atom_type_str(atom) != "quantity":
+            non_qty.append(atom)
+            continue
+        val = _atom_value(atom)
+        noun = str(val.get("noun") or "").strip().lower()
+        loc_key = _quantity_locator_key(atom)
+        qty_by_group[(noun, loc_key)].append(atom)
+
+    kept_qty: list[Any] = []
+    dropped_qty: list[Any] = []
+    for (_noun, _loc), group in qty_by_group.items():
+        if len(group) == 1:
+            kept_qty.append(group[0])
+            continue
+        # Pick the atom with the highest quantity (widest range upper bound).
+        def _qty_score(a: Any) -> float:
+            v = _atom_value(a)
+            q = v.get("quantity")
+            rmax = v.get("range_max")
+            try:
+                base = float(q) if q is not None else 0.0
+            except (TypeError, ValueError):
+                base = 0.0
+            try:
+                upper = float(rmax) if rmax is not None else base
+            except (TypeError, ValueError):
+                upper = base
+            return max(base, upper)
+
+        winner = max(group, key=_qty_score)
+        kept_qty.append(winner)
+        for a in group:
+            if a is not winner:
+                dropped_qty.append(a)
+
+    return non_qty + kept_qty, dropped_qty
+
+
 def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
-    """Run both drops. Returns (kept, dropped). ``dropped`` is the union across
+    """Run all drops. Returns (kept, dropped). ``dropped`` is the union across
     passes; the compiler routes it into the retained-suppression ledger."""
-    kept, dropped_a = drop_contextless_stakeholders(atoms)
-    kept, dropped_b = drop_nonsubstantive_fragments(kept)
-    return kept, dropped_a + dropped_b
+    all_dropped: list[Any] = []
+    kept, d = drop_contextless_stakeholders(atoms)
+    all_dropped.extend(d)
+    kept, d = drop_nonsubstantive_fragments(kept)
+    all_dropped.extend(d)
+    kept, d = drop_section_headers(kept)
+    all_dropped.extend(d)
+    kept, d = drop_email_non_scope(kept)
+    all_dropped.extend(d)
+    kept, d = drop_transcript_conversational(kept)
+    all_dropped.extend(d)
+    kept, d = drop_risk_fragments(kept)
+    all_dropped.extend(d)
+    kept, d = collapse_ambiguous_user_quantities(kept)
+    all_dropped.extend(d)
+    return kept, all_dropped
 
 
 __all__ = [
     "apply_substance_gate",
+    "collapse_ambiguous_user_quantities",
     "drop_contextless_stakeholders",
+    "drop_email_non_scope",
     "drop_nonsubstantive_fragments",
+    "drop_risk_fragments",
+    "drop_section_headers",
+    "drop_transcript_conversational",
 ]
