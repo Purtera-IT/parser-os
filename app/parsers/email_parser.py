@@ -100,6 +100,16 @@ def _iter_cid_inline_parts(msg) -> dict[str, dict[str, Any]]:
                 "is_image": True,
             }
             continue
+        if ctype == "application/pdf":
+            out[key] = {
+                "content_id": key,
+                "content_type": ctype,
+                "text": "",
+                "payload": payload,
+                "size": len(payload),
+                "is_pdf": True,
+            }
+            continue
         try:
             text = payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
         except Exception:
@@ -117,16 +127,33 @@ def _iter_cid_inline_parts(msg) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _ocr_text_from_cid_image(payload: bytes) -> str:
+def _ocr_text_from_cid_pdf(payload: bytes) -> str:
     if not payload:
         return ""
     try:
-        from app.parsers._ocr_chain import ocr_image_bytes
+        import fitz  # type: ignore[import-untyped]
 
-        result = ocr_image_bytes(payload)
-        return (result.get("text") or "").strip()
+        doc = fitz.open(stream=payload, filetype="pdf")
+        from app.parsers._ocr_chain import ocr_pdf_page
+
+        parts: list[str] = []
+        for page in doc:
+            res = ocr_pdf_page(page)
+            text = (res.get("text") or "").strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
     except Exception:
         return ""
+
+
+def _ocr_text_from_cid_inline(payload: bytes, *, content_type: str) -> str:
+    ctype = (content_type or "").lower()
+    if ctype.startswith("image/"):
+        return _ocr_text_from_cid_image(payload)
+    if ctype == "application/pdf":
+        return _ocr_text_from_cid_pdf(payload)
+    return ""
 
 
 def _parse_qty_token(token: str) -> int | None:
@@ -697,8 +724,12 @@ class EmailParser(BaseParser):
                     )
                 continue
             text = str(part.get("text") or "")
-            if part.get("is_image") and part.get("payload"):
-                ocr_text = _ocr_text_from_cid_image(bytes(part["payload"]))
+            payload = part.get("payload")
+            if payload and (part.get("is_image") or part.get("is_pdf")):
+                ocr_text = _ocr_text_from_cid_inline(
+                    bytes(payload),
+                    content_type=str(part.get("content_type") or ""),
+                )
                 if ocr_text:
                     text = ocr_text
             atoms.extend(

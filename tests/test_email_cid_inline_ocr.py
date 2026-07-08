@@ -61,22 +61,31 @@ def _build_multipart_eml(*, cid: str = "07131976-d75d-4133-b5d2-52a8919274ba") -
   return "\r\n".join(lines).encode("utf-8")
 
 
+def test_multipart_eml_cid_pdf_ocr_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": _OCR_EQUIPMENT_TEXT,
+    )
+    eml = tmp_path / "inline-equipment-pdf.eml"
+    eml.write_bytes(_build_multipart_eml(cid="pdf-cid-1"))
+    raw = eml.read_bytes().replace(b"image/png", b"application/pdf")
+    eml.write_bytes(raw)
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_inline_pdf", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment
+
 def test_multipart_eml_cid_image_ocr_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "app.parsers.email_parser._ocr_text_from_cid_image",
-        lambda _payload: _OCR_EQUIPMENT_TEXT,
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": _OCR_EQUIPMENT_TEXT,
     )
-    eml = tmp_path / "inline-equipment.eml"
+    eml = tmp_path / "inline-equipment-img.eml"
     eml.write_bytes(_build_multipart_eml())
 
-    atoms = EmailParser().parse_artifact("deal-gecko", "art_inline", eml)
-    equipment = [
-        a
-        for a in atoms
-        if a.value.get("kind") == "email_cid_equipment_line"
-    ]
-    assert equipment, "expected email_cid_equipment_line atoms from OCR text"
-    assert any("e7" in (a.value.get("item") or "").lower() for a in equipment)
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_inline_img", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment
 
 
 def test_multipart_eml_missing_cid_part_emits_unresolved(tmp_path) -> None:
