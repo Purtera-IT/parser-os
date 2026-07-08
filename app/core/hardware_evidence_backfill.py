@@ -42,7 +42,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "UBNT-E7-AP",
         "Ubiquiti E7 Access Point",
         re.compile(
-            r"\b(\d+)(?:\s*(?:x\s*)?(?:e7|u7)|(?:e7|u7))\s*(?:access\s*)?aps?\b",
+            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?(?:e7|u7)\s*aps?\b"
+            r"|(?:access\s+point\s+)?e7(?:\s+enterprise)?[^\n]{0,40}?\s×\s*(\d+)\b",
             re.I,
         ),
     ),
@@ -55,7 +56,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "UBNT-SW-PRO",
         "Ubiquiti Pro Switch",
         re.compile(
-            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\d+\s*)?port\s*switches?\b",
+            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\d+\s*)?port\s*switches?\b"
+            r"|switch\s+pro(?:\s+\w+){0,6}\s*×\s*(\d+)\b",
             re.I,
         ),
     ),
@@ -64,18 +66,27 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "Ubiquiti UNVR",
         re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:uni\s*)?unvr\b", re.I),
     ),
-    ("UBNT-NVR", "Ubiquiti NVR", re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:\d+\s*)?nvr\b", re.I)),
+    ("UBNT-NVR", "Ubiquiti NVR", re.compile(
+        r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:\d+\s*)?nvr\b"
+        r"|enterprise\s+nvr[^\n]{0,40}?\s×\s*(\d+)\b",
+        re.I,
+    )),
     (
         "UBNT-G6-PRO-DB",
         "Ubiquiti G6 Pro Doorbell",
-        re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?g6\s+pro(?:\s+(?:turret|doorbell))?\b", re.I),
+        re.compile(
+            r"g6\s+pro(?:\s+turret)?\s*×\s*(\d+)\b"
+            r"|\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)[ \t]*(?:x[ \t]*)?g6\s+pro(?:\s+(?:turret|doorbell))?\b",
+            re.I,
+        ),
     ),
     (
         "UBNT-BADGE-READER",
         "Ubiquiti Card / Badge Reader",
         re.compile(
             r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?"
-            r"(?:badge\s*readers?|card\s*readers?|access\s*readers?)\b",
+            r"(?:badge\s*readers?|card\s*readers?|access\s*readers?)\b"
+            r"|(?:badge|card)\s*reader[^\n]{0,40}?\s×\s*(\d+)\b",
             re.I,
         ),
     ),
@@ -211,6 +222,15 @@ def _mint_bom_line(
     )
 
 
+def _parse_qty_from_match(match: re.Match[str]) -> int | None:
+    last = match.lastindex or 0
+    for idx in range(last, 0, -1):
+        qty = _parse_qty(str(match.group(idx) or ""))
+        if qty:
+            return qty
+    return None
+
+
 def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
     """Add bom_line atoms from grounded equipment counts in scope prose."""
     existing = _existing_bom_skus(atoms)
@@ -227,14 +247,22 @@ def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tu
     for sku, description, pattern in _PATTERNS:
         if sku.lower() in existing:
             continue
-        match = pattern.search(corpus)
+        match = None
+        for line in corpus.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            m = pattern.search(line)
+            if m:
+                match = m
+                break
         if not match:
             continue
-        qty = _parse_qty(match.group(1))
+        qty = _parse_qty_from_match(match)
         if not qty:
             continue
         source_atom = next(
-            (a for a in prose_atoms if pattern.search(_text(a))),
+            (a for a in prose_atoms if any(pattern.search(line) for line in _text(a).splitlines())),
             prose_atoms[0] if prose_atoms else atoms[0],
         )
         atoms.append(

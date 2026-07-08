@@ -123,6 +123,16 @@ def ocr_image_file(path: Path) -> dict[str, Any]:
     return _ocr_image_bytes(image_bytes, notes)
 
 
+def ocr_image_bytes(image_bytes: bytes) -> dict[str, Any]:
+    """OCR raw image bytes (inline email MIME parts, buffers, etc.)."""
+    notes: list[str] = []
+    if _ocr_disabled():
+        return _empty(["OCR disabled via PARSER_OS_OCR_DISABLE"])
+    if not image_bytes:
+        return _empty(["empty image bytes"])
+    return _ocr_image_bytes(image_bytes, notes)
+
+
 def _ocr_image_bytes(image_bytes: bytes, notes: list[str]) -> dict[str, Any]:
     """Common chain for raw image bytes."""
     # 1) pytesseract
