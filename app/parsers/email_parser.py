@@ -49,14 +49,20 @@ _EQUIPMENT_LINE_RE = re.compile(
     r"|"
     r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?"
     r"(udm(?:\s*beast)?|enterprise\s+nvr|uni\s*nvr|unvr|nvr|"
-    r"g6\s+pro(?:\s+turret)?|badge\s*reader|card\s*reader|access\s*reader|"
-    r"access\s*point|ap\b|switch(?:\s*pro)?|camera|doorbell)\b"
+    r"g6\s+(?:pro(?:\s+turret)?|turret|instant)|"
+    r"(?:access\s+)?g3\s*reader|badge\s*reader|card\s*reader|access\s*reader|"
+    r"access\s*(?:point|card)|ap\b|switch(?:\s*pro)?|camera|doorbell|"
+    r"door\s*sensor|mount)\b"
     r"|"
-    r"(?:access\s+point|switch(?:\s*pro)?|enterprise\s+nvr|nvr|g6\s+pro|"
-    r"badge\s*reader|card\s*reader)[^\n]{0,80}?\s×\s*(\d+)\b"
+    r"(?:access\s+point(?:\s+e7)?|switch\s+pro(?:\s+max)?(?:\s+\d+)?(?:\s+poe)?|"
+    r"enterprise\s+nvr|nvr|g6(?:\s+pro)?(?:\s+turret)?|"
+    r"(?:access\s+)?g3\s*reader|badge\s*reader|card\s*reader|"
+    r"access\s*card)[^\n]{0,80}?\s*[×x]\s*(\d+)\b"
     r")",
     re.I,
 )
+# Prefer digital PDF text when a page already has enough selectable chars.
+_PDF_DIGITAL_TEXT_MIN_CHARS = 40
 _WORD_QTY: dict[str, int] = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -129,7 +135,43 @@ def _iter_cid_inline_parts(msg) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _digital_text_from_pdf_page(page) -> str:
+    """Extract selectable text (and table cells) before OCR fallback."""
+    chunks: list[str] = []
+    try:
+        plain = (page.get_text("text") or "").strip()
+        if plain:
+            chunks.append(plain)
+    except Exception:
+        plain = ""
+    # Tables often have usable cell text even when page.get_text("text") is sparse.
+    try:
+        for table in page.find_tables().tables:  # type: ignore[attr-defined]
+            for row in table.extract() or []:
+                cells = [str(c).strip() for c in row if c and str(c).strip()]
+                if cells:
+                    chunks.append("  ".join(cells))
+    except Exception:
+        pass
+    if not chunks:
+        try:
+            dict_text = page.get_text("dict") or {}
+            lines: list[str] = []
+            for block in dict_text.get("blocks", []) or []:
+                for line in block.get("lines", []) or []:
+                    spans = "".join(str(s.get("text") or "") for s in line.get("spans", []) or [])
+                    if spans.strip():
+                        lines.append(spans.strip())
+            if lines:
+                chunks.append("\n".join(lines))
+        except Exception:
+            pass
+    text = "\n".join(chunks).strip()
+    return text
+
+
 def _ocr_text_from_cid_pdf(payload: bytes) -> str:
+    """Prefer PyMuPDF digital text; OCR only pages lacking a usable text layer."""
     if not payload:
         return ""
     try:
@@ -140,10 +182,17 @@ def _ocr_text_from_cid_pdf(payload: bytes) -> str:
 
         parts: list[str] = []
         for page in doc:
+            digital = _digital_text_from_pdf_page(page)
+            if len(digital) >= _PDF_DIGITAL_TEXT_MIN_CHARS:
+                parts.append(digital)
+                continue
             res = ocr_pdf_page(page)
-            text = (res.get("text") or "").strip()
-            if text:
-                parts.append(text)
+            ocr_text = (res.get("text") or "").strip()
+            # Keep whichever path yielded more usable text.
+            if len(ocr_text) > len(digital):
+                parts.append(ocr_text)
+            elif digital:
+                parts.append(digital)
         return "\n".join(parts)
     except Exception:
         return ""

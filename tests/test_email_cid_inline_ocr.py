@@ -127,7 +127,7 @@ def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
     assert bom.get("UBNT-E7-AP") == 6
     assert bom.get("UBNT-SW-PRO") == 1
     assert bom.get("UBNT-NVR") == 1
-    assert bom.get("UBNT-G6-PRO-DB") == 4
+    assert bom.get("UBNT-G6-TURRET") == 4 or bom.get("UBNT-G6-PRO-DB") == 4
     assert bom.get("UBNT-BADGE-READER") == 3
     email_bom = [
         a for a in out
@@ -135,6 +135,83 @@ def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
         and a.value.get("source") == "email_cid_equipment_line"
     ]
     assert len(email_bom) >= 4
+
+
+def test_hardware_backfill_maps_order_list_product_names() -> None:
+    class _Scope:
+        def __init__(self, text: str, qty: int | None = None):
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": "email_cid_equipment_line", "quantity": qty}
+
+    lines = [
+        _Scope("Access Point E7 Enterprise × 6", 6),
+        _Scope("Switch Pro Max 48 PoE × 1", 1),
+        _Scope("Enterprise NVR × 1", 1),
+        _Scope("G6 Pro Turret × 4", 4),
+        _Scope("Access G3 Reader × 7", 7),
+        _Scope("Access Card × 25", 25),
+    ]
+    out, minted = backfill_hardware_bom_lines(lines, project_id="deal-gecko")
+    assert minted >= 5
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-SW-PRO") == 1
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-G6-TURRET") == 4
+    assert bom.get("UBNT-BADGE-READER") == 7
+    assert bom.get("UBNT-ACCESS-CARD") == 25
+
+
+def test_cid_pdf_prefers_digital_text_layer(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import fitz
+
+    digital = "\n".join(
+        [
+            "Order Details",
+            "Access Point E7 Enterprise × 6",
+            "Switch Pro Max 48 PoE × 1",
+            "Enterprise NVR × 1",
+        ]
+    )
+
+    class _Page:
+        def get_text(self, mode="text"):
+            if mode == "text":
+                return digital
+            if mode == "dict":
+                return {"blocks": []}
+            return ""
+
+        def find_tables(self):
+            class _Finder:
+                tables = []
+
+            return _Finder()
+
+    class _Doc:
+        def __iter__(self):
+            yield _Page()
+
+    monkeypatch.setattr("fitz.open", lambda *a, **k: _Doc())
+    called = {"ocr": 0}
+
+    def _boom(_page):
+        called["ocr"] += 1
+        return {"text": "4E7 APS", "backend": "fake", "confidence": 0.1, "notes": []}
+
+    monkeypatch.setattr("app.parsers._ocr_chain.ocr_pdf_page", _boom)
+    from app.parsers.email_parser import _ocr_text_from_cid_pdf
+
+    text = _ocr_text_from_cid_pdf(b"%PDF-fake")
+    assert "Access Point E7 Enterprise × 6" in text
+    assert "Switch Pro Max 48 PoE × 1" in text
+    assert called["ocr"] == 0
 
 
 def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

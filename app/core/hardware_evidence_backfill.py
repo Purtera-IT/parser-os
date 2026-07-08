@@ -39,47 +39,85 @@ _JSON_MANIFEST_KEY_RE = re.compile(
     re.I,
 )
 
+_QTY = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+# Order-list lines often put the product name first: "Access Point E7 … × 6" or "…  6".
+_NAME_THEN_QTY = r"(?:[×x]\s*|(?:\s{2,}|\t))\s*(\d+)\b"
+
 _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
     (
         "UBNT-E7-AP",
         "Ubiquiti E7 Access Point",
         re.compile(
-            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?(?:e7|u7)\s*aps?\b"
+            rf"\b{_QTY}\s*(?:x\s*|×\s*)?(?:e7|u7)\s*aps?\b"
             r"|(?<![\w/])(\d+)\s*(?:x\s*|×\s*)?e7\s*aps?\b"
-            r"|(?:access\s+point\s+)?e7(?:\s+enterprise)?[^\n]{0,40}?\s×\s*(\d+)\b",
+            rf"|access\s+point\s+e7(?:\s+enterprise)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:access\s+point\s+)?e7(?:\s+enterprise)?[^\n]{{0,40}}?\s*[×x]\s*(\d+)\b",
             re.I,
         ),
     ),
     (
         "UBNT-UDM-BEAST",
         "Ubiquiti Dream Machine Beast",
-        re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?udm(?:[-\s]*beast)?\b", re.I),
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?udm(?:[-\s]*beast)?\b"
+            rf"|udm(?:[-\s]*beast)?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            re.I,
+        ),
     ),
     (
         "UBNT-SW-PRO",
         "Ubiquiti Pro Switch",
         re.compile(
-            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\d+\s*)?port\s*switches?\b"
-            r"|switch\s+pro(?:\s+\w+){0,6}\s*×\s*(\d+)\b",
+            rf"\b{_QTY}\s+(?:\d+\s*)?port\s*switches?\b"
+            rf"|switch\s+pro(?:\s+max)?(?:\s+\d+)?(?:\s+poe)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            r"|switch\s+pro(?:\s+\w+){0,6}\s*[×x]\s*(\d+)\b",
             re.I,
         ),
     ),
     (
         "UBNT-UNVR",
         "Ubiquiti UNVR",
-        re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:uni\s*)?unvr\b", re.I),
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?(?:uni\s*)?unvr\b"
+            rf"|(?:uni\s*)?unvr[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            re.I,
+        ),
     ),
-    ("UBNT-NVR", "Ubiquiti NVR", re.compile(
-        r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:\d+\s*)?nvr\b"
-        r"|enterprise\s+nvr[^\n]{0,40}?\s×\s*(\d+)\b",
-        re.I,
-    )),
+    (
+        "UBNT-NVR",
+        "Ubiquiti NVR",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?(?:\d+\s*)?nvr\b"
+            rf"|enterprise\s+nvr[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            r"|enterprise\s+nvr[^\n]{0,40}?\s*[×x]\s*(\d+)\b",
+            re.I,
+        ),
+    ),
+    (
+        "UBNT-G6-TURRET",
+        "Ubiquiti G6 Turret",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?g6(?:\s+pro)?\s*turrets?\b"
+            rf"|g6(?:\s+pro)?\s*turrets?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            re.I,
+        ),
+    ),
     (
         "UBNT-G6-PRO-DB",
         "Ubiquiti G6 Pro Doorbell",
         re.compile(
-            r"g6\s+pro(?:\s+turret)?\s*×\s*(\d+)\b"
-            r"|\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)[ \t]*(?:x[ \t]*)?g6\s+pro(?:\s+(?:turret|doorbell))?\b",
+            r"g6\s+pro(?:\s+doorbell)?\s*[×x]\s*(\d+)\b"
+            rf"|\b{_QTY}[ \t]*(?:x[ \t]*)?g6\s+pro(?:\s+doorbell)?\b"
+            rf"|g6\s+pro(?:\s+doorbell)?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            re.I,
+        ),
+    ),
+    (
+        "UBNT-G6-INSTANT",
+        "Ubiquiti G6 Instant",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?g6\s*instant\b"
+            rf"|g6\s*instant[^\n]{{0,40}}?{_NAME_THEN_QTY}",
             re.I,
         ),
     ),
@@ -87,9 +125,19 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "UBNT-BADGE-READER",
         "Ubiquiti Card / Badge Reader",
         re.compile(
-            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?"
-            r"(?:badge\s*readers?|card\s*readers?|access\s*readers?)\b"
-            r"|(?:badge|card)\s*reader[^\n]{0,40}?\s×\s*(\d+)\b",
+            rf"\b{_QTY}\s*(?:x\s*)?"
+            r"(?:badge\s*readers?|card\s*readers?|access\s*readers?|access\s+g3\s*readers?|g3\s*readers?)\b"
+            rf"|(?:access\s+)?g3\s*reader[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:badge|card)\s*reader[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            re.I,
+        ),
+    ),
+    (
+        "UBNT-ACCESS-CARD",
+        "Ubiquiti Access Card",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?access\s*cards?\b"
+            rf"|access\s*cards?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
             re.I,
         ),
     ),
