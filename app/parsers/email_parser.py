@@ -48,18 +48,21 @@ _EQUIPMENT_LINE_RE = re.compile(
     r"(?<![\w/])(\d+)\s*(?:x\s*|×\s*)?e7\s*aps?\b"
     r"|"
     r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*|×\s*)?"
-    r"(udm(?:\s*beast)?|enterprise\s+nvr|uni\s*nvr|unvr|nvr|"
-    r"g6\s+(?:pro(?:\s+turret)?|turret|instant)|"
-    r"(?:access\s+)?g3\s*reader|badge\s*reader|card\s*reader|access\s*reader|"
-    r"access\s*(?:point|card)|ap\b|switch(?:\s*pro)?|camera|doorbell|"
-    r"door\s*sensor|mount)\b"
+    r"(udm(?:\s*beast)?|dream\s+machine(?:\s*beast)?|enterprise\s+nvr|uni\s*nvr|unvr|nvr|"
+    r"g6\s+(?:pro(?:\s+(?:turret|360))?|turret|instant|entry)|"
+    r"(?:access\s+)?g3\s*reader|badge\s*reader|card\s*reader|access\s*reader(?:\s*pro)?|"
+    r"access\s*(?:point(?:\s+e7)?|card|hub)|ap\b|switch(?:\s*pro)?|"
+    r"camera(?:\s+g6|\s+ai)?|doorbell|sensor|mount)\b"
     r"|"
+    # Order-screenshot rows: "Access Point E7 ..... 6" (qty right-aligned, no ×).
     r"(?:access\s+point(?:\s+e7)?|switch\s+pro(?:\s+max)?(?:\s+\d+)?(?:\s+poe)?|"
-    r"enterprise\s+nvr|nvr|g6(?:\s+pro)?(?:\s+turret)?|"
-    r"(?:access\s+)?g3\s*reader|badge\s*reader|card\s*reader|"
-    r"access\s*card)[^\n]{0,80}?\s*[×x]\s*(\d+)\b"
+    r"enterprise\s+nvr|nvr|dream\s+machine(?:\s*beast)?|udm(?:\s*beast)?|"
+    r"g6(?:\s+pro)?(?:\s+(?:turret|360))?|camera\s+g6(?:\s+pro)?(?:\s+(?:turret|360))?|"
+    r"(?:access\s+)?g3\s*reader|access\s+reader(?:\s*pro)?|badge\s*reader|card\s*reader|"
+    r"access\s*card|enterprise\s+access\s+hub|"
+    r"reader\s+g6\s+entry)[^\n]{0,80}?(?:[×x]\s*|(?:\s{2,}|\t))\s*(\d+)\s*$"
     r")",
-    re.I,
+    re.I | re.M,
 )
 # Prefer digital PDF text when a page already has enough selectable chars.
 _PDF_DIGITAL_TEXT_MIN_CHARS = 40

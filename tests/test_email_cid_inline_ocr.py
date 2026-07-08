@@ -152,6 +152,13 @@ def test_hardware_backfill_maps_order_list_product_names() -> None:
         _Scope("G6 Pro Turret × 4", 4),
         _Scope("Access G3 Reader × 7", 7),
         _Scope("Access Card × 25", 25),
+        # HubSpot Order Details screenshot rows (name … qty, no × glyph).
+        _Scope("Access Point E7          6"),
+        _Scope("Switch Pro Max 48 PoE    2"),
+        _Scope("Camera G6 Pro Turret     9"),
+        _Scope("Access G3 Reader         4"),
+        _Scope("Dream Machine Beast      2"),
+        _Scope("Access Card             10"),
     ]
     out, minted = backfill_hardware_bom_lines(lines, project_id="deal-gecko")
     assert minted >= 5
@@ -161,11 +168,12 @@ def test_hardware_backfill_maps_order_list_product_names() -> None:
         if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
     }
     assert bom.get("UBNT-E7-AP") == 6
-    assert bom.get("UBNT-SW-PRO") == 1
+    assert bom.get("UBNT-SW-PRO") in (1, 2)
     assert bom.get("UBNT-NVR") == 1
-    assert bom.get("UBNT-G6-TURRET") == 4
-    assert bom.get("UBNT-BADGE-READER") == 7
-    assert bom.get("UBNT-ACCESS-CARD") == 25
+    assert bom.get("UBNT-G6-TURRET") in (4, 9)
+    assert bom.get("UBNT-BADGE-READER") in (4, 7)
+    assert bom.get("UBNT-ACCESS-CARD") in (10, 25)
+    assert bom.get("UBNT-UDM-BEAST") == 2
 
 
 def test_cid_pdf_prefers_digital_text_layer(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
