@@ -914,19 +914,27 @@ def _project_atoms_to_structured(
 
 
 def _atom_section_path(atom: EvidenceAtom) -> list[str]:
-    if not atom.source_refs:
-        return []
-    ref: SourceRef = atom.source_refs[0]
-    locator = ref.locator or {}
-    section_path = locator.get("section_path")
-    if isinstance(section_path, list) and section_path:
-        return [str(x) for x in section_path]
-    # Fall back to whatever locator field gives us section-ish context.
-    fallback_keys = ("section", "sheet", "speaker", "channel", "location")
-    for key in fallback_keys:
-        value = locator.get(key)
-        if value:
-            return [str(value)]
+    if atom.source_refs:
+        ref: SourceRef = atom.source_refs[0]
+        locator = ref.locator or {}
+        section_path = locator.get("section_path")
+        if isinstance(section_path, list) and section_path:
+            return [str(x) for x in section_path]
+        # Fall back to whatever locator field gives us section-ish context.
+        fallback_keys = ("section", "sheet", "speaker", "channel", "location")
+        for key in fallback_keys:
+            value = locator.get(key)
+            if value:
+                return [str(value)]
+    # Email Include/Exclude bullets carry polarity in value when locator
+    # predates section_path stamping — keep envelope grouping stable.
+    val = atom.value or {}
+    list_section = str(val.get("list_section") or "").strip().lower()
+    if list_section in {"include", "exclude"}:
+        header = val.get("section_header") or (
+            "Include" if list_section == "include" else "Exclude"
+        )
+        return [str(header)]
     return []
 
 

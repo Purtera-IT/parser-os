@@ -273,6 +273,20 @@ _EXCLUDE_LABEL_RE = re.compile(
 )
 
 
+def _list_section_label(section: str | None) -> str | None:
+    """Human-readable list header for Include/Exclude polarity (PDF ``section_path`` parity)."""
+    if section == "include":
+        return "Include"
+    if section == "exclude":
+        return "Exclude"
+    return None
+
+
+def _list_section_path(section: str | None) -> list[str]:
+    label = _list_section_label(section)
+    return [label] if label else []
+
+
 def _is_greeting_line(cleaned: str) -> bool:
     """True when a line is a salutation opener ("Eddie,", "Hi John,", "Dear
     all,"). Structural: a short line (≤4 words) ending in a comma that is
@@ -909,20 +923,33 @@ class EmailParser(BaseParser):
         artifact_id: str,
         filename: str,
         block: dict[str, Any],
+        *,
+        line_num: int | None = None,
+        section_path: list[str] | None = None,
     ) -> SourceRef:
+        """Build a source ref pinned to one body line when ``line_num`` is set.
+
+        Block-level refs (whole message) use ``line_start``/``line_end``; per-atom
+        refs pin a single line so replay/verification and document-order sort work.
+        """
+        start = int(line_num if line_num is not None else block["line_start"])
+        end = int(line_num if line_num is not None else block["line_end"])
+        locator: dict[str, Any] = {
+            "message_index": block["message_index"],
+            "line_start": start,
+            "line_end": end,
+            "sender": block["sender"],
+            "sent_at": block["sent_at"],
+            "quoted": block["quoted"],
+        }
+        if section_path:
+            locator["section_path"] = list(section_path)
         return SourceRef(
-            id=stable_id("src", artifact_id, block["message_index"], block["line_start"]),
+            id=stable_id("src", artifact_id, block["message_index"], start, end),
             artifact_id=artifact_id,
             artifact_type=ArtifactType.email,
             filename=filename,
-            locator={
-                "message_index": block["message_index"],
-                "line_start": block["line_start"],
-                "line_end": block["line_end"],
-                "sender": block["sender"],
-                "sent_at": block["sent_at"],
-                "quoted": block["quoted"],
-            },
+            locator=locator,
             extraction_method="thread_text_rules",
             parser_version=self.parser_version,
         )
@@ -936,7 +963,6 @@ class EmailParser(BaseParser):
         authority: AuthorityClass,
     ) -> list[EvidenceAtom]:
         atoms: list[EvidenceAtom] = []
-        source_ref = self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block)
         confidence = 0.45 if authority == AuthorityClass.quoted_old_email else 0.86
 
         # Body-hygiene state, per message block. ``in_signature`` latches once
@@ -945,7 +971,8 @@ class EmailParser(BaseParser):
         in_signature = False
         current_section: str | None = None  # "include" | "exclude" | None
 
-        for line in block["lines"]:
+        for line_idx, line in enumerate(block["lines"]):
+            line_num = int(block["line_start"]) + line_idx
             raw_cleaned = line.lstrip("> ").strip()
             if not raw_cleaned:
                 continue
@@ -953,6 +980,17 @@ class EmailParser(BaseParser):
             cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
+            # Bullets inherit the active Include/Exclude header; compute before
+            # hygiene continues so per-line locators carry section_path.
+            section_for_line = current_section if is_bullet else None
+            section_path = _list_section_path(section_for_line)
+            source_ref = self._build_source_ref(
+                artifact_id=artifact_id,
+                filename=filename,
+                block=block,
+                line_num=line_num,
+                section_path=section_path or None,
+            )
             lowered = normalize_text(cleaned)
             entity_keys = self._extract_entity_keys(cleaned)
             # Site atoms are attempted on EVERY line (an address can appear in a
@@ -993,9 +1031,7 @@ class EmailParser(BaseParser):
             if _EXCLUDE_LABEL_RE.match(cleaned):
                 current_section = "exclude"
                 continue
-            # A bullet item stays inside the active section; any non-bullet
-            # content line ends it (and is typed normally).
-            section_for_line = current_section if is_bullet else None
+            # Non-bullet content ends the active list section for following lines.
             if not is_bullet:
                 current_section = None
 
@@ -1056,9 +1092,12 @@ class EmailParser(BaseParser):
                     "text": cleaned,
                     "message_index": block["message_index"],
                     "quoted": block["quoted"],
+                    "kind": "email_body_line",
+                    "line": line_num,
                 }
                 if section_for_line:
                     atom_value["list_section"] = section_for_line
+                    atom_value["section_header"] = _list_section_label(section_for_line)
                 if delta_payload and atom_type == AtomType.customer_instruction:
                     atom_value["change_delta"] = delta_payload
                 atoms.append(
@@ -1068,7 +1107,7 @@ class EmailParser(BaseParser):
                             project_id,
                             artifact_id,
                             block["message_index"],
-                            block["line_start"],
+                            line_num,
                             atom_type.value,
                             cleaned,
                         ),
@@ -1102,7 +1141,7 @@ class EmailParser(BaseParser):
                             project_id,
                             artifact_id,
                             block["message_index"],
-                            block["line_start"],
+                            line_num,
                             "scope_item",
                             cleaned,
                         ),
@@ -1116,7 +1155,15 @@ class EmailParser(BaseParser):
                             "message_index": block["message_index"],
                             "quoted": block["quoted"],
                             "kind": "email_body_line",
-                            **({"list_section": section_for_line} if section_for_line else {}),
+                            "line": line_num,
+                            **(
+                                {
+                                    "list_section": section_for_line,
+                                    "section_header": _list_section_label(section_for_line),
+                                }
+                                if section_for_line
+                                else {}
+                            ),
                         },
                         entity_keys=entity_keys,
                         source_refs=[source_ref],

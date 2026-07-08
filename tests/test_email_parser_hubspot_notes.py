@@ -125,3 +125,40 @@ def test_email_cid_marker_line_not_scope_atom(tmp_path):
     atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
     for a in atoms:
         assert not a.raw_text.strip().startswith("[cid:"), a.raw_text
+
+
+def test_email_list_items_carry_section_context_and_per_line_locators(tmp_path):
+    """Include/Exclude bullets carry ``list_section`` polarity and per-line locators."""
+    atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
+
+    okta = next(a for a in atoms if a.raw_text.strip() == "Okta integration")
+    assert okta.value.get("list_section") == "include"
+    assert okta.value.get("section_header") == "Include"
+    assert okta.value.get("kind") == "email_body_line"
+    loc = okta.source_refs[0].locator
+    assert loc.get("section_path") == ["Include"]
+    assert loc["line_start"] == loc["line_end"]
+    assert isinstance(loc["line_start"], int)
+
+    buildout = next(a for a in atoms if a.raw_text.strip() == "Network buildout")
+    assert buildout.atom_type == AtomType.exclusion
+    assert buildout.value.get("list_section") == "exclude"
+    assert buildout.value.get("section_header") == "Exclude"
+    assert buildout.value.get("kind") == "email_body_line"
+    ex_loc = buildout.source_refs[0].locator
+    assert ex_loc.get("section_path") == ["Exclude"]
+    assert ex_loc["line_start"] == ex_loc["line_end"]
+
+    # Source order: Include items precede Exclude items in the email body.
+    include_lines = [
+        a.source_refs[0].locator["line_start"]
+        for a in atoms
+        if a.value.get("list_section") == "include"
+    ]
+    exclude_lines = [
+        a.source_refs[0].locator["line_start"]
+        for a in atoms
+        if a.value.get("list_section") == "exclude"
+    ]
+    assert include_lines and exclude_lines
+    assert max(include_lines) < min(exclude_lines)

@@ -373,21 +373,25 @@ class TranscriptParser(BaseParser):
         return "unknown"
 
     def _base_source_ref(self, artifact_id: str, filename: str, segment: dict[str, Any], speaker_role: str) -> SourceRef:
+        section = segment.get("section")
+        locator: dict[str, Any] = {
+            "line_start": segment["line_start"],
+            "line_end": segment["line_end"],
+            "speaker": segment.get("speaker"),
+            "speaker_role": speaker_role,
+            "timestamp_start": segment.get("timestamp_start"),
+            "timestamp_end": segment.get("timestamp_end"),
+            "section": section,
+            "utterance_index": segment["utterance_index"],
+        }
+        if section:
+            locator["section_path"] = [str(section)]
         return SourceRef(
             id=stable_id("src", artifact_id, segment["utterance_index"], segment["line_start"], segment["text"]),
             artifact_id=artifact_id,
             artifact_type=ArtifactType.transcript,
             filename=filename,
-            locator={
-                "line_start": segment["line_start"],
-                "line_end": segment["line_end"],
-                "speaker": segment.get("speaker"),
-                "speaker_role": speaker_role,
-                "timestamp_start": segment.get("timestamp_start"),
-                "timestamp_end": segment.get("timestamp_end"),
-                "section": segment.get("section"),
-                "utterance_index": segment["utterance_index"],
-            },
+            locator=locator,
             extraction_method="transcript_rule_engine",
             parser_version=self.parser_version,
         )
