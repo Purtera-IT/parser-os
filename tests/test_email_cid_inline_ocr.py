@@ -357,6 +357,75 @@ def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.Mon
     assert qty_by_line.get("4E7 APS") == 4
 
 
+def test_score_cid_ocr_prefers_order_details_over_transcript() -> None:
+    from app.parsers.email_parser import _score_cid_ocr_text
+
+    transcript = (
+        "Meeting Summary and Full Transcript\n"
+        "Jacob Vander-Plaats [07:16]\n"
+        "We have like 4E7 APS. We have two UDM beast for like, their.\n"
+    )
+    order = _HUBSPOT_ORDER_TABLE_TEXT
+    assert _score_cid_ocr_text(order) > _score_cid_ocr_text(transcript)
+
+
+def test_picks_best_cid_when_multiple_inline_images(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transcript_cid = "transcript-cid-uuid"
+    order_cid = "07131976-d75d-4133-b5d2-52a8919274ba"
+
+    def _fake_ocr(payload: bytes, content_type: str = "") -> str:
+        if order_cid.encode() in payload or len(payload) < 200:
+            return _HUBSPOT_ORDER_TABLE_TEXT
+        return (
+            "Meeting Summary and Full Transcript\n"
+            "Jacob Vander-Plaats [07:16]\n"
+            "We have like 4E7 APS.\n"
+        )
+
+    monkeypatch.setattr("app.parsers.email_parser._ocr_text_from_cid_inline", _fake_ocr)
+
+    mixed = "=_Mixed_dual"
+    related = "=_Related_dual"
+    png_b64 = base64.b64encode(_TINY_PNG).decode("ascii")
+    lines = [
+        "From: patrick@example.com",
+        "Subject: Equipment list",
+        f'Content-Type: multipart/mixed; boundary="{mixed}"',
+        "",
+        f"--{mixed}",
+        f'Content-Type: multipart/related; boundary="{related}"',
+        "",
+        f"--{related}",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        f"Full equipment list below.\n[cid:{order_cid}]\n",
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{transcript_cid}@hubspot-ingest>",
+        "",
+        png_b64,
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{order_cid}@hubspot-ingest>",
+        "",
+        png_b64 + "extra",
+        f"--{related}--",
+        f"--{mixed}--",
+        "",
+    ]
+    eml = tmp_path / "dual-inline.eml"
+    eml.write_bytes("\r\n".join(lines).encode("utf-8"))
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_dual_cid", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 8
+    cids = {a.value.get("content_id") for a in equipment}
+    assert order_cid in cids
+    assert transcript_cid not in cids
+
+
 def test_iter_cid_inline_parts_finds_image_part() -> None:
     msg = BytesParser(policy=policy.default).parsebytes(_build_multipart_eml())
     from app.parsers.email_parser import _iter_cid_inline_parts

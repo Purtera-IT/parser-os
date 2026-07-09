@@ -314,6 +314,40 @@ def _ocr_text_from_cid_inline(payload: bytes, *, content_type: str) -> str:
     return ""
 
 
+def _score_cid_ocr_text(text: str) -> int:
+    """Rank inline MIME OCR — prefer HubSpot order-table screenshots."""
+    raw = (text or "").strip()
+    if not raw:
+        return 0
+    score = min(len(raw), 2500) // 30
+    if _ORDER_DETAILS_HDR_RE.search(raw):
+        score += 250
+    product_hits = len(
+        re.findall(
+            r"\b(?:access point|switch|enterprise nvr|nvr|reader|access card|protect|g6|udm)\b",
+            raw,
+            re.I,
+        )
+    )
+    score += product_hits * 20
+    if _TRANSCRIPT_DOC_RE.search(raw):
+        score -= 150
+    return score
+
+
+def _ocr_cid_part(part: dict[str, Any]) -> str:
+    text = str(part.get("text") or "")
+    payload = part.get("payload")
+    if payload and (part.get("is_image") or part.get("is_pdf")):
+        ocr_text = _ocr_text_from_cid_inline(
+            bytes(payload),
+            content_type=str(part.get("content_type") or ""),
+        )
+        if ocr_text:
+            return ocr_text
+    return text
+
+
 def _parse_qty_token(token: str) -> int | None:
     raw = (token or "").strip().lower()
     if raw.isdigit():
@@ -348,6 +382,36 @@ def _hardware_atoms_from_equipment_text(
         cleaned = line.strip()
         if not cleaned or _TRANSCRIPT_SPEECH_LINE_RE.search(cleaned):
             continue
+        trail_qty = _trailing_order_qty(cleaned)
+        if trail_qty is not None:
+            name = _order_row_name(cleaned, trail_qty)
+            trail_qty = _sanity_order_qty(name, trail_qty)
+            if trail_qty:
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(trail_qty)),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item,
+                        raw_text=cleaned,
+                        normalized_text=normalize_text(cleaned),
+                        value={
+                            "text": cleaned,
+                            "kind": "email_cid_equipment_line",
+                            "quantity": trail_qty,
+                            "item": name,
+                            "content_id": content_id,
+                        },
+                        entity_keys=[],
+                        source_refs=[src],
+                        authority_class=AuthorityClass.customer_current_authored,
+                        confidence=0.8,
+                        review_status=ReviewStatus.needs_review,
+                        review_flags=["email_cid_equipment_line"],
+                        parser_version=parser_version,
+                    )
+                )
+                continue
         matched = False
         for match in _EQUIPMENT_LINE_RE.finditer(cleaned):
             matched = True
@@ -388,37 +452,6 @@ def _hardware_atoms_from_equipment_text(
             )
         if matched:
             continue
-        trail_qty = _trailing_order_qty(cleaned)
-        if trail_qty is None:
-            continue
-        name = _order_row_name(cleaned, trail_qty)
-        trail_qty = _sanity_order_qty(name, trail_qty)
-        if not trail_qty:
-            continue
-        atoms.append(
-            EvidenceAtom(
-                id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(trail_qty)),
-                project_id=project_id,
-                artifact_id=artifact_id,
-                atom_type=AtomType.scope_item,
-                raw_text=cleaned,
-                normalized_text=normalize_text(cleaned),
-                value={
-                    "text": cleaned,
-                    "kind": "email_cid_equipment_line",
-                    "quantity": trail_qty,
-                    "item": name,
-                    "content_id": content_id,
-                },
-                entity_keys=[],
-                source_refs=[src],
-                authority_class=AuthorityClass.customer_current_authored,
-                confidence=0.76,
-                review_status=ReviewStatus.needs_review,
-                review_flags=["email_cid_equipment_line"],
-                parser_version=parser_version,
-            )
-        )
     if not atoms and any(ch.isalnum() for ch in text):
         atoms.append(
             EvidenceAtom(
@@ -911,6 +944,7 @@ class EmailParser(BaseParser):
             targets = set(inline_parts.keys())
         else:
             targets = referenced or set(inline_parts.keys())
+        ocr_by_cid: dict[str, str] = {}
         for cid in targets:
             part = inline_parts.get(cid)
             if not part:
@@ -925,25 +959,34 @@ class EmailParser(BaseParser):
                         )
                     )
                 continue
-            text = str(part.get("text") or "")
-            payload = part.get("payload")
-            if payload and (part.get("is_image") or part.get("is_pdf")):
-                ocr_text = _ocr_text_from_cid_inline(
-                    bytes(payload),
-                    content_type=str(part.get("content_type") or ""),
+            ocr_by_cid[cid] = _ocr_cid_part(part)
+
+        if ocr_by_cid:
+            best_cid = max(ocr_by_cid, key=lambda c: _score_cid_ocr_text(ocr_by_cid[c]))
+            best_text = ocr_by_cid.get(best_cid) or ""
+            if _score_cid_ocr_text(best_text) > 0:
+                atoms.extend(
+                    _hardware_atoms_from_equipment_text(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        text=best_text,
+                        content_id=best_cid,
+                        parser_version=self.parser_version,
+                    )
                 )
-                if ocr_text:
-                    text = ocr_text
-            atoms.extend(
-                _hardware_atoms_from_equipment_text(
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=path.name,
-                    text=text,
-                    content_id=cid,
-                    parser_version=self.parser_version,
+        if not any(a.value.get("kind") == "email_cid_equipment_line" for a in atoms):
+            for cid, text in ocr_by_cid.items():
+                atoms.extend(
+                    _hardware_atoms_from_equipment_text(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        text=text,
+                        content_id=cid,
+                        parser_version=self.parser_version,
+                    )
                 )
-            )
         if referenced:
             resolved = {
                 cid
