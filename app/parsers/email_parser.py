@@ -408,6 +408,36 @@ def _parse_qty_token(token: str) -> int | None:
     return _WORD_QTY.get(raw)
 
 
+def _cid_equipment_source_ref(
+    *,
+    artifact_id: str,
+    filename: str,
+    content_id: str,
+    parser_version: str,
+    message_index: int,
+    line_start: int,
+    row_index: int,
+) -> SourceRef:
+    """Pin CID equipment rows into email document order (after body prose)."""
+    return SourceRef(
+        id=stable_id("src", artifact_id, "cid", content_id, line_start, row_index),
+        artifact_id=artifact_id,
+        artifact_type=ArtifactType.email,
+        filename=filename,
+        locator={
+            "kind": "email_cid_inline",
+            "content_id": content_id,
+            "message_index": message_index,
+            "line_start": line_start,
+            "line_end": line_start,
+            "row_index": row_index,
+            "section_path": ["Equipment list"],
+        },
+        extraction_method="email_cid_inline",
+        parser_version=parser_version,
+    )
+
+
 def _hardware_atoms_from_equipment_text(
     *,
     project_id: str,
@@ -416,20 +446,14 @@ def _hardware_atoms_from_equipment_text(
     text: str,
     content_id: str,
     parser_version: str,
+    message_index: int = 0,
+    anchor_line: int = 1,
 ) -> list[EvidenceAtom]:
     atoms: list[EvidenceAtom] = []
     text = _focus_cid_equipment_text(text)
     if not text.strip():
         return atoms
-    src = SourceRef(
-        id=stable_id("src", artifact_id, "cid", content_id),
-        artifact_id=artifact_id,
-        artifact_type=ArtifactType.email,
-        filename=filename,
-        locator={"kind": "email_cid_inline", "content_id": content_id},
-        extraction_method="email_cid_inline",
-        parser_version=parser_version,
-    )
+    row_index = 0
     for line in text.splitlines():
         cleaned = line.strip()
         if not cleaned or _TRANSCRIPT_SPEECH_LINE_RE.search(cleaned):
@@ -439,6 +463,16 @@ def _hardware_atoms_from_equipment_text(
             name = _order_row_name(cleaned, trail_qty)
             trail_qty = _sanity_order_qty(name, trail_qty)
             if trail_qty:
+                line_start = int(anchor_line) + row_index
+                src = _cid_equipment_source_ref(
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    content_id=content_id,
+                    parser_version=parser_version,
+                    message_index=message_index,
+                    line_start=line_start,
+                    row_index=row_index,
+                )
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(trail_qty)),
@@ -453,6 +487,10 @@ def _hardware_atoms_from_equipment_text(
                             "quantity": trail_qty,
                             "item": name,
                             "content_id": content_id,
+                            "line": line_start,
+                            "row_index": row_index,
+                            "list_section": "equipment",
+                            "section_header": "Equipment list",
                         },
                         entity_keys=[],
                         source_refs=[src],
@@ -463,6 +501,7 @@ def _hardware_atoms_from_equipment_text(
                         parser_version=parser_version,
                     )
                 )
+                row_index += 1
                 continue
         matched = False
         for match in _EQUIPMENT_LINE_RE.finditer(cleaned):
@@ -478,6 +517,16 @@ def _hardware_atoms_from_equipment_text(
             if not qty:
                 continue
             item = _order_row_name(cleaned, qty)
+            line_start = int(anchor_line) + row_index
+            src = _cid_equipment_source_ref(
+                artifact_id=artifact_id,
+                filename=filename,
+                content_id=content_id,
+                parser_version=parser_version,
+                message_index=message_index,
+                line_start=line_start,
+                row_index=row_index,
+            )
             atoms.append(
                 EvidenceAtom(
                     id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(qty)),
@@ -492,6 +541,10 @@ def _hardware_atoms_from_equipment_text(
                         "quantity": qty,
                         "item": item,
                         "content_id": content_id,
+                        "line": line_start,
+                        "row_index": row_index,
+                        "list_section": "equipment",
+                        "section_header": "Equipment list",
                     },
                     entity_keys=[],
                     source_refs=[src],
@@ -502,9 +555,19 @@ def _hardware_atoms_from_equipment_text(
                     parser_version=parser_version,
                 )
             )
+            row_index += 1
         if matched:
             continue
     if not atoms and any(ch.isalnum() for ch in text):
+        src = _cid_equipment_source_ref(
+            artifact_id=artifact_id,
+            filename=filename,
+            content_id=content_id,
+            parser_version=parser_version,
+            message_index=message_index,
+            line_start=int(anchor_line),
+            row_index=0,
+        )
         atoms.append(
             EvidenceAtom(
                 id=stable_id("atm", project_id, artifact_id, "cid_body", content_id, text[:120]),
@@ -517,6 +580,7 @@ def _hardware_atoms_from_equipment_text(
                     "text": text[:4000],
                     "kind": "email_cid_inline_body",
                     "content_id": content_id,
+                    "line": int(anchor_line),
                 },
                 entity_keys=[],
                 source_refs=[src],
@@ -528,6 +592,7 @@ def _hardware_atoms_from_equipment_text(
             )
         )
     return atoms
+
 
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
@@ -648,6 +713,95 @@ def _is_greeting_line(cleaned: str) -> bool:
     # Pure name-shaped salutation: every token is alphabetic (allowing an
     # initial's period / hyphen / apostrophe) — "Eddie", "Mr. Smith", "Jean-Luc".
     return all(re.fullmatch(r"[A-Za-z][A-Za-z.'\-]*", w) for w in words)
+
+
+_COURTESY_PROSE_RE = re.compile(
+    r"^(?:appreciate\b|thanks?\b|thank you\b|looking forward\b|"
+    r"hope (?:you(?:'re| are)?|this)\b|just (?:wanted|checking|following)\b|"
+    r"wanted to (?:follow|check|touch)\b|as (?:discussed|mentioned)\b|"
+    r"please (?:see|find|let me know)\b|attached (?:is|please find)\b|"
+    r"below is\b|see (?:below|attached)\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_courtesy_prose_line(cleaned: str) -> bool:
+    """True for framing/courtesy prose that must not become baseline scope_item.
+
+    Universal structural rule: long conversational openers ("Appreciate you
+    hopping on…", "Attached is a summary…") are email chrome around the deal,
+    not contractual scope. Typed extractors (requirement / exclusion / …) still
+    run; only the fail-open ``scope_item`` gate is skipped.
+    """
+    text = (cleaned or "").strip()
+    if not text or len(text) < 24:
+        return False
+    if _BULLET_PREFIX_RE.match(text):
+        return False
+    lowered = normalize_text(text)
+    # Keep lines that already look like actionable scope / constraints.
+    if any(
+        needle in lowered
+        for needle in (
+            "include",
+            "exclude",
+            "requirement",
+            "must ",
+            "need to",
+            "required",
+            "after hours",
+            "badge",
+            "escort",
+            "install",
+            "configure",
+            "deploy",
+        )
+    ):
+        return False
+    if _COURTESY_PROSE_RE.match(text):
+        return True
+    if "hopping on" in lowered or "short notice" in lowered:
+        return True
+    return False
+
+
+def _cid_reading_anchor(
+    *,
+    body_text: str,
+    content_id: str,
+    blocks: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """Return ``(message_index, line_start)`` where an inline CID belongs in reading order.
+
+    Prefer the body line that references ``cid:…``. Fall back to the line that
+    introduces the equipment/order list. Last resort: immediately after the
+    last authored body line so CID rows sort *after* Include/Exclude prose.
+    """
+    cid_norm = _normalize_cid(content_id)
+    intro_re = re.compile(
+        r"\b(?:full\s+)?equipment\s+list\b|\border\s+details\b|\bsee\s+(?:the\s+)?(?:list|image|screenshot)\b",
+        re.I,
+    )
+    fallback_msg = 0
+    fallback_line = 1
+    for block in blocks or []:
+        msg_i = int(block.get("message_index") or 0)
+        base = int(block.get("line_start") or 1)
+        lines = list(block.get("lines") or [])
+        if lines:
+            fallback_msg = msg_i
+            fallback_line = base + len(lines)
+        for idx, line in enumerate(lines):
+            raw = str(line or "")
+            line_num = base + idx
+            for m in _CID_REF_RE.finditer(raw):
+                if _normalize_cid(m.group(1)) == cid_norm:
+                    return msg_i, line_num
+            if intro_re.search(raw):
+                # Equipment image follows the intro sentence in natural reading.
+                fallback_msg = msg_i
+                fallback_line = line_num + 1
+    return fallback_msg, fallback_line
 
 
 def _extract_email_text(path: Path) -> str:
@@ -874,7 +1028,11 @@ class EmailParser(BaseParser):
         )
         atoms.extend(
             self._cid_inline_atoms(
-                project_id=project_id, artifact_id=artifact_id, path=path, body_text=text
+                project_id=project_id,
+                artifact_id=artifact_id,
+                path=path,
+                body_text=text,
+                blocks=blocks,
             )
         )
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
@@ -977,6 +1135,7 @@ class EmailParser(BaseParser):
         artifact_id: str,
         path: Path,
         body_text: str,
+        blocks: list[dict[str, Any]] | None = None,
     ) -> list[EvidenceAtom]:
         if path.suffix.lower() != ".eml":
             return []
@@ -1017,20 +1176,28 @@ class EmailParser(BaseParser):
                 continue
             ocr_by_cid[cid] = _ocr_cid_part(part)
 
+        def _hw_from(cid: str, blob: str) -> list[EvidenceAtom]:
+            msg_i, line_i = _cid_reading_anchor(
+                body_text=body_text, content_id=cid, blocks=blocks or []
+            )
+            return _hardware_atoms_from_equipment_text(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                text=blob,
+                content_id=cid,
+                parser_version=self.parser_version,
+                message_index=msg_i,
+                anchor_line=line_i,
+            )
+
         equipment_lines: list[EvidenceAtom] = []
         if ocr_by_cid:
             if equipment_list_hint and len(ocr_by_cid) > 1:
                 best_count = 0
                 best_batch: list[EvidenceAtom] = []
                 for cid, text in ocr_by_cid.items():
-                    batch = _hardware_atoms_from_equipment_text(
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=path.name,
-                        text=text,
-                        content_id=cid,
-                        parser_version=self.parser_version,
-                    )
+                    batch = _hw_from(cid, text)
                     eq = [a for a in batch if a.value.get("kind") == "email_cid_equipment_line"]
                     if len(eq) > best_count:
                         best_count = len(eq)
@@ -1042,14 +1209,7 @@ class EmailParser(BaseParser):
                     if _score_cid_ocr_text(pick_text) > 0:
                         equipment_lines = [
                             a
-                            for a in _hardware_atoms_from_equipment_text(
-                                project_id=project_id,
-                                artifact_id=artifact_id,
-                                filename=path.name,
-                                text=pick_text,
-                                content_id=pick_cid,
-                                parser_version=self.parser_version,
-                            )
+                            for a in _hw_from(pick_cid, pick_text)
                             if a.value.get("kind") == "email_cid_equipment_line"
                         ]
             else:
@@ -1057,27 +1217,13 @@ class EmailParser(BaseParser):
                 if _score_cid_ocr_text(pick_text) > 0:
                     equipment_lines = [
                         a
-                        for a in _hardware_atoms_from_equipment_text(
-                            project_id=project_id,
-                            artifact_id=artifact_id,
-                            filename=path.name,
-                            text=pick_text,
-                            content_id=pick_cid,
-                            parser_version=self.parser_version,
-                        )
+                        for a in _hw_from(pick_cid, pick_text)
                         if a.value.get("kind") == "email_cid_equipment_line"
                     ]
         if not equipment_lines:
             for cid, text in ocr_by_cid.items():
                 equipment_lines.extend(
-                    _hardware_atoms_from_equipment_text(
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=path.name,
-                        text=text,
-                        content_id=cid,
-                        parser_version=self.parser_version,
-                    )
+                    _hw_from(cid, text)
                 )
         atoms.extend(equipment_lines)
         has_equipment = any(a.value.get("kind") == "email_cid_equipment_line" for a in atoms)
@@ -1599,7 +1745,12 @@ class EmailParser(BaseParser):
             # census inventories every body line). This mirrors the docx
             # fail-open prose gate and the MboxParser per-paragraph behavior:
             # keep + let the downstream learnable seam decide, never drop.
-            if not atom_types and any(ch.isalnum() for ch in cleaned):
+            # Courtesy/framing prose is email chrome — skip the fail-open gate.
+            if (
+                not atom_types
+                and any(ch.isalnum() for ch in cleaned)
+                and not _is_courtesy_prose_line(cleaned)
+            ):
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id(

@@ -162,3 +162,83 @@ def test_email_list_items_carry_section_context_and_per_line_locators(tmp_path):
     ]
     assert include_lines and exclude_lines
     assert max(include_lines) < min(exclude_lines)
+
+
+def test_email_courtesy_prose_not_baseline_scope(tmp_path):
+    """Framing openers must not become fail-open scope_item atoms."""
+    body = "\n".join(
+        [
+            "From: a@example.com",
+            "To: b@example.com",
+            "Subject: Scope",
+            "",
+            "Appreciate you hopping on in such short notice. Attached is a summary of the call.",
+            "Include:",
+            "  *   Okta integration",
+            "Thanks,",
+        ]
+    )
+    p = tmp_path / "courtesy.eml"
+    p.write_text(body, encoding="utf-8")
+    atoms = EmailParser().parse_artifact("p", "art_c", p)
+    texts = _texts(atoms)
+    assert not any(t.startswith("Appreciate you hopping") for t in texts)
+    assert "Okta integration" in texts
+
+
+def test_email_cid_equipment_sorts_after_body_include_exclude(tmp_path, monkeypatch):
+    """CID equipment rows inherit reading-order line_start after body list items."""
+    from app.parsers import email_parser as ep
+
+    cid = "equip-shot-1"
+    monkeypatch.setattr(ep, "_ocr_cid_part", lambda part: "Access Point E7 Enterprise × 2\nSwitch Pro Max 48 PoE × 1\n")
+    mixed = "=_Mixed_ord"
+    related = "=_Related_ord"
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    eml = "\r\n".join(
+        [
+            "From: a@example.com",
+            "To: b@example.com",
+            "Subject: Equipment list",
+            "MIME-Version: 1.0",
+            f'Content-Type: multipart/mixed; boundary="{mixed}"',
+            "",
+            f"--{mixed}",
+            f'Content-Type: multipart/related; boundary="{related}"',
+            "",
+            f"--{related}",
+            "Content-Type: text/plain; charset=utf-8",
+            "",
+            "Below is the full equipment list.",
+            "Include:",
+            "  *   Okta integration",
+            "Exclude:",
+            "  *   Network buildout",
+            f"[cid:{cid}]",
+            f"--{related}",
+            "Content-Type: image/png",
+            "Content-Transfer-Encoding: base64",
+            f"Content-ID: <{cid}>",
+            "",
+            png,
+            f"--{related}--",
+            f"--{mixed}--",
+            "",
+        ]
+    )
+    p = tmp_path / "order.eml"
+    p.write_bytes(eml.encode("utf-8"))
+    atoms = EmailParser().parse_artifact("p", "art_ord", p)
+    include = next(a for a in atoms if a.raw_text.strip() == "Okta integration")
+    exclude = next(a for a in atoms if a.raw_text.strip() == "Network buildout")
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment
+    include_line = include.source_refs[0].locator["line_start"]
+    exclude_line = exclude.source_refs[0].locator["line_start"]
+    equip_lines = [a.source_refs[0].locator["line_start"] for a in equipment]
+    assert include_line < exclude_line
+    assert exclude_line < min(equip_lines)
+    assert all(a.source_refs[0].locator.get("kind") == "email_cid_inline" for a in equipment)
+    assert all(a.source_refs[0].locator.get("section_path") == ["Equipment list"] for a in equipment)

@@ -370,8 +370,16 @@ def _mint_bom_from_email_cid_equipment_lines(
     project_id: str,
     existing: set[str],
 ) -> tuple[list[Any], int]:
+    """Mint BOM rows from CID equipment lines and drop the source scope duplicates.
+
+    Universal embedding rule: once a machine ``bom_line`` is grounded from an
+    ``email_cid_equipment_line`` scope atom, keep the BOM (inherits the CID
+    locator / reading order) and remove the customer-authored scope twin so
+    Atom Quality audit does not show the same equipment twice.
+    """
     minted = 0
-    for atom in atoms:
+    drop_ids: set[str] = set()
+    for atom in list(atoms):
         if not _is_email_cid_equipment_atom(atom):
             continue
         val = getattr(atom, "value", None) or {}
@@ -384,6 +392,7 @@ def _mint_bom_from_email_cid_equipment_lines(
         ]
         if not lines:
             lines = [str(val.get("item") or "").strip()]
+        atom_minted = False
         for line in lines:
             if not line:
                 continue
@@ -416,6 +425,8 @@ def _mint_bom_from_email_cid_equipment_lines(
                 continue
             sku, description = mapped
             if sku.lower() in existing:
+                # Already have BOM for this SKU — still drop the scope twin.
+                atom_minted = True
                 continue
             atoms.append(
                 _mint_bom_line(
@@ -430,6 +441,13 @@ def _mint_bom_from_email_cid_equipment_lines(
             )
             existing.add(sku.lower())
             minted += 1
+            atom_minted = True
+        if atom_minted:
+            aid = str(getattr(atom, "id", "") or "")
+            if aid:
+                drop_ids.add(aid)
+    if drop_ids:
+        atoms[:] = [a for a in atoms if str(getattr(a, "id", "") or "") not in drop_ids]
     return atoms, minted
 
 

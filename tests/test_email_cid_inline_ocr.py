@@ -192,13 +192,20 @@ def test_multipart_eml_missing_cid_part_emits_unresolved(tmp_path) -> None:
 
 def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
     class _Scope:
-        def __init__(self, text: str):
+        def __init__(self, text: str, atom_id: str):
+            self.id = atom_id
             self.atom_type = type("T", (), {"value": "scope_item"})()
             self.raw_text = text
             self.text = text
             self.value = {"text": text, "kind": "email_cid_equipment_line"}
 
-    atoms = [_Scope(_OCR_EQUIPMENT_TEXT)]
+    atoms = [
+        _Scope("Access Point E7 Enterprise × 6", "scope-e7"),
+        _Scope("Switch Pro Max 48 PoE × 1", "scope-sw"),
+        _Scope("Enterprise NVR × 1", "scope-nvr"),
+        _Scope("G6 Pro Turret × 4", "scope-g6"),
+        _Scope("Card Reader × 3", "scope-reader"),
+    ]
     out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
     assert minted >= 4
     bom = {
@@ -217,30 +224,37 @@ def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
         and a.value.get("source") == "email_cid_equipment_line"
     ]
     assert len(email_bom) >= 4
+    remaining_scope = [
+        a for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "scope_item"
+        and getattr(a, "value", {}).get("kind") == "email_cid_equipment_line"
+    ]
+    assert remaining_scope == []
 
 
 def test_hardware_backfill_maps_order_list_product_names() -> None:
     class _Scope:
-        def __init__(self, text: str, qty: int | None = None):
+        def __init__(self, text: str, qty: int | None = None, atom_id: str = ""):
+            self.id = atom_id or f"scope-{text[:24]}"
             self.atom_type = type("T", (), {"value": "scope_item"})()
             self.raw_text = text
             self.text = text
             self.value = {"text": text, "kind": "email_cid_equipment_line", "quantity": qty}
 
     lines = [
-        _Scope("Access Point E7 Enterprise × 6", 6),
-        _Scope("Switch Pro Max 48 PoE × 1", 1),
-        _Scope("Enterprise NVR × 1", 1),
-        _Scope("G6 Pro Turret × 4", 4),
-        _Scope("Access G3 Reader × 7", 7),
-        _Scope("Access Card × 25", 25),
+        _Scope("Access Point E7 Enterprise × 6", 6, "s1"),
+        _Scope("Switch Pro Max 48 PoE × 1", 1, "s2"),
+        _Scope("Enterprise NVR × 1", 1, "s3"),
+        _Scope("G6 Pro Turret × 4", 4, "s4"),
+        _Scope("Access G3 Reader × 7", 7, "s5"),
+        _Scope("Access Card × 25", 25, "s6"),
         # HubSpot Order Details screenshot rows (name … qty, no × glyph).
-        _Scope("Access Point E7          6"),
-        _Scope("Switch Pro Max 48 PoE    2"),
-        _Scope("Camera G6 Pro Turret     9"),
-        _Scope("Access G3 Reader         4"),
-        _Scope("Dream Machine Beast      2"),
-        _Scope("Access Card             10"),
+        _Scope("Access Point E7          6", atom_id="s7"),
+        _Scope("Switch Pro Max 48 PoE    2", atom_id="s8"),
+        _Scope("Camera G6 Pro Turret     9", atom_id="s9"),
+        _Scope("Access G3 Reader         4", atom_id="s10"),
+        _Scope("Dream Machine Beast      2", atom_id="s11"),
+        _Scope("Access Card             10", atom_id="s12"),
     ]
     out, minted = backfill_hardware_bom_lines(lines, project_id="deal-gecko")
     assert minted >= 5
@@ -373,8 +387,9 @@ def test_picks_best_cid_when_multiple_inline_images(tmp_path, monkeypatch: pytes
     transcript_cid = "transcript-cid-uuid"
     order_cid = "07131976-d75d-4133-b5d2-52a8919274ba"
 
-    def _fake_ocr(payload: bytes, content_type: str = "") -> str:
-        if order_cid.encode() in payload or len(payload) < 200:
+    def _fake_ocr_part(part: dict) -> str:
+        cid = str(part.get("content_id") or "")
+        if cid == order_cid:
             return _HUBSPOT_ORDER_TABLE_TEXT
         return (
             "Meeting Summary and Full Transcript\n"
@@ -382,7 +397,7 @@ def test_picks_best_cid_when_multiple_inline_images(tmp_path, monkeypatch: pytes
             "We have like 4E7 APS.\n"
         )
 
-    monkeypatch.setattr("app.parsers.email_parser._ocr_text_from_cid_inline", _fake_ocr)
+    monkeypatch.setattr("app.parsers.email_parser._ocr_cid_part", _fake_ocr_part)
 
     mixed = "=_Mixed_dual"
     related = "=_Related_dual"
@@ -410,7 +425,7 @@ def test_picks_best_cid_when_multiple_inline_images(tmp_path, monkeypatch: pytes
         "Content-Transfer-Encoding: base64",
         f"Content-ID: <{order_cid}@hubspot-ingest>",
         "",
-        png_b64 + "extra",
+        png_b64,
         f"--{related}--",
         f"--{mixed}--",
         "",
@@ -424,6 +439,9 @@ def test_picks_best_cid_when_multiple_inline_images(tmp_path, monkeypatch: pytes
     cids = {a.value.get("content_id") for a in equipment}
     assert order_cid in cids
     assert transcript_cid not in cids
+    # Reading-order locators: CID rows sit after the body intro line.
+    assert all(isinstance(a.source_refs[0].locator.get("line_start"), int) for a in equipment)
+    assert all(a.source_refs[0].locator.get("kind") == "email_cid_inline" for a in equipment)
 
 
 def test_iter_cid_inline_parts_finds_image_part() -> None:
