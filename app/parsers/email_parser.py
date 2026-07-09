@@ -458,6 +458,8 @@ def _hardware_atoms_from_equipment_text(
         cleaned = line.strip()
         if not cleaned or _TRANSCRIPT_SPEECH_LINE_RE.search(cleaned):
             continue
+        if _is_ocr_junk_equipment_line(cleaned):
+            continue
         trail_qty = _trailing_order_qty(cleaned)
         if trail_qty is not None:
             name = _order_row_name(cleaned, trail_qty)
@@ -693,9 +695,100 @@ def _list_section_label(section: str | None) -> str | None:
     return None
 
 
-def _list_section_path(section: str | None) -> list[str]:
+def _list_section_path(section: str | None, *, lead_in: list[str] | None = None) -> list[str]:
+    """Section breadcrumb: framing lead-in + Include/Exclude header.
+
+    Framing prose ("By the end of the meeting customer clarified:") prefixes
+    the polarity label so Atom Quality can render
+    ``…clarified › Include: Okta integration`` instead of a bare ``Include:``.
+    The same text also rides on ``locator.lead_in`` / ``value.intro``.
+    """
+    path: list[str] = []
+    for lead in lead_in or []:
+        cleaned = (lead or "").strip().rstrip(":")
+        if cleaned and cleaned not in path:
+            path.append(cleaned)
     label = _list_section_label(section)
-    return [label] if label else []
+    if label:
+        path.append(label)
+    return path
+
+
+def _is_email_list_framing_lead_in(cleaned: str) -> bool:
+    """True for a short framing sentence that governs an Include/Exclude list.
+
+    Universal structural rule (not deal-specific): a non-bullet line ending in
+    ``:`` that announces clarification / inclusion / exclusion, kept as
+    ``lead_in`` on the bullets beneath rather than as its own atom.
+    """
+    text = (cleaned or "").strip()
+    if not text or len(text) > 200:
+        return False
+    if _BULLET_PREFIX_RE.match(text):
+        return False
+    if _INCLUDE_LABEL_RE.match(text) or _EXCLUDE_LABEL_RE.match(text):
+        return False
+    if not text.endswith(":"):
+        return False
+    # Label-only attribution ("Customer specifically said:") is framing too.
+    words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
+    if not (2 <= len(words) <= 25):
+        return False
+    lowered = normalize_text(text)
+    cues = (
+        "clarif", "includ", "exclud", "following", "scope", "customer",
+        "meeting", "said", "noted", "confirmed", "agreed", "require",
+    )
+    return any(c in lowered for c in cues)
+
+
+def _is_customer_quote_line(cleaned: str) -> bool:
+    """True when the line is a quoted customer utterance (not a requirement)."""
+    text = (cleaned or "").strip()
+    if len(text) < 8:
+        return False
+    if (text.startswith('"') and text.endswith('"')) or (
+        text.startswith("\u201c") and text.endswith("\u201d")
+    ):
+        return True
+    return False
+
+
+# OCR equipment rows that are truncated / ellipsis-garbled must not become atoms.
+_OCR_JUNK_ELLIPSIS_RE = re.compile(r"\.{3,}|…")
+_OCR_JUNK_LEADING_NOISE_RE = re.compile(r"^[IiLl1]\s+[A-Z]")
+# Known product-family cues for HubSpot order-table rows (universal Ubiquiti/order vocab).
+_EQUIPMENT_FAMILY_RE = re.compile(
+    r"(?:"
+    r"\b(?:access\s+point|switch(?:\s+pro)?|dream\s+machine|udm|nvr|unvr|"
+    r"g6|g5|g3|reader|access\s+card|protect|sensor|camera|doorbell|"
+    r"mount|hub|poe|turret|ptz|badge|aps?)\b"
+    r"|(?:\d+\s*)?e7\s*aps?\b"  # glued OCR: "4E7 APS" / "4 E7 APs"
+    r")",
+    re.I,
+)
+
+
+def _is_ocr_junk_equipment_line(cleaned: str) -> bool:
+    """Drop truncated / unrecognizable OCR rows — universal structural gate."""
+    text = (cleaned or "").strip()
+    if not text:
+        return True
+    if _OCR_JUNK_ELLIPSIS_RE.search(text):
+        return True
+    if _OCR_JUNK_LEADING_NOISE_RE.match(text):
+        return True
+    # Single-letter token + truncated stump ("I Access…", "Al Multi…").
+    tokens = re.findall(r"[A-Za-z0-9]+", text)
+    if tokens and len(tokens[0]) == 1 and tokens[0].isalpha():
+        return True
+    # "Camera Al …" — OCR of "AI" as a bare two-letter token mid-name.
+    if re.search(r"\bcamera\s+al\b", text, re.I):
+        return True
+    # Trailing-qty rows with no recognizable product family are OCR debris.
+    if not _EQUIPMENT_FAMILY_RE.search(text):
+        return True
+    return False
 
 
 def _is_greeting_line(cleaned: str) -> bool:
@@ -1538,6 +1631,7 @@ class EmailParser(BaseParser):
         *,
         line_num: int | None = None,
         section_path: list[str] | None = None,
+        lead_in: list[str] | None = None,
     ) -> SourceRef:
         """Build a source ref pinned to one body line when ``line_num`` is set.
 
@@ -1556,6 +1650,8 @@ class EmailParser(BaseParser):
         }
         if section_path:
             locator["section_path"] = list(section_path)
+        if lead_in:
+            locator["lead_in"] = list(lead_in)
         return SourceRef(
             id=stable_id("src", artifact_id, block["message_index"], start, end),
             artifact_id=artifact_id,
@@ -1580,8 +1676,12 @@ class EmailParser(BaseParser):
         # Body-hygiene state, per message block. ``in_signature`` latches once
         # an authored message reaches its sign-off. ``current_section`` carries
         # an Include/Exclude list header down onto the bullet items beneath it.
+        # ``pending_lead_in`` holds framing prose ("By the end of the meeting
+        # customer clarified:") until the next Include/Exclude list consumes it.
         in_signature = False
         current_section: str | None = None  # "include" | "exclude" | None
+        pending_lead_in: list[str] = []
+        active_lead_in: list[str] = []
 
         for line_idx, line in enumerate(block["lines"]):
             line_num = int(block["line_start"]) + line_idx
@@ -1595,13 +1695,15 @@ class EmailParser(BaseParser):
             # Bullets inherit the active Include/Exclude header; compute before
             # hygiene continues so per-line locators carry section_path.
             section_for_line = current_section if is_bullet else None
-            section_path = _list_section_path(section_for_line)
+            lead_for_line = list(active_lead_in) if section_for_line else []
+            section_path = _list_section_path(section_for_line, lead_in=lead_for_line or None)
             source_ref = self._build_source_ref(
                 artifact_id=artifact_id,
                 filename=filename,
                 block=block,
                 line_num=line_num,
                 section_path=section_path or None,
+                lead_in=lead_for_line or None,
             )
             lowered = normalize_text(cleaned)
             entity_keys = self._extract_entity_keys(cleaned)
@@ -1635,17 +1737,32 @@ class EmailParser(BaseParser):
             # 2) Salutation opener — no scope/role/instruction.
             if _is_greeting_line(cleaned):
                 continue
+            # 2b) Framing lead-in above Include/Exclude — connective tissue,
+            #     not a standalone atom. Hold until the list header arrives.
+            if not is_bullet and _is_email_list_framing_lead_in(cleaned):
+                pending_lead_in = [cleaned.rstrip()]
+                continue
             # 3) List-section header ("Include:"/"Exclude:") — not an atom; the
-            #    items beneath inherit its polarity.
+            #    items beneath inherit its polarity + any pending lead-in.
             if _INCLUDE_LABEL_RE.match(cleaned):
                 current_section = "include"
+                if pending_lead_in:
+                    active_lead_in = list(pending_lead_in)
+                    pending_lead_in = []
                 continue
             if _EXCLUDE_LABEL_RE.match(cleaned):
                 current_section = "exclude"
+                if pending_lead_in:
+                    active_lead_in = list(pending_lead_in)
+                    pending_lead_in = []
                 continue
             # Non-bullet content ends the active list section for following lines.
             if not is_bullet:
                 current_section = None
+                active_lead_in = []
+                # Keep pending lead-in only if the next line may still open a list.
+                if not _is_email_list_framing_lead_in(cleaned):
+                    pending_lead_in = []
 
             atom_types: list[AtomType] = []
             pack = get_active_domain_pack()
@@ -1659,26 +1776,30 @@ class EmailParser(BaseParser):
                 for p in rows
             ]
 
-            # A bullet under an "Exclude:" header IS an exclusion even though
-            # the item text itself ("Network buildout") carries no exclusion
-            # keyword — the header supplied the polarity. Likewise an item
-            # under "Include:" is scope (handled by the baseline gate below).
+            # List polarity wins: Include/Exclude bullets are one typed atom
+            # each (verbatim evidence). Do not also emit requirement/task/
+            # open_question twins for the same bullet.
             if section_for_line == "exclude":
-                atom_types.append(AtomType.exclusion)
-            if any(re.search(pattern, lowered) for pattern in exclusion_patterns):
-                if AtomType.exclusion not in atom_types:
+                atom_types = [AtomType.exclusion]
+            elif section_for_line == "include":
+                atom_types = [AtomType.scope_item]
+            elif _is_customer_quote_line(cleaned):
+                # Quoted customer utterance — never a requirement paraphrase.
+                atom_types = [AtomType.customer_instruction]
+            else:
+                if any(re.search(pattern, lowered) for pattern in exclusion_patterns):
                     atom_types.append(AtomType.exclusion)
-            if any(re.search(pattern, lowered) for pattern in instruction_patterns):
-                atom_types.append(AtomType.customer_instruction)
-            # Change-delta presence ("from 48 to 36" anywhere in line)
-            # is a strong customer_instruction signal — the email writer
-            # is changing the scope by a specific delta.
-            if CHANGE_DELTA_PATTERN.search(cleaned) and AtomType.customer_instruction not in atom_types:
-                atom_types.append(AtomType.customer_instruction)
-            if any(re.search(pattern, lowered) for pattern in constraint_patterns) or TIME_RANGE_RE.search(cleaned):
-                atom_types.append(AtomType.constraint)
-            if cleaned.endswith("?") or re.match(r"^(who|what|when|where|why|how|can|could|should)\b", lowered):
-                atom_types.append(AtomType.open_question)
+                if any(re.search(pattern, lowered) for pattern in instruction_patterns):
+                    atom_types.append(AtomType.customer_instruction)
+                # Change-delta presence ("from 48 to 36" anywhere in line)
+                # is a strong customer_instruction signal — the email writer
+                # is changing the scope by a specific delta.
+                if CHANGE_DELTA_PATTERN.search(cleaned) and AtomType.customer_instruction not in atom_types:
+                    atom_types.append(AtomType.customer_instruction)
+                if any(re.search(pattern, lowered) for pattern in constraint_patterns) or TIME_RANGE_RE.search(cleaned):
+                    atom_types.append(AtomType.constraint)
+                if cleaned.endswith("?") or re.match(r"^(who|what|when|where|why|how|can|could|should)\b", lowered):
+                    atom_types.append(AtomType.open_question)
 
             # Pre-compute change_delta once per line so customer
             # instructions with "from X to Y" carry structured deltas.
@@ -1696,11 +1817,20 @@ class EmailParser(BaseParser):
                 except (ValueError, IndexError):
                     delta_payload = None
 
+            # Deduplicate while preserving order (include may already set scope_item).
+            seen_types: set[AtomType] = set()
+            unique_types: list[AtomType] = []
+            for atom_type in atom_types:
+                if atom_type not in seen_types:
+                    seen_types.add(atom_type)
+                    unique_types.append(atom_type)
+            atom_types = unique_types
+
             for atom_type in atom_types:
                 review_status = ReviewStatus.auto_accepted
                 if atom_type == AtomType.open_question:
                     review_status = ReviewStatus.needs_review
-                atom_value = {
+                atom_value: dict[str, Any] = {
                     "text": cleaned,
                     "message_index": block["message_index"],
                     "quoted": block["quoted"],
@@ -1710,6 +1840,9 @@ class EmailParser(BaseParser):
                 if section_for_line:
                     atom_value["list_section"] = section_for_line
                     atom_value["section_header"] = _list_section_label(section_for_line)
+                if lead_for_line:
+                    atom_value["lead_in"] = list(lead_for_line)
+                    atom_value["intro"] = lead_for_line[0]
                 if delta_payload and atom_type == AtomType.customer_instruction:
                     atom_value["change_delta"] = delta_payload
                 atoms.append(
@@ -1751,6 +1884,19 @@ class EmailParser(BaseParser):
                 and any(ch.isalnum() for ch in cleaned)
                 and not _is_courtesy_prose_line(cleaned)
             ):
+                baseline_value: dict[str, Any] = {
+                    "text": cleaned,
+                    "message_index": block["message_index"],
+                    "quoted": block["quoted"],
+                    "kind": "email_body_line",
+                    "line": line_num,
+                }
+                if section_for_line:
+                    baseline_value["list_section"] = section_for_line
+                    baseline_value["section_header"] = _list_section_label(section_for_line)
+                if lead_for_line:
+                    baseline_value["lead_in"] = list(lead_for_line)
+                    baseline_value["intro"] = lead_for_line[0]
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id(
@@ -1767,21 +1913,7 @@ class EmailParser(BaseParser):
                         atom_type=AtomType.scope_item,
                         raw_text=cleaned,
                         normalized_text=normalize_text(cleaned),
-                        value={
-                            "text": cleaned,
-                            "message_index": block["message_index"],
-                            "quoted": block["quoted"],
-                            "kind": "email_body_line",
-                            "line": line_num,
-                            **(
-                                {
-                                    "list_section": section_for_line,
-                                    "section_header": _list_section_label(section_for_line),
-                                }
-                                if section_for_line
-                                else {}
-                            ),
-                        },
+                        value=baseline_value,
                         entity_keys=entity_keys,
                         source_refs=[source_ref],
                         authority_class=authority,

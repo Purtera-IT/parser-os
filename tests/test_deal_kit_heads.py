@@ -66,19 +66,20 @@ def test_quote_line_head_merges_config_install_email_lines() -> None:
         _Task("Badge reader configuration"),
         _Task("Okta integration"),
         _Task("UID Enterprise setup"),
-        _Task("Knowledge transfer / guided handoff"),
+        _Task("Knowledge transfer / walking him through the setup"),
     ]
     out, changed = consolidate_quote_line_tasks(atoms, project_id="deal-1")
     task_atoms = [a for a in out if getattr(getattr(a, "atom_type", None), "value", "") == "task"]
     names = sorted(a.value["text"] for a in task_atoms)
     assert changed >= 4
-    assert names == sorted([CONFIG_UMBRELLA, "Knowledge transfer / guided handoff"])
+    assert names == sorted([CONFIG_UMBRELLA, "Knowledge transfer / walking him through the setup"])
     assert len(task_atoms) == 2
     config_task = next(a for a in task_atoms if a.value["text"] == CONFIG_UMBRELLA)
     assert config_task.value["technician_skill"] == "Network / Wireless L2"
     originals = config_task.value["quote_line"]["original_text"]
     assert "Camera configuration" in originals
     assert "Okta integration" in originals
+    assert "guided handoff" not in " ".join(names)
 
 
 def test_quote_line_head_collapses_ubiquiti_micro_tasks() -> None:

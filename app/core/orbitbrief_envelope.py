@@ -928,13 +928,24 @@ def _atom_section_path(atom: EvidenceAtom) -> list[str]:
                 return [str(value)]
     # Email Include/Exclude bullets carry polarity in value when locator
     # predates section_path stamping — keep envelope grouping stable.
+    # Prefer lead_in + header so connective tissue survives compact projection.
     val = atom.value or {}
     list_section = str(val.get("list_section") or "").strip().lower()
     if list_section in {"include", "exclude"}:
+        path: list[str] = []
+        lead = val.get("lead_in") or val.get("intro")
+        if isinstance(lead, list):
+            for item in lead:
+                s = str(item or "").strip().rstrip(":")
+                if s and s not in path:
+                    path.append(s)
+        elif isinstance(lead, str) and lead.strip():
+            path.append(lead.strip().rstrip(":"))
         header = val.get("section_header") or (
             "Include" if list_section == "include" else "Exclude"
         )
-        return [str(header)]
+        path.append(str(header))
+        return path
     return []
 
 

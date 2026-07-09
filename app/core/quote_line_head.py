@@ -118,10 +118,19 @@ def _is_config_install_deal(delivery_model: str) -> bool:
     return delivery_model.strip().lower() in CONFIG_INSTALL_MODELS
 
 
+def _is_knowledge_handoff_line(label: str) -> bool:
+    low = (label or "").strip().lower()
+    if not low:
+        return False
+    if low == KNOWLEDGE_HANDOFF.lower():
+        return True
+    return bool(re.search(r"\b(knowledge\s+transfer|white\s+glove|walk(?:ing)?\b)", low))
+
+
 def _coalesce_config_install_decision(decision: QuoteLineDecision, *, config_install: bool) -> QuoteLineDecision:
     if not config_install or not decision.quote_line:
         return decision
-    if decision.quote_line == KNOWLEDGE_HANDOFF:
+    if _is_knowledge_handoff_line(decision.quote_line):
         return decision
     if decision.quote_line in _CONFIG_INSTALL_MICRO_LABELS:
         return QuoteLineDecision(
@@ -140,7 +149,10 @@ def _rule_quote_line(text: str, *, config_install: bool) -> QuoteLineDecision:
         return QuoteLineDecision("", "", "pmo_filtered", 1.0)
 
     if re.search(r"\b(knowledge transfer|white glove|walk(?:ing)?\b)", low):
-        return QuoteLineDecision(KNOWLEDGE_HANDOFF, "Senior engineer", "deterministic_fallback", 0.76, route_trainable=True)
+        # Keep source wording ("walking him through the setup") — never invent
+        # "guided handoff" when the email already named the work unit.
+        label = text.strip()[:120] if text.strip() else KNOWLEDGE_HANDOFF
+        return QuoteLineDecision(label, "Senior engineer", "deterministic_fallback", 0.76, route_trainable=True)
     if re.search(r"\b(site survey|heatmap|passive survey|gap analysis)\b", low):
         return QuoteLineDecision(SURVEY_UMBRELLA, "Wireless survey tech", "deterministic_fallback", 0.72, route_trainable=True)
     if config_install and _CONFIG_INSTALL_LINE_RE.search(low):
@@ -187,8 +199,14 @@ def _head_classify(relation: str, text: str, candidates: list[str]) -> tuple[str
 def decide_quote_line(text: str, *, config_install: bool) -> QuoteLineDecision:
     if not text.strip():
         return QuoteLineDecision("", "", "empty", 0.0, route_trainable=True)
+    source_text = text.strip()
     quote, conf, source = _head_classify(QUOTE_LABOR_LINE_RELATION, text, _LABOR_CANDIDATES)
     if quote:
+        # Neural/embedding heads pick from canned candidates — never let them
+        # replace a knowledge-transfer line with the "guided handoff" paraphrase
+        # when the source already named the work unit.
+        if _is_knowledge_handoff_line(quote) and _is_knowledge_handoff_line(source_text):
+            quote = source_text[:120]
         skill, skill_conf, skill_source = _head_classify(TASK_TECHNICIAN_SKILL_RELATION, text, _SKILL_CANDIDATES)
         if not skill:
             fallback = _rule_quote_line(text, config_install=config_install)
@@ -219,8 +237,9 @@ def _quote_line_bucket_key(
             site_key = str(key)
             break
     line_key = decision.quote_line.strip().lower()
-    if line_key == KNOWLEDGE_HANDOFF.lower():
-        return (site_key, line_key)
+    if _is_knowledge_handoff_line(decision.quote_line):
+        # Bucket all knowledge-transfer variants together without rewriting text.
+        return (site_key, "knowledge_handoff")
     if config_install and (
         line_key == CONFIG_UMBRELLA.lower()
         or decision.quote_line in _CONFIG_INSTALL_MICRO_LABELS

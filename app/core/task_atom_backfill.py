@@ -145,117 +145,31 @@ def should_backfill_task(text: str) -> bool:
 
 
 def _task_label(text: str) -> str:
+    """Preserve verbatim wording — never invent umbrella paraphrases.
+
+    Email Include bullets and note lines must stay exactly as written
+    ("walking him through the setup", not "guided handoff"). The only
+    rewrite allowed is collapsing a question-shaped Ubiquiti install ask
+    into a short parent label when the source is itself a resource question
+    (not an Include-list micro-item).
+    """
     label = _clean_candidate(text)
-    # Note requests phrased as questions are still quote-level tasks.
-    if re.search(r"\bubiquiti\s+install\b", label, re.I):
+    # Question-shaped resource asks only — not Include-list micro-labels.
+    if re.match(r"^(?:do|can|could)\b", label, re.I) and re.search(
+        r"\bubiquiti\s+install\b", label, re.I
+    ):
         return "Ubiquiti configuration / install support"
-    if re.search(r"\bokta\s+integration\b", label, re.I):
-        return "Okta integration"
-    if re.search(r"\buid\s+enterprise\s+setup\b", label, re.I):
-        return "UID Enterprise setup"
-    if re.search(r"\bbadge\s*/?\s*access(?:\s+control)?\s+setup\b", label, re.I):
-        return "Badge/access control setup"
-    if re.search(r"\bcamera\s+configuration\b", label, re.I):
-        return "Camera configuration"
-    if re.search(r"\bknowledge\s+transfer\b", label, re.I):
-        return "Knowledge transfer / guided handoff"
     return label[:240]
 
 
-def _mint_parent_task(
-    *,
-    source_atom: Any,
-    project_id: str,
-    label: str,
-    reason: str,
-) -> Any:
-    task = copy.deepcopy(source_atom)
-    artifact_id = getattr(source_atom, "artifact_id", "") or ""
-    task.id = stable_id("atm", artifact_id, "quote_task_backfill", label)
-    task.project_id = project_id
-    task.atom_type = AtomType.task
-    task.raw_text = label
-    task.normalized_text = label.lower()
-    val = dict(getattr(task, "value", None) or {})
-    val.update(
-        {
-            "kind": "task",
-            "text": label,
-            "task_tier": "parent",
-            "is_quote_line": True,
-            "backfilled_from_atom_id": getattr(source_atom, "id", None),
-            "backfill_reason": reason,
-        }
-    )
-    task.value = val
-    flags = list(getattr(task, "review_flags", None) or [])
-    for flag in ("task_backfill", "task_tier_parent"):
-        if flag not in flags:
-            flags.append(flag)
-    task.review_flags = flags
-    return task
-
-
-def _backfill_umbrella_tasks_from_include_lists(
-    atoms: list[Any], *, project_id: str, existing: set[str]
-) -> list[Any]:
-    """Mint 1–2 umbrella parent tasks from email ``Include:`` bullet lists.
-
-    Individual micro-labels (Okta integration, camera configuration, …) are
-    inputs to ``quote_line_head`` consolidation, not standalone quote lines.
-    """
-    include_atoms = [a for a in atoms if _is_email_include_list_item(a)]
-    if not include_atoms:
-        return []
-
-    labels = [_clean_candidate(_text(a)) for a in include_atoms]
-    labels = [l for l in labels if l]
-    if not labels:
-        return []
-
-    source = include_atoms[0]
-    added: list[Any] = []
-
-    config_hits = [
-        l
-        for l in labels
-        if _QUOTE_TASK_RE.search(l)
-        and not re.search(r"\bknowledge\s+transfer\b", l, re.I)
-    ]
-    knowledge_hits = [l for l in labels if re.search(r"\bknowledge\s+transfer\b", l, re.I)]
-
-    if config_hits:
-        umbrella = "Ubiquiti configuration / install support"
-        key = re.sub(r"\s+", " ", umbrella.lower())
-        if key not in existing:
-            existing.add(key)
-            added.append(
-                _mint_parent_task(
-                    source_atom=source,
-                    project_id=project_id,
-                    label=umbrella,
-                    reason="email_include_list_umbrella",
-                )
-            )
-
-    if knowledge_hits:
-        umbrella = "Knowledge transfer / guided handoff"
-        key = re.sub(r"\s+", " ", umbrella.lower())
-        if key not in existing:
-            existing.add(key)
-            added.append(
-                _mint_parent_task(
-                    source_atom=source,
-                    project_id=project_id,
-                    label=umbrella,
-                    reason="email_include_list_umbrella",
-                )
-            )
-
-    return added
-
-
 def backfill_quote_task_atoms(atoms: list[Any], *, project_id: str) -> tuple[list[Any], int]:
+    """Mint quote-level tasks from notes / asks — never from email Include lists.
+
+    Include/Exclude bullets are evidence atoms (verbatim). Inventing umbrella
+    parents like ``Ubiquiti configuration / install support`` or
+    ``Knowledge transfer / guided handoff`` from those lists hallucinates
+    wording that is not in the source email.
+    """
     existing = {
         re.sub(r"\s+", " ", _clean_candidate(_text(a)).lower())
         for a in atoms
@@ -266,8 +180,8 @@ def backfill_quote_task_atoms(atoms: list[Any], *, project_id: str) -> tuple[lis
     for atom in atoms:
         if _atom_type_str(atom) not in _SOURCE_TYPES:
             continue
-        # Include-list micro-items are grouped into umbrella parent tasks
-        # below — never promoted one-by-one (that breaks quote_line_head).
+        # Include-list items stay as verbatim evidence — never become tasks
+        # and never seed invented umbrella parents.
         if _is_email_include_list_item(atom):
             continue
         kind = _source_kind(atom)
@@ -298,6 +212,10 @@ def backfill_quote_task_atoms(atoms: list[Any], *, project_id: str) -> tuple[lis
             task.raw_text = label
             task.normalized_text = label.lower()
             val = dict(getattr(task, "value", None) or {})
+            # Strip Include/Exclude polarity so minted tasks are not shown as
+            # hallucinated Include bullets in Atom Quality audit.
+            val.pop("list_section", None)
+            val.pop("section_header", None)
             val.update(
                 {
                     "kind": "task",
@@ -309,18 +227,20 @@ def backfill_quote_task_atoms(atoms: list[Any], *, project_id: str) -> tuple[lis
                 }
             )
             task.value = val
+            # Clear section_path Include/Exclude so envelope grouping is honest.
+            for ref in getattr(task, "source_refs", None) or []:
+                loc = getattr(ref, "locator", None)
+                if isinstance(loc, dict) and loc.get("section_path") in (["Include"], ["Exclude"]):
+                    loc = dict(loc)
+                    loc.pop("section_path", None)
+                    loc.pop("lead_in", None)
+                    ref.locator = loc
             flags = list(getattr(task, "review_flags", None) or [])
             for flag in ("task_backfill", "task_tier_parent"):
                 if flag not in flags:
                     flags.append(flag)
             task.review_flags = flags
             added.append(task)
-
-    added.extend(
-        _backfill_umbrella_tasks_from_include_lists(
-            atoms, project_id=project_id, existing=existing
-        )
-    )
 
     if not added:
         return atoms, 0

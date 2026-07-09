@@ -49,16 +49,22 @@ def _write_gecko_eml(tmp_path: Path) -> Path:
 
 def test_substance_gate_drops_label_lead_ins_keeps_list_items(tmp_path):
     atoms = EmailParser().parse_artifact("p", "art_email", _write_gecko_eml(tmp_path))
+    # Framing lead-ins are connective tissue at parse time — never emitted as atoms.
+    raw_texts = {a.raw_text.strip() for a in atoms}
+    assert "Customer specifically said:" not in raw_texts
+    assert "By the end of the meeting customer clarified:" not in raw_texts
     kept, dropped = apply_substance_gate(atoms)
-    dropped_texts = {a.raw_text.strip() for a in dropped}
     kept_sections = {
         (a.raw_text.strip(), a.value.get("list_section"))
         for a in kept
         if a.value.get("list_section")
     }
-    assert "Customer specifically said:" in dropped_texts
     assert ("Okta integration", "include") in kept_sections
     assert any(t == "Network buildout" and s == "exclude" for t, s in kept_sections)
+    # Include bullets carry the meeting-clarified lead-in.
+    okta = next(a for a in kept if a.raw_text.strip() == "Okta integration")
+    lead = okta.value.get("lead_in") or []
+    assert any("clarified" in str(x).lower() for x in lead)
 
 
 def test_type_sanity_preserves_email_include_list_items(tmp_path):

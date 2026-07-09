@@ -31,6 +31,9 @@ def test_backfills_hubspot_note_quote_tasks() -> None:
     tasks = [a for a in out if a.atom_type == AtomType.task]
     assert [t.value["is_quote_line"] for t in tasks] == [True, True, True, True]
     assert any("Okta integration" in t.raw_text for t in tasks)
+    # Verbatim — no umbrella rewrite on micro-labels.
+    assert all("guided handoff" not in t.raw_text for t in tasks)
+    assert all("Ubiquiti configuration" not in t.raw_text for t in tasks)
 
 
 def test_backfills_question_shaped_ubiquiti_install_request() -> None:
@@ -73,8 +76,52 @@ def test_does_not_backfill_email_header_or_narrative_fragments() -> None:
 
 
 def test_normalizes_knowledge_transfer_label() -> None:
-    atoms = [_Atom("scope_item", "*   Knowledge transfer / walking him through the setup", kind="email_body_line")]
+    """Include-list knowledge-transfer lines stay verbatim evidence — no invented task."""
+    atoms = [
+        _Atom(
+            "scope_item",
+            "*   Knowledge transfer / walking him through the setup",
+            kind="email_body_line",
+        )
+    ]
+    # Mark as Include-list item the way the email parser does.
+    atoms[0].value["list_section"] = "include"
+    out, count = backfill_quote_task_atoms(atoms, project_id="gecko")
+    assert count == 0
+    assert [a for a in out if a.atom_type == AtomType.task] == []
+
+
+def test_include_list_does_not_mint_umbrella_hallucinations() -> None:
+    """Email Include bullets must never invent 'guided handoff' / Ubiquiti umbrella."""
+    atoms = [
+        _Atom("scope_item", "Badge/access control setup", kind="email_body_line"),
+        _Atom("scope_item", "Okta integration", kind="email_body_line"),
+        _Atom("scope_item", "Camera configuration", kind="email_body_line"),
+        _Atom(
+            "scope_item",
+            "Knowledge transfer / walking him through the setup",
+            kind="email_body_line",
+        ),
+    ]
+    for a in atoms:
+        a.value["list_section"] = "include"
+    out, count = backfill_quote_task_atoms(atoms, project_id="gecko")
+    assert count == 0
+    texts = [a.raw_text for a in out]
+    assert "Knowledge transfer / guided handoff" not in texts
+    assert "Ubiquiti configuration / install support" not in texts
+    assert [a for a in out if a.atom_type == AtomType.task] == []
+
+
+def test_preserves_verbatim_knowledge_transfer_from_non_include_bullet() -> None:
+    atoms = [
+        _Atom(
+            "scope_item",
+            "*   Knowledge transfer / walking him through the setup",
+            kind="email_body_line",
+        )
+    ]
     out, count = backfill_quote_task_atoms(atoms, project_id="gecko")
     assert count == 1
     task = [a for a in out if a.atom_type == AtomType.task][0]
-    assert task.raw_text == "Knowledge transfer / guided handoff"
+    assert task.raw_text == "Knowledge transfer / walking him through the setup"

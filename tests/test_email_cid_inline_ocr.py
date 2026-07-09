@@ -357,9 +357,16 @@ def test_trailing_order_qty_ignores_switch_model_number() -> None:
 
 
 def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Glued but recognizable product rows still emit; ellipsis/noise junk does not."""
     monkeypatch.setattr(
         "app.parsers.email_parser._ocr_text_from_cid_inline",
-        lambda _payload, content_type="": "4E7 APS\nSwitch Pro × 2\nEnterprise NVR × 1",
+        lambda _payload, content_type="": (
+            "4E7 APS\n"
+            "Switch Pro × 2\n"
+            "Enterprise NVR × 1\n"
+            "I Access Reader Pro Juncti ... 5\n"
+            "Camera Al Multi Sensor 4 1\n"
+        ),
     )
     eml = tmp_path / "garbled-inline.eml"
     eml.write_bytes(_build_multipart_eml())
@@ -369,6 +376,8 @@ def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.Mon
     assert len(equipment) >= 2
     qty_by_line = {a.raw_text: a.value.get("quantity") for a in equipment}
     assert qty_by_line.get("4E7 APS") == 4
+    assert "I Access Reader Pro Juncti ... 5" not in qty_by_line
+    assert "Camera Al Multi Sensor 4 1" not in qty_by_line
 
 
 def test_score_cid_ocr_prefers_order_details_over_transcript() -> None:

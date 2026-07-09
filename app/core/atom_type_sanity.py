@@ -575,22 +575,51 @@ def demote_manifest_metadata_bom_lines(atoms: list[Any]) -> int:
 
 
 def demote_email_include_list_microtasks(atoms: list[Any]) -> int:
-    """Re-type mistyped ``task`` atoms that are email Include-list micro-labels.
+    """Re-type mistyped Include-list micro-labels back to ``scope_item``.
 
-    The typed classifier can promote ``Okta integration`` to ``task`` when the
-    email parser stripped the bullet chrome; those belong in the umbrella
-    quote-line bucket, not as standalone child tasks."""
+    The typed classifier can promote ``Okta integration`` to ``task`` or
+    ``requirement`` when the email parser stripped the bullet chrome; Include
+    bullets are verbatim evidence, not standalone tasks/requirements.
+    """
     from app.core.schemas import AtomType
 
     demoted = 0
     for atom in atoms:
-        if _atom_type_str(atom) != "task":
+        at = _atom_type_str(atom)
+        if at not in {"task", "requirement"}:
             continue
         val = getattr(atom, "value", None) or {}
         if not isinstance(val, dict):
             continue
         if val.get("list_section") == "include" and val.get("kind") == "email_body_line":
+            # Do not demote intentionally minted quote-line parents that lost
+            # list_section — those no longer carry include polarity.
+            if val.get("is_quote_line") and val.get("backfill_reason"):
+                continue
             atom.atom_type = AtomType.scope_item
+            demoted += 1
+    return demoted
+
+
+def demote_customer_quote_requirements(atoms: list[Any]) -> int:
+    """Quoted customer utterances are ``customer_instruction``, not ``requirement``."""
+    from app.core.schemas import AtomType
+
+    demoted = 0
+    for atom in atoms:
+        if _atom_type_str(atom) != "requirement":
+            continue
+        text = _atom_text(atom).strip()
+        if not text:
+            continue
+        if (text.startswith('"') and text.endswith('"')) or (
+            text.startswith("\u201c") and text.endswith("\u201d")
+        ):
+            atom.atom_type = AtomType.customer_instruction
+            flags = list(getattr(atom, "review_flags", None) or [])
+            if "retyped_customer_quote" not in flags:
+                flags.append("retyped_customer_quote")
+            atom.review_flags = flags
             demoted += 1
     return demoted
 
@@ -603,6 +632,7 @@ def apply_type_sanity(atoms: list[Any], *, project_id: str) -> tuple[list[Any], 
     demoted = demote_nondeliverable_quantities(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)
     demoted += demote_email_include_list_microtasks(atoms)
+    demoted += demote_customer_quote_requirements(atoms)
     # Universal scrub: strip junk quantity: keys off *any* atom (commercial
     # totals, pricing assumptions) — not just quantity-typed ones — so the
     # entity resolver never promotes "260 pmo cost" into a quantity entity.
@@ -615,6 +645,8 @@ def apply_type_sanity(atoms: list[Any], *, project_id: str) -> tuple[list[Any], 
 
 __all__ = [
     "apply_type_sanity",
+    "demote_customer_quote_requirements",
+    "demote_email_include_list_microtasks",
     "demote_manifest_metadata_bom_lines",
     "demote_nondeliverable_quantities",
     "scrub_nondeliverable_quantity_keys",

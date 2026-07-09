@@ -372,11 +372,16 @@ def _mint_bom_from_email_cid_equipment_lines(
 ) -> tuple[list[Any], int]:
     """Mint BOM rows from CID equipment lines and drop the source scope duplicates.
 
-    Universal embedding rule: once a machine ``bom_line`` is grounded from an
+    Universal rule: once a machine ``bom_line`` is grounded from an
     ``email_cid_equipment_line`` scope atom, keep the BOM (inherits the CID
     locator / reading order) and remove the customer-authored scope twin so
     Atom Quality audit does not show the same equipment twice.
+
+    OCR-junk / unmapped CID rows are also dropped (ellipsis truncations,
+    leading noise letters) so they never surface as twin equipment atoms.
     """
+    from app.parsers.email_parser import _is_ocr_junk_equipment_line
+
     minted = 0
     drop_ids: set[str] = set()
     for atom in list(atoms):
@@ -393,9 +398,13 @@ def _mint_bom_from_email_cid_equipment_lines(
         if not lines:
             lines = [str(val.get("item") or "").strip()]
         atom_minted = False
+        all_junk = True
         for line in lines:
             if not line:
                 continue
+            if _is_ocr_junk_equipment_line(line):
+                continue
+            all_junk = False
             qty_n = 0
             for _sku, _description, pattern in _PATTERNS:
                 match = pattern.search(line)
@@ -404,10 +413,6 @@ def _mint_bom_from_email_cid_equipment_lines(
                 qty_n = _parse_qty_from_match(match) or 0
                 if qty_n > 0:
                     break
-            if qty_n <= 0:
-                glued_qty = _glued_trailing_order_qty(line)
-                if glued_qty:
-                    qty_n = glued_qty
             if qty_n <= 0:
                 glued_qty = _glued_trailing_order_qty(line)
                 if glued_qty:
@@ -422,6 +427,7 @@ def _mint_bom_from_email_cid_equipment_lines(
                 continue
             mapped = _sku_from_equipment_text(line) or _sku_from_equipment_text(str(val.get("item") or ""))
             if not mapped:
+                # Unmapped OCR debris (e.g. "Camera Al Multi Sensor 4") — drop twin.
                 continue
             sku, description = mapped
             if sku.lower() in existing:
@@ -442,7 +448,11 @@ def _mint_bom_from_email_cid_equipment_lines(
             existing.add(sku.lower())
             minted += 1
             atom_minted = True
-        if atom_minted:
+        if atom_minted or all_junk or (
+            lines and all(_is_ocr_junk_equipment_line(l) or not _sku_from_equipment_text(l) for l in lines if l)
+        ):
+            # Drop source twin when BOM minted, OR when the CID row is junk /
+            # unmapped OCR debris that would otherwise twin with nothing useful.
             aid = str(getattr(atom, "id", "") or "")
             if aid:
                 drop_ids.add(aid)

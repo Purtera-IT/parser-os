@@ -132,21 +132,35 @@ def test_email_list_items_carry_section_context_and_per_line_locators(tmp_path):
     atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
 
     okta = next(a for a in atoms if a.raw_text.strip() == "Okta integration")
+    assert okta.atom_type == AtomType.scope_item
     assert okta.value.get("list_section") == "include"
     assert okta.value.get("section_header") == "Include"
     assert okta.value.get("kind") == "email_body_line"
+    assert okta.value.get("intro") == "By the end of the meeting customer clarified:"
+    assert okta.value.get("lead_in") == ["By the end of the meeting customer clarified:"]
     loc = okta.source_refs[0].locator
-    assert loc.get("section_path") == ["Include"]
+    assert loc.get("section_path") == [
+        "By the end of the meeting customer clarified",
+        "Include",
+    ]
+    assert loc.get("lead_in") == ["By the end of the meeting customer clarified:"]
     assert loc["line_start"] == loc["line_end"]
     assert isinstance(loc["line_start"], int)
+    # Framing lead-in is connective tissue — not its own atom.
+    assert "By the end of the meeting customer clarified:" not in _texts(atoms)
 
     buildout = next(a for a in atoms if a.raw_text.strip() == "Network buildout")
     assert buildout.atom_type == AtomType.exclusion
     assert buildout.value.get("list_section") == "exclude"
     assert buildout.value.get("section_header") == "Exclude"
     assert buildout.value.get("kind") == "email_body_line"
+    assert buildout.value.get("intro") == "By the end of the meeting customer clarified:"
     ex_loc = buildout.source_refs[0].locator
-    assert ex_loc.get("section_path") == ["Exclude"]
+    assert ex_loc.get("section_path") == [
+        "By the end of the meeting customer clarified",
+        "Exclude",
+    ]
+    assert ex_loc.get("lead_in") == ["By the end of the meeting customer clarified:"]
     assert ex_loc["line_start"] == ex_loc["line_end"]
 
     # Source order: Include items precede Exclude items in the email body.
@@ -162,6 +176,11 @@ def test_email_list_items_carry_section_context_and_per_line_locators(tmp_path):
     ]
     assert include_lines and exclude_lines
     assert max(include_lines) < min(exclude_lines)
+
+    # Include siblings share one type — no requirement/task mix.
+    include_atoms = [a for a in atoms if a.value.get("list_section") == "include"]
+    assert include_atoms
+    assert all(a.atom_type == AtomType.scope_item for a in include_atoms)
 
 
 def test_email_courtesy_prose_not_baseline_scope(tmp_path):
