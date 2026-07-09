@@ -991,10 +991,19 @@ def _value_key(atom: Any) -> tuple | None:
             key = _first_trunc("description", "text", "requirement", "criterion")
         return (atype, key) if key else None
     if atype == "bom_line":
+        # Email CID order tables can list the same SKU twice with different
+        # quantities (e.g. two G6 Entry Wedge Mount rows). Keep qty + row.
         key = _first("item_id", "sku")
         if not key:
-            key = _first_trunc("description")
-        return (atype, key) if key else None
+            key = _first_trunc("description", "item")
+        if not key:
+            return None
+        qty = val.get("quantity")
+        if qty is None:
+            qty = val.get("qty")
+        row = val.get("row_index")
+        item = _first("item") or _first_trunc("description") or ""
+        return (atype, key, str(qty) if qty is not None else "", str(row) if row is not None else "", item)
     if atype == "service_line":
         key = _first("service_id")
         if not key:

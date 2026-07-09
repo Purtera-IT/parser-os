@@ -94,6 +94,41 @@ def test_distinct_ids_never_collapse() -> None:
     assert len(out) == 2
 
 
+def test_bom_line_same_sku_different_qty_survives() -> None:
+    """HubSpot order tables can list the same SKU on two rows with different qtys."""
+    a = _Atom(
+        "bom_line",
+        {"sku": "UACC-G6-Entry-Wedge", "item": "G6 Entry Wedge Mount",
+         "quantity": 1, "row_index": 18},
+        confidence=0.9,
+    )
+    b = _Atom(
+        "bom_line",
+        {"sku": "UACC-G6-Entry-Wedge", "item": "G6 Entry Wedge Mount",
+         "quantity": 5, "row_index": 19},
+        confidence=0.9,
+    )
+    out = semantic_dedup_atoms([a, b])
+    assert len(out) == 2
+    assert sorted(int(x.value["quantity"]) for x in out) == [1, 5]
+
+
+def test_bom_line_same_sku_same_qty_collapses() -> None:
+    a = _Atom(
+        "bom_line",
+        {"sku": "UA-Card", "item": "Access Card", "quantity": 10, "row_index": 0},
+        confidence=0.9,
+    )
+    b = _Atom(
+        "bom_line",
+        {"sku": "UA-Card", "item": "Access Card", "quantity": 10, "row_index": 0},
+        confidence=0.6,
+    )
+    out = semantic_dedup_atoms([a, b])
+    assert len(out) == 1
+    assert out[0].confidence == 0.9
+
+
 # ── pure-prose atoms (no distinguishing scalar field) unchanged ─────
 
 
