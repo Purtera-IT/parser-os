@@ -290,17 +290,57 @@ def _slice_order_details_text(text: str) -> str:
     return chunk.strip()
 
 
+def _rejoin_split_order_qty_lines(text: str) -> str:
+    """Join HubSpot OCR rows where quantity lands on the next line.
+
+    Doc Intel / tesseract often emit::
+
+        Access Point E7
+        6
+        Enterprise NVR
+        1
+
+    Universal rule: a bare ``1–99`` line after a non-qty product stem is the
+    order quantity for that stem — not a standalone atom.
+    """
+    lines = [ln.rstrip() for ln in (text or "").splitlines()]
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        cur = lines[i].strip()
+        nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if (
+            cur
+            and nxt
+            and re.fullmatch(r"\d{1,2}", nxt)
+            and not re.search(r"(?:\s{2,}|\t|[×x]\s*)\d{1,3}\s*$", cur, re.I)
+            and not re.fullmatch(r"\d{1,2}", cur)
+            and not _ORDER_TABLE_HDR_LINE_RE.match(cur)
+            and not _ORDER_DETAILS_HDR_RE.fullmatch(cur)
+            and any(ch.isalpha() for ch in cur)
+        ):
+            qty = int(nxt)
+            # Avoid gluing model-only stems that already end in the same digit.
+            if _sanity_order_qty(_order_row_name(f"{cur} {qty}", qty) or cur, qty):
+                out.append(f"{cur} {qty}")
+                i += 2
+                continue
+        if cur:
+            out.append(cur)
+        i += 1
+    return "\n".join(out)
+
+
 def _focus_cid_equipment_text(text: str) -> str:
     """Prefer order-table text; ignore spoken transcript counts from wrong embeds."""
     raw = (text or "").strip()
     if not raw:
         return raw
     order = _slice_order_details_text(raw)
-    if order != raw:
-        return order
-    if _TRANSCRIPT_DOC_RE.search(raw):
+    focused = order if order != raw else ("" if _TRANSCRIPT_DOC_RE.search(raw) else raw)
+    if not focused:
         return ""
-    return raw
+    return _rejoin_split_order_qty_lines(focused)
 
 
 def _ocr_text_from_cid_image(payload: bytes) -> str:
@@ -894,7 +934,7 @@ def _repair_ocr_equipment_line(cleaned: str) -> str:
     """Normalize common HubSpot order-screenshot OCR defects (universal).
 
     - Strip a leading single-letter noise glyph before a product name
-      (``I Access Reader…`` → ``Access Reader…``).
+      (``I Access Reader…`` / ``m Enterprise NVR`` → product stem).
     - Repair ``Camera Al`` → ``Camera AI`` (OCR of AI).
     - Collapse ellipsis truncations so the stem + trailing qty survive
       (``Access Reader Pro Juncti ... 5`` → ``Access Reader Pro Juncti 5``).
@@ -902,7 +942,7 @@ def _repair_ocr_equipment_line(cleaned: str) -> str:
     text = re.sub(r"\s+", " ", (cleaned or "").strip())
     if not text:
         return ""
-    text = re.sub(r"^[IiLl1]\s+(?=[A-Z])", "", text)
+    text = re.sub(r"^[IiLl1mM]\s+(?=[A-Z])", "", text)
     text = re.sub(r"\b(camera)\s+al\b", r"\1 AI", text, flags=re.I)
     # Keep product stem + trailing qty when OCR truncates with ellipsis.
     text = re.sub(r"\s*(?:\.{3,}|…)\s*", " ", text)

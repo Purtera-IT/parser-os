@@ -629,6 +629,56 @@ _FULL_HUBSPOT_ORDER_OCR = "\n".join(
 )
 
 
+def test_rejoin_split_doc_intel_qty_lines() -> None:
+    """Doc Intel often puts HubSpot order qty on the next OCR line."""
+    from app.parsers.email_parser import (
+        _focus_cid_equipment_text,
+        _hardware_atoms_from_equipment_text,
+    )
+
+    split = "\n".join(
+        [
+            "Order Details",
+            "· Delivered",
+            "Access Card",
+            "10",
+            "Enterprise NVR",
+            "1",
+            "Access Point E7",
+            "6",
+            "Camera G6 Pro Turret",
+            "9",
+            "25G Direct Attach Cable",
+            "3",
+            "G6 Entry Wedge Mount",
+            "1",
+            "G6 Entry Wedge Mount",
+            "5",
+        ]
+    )
+    focused = _focus_cid_equipment_text(split)
+    assert "Access Card 10" in focused
+    assert "Enterprise NVR 1" in focused
+    assert "Access Point E7 6" in focused
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art_split",
+        filename="e.eml",
+        text=focused,
+        content_id="cid-order",
+        parser_version="test",
+        lead_in=["Below is the full equipment list."],
+    )
+    by_item = {a.value.get("item"): a.value.get("quantity") for a in atoms}
+    assert by_item.get("Access Card") == 10
+    assert by_item.get("Enterprise NVR") == 1
+    assert by_item.get("Access Point E7") == 6
+    assert by_item.get("Camera G6 Pro Turret") == 9
+    assert by_item.get("25G Direct Attach Cable") == 3
+    wedges = [a for a in atoms if a.value.get("item") == "G6 Entry Wedge Mount"]
+    assert sorted(int(a.value.get("quantity") or 0) for a in wedges) == [1, 5]
+
+
 def test_full_hubspot_order_table_emits_all_rows_with_qty() -> None:
     from app.parsers.email_parser import (
         _equipment_list_lead_in,
