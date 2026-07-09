@@ -130,8 +130,8 @@ WEAK_ATOM_TYPES: frozenset = frozenset({
 
 # Email communication atoms are intentionally typed as deal_metadata with a
 # structured ``value.kind``. They must not be "recovered" into stakeholder /
-# requirement / etc. — a body greeting ("Eddie,") is an addressee, not a roster
-# person. Universal structural lock by kind, not by deal/name.
+# requirement / etc. Body greetings are metadata tags (not atoms); legacy
+# ``email_addressee`` kinds stay locked if present.
 _PROTECTED_EMAIL_KINDS: frozenset = frozenset({
     "email_addressee",
     "email_body_context",

@@ -26,7 +26,8 @@ never a specific name, deal, or domain term:
 4. ``drop_email_non_scope`` — email header metadata, label-only lead-ins
    ("Customer specifically said:"), and pleasantry/sign-off body lines typed
    as scope are not actionable to any head. Intentional communication atoms
-   (``email_addressee``, ``email_body_context``) are kept.
+   (``email_body_context``) are kept. Body greetings are metadata tags on
+   sibling atoms, not standalone ``email_addressee`` atoms.
 
 5. ``drop_transcript_conversational`` — raw transcript turns (page ≥ 1) that
    lack deal substance (no scope verb, no device/vendor entity, no structured
@@ -348,9 +349,10 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
     salutation / sign-off / speaker label mis-typed as a person and is useless
     to every downstream head. Everything else is kept untouched.
 
-    Safety net: if a body greeting was mis-retyped to ``stakeholder`` but still
-    carries ``kind=email_addressee`` / ``email_body_context``, restore
-    ``deal_metadata`` and keep — never drop communication atoms.
+    Safety net: legacy ``kind=email_addressee`` (bare greeting) is dropped —
+    addressee is metadata on sibling atoms, not a roster person.
+    ``email_body_context`` mistyped as stakeholder is restored to
+    ``deal_metadata`` and kept.
     """
     kept: list[Any] = []
     dropped: list[Any] = []
@@ -361,7 +363,10 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         text = _atom_text(atom)
         value = _atom_value(atom)
         kind = str(value.get("kind") or "")
-        if kind in {"email_addressee", "email_body_context"}:
+        if kind == "email_addressee":
+            dropped.append(atom)
+            continue
+        if kind == "email_body_context":
             try:
                 from app.core.schemas import AtomType
 
@@ -519,8 +524,10 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     ``list_section`` set) are always kept.
 
     Intentional communication atoms are also kept:
-    - ``email_addressee`` — body greeting / who the message is addressed to
     - ``email_body_context`` — intro / logistics prose (not contractual scope)
+
+    Legacy ``email_addressee`` atoms (bare greetings) are dropped — addressee
+    is now metadata/tag on sibling atoms, not a reviewable card.
     """
     kept: list[Any] = []
     dropped: list[Any] = []
@@ -531,10 +538,13 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
             continue
         val = _atom_value(atom)
         kind = str(val.get("kind") or "")
-        # Body greeting + intro prose are first-class communication atoms —
-        # never drop them as "non-scope chrome".
-        if kind in {"email_addressee", "email_body_context"}:
+        # Intro prose is a first-class communication atom — keep.
+        if kind == "email_body_context":
             kept.append(atom)
+            continue
+        # Legacy bare greeting atoms — demote/drop (tag lives on siblings).
+        if kind == "email_addressee":
+            dropped.append(atom)
             continue
         # Email header metadata — never scope (retyped at parse time to
         # deal_metadata, but catch any legacy scope_item headers too).

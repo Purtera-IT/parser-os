@@ -194,26 +194,29 @@ def test_equipment_list_intro_is_connective_not_orphan_scope(tmp_path: Path) -> 
 
 
 def test_greeting_and_intro_precede_include_exclude(tmp_path: Path) -> None:
-    """Addressee + intro body context sort before Include/Exclude in reading order."""
+    """Greeting is an addressee tag; intro body context sorts before Include/Exclude."""
     atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
 
-    addressee = next(a for a in atoms if a.value.get("kind") == "email_addressee")
-    assert addressee.raw_text.strip() == "Eddie,"
-    assert addressee.atom_type == AtomType.deal_metadata
+    assert not any(a.raw_text.strip() == "Eddie," for a in atoms)
+    assert not any((a.value or {}).get("kind") == "email_addressee" for a in atoms)
 
     intro = next(a for a in atoms if a.value.get("kind") == "email_body_context")
     assert "Appreciate you hopping on" in intro.raw_text
     assert intro.atom_type == AtomType.deal_metadata
     assert intro.atom_type != AtomType.scope_item
+    assert intro.value.get("addressee") == "Eddie"
+    assert intro.value.get("to_greeting") == "Eddie"
+
+    include_atoms = [a for a in atoms if a.value.get("list_section") == "include"]
+    assert include_atoms
+    assert all(a.value.get("addressee") == "Eddie" for a in include_atoms)
 
     include_line = min(
         a.source_refs[0].locator["line_start"]
-        for a in atoms
-        if a.value.get("list_section") == "include"
+        for a in include_atoms
     )
-    addr_line = addressee.source_refs[0].locator["line_start"]
     intro_line = intro.source_refs[0].locator["line_start"]
-    assert addr_line < intro_line < include_line
+    assert intro_line < include_line
 
 
 def test_cid_equipment_carries_equipment_list_lead_in(tmp_path: Path, monkeypatch) -> None:

@@ -503,6 +503,11 @@ def _mint_bom_line(
             value["list_section"] = src_val.get("list_section")
         if src_val.get("section_header"):
             value["section_header"] = src_val.get("section_header")
+        # Body-greeting addressee tag (not a standalone atom).
+        if src_val.get("addressee"):
+            value["addressee"] = src_val.get("addressee")
+        if src_val.get("to_greeting"):
+            value["to_greeting"] = src_val.get("to_greeting")
     return EvidenceAtom(
         id=atom_id,
         project_id=project_id,

@@ -79,14 +79,16 @@ def _texts(atoms):
     return [a.raw_text.strip() for a in atoms]
 
 
-def test_email_greeting_emitted_as_addressee_not_scope(tmp_path):
-    """Body greeting is communication addressee metadata, never scope."""
+def test_email_greeting_is_addressee_tag_not_atom(tmp_path):
+    """Body greeting is metadata on sibling atoms — never a standalone atom."""
     atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
-    greetings = [a for a in atoms if a.raw_text.strip() == "Eddie,"]
-    assert len(greetings) == 1
-    assert greetings[0].atom_type == AtomType.deal_metadata
-    assert greetings[0].value.get("kind") == "email_addressee"
-    assert greetings[0].value.get("role") == "to_greeting"
+    assert not any(a.raw_text.strip() == "Eddie," for a in atoms)
+    assert not any(
+        (a.value or {}).get("kind") == "email_addressee" for a in atoms
+    )
+    stamped = [a for a in atoms if (a.value or {}).get("addressee") == "Eddie"]
+    assert stamped, "expected addressee tag on email-sourced atoms"
+    assert all((a.value or {}).get("to_greeting") == "Eddie" for a in stamped)
     assert not any(
         a.atom_type == AtomType.scope_item and a.raw_text.strip() == "Eddie,"
         for a in atoms
@@ -280,8 +282,95 @@ def test_email_cid_equipment_sorts_after_body_include_exclude(tmp_path, monkeypa
     assert include_line < exclude_line
     assert exclude_line < min(equip_lines)
     assert all(a.source_refs[0].locator.get("kind") == "email_cid_inline" for a in equipment)
+    # All CID rows share the anchor line; order is row_index only.
+    assert len({a.source_refs[0].locator["line_start"] for a in equipment}) == 1
     # Connective tissue: equipment-list intro prefixes section_path when present.
     for a in equipment:
         path = a.source_refs[0].locator.get("section_path") or []
         assert path[-1] == "Equipment list"
         assert any("equipment list" in str(x).lower() for x in path)
+
+
+def test_post_cid_body_note_sorts_after_equipment_rows(tmp_path, monkeypatch):
+    """Post-image body notes must sort after CID equipment in document order.
+
+    Universal: OCR rows pin to the CID anchor ``line_start`` and use
+    ``row_index`` as the within-image tiebreaker. Expanding line_start by
+    row would collide with later body lines (spare-AP notes, etc.).
+    """
+    from app.parsers import email_parser as ep
+
+    cid = "equip-shot-post"
+    monkeypatch.setattr(
+        ep,
+        "_ocr_cid_part",
+        lambda part: (
+            "Access Point E7 Enterprise × 2\n"
+            "Switch Pro Max 48 PoE × 1\n"
+            "Camera G6 Pro Turret × 9\n"
+            "Dream Machine Beast × 2\n"
+        ),
+    )
+    mixed = "=_Mixed_post"
+    related = "=_Related_post"
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    note = (
+        '"It is worth noting that we aren\'t using all of the G6 Pro Turret '
+        'cameras and we have 1 spare AP as well."'
+    )
+    eml = "\r\n".join(
+        [
+            "From: a@example.com",
+            "To: b@example.com",
+            "Subject: Equipment list",
+            "MIME-Version: 1.0",
+            f'Content-Type: multipart/mixed; boundary="{mixed}"',
+            "",
+            f"--{mixed}",
+            f'Content-Type: multipart/related; boundary="{related}"',
+            "",
+            f"--{related}",
+            "Content-Type: text/plain; charset=utf-8",
+            "",
+            "Eddie,",
+            "Below is the full equipment list.",
+            f"[cid:{cid}]",
+            note,
+            "Thanks,",
+            f"--{related}",
+            "Content-Type: image/png",
+            "Content-Transfer-Encoding: base64",
+            f"Content-ID: <{cid}>",
+            "",
+            png,
+            f"--{related}--",
+            f"--{mixed}--",
+            "",
+        ]
+    )
+    p = tmp_path / "post_cid.eml"
+    p.write_bytes(eml.encode("utf-8"))
+    atoms = EmailParser().parse_artifact("p", "art_post", p)
+
+    assert not any(a.raw_text.strip() == "Eddie," for a in atoms)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 3
+    note_atom = next(a for a in atoms if "spare AP" in a.raw_text)
+    equip_line = equipment[0].source_refs[0].locator["line_start"]
+    note_line = note_atom.source_refs[0].locator["line_start"]
+    assert note_line > equip_line
+    assert all(a.source_refs[0].locator["line_start"] == equip_line for a in equipment)
+    # Document-order key used by Atom Quality: (line_start, row_index).
+    equip_keys = [
+        (
+            a.source_refs[0].locator["line_start"],
+            a.source_refs[0].locator.get("row_index", 0),
+        )
+        for a in equipment
+    ]
+    note_key = (note_line, -1)
+    assert max(equip_keys) < note_key or note_key[0] > max(k[0] for k in equip_keys)
+    assert all(a.value.get("addressee") == "Eddie" for a in equipment)
+    assert note_atom.value.get("addressee") == "Eddie"

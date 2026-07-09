@@ -473,7 +473,13 @@ def _cid_equipment_source_ref(
     row_index: int,
     lead_in: list[str] | None = None,
 ) -> SourceRef:
-    """Pin CID equipment rows into email document order (after body prose)."""
+    """Pin CID equipment rows into email document order (after body prose).
+
+    All OCR rows share the CID body's ``line_start`` (the inline ``[cid:…]``
+    anchor). Intra-image order is ``row_index`` only — never expand
+    ``line_start`` by row, or post-image body notes (same message, later
+    line numbers) interleave mid-BOM in document-order sorts.
+    """
     section_path = _list_section_path(None, lead_in=lead_in) + ["Equipment list"]
     # Deduplicate while preserving order (lead-in may already say "equipment list").
     seen: set[str] = set()
@@ -573,7 +579,7 @@ def _hardware_atoms_from_equipment_text(
             name = _order_row_name(cleaned, trail_qty)
             trail_qty = _sanity_order_qty(name, trail_qty)
             if trail_qty:
-                line_start = int(anchor_line) + row_index
+                line_start = int(anchor_line)
                 src = _cid_equipment_source_ref(
                     artifact_id=artifact_id,
                     filename=filename,
@@ -642,7 +648,7 @@ def _hardware_atoms_from_equipment_text(
             if not qty:
                 continue
             item = _order_row_name(cleaned, qty)
-            line_start = int(anchor_line) + row_index
+            line_start = int(anchor_line)
             src = _cid_equipment_source_ref(
                 artifact_id=artifact_id,
                 filename=filename,
@@ -977,9 +983,10 @@ def _is_greeting_line(cleaned: str) -> bool:
     all,"). Structural: a short line (≤4 words) ending in a comma that is
     either led by a greeting word or is purely name-shaped tokens.
 
-    These are NOT scope — they are emitted as ``deal_metadata`` /
-    ``email_addressee`` so the body greeting (who the message is addressed to)
-    is preserved in document order, distinct from RFC From/To headers.
+    These are NOT first-class atoms — the addressee is stamped as metadata
+    (``value.addressee`` / ``to_greeting``) on sibling body atoms and the
+    email header so Atom Quality can show a "To: Eddie" tag without a
+    standalone reviewable ``Eddie,`` atom.
     """
     if not cleaned.endswith(","):
         return False
@@ -991,6 +998,65 @@ def _is_greeting_line(cleaned: str) -> bool:
     # Pure name-shaped salutation: every token is alphabetic (allowing an
     # initial's period / hyphen / apostrophe) — "Eddie", "Mr. Smith", "Jean-Luc".
     return all(re.fullmatch(r"[A-Za-z][A-Za-z.'\-]*", w) for w in words)
+
+
+def _greeting_addressee_name(cleaned: str) -> str:
+    """Extract the display name from a salutation line ("Eddie," → "Eddie")."""
+    text = (cleaned or "").rstrip(",").strip()
+    if not text:
+        return ""
+    if _GREETING_LEAD_RE.match(cleaned or ""):
+        rest = _GREETING_LEAD_RE.sub("", text).strip(" ,")
+        return rest or text
+    return text
+
+
+_ADDRESSEE_STAMP_KINDS: frozenset[str] = frozenset(
+    {
+        "email_body_line",
+        "email_body_context",
+        "email_cid_equipment_line",
+        "email_cid_inline_body",
+        "email_header",
+        "email_attachment",
+    }
+)
+
+
+def _stamp_email_addressee(atoms: list[EvidenceAtom], addressee: str) -> None:
+    """Attach body-greeting addressee as structured metadata on email atoms."""
+    name = (addressee or "").strip()
+    if not name:
+        return
+    for atom in atoms:
+        val = atom.value if isinstance(atom.value, dict) else None
+        if val is None:
+            continue
+        kind = str(val.get("kind") or "")
+        if kind in _ADDRESSEE_STAMP_KINDS:
+            val["addressee"] = name
+            val["to_greeting"] = name
+            continue
+        # BOM / backfill rows from CID OCR: stamp when locator is email-sourced.
+        refs = list(getattr(atom, "source_refs", None) or [])
+        loc = refs[0].locator if refs and isinstance(getattr(refs[0], "locator", None), dict) else {}
+        if loc.get("kind") == "email_cid_inline" or "message_index" in loc:
+            val["addressee"] = name
+            val["to_greeting"] = name
+
+
+def _body_greeting_addressee(blocks: list[dict[str, Any]]) -> str | None:
+    """First authored-message salutation name, if any."""
+    for block in blocks or []:
+        if block.get("quoted"):
+            continue
+        for line in block.get("lines") or []:
+            raw = str(line or "").lstrip("> ").strip()
+            cleaned = _BULLET_PREFIX_RE.sub("", raw).strip()
+            if cleaned and _is_greeting_line(cleaned):
+                name = _greeting_addressee_name(cleaned)
+                return name or None
+    return None
 
 
 _COURTESY_PROSE_RE = re.compile(
@@ -1338,6 +1404,10 @@ class EmailParser(BaseParser):
                 blocks=blocks,
             )
         )
+        # Body greeting ("Eddie,") is metadata/tag — not a reviewable atom.
+        greeting = _body_greeting_addressee(blocks)
+        if greeting:
+            _stamp_email_addressee(atoms, greeting)
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
@@ -1966,44 +2036,11 @@ class EmailParser(BaseParser):
             if not block["quoted"] and _SIGNOFF_RE.match(cleaned):
                 in_signature = True
                 continue
-            # 2) Salutation opener — not scope; emit as email addressee so the
-            #    body greeting ("Eddie,", "Hi John,") is preserved in reading
-            #    order ahead of Include/Exclude / equipment. Distinct from the
-            #    RFC To: header on the deal_metadata email_header atom.
+            # 2) Salutation opener — not an atom. Captured later as
+            #    ``value.addressee`` / ``to_greeting`` on sibling body atoms
+            #    (and the email header) so Atom Quality can show "To: Eddie"
+            #    without a standalone reviewable ``Eddie,`` card.
             if _is_greeting_line(cleaned):
-                atoms.append(
-                    EvidenceAtom(
-                        id=stable_id(
-                            "atm",
-                            project_id,
-                            artifact_id,
-                            block["message_index"],
-                            line_num,
-                            "email_addressee",
-                            cleaned,
-                        ),
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        atom_type=AtomType.deal_metadata,
-                        raw_text=cleaned,
-                        normalized_text=normalize_text(cleaned),
-                        value={
-                            "text": cleaned,
-                            "message_index": block["message_index"],
-                            "quoted": block["quoted"],
-                            "kind": "email_addressee",
-                            "role": "to_greeting",
-                            "line": line_num,
-                        },
-                        entity_keys=entity_keys,
-                        source_refs=[source_ref],
-                        authority_class=authority,
-                        confidence=confidence,
-                        review_status=ReviewStatus.auto_accepted,
-                        review_flags=[],
-                        parser_version=self.parser_version,
-                    )
-                )
                 continue
             # 2b) Framing lead-in above Include/Exclude — connective tissue,
             #     not a standalone atom. Hold until the list header arrives.

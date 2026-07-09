@@ -60,18 +60,34 @@ def test_bare_name_stakeholders_dropped():
     assert len(dropped) == 3
 
 
-def test_email_addressee_mistyped_stakeholder_restored():
-    """Span-admission may retype Eddie, → stakeholder; substance gate restores."""
+def test_email_addressee_legacy_atom_dropped_as_stakeholder():
+    """Legacy bare greeting atoms are dropped — not restored as deal_metadata."""
     atom = _mk(
         "stakeholder",
         "Eddie,",
         value={"text": "Eddie,", "kind": "email_addressee", "role": "to_greeting"},
     )
     kept, dropped = drop_contextless_stakeholders([atom])
+    assert kept == []
+    assert atom in dropped
+
+
+def test_email_body_context_mistyped_stakeholder_restored():
+    """Span-admission may retype intro context → stakeholder; gate restores."""
+    atom = _mk(
+        "stakeholder",
+        "Appreciate you hopping on in such short notice.",
+        value={
+            "text": "Appreciate you hopping on in such short notice.",
+            "kind": "email_body_context",
+            "role": "intro",
+        },
+    )
+    kept, dropped = drop_contextless_stakeholders([atom])
     assert dropped == []
     assert len(kept) == 1
     assert kept[0].atom_type == AtomType.deal_metadata
-    assert kept[0].value.get("kind") == "email_addressee"
+    assert kept[0].value.get("kind") == "email_body_context"
 
 
 def test_stakeholder_with_role_kept():
@@ -260,7 +276,7 @@ def test_email_pleasantry_scope_dropped_context_kept():
     scope_pleasantry = _mk_email(
         "Appreciate you hopping on in such short notice. Attached is a summary."
     )
-    # Intentional communication atoms must survive the gate.
+    # Legacy bare greeting atom drops; intro context survives.
     addressee = _mk(
         "deal_metadata",
         "Eddie,",
@@ -277,7 +293,7 @@ def test_email_pleasantry_scope_dropped_context_kept():
     )
     kept, dropped = drop_email_non_scope([scope_pleasantry, addressee, context])
     assert scope_pleasantry in dropped
-    assert addressee in kept
+    assert addressee in dropped
     assert context in kept
 
 
