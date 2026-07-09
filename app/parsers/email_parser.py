@@ -366,6 +366,10 @@ def _score_cid_ocr_text(text: str) -> int:
         score -= 400
     if re.search(r"\bmeeting summary\b", raw, re.I):
         score -= 200
+    # Spoken transcript lines mentioning products should not beat order tables.
+    speech_hits = len(_TRANSCRIPT_SPEECH_LINE_RE.findall(raw))
+    if speech_hits:
+        score -= min(speech_hits, 20) * 25
     orderish = len(re.findall(r"(?:\s{2,}|\t|[×x]\s*)\d{1,3}\s*$", raw, re.I | re.M))
     score += min(orderish, 12) * 15
     return score
@@ -1366,16 +1370,27 @@ class EmailParser(BaseParser):
         equipment_lines: list[EvidenceAtom] = []
         if ocr_by_cid:
             if equipment_list_hint and len(ocr_by_cid) > 1:
-                best_count = 0
-                best_batch: list[EvidenceAtom] = []
+                # Prefer HubSpot order-table OCR (score + payload size), not
+                # whichever CID happens to emit the most regex hits — transcript
+                # screenshots can mention products and win a naive count race.
+                ranked: list[tuple[int, int, int, str, list[EvidenceAtom]]] = []
                 for cid, text in ocr_by_cid.items():
                     batch = _hw_from(cid, text)
                     eq = [a for a in batch if a.value.get("kind") == "email_cid_equipment_line"]
-                    if len(eq) > best_count:
-                        best_count = len(eq)
-                        best_batch = eq
-                if best_batch:
-                    equipment_lines = best_batch
+                    part = inline_parts.get(cid) or {}
+                    payload_size = int(part.get("size") or 0)
+                    ranked.append(
+                        (
+                            _score_cid_ocr_text(text),
+                            len(eq),
+                            payload_size,
+                            cid,
+                            eq,
+                        )
+                    )
+                ranked.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
+                if ranked and ranked[0][1] > 0:
+                    equipment_lines = ranked[0][4]
                 else:
                     pick_cid, pick_text = _pick_best_cid_ocr(ocr_by_cid)
                     if _score_cid_ocr_text(pick_text) > 0:
