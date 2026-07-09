@@ -45,12 +45,28 @@ _QTY = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
 _NAME_THEN_QTY = r"(?:[×x]\s*|(?:\s{2,}|\t))\s*(\d+)\s*$"
 
 
+_GLUED_QTY = r"(?:\s+(\d{1,2})\s*$)"
+
 _GLUED_STEM_SKU: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"access\s+point\s+e7(?:\s+enterprise)?\b", re.I), "UBNT-E7-AP", "Ubiquiti E7 Access Point"),
     (re.compile(r"(?:udm(?:[-\s]*beast)?|dream\s+machine(?:\s*beast)?)\b", re.I), "UBNT-UDM-BEAST", "Ubiquiti Dream Machine Beast"),
     (re.compile(r"enterprise\s+nvr\b", re.I), "UBNT-NVR", "Ubiquiti NVR"),
     (re.compile(r"access\s*cards?\b", re.I), "UBNT-ACCESS-CARD", "Ubiquiti Access Card"),
     (re.compile(r"protect(?:\s+all[- ]in[- ]one)?\s*sensors?\b", re.I), "UBNT-PROTECT-SENSOR", "Ubiquiti Protect All-In-One Sensor"),
+    (re.compile(r"switch\s+pro(?:\s+max)?(?:\s+\d+)?(?:\s+poe)?\b", re.I), "UBNT-SW-PRO", "Ubiquiti Pro Switch"),
+    (re.compile(r"(?:camera\s+)?g6(?:\s+pro)?\s*turrets?\b", re.I), "UBNT-G6-TURRET", "Ubiquiti G6 Turret"),
+    (re.compile(r"(?:camera\s+)?g6(?:\s+pro)?\s*360\b", re.I), "UBNT-G6-PRO-360", "Ubiquiti G6 Pro 360"),
+    (re.compile(r"(?:g6(?:/g5)?\s+ptz\s+pendant\s+mount|g6\s+ptz\s+mounts?)\b", re.I), "UBNT-G6-PTZ-MOUNT", "Ubiquiti G6 PTZ Mount"),
+    (re.compile(r"access\s+g3\s*readers?(?:\s*pro)?\b", re.I), "UBNT-ACCESS-G3-READER", "Ubiquiti Access G3 Reader"),
+    (re.compile(r"reader\s+g6\s+entry\b", re.I), "UBNT-READER-G6-ENTRY", "Ubiquiti Reader G6 Entry"),
+    (re.compile(r"access\s+reader(?:\s*pro)?(?:\s+juncti\w*)?\b", re.I), "UBNT-ACCESS-READER-PRO", "Ubiquiti Access Reader Pro"),
+    (re.compile(r"access\s+rescue\s+key\s*switch\b", re.I), "UBNT-ACCESS-RESCUE-KEYSWITCH", "Ubiquiti Access Rescue KeySwitch"),
+    (re.compile(r"power\s+distribution\s+pro\b", re.I), "UBNT-POWER-DIST-PRO", "Ubiquiti Power Distribution Pro"),
+    (re.compile(r"enterprise\s+access\s+hubs?\b", re.I), "UBNT-ACCESS-HUB", "Ubiquiti Enterprise Access Hub"),
+    (re.compile(r"access\s+intercom\s+viewer\b", re.I), "UBNT-ACCESS-INTERCOM-VIEWER", "Ubiquiti Access Intercom Viewer"),
+    (re.compile(r"camera\s+ai\s+multi\s+sensor(?:\s+\d+)?\b", re.I), "UBNT-AI-MULTI-SENSOR", "Ubiquiti Camera AI Multi Sensor"),
+    (re.compile(r"\d{1,2}g\s+direct\s+attach\s+cables?\b", re.I), "UBNT-25G-DAC", "Ubiquiti 25G Direct Attach Cable"),
+    (re.compile(r"g6\s+entry\s+wedge\s+mounts?\b", re.I), "UBNT-G6-ENTRY-WEDGE", "Ubiquiti G6 Entry Wedge Mount"),
 ]
 
 
@@ -120,7 +136,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "Ubiquiti G6 Pro 360",
         re.compile(
             rf"\b{_QTY}\s*(?:x\s*)?(?:camera\s+)?g6(?:\s+pro)?\s*360\b"
-            rf"|(?:camera\s+)?g6(?:\s+pro)?\s*360[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            rf"|(?:camera\s+)?g6(?:\s+pro)?\s*360[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:camera\s+)?g6(?:\s+pro)?\s*360{_GLUED_QTY}",
             re.I | re.M,
         ),
     ),
@@ -144,19 +161,42 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "UBNT-ACCESS-G3-READER",
+        "Ubiquiti Access G3 Reader",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?(?:access\s+)?g3\s*readers?(?:\s*pro)?\b"
+            rf"|(?:access\s+)?g3\s*readers?(?:\s*pro)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:access\s+)?g3\s*readers?(?:\s*pro)?{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-READER-G6-ENTRY",
+        "Ubiquiti Reader G6 Entry",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?reader\s+g6\s+entry\b"
+            rf"|reader\s+g6\s+entry[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|reader\s+g6\s+entry{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-ACCESS-READER-PRO",
+        "Ubiquiti Access Reader Pro",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?access\s+reader(?:\s*pro)?(?:\s+juncti\w*)?\b"
+            rf"|access\s+reader(?:\s*pro)?(?:\s+juncti\w*)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|access\s+reader(?:\s*pro)?(?:\s+juncti\w*)?{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
         "UBNT-BADGE-READER",
         "Ubiquiti Card / Badge Reader",
         re.compile(
-            rf"\b{_QTY}\s*(?:x\s*)?"
-            r"(?:badge\s*readers?|card\s*readers?|access\s*readers?(?:\s*pro)?|"
-            r"access\s+g3\s*readers?|g3\s*readers?|reader\s+g6\s+entry)\b"
-            rf"|(?:access\s+)?g3\s*readers?(?:\s*pro)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            rf"|access\s+reader(?:\s*pro)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            rf"|reader\s+g6\s+entry[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            rf"|(?:badge|card)\s*reader[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            r"|(?:access\s+g3\s*readers?(?:\s*pro)?|reader\s+g6\s+entry|(?:badge|card)\s*readers?)"
-            r"\s+(\d{1,2})\s*$"
-            r"|(?:access\s+g3\s*readers?(?:\s*pro)?|reader\s+g6\s+entry)\b",
+            rf"\b{_QTY}\s*(?:x\s*)?(?:badge\s*readers?|card\s*readers?)\b"
+            rf"|(?:badge|card)\s*readers?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:badge|card)\s*readers?{_GLUED_QTY}",
             re.I | re.M,
         ),
     ),
@@ -165,7 +205,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "Ubiquiti Access Card",
         re.compile(
             rf"\b{_QTY}\s*(?:x\s*)?access\s*cards?\b"
-            rf"|access\s*cards?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            rf"|access\s*cards?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|access\s*cards?{_GLUED_QTY}",
             re.I | re.M,
         ),
     ),
@@ -174,7 +215,9 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "Ubiquiti Enterprise Access Hub",
         re.compile(
             rf"\b{_QTY}\s*(?:x\s*)?(?:enterprise\s+)?access\s+hubs?\b"
-            rf"|(?:enterprise\s+)?access\s+hubs?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            rf"|enterprise\s+access\s+hubs?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|enterprise\s+access\s+hubs?{_GLUED_QTY}"
+            rf"|(?:enterprise\s+)?access\s+hubs?{_GLUED_QTY}",
             re.I | re.M,
         ),
     ),
@@ -184,7 +227,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         re.compile(
             rf"\b{_QTY}\s*(?:x\s*)?protect(?:\s+all[- ]in[- ]one)?\s+sensors?\b"
             rf"|protect(?:\s+all[- ]in[- ]one)?\s+sensors?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            r"|protect(?:\s+all[- ]in[- ]one)?\s+sensors?[^\n]{0,40}?\s*[×x]\s*(\d+)\b",
+            r"|protect(?:\s+all[- ]in[- ]one)?\s+sensors?[^\n]{0,40}?\s*[×x]\s*(\d+)\b"
+            rf"|protect(?:\s+all[- ]in[- ]one)?\s+sensors?{_GLUED_QTY}",
             re.I | re.M,
         ),
     ),
@@ -199,7 +243,66 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
             re.I | re.M,
         ),
     ),
-
+    (
+        "UBNT-ACCESS-RESCUE-KEYSWITCH",
+        "Ubiquiti Access Rescue KeySwitch",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?access\s+rescue\s+key\s*switch\b"
+            rf"|access\s+rescue\s+key\s*switch[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|access\s+rescue\s+key\s*switch{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-POWER-DIST-PRO",
+        "Ubiquiti Power Distribution Pro",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?power\s+distribution\s+pro\b"
+            rf"|power\s+distribution\s+pro[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|power\s+distribution\s+pro{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-ACCESS-INTERCOM-VIEWER",
+        "Ubiquiti Access Intercom Viewer",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?access\s+intercom\s+viewer\b"
+            rf"|access\s+intercom\s+viewer[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|access\s+intercom\s+viewer{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-AI-MULTI-SENSOR",
+        "Ubiquiti Camera AI Multi Sensor",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?camera\s+ai\s+multi\s+sensor(?:\s+\d+)?\b"
+            rf"|camera\s+ai\s+multi\s+sensor(?:\s+\d+)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|camera\s+ai\s+multi\s+sensor(?:\s+\d+)?{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-25G-DAC",
+        "Ubiquiti 25G Direct Attach Cable",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?\d{{1,2}}g\s+direct\s+attach\s+cables?\b"
+            rf"|\d{{1,2}}g\s+direct\s+attach\s+cables?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|\d{{1,2}}g\s+direct\s+attach\s+cables?{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "UBNT-G6-ENTRY-WEDGE",
+        "Ubiquiti G6 Entry Wedge Mount",
+        re.compile(
+            rf"\b{_QTY}\s*(?:x\s*)?g6\s+entry\s+wedge\s+mounts?\b"
+            rf"|g6\s+entry\s+wedge\s+mounts?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|g6\s+entry\s+wedge\s+mounts?{_GLUED_QTY}",
+            re.I | re.M,
+        ),
+    ),
     (
         "UBNT-AP-GENERIC",
         "Ubiquiti Access Point",
@@ -278,6 +381,24 @@ def _existing_bom_skus(atoms: list[Any]) -> set[str]:
     return out
 
 
+def _existing_bom_row_keys(atoms: list[Any]) -> set[str]:
+    """Per-row keys so duplicate SKUs (two wedge mounts) stay distinct lines."""
+    out: set[str] = set()
+    for atom in atoms:
+        if _atom_type_str(atom) != "bom_line":
+            continue
+        val = getattr(atom, "value", None) or {}
+        if not isinstance(val, dict):
+            continue
+        sku = str(val.get("sku") or val.get("item_id") or "").strip().lower()
+        item = str(val.get("item") or val.get("description") or "").strip().lower()
+        qty = str(val.get("quantity") or val.get("qty") or "").strip()
+        row = str(val.get("row_index") if val.get("row_index") is not None else "")
+        if sku:
+            out.add(f"{sku}|{item}|{qty}|{row}")
+    return out
+
+
 def _value_kind(atom: Any) -> str:
     val = getattr(atom, "value", None) or {}
     if isinstance(val, dict):
@@ -287,6 +408,16 @@ def _value_kind(atom: Any) -> str:
 
 def _is_email_cid_equipment_atom(atom: Any) -> bool:
     return _value_kind(atom) == _EMAIL_CID_KIND
+
+
+def _slug_sku_from_item(item: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9]+", "-", (item or "").strip().upper()).strip("-")
+    stem = re.sub(r"-{2,}", "-", stem)
+    if not stem:
+        return "UBNT-UNKNOWN"
+    if not stem.startswith("UBNT-"):
+        stem = f"UBNT-{stem}"
+    return stem[:64]
 
 
 def _sku_from_equipment_text(text: str) -> tuple[str, str] | None:
@@ -300,10 +431,12 @@ def _sku_from_equipment_text(text: str) -> tuple[str, str] | None:
         if stem and stem not in candidates:
             candidates.append(stem)
     for candidate in candidates:
-        for sku, description, pattern in _PATTERNS:
+        # Prefer specific glued stems before broad prose patterns so
+        # Reader G6 Entry / Access G3 Reader do not collapse together.
+        for pattern, sku, description in _GLUED_STEM_SKU:
             if pattern.search(candidate):
                 return sku, description
-        for pattern, sku, description in _GLUED_STEM_SKU:
+        for sku, description, pattern in _PATTERNS:
             if pattern.search(candidate):
                 return sku, description
     return None
@@ -318,11 +451,22 @@ def _mint_bom_line(
     source_atom: Any,
     notes: str,
     source: str = "hardware_evidence_backfill",
+    item: str | None = None,
+    row_index: int | None = None,
 ) -> Any:
     from app.core.schemas import ArtifactType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef
 
     artifact_id = getattr(source_atom, "artifact_id", "") or "hardware_evidence_backfill"
-    atom_id = stable_id("bom_line", project_id, sku, str(qty), _text(source_atom)[:120])
+    item_name = (item or description or "").strip()
+    atom_id = stable_id(
+        "bom_line",
+        project_id,
+        sku,
+        str(qty),
+        item_name[:120],
+        str(row_index if row_index is not None else ""),
+        _text(source_atom)[:80],
+    )
     refs = list(getattr(source_atom, "source_refs", None) or [])
     if not refs:
         refs = [
@@ -336,6 +480,28 @@ def _mint_bom_line(
                 parser_version="hardware_evidence_backfill_v1",
             )
         ]
+    value: dict[str, Any] = {
+        "sku": sku,
+        "item_id": sku,
+        "description": description,
+        "item": item_name or description,
+        "quantity": qty,
+        "qty": qty,
+        "vendor": "Ubiquiti",
+        "source": source,
+        "notes": notes,
+    }
+    if row_index is not None:
+        value["row_index"] = row_index
+    src_val = getattr(source_atom, "value", None) or {}
+    if isinstance(src_val, dict):
+        if src_val.get("lead_in") and "lead_in" not in value:
+            value["lead_in"] = list(src_val.get("lead_in") or [])
+            value["intro"] = src_val.get("intro") or (value["lead_in"][0] if value["lead_in"] else None)
+        if src_val.get("list_section"):
+            value["list_section"] = src_val.get("list_section")
+        if src_val.get("section_header"):
+            value["section_header"] = src_val.get("section_header")
     return EvidenceAtom(
         id=atom_id,
         project_id=project_id,
@@ -343,16 +509,7 @@ def _mint_bom_line(
         atom_type=AtomType.bom_line,
         raw_text=_text(source_atom)[:2000],
         normalized_text=description.lower(),
-        value={
-            "sku": sku,
-            "item_id": sku,
-            "description": description,
-            "quantity": qty,
-            "qty": qty,
-            "vendor": "Ubiquiti",
-            "source": source,
-            "notes": notes,
-        },
+        value=value,
         source_refs=refs[:1],
         authority_class=AuthorityClass.machine_extractor,
         confidence=0.78 if source == _EMAIL_CID_SOURCE else 0.72,
@@ -370,20 +527,25 @@ def _mint_bom_from_email_cid_equipment_lines(
     project_id: str,
     existing: set[str],
 ) -> tuple[list[Any], int]:
-    """Mint BOM rows from CID equipment lines and drop the source scope duplicates.
+    """Mint one BOM row per CID equipment line; drop the source scope twins.
 
-    Universal rule: once a machine ``bom_line`` is grounded from an
-    ``email_cid_equipment_line`` scope atom, keep the BOM (inherits the CID
-    locator / reading order) and remove the customer-authored scope twin so
-    Atom Quality audit does not show the same equipment twice.
-
-    OCR-junk / unmapped CID rows are also dropped (ellipsis truncations,
-    leading noise letters) so they never surface as twin equipment atoms.
+    Universal rules:
+    - Every recoverable OCR order row becomes a ``bom_line`` with quantity.
+    - Distinct products keep distinct SKUs (G3 Reader ≠ Reader G6 Entry).
+    - Duplicate product rows (two wedge mounts) stay separate BOM lines.
+    - Unmapped but qty-bearing product names mint a slug SKU rather than
+      being dropped — completeness over vocabulary coverage.
+    - BOM inherits CID locator / lead_in / section_path connective tissue.
     """
-    from app.parsers.email_parser import _is_ocr_junk_equipment_line
+    from app.parsers.email_parser import (
+        _is_ocr_junk_equipment_line,
+        _order_row_name,
+        _repair_ocr_equipment_line,
+    )
 
     minted = 0
     drop_ids: set[str] = set()
+    seen_rows = _existing_bom_row_keys(atoms)
     for atom in list(atoms):
         if not _is_email_cid_equipment_atom(atom):
             continue
@@ -391,12 +553,13 @@ def _mint_bom_from_email_cid_equipment_lines(
         if not isinstance(val, dict):
             continue
         lines = [
-            line.strip()
+            _repair_ocr_equipment_line(line)
             for line in str(val.get("text") or _text(atom) or "").splitlines()
             if line.strip()
         ]
         if not lines:
-            lines = [str(val.get("item") or "").strip()]
+            item_fallback = _repair_ocr_equipment_line(str(val.get("item") or ""))
+            lines = [item_fallback] if item_fallback else []
         atom_minted = False
         all_junk = True
         for line in lines:
@@ -419,19 +582,25 @@ def _mint_bom_from_email_cid_equipment_lines(
                     qty_n = glued_qty
             if qty_n <= 0:
                 try:
-                    qty_n = int(val.get("quantity") or 0)
+                    qty_n = int(val.get("quantity") or val.get("qty") or 0)
                 except (TypeError, ValueError):
                     qty_n = 0
             qty_n = _sanity_cid_line_qty(line, qty_n)
             if qty_n <= 0:
                 continue
-            mapped = _sku_from_equipment_text(line) or _sku_from_equipment_text(str(val.get("item") or ""))
-            if not mapped:
-                # Unmapped OCR debris (e.g. "Camera Al Multi Sensor 4") — drop twin.
-                continue
-            sku, description = mapped
-            if sku.lower() in existing:
-                # Already have BOM for this SKU — still drop the scope twin.
+            item_name = _order_row_name(line, qty_n) or str(val.get("item") or line)
+            mapped = _sku_from_equipment_text(line) or _sku_from_equipment_text(item_name)
+            if mapped:
+                sku, description = mapped
+            else:
+                sku = _slug_sku_from_item(item_name)
+                description = item_name
+            try:
+                row_index = int(val.get("row_index")) if val.get("row_index") is not None else None
+            except (TypeError, ValueError):
+                row_index = None
+            row_key = f"{sku.lower()}|{item_name.strip().lower()}|{qty_n}|{row_index if row_index is not None else ''}"
+            if row_key in seen_rows:
                 atom_minted = True
                 continue
             atoms.append(
@@ -443,16 +612,15 @@ def _mint_bom_from_email_cid_equipment_lines(
                     source_atom=atom,
                     notes=_EMAIL_CID_SOURCE,
                     source=_EMAIL_CID_SOURCE,
+                    item=item_name,
+                    row_index=row_index,
                 )
             )
+            seen_rows.add(row_key)
             existing.add(sku.lower())
             minted += 1
             atom_minted = True
-        if atom_minted or all_junk or (
-            lines and all(_is_ocr_junk_equipment_line(l) or not _sku_from_equipment_text(l) for l in lines if l)
-        ):
-            # Drop source twin when BOM minted, OR when the CID row is junk /
-            # unmapped OCR debris that would otherwise twin with nothing useful.
+        if atom_minted or all_junk:
             aid = str(getattr(atom, "id", "") or "")
             if aid:
                 drop_ids.add(aid)

@@ -139,7 +139,7 @@ def test_order_details_table_mints_full_bom() -> None:
     assert bom.get("UBNT-E7-AP") == 6
     assert bom.get("UBNT-NVR") == 1
     assert bom.get("UBNT-G6-PTZ-MOUNT") == 6
-    assert bom.get("UBNT-BADGE-READER") == 4
+    assert bom.get("UBNT-ACCESS-G3-READER") == 4
     assert bom.get("UBNT-UDM-BEAST") == 2
 
 
@@ -227,7 +227,7 @@ def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
     assert bom.get("UBNT-SW-PRO") == 1
     assert bom.get("UBNT-NVR") == 1
     assert bom.get("UBNT-G6-TURRET") == 4 or bom.get("UBNT-G6-PRO-DB") == 4
-    assert bom.get("UBNT-BADGE-READER") == 3
+    assert bom.get("UBNT-BADGE-READER") == 3 or bom.get("UBNT-ACCESS-G3-READER") == 3
     email_bom = [
         a for a in out
         if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
@@ -277,7 +277,7 @@ def test_hardware_backfill_maps_order_list_product_names() -> None:
     assert bom.get("UBNT-SW-PRO") in (1, 2)
     assert bom.get("UBNT-NVR") == 1
     assert bom.get("UBNT-G6-TURRET") in (4, 9)
-    assert bom.get("UBNT-BADGE-READER") in (4, 7)
+    assert bom.get("UBNT-ACCESS-G3-READER") in (4, 7) or bom.get("UBNT-BADGE-READER") in (4, 7)
     assert bom.get("UBNT-ACCESS-CARD") in (10, 25)
     assert bom.get("UBNT-UDM-BEAST") == 2
 
@@ -367,7 +367,7 @@ def test_trailing_order_qty_ignores_switch_model_number() -> None:
 
 
 def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Glued but recognizable product rows still emit; ellipsis/noise junk does not."""
+    """Glued / truncated OCR rows repair into product+qty equipment atoms."""
     monkeypatch.setattr(
         "app.parsers.email_parser._ocr_text_from_cid_inline",
         lambda _payload, content_type="": (
@@ -383,11 +383,13 @@ def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.Mon
 
     atoms = EmailParser().parse_artifact("deal-gecko", "art_garbled", eml)
     equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
-    assert len(equipment) >= 2
-    qty_by_line = {a.raw_text: a.value.get("quantity") for a in equipment}
-    assert qty_by_line.get("4E7 APS") == 4
-    assert "I Access Reader Pro Juncti ... 5" not in qty_by_line
-    assert "Camera Al Multi Sensor 4 1" not in qty_by_line
+    assert len(equipment) >= 4
+    qty_by_item = {a.value.get("item"): a.value.get("quantity") for a in equipment}
+    assert qty_by_item.get("4E7 APS") == 4 or any(
+        a.value.get("quantity") == 4 and "e7" in (a.raw_text or "").lower() for a in equipment
+    )
+    assert qty_by_item.get("Access Reader Pro Juncti") == 5
+    assert qty_by_item.get("Camera AI Multi Sensor 4") == 1
 
 
 def test_score_cid_ocr_prefers_order_details_over_transcript() -> None:
@@ -560,11 +562,15 @@ def test_hardware_backfill_glued_ocr_order_rows() -> None:
     from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
 
     class _Scope:
-        def __init__(self, text: str):
+        def __init__(self, text: str, row_index: int = 0):
             self.atom_type = type("T", (), {"value": "scope_item"})()
             self.raw_text = text
             self.text = text
-            self.value = {"text": text, "kind": "email_cid_equipment_line"}
+            self.value = {
+                "text": text,
+                "kind": "email_cid_equipment_line",
+                "row_index": row_index,
+            }
 
     glued_rows = [
         "Access Point E7 6",
@@ -577,9 +583,9 @@ def test_hardware_backfill_glued_ocr_order_rows() -> None:
         "Protect All-In-One Sensor 2",
         "Access Card 10",
     ]
-    atoms = [_Scope(row) for row in glued_rows]
+    atoms = [_Scope(row, i) for i, row in enumerate(glued_rows)]
     out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
-    assert minted >= 7
+    assert minted >= 9
     bom = {
         a.value["sku"]: a.value["quantity"]
         for a in out
@@ -588,11 +594,119 @@ def test_hardware_backfill_glued_ocr_order_rows() -> None:
     assert bom.get("UBNT-E7-AP") == 6
     assert bom.get("UBNT-SW-PRO") == 2
     assert bom.get("UBNT-NVR") == 1
-    assert bom.get("UBNT-BADGE-READER") == 4
+    assert bom.get("UBNT-ACCESS-G3-READER") == 4
+    assert bom.get("UBNT-READER-G6-ENTRY") == 6
     assert bom.get("UBNT-G6-PTZ-MOUNT") == 6
     assert bom.get("UBNT-G6-TURRET") == 4
     assert bom.get("UBNT-PROTECT-SENSOR") == 2
     assert bom.get("UBNT-ACCESS-CARD") == 10
+
+
+_FULL_HUBSPOT_ORDER_OCR = "\n".join(
+    [
+        "Order Details",
+        "Access Card 10",
+        "Protect All-In-One Sensor 2",
+        "I Access Reader Pro Juncti ... 5",
+        "Access Rescue KeySwitch 2",
+        "G6/G5 PTZ Pendant Mount 6",
+        "Switch Pro Max 48 PoE 2",
+        "Power Distribution Pro 2",
+        "Enterprise NVR 1",
+        "Access Point E7 6",
+        "Enterprise Access Hub 1",
+        "Access G3 Reader 4",
+        "Access Intercom Viewer 3",
+        "Camera G6 Pro 360 2",
+        "Reader G6 Entry 6",
+        "Camera Al Multi Sensor 4 1",
+        "Camera G6 Pro Turret 9",
+        "25G Direct Attach Cable 3",
+        "Dream Machine Beast 2",
+        "G6 Entry Wedge Mount 1",
+        "G6 Entry Wedge Mount 5",
+    ]
+)
+
+
+def test_full_hubspot_order_table_emits_all_rows_with_qty() -> None:
+    from app.parsers.email_parser import (
+        _equipment_list_lead_in,
+        _hardware_atoms_from_equipment_text,
+    )
+
+    lead = _equipment_list_lead_in(
+        "Below is the full equipment list. One hard requirement for him is Otka integration."
+    )
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art_order",
+        filename="e.eml",
+        text=_FULL_HUBSPOT_ORDER_OCR,
+        content_id="07131976-d75d-4133-b5d2-52a8919274ba",
+        parser_version="test",
+        lead_in=lead,
+    )
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) == 20
+    assert all(int(a.value.get("quantity") or 0) > 0 for a in equipment)
+    assert all(a.value.get("lead_in") for a in equipment)
+    assert all(
+        "Equipment list" in ((a.source_refs[0].locator or {}).get("section_path") or [])
+        for a in equipment
+    )
+    by_item = {a.value.get("item"): a.value.get("quantity") for a in equipment}
+    assert by_item.get("Access Card") == 10
+    assert by_item.get("Switch Pro Max 48 PoE") == 2
+    assert by_item.get("Access Reader Pro Juncti") == 5
+    assert by_item.get("Camera AI Multi Sensor 4") == 1
+    assert by_item.get("Power Distribution Pro") == 2
+    assert by_item.get("Enterprise Access Hub") == 1
+    wedge = [a for a in equipment if a.value.get("item") == "G6 Entry Wedge Mount"]
+    assert sorted(int(a.value.get("quantity") or 0) for a in wedge) == [1, 5]
+
+
+def test_full_hubspot_order_table_mints_complete_bom() -> None:
+    from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+    from app.parsers.email_parser import (
+        _equipment_list_lead_in,
+        _hardware_atoms_from_equipment_text,
+    )
+
+    lead = _equipment_list_lead_in("Below is the full equipment list.")
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art_order",
+        filename="e.eml",
+        text=_FULL_HUBSPOT_ORDER_OCR,
+        content_id="07131976-d75d-4133-b5d2-52a8919274ba",
+        parser_version="test",
+        lead_in=lead,
+    )
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    bom = [
+        a
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    ]
+    assert minted == 20
+    assert len(bom) == 20
+    by_sku = {a.value["sku"]: a.value["quantity"] for a in bom}
+    assert by_sku.get("UBNT-ACCESS-CARD") == 10
+    assert by_sku.get("UBNT-SW-PRO") == 2
+    assert by_sku.get("UBNT-E7-AP") == 6
+    assert by_sku.get("UBNT-ACCESS-G3-READER") == 4
+    assert by_sku.get("UBNT-READER-G6-ENTRY") == 6
+    assert by_sku.get("UBNT-G6-PRO-360") == 2
+    assert by_sku.get("UBNT-POWER-DIST-PRO") == 2
+    assert by_sku.get("UBNT-ACCESS-HUB") == 1
+    assert by_sku.get("UBNT-AI-MULTI-SENSOR") == 1
+    wedges = [a for a in bom if a.value.get("sku") == "UBNT-G6-ENTRY-WEDGE"]
+    assert sorted(int(a.value.get("quantity") or 0) for a in wedges) == [1, 5]
+    # Connective tissue from body lead-in survives on BOM locators.
+    loc = (bom[0].source_refs[0].locator or {}) if bom[0].source_refs else {}
+    assert loc.get("lead_in") or bom[0].value.get("lead_in")
+    assert "Equipment list" in (loc.get("section_path") or [])
 
 
 def test_hardware_backfill_skips_transcript_prose_when_cid_equipment_present() -> None:
@@ -620,6 +734,6 @@ def test_hardware_backfill_skips_transcript_prose_when_cid_equipment_present() -
         if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
     ]
     assert len(bom) == 1
-    assert bom[0].value.get("sku") == "UBNT-BADGE-READER"
+    assert bom[0].value.get("sku") == "UBNT-ACCESS-G3-READER"
     assert bom[0].value.get("quantity") == 4
     assert bom[0].value.get("source") == "email_cid_equipment_line"

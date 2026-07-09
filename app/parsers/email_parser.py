@@ -89,7 +89,10 @@ _WORD_QTY: dict[str, int] = {
 }
 # HubSpot order rows: qty is usually the last number, not embedded model nums (Max 48).
 _MODEL_QTY_IN_NAME_RE = re.compile(
-    r"\b(?:max|pro|series)\s+(\d{2,3})\b|\b(\d{2,3})\s+poe\b",
+    r"\b(?:max|pro|series)\s+(\d{2,3})\b"
+    r"|\b(\d{2,3})\s+poe\b"
+    r"|\bmulti\s+sensor\s+(\d)\b"
+    r"|\b(\d{1,2})g\s+direct\b",
     re.I,
 )
 
@@ -98,6 +101,13 @@ def _glued_trailing_order_qty(line: str) -> int | None:
     """OCR sometimes glues order qty to the product name (e.g. ``... PoE 2``)."""
     cleaned = (line or "").strip()
     if not cleaned:
+        return None
+    # ``Camera AI Multi Sensor 4 1`` — model variant then order qty.
+    multi = re.search(r"\bmulti\s+sensor\s+(\d+)\s+(\d{1,2})\s*$", cleaned, re.I)
+    if multi:
+        return int(multi.group(2))
+    # Bare ``… Multi Sensor 4`` — trailing digit is the model, not qty.
+    if re.search(r"\bmulti\s+sensor\s+\d+\s*$", cleaned, re.I):
         return None
     m = re.search(r"(\d{1,2})\s*$", cleaned)
     if not m:
@@ -109,8 +119,8 @@ def _glued_trailing_order_qty(line: str) -> int | None:
     if not stem:
         return None
     for mx in _MODEL_QTY_IN_NAME_RE.finditer(stem):
-        model_num = int(mx.group(1) or mx.group(2) or 0)
-        if model_num == qty and qty >= 10:
+        model_num = int(next((g for g in mx.groups() if g), 0) or 0)
+        if model_num == qty:
             return None
     if qty <= 10:
         return qty
@@ -143,7 +153,7 @@ def _sanity_order_qty(name: str, qty: int) -> int | None:
     if qty <= 0 or qty > 99:
         return None
     for m in _MODEL_QTY_IN_NAME_RE.finditer(name or ""):
-        model_num = int(m.group(1) or m.group(2) or 0)
+        model_num = int(next((g for g in m.groups() if g), 0) or 0)
         if model_num == qty and qty >= 10:
             return None
     return qty
@@ -456,6 +466,25 @@ def _cid_equipment_source_ref(
     )
 
 
+def _equipment_list_clause(raw: str) -> str:
+    """Prefer the short equipment-list framing clause as connective tissue."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    m = re.search(
+        r"[^.!?\n]*\b(?:full\s+)?equipment\s+list\b[^.!?\n]*[.!]?",
+        text,
+        re.I,
+    )
+    if m:
+        clause = re.sub(r"\s+", " ", m.group(0)).strip()
+        if clause:
+            return clause[:120]
+    if len(text) > 120:
+        return text[:117].rstrip() + "…"
+    return text
+
+
 def _equipment_list_lead_in(body_text: str, blocks: list[dict[str, Any]] | None = None) -> list[str]:
     """Collect body intro lines that frame the following equipment CID image."""
     leads: list[str] = []
@@ -463,11 +492,8 @@ def _equipment_list_lead_in(body_text: str, blocks: list[dict[str, Any]] | None 
         for line in block.get("lines") or []:
             raw = str(line or "").strip()
             if raw and _is_equipment_list_intro_line(raw):
-                # Prefer the equipment-list clause as the section breadcrumb.
-                clipped = raw
-                if len(clipped) > 120:
-                    clipped = clipped[:117].rstrip() + "…"
-                if clipped not in leads:
+                clipped = _equipment_list_clause(raw)
+                if clipped and clipped not in leads:
                     leads.append(clipped)
     if leads:
         return leads[:2]
@@ -475,7 +501,7 @@ def _equipment_list_lead_in(body_text: str, blocks: list[dict[str, Any]] | None 
     for line in body.splitlines():
         raw = line.strip()
         if raw and _is_equipment_list_intro_line(raw):
-            return [raw[:120]]
+            return [_equipment_list_clause(raw)]
     return []
 
 
@@ -497,7 +523,7 @@ def _hardware_atoms_from_equipment_text(
         return atoms
     row_index = 0
     for line in text.splitlines():
-        cleaned = line.strip()
+        cleaned = _repair_ocr_equipment_line(line)
         if not cleaned or _TRANSCRIPT_SPEECH_LINE_RE.search(cleaned):
             continue
         if _is_ocr_junk_equipment_line(cleaned):
@@ -522,6 +548,7 @@ def _hardware_atoms_from_equipment_text(
                     "text": cleaned,
                     "kind": "email_cid_equipment_line",
                     "quantity": trail_qty,
+                    "qty": trail_qty,
                     "item": name,
                     "content_id": content_id,
                     "line": line_start,
@@ -534,7 +561,16 @@ def _hardware_atoms_from_equipment_text(
                     value["intro"] = lead_in[0]
                 atoms.append(
                     EvidenceAtom(
-                        id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(trail_qty)),
+                        id=stable_id(
+                            "atm",
+                            project_id,
+                            artifact_id,
+                            "cid_hw",
+                            content_id,
+                            cleaned,
+                            str(trail_qty),
+                            row_index,
+                        ),
                         project_id=project_id,
                         artifact_id=artifact_id,
                         atom_type=AtomType.scope_item,
@@ -581,6 +617,7 @@ def _hardware_atoms_from_equipment_text(
                 "text": cleaned,
                 "kind": "email_cid_equipment_line",
                 "quantity": qty,
+                "qty": qty,
                 "item": item,
                 "content_id": content_id,
                 "line": line_start,
@@ -593,7 +630,16 @@ def _hardware_atoms_from_equipment_text(
                 value["intro"] = lead_in[0]
             atoms.append(
                 EvidenceAtom(
-                    id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(qty)),
+                    id=stable_id(
+                        "atm",
+                        project_id,
+                        artifact_id,
+                        "cid_hw",
+                        content_id,
+                        cleaned,
+                        str(qty),
+                        row_index,
+                    ),
                     project_id=project_id,
                     artifact_id=artifact_id,
                     atom_type=AtomType.scope_item,
@@ -838,28 +884,50 @@ def _is_customer_quote_line(cleaned: str) -> bool:
 # OCR equipment rows that are truncated / ellipsis-garbled must not become atoms.
 _OCR_JUNK_ELLIPSIS_RE = re.compile(r"\.{3,}|…")
 _OCR_JUNK_LEADING_NOISE_RE = re.compile(r"^[IiLl1]\s+[A-Z]")
+_ORDER_TABLE_HDR_LINE_RE = re.compile(
+    r"^(?:order\s+details|delivered|qty|quantity|item|product)\s*$",
+    re.I,
+)
+
+
+def _repair_ocr_equipment_line(cleaned: str) -> str:
+    """Normalize common HubSpot order-screenshot OCR defects (universal).
+
+    - Strip a leading single-letter noise glyph before a product name
+      (``I Access Reader…`` → ``Access Reader…``).
+    - Repair ``Camera Al`` → ``Camera AI`` (OCR of AI).
+    - Collapse ellipsis truncations so the stem + trailing qty survive
+      (``Access Reader Pro Juncti ... 5`` → ``Access Reader Pro Juncti 5``).
+    """
+    text = re.sub(r"\s+", " ", (cleaned or "").strip())
+    if not text:
+        return ""
+    text = re.sub(r"^[IiLl1]\s+(?=[A-Z])", "", text)
+    text = re.sub(r"\b(camera)\s+al\b", r"\1 AI", text, flags=re.I)
+    # Keep product stem + trailing qty when OCR truncates with ellipsis.
+    text = re.sub(r"\s*(?:\.{3,}|…)\s*", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _is_ocr_junk_equipment_line(cleaned: str) -> bool:
-    """Drop truncated / unrecognizable OCR rows — universal structural gate.
+    """Drop unrecognizable OCR debris — not recoverable order-table rows.
 
-    Only structural garbage (ellipsis truncations, leading single-letter noise,
-    OCR ``Al`` for ``AI``). Do NOT require a product-family vocabulary hit —
+    Prefer ``_repair_ocr_equipment_line`` first. Only drop chrome / empty /
+    non-product debris. Do NOT require a product-family vocabulary hit —
     that falsely drops real HubSpot rows like ``Power Distribution Pro 2``.
     """
-    text = (cleaned or "").strip()
+    text = _repair_ocr_equipment_line(cleaned)
     if not text:
         return True
-    if _OCR_JUNK_ELLIPSIS_RE.search(text):
+    if _ORDER_TABLE_HDR_LINE_RE.match(text):
         return True
-    if _OCR_JUNK_LEADING_NOISE_RE.match(text):
+    if _ORDER_DETAILS_HDR_RE.fullmatch(text):
         return True
-    # Single-letter token + truncated stump ("I Access…").
-    tokens = re.findall(r"[A-Za-z0-9]+", text)
-    if tokens and len(tokens[0]) == 1 and tokens[0].isalpha():
+    # Still truncated with no trailing qty and almost no letters → junk.
+    if _OCR_JUNK_ELLIPSIS_RE.search(cleaned or "") and _trailing_order_qty(text) is None:
         return True
-    # "Camera Al …" — OCR of "AI" as a bare two-letter token mid-name.
-    if re.search(r"\bcamera\s+al\b", text, re.I):
+    letters = re.sub(r"[^A-Za-z]", "", text)
+    if len(letters) < 3:
         return True
     return False
 

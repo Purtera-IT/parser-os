@@ -126,9 +126,14 @@ def test_backfill_does_not_hallucinate_include_umbrellas(tmp_path: Path) -> None
     )
 
 
-def test_ocr_junk_equipment_lines_dropped() -> None:
-    assert _is_ocr_junk_equipment_line("I Access Reader Pro Juncti ... 5")
-    assert _is_ocr_junk_equipment_line("Camera Al Multi Sensor 4 1")
+def test_ocr_junk_equipment_lines_repaired_not_dropped() -> None:
+    from app.parsers.email_parser import _repair_ocr_equipment_line
+
+    # Truncated / OCR-noise rows repair into recoverable product+qty lines.
+    assert not _is_ocr_junk_equipment_line("I Access Reader Pro Juncti ... 5")
+    assert not _is_ocr_junk_equipment_line("Camera Al Multi Sensor 4 1")
+    assert _repair_ocr_equipment_line("I Access Reader Pro Juncti ... 5") == "Access Reader Pro Juncti 5"
+    assert _repair_ocr_equipment_line("Camera Al Multi Sensor 4 1") == "Camera AI Multi Sensor 4 1"
     assert not _is_ocr_junk_equipment_line("Access G3 Reader 4")
     assert not _is_ocr_junk_equipment_line("Protect All-In-One Sensor 2")
     # Real HubSpot rows must not be junked for missing family vocabulary.
@@ -152,10 +157,13 @@ def test_ocr_junk_equipment_lines_dropped() -> None:
         parser_version="test",
     )
     texts = [a.raw_text for a in atoms]
-    assert "I Access Reader Pro Juncti ... 5" not in texts
-    assert "Camera Al Multi Sensor 4 1" not in texts
+    assert any("Access Reader Pro Juncti" in t for t in texts)
+    assert any("Camera AI Multi Sensor" in t for t in texts)
     assert any("Access G3 Reader" in t for t in texts)
     assert any("Protect All-In-One Sensor" in t for t in texts)
+    by_item = {a.value.get("item"): a.value.get("quantity") for a in atoms}
+    assert by_item.get("Access Reader Pro Juncti") == 5
+    assert by_item.get("Camera AI Multi Sensor 4") == 1
 
 
 def test_equipment_list_intro_is_connective_not_orphan_scope(tmp_path: Path) -> None:
