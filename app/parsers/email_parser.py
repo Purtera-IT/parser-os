@@ -417,25 +417,62 @@ def _cid_equipment_source_ref(
     message_index: int,
     line_start: int,
     row_index: int,
+    lead_in: list[str] | None = None,
 ) -> SourceRef:
     """Pin CID equipment rows into email document order (after body prose)."""
+    section_path = _list_section_path(None, lead_in=lead_in) + ["Equipment list"]
+    # Deduplicate while preserving order (lead-in may already say "equipment list").
+    seen: set[str] = set()
+    path: list[str] = []
+    for part in section_path:
+        key = part.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        path.append(part)
+    locator: dict[str, Any] = {
+        "kind": "email_cid_inline",
+        "content_id": content_id,
+        "message_index": message_index,
+        "line_start": line_start,
+        "line_end": line_start,
+        "row_index": row_index,
+        "section_path": path or ["Equipment list"],
+    }
+    if lead_in:
+        locator["lead_in"] = list(lead_in)
     return SourceRef(
         id=stable_id("src", artifact_id, "cid", content_id, line_start, row_index),
         artifact_id=artifact_id,
         artifact_type=ArtifactType.email,
         filename=filename,
-        locator={
-            "kind": "email_cid_inline",
-            "content_id": content_id,
-            "message_index": message_index,
-            "line_start": line_start,
-            "line_end": line_start,
-            "row_index": row_index,
-            "section_path": ["Equipment list"],
-        },
+        locator=locator,
         extraction_method="email_cid_inline",
         parser_version=parser_version,
     )
+
+
+def _equipment_list_lead_in(body_text: str, blocks: list[dict[str, Any]] | None = None) -> list[str]:
+    """Collect body intro lines that frame the following equipment CID image."""
+    leads: list[str] = []
+    for block in blocks or []:
+        for line in block.get("lines") or []:
+            raw = str(line or "").strip()
+            if raw and _is_equipment_list_intro_line(raw):
+                # Prefer the equipment-list clause as the section breadcrumb.
+                clipped = raw
+                if len(clipped) > 120:
+                    clipped = clipped[:117].rstrip() + "…"
+                if clipped not in leads:
+                    leads.append(clipped)
+    if leads:
+        return leads[:2]
+    body = (body_text or "").strip()
+    for line in body.splitlines():
+        raw = line.strip()
+        if raw and _is_equipment_list_intro_line(raw):
+            return [raw[:120]]
+    return []
 
 
 def _hardware_atoms_from_equipment_text(
@@ -448,6 +485,7 @@ def _hardware_atoms_from_equipment_text(
     parser_version: str,
     message_index: int = 0,
     anchor_line: int = 1,
+    lead_in: list[str] | None = None,
 ) -> list[EvidenceAtom]:
     atoms: list[EvidenceAtom] = []
     text = _focus_cid_equipment_text(text)
@@ -474,7 +512,22 @@ def _hardware_atoms_from_equipment_text(
                     message_index=message_index,
                     line_start=line_start,
                     row_index=row_index,
+                    lead_in=lead_in,
                 )
+                value: dict[str, Any] = {
+                    "text": cleaned,
+                    "kind": "email_cid_equipment_line",
+                    "quantity": trail_qty,
+                    "item": name,
+                    "content_id": content_id,
+                    "line": line_start,
+                    "row_index": row_index,
+                    "list_section": "equipment",
+                    "section_header": "Equipment list",
+                }
+                if lead_in:
+                    value["lead_in"] = list(lead_in)
+                    value["intro"] = lead_in[0]
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(trail_qty)),
@@ -483,17 +536,7 @@ def _hardware_atoms_from_equipment_text(
                         atom_type=AtomType.scope_item,
                         raw_text=cleaned,
                         normalized_text=normalize_text(cleaned),
-                        value={
-                            "text": cleaned,
-                            "kind": "email_cid_equipment_line",
-                            "quantity": trail_qty,
-                            "item": name,
-                            "content_id": content_id,
-                            "line": line_start,
-                            "row_index": row_index,
-                            "list_section": "equipment",
-                            "section_header": "Equipment list",
-                        },
+                        value=value,
                         entity_keys=[],
                         source_refs=[src],
                         authority_class=AuthorityClass.customer_current_authored,
@@ -528,7 +571,22 @@ def _hardware_atoms_from_equipment_text(
                 message_index=message_index,
                 line_start=line_start,
                 row_index=row_index,
+                lead_in=lead_in,
             )
+            value = {
+                "text": cleaned,
+                "kind": "email_cid_equipment_line",
+                "quantity": qty,
+                "item": item,
+                "content_id": content_id,
+                "line": line_start,
+                "row_index": row_index,
+                "list_section": "equipment",
+                "section_header": "Equipment list",
+            }
+            if lead_in:
+                value["lead_in"] = list(lead_in)
+                value["intro"] = lead_in[0]
             atoms.append(
                 EvidenceAtom(
                     id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(qty)),
@@ -537,17 +595,7 @@ def _hardware_atoms_from_equipment_text(
                     atom_type=AtomType.scope_item,
                     raw_text=cleaned,
                     normalized_text=normalize_text(cleaned),
-                    value={
-                        "text": cleaned,
-                        "kind": "email_cid_equipment_line",
-                        "quantity": qty,
-                        "item": item,
-                        "content_id": content_id,
-                        "line": line_start,
-                        "row_index": row_index,
-                        "list_section": "equipment",
-                        "section_header": "Equipment list",
-                    },
+                    value=value,
                     entity_keys=[],
                     source_refs=[src],
                     authority_class=AuthorityClass.customer_current_authored,
@@ -569,7 +617,17 @@ def _hardware_atoms_from_equipment_text(
             message_index=message_index,
             line_start=int(anchor_line),
             row_index=0,
+            lead_in=lead_in,
         )
+        value = {
+            "text": text[:4000],
+            "kind": "email_cid_inline_body",
+            "content_id": content_id,
+            "line": int(anchor_line),
+        }
+        if lead_in:
+            value["lead_in"] = list(lead_in)
+            value["intro"] = lead_in[0]
         atoms.append(
             EvidenceAtom(
                 id=stable_id("atm", project_id, artifact_id, "cid_body", content_id, text[:120]),
@@ -578,12 +636,7 @@ def _hardware_atoms_from_equipment_text(
                 atom_type=AtomType.scope_item,
                 raw_text=text[:4000],
                 normalized_text=normalize_text(text),
-                value={
-                    "text": text[:4000],
-                    "kind": "email_cid_inline_body",
-                    "content_id": content_id,
-                    "line": int(anchor_line),
-                },
+                value=value,
                 entity_keys=[],
                 source_refs=[src],
                 authority_class=AuthorityClass.customer_current_authored,
@@ -714,6 +767,30 @@ def _list_section_path(section: str | None, *, lead_in: list[str] | None = None)
     return path
 
 
+_EQUIPMENT_LIST_INTRO_RE = re.compile(
+    r"\b(?:below\s+is|attached\s+is|here\s+is|see)\b.{0,40}\b(?:full\s+)?equipment\s+list\b"
+    r"|\b(?:full\s+)?equipment\s+list\b.{0,20}\b(?:below|attached|follows|here)\b"
+    r"|\border\s+details\b",
+    re.I,
+)
+
+
+def _is_equipment_list_intro_line(cleaned: str) -> bool:
+    """True when body prose introduces a following inline equipment image/list.
+
+    Universal connective rule: "Below is the full equipment list…" is framing
+    for the CID/order screenshot that follows — not a standalone scope atom.
+    Extra clauses on the same line (e.g. Okta requirement) still extract via
+    typed patterns below; only the fail-open scope_item path is suppressed.
+    """
+    text = (cleaned or "").strip()
+    if not text or len(text) > 280:
+        return False
+    if _BULLET_PREFIX_RE.match(text):
+        return False
+    return bool(_EQUIPMENT_LIST_INTRO_RE.search(text))
+
+
 def _is_email_list_framing_lead_in(cleaned: str) -> bool:
     """True for a short framing sentence that governs an Include/Exclude list.
 
@@ -842,7 +919,14 @@ def _is_courtesy_prose_line(cleaned: str) -> bool:
             "deploy",
         )
     ):
+        # Equipment-list intros often share a line with a hard requirement
+        # ("…equipment list. One hard requirement… Otka…"). Still framing for
+        # the following CID image — do not mint a bare scope_item for the intro.
+        if _is_equipment_list_intro_line(text):
+            return True
         return False
+    if _is_equipment_list_intro_line(text):
+        return True
     if _COURTESY_PROSE_RE.match(text):
         return True
     if "hopping on" in lowered or "short notice" in lowered:
@@ -1261,6 +1345,8 @@ class EmailParser(BaseParser):
                 continue
             ocr_by_cid[cid] = _ocr_cid_part(part)
 
+        equipment_lead_in = _equipment_list_lead_in(body_text, blocks)
+
         def _hw_from(cid: str, blob: str) -> list[EvidenceAtom]:
             msg_i, line_i = _cid_reading_anchor(
                 body_text=body_text, content_id=cid, blocks=blocks or []
@@ -1274,6 +1360,7 @@ class EmailParser(BaseParser):
                 parser_version=self.parser_version,
                 message_index=msg_i,
                 anchor_line=line_i,
+                lead_in=equipment_lead_in or None,
             )
 
         equipment_lines: list[EvidenceAtom] = []
@@ -1312,6 +1399,7 @@ class EmailParser(BaseParser):
                 )
         atoms.extend(equipment_lines)
         has_equipment = any(a.value.get("kind") == "email_cid_equipment_line" for a in atoms)
+        has_inline_body = any(a.value.get("kind") == "email_cid_inline_body" for a in atoms)
         if referenced:
             resolved = {
                 cid
@@ -1323,7 +1411,14 @@ class EmailParser(BaseParser):
                 )
             }
             for cid in sorted(referenced - resolved):
-                if has_equipment and cid in inline_parts:
+                # Image exists in MIME → not an unresolved CID. Empty OCR is a
+                # backend gap, not a missing-part story; suppress open_question
+                # when any equipment/body was extracted from sibling CIDs, or
+                # when the part itself is present (connective tissue already
+                # points body "equipment list" prose at these embeds).
+                if cid in inline_parts:
+                    continue
+                if has_equipment or has_inline_body:
                     continue
                 if not any(
                     a.value.get("kind") == "email_cid_unresolved"

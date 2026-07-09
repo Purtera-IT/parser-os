@@ -156,3 +156,77 @@ def test_ocr_junk_equipment_lines_dropped() -> None:
     assert "Camera Al Multi Sensor 4 1" not in texts
     assert any("Access G3 Reader" in t for t in texts)
     assert any("Protect All-In-One Sensor" in t for t in texts)
+
+
+def test_equipment_list_intro_is_connective_not_orphan_scope(tmp_path: Path) -> None:
+    from app.parsers.email_parser import _is_equipment_list_intro_line
+
+    intro = "Below is the full equipment list. One hard requirement for him is Otka integration."
+    assert _is_equipment_list_intro_line(intro)
+    atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
+    orphan = [
+        a
+        for a in atoms
+        if a.atom_type == AtomType.scope_item
+        and "full equipment list" in a.raw_text.lower()
+        and a.value.get("kind") == "email_body_line"
+    ]
+    assert orphan == []
+
+
+def test_cid_equipment_carries_equipment_list_lead_in(tmp_path: Path, monkeypatch) -> None:
+    import base64
+
+    from app.parsers.email_parser import EmailParser as EP
+
+    cid = "f41c1a3b-2993-42e3-a181-e2441b3942d0"
+    png = base64.b64encode(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+    ).decode("ascii")
+    mixed = "=_M"
+    related = "=_R"
+    body = (
+        "Below is the full equipment list. One hard requirement for him is Otka integration.\n"
+        f"[cid:{cid}]\n"
+    )
+    lines = [
+        "From: p@example.com",
+        "Subject: eq",
+        f'Content-Type: multipart/mixed; boundary="{mixed}"',
+        "",
+        f"--{mixed}",
+        f'Content-Type: multipart/related; boundary="{related}"',
+        "",
+        f"--{related}",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        body,
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{cid}@hubspot-ingest>",
+        "",
+        png,
+        f"--{related}--",
+        f"--{mixed}--",
+        "",
+    ]
+    eml = tmp_path / "eq.eml"
+    eml.write_bytes("\r\n".join(lines).encode("utf-8"))
+
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_cid_part",
+        lambda part: "Order Details\nAccess Point E7 × 6\nSwitch Pro Max 48 PoE × 2\n",
+    )
+    atoms = EP().parse_artifact("p", "art", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    unresolved = [a for a in atoms if a.value.get("kind") == "email_cid_unresolved"]
+    assert equipment
+    assert unresolved == []
+    lead = equipment[0].value.get("lead_in") or []
+    assert any("equipment list" in str(x).lower() for x in lead)
+    path = (equipment[0].source_refs[0].locator or {}).get("section_path") or []
+    assert "Equipment list" in path
+    assert any("equipment list" in str(x).lower() for x in path)

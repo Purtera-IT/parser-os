@@ -190,6 +190,16 @@ def test_multipart_eml_missing_cid_part_emits_unresolved(tmp_path) -> None:
     assert "missing-image-uuid" in unresolved[0].value.get("content_ids", [])
 
 
+def test_present_cid_empty_ocr_does_not_mint_unresolved(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MIME part exists but OCR returns nothing — not an unresolved-CID open_question."""
+    monkeypatch.setattr("app.parsers.email_parser._ocr_cid_part", lambda _part: "")
+    eml = tmp_path / "empty-ocr.eml"
+    eml.write_bytes(_build_multipart_eml())
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_empty_ocr", eml)
+    unresolved = [a for a in atoms if a.value.get("kind") == "email_cid_unresolved"]
+    assert unresolved == []
+
+
 def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
     class _Scope:
         def __init__(self, text: str, atom_id: str):
