@@ -65,7 +65,7 @@ _GLUED_STEM_SKU: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"enterprise\s+access\s+hubs?\b", re.I), "UBNT-ACCESS-HUB", "Ubiquiti Enterprise Access Hub"),
     (re.compile(r"access\s+intercom\s+viewer\b", re.I), "UBNT-ACCESS-INTERCOM-VIEWER", "Ubiquiti Access Intercom Viewer"),
     (re.compile(r"camera\s+ai\s+multi\s+sensor(?:\s+\d+)?\b", re.I), "UBNT-AI-MULTI-SENSOR", "Ubiquiti Camera AI Multi Sensor"),
-    (re.compile(r"\d{1,2}g\s+direct\s+attach\s+cables?\b", re.I), "UBNT-25G-DAC", "Ubiquiti 25G Direct Attach Cable"),
+    (re.compile(r"(?<!\d)\d{1,2}g\s+direct\s+attach\s+cables?\b", re.I), "UBNT-25G-DAC", "Ubiquiti 25G Direct Attach Cable"),
     (re.compile(r"g6\s+entry\s+wedge\s+mounts?\b", re.I), "UBNT-G6-ENTRY-WEDGE", "Ubiquiti G6 Entry Wedge Mount"),
 ]
 
@@ -287,7 +287,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "UBNT-25G-DAC",
         "Ubiquiti 25G Direct Attach Cable",
         re.compile(
-            rf"\b{_QTY}\s*(?:x\s*)?\d{{1,2}}g\s+direct\s+attach\s+cables?\b"
+            # Do not let leading ``_QTY`` steal the ``2`` from ``25G``.
+            rf"\b{_QTY}\s*(?:x\s*|×\s+)\d{{1,2}}g\s+direct\s+attach\s+cables?\b"
             rf"|\d{{1,2}}g\s+direct\s+attach\s+cables?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
             rf"|\d{{1,2}}g\s+direct\s+attach\s+cables?{_GLUED_QTY}",
             re.I | re.M,
@@ -510,6 +511,7 @@ def _mint_bom_line(
         raw_text=_text(source_atom)[:2000],
         normalized_text=description.lower(),
         value=value,
+        entity_keys=[f"quantity:{qty}"],
         source_refs=refs[:1],
         authority_class=AuthorityClass.machine_extractor,
         confidence=0.78 if source == _EMAIL_CID_SOURCE else 0.72,
@@ -568,23 +570,24 @@ def _mint_bom_from_email_cid_equipment_lines(
             if _is_ocr_junk_equipment_line(line):
                 continue
             all_junk = False
+            # Universal: trailing / glued order qty wins over mid-name digits
+            # (``25G``, ``Max 48``, ``Multi Sensor 4``).
             qty_n = 0
-            for _sku, _description, pattern in _PATTERNS:
-                match = pattern.search(line)
-                if not match:
-                    continue
-                qty_n = _parse_qty_from_match(match) or 0
-                if qty_n > 0:
-                    break
+            try:
+                qty_n = int(val.get("quantity") or val.get("qty") or 0)
+            except (TypeError, ValueError):
+                qty_n = 0
+            glued_qty = _glued_trailing_order_qty(line)
+            if glued_qty:
+                qty_n = glued_qty
             if qty_n <= 0:
-                glued_qty = _glued_trailing_order_qty(line)
-                if glued_qty:
-                    qty_n = glued_qty
-            if qty_n <= 0:
-                try:
-                    qty_n = int(val.get("quantity") or val.get("qty") or 0)
-                except (TypeError, ValueError):
-                    qty_n = 0
+                for _sku, _description, pattern in _PATTERNS:
+                    match = pattern.search(line)
+                    if not match:
+                        continue
+                    qty_n = _parse_qty_from_match(match) or 0
+                    if qty_n > 0:
+                        break
             qty_n = _sanity_cid_line_qty(line, qty_n)
             if qty_n <= 0:
                 continue
@@ -644,22 +647,23 @@ def _sanity_cid_line_qty(line: str, qty: int) -> int:
     glued_qty = _glued_trailing_order_qty(cleaned)
     if qty <= 0:
         return glued_qty or 0
-    if glued_qty is not None and qty >= 10:
-        if re.search(rf"(?:max|pro|series)\s+{qty}\b|\b{qty}\s+poe\b", cleaned, re.I):
-            return glued_qty
-        trail = re.search(r"(?:\s{2,}|\t|[×x])\s*(\d{1,2})\s*$", cleaned, re.I)
-        if trail:
-            return int(trail.group(1))
-        if glued_qty <= 10:
-            return glued_qty
-        return 0
-    if glued_qty is not None and glued_qty != qty:
-        if re.search(
-            r"(?:access\s+g3|reader\s+g6|g6(?:/g5)?\s+ptz|(?:camera\s+)?g6(?:\s+pro)?\s*turret)",
-            cleaned,
-            re.I,
-        ):
-            return glued_qty
+    if glued_qty is None:
+        return qty
+    if glued_qty == qty:
+        return qty
+    # Mid-name model digits that regex mistook for order qty.
+    if re.search(
+        rf"(?:max|pro|series)\s+{qty}\b|\b{qty}\s+poe\b|\b{qty}g\b|"
+        rf"\bmulti\s+sensor\s+{qty}\b",
+        cleaned,
+        re.I,
+    ):
+        return glued_qty
+    trail = re.search(r"(?:\s{2,}|\t|[×x])\s*(\d{1,2})\s*$", cleaned, re.I)
+    if trail:
+        return int(trail.group(1))
+    if glued_qty <= 10:
+        return glued_qty
     return qty
 
 

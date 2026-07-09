@@ -701,12 +701,16 @@ def test_full_hubspot_order_table_mints_complete_bom() -> None:
     assert by_sku.get("UBNT-POWER-DIST-PRO") == 2
     assert by_sku.get("UBNT-ACCESS-HUB") == 1
     assert by_sku.get("UBNT-AI-MULTI-SENSOR") == 1
+    assert by_sku.get("UBNT-25G-DAC") == 3
+    assert by_sku.get("UBNT-ACCESS-READER-PRO") == 5
+    assert by_sku.get("UBNT-ACCESS-RESCUE-KEYSWITCH") == 2
     wedges = [a for a in bom if a.value.get("sku") == "UBNT-G6-ENTRY-WEDGE"]
     assert sorted(int(a.value.get("quantity") or 0) for a in wedges) == [1, 5]
     # Connective tissue from body lead-in survives on BOM locators.
     loc = (bom[0].source_refs[0].locator or {}) if bom[0].source_refs else {}
     assert loc.get("lead_in") or bom[0].value.get("lead_in")
     assert "Equipment list" in (loc.get("section_path") or [])
+    assert all(f"quantity:{a.value['quantity']}" in (a.entity_keys or []) for a in bom)
 
 
 def test_hardware_backfill_skips_transcript_prose_when_cid_equipment_present() -> None:

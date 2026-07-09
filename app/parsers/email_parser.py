@@ -577,7 +577,7 @@ def _hardware_atoms_from_equipment_text(
                         raw_text=cleaned,
                         normalized_text=normalize_text(cleaned),
                         value=value,
-                        entity_keys=[],
+                        entity_keys=[f"quantity:{trail_qty}"],
                         source_refs=[src],
                         authority_class=AuthorityClass.customer_current_authored,
                         confidence=0.8,
@@ -646,7 +646,7 @@ def _hardware_atoms_from_equipment_text(
                     raw_text=cleaned,
                     normalized_text=normalize_text(cleaned),
                     value=value,
-                    entity_keys=[],
+                    entity_keys=[f"quantity:{qty}"],
                     source_refs=[src],
                     authority_class=AuthorityClass.customer_current_authored,
                     confidence=0.78,
@@ -1995,6 +1995,11 @@ class EmailParser(BaseParser):
                     seen_types.add(atom_type)
                     unique_types.append(atom_type)
             atom_types = unique_types
+
+            # Equipment-list framing is connective tissue for the CID image —
+            # never mint a typed body atom for the intro line itself.
+            if _is_equipment_list_intro_line(cleaned):
+                atom_types = []
 
             for atom_type in atom_types:
                 review_status = ReviewStatus.auto_accepted
