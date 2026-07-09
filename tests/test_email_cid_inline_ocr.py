@@ -519,3 +519,70 @@ def test_equipment_list_ocr_picks_richest_table_over_transcript(tmp_path, monkey
     assert len(equipment) >= 8
     assert {a.value.get("content_id") for a in equipment} == {order_cid}
     assert unresolved == []
+def test_hardware_backfill_glued_ocr_order_rows() -> None:
+    from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+
+    class _Scope:
+        def __init__(self, text: str):
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": "email_cid_equipment_line"}
+
+    glued_rows = [
+        "Access Point E7 6",
+        "Switch Pro Max 48 PoE 2",
+        "Enterprise NVR 1",
+        "Access G3 Reader 4",
+        "Reader G6 Entry 6",
+        "G6/G5 PTZ Pendant Mount 6",
+        "Camera G6 Pro Turret 4",
+        "Protect All-In-One Sensor 2",
+        "Access Card 10",
+    ]
+    atoms = [_Scope(row) for row in glued_rows]
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    assert minted >= 7
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-SW-PRO") == 2
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-BADGE-READER") == 4
+    assert bom.get("UBNT-G6-PTZ-MOUNT") == 6
+    assert bom.get("UBNT-G6-TURRET") == 4
+    assert bom.get("UBNT-PROTECT-SENSOR") == 2
+    assert bom.get("UBNT-ACCESS-CARD") == 10
+
+
+def test_hardware_backfill_skips_transcript_prose_when_cid_equipment_present() -> None:
+    from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+
+    class _Atom:
+        def __init__(self, *, kind: str, text: str, atom_type: str = "scope_item"):
+            self.atom_type = type("T", (), {"value": atom_type})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": kind}
+
+    atoms = [
+        _Atom(kind="email_cid_equipment_line", text="Access G3 Reader 4"),
+        _Atom(
+            kind="",
+            text="We need seven badge readers on every door.",
+            atom_type="customer_instruction",
+        ),
+    ]
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    bom = [
+        a
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    ]
+    assert len(bom) == 1
+    assert bom[0].value.get("sku") == "UBNT-BADGE-READER"
+    assert bom[0].value.get("quantity") == 4
+    assert bom[0].value.get("source") == "email_cid_equipment_line"

@@ -13,6 +13,7 @@ from typing import Any
 from app.core.ids import stable_id
 from app.core.schemas import AtomType
 from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
+from app.parsers.email_parser import _glued_trailing_order_qty
 
 HARDWARE_EVIDENCE_RELATION = "hardware_evidence_line"
 
@@ -42,6 +43,16 @@ _JSON_MANIFEST_KEY_RE = re.compile(
 _QTY = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
 # Order-list lines: "Access Point E7 … × 6" or right-aligned "Access Point E7   6".
 _NAME_THEN_QTY = r"(?:[×x]\s*|(?:\s{2,}|\t))\s*(\d+)\s*$"
+
+
+_GLUED_STEM_SKU: list[tuple[re.Pattern[str], str, str]] = [
+    (re.compile(r"access\s+point\s+e7(?:\s+enterprise)?\b", re.I), "UBNT-E7-AP", "Ubiquiti E7 Access Point"),
+    (re.compile(r"(?:udm(?:[-\s]*beast)?|dream\s+machine(?:\s*beast)?)\b", re.I), "UBNT-UDM-BEAST", "Ubiquiti Dream Machine Beast"),
+    (re.compile(r"enterprise\s+nvr\b", re.I), "UBNT-NVR", "Ubiquiti NVR"),
+    (re.compile(r"access\s*cards?\b", re.I), "UBNT-ACCESS-CARD", "Ubiquiti Access Card"),
+    (re.compile(r"protect(?:\s+all[- ]in[- ]one)?\s*sensors?\b", re.I), "UBNT-PROTECT-SENSOR", "Ubiquiti Protect All-In-One Sensor"),
+]
+
 
 _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
     (
@@ -98,7 +109,9 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "Ubiquiti G6 Turret",
         re.compile(
             rf"\b{_QTY}\s*(?:x\s*)?(?:camera\s+)?g6(?:\s+pro)?\s*turrets?\b"
-            rf"|(?:camera\s+)?g6(?:\s+pro)?\s*turrets?[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            rf"|(?:camera\s+)?g6(?:\s+pro)?\s*turrets?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:camera\s+)?g6(?:\s+pro)?\s*turrets?\s+(\d{{1,2}})\s*$"
+            r"|(?:camera\s+)?g6(?:\s+pro)?\s*turrets?\b",
             re.I | re.M,
         ),
     ),
@@ -137,10 +150,13 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
             rf"\b{_QTY}\s*(?:x\s*)?"
             r"(?:badge\s*readers?|card\s*readers?|access\s*readers?(?:\s*pro)?|"
             r"access\s+g3\s*readers?|g3\s*readers?|reader\s+g6\s+entry)\b"
-            rf"|(?:access\s+)?g3\s*reader[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:access\s+)?g3\s*readers?(?:\s*pro)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
             rf"|access\s+reader(?:\s*pro)?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
             rf"|reader\s+g6\s+entry[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            rf"|(?:badge|card)\s*reader[^\n]{{0,40}}?{_NAME_THEN_QTY}",
+            rf"|(?:badge|card)\s*reader[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            r"|(?:access\s+g3\s*readers?(?:\s*pro)?|reader\s+g6\s+entry|(?:badge|card)\s*readers?)"
+            r"\s+(\d{1,2})\s*$"
+            r"|(?:access\s+g3\s*readers?(?:\s*pro)?|reader\s+g6\s+entry)\b",
             re.I | re.M,
         ),
     ),
@@ -176,12 +192,14 @@ _PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         "UBNT-G6-PTZ-MOUNT",
         "Ubiquiti G6 PTZ Mount",
         re.compile(
-            rf"\b{_QTY}\s*(?:x\s*)?g6\s+ptz\s+mounts?\b"
-            rf"|g6\s+ptz\s+mounts?[^\n]{{0,40}}?{_NAME_THEN_QTY}"
-            r"|g6\s+ptz\s+mounts?[^\n]{0,40}?\s*[×x]\s*(\d+)\b",
+            rf"\b{_QTY}\s*(?:x\s*)?(?:g6(?:/g5)?\s+ptz\s+pendant\s+)?g6\s+ptz\s+mounts?\b"
+            rf"|(?:g6(?:/g5)?\s+ptz\s+pendant\s+mount|g6\s+ptz\s+mounts?)[^\n]{{0,40}}?{_NAME_THEN_QTY}"
+            rf"|(?:g6(?:/g5)?\s+ptz\s+pendant\s+mount|g6\s+ptz\s+mounts?)\s+(\d{{1,2}})\s*$"
+            r"|(?:g6(?:/g5)?\s+ptz\s+pendant\s+mount|g6\s+ptz\s+mounts?)\b",
             re.I | re.M,
         ),
     ),
+
     (
         "UBNT-AP-GENERIC",
         "Ubiquiti Access Point",
@@ -275,9 +293,19 @@ def _sku_from_equipment_text(text: str) -> tuple[str, str] | None:
     line = (text or "").strip()
     if not line:
         return None
-    for sku, description, pattern in _PATTERNS:
-        if pattern.search(line):
-            return sku, description
+    candidates = [line]
+    glued = _glued_trailing_order_qty(line)
+    if glued is not None:
+        stem = re.sub(rf"\s{re.escape(str(glued))}\s*$", "", line).strip()
+        if stem and stem not in candidates:
+            candidates.append(stem)
+    for candidate in candidates:
+        for sku, description, pattern in _PATTERNS:
+            if pattern.search(candidate):
+                return sku, description
+        for pattern, sku, description in _GLUED_STEM_SKU:
+            if pattern.search(candidate):
+                return sku, description
     return None
 
 
@@ -368,6 +396,14 @@ def _mint_bom_from_email_cid_equipment_lines(
                 if qty_n > 0:
                     break
             if qty_n <= 0:
+                glued_qty = _glued_trailing_order_qty(line)
+                if glued_qty:
+                    qty_n = glued_qty
+            if qty_n <= 0:
+                glued_qty = _glued_trailing_order_qty(line)
+                if glued_qty:
+                    qty_n = glued_qty
+            if qty_n <= 0:
                 try:
                     qty_n = int(val.get("quantity") or 0)
                 except (TypeError, ValueError):
@@ -409,29 +445,38 @@ def _parse_qty_from_match(match: re.Match[str]) -> int | None:
 def _sanity_cid_line_qty(line: str, qty: int) -> int:
     """Prefer trailing order qty when OCR embeds model numbers in the product name."""
     cleaned = (line or "").strip()
+    glued_qty = _glued_trailing_order_qty(cleaned)
     if qty <= 0:
-        return 0
-    glued = re.search(r"(\d{1,2})\s*$", cleaned)
-    if glued and qty >= 10:
-        glued_qty = int(glued.group(1))
-        stem = cleaned[: glued.start(1)].rstrip()
-        if glued_qty <= 10 and re.search(rf"(?:max|pro)\s+{qty}\b|\b{qty}\s+poe\b", stem, re.I):
+        return glued_qty or 0
+    if glued_qty is not None and qty >= 10:
+        if re.search(rf"(?:max|pro|series)\s+{qty}\b|\b{qty}\s+poe\b", cleaned, re.I):
             return glued_qty
-    if qty >= 10 and re.search(rf"(?:max|pro)\s+{qty}\b|\b{qty}\s+poe\b", cleaned, re.I):
-        trail = re.search(r"(?:\s{2,}|\t|[×x]\s*)(\d{1,2})\s*$", cleaned, re.I)
+        trail = re.search(r"(?:\s{2,}|\t|[×x])\s*(\d{1,2})\s*$", cleaned, re.I)
         if trail:
             return int(trail.group(1))
-        if glued and int(glued.group(1)) <= 10:
-            return int(glued.group(1))
+        if glued_qty <= 10:
+            return glued_qty
         return 0
+    if glued_qty is not None and glued_qty != qty:
+        if re.search(
+            r"(?:access\s+g3|reader\s+g6|g6(?:/g5)?\s+ptz|(?:camera\s+)?g6(?:\s+pro)?\s*turret)",
+            cleaned,
+            re.I,
+        ):
+            return glued_qty
     return qty
+
+
 
 def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
     """Add bom_line atoms from grounded equipment counts in scope prose."""
+    has_email_cid_equipment = any(_is_email_cid_equipment_atom(a) for a in atoms)
     existing = _existing_bom_skus(atoms)
     atoms, email_minted = _mint_bom_from_email_cid_equipment_lines(
         atoms, project_id=project_id, existing=existing
     )
+    if has_email_cid_equipment:
+        return atoms, email_minted
     prose_atoms = [
         a for a in atoms if _atom_type_str(a) in _SOURCE_TYPES and _is_prose_evidence(a)
     ]
