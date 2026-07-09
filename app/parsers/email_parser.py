@@ -757,20 +757,15 @@ def _is_customer_quote_line(cleaned: str) -> bool:
 # OCR equipment rows that are truncated / ellipsis-garbled must not become atoms.
 _OCR_JUNK_ELLIPSIS_RE = re.compile(r"\.{3,}|…")
 _OCR_JUNK_LEADING_NOISE_RE = re.compile(r"^[IiLl1]\s+[A-Z]")
-# Known product-family cues for HubSpot order-table rows (universal Ubiquiti/order vocab).
-_EQUIPMENT_FAMILY_RE = re.compile(
-    r"(?:"
-    r"\b(?:access\s+point|switch(?:\s+pro)?|dream\s+machine|udm|nvr|unvr|"
-    r"g6|g5|g3|reader|access\s+card|protect|sensor|camera|doorbell|"
-    r"mount|hub|poe|turret|ptz|badge|aps?)\b"
-    r"|(?:\d+\s*)?e7\s*aps?\b"  # glued OCR: "4E7 APS" / "4 E7 APs"
-    r")",
-    re.I,
-)
 
 
 def _is_ocr_junk_equipment_line(cleaned: str) -> bool:
-    """Drop truncated / unrecognizable OCR rows — universal structural gate."""
+    """Drop truncated / unrecognizable OCR rows — universal structural gate.
+
+    Only structural garbage (ellipsis truncations, leading single-letter noise,
+    OCR ``Al`` for ``AI``). Do NOT require a product-family vocabulary hit —
+    that falsely drops real HubSpot rows like ``Power Distribution Pro 2``.
+    """
     text = (cleaned or "").strip()
     if not text:
         return True
@@ -778,15 +773,12 @@ def _is_ocr_junk_equipment_line(cleaned: str) -> bool:
         return True
     if _OCR_JUNK_LEADING_NOISE_RE.match(text):
         return True
-    # Single-letter token + truncated stump ("I Access…", "Al Multi…").
+    # Single-letter token + truncated stump ("I Access…").
     tokens = re.findall(r"[A-Za-z0-9]+", text)
     if tokens and len(tokens[0]) == 1 and tokens[0].isalpha():
         return True
     # "Camera Al …" — OCR of "AI" as a bare two-letter token mid-name.
     if re.search(r"\bcamera\s+al\b", text, re.I):
-        return True
-    # Trailing-qty rows with no recognizable product family are OCR debris.
-    if not _EQUIPMENT_FAMILY_RE.search(text):
         return True
     return False
 

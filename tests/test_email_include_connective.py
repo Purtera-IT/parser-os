@@ -131,6 +131,10 @@ def test_ocr_junk_equipment_lines_dropped() -> None:
     assert _is_ocr_junk_equipment_line("Camera Al Multi Sensor 4 1")
     assert not _is_ocr_junk_equipment_line("Access G3 Reader 4")
     assert not _is_ocr_junk_equipment_line("Protect All-In-One Sensor 2")
+    # Real HubSpot rows must not be junked for missing family vocabulary.
+    assert not _is_ocr_junk_equipment_line("Power Distribution Pro 2")
+    assert not _is_ocr_junk_equipment_line("Access Rescue KeySwitch 2")
+    assert not _is_ocr_junk_equipment_line("Camera AI Multi Sensor 4 1")
 
     atoms = _hardware_atoms_from_equipment_text(
         project_id="deal-gecko",
