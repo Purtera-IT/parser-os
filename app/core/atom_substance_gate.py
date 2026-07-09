@@ -289,6 +289,11 @@ def _atom_value(atom: Any) -> dict:
     return val if isinstance(val, dict) else {}
 
 
+# Communication-atom roles on email body lines — NOT stakeholder titles.
+# ``role: "to_greeting"`` / ``"intro"`` must not satisfy stakeholder role context.
+_EMAIL_COMM_ROLES: frozenset[str] = frozenset({"to_greeting", "intro", "from_signoff"})
+
+
 def _has_role_context(text: str, value: dict, entity_keys: list[str]) -> bool:
     """True when a stakeholder atom carries enough context to be actionable:
     a role/title, email, phone, affiliation, or approval/responsibility cue."""
@@ -296,6 +301,8 @@ def _has_role_context(text: str, value: dict, entity_keys: list[str]) -> bool:
     for field in ("role", "title", "email", "position", "affiliation", "org", "organization", "department"):
         v = value.get(field)
         if isinstance(v, str) and v.strip():
+            if field == "role" and v.strip().lower() in _EMAIL_COMM_ROLES:
+                continue
             return True
     # Entity keys that anchor the person to an org / email / role.
     for k in entity_keys or []:
@@ -339,7 +346,12 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
     """Partition into (kept, dropped). A ``stakeholder`` atom with no
     role/affiliation/contact context AND a bare-name shape is dropped — it is a
     salutation / sign-off / speaker label mis-typed as a person and is useless
-    to every downstream head. Everything else is kept untouched."""
+    to every downstream head. Everything else is kept untouched.
+
+    Safety net: if a body greeting was mis-retyped to ``stakeholder`` but still
+    carries ``kind=email_addressee`` / ``email_body_context``, restore
+    ``deal_metadata`` and keep — never drop communication atoms.
+    """
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
@@ -348,6 +360,16 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             continue
         text = _atom_text(atom)
         value = _atom_value(atom)
+        kind = str(value.get("kind") or "")
+        if kind in {"email_addressee", "email_body_context"}:
+            try:
+                from app.core.schemas import AtomType
+
+                atom.atom_type = AtomType.deal_metadata
+            except Exception:
+                pass
+            kept.append(atom)
+            continue
         entity_keys = list(getattr(atom, "entity_keys", None) or [])
         if _has_role_context(text, value, entity_keys):
             kept.append(atom)

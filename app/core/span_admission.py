@@ -128,6 +128,23 @@ WEAK_ATOM_TYPES: frozenset = frozenset({
     "scope_item", "entity", "deal_metadata", "site_implementation_note",
 })
 
+# Email communication atoms are intentionally typed as deal_metadata with a
+# structured ``value.kind``. They must not be "recovered" into stakeholder /
+# requirement / etc. — a body greeting ("Eddie,") is an addressee, not a roster
+# person. Universal structural lock by kind, not by deal/name.
+_PROTECTED_EMAIL_KINDS: frozenset = frozenset({
+    "email_addressee",
+    "email_body_context",
+    "email_header",
+})
+
+
+def _is_protected_email_atom(atom) -> bool:
+    val = getattr(atom, "value", None)
+    if not isinstance(val, dict):
+        return False
+    return str(val.get("kind") or "") in _PROTECTED_EMAIL_KINDS
+
 # The specific types a retained atom may be recovered into — the span-recall
 # targets plus the commercial categories. Only valid AtomType values.
 RECOVERABLE_ATOM_TYPES: tuple = (
@@ -181,9 +198,13 @@ def _readmit_via_heads(atoms, heads, weak) -> int:
     from app.core.admission_head import RELATION_TO_ATOM_TYPE
     from app.core.embedding_retrieval import embed_texts
 
-    targets = [a for a in atoms
-               if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None)) in weak
-               and (getattr(a, "raw_text", "") or "").strip()]
+    targets = [
+        a
+        for a in atoms
+        if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None)) in weak
+        and (getattr(a, "raw_text", "") or "").strip()
+        and not _is_protected_email_atom(a)
+    ]
     if not targets:
         return 0
     texts = [(a.raw_text or "").strip()[:600] for a in targets]
@@ -217,6 +238,8 @@ def _readmit_via_store(atoms, weak, cand, scope) -> int:
         cur = getattr(a, "atom_type", None)
         cur_v = getattr(cur, "value", cur)
         if cur_v not in weak:
+            continue
+        if _is_protected_email_atom(a):
             continue
         text = (getattr(a, "raw_text", "") or "").strip()
         if not text:

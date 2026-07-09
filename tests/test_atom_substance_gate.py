@@ -60,6 +60,20 @@ def test_bare_name_stakeholders_dropped():
     assert len(dropped) == 3
 
 
+def test_email_addressee_mistyped_stakeholder_restored():
+    """Span-admission may retype Eddie, → stakeholder; substance gate restores."""
+    atom = _mk(
+        "stakeholder",
+        "Eddie,",
+        value={"text": "Eddie,", "kind": "email_addressee", "role": "to_greeting"},
+    )
+    kept, dropped = drop_contextless_stakeholders([atom])
+    assert dropped == []
+    assert len(kept) == 1
+    assert kept[0].atom_type == AtomType.deal_metadata
+    assert kept[0].value.get("kind") == "email_addressee"
+
+
 def test_stakeholder_with_role_kept():
     atoms = [_mk("stakeholder", "Renee Watkins, VP Engineering")]
     kept, dropped = drop_contextless_stakeholders(atoms)
