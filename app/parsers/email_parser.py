@@ -87,6 +87,43 @@ _WORD_QTY: dict[str, int] = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
 }
+# HubSpot order rows: qty is usually the last number, not embedded model nums (Max 48).
+_MODEL_QTY_IN_NAME_RE = re.compile(
+    r"\b(?:max|pro|series)\s+(\d{2,3})\b|\b(\d{2,3})\s+poe\b",
+    re.I,
+)
+
+
+def _trailing_order_qty(line: str) -> int | None:
+    """Parse right-aligned / × qty from an order-table OCR line."""
+    cleaned = (line or "").strip()
+    if not cleaned:
+        return None
+    m = re.search(r"[×x]\s*(\d{1,3})\s*$", cleaned, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(?:\s{2,}|\t)(\d{1,3})\s*$", cleaned)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _sanity_order_qty(name: str, qty: int) -> int | None:
+    """Reject OCR grabbing model numbers (e.g. Switch Pro Max 48) as order qty."""
+    if qty <= 0 or qty > 99:
+        return None
+    for m in _MODEL_QTY_IN_NAME_RE.finditer(name or ""):
+        model_num = int(m.group(1) or m.group(2) or 0)
+        if model_num == qty and qty >= 10:
+            return None
+    return qty
+
+
+def _order_row_name(line: str, qty: int) -> str:
+    cleaned = (line or "").strip()
+    cleaned = re.sub(r"[×x]\s*\d{1,3}\s*$", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"(?:\s{2,}|\t)\d{1,3}\s*$", "", cleaned).strip()
+    return re.sub(r"\s+", " ", cleaned).strip() or line.strip()
 
 
 def _parse_email_message(path: Path):
@@ -311,7 +348,9 @@ def _hardware_atoms_from_equipment_text(
         cleaned = line.strip()
         if not cleaned or _TRANSCRIPT_SPEECH_LINE_RE.search(cleaned):
             continue
+        matched = False
         for match in _EQUIPMENT_LINE_RE.finditer(cleaned):
+            matched = True
             qty = None
             item = match.group(0)
             for g in reversed([x for x in match.groups() if x]):
@@ -322,6 +361,7 @@ def _hardware_atoms_from_equipment_text(
                 item = str(match.group(2))
             if not qty:
                 continue
+            item = _order_row_name(cleaned, qty)
             atoms.append(
                 EvidenceAtom(
                     id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(qty)),
@@ -346,6 +386,39 @@ def _hardware_atoms_from_equipment_text(
                     parser_version=parser_version,
                 )
             )
+        if matched:
+            continue
+        trail_qty = _trailing_order_qty(cleaned)
+        if trail_qty is None:
+            continue
+        name = _order_row_name(cleaned, trail_qty)
+        trail_qty = _sanity_order_qty(name, trail_qty)
+        if not trail_qty:
+            continue
+        atoms.append(
+            EvidenceAtom(
+                id=stable_id("atm", project_id, artifact_id, "cid_hw", content_id, cleaned, str(trail_qty)),
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.scope_item,
+                raw_text=cleaned,
+                normalized_text=normalize_text(cleaned),
+                value={
+                    "text": cleaned,
+                    "kind": "email_cid_equipment_line",
+                    "quantity": trail_qty,
+                    "item": name,
+                    "content_id": content_id,
+                },
+                entity_keys=[],
+                source_refs=[src],
+                authority_class=AuthorityClass.customer_current_authored,
+                confidence=0.76,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["email_cid_equipment_line"],
+                parser_version=parser_version,
+            )
+        )
     if not atoms and any(ch.isalnum() for ch in text):
         atoms.append(
             EvidenceAtom(
@@ -827,10 +900,17 @@ class EmailParser(BaseParser):
             return []
         inline_parts = _iter_cid_inline_parts(msg)
         referenced = {_normalize_cid(m.group(1)) for m in _CID_REF_RE.finditer(body_text or "")}
+        body_l = (body_text or "").lower()
+        equipment_list_hint = "equipment list" in body_l or "order details" in body_l
         if not inline_parts and not referenced:
             return []
         atoms: list[EvidenceAtom] = []
-        targets = referenced or set(inline_parts.keys())
+        # When the email references an equipment screenshot, OCR every inline image —
+        # not only CIDs mentioned in the plain-text body (HTML-only cid: refs).
+        if equipment_list_hint and inline_parts:
+            targets = set(inline_parts.keys())
+        else:
+            targets = referenced or set(inline_parts.keys())
         for cid in targets:
             part = inline_parts.get(cid)
             if not part:

@@ -135,15 +135,42 @@ def ocr_image_bytes(image_bytes: bytes) -> dict[str, Any]:
 
 def _ocr_image_bytes(image_bytes: bytes, notes: list[str]) -> dict[str, Any]:
     """Common chain for raw image bytes."""
+    # 0) Azure Document Intelligence — best for HubSpot order screenshots.
+    try:
+        from app.core.doc_intel_ocr import doc_intel_available, extract_text_from_image_bytes
+
+        if doc_intel_available():
+            text = extract_text_from_image_bytes(image_bytes) or ""
+            if text.strip():
+                return {
+                    "text": text.strip(),
+                    "backend": "azure_doc_intel",
+                    "confidence": 0.92,
+                    "notes": notes,
+                }
+            notes.append("azure_doc_intel returned no text")
+    except Exception as exc:
+        notes.append(f"azure_doc_intel unavailable: {type(exc).__name__}")
+
     # 1) pytesseract
     try:
         import pytesseract
-        from PIL import Image
+        from PIL import Image, ImageOps
+
         img = Image.open(io.BytesIO(image_bytes))
-        text = pytesseract.image_to_string(img, lang=_ocr_language()) or ""
+        if img.mode not in ("L", "RGB"):
+            img = img.convert("RGB")
+        w, h = img.size
+        if max(w, h) < 1400:
+            scale = 2
+            img = img.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
+        gray = ImageOps.grayscale(img)
+        gray = ImageOps.autocontrast(gray)
+        config = f"--psm 6 --oem 3 -l {_ocr_language()}"
+        text = pytesseract.image_to_string(gray, config=config) or ""
         if text.strip():
             return {
-                "text": text,
+                "text": text.strip(),
                 "backend": "pytesseract",
                 "confidence": 0.80,
                 "notes": notes,

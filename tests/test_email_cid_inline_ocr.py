@@ -304,6 +304,44 @@ def test_cid_pdf_prefers_digital_text_layer(tmp_path, monkeypatch: pytest.Monkey
     assert called["ocr"] == 0
 
 
+def test_trailing_order_qty_ignores_switch_model_number() -> None:
+    from app.parsers.email_parser import (
+        _hardware_atoms_from_equipment_text,
+        _sanity_order_qty,
+        _trailing_order_qty,
+    )
+
+    assert _trailing_order_qty("Switch Pro Max 48 PoE          2") == 2
+    assert _sanity_order_qty("Switch Pro Max 48 PoE", 48) is None
+    assert _sanity_order_qty("Switch Pro Max 48 PoE", 2) == 2
+
+    text = "\n".join(
+        [
+            "Order Details",
+            "Access Point E7 Enterprise          6",
+            "Switch Pro Max 48 PoE               2",
+            "Enterprise NVR                      1",
+            "Access G3 Reader Pro                4",
+            "Access Card                        10",
+            "Protect All-In-One Sensor           2",
+        ]
+    )
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art1",
+        filename="e.eml",
+        text=text,
+        content_id="cid1",
+        parser_version="test",
+    )
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 5
+    by_item = {a.value.get("item", ""): a.value.get("quantity") for a in equipment}
+    assert by_item.get("Access Point E7 Enterprise") == 6
+    assert by_item.get("Switch Pro Max 48 PoE") == 2
+    assert by_item.get("Enterprise NVR") == 1
+
+
 def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.parsers.email_parser._ocr_text_from_cid_inline",

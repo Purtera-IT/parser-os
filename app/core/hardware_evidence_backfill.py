@@ -372,6 +372,7 @@ def _mint_bom_from_email_cid_equipment_lines(
                     qty_n = int(val.get("quantity") or 0)
                 except (TypeError, ValueError):
                     qty_n = 0
+            qty_n = _sanity_cid_line_qty(line, qty_n)
             if qty_n <= 0:
                 continue
             mapped = _sku_from_equipment_text(line) or _sku_from_equipment_text(str(val.get("item") or ""))
@@ -403,6 +404,18 @@ def _parse_qty_from_match(match: re.Match[str]) -> int | None:
         if qty:
             return qty
     return None
+
+
+def _sanity_cid_line_qty(line: str, qty: int) -> int:
+    """Prefer trailing order qty when OCR embeds model numbers in the product name."""
+    if qty <= 0:
+        return 0
+    if qty >= 10 and re.search(rf"(?:max|pro)\s+{qty}\b|\b{qty}\s+poe\b", line, re.I):
+        trail = re.search(r"(?:\s{2,}|\t|[×x]\s*)(\d{1,2})\s*$", line.strip(), re.I)
+        if trail:
+            return int(trail.group(1))
+        return 0
+    return qty
 
 
 def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
