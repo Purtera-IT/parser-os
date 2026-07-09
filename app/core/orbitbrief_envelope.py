@@ -931,7 +931,7 @@ def _atom_section_path(atom: EvidenceAtom) -> list[str]:
     # Prefer lead_in + header so connective tissue survives compact projection.
     val = atom.value or {}
     list_section = str(val.get("list_section") or "").strip().lower()
-    if list_section in {"include", "exclude"}:
+    if list_section in {"include", "exclude", "equipment"}:
         path: list[str] = []
         lead = val.get("lead_in") or val.get("intro")
         if isinstance(lead, list):
@@ -941,10 +941,15 @@ def _atom_section_path(atom: EvidenceAtom) -> list[str]:
                     path.append(s)
         elif isinstance(lead, str) and lead.strip():
             path.append(lead.strip().rstrip(":"))
-        header = val.get("section_header") or (
-            "Include" if list_section == "include" else "Exclude"
-        )
-        path.append(str(header))
+        if list_section == "equipment":
+            header = val.get("section_header") or "Equipment list"
+        else:
+            header = val.get("section_header") or (
+                "Include" if list_section == "include" else "Exclude"
+            )
+        header_s = str(header).strip()
+        if header_s and header_s not in path:
+            path.append(header_s)
         return path
     return []
 
