@@ -79,10 +79,18 @@ def _texts(atoms):
     return [a.raw_text.strip() for a in atoms]
 
 
-def test_email_greeting_not_emitted_as_atom(tmp_path):
-    """The salutation ("Eddie,") is envelope chrome, not deal content."""
+def test_email_greeting_emitted_as_addressee_not_scope(tmp_path):
+    """Body greeting is communication addressee metadata, never scope."""
     atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
-    assert "Eddie," not in _texts(atoms)
+    greetings = [a for a in atoms if a.raw_text.strip() == "Eddie,"]
+    assert len(greetings) == 1
+    assert greetings[0].atom_type == AtomType.deal_metadata
+    assert greetings[0].value.get("kind") == "email_addressee"
+    assert greetings[0].value.get("role") == "to_greeting"
+    assert not any(
+        a.atom_type == AtomType.scope_item and a.raw_text.strip() == "Eddie,"
+        for a in atoms
+    )
 
 
 def test_email_signature_block_stripped(tmp_path):
@@ -183,8 +191,8 @@ def test_email_list_items_carry_section_context_and_per_line_locators(tmp_path):
     assert all(a.atom_type == AtomType.scope_item for a in include_atoms)
 
 
-def test_email_courtesy_prose_not_baseline_scope(tmp_path):
-    """Framing openers must not become fail-open scope_item atoms."""
+def test_email_courtesy_prose_is_body_context_not_scope(tmp_path):
+    """Intro/courtesy prose is email_body_context — never fail-open scope_item."""
     body = "\n".join(
         [
             "From: a@example.com",
@@ -200,9 +208,21 @@ def test_email_courtesy_prose_not_baseline_scope(tmp_path):
     p = tmp_path / "courtesy.eml"
     p.write_text(body, encoding="utf-8")
     atoms = EmailParser().parse_artifact("p", "art_c", p)
-    texts = _texts(atoms)
-    assert not any(t.startswith("Appreciate you hopping") for t in texts)
-    assert "Okta integration" in texts
+    intro = [
+        a
+        for a in atoms
+        if a.raw_text.strip().startswith("Appreciate you hopping")
+    ]
+    assert len(intro) == 1
+    assert intro[0].atom_type == AtomType.deal_metadata
+    assert intro[0].value.get("kind") == "email_body_context"
+    assert intro[0].value.get("role") == "intro"
+    assert not any(
+        a.atom_type == AtomType.scope_item
+        and a.raw_text.strip().startswith("Appreciate you hopping")
+        for a in atoms
+    )
+    assert "Okta integration" in _texts(atoms)
 
 
 def test_email_cid_equipment_sorts_after_body_include_exclude(tmp_path, monkeypatch):
@@ -260,4 +280,8 @@ def test_email_cid_equipment_sorts_after_body_include_exclude(tmp_path, monkeypa
     assert include_line < exclude_line
     assert exclude_line < min(equip_lines)
     assert all(a.source_refs[0].locator.get("kind") == "email_cid_inline" for a in equipment)
-    assert all(a.source_refs[0].locator.get("section_path") == ["Equipment list"] for a in equipment)
+    # Connective tissue: equipment-list intro prefixes section_path when present.
+    for a in equipment:
+        path = a.source_refs[0].locator.get("section_path") or []
+        assert path[-1] == "Equipment list"
+        assert any("equipment list" in str(x).lower() for x in path)

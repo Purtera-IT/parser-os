@@ -239,17 +239,32 @@ def test_email_label_only_dropped():
     assert len(dropped) == 2
 
 
-def test_email_pleasantry_dropped():
+def test_email_pleasantry_scope_dropped_context_kept():
     from app.core.atom_substance_gate import drop_email_non_scope
 
-    atoms = [
-        _mk_email(
-            "Appreciate you hopping on in such short notice. Attached is a summary."
-        ),
-    ]
-    kept, dropped = drop_email_non_scope(atoms)
-    assert kept == []
-    assert len(dropped) == 1
+    # Legacy / mis-typed scope_item pleasantry still drops.
+    scope_pleasantry = _mk_email(
+        "Appreciate you hopping on in such short notice. Attached is a summary."
+    )
+    # Intentional communication atoms must survive the gate.
+    addressee = _mk(
+        "deal_metadata",
+        "Eddie,",
+        value={"text": "Eddie,", "kind": "email_addressee", "role": "to_greeting"},
+    )
+    context = _mk(
+        "deal_metadata",
+        "Appreciate you hopping on in such short notice. Attached is a summary.",
+        value={
+            "text": "Appreciate you hopping on in such short notice. Attached is a summary.",
+            "kind": "email_body_context",
+            "role": "intro",
+        },
+    )
+    kept, dropped = drop_email_non_scope([scope_pleasantry, addressee, context])
+    assert scope_pleasantry in dropped
+    assert addressee in kept
+    assert context in kept
 
 
 def test_email_include_list_item_kept():

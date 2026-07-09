@@ -22,6 +22,11 @@ _GECKO_BODY = "\n".join(
         "",
         "Eddie,",
         "",
+        "Appreciate you hopping on in such short notice. Attached is a summary of the information "
+        "needed to provide a quote as well as the transcript of our conversation with the customer. "
+        "This is one that if we're fast on, definitely feel confident in winning. Let us know if "
+        "there is anything on our side that we can do to help or speed up the process.",
+        "",
         "Below is the full equipment list. One hard requirement for him is Otka integration.",
         "By the end of the meeting customer clarified:",
         "Include:",
@@ -180,6 +185,35 @@ def test_equipment_list_intro_is_connective_not_orphan_scope(tmp_path: Path) -> 
         and a.value.get("kind") == "email_body_line"
     ]
     assert orphan == []
+    # Equipment intro must also not become email_body_context (CID lead_in only).
+    assert not any(
+        a.value.get("kind") == "email_body_context"
+        and "full equipment list" in a.raw_text.lower()
+        for a in atoms
+    )
+
+
+def test_greeting_and_intro_precede_include_exclude(tmp_path: Path) -> None:
+    """Addressee + intro body context sort before Include/Exclude in reading order."""
+    atoms = EmailParser().parse_artifact("p", "art_email", _write_eml(tmp_path))
+
+    addressee = next(a for a in atoms if a.value.get("kind") == "email_addressee")
+    assert addressee.raw_text.strip() == "Eddie,"
+    assert addressee.atom_type == AtomType.deal_metadata
+
+    intro = next(a for a in atoms if a.value.get("kind") == "email_body_context")
+    assert "Appreciate you hopping on" in intro.raw_text
+    assert intro.atom_type == AtomType.deal_metadata
+    assert intro.atom_type != AtomType.scope_item
+
+    include_line = min(
+        a.source_refs[0].locator["line_start"]
+        for a in atoms
+        if a.value.get("list_section") == "include"
+    )
+    addr_line = addressee.source_refs[0].locator["line_start"]
+    intro_line = intro.source_refs[0].locator["line_start"]
+    assert addr_line < intro_line < include_line
 
 
 def test_cid_equipment_carries_equipment_list_lead_in(tmp_path: Path, monkeypatch) -> None:

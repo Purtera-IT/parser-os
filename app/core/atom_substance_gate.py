@@ -25,7 +25,8 @@ never a specific name, deal, or domain term:
 
 4. ``drop_email_non_scope`` — email header metadata, label-only lead-ins
    ("Customer specifically said:"), and pleasantry/sign-off body lines typed
-   as scope are not actionable to any head.
+   as scope are not actionable to any head. Intentional communication atoms
+   (``email_addressee``, ``email_body_context``) are kept.
 
 5. ``drop_transcript_conversational`` — raw transcript turns (page ≥ 1) that
    lack deal substance (no scope verb, no device/vendor entity, no structured
@@ -455,7 +456,12 @@ def _has_deal_substance(text: str, entity_keys: list[str]) -> bool:
 def _is_email_atom(atom: Any) -> bool:
     val = _atom_value(atom)
     kind = str(val.get("kind") or "")
-    if kind in {"email_body_line", "email_header"}:
+    if kind in {
+        "email_body_line",
+        "email_header",
+        "email_addressee",
+        "email_body_context",
+    }:
         return True
     refs = getattr(atom, "source_refs", None) or []
     if refs:
@@ -488,7 +494,12 @@ def drop_section_headers(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Drop email chrome mis-typed as scope: headers, label-only lead-ins,
     pleasantry/sign-off body lines. Real include/exclude list items (with
-    ``list_section`` set) are always kept."""
+    ``list_section`` set) are always kept.
+
+    Intentional communication atoms are also kept:
+    - ``email_addressee`` — body greeting / who the message is addressed to
+    - ``email_body_context`` — intro / logistics prose (not contractual scope)
+    """
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
@@ -498,6 +509,11 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
             continue
         val = _atom_value(atom)
         kind = str(val.get("kind") or "")
+        # Body greeting + intro prose are first-class communication atoms —
+        # never drop them as "non-scope chrome".
+        if kind in {"email_addressee", "email_body_context"}:
+            kept.append(atom)
+            continue
         # Email header metadata — never scope (retyped at parse time to
         # deal_metadata, but catch any legacy scope_item headers too).
         if kind == "email_header":

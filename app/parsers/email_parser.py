@@ -975,8 +975,12 @@ def _is_ocr_junk_equipment_line(cleaned: str) -> bool:
 def _is_greeting_line(cleaned: str) -> bool:
     """True when a line is a salutation opener ("Eddie,", "Hi John,", "Dear
     all,"). Structural: a short line (≤4 words) ending in a comma that is
-    either led by a greeting word or is purely name-shaped tokens. Carries no
-    scope, role, or instruction, so it should never become an atom."""
+    either led by a greeting word or is purely name-shaped tokens.
+
+    These are NOT scope — they are emitted as ``deal_metadata`` /
+    ``email_addressee`` so the body greeting (who the message is addressed to)
+    is preserved in document order, distinct from RFC From/To headers.
+    """
     if not cleaned.endswith(","):
         return False
     words = cleaned.rstrip(",").split()
@@ -994,7 +998,9 @@ _COURTESY_PROSE_RE = re.compile(
     r"hope (?:you(?:'re| are)?|this)\b|just (?:wanted|checking|following)\b|"
     r"wanted to (?:follow|check|touch)\b|as (?:discussed|mentioned)\b|"
     r"please (?:see|find|let me know)\b|attached (?:is|please find)\b|"
-    r"below is\b|see (?:below|attached)\b)",
+    r"below is\b|see (?:below|attached)\b|"
+    r"let (?:me|us) know\b|feel free\b|"
+    r"this is one that\b|if we(?:'re| are) fast\b)",
     re.IGNORECASE,
 )
 
@@ -1003,9 +1009,13 @@ def _is_courtesy_prose_line(cleaned: str) -> bool:
     """True for framing/courtesy prose that must not become baseline scope_item.
 
     Universal structural rule: long conversational openers ("Appreciate you
-    hopping on…", "Attached is a summary…") are email chrome around the deal,
-    not contractual scope. Typed extractors (requirement / exclusion / …) still
-    run; only the fail-open ``scope_item`` gate is skipped.
+    hopping on…", "Attached is a summary…") are email *communication context*,
+    not contractual scope. They are emitted as ``deal_metadata`` /
+    ``email_body_context`` (see body loop). Typed extractors (requirement /
+    exclusion / …) still run; only the fail-open ``scope_item`` gate is skipped.
+
+    Equipment-list intros are also courtesy/framing here so they do not mint
+    orphan scope — they stay connective tissue via CID ``lead_in``.
     """
     text = (cleaned or "").strip()
     if not text or len(text) < 24:
@@ -1041,9 +1051,21 @@ def _is_courtesy_prose_line(cleaned: str) -> bool:
         return True
     if _COURTESY_PROSE_RE.match(text):
         return True
-    if "hopping on" in lowered or "short notice" in lowered:
-        return True
     return False
+
+
+def _is_email_body_context_line(cleaned: str) -> bool:
+    """True when courtesy prose should be kept as an ``email_body_context`` atom.
+
+    Universal: authored intro / logistics paragraphs that frame the ask without
+    being Include/Exclude bullets or equipment-list CID lead-ins. Distinct from
+    ``_is_courtesy_prose_line`` so equipment-list intros stay connective-only.
+    """
+    if not _is_courtesy_prose_line(cleaned):
+        return False
+    if _is_equipment_list_intro_line(cleaned):
+        return False
+    return True
 
 
 def _cid_reading_anchor(
@@ -1944,8 +1966,44 @@ class EmailParser(BaseParser):
             if not block["quoted"] and _SIGNOFF_RE.match(cleaned):
                 in_signature = True
                 continue
-            # 2) Salutation opener — no scope/role/instruction.
+            # 2) Salutation opener — not scope; emit as email addressee so the
+            #    body greeting ("Eddie,", "Hi John,") is preserved in reading
+            #    order ahead of Include/Exclude / equipment. Distinct from the
+            #    RFC To: header on the deal_metadata email_header atom.
             if _is_greeting_line(cleaned):
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id(
+                            "atm",
+                            project_id,
+                            artifact_id,
+                            block["message_index"],
+                            line_num,
+                            "email_addressee",
+                            cleaned,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.deal_metadata,
+                        raw_text=cleaned,
+                        normalized_text=normalize_text(cleaned),
+                        value={
+                            "text": cleaned,
+                            "message_index": block["message_index"],
+                            "quoted": block["quoted"],
+                            "kind": "email_addressee",
+                            "role": "to_greeting",
+                            "line": line_num,
+                        },
+                        entity_keys=entity_keys,
+                        source_refs=[source_ref],
+                        authority_class=authority,
+                        confidence=confidence,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    )
+                )
                 continue
             # 2b) Framing lead-in above Include/Exclude — connective tissue,
             #     not a standalone atom. Hold until the list header arrives.
@@ -2087,13 +2145,58 @@ class EmailParser(BaseParser):
                     )
                 )
 
+            # Courtesy / intro body prose — legitimate email communication
+            # context (not fake scope). Emit as deal_metadata so Atom Quality
+            # can show "Appreciate you hopping on…" without inventing scope.
+            # Equipment-list intros stay connective-only (CID lead_in).
+            if (
+                not atom_types
+                and any(ch.isalnum() for ch in cleaned)
+                and _is_email_body_context_line(cleaned)
+            ):
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id(
+                            "atm",
+                            project_id,
+                            artifact_id,
+                            block["message_index"],
+                            line_num,
+                            "email_body_context",
+                            cleaned,
+                        ),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.deal_metadata,
+                        raw_text=cleaned,
+                        normalized_text=normalize_text(cleaned),
+                        value={
+                            "text": cleaned,
+                            "message_index": block["message_index"],
+                            "quoted": block["quoted"],
+                            "kind": "email_body_context",
+                            "role": "intro",
+                            "line": line_num,
+                        },
+                        entity_keys=entity_keys,
+                        source_refs=[source_ref],
+                        authority_class=authority,
+                        confidence=confidence,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    )
+                )
+                continue
+
             # Baseline body coverage: a body line that matched no typed
             # pattern is still real content — emit it as a scope_item so it
             # is never silently absent from the atom stream (the content
             # census inventories every body line). This mirrors the docx
             # fail-open prose gate and the MboxParser per-paragraph behavior:
             # keep + let the downstream learnable seam decide, never drop.
-            # Courtesy/framing prose is email chrome — skip the fail-open gate.
+            # Courtesy/framing prose is handled above (context atom or CID
+            # connective) — never fail-open as scope_item.
             if (
                 not atom_types
                 and any(ch.isalnum() for ch in cleaned)
