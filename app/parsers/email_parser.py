@@ -94,6 +94,29 @@ _MODEL_QTY_IN_NAME_RE = re.compile(
 )
 
 
+def _glued_trailing_order_qty(line: str) -> int | None:
+    """OCR sometimes glues order qty to the product name (e.g. ``... PoE 2``)."""
+    cleaned = (line or "").strip()
+    if not cleaned:
+        return None
+    m = re.search(r"(\d{1,2})\s*$", cleaned)
+    if not m:
+        return None
+    qty = int(m.group(1))
+    if qty <= 0:
+        return None
+    stem = cleaned[: m.start(1)].rstrip()
+    if not stem:
+        return None
+    for mx in _MODEL_QTY_IN_NAME_RE.finditer(stem):
+        model_num = int(mx.group(1) or mx.group(2) or 0)
+        if model_num == qty and qty >= 10:
+            return None
+    if qty <= 10:
+        return qty
+    return None
+
+
 def _trailing_order_qty(line: str) -> int | None:
     """Parse right-aligned / × qty from an order-table OCR line."""
     cleaned = (line or "").strip()
@@ -104,7 +127,14 @@ def _trailing_order_qty(line: str) -> int | None:
         return int(m.group(1))
     m = re.search(r"(?:\s{2,}|\t)(\d{1,3})\s*$", cleaned)
     if m:
-        return int(m.group(1))
+        qty = int(m.group(1))
+        name = cleaned[: m.start(1)].rstrip()
+        sane = _sanity_order_qty(name, qty)
+        if sane is not None:
+            return sane
+    glued = _glued_trailing_order_qty(cleaned)
+    if glued is not None:
+        return glued
     return None
 
 
@@ -123,6 +153,8 @@ def _order_row_name(line: str, qty: int) -> str:
     cleaned = (line or "").strip()
     cleaned = re.sub(r"[×x]\s*\d{1,3}\s*$", "", cleaned, flags=re.I).strip()
     cleaned = re.sub(r"(?:\s{2,}|\t)\d{1,3}\s*$", "", cleaned).strip()
+    if qty and re.search(rf"\s{qty}\s*$", cleaned):
+        cleaned = re.sub(rf"\s{qty}\s*$", "", cleaned).strip()
     return re.sub(r"\s+", " ", cleaned).strip() or line.strip()
 
 
@@ -331,8 +363,28 @@ def _score_cid_ocr_text(text: str) -> int:
     )
     score += product_hits * 20
     if _TRANSCRIPT_DOC_RE.search(raw):
-        score -= 150
+        score -= 400
+    if re.search(r"\bmeeting summary\b", raw, re.I):
+        score -= 200
+    orderish = len(re.findall(r"(?:\s{2,}|\t|[×x]\s*)\d{1,3}\s*$", raw, re.I | re.M))
+    score += min(orderish, 12) * 15
     return score
+
+
+def _pick_best_cid_ocr(ocr_by_cid: dict[str, str]) -> tuple[str, str]:
+    """Choose inline screenshot OCR — prefer HubSpot order tables over transcript embeds."""
+    if not ocr_by_cid:
+        return "", ""
+    ranked = sorted(
+        ocr_by_cid.items(),
+        key=lambda kv: _score_cid_ocr_text(kv[1]),
+        reverse=True,
+    )
+    for cid, blob in ranked:
+        if _ORDER_DETAILS_HDR_RE.search(blob or ""):
+            return cid, blob
+    cid, blob = ranked[0]
+    return cid, blob or ""
 
 
 def _ocr_cid_part(part: dict[str, Any]) -> str:
@@ -934,7 +986,11 @@ class EmailParser(BaseParser):
         inline_parts = _iter_cid_inline_parts(msg)
         referenced = {_normalize_cid(m.group(1)) for m in _CID_REF_RE.finditer(body_text or "")}
         body_l = (body_text or "").lower()
-        equipment_list_hint = "equipment list" in body_l or "order details" in body_l
+        equipment_list_hint = (
+            "equipment list" in body_l
+            or "full equipment list" in body_l
+            or "order details" in body_l
+        )
         if not inline_parts and not referenced:
             return []
         atoms: list[EvidenceAtom] = []
@@ -961,23 +1017,59 @@ class EmailParser(BaseParser):
                 continue
             ocr_by_cid[cid] = _ocr_cid_part(part)
 
+        equipment_lines: list[EvidenceAtom] = []
         if ocr_by_cid:
-            best_cid = max(ocr_by_cid, key=lambda c: _score_cid_ocr_text(ocr_by_cid[c]))
-            best_text = ocr_by_cid.get(best_cid) or ""
-            if _score_cid_ocr_text(best_text) > 0:
-                atoms.extend(
-                    _hardware_atoms_from_equipment_text(
+            if equipment_list_hint and len(ocr_by_cid) > 1:
+                best_count = 0
+                best_batch: list[EvidenceAtom] = []
+                for cid, text in ocr_by_cid.items():
+                    batch = _hardware_atoms_from_equipment_text(
                         project_id=project_id,
                         artifact_id=artifact_id,
                         filename=path.name,
-                        text=best_text,
-                        content_id=best_cid,
+                        text=text,
+                        content_id=cid,
                         parser_version=self.parser_version,
                     )
-                )
-        if not any(a.value.get("kind") == "email_cid_equipment_line" for a in atoms):
+                    eq = [a for a in batch if a.value.get("kind") == "email_cid_equipment_line"]
+                    if len(eq) > best_count:
+                        best_count = len(eq)
+                        best_batch = eq
+                if best_batch:
+                    equipment_lines = best_batch
+                else:
+                    pick_cid, pick_text = _pick_best_cid_ocr(ocr_by_cid)
+                    if _score_cid_ocr_text(pick_text) > 0:
+                        equipment_lines = [
+                            a
+                            for a in _hardware_atoms_from_equipment_text(
+                                project_id=project_id,
+                                artifact_id=artifact_id,
+                                filename=path.name,
+                                text=pick_text,
+                                content_id=pick_cid,
+                                parser_version=self.parser_version,
+                            )
+                            if a.value.get("kind") == "email_cid_equipment_line"
+                        ]
+            else:
+                pick_cid, pick_text = _pick_best_cid_ocr(ocr_by_cid)
+                if _score_cid_ocr_text(pick_text) > 0:
+                    equipment_lines = [
+                        a
+                        for a in _hardware_atoms_from_equipment_text(
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=path.name,
+                            text=pick_text,
+                            content_id=pick_cid,
+                            parser_version=self.parser_version,
+                        )
+                        if a.value.get("kind") == "email_cid_equipment_line"
+                    ]
+        if not equipment_lines:
             for cid, text in ocr_by_cid.items():
-                atoms.extend(
+                equipment_lines.extend(
                     _hardware_atoms_from_equipment_text(
                         project_id=project_id,
                         artifact_id=artifact_id,
@@ -987,6 +1079,8 @@ class EmailParser(BaseParser):
                         parser_version=self.parser_version,
                     )
                 )
+        atoms.extend(equipment_lines)
+        has_equipment = any(a.value.get("kind") == "email_cid_equipment_line" for a in atoms)
         if referenced:
             resolved = {
                 cid
@@ -998,6 +1092,8 @@ class EmailParser(BaseParser):
                 )
             }
             for cid in sorted(referenced - resolved):
+                if has_equipment and cid in inline_parts:
+                    continue
                 if not any(
                     a.value.get("kind") == "email_cid_unresolved"
                     and cid in (a.value.get("content_ids") or [])
@@ -1012,6 +1108,7 @@ class EmailParser(BaseParser):
                             referenced=sorted(referenced),
                         )
                     )
+
         return atoms
 
     def _unresolved_cid_atom(

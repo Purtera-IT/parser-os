@@ -408,15 +408,23 @@ def _parse_qty_from_match(match: re.Match[str]) -> int | None:
 
 def _sanity_cid_line_qty(line: str, qty: int) -> int:
     """Prefer trailing order qty when OCR embeds model numbers in the product name."""
+    cleaned = (line or "").strip()
     if qty <= 0:
         return 0
-    if qty >= 10 and re.search(rf"(?:max|pro)\s+{qty}\b|\b{qty}\s+poe\b", line, re.I):
-        trail = re.search(r"(?:\s{2,}|\t|[×x]\s*)(\d{1,2})\s*$", line.strip(), re.I)
+    glued = re.search(r"(\d{1,2})\s*$", cleaned)
+    if glued and qty >= 10:
+        glued_qty = int(glued.group(1))
+        stem = cleaned[: glued.start(1)].rstrip()
+        if glued_qty <= 10 and re.search(rf"(?:max|pro)\s+{qty}\b|\b{qty}\s+poe\b", stem, re.I):
+            return glued_qty
+    if qty >= 10 and re.search(rf"(?:max|pro)\s+{qty}\b|\b{qty}\s+poe\b", cleaned, re.I):
+        trail = re.search(r"(?:\s{2,}|\t|[×x]\s*)(\d{1,2})\s*$", cleaned, re.I)
         if trail:
             return int(trail.group(1))
+        if glued and int(glued.group(1)) <= 10:
+            return int(glued.group(1))
         return 0
     return qty
-
 
 def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
     """Add bom_line atoms from grounded equipment counts in scope prose."""

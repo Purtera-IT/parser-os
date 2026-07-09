@@ -433,3 +433,89 @@ def test_iter_cid_inline_parts_finds_image_part() -> None:
     parts = _iter_cid_inline_parts(msg)
     assert "07131976-d75d-4133-b5d2-52a8919274ba" in parts
     assert parts["07131976-d75d-4133-b5d2-52a8919274ba"]["is_image"] is True
+
+
+def test_glued_trailing_qty_on_garbled_switch_and_protect() -> None:
+    from app.parsers.email_parser import _hardware_atoms_from_equipment_text
+
+    text = "\n".join(
+        [
+            "Protect All-In-One Sensor 2",
+            "Switch Pro Max 48 PoE 2",
+        ]
+    )
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art1",
+        filename="e.eml",
+        text=text,
+        content_id="cid-order",
+        parser_version="test",
+    )
+    by_item = {a.value.get("item", ""): a.value.get("quantity") for a in atoms}
+    assert by_item.get("Protect All-In-One Sensor") == 2
+    assert by_item.get("Switch Pro Max 48 PoE") == 2
+
+
+def test_equipment_list_ocr_picks_richest_table_over_transcript(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transcript_cid = "07131976-d75d-4133-b5d2-52a8919274ba"
+    order_cid = "f41c1a3b-2993-42e3-a181-e2441b3942d0"
+    transcript_ocr = "\n".join(
+        [
+            "Meeting Summary and Full Transcript",
+            "Protect All-In-One Sensor 2",
+            "Switch Pro Max 48 PoE 2",
+        ]
+    )
+
+    def _fake_ocr_part(part: dict) -> str:
+        cid = str(part.get("content_id") or "")
+        if cid == order_cid:
+            return _HUBSPOT_ORDER_TABLE_TEXT
+        if cid == transcript_cid:
+            return transcript_ocr
+        return ""
+
+    monkeypatch.setattr("app.parsers.email_parser._ocr_cid_part", _fake_ocr_part)
+
+    mixed = "=_Mixed_gecko"
+    related = "=_Related_gecko"
+    png_b64 = base64.b64encode(_TINY_PNG).decode("ascii")
+    body = "Below is the full equipment list.\n"
+    lines = [
+        "From: patrick@example.com",
+        "Subject: Equipment list",
+        f'Content-Type: multipart/mixed; boundary="{mixed}"',
+        "",
+        f"--{mixed}",
+        f'Content-Type: multipart/related; boundary="{related}"',
+        "",
+        f"--{related}",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        body + f"[cid:{transcript_cid}]\n[cid:{order_cid}]\n",
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{transcript_cid}@hubspot-ingest>",
+        "",
+        png_b64,
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{order_cid}@hubspot-ingest>",
+        "",
+        png_b64 + "x" * 120,
+        f"--{related}--",
+        f"--{mixed}--",
+        "",
+    ]
+    eml = tmp_path / "gecko-dual-inline.eml"
+    eml.write_bytes("\r\n".join(lines).encode("utf-8"))
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_gecko_dual", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    unresolved = [a for a in atoms if a.value.get("kind") == "email_cid_unresolved"]
+    assert len(equipment) >= 8
+    assert {a.value.get("content_id") for a in equipment} == {order_cid}
+    assert unresolved == []
