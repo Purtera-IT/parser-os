@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.core.address_parse import (
     enrich_location_fields,
+    find_us_addresses_in_text,
     parse_city_state_field,
     parse_us_address_line,
 )
@@ -42,6 +43,20 @@ def test_hubspot_note_address_without_state_zip_space() -> None:
     assert parsed.state == "PA"
     assert parsed.zip == "15212"
     assert parsed.aliases == ("GECKO ROBOTICS",)
+
+
+def test_hubspot_note_all_lowercase_city_state_zip() -> None:
+    """Trent-style HubSpot notes are often typed entirely lowercase."""
+    raw = "100 south ashley drive suite 500 tampa fl 33602"
+    parsed = parse_us_address_line(raw)
+    assert parsed.street_address == "100 south ashley drive suite 500"
+    assert parsed.city.lower() == "tampa"
+    assert parsed.state == "FL"
+    assert parsed.zip == "33602"
+    found = find_us_addresses_in_text(raw)
+    assert len(found) == 1
+    assert found[0].state == "FL"
+    assert found[0].zip == "33602"
 
 
 def test_city_state_field_split() -> None:

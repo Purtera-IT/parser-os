@@ -144,3 +144,102 @@ def test_note_provenance_backfill_mints_pointer_when_note_has_no_atoms(tmp_path:
     note_atoms = [a for a in out if getattr(a, "artifact_id", "") == "art_note"]
     assert len(note_atoms) == 1
     assert note_atoms[0].value.get("duplicate_of") == "atm_art_pdf"
+
+
+def test_note_provenance_backfill_remints_address_note_as_physical_site(tmp_path: Path) -> None:
+    """Trent-style all-lowercase address notes must remint as physical_site."""
+    from app.core.schemas import AtomType
+
+    note = tmp_path / "010097-hs-note-112676376893-ashley.txt"
+    note.write_text(
+        "\n".join(
+            [
+                "HubSpot Note: 100 south ashley drive suite 500 tampa fl 33602",
+                "HubSpot Note ID: 112676376893",
+                "Date: 2026-07-09T16:35:02.874Z",
+                "Author: Trent Torrence",
+                "Author-Email: t@purtera-it.com",
+                "",
+                "100 south ashley drive suite 500 tampa fl 33602",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out, minted = ensure_hubspot_note_provenance(
+        [],
+        project_id="deal-stinson",
+        artifact_paths={"art_note": note},
+    )
+    assert minted == 1
+    note_atoms = [a for a in out if getattr(a, "artifact_id", "") == "art_note"]
+    assert len(note_atoms) == 1
+    site = note_atoms[0]
+    assert site.atom_type == AtomType.physical_site
+    assert site.value["city"].lower() == "tampa"
+    assert site.value["state"] == "FL"
+    assert site.value["zip"] == "33602"
+    assert "hubspot_note_physical_site" in site.review_flags
+    assert "site:tampa_fl_33602" in site.entity_keys
+
+
+def test_note_provenance_remints_site_when_deal_metadata_remains(tmp_path: Path) -> None:
+    """Address notes must remint physical_site even if deal_metadata survived dedup."""
+    from app.core.schemas import (
+        ArtifactType,
+        AtomType,
+        AuthorityClass,
+        EvidenceAtom,
+        ReviewStatus,
+        SourceRef,
+    )
+
+    note = tmp_path / "010097-hs-note-112676376893-ashley.txt"
+    note.write_text(
+        "\n".join(
+            [
+                "HubSpot Note: 100 south ashley drive suite 500 tampa fl 33602",
+                "HubSpot Note ID: 112676376893",
+                "Date: 2026-07-09T16:35:02.874Z",
+                "Author: Trent Torrence",
+                "",
+                "100 south ashley drive suite 500 tampa fl 33602",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    leftover = EvidenceAtom(
+        id="atm_meta",
+        project_id="deal-stinson",
+        artifact_id="art_note",
+        atom_type=AtomType.deal_metadata,
+        raw_text="hubspot note provenance",
+        normalized_text="hubspot note provenance",
+        value={"field_name": "hubspot_note_provenance", "text": "hubspot note provenance"},
+        entity_keys=[],
+        source_refs=[
+            SourceRef(
+                id="s1",
+                artifact_id="art_note",
+                artifact_type=ArtifactType.txt,
+                filename=note.name,
+                locator={},
+                extraction_method="t",
+                parser_version="t",
+            )
+        ],
+        authority_class=AuthorityClass.meeting_note,
+        confidence=0.5,
+        review_status=ReviewStatus.needs_review,
+        review_flags=["note_provenance_backfill"],
+        parser_version="t",
+    )
+    out, minted = ensure_hubspot_note_provenance(
+        [leftover],
+        project_id="deal-stinson",
+        artifact_paths={"art_note": note},
+    )
+    assert minted == 1
+    sites = [a for a in out if a.atom_type == AtomType.physical_site]
+    assert len(sites) == 1
+    assert sites[0].value["zip"] == "33602"
+    assert "hubspot_note_physical_site" in sites[0].review_flags

@@ -29,11 +29,15 @@ _STREET_SUFFIXES = frozenset({
 _HOUSE_NUMBER_RE = re.compile(r"^\d{1,6}\b")
 
 # Embedded or line-ending ``City, ST ZIP`` (not greedy-left across the whole line).
+# IGNORECASE: HubSpot notes are often typed all-lowercase
+# (``100 south ashley drive suite 500 tampa fl 33602``). Title-case-only
+# matching silently dropped those into deal_metadata with no physical_site.
 _CITY_STATE_ZIP_RE = re.compile(
-    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,?\s+"
+    r"\b([A-Za-z][A-Za-z.'\-]+(?:\s+[A-Za-z][A-Za-z.'\-]+){0,3})\s*,?\s+"
     # HubSpot notes are often typed as "PITTSBURGH, PA15212-5359" (no
     # space between state and ZIP). Accept both "PA 15212" and "PA15212".
-    r"([A-Z]{2})\s*(\d{5})(?:-\d{4})?\b"
+    r"([A-Za-z]{2})\s*(\d{5})(?:-\d{4})?\b",
+    re.IGNORECASE,
 )
 
 
@@ -178,8 +182,9 @@ def _parse_trailing_city_state_no_zip(street: str) -> ParsedAddress | None:
     """Parse ``3030 E 1st Ave, Denver CO`` when ZIP is absent."""
     raw = _clean(street) or ""
     m = re.search(
-        r"^(.+?),\s*([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,2})\s+([A-Z]{2})\s*$",
+        r"^(.+?),\s*([A-Za-z][A-Za-z.'\-]+(?:\s+[A-Za-z][A-Za-z.'\-]+){0,2})\s+([A-Za-z]{2})\s*$",
         raw,
+        re.IGNORECASE,
     )
     if not m:
         return None
@@ -400,3 +405,4 @@ __all__ = [
     "parse_city_state_field",
     "parse_us_address_line",
 ]
+

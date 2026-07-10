@@ -792,6 +792,17 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 fk = _nf(v.get(field))
                 if fk and fk in facility_to_canonical:
                     return facility_to_canonical[fk]
+            # HubSpot / email address notes mint real job sites with
+            # city_st_zip slugs (``tampa_fl_33602``). Those are not
+            # OPTBOT-style facility-name ghosts — keep them even when a
+            # structural roster exists elsewhere on the deal.
+            flags = list(getattr(atom, "review_flags", None) or [])
+            if (
+                "hubspot_note_physical_site" in flags
+                or "email_note_physical_site" in flags
+                or _is_geo_fallback_physical_site(atom)
+            ):
+                return sid
             # No match against any complete atom — ghost emission with a
             # synthetic site_id and no canonical address/facility to
             # merge into. Drop it. Safe: a genuine new site would have
@@ -1263,6 +1274,9 @@ _CROSS_TYPE_PRIORITY: dict[str, int] = {
     "requirement": 5,
     "exclusion": 5,
     "constraint": 6,
+    # HubSpot address notes emit scope_item + physical_site for the same
+    # street line; physical_site must win or the job site disappears.
+    "physical_site": 9,
     "service_line": 7,
     "bom_line": 7,
     "pricing_assumption": 7,
