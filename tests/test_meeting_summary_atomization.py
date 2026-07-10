@@ -95,6 +95,20 @@ def test_atoms_from_structured_meeting_summary_carry_connective_tissue():
                 "title": "Meeting Summary and Full Transcript",
                 "sections": [
                     {
+                        "heading": "Executive Summary",
+                        "level": 2,
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [
+                                    {"text": "Badge access is in scope."},
+                                    {"text": "SSO is required."},
+                                ],
+                            }
+                        ],
+                        "subsections": [],
+                    },
+                    {
                         "heading": "Action Items",
                         "level": 2,
                         "blocks": [
@@ -134,7 +148,19 @@ def test_atoms_from_structured_meeting_summary_carry_connective_tissue():
             parser_version="test",
         )
     )
-    assert len(atoms) == 3
+    assert len(atoms) == 5
+    # Document order: Exec → Action → Decisions (block_index survives id-sort).
+    texts = [a.raw_text or "" for a in atoms]
+    assert texts[0].startswith("Badge access")
+    assert texts[2].startswith("Jacob to send")
+    assert texts[-1].startswith("Project should be performed remotely")
+    for i, a in enumerate(atoms):
+        loc = a.source_refs[0].locator
+        assert loc.get("block_index") == i
+        assert loc.get("section_path", [None])[0] == "Meeting Summary and Full Transcript"
+        lead = loc.get("lead_in") or []
+        assert "Meeting Summary and Full Transcript" in lead
+
     action = [a for a in atoms if "Jacob" in (a.raw_text or "")]
     assert len(action) == 1
     loc = action[0].source_refs[0].locator
@@ -143,12 +169,82 @@ def test_atoms_from_structured_meeting_summary_carry_connective_tissue():
     val = action[0].value or {}
     assert val.get("list_section") == "action_items"
     assert val.get("section_header") == "Action Items"
+    assert "Meeting Summary and Full Transcript" in (val.get("lead_in") or [])
 
     decision = [a for a in atoms if "remotely" in (a.raw_text or "")]
     assert len(decision) == 1
     dloc = decision[0].source_refs[0].locator
     assert "Key Decisions" in (dloc.get("section_path") or [])
     assert (decision[0].value or {}).get("list_section") == "key_decisions"
+
+
+def test_meeting_summary_block_index_survives_id_sort():
+    """Compiler sorts by atom.id; block_index must still restore reading order."""
+    structured = {
+        "document": {"title": "Meeting Summary and Full Transcript"},
+        "pages": [
+            {
+                "page": 0,
+                "sections": [
+                    {
+                        "heading": "Executive Summary",
+                        "level": 2,
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [
+                                    {"text": "Zebra comes first in document order."},
+                                    {"text": "Apple comes second in document order."},
+                                ],
+                            }
+                        ],
+                        "subsections": [],
+                    },
+                    {
+                        "heading": "Action Items",
+                        "level": 2,
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [
+                                    {"text": "Mango action item is third overall."},
+                                ],
+                            }
+                        ],
+                        "subsections": [],
+                    },
+                ],
+            }
+        ],
+    }
+    atoms = list(
+        atoms_from_structured_doc(
+            structured_doc=structured,
+            project_id="proj_demo",
+            artifact_id="art_demo",
+            filename="Meeting_Summary_and_Full_Transcript.pdf",
+            parser_version="test",
+        )
+    )
+    by_id = sorted(atoms, key=lambda a: a.id)
+    restored = sorted(
+        by_id,
+        key=lambda a: (a.source_refs[0].locator or {}).get("block_index", 10**9),
+    )
+    assert [a.raw_text for a in restored] == [
+        "Zebra comes first in document order.",
+        "Apple comes second in document order.",
+        "Mango action item is third overall.",
+    ]
+    assert "Meeting Summary and Full Transcript" in (
+        (restored[0].source_refs[0].locator or {}).get("lead_in") or []
+    )
+    assert "Executive Summary" in (
+        (restored[0].source_refs[0].locator or {}).get("lead_in") or []
+    )
+    assert "Action Items" in (
+        (restored[2].source_refs[0].locator or {}).get("lead_in") or []
+    )
 
 
 def test_glued_paragraph_above_bullet_list_stamps_trailing_header():

@@ -3510,15 +3510,50 @@ def atoms_from_structured_doc(
     # vendor_line_item on every paragraph in the doc (electrical test specs
     # included). Classification runs on the sub-headings; the root is prepended
     # to the locator afterward.
+    #
+    # Also stamp ``block_index`` (monotonic emit order) and carry the title on
+    # ``lead_in``. The compiler/envelope sort atoms by id, so audit UIs restore
+    # reading order via block_index — same role as DOCX ``para_order`` / email
+    # ``line_start``. Title-on-lead_in matches DOCX Title→section root and email
+    # framing connective tissue (meeting-summary / hybrid summary pages used to
+    # skip this and only got section headers).
     doc_title = (structured_doc.get("document") or {}).get("title")
+    emit_seq = [0]
 
     def _root_atom(atom: EvidenceAtom) -> EvidenceAtom:
-        if doc_title and getattr(atom, "source_refs", None):
-            loc = getattr(atom.source_refs[0], "locator", None)
-            if isinstance(loc, dict):
-                sp = loc.get("section_path") or []
-                if not sp or sp[0] != doc_title:
-                    loc["section_path"] = [doc_title, *sp]
+        if not getattr(atom, "source_refs", None):
+            return atom
+        loc = getattr(atom.source_refs[0], "locator", None)
+        if not isinstance(loc, dict):
+            return atom
+        # Stable reading-order index for post-compile id-sort recovery.
+        # Stamp both block_index (PDF/DOCX audit key) and line_start (email
+        # audit key) so every consumer restores reading order the same way.
+        if "block_index" not in loc:
+            loc["block_index"] = emit_seq[0]
+        if "line_start" not in loc:
+            loc["line_start"] = emit_seq[0]
+            loc["line_end"] = emit_seq[0]
+        emit_seq[0] += 1
+        if not doc_title:
+            return atom
+        sp = loc.get("section_path") or []
+        if not sp or sp[0] != doc_title:
+            loc["section_path"] = [doc_title, *sp]
+        lead = [str(x).strip() for x in (loc.get("lead_in") or []) if str(x or "").strip()]
+        if doc_title not in lead:
+            lead = [doc_title, *lead]
+            loc["lead_in"] = lead
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict):
+            vlead = [str(x).strip() for x in (val.get("lead_in") or []) if str(x or "").strip()]
+            if doc_title not in vlead:
+                vlead = [doc_title, *vlead]
+                val["lead_in"] = vlead
+            # Keep intro as the deepest connective (section header), not the
+            # document title alone — title still rides on lead_in / section_path.
+            if vlead:
+                val["intro"] = vlead[-1] if len(vlead) > 1 else vlead[0]
         return atom
 
     for page in structured_doc.get("pages", []):
