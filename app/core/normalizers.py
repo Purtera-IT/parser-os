@@ -170,9 +170,11 @@ def parse_timestamp(line: str) -> str | None:
 # export diarization. Structural (Name tokens + bracket clock), not a name list.
 # Initials ("J.") allowed; trailing period on multi-letter words is not (avoids
 # "Hey.\\nTrent … [00:56]" being parsed as a speaker).
+# Only [ \t] between name tokens — never newlines — so sticky section
+# headers on the previous line cannot be absorbed into the speaker.
 _NAME_BRACKET_TS_RE = re.compile(
-    r"^(?P<speaker>[A-Z](?:[A-Za-z'\-]+|\.)(?:\s+[A-Z](?:[A-Za-z0-9'\-]+|\.)){0,4})"
-    r"\s*\[(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\]\s*:?\s*(?P<body>.*)$"
+    r"^(?P<speaker>[A-Z](?:[A-Za-z'\-]+|\.)(?:[ \t]+[A-Z](?:[A-Za-z0-9'\-]+|\.)){0,4})"
+    r"[ \t]*\[(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\][ \t]*:?[ \t]*(?P<body>.*)$"
 )
 
 

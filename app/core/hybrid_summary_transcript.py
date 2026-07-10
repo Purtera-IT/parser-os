@@ -44,10 +44,27 @@ _EXEC_SUMMARY_MARKER_RE = re.compile(
 # Name tokens allow hyphens/apostrophes and single-letter initials ("J."), but
 # NOT a trailing period on a multi-letter word — otherwise "Hey.\nTrent … [00:56]"
 # greedily becomes speaker="Hey.\\nTrent …".
+# CRITICAL: only [ \t] between name tokens — never newlines. Sticky PDF
+# section headers ("Key Decisions\nFull Transcript Alex … [00:04]") must NOT
+# be absorbed into the speaker name.
 _SPEAKER_TS_RE = re.compile(
-    r"(?:(?<=^)|(?<=\s))"
-    r"(?P<speaker>[A-Z](?:[A-Za-z'\-]+|\.)(?:\s+[A-Z](?:[A-Za-z0-9'\-]+|\.)){0,4})"
-    r"\s*\[(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\]\s*:?\s*",
+    r"(?:(?<=^)|(?<=[\s]))"
+    r"(?P<speaker>[A-Z](?:[A-Za-z'\-]+|\.)(?:[ \t]+[A-Z](?:[A-Za-z0-9'\-]+|\.)){0,4})"
+    r"[ \t]*\[(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\][ \t]*:?[ \t]*",
+)
+
+# Sticky / inline meeting-summary chrome that text-rich PDF extracts often
+# repeat onto every transcript page as a heading (or glue before the first
+# speaker stamp). Closed-class structural labels only — never deal vocabulary.
+_MEETING_SECTION_CHROME_RE = re.compile(
+    r"(?im)^[ \t]*(?:key\s+decisions?|action\s+items?|executive\s+summary|"
+    r"open\s+questions?|attendees?|participants?|next\s+steps?|agenda|"
+    r"discussion|notes|follow[\s-]?ups?|full\s+transcripts?|"
+    r"meeting\s+summary(?:\s+and\s+full\s+transcripts?)?)"
+    r"[ \t]*:?[ \t]*$"
+)
+_FULL_TRANSCRIPT_INLINE_RE = re.compile(
+    r"(?im)(?:^|(?<=\n))[ \t]*full\s+transcripts?[ \t]*:?[ \t]+(?=[A-Z])"
 )
 
 # Greeting / intro / logistics — closed-class social language. A turn that
@@ -63,10 +80,14 @@ _GREETING_RE = re.compile(
 )
 _INTRO_RE = re.compile(
     r"(?:"
-    r"(?:i(?:'m|\s+am)\s+\w+.{0,40}(?:co-?founder|engineer|manager|director|specialist))|"
+    r"(?:i(?:'m|\s+am)\s+(?:one\s+of\s+the\s+)?co[-\s]?founders?\b)|"
+    r"(?:i(?:'m|\s+am)\s+\w[\w\-']*.{0,48}"
+    r"(?:co[-\s]?founders?|engineer|manager|director|specialist|aes\b))|"
     r"(?:introduce\s+yourself|introductions?\s+real\s+quick|knock\s+those\s+out)|"
     r"(?:start\s+some\s+introductions)|"
-    r"(?:i(?:'m|\s+am)\s+a\s+\w+)"
+    r"(?:i(?:'m|\s+am)\s+a\s+\w+)|"
+    r"(?:looking\s+forward\s+to\s+digging\s+in)|"
+    r"(?:joining\s+will\s+be\b)"
     r")",
     re.IGNORECASE,
 )
@@ -77,6 +98,13 @@ _LOGISTICS_RE = re.compile(
     r"(?:can\s+you\s+(?:hear|repeat)|i(?:'m| am)\s+not\s+hearing)|"
     r"(?:sorry|apolog|no\s+worries|excuse\s+me)|"
     r"(?:call\s+him\s+on\s+(?:his\s+)?cell|team'?s?\s+message)"
+    r")",
+    re.IGNORECASE,
+)
+_SIGNOFF_RE = re.compile(
+    r"(?:"
+    r"(?:^|\.\s*)(?:thanks|thank\s+you|appreciate(?:\s+it)?|bye|goodbye|take\s+care)\b|"
+    r"(?:talk\s+soon|catch\s+you\s+later|have\s+a\s+good\s+(?:one|day|night))"
     r")",
     re.IGNORECASE,
 )
@@ -293,6 +321,31 @@ def split_speaker_timestamp_turns(text: str) -> list[SpeakerTurn]:
     return turns
 
 
+def strip_transcript_section_chrome(text: str) -> str:
+    """Remove sticky meeting-summary headers and inline ``Full Transcript`` labels.
+
+    Text-rich PDF extracts often repeat the last summary heading (e.g.
+    ``Key Decisions``) onto every subsequent transcript page, and glue
+    ``Full Transcript`` onto the first speaker stamp. Both poison speaker
+    splits and pollute atom text. Universal / structural only.
+    """
+    if not text:
+        return ""
+    # Drop whole-line section chrome first.
+    lines = [
+        ln
+        for ln in text.splitlines()
+        if ln.strip() and not _MEETING_SECTION_CHROME_RE.match(ln)
+    ]
+    cleaned = "\n".join(lines)
+    # Strip an inline ``Full Transcript`` prefix glued onto a speaker stamp.
+    cleaned = _FULL_TRANSCRIPT_INLINE_RE.sub(
+        lambda m: "\n" if ("\n" in m.group(0)) else "",
+        cleaned,
+    )
+    return cleaned.strip()
+
+
 def classify_transcript_turn_role(text: str) -> TurnRole:
     """Classify a single utterance as greeting/intro/logistics/filler/deal.
 
@@ -312,6 +365,9 @@ def classify_transcript_turn_role(text: str) -> TurnRole:
         return "intro"
     if _LOGISTICS_RE.search(probe):
         return "logistics"
+    # Closing thanks / bye without deal substance → filler (not scope).
+    if _SIGNOFF_RE.search(probe):
+        return "filler"
     # Short social turns without substance → filler
     tokens = [t for t in re.findall(r"[a-z0-9]+", probe.lower()) if t]
     if len(tokens) < 8:
@@ -560,7 +616,10 @@ def rewrite_hybrid_pdf_atoms(
         if plan.kind == "hybrid" and page_idx == start:
             m = _FULL_TRANSCRIPT_MARKER_RE.search(turns_text)
             if m:
-                turns_text = turns_text[m.start() :]
+                # Advance past the marker itself — do not keep
+                # ``Full Transcript`` glued onto the first speaker stamp.
+                turns_text = turns_text[m.end() :]
+        turns_text = strip_transcript_section_chrome(turns_text)
         turns = split_speaker_timestamp_turns(turns_text)
         if not turns and count_speaker_timestamp_hits(turns_text) == 0:
             continue
@@ -569,18 +628,30 @@ def rewrite_hybrid_pdf_atoms(
             # Section chrome ("Full Transcript: …") with no body.
             label = ""
             if turn.speaker and turn.timestamp:
+                # Reject speakers that absorbed section chrome / newlines.
+                if "\n" in (turn.speaker or "") or _MEETING_SECTION_CHROME_RE.match(
+                    (turn.speaker or "").strip()
+                ):
+                    continue
                 label = f"{turn.speaker} [{turn.timestamp}]"
             display = f"{label} {body}".strip() if body else label
             if not display:
                 continue
-            # Drop pure section headers.
+            # Drop pure section headers / sticky chrome leftovers.
             if re.match(
                 r"^(?:full\s+transcripts?(?:\s+and\s+summary)?|executive\s+summary|"
-                r"meeting\s+summary(?:\s+and\s+full\s+transcripts?)?)\s*:?\s*$",
+                r"meeting\s+summary(?:\s+and\s+full\s+transcripts?)?|"
+                r"key\s+decisions?|action\s+items?|open\s+questions?|"
+                r"attendees?|participants?|next\s+steps?|agenda|discussion|"
+                r"notes|follow[\s-]?ups?)\s*:?\s*$",
                 display,
                 re.I,
             ):
                 continue
+            # Speaker-less lead that is only leftover chrome crumbs ("Key").
+            if not turn.speaker and len(re.findall(r"[a-z0-9]+", display.lower())) <= 2:
+                if not _SPEAKER_TS_RE.search(display):
+                    continue
             role = classify_transcript_turn_role(body or display)
             locator = {
                 "page": page_idx,
@@ -778,4 +849,5 @@ __all__ = [
     "retag_conversational_to_meta",
     "rewrite_hybrid_pdf_atoms",
     "split_speaker_timestamp_turns",
+    "strip_transcript_section_chrome",
 ]

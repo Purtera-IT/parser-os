@@ -438,6 +438,125 @@ def test_rewrite_fragmented_pdf_blocks_like_text_rich_export():
     )
 
 
+def test_split_does_not_absorb_section_chrome_across_newline():
+    """Sticky 'Key Decisions' / 'Full Transcript' must not become the speaker."""
+    from app.core.hybrid_summary_transcript import strip_transcript_section_chrome
+
+    raw = (
+        "Key Decisions\n"
+        "Full Transcript Alex Rivera [00:04] See, Pat should be joining us shortly.\n"
+        "Sam Chen [00:41] I don't remember what that was.\n"
+        "Alex Rivera [01:20] Hey, how you doing?"
+    )
+    cleaned = strip_transcript_section_chrome(raw)
+    assert "Key Decisions" not in cleaned
+    assert not cleaned.lower().startswith("full transcript")
+    turns = split_speaker_timestamp_turns(cleaned)
+    speakers = [t.speaker for t in turns if t.speaker]
+    assert speakers[0] == "Alex Rivera"
+    assert "Full Transcript" not in (speakers[0] or "")
+    assert all("\n" not in (s or "") for s in speakers)
+
+
+def test_classify_co_founder_space_and_signoff():
+    assert (
+        classify_transcript_turn_role(
+            "Yep. I can start. I'm Alex Rivera. I am one of the co founders of Acme."
+        )
+        == "intro"
+    )
+    assert (
+        classify_transcript_turn_role("All right, I'll sit on my end. Thank you guys.")
+        == "filler"
+    )
+
+
+def test_rewrite_strips_sticky_key_decisions_chrome():
+    filename = "Acme_Meeting_Summary_and_Full_Transcript.pdf"
+    structured = {
+        "document": {"title": "Meeting Summary and Full Transcript"},
+        "pages": [
+            {
+                "page": 0,
+                "sections": [
+                    {
+                        "heading": "Executive Summary",
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [
+                                    {"text": "Badge access and camera configuration are primary focus areas."},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "page": 1,
+                "sections": [
+                    {
+                        # Sticky leftover from summary page — real PDF text-rich path.
+                        "heading": "Key Decisions",
+                        "blocks": [
+                            {
+                                "kind": "paragraph",
+                                "text": (
+                                    "Full Transcript Alex Rivera [00:04] See, Pat should be joining us shortly. "
+                                    "Sam Chen [00:20] Hey, how you doing? Been a while. "
+                                    "Alex Rivera [06:10] We need to configure badge zones and cameras with SSO."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    atoms = [
+        _mk_scope(
+            "Badge access and camera configuration are primary focus areas.",
+            page=0,
+            filename=filename,
+        ),
+        _mk_scope(
+            "Full Transcript Alex Rivera [00:04] See, Pat should be joining us shortly.",
+            page=1,
+            filename=filename,
+        ),
+    ]
+    atoms[0].value = {"kind": "bullet", "depth": 1, "text": atoms[0].raw_text}
+    atoms[0].source_refs[0].locator = {"page": 0, "block_kind": "bullet_list"}
+
+    out = rewrite_hybrid_pdf_atoms(
+        atoms=atoms,
+        structured_doc=structured,
+        filename=filename,
+        project_id="proj_demo",
+        artifact_id="art_demo",
+        parser_version="test_v1",
+    )
+    texts = [a.raw_text or "" for a in out]
+    assert not any(t.startswith("Key Decisions") for t in texts)
+    assert not any(t.startswith("Full Transcript") for t in texts)
+    assert not any("Full Transcript Alex" in t for t in texts)
+    meta = [
+        a
+        for a in out
+        if a.atom_type == AtomType.deal_metadata
+        and isinstance(a.value, dict)
+        and a.value.get("kind") == CONVERSATION_META_KIND
+    ]
+    assert meta
+    speakers = [
+        (a.value or {}).get("speaker")
+        for a in out
+        if isinstance(a.value, dict) and a.value.get("speaker")
+    ]
+    assert "Alex Rivera" in speakers
+    assert not any(s and ("Decision" in s or "Transcript" in s or "\n" in s) for s in speakers)
+
+
 def test_no_gecko_hardcodes_in_hybrid_module():
     """Guard: hybrid module must stay deal-agnostic."""
     from pathlib import Path
