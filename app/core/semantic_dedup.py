@@ -1495,28 +1495,40 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
 
     Returns a new list. Atoms without a semantic key (no value, or
     no recognized atom_type) pass through unchanged.
+
+    Emit order matches the input stream: winners are chosen by confidence,
+    but each surviving key appears at the position of its first occurrence.
+    (Sorting the output by confidence used to scramble reading order for
+    audit UIs after the compiler's id-sort.)
     """
     if not atoms:
         return atoms
 
-    # Group by key; track the winner per key
-    by_key: dict[tuple, Any] = {}
-    unkeyed: list[Any] = []
-
-    # Sort by confidence desc so first-encountered per key is the winner.
-    sorted_atoms = sorted(atoms, key=_confidence, reverse=True)
-
-    for atom in sorted_atoms:
+    # Pick the highest-confidence winner per key (scan confidence-desc).
+    winners: dict[tuple, Any] = {}
+    for atom in sorted(atoms, key=_confidence, reverse=True):
         key = _value_key(atom)
         if key is None:
-            unkeyed.append(atom)
             continue
-        if key not in by_key:
-            by_key[key] = atom
+        if key not in winners:
+            winners[key] = atom
         else:
-            _merge_values(by_key[key], atom)
+            _merge_values(winners[key], atom)
 
-    return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(list(by_key.values()) + unkeyed))
+    # Rebuild in original document order at first-occurrence positions.
+    seen: set[tuple] = set()
+    ordered: list[Any] = []
+    for atom in atoms:
+        key = _value_key(atom)
+        if key is None:
+            ordered.append(atom)
+            continue
+        if key in seen:
+            continue
+        ordered.append(winners[key])
+        seen.add(key)
+
+    return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(ordered))
 
 
 __all__ = ["semantic_dedup_atoms", "cross_type_dedup_atoms"]

@@ -157,6 +157,7 @@ def test_atoms_from_structured_meeting_summary_carry_connective_tissue():
     for i, a in enumerate(atoms):
         loc = a.source_refs[0].locator
         assert loc.get("block_index") == i
+        assert loc.get("line_start") == i
         assert loc.get("section_path", [None])[0] == "Meeting Summary and Full Transcript"
         lead = loc.get("lead_in") or []
         assert "Meeting Summary and Full Transcript" in lead
