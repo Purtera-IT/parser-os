@@ -166,6 +166,19 @@ def test_classify_greeting_intro_vs_deal():
         )
         == "deal"
     )
+    # Speaker stamp must not inflate soft-social into deal/scope.
+    assert (
+        classify_transcript_turn_role(
+            "Jacob Vander-Plaats [00:41] I don't remember what that was..."
+        )
+        == "filler"
+    )
+    assert (
+        classify_transcript_turn_role(
+            "Daniel Peterson [00:48] We'll touch on this... Hey Patrick. How are you?"
+        )
+        == "filler"
+    )
 
 
 # ── rewrite ──

@@ -353,18 +353,43 @@ def strip_transcript_section_chrome(text: str) -> str:
     return cleaned.strip()
 
 
+_SOFT_SOCIAL_RE = re.compile(
+    r"(?:"
+    r"(?:i\s+don'?t\s+remember\s+what\s+that\s+was)|"
+    r"(?:i\s+don'?t\s+(?:recall|remember)\b)|"
+    r"(?:what\s+was\s+that\s+again)|"
+    r"(?:we(?:'ll| will)\s+touch\s+on\s+this)|"
+    r"(?:long\s+time\s+no\s+(?:talk|see|speak))"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _utterance_body(text: str) -> str:
+    """Strip leading ``Name [mm:ss]`` chrome so token-length heuristics
+    score the spoken words, not the speaker stamp."""
+    probe = (text or "").strip()
+    if not probe:
+        return ""
+    return _SPEAKER_TS_RE.sub("", probe, count=1).strip() or probe
+
+
 def classify_transcript_turn_role(text: str) -> TurnRole:
     """Classify a single utterance as greeting/intro/logistics/filler/deal.
 
     Substance always wins: a turn that mentions install/configure/equipment
     etc. is ``deal`` even if it opens with a greeting.
     """
-    probe = (text or "").strip()
+    # Classify the spoken body — speaker stamps inflate token counts and
+    # flip soft social ("I don't remember…") into false ``deal``.
+    probe = _utterance_body(text)
     if not probe:
         return "filler"
     if _DEAL_SUBSTANCE_RE.search(probe):
         return "deal"
     if _FILLER_ONLY_RE.match(probe):
+        return "filler"
+    if _SOFT_SOCIAL_RE.search(probe):
         return "filler"
     if _GREETING_RE.search(probe):
         return "greeting"
