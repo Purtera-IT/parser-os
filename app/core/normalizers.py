@@ -156,14 +156,32 @@ def parse_timestamp(line: str) -> str | None:
     match = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", line)
     if match:
         return match.group(1)
+    # Meeting-export clocks are often [mm:ss] without hours.
+    match = re.search(r"\[(\d{1,2}:\d{2})\]", line)
+    if match:
+        return match.group(1)
     match = re.search(r"\b(\d{2}:\d{2}:\d{2})\b", line)
     if match:
         return match.group(1)
     return None
 
 
+# ``Alex Rivera [03:15]`` / ``Alex Rivera [03:15]: body`` — common PDF/meeting
+# export diarization. Structural (Name tokens + bracket clock), not a name list.
+# Initials ("J.") allowed; trailing period on multi-letter words is not (avoids
+# "Hey.\\nTrent … [00:56]" being parsed as a speaker).
+_NAME_BRACKET_TS_RE = re.compile(
+    r"^(?P<speaker>[A-Z](?:[A-Za-z'\-]+|\.)(?:\s+[A-Z](?:[A-Za-z0-9'\-]+|\.)){0,4})"
+    r"\s*\[(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\]\s*:?\s*(?P<body>.*)$"
+)
+
+
 def detect_speaker(line: str) -> str | None:
     line = line.strip()
+    # Name [mm:ss] body  (meeting PDF / HubSpot transcript export)
+    name_ts = _NAME_BRACKET_TS_RE.match(line)
+    if name_ts:
+        return name_ts.group("speaker").strip()
     # [00:00:01] Speaker: text
     match = re.match(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*([A-Za-zÀ-ÿ][^:]{1,79}):\s*.+$", line)
     if match:
@@ -179,11 +197,56 @@ def detect_speaker(line: str) -> str | None:
     return None
 
 
+# Meeting-summary / agenda section labels (Title-Case or ALL CAPS in source).
+# Structural closed class — not a deal/customer vocabulary. Used by transcript
+# segmenters AND the PDF text-rich splitter so header+bullet pages nest bullets
+# under the right section_path instead of gluing headers into prose.
+_MEETING_SECTION_ALIASES: dict[str, str] = {
+    "decisions": "Decisions",
+    "decision": "Decisions",
+    "key decisions": "Key Decisions",
+    "key decision": "Key Decisions",
+    "action items": "Action Items",
+    "action item": "Action Items",
+    "open questions": "Open Questions",
+    "open question": "Open Questions",
+    "notes": "Notes",
+    "discussion": "Discussion",
+    "executive summary": "Executive Summary",
+    "attendees": "Attendees",
+    "participants": "Participants",
+    "next steps": "Next Steps",
+    "agenda": "Agenda",
+    "follow ups": "Follow Ups",
+    "follow-ups": "Follow Ups",
+    "follow up": "Follow Ups",
+}
+
+
 def detect_section(line: str) -> str | None:
+    """Return canonical meeting-section label when ``line`` is ONLY that header.
+
+    Matches Title-Case / ALL CAPS / trailing-colon variants. Returns None for
+    ordinary prose that merely mentions the phrase.
+    """
     cleaned = normalize_text(line).rstrip(":")
-    if cleaned in {"decisions", "action items", "open questions", "notes", "discussion"}:
-        return cleaned.title()
-    return None
+    return _MEETING_SECTION_ALIASES.get(cleaned)
+
+
+def meeting_section_slug(label: str | None) -> str | None:
+    """Normalize a meeting section label to a ``list_section`` slug."""
+    if not label:
+        return None
+    cleaned = normalize_text(label).rstrip(":")
+    canonical = _MEETING_SECTION_ALIASES.get(cleaned)
+    if not canonical:
+        for display in set(_MEETING_SECTION_ALIASES.values()):
+            if normalize_text(display) == cleaned:
+                canonical = display
+                break
+    if not canonical:
+        return None
+    return re.sub(r"[^a-z0-9]+", "_", canonical.lower()).strip("_")
 
 
 def split_transcript_segments(text: str) -> list[dict[str, Any]]:
@@ -205,9 +268,15 @@ def split_transcript_segments(text: str) -> list[dict[str, Any]]:
         speaker = detect_speaker(stripped)
         timestamp = parse_timestamp(stripped)
         content = stripped
-        if speaker:
+        name_ts = _NAME_BRACKET_TS_RE.match(stripped)
+        if name_ts:
+            # ``Alex Rivera [03:15] body`` — body is everything after the stamp.
+            content = (name_ts.group("body") or "").strip()
+            if not timestamp:
+                timestamp = name_ts.group("ts")
+        elif speaker:
             # remove timestamp prefix and speaker label from content
-            content = re.sub(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*", "", content)
+            content = re.sub(r"^\[(?:\d{2}:\d{2}(?::\d{2})?)\]\s*", "", content)
             # Defensive: a future regex change could yield a "speaker"
             # whose label isn't followed by ``:`` in the line. Skip the
             # split rather than crashing — keep the full line as content.
@@ -219,7 +288,7 @@ def split_transcript_segments(text: str) -> list[dict[str, Any]]:
             # Bracketed-timestamp leader (``[00:00:01] body``) with no
             # speaker label: strip the timestamp so the body reads
             # cleanly downstream.
-            content = re.sub(r"^\[(?:\d{2}:\d{2}:\d{2})\]\s*", "", content)
+            content = re.sub(r"^\[(?:\d{2}:\d{2}(?::\d{2})?)\]\s*", "", content)
 
         segments.append(
             {

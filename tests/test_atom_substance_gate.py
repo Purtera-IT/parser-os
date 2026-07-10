@@ -133,7 +133,7 @@ def test_backchannel_filler_dropped():
     atoms = [
         _mk("scope_item", "Yeah."),
         _mk("scope_item", "Okay, sure."),
-        _mk("scope_item", "Jacob Vander-Plaats [03:05] Yeah."),
+        _mk("scope_item", "Alex Rivera [03:05] Yeah."),
     ]
     kept, dropped = drop_nonsubstantive_fragments(atoms)
     assert kept == []
@@ -142,7 +142,7 @@ def test_backchannel_filler_dropped():
 
 def test_real_scope_kept_even_when_short():
     atoms = [
-        _mk("scope_item", "Okta integration"),
+        _mk("scope_item", "SSO integration"),
         _mk("scope_item", "Install 12 cameras"),
         _mk("scope_item", "Yeah, not too bad. Can't complain."),  # has real words
     ]
@@ -162,10 +162,10 @@ def test_apply_substance_gate_combined():
         _mk("stakeholder", "Tom Amble."),                    # drop
         _mk("stakeholder", "Renee Watkins, Director"),       # keep
         _mk("scope_item", "Yeah."),                          # drop
-        _mk("scope_item", "Okta integration"),               # keep
+        _mk("scope_item", "SSO integration"),               # keep
     ]
     kept, dropped = apply_substance_gate(atoms)
-    assert set(_texts(kept)) == {"Renee Watkins, Director", "Okta integration"}
+    assert set(_texts(kept)) == {"Renee Watkins, Director", "SSO integration"}
     assert set(_texts(dropped)) == {"Tom Amble.", "Yeah."}
 
 
@@ -173,14 +173,14 @@ def test_apply_substance_gate_combined():
 
 def test_speaker_label_only_atoms_dropped():
     # When a transcript is delivered as a PDF, the color-driven segmenter emits
-    # each speaker/timestamp header ("Daniel Peterson [00:48]") as its own
+    # each speaker/timestamp header ("Alex Rivera [00:48]") as its own
     # block, which the fail-open PDF atomizer turns into a standalone
     # scope_item. Those bare labels are chrome (speaker is already section_path
     # context) and must be gated.
     atoms = [
-        _mk("scope_item", "Daniel Peterson [00:48]"),
-        _mk("scope_item", "Jacob Vander-Plaats [07:16]"),
-        _mk("scope_item", "Trent Torrence [16:24]"),
+        _mk("scope_item", "Alex Rivera [00:48]"),
+        _mk("scope_item", "Sam Chen [07:16]"),
+        _mk("scope_item", "Jordan Lee [16:24]"),
     ]
     kept, dropped = drop_nonsubstantive_fragments(atoms)
     assert kept == []
@@ -193,7 +193,7 @@ def test_speaker_label_with_real_utterance_kept():
     atoms = [
         _mk(
             "scope_item",
-            "Jacob Vander-Plaats [07:16] What we have on site are 12 cameras "
+            "Sam Chen [07:16] What we have on site are 12 cameras "
             "and six or seven badge readers.",
         )
     ]
@@ -221,7 +221,7 @@ def test_short_utterance_with_deal_word_kept():
     atoms = [
         _mk("scope_item", "I see the switch."),
         _mk("scope_item", "Sounds like the firewall."),
-        _mk("scope_item", "You handle Okta."),
+        _mk("scope_item", "You handle SSO."),
     ]
     kept, dropped = drop_nonsubstantive_fragments(atoms)
     assert len(kept) == 3 and dropped == []
@@ -235,7 +235,7 @@ def test_section_header_dropped():
     atoms = [
         _mk("scope_item", "Meeting Summary and Full Transcript Executive Summary"),
         _mk("scope_item", "Executive Summary"),
-        _mk("scope_item", "Full Transcript: Daniel Peterson [00:04]"),
+        _mk("scope_item", "Full Transcript: Alex Rivera [00:04]"),
     ]
     kept, dropped = drop_section_headers(atoms)
     assert kept == []
@@ -245,10 +245,9 @@ def test_section_header_dropped():
 def test_section_header_with_substance_kept():
     from app.core.atom_substance_gate import drop_section_headers
 
-    atoms = [_mk("scope_item", "Okta integration is a significant requirement.")]
+    atoms = [_mk("scope_item", "SSO integration is a significant requirement.")]
     kept, dropped = drop_section_headers(atoms)
     assert len(kept) == 1 and dropped == []
-
 
 # ── email non-scope ──
 
@@ -331,8 +330,9 @@ def _mk_transcript(text, page=1, **loc_kw):
     return atom
 
 
-def test_transcript_greeting_dropped():
+def test_transcript_greeting_retagged_to_conversation_meta():
     from app.core.atom_substance_gate import drop_transcript_conversational
+    from app.core.schemas import AtomType
 
     atoms = [
         _mk_transcript("I know. It has been a while. Hope life's been treating you well.", page=1),
@@ -340,18 +340,23 @@ def test_transcript_greeting_dropped():
         _mk_transcript("I'm not hearing very well. Can you repeat one more time?", page=6),
     ]
     kept, dropped = drop_transcript_conversational(atoms)
-    assert kept == []
-    assert len(dropped) == 3
+    assert dropped == []
+    assert len(kept) == 3
+    for a in kept:
+        assert a.atom_type == AtomType.deal_metadata
+        assert a.value.get("kind") == "conversation_meta"
+        assert a.value.get("non_deal") is True
 
 
 def test_transcript_exec_summary_bullet_kept():
     from app.core.atom_substance_gate import drop_transcript_conversational
 
-    atom = _mk("scope_item", "Okta integration is considered a significant requirement.")
+    atom = _mk("scope_item", "SSO integration is considered a significant requirement.")
     atom.source_refs[0].locator = {"page": 0, "block_kind": "bullet_list"}
     atom.value = {"kind": "bullet", "depth": 1}
     kept, dropped = drop_transcript_conversational([atom])
     assert len(kept) == 1 and dropped == []
+    assert kept[0].atom_type.value == "scope_item"
 
 
 def test_transcript_substantive_turn_kept():
@@ -359,13 +364,13 @@ def test_transcript_substantive_turn_kept():
 
     atoms = [
         _mk_transcript(
-            "We need to set up badge zones and guest VLAN with Okta integration.",
+            "We need to set up badge zones and guest VLAN with SSO integration.",
             page=4,
         ),
     ]
     kept, dropped = drop_transcript_conversational(atoms)
     assert len(kept) == 1 and dropped == []
-
+    assert kept[0].atom_type.value == "scope_item"
 
 # ── risk fragments ──
 

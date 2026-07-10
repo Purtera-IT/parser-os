@@ -128,22 +128,24 @@ WEAK_ATOM_TYPES: frozenset = frozenset({
     "scope_item", "entity", "deal_metadata", "site_implementation_note",
 })
 
-# Email communication atoms are intentionally typed as deal_metadata with a
-# structured ``value.kind``. They must not be "recovered" into stakeholder /
-# requirement / etc. Body greetings are metadata tags (not atoms); legacy
-# ``email_addressee`` kinds stay locked if present.
-_PROTECTED_EMAIL_KINDS: frozenset = frozenset({
+# Communication / non-deal metadata atoms are intentionally typed as
+# deal_metadata with a structured ``value.kind``. They must not be
+# "recovered" into stakeholder / requirement / scope. Covers email chrome
+# and transcript greeting/intro/logistics (``conversation_meta``).
+_PROTECTED_META_KINDS: frozenset = frozenset({
     "email_addressee",
     "email_body_context",
     "email_header",
+    "conversation_meta",
 })
 
 
 def _is_protected_email_atom(atom) -> bool:
+    """True for non-deal communication metadata (email + transcript chrome)."""
     val = getattr(atom, "value", None)
     if not isinstance(val, dict):
         return False
-    return str(val.get("kind") or "") in _PROTECTED_EMAIL_KINDS
+    return str(val.get("kind") or "") in _PROTECTED_META_KINDS
 
 # The specific types a retained atom may be recovered into — the span-recall
 # targets plus the commercial categories. Only valid AtomType values.

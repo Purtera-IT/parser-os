@@ -316,6 +316,15 @@ def _page_is_form(raw: list[str]) -> bool:
     nonblank = [l.strip() for l in raw if l.strip()]
     if len(nonblank) < 3:
         return False
+    # Diarized meeting transcripts are never forms — speaker stamps + rhetorical
+    # questions would otherwise trip form mode and shatter the dialogue.
+    try:
+        from app.core.hybrid_summary_transcript import count_speaker_timestamp_hits
+
+        if count_speaker_timestamp_hits("\n".join(nonblank)) >= 2:
+            return False
+    except Exception:
+        pass
     rep = "  ".join(nonblank[:40])[:800]
     try:
         return _form_page_rule().fires(rep)
@@ -1200,6 +1209,31 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _collapse_toc_atoms(atoms)
         atoms = _fold_answers_into_questions(atoms)
         atoms = _fold_photo_requests_into_images(atoms)
+
+        # Universal hybrid summary+transcript rewrite: when filename/title/
+        # content signals a meeting-summary front matter + diarized transcript
+        # body, re-atomize transcript pages as per-turn atoms (deal vs
+        # conversation_meta). No deal-specific hardcodes — structural only.
+        try:
+            from app.core.hybrid_summary_transcript import rewrite_hybrid_pdf_atoms
+
+            atoms = rewrite_hybrid_pdf_atoms(
+                atoms=atoms,
+                structured_doc=structured_doc,
+                filename=path.name,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                parser_version=self.parser_version,
+            )
+        except Exception as exc:  # pragma: no cover — never fail the parse
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "hybrid_summary_transcript rewrite failed for %s: %s",
+                path.name,
+                exc,
+                exc_info=True,
+            )
 
         return ParserOutput(
             atoms=atoms,
@@ -3116,11 +3150,23 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             if stripped is not None:
                 prose_text = stripped
 
+        # Diarized transcript pages (meeting summary + full transcript exports)
+        # must not go through form Q&A regroup / form_field tagging — speaker
+        # stamps look like Title-Case headers and rhetorical "?" trips the form
+        # gate. Hybrid rewrite owns turn atomization for these pages.
+        try:
+            from app.core.hybrid_summary_transcript import count_speaker_timestamp_hits
+
+            _diarized = count_speaker_timestamp_hits(prose_text or "") >= 2
+        except Exception:
+            _diarized = False
+
         # On a questionnaire / field-report page, join each question with its
         # answer ("Have you installed the NEXEO Box?\nYes" -> one Q&A unit) before
         # the prose splitter sees it, so the answer isn't buried in a blob with the
         # next instruction. No-op on non-form pages (gated on >=2 question lines).
-        prose_text = _regroup_form_qa(prose_text)
+        if not _diarized:
+            prose_text = _regroup_form_qa(prose_text)
 
         sections = _text_rich_sections(prose_text)
         if table_blocks:
@@ -3133,7 +3179,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # form values ('Signature', 'Managers Name', 'Diedra Kennedy'), and skip
         # page-title detection (it was grabbing the first question / a field label
         # as the 'title' and stripping it).
-        if _page_is_form(prose_text.splitlines()):
+        if (not _diarized) and _page_is_form(prose_text.splitlines()):
             for _sec in sections:
                 for _blk in _sec.get("blocks") or []:
                     _blk["form_field"] = True
@@ -3142,7 +3188,22 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # both the section root AND its own atom. (_detect_text_title rejects
         # questions / field values, so a form page's first Q isn't taken as
         # the title — while a real title like 'Burger King HME Install' is kept.)
-        page_title = _detect_text_title(prose_text)
+        # On diarized transcript pages, prefer a stable chrome title over the
+        # first spoken fragment ("something intune related…").
+        if _diarized:
+            page_title = None
+            for _probe in (prose_text or "").splitlines()[:8]:
+                _p = _probe.strip()
+                if re.match(
+                    r"^(?:meeting\s+summary(?:\s+and\s+full\s+transcripts?)?|"
+                    r"full\s+transcripts?|executive\s+summary)\b",
+                    _p,
+                    re.I,
+                ):
+                    page_title = _p.split(":")[0].strip()
+                    break
+        else:
+            page_title = _detect_text_title(prose_text)
         if page_title:
             _strip_title_block(sections, page_title)
         _stamp_section_and_block_ids(sections, page_index)
@@ -3604,8 +3665,17 @@ def _atoms_for_sections(
 
         pending: tuple[dict[str, Any], str] | None = None  # single un-consumed lead-in
         sticky: str | None = None                          # intro governing an enumerated list
+        pending_meeting_section: str | None = None         # trailing header before a bullet list
         for idx, block in enumerate(blocks):
             nxt = blocks[idx + 1] if idx + 1 < len(blocks) else None
+            # Stamp a trailing meeting header from the previous glued paragraph
+            # onto this bullet list so Key Decisions bullets nest correctly.
+            if pending_meeting_section and block.get("kind") == "bullet_list":
+                if not block.get("meeting_section"):
+                    block = {**block, "meeting_section": pending_meeting_section}
+                pending_meeting_section = None
+            elif pending_meeting_section and block.get("kind") != "bullet_list":
+                pending_meeting_section = None
             if pending is not None:
                 # Previous block was a framing lead-in — lift onto THIS block.
                 yield from _emit(block, [pending[1]])
@@ -3618,6 +3688,33 @@ def _atoms_for_sections(
             if sticky and not _enum(block):
                 sticky = None  # the enumerated list ended
             btext = (block.get("text") or "").strip() if block.get("kind") == "paragraph" else ""
+            # Glued meeting-summary paragraph sitting above a bullet list:
+            # split Action Items bullets here and carry Key Decisions onto nxt.
+            if btext and nxt is not None and nxt.get("kind") == "bullet_list":
+                glued = _split_glued_meeting_summary_paragraph(btext)
+                if glued is not None:
+                    glued_blocks, trailing = glued
+                    for sub in glued_blocks:
+                        sub_path = path + (
+                            [sub["meeting_section"]] if sub.get("meeting_section") else []
+                        )
+                        yield from _atoms_for_block(
+                            block=sub,
+                            section_path=sub_path,
+                            page_index=page_index,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=filename,
+                            parser_version=parser_version,
+                            lead_in=(
+                                [sub["meeting_section"]]
+                                if sub.get("meeting_section")
+                                else None
+                            ),
+                        )
+                    if trailing:
+                        pending_meeting_section = trailing
+                    continue
             # A (possibly long) framing intro directly above an enumerated list
             # governs the WHOLE list ("The intent … all responses follow the same
             # format" over a–g). SEMANTIC, not regex: the 'next block is
@@ -3707,11 +3804,46 @@ def _atoms_for_block(
             return
         if len(text) < 10 and not _is_form_field:
             return
+        # Bare meeting-summary section headers are connective tissue, not facts.
+        # Check BEFORE the Title-Case fragment drop — "Action Items" / "Key
+        # Decisions" match the fragment shape and would otherwise vanish
+        # without stamping section_path on the bullets beneath.
+        if _is_meeting_section_heading_line(text):
+            return
         # P1.4: skip pure-title-case bullet-fragment labels like "Cost
         # Proposal", "Project Description", "Addendums".  These come
         # from proposal-format checklists and carry no scope data.
         if not _is_form_field and _looks_like_fragment(text):
             return
+        # Repair glued meeting-summary header + checkbox-``I`` bullet blobs
+        # (Action Items / Key Decisions) into per-bullet atoms with section_path.
+        glued = _split_glued_meeting_summary_paragraph(text)
+        if glued is not None:
+            glued_blocks, trailing_header = glued
+            for sub in glued_blocks:
+                sub_path = list(section_path)
+                meeting_sec = sub.get("meeting_section")
+                if meeting_sec:
+                    sub_path = sub_path + [meeting_sec]
+                yield from _atoms_for_block(
+                    block=sub,
+                    section_path=sub_path,
+                    page_index=page_index,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    lead_in=([meeting_sec] if meeting_sec else None) or lead_in,
+                )
+            # Trailing header with no bullets in this blob — emit a marker
+            # paragraph the sections walker cannot see. Instead, if we only
+            # had a trailing header, fall through so the original text is not
+            # silently dropped when there is no next-block stamp available.
+            if glued_blocks:
+                return
+            if trailing_header:
+                # Header-only carry without sibling blocks: drop the chrome.
+                return
         # P1.1: when a paragraph contains ≥2 Q\d. / A\d. markers, split
         # it into one atom per Q&A pair so packet anchors don't end up
         # as 2,400-char transcripts.  Single-Q paragraphs and
@@ -3849,9 +3981,23 @@ def _atoms_for_block(
 
     if kind == "bullet_list":
         intro = (block.get("intro") or "").strip()
+        meeting_sec = (block.get("meeting_section") or "").strip() or None
+        # Prefer an explicit meeting_section stamp; else derive from path.
+        list_sec, sec_header = _meeting_section_connective(
+            section_path + ([meeting_sec] if meeting_sec else [])
+        )
+        if meeting_sec and not sec_header:
+            sec_header = meeting_sec
+            list_sec = list_sec or _meeting_section_connective([meeting_sec])[0]
+        effective_lead = list(lead_in or [])
+        if sec_header and sec_header not in effective_lead:
+            effective_lead = effective_lead + [sec_header]
+        bullet_section_path = section_path + (
+            [meeting_sec] if meeting_sec and meeting_sec not in section_path else []
+        )
         if intro:
             intro_type, intro_auth = _classify_text_block(
-                text=intro, section_path=section_path, kind="bullet_intro"
+                text=intro, section_path=bullet_section_path, kind="bullet_intro"
             )
             yield _make_atom(
                 text=intro,
@@ -3862,12 +4008,13 @@ def _atoms_for_block(
                 atom_type=intro_type,
                 authority_class=intro_auth,
                 confidence=DEFAULT_BLOCK_CONFIDENCE,
-                locator={**base_locator, "bullet_role": "intro"},
+                locator={**base_locator, "bullet_role": "intro", "section_path": bullet_section_path},
                 value={"kind": "bullet_intro"},
             )
         # Bullets inherit the intro's classification context; for many docs
         # the intro line ("Partner(s) must:") is what colors every child.
-        bullet_section_path = section_path + ([intro] if intro else [])
+        if intro:
+            bullet_section_path = bullet_section_path + [intro]
         for index, item in enumerate(block.get("items", []) or []):
             yield from _atoms_for_bullet(
                 item=item,
@@ -3877,8 +4024,15 @@ def _atoms_for_block(
                 artifact_id=artifact_id,
                 filename=filename,
                 parser_version=parser_version,
-                base_locator=base_locator,
+                base_locator={
+                    **base_locator,
+                    "section_path": bullet_section_path,
+                    "lead_in": effective_lead,
+                },
                 section_path=bullet_section_path,
+                list_section=list_sec,
+                section_header=sec_header,
+                lead_in=effective_lead,
             )
         return
 
@@ -4083,6 +4237,9 @@ def _atoms_for_bullet(
     parser_version: str,
     base_locator: dict[str, Any],
     section_path: list[str],
+    list_section: str | None = None,
+    section_header: str | None = None,
+    lead_in: list[str] | None = None,
 ) -> Iterator[EvidenceAtom]:
     text = (item.get("text") or "").strip()
     if text:
@@ -4096,6 +4253,24 @@ def _atoms_for_bullet(
     # legitimate short list items (intern reports: coverage areas + pricing lines).
     if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text):
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="bullet")
+        # Derive meeting-summary connective tissue when caller didn't stamp it.
+        ls = list_section
+        sh = section_header
+        if not ls or not sh:
+            derived_ls, derived_sh = _meeting_section_connective(section_path)
+            ls = ls or derived_ls
+            sh = sh or derived_sh
+        effective_lead = list(lead_in or base_locator.get("lead_in") or [])
+        if sh and sh not in effective_lead:
+            effective_lead = effective_lead + [sh]
+        value: dict[str, Any] = {"kind": "bullet", "depth": depth}
+        if ls:
+            value["list_section"] = ls
+        if sh:
+            value["section_header"] = sh
+        if effective_lead:
+            value["lead_in"] = list(effective_lead)
+            value["intro"] = effective_lead[0]
         yield _make_atom(
             text=text,
             project_id=project_id,
@@ -4109,8 +4284,10 @@ def _atoms_for_bullet(
                 **base_locator,
                 "bullet_path": list(path_indices),
                 "bullet_depth": depth,
+                "lead_in": effective_lead,
+                "section_path": section_path,
             },
-            value={"kind": "bullet", "depth": depth},
+            value=value,
         )
     for child_index, child in enumerate(item.get("children", []) or []):
         yield from _atoms_for_bullet(
@@ -4123,6 +4300,9 @@ def _atoms_for_bullet(
             parser_version=parser_version,
             base_locator=base_locator,
             section_path=section_path,
+            list_section=list_section,
+            section_header=section_header,
+            lead_in=lead_in,
         )
 
 
@@ -6119,6 +6299,201 @@ def _looks_like_section_heading(stripped: str) -> bool:
     return True
 
 
+# Checkbox / task-list glyphs often extract as a bare capital ``I`` (or ``l`` /
+# ``|``) before an owner+verb action line. Structural — Capitalized owner +
+# ``to <verb>`` — never a name list. Distinguishes "I Jacob to send…" from
+# prose "I think we should…".
+_CHECKBOX_OWNER_ACTION_RE = re.compile(
+    r"^\s*[Il|]\s+"
+    r"(?P<body>"
+    r"[A-Z][\w\-']*"
+    r"(?:\s+(?:[A-Z][\w\-']+|team|customer|staff|group|vendor)){0,4}"
+    r"\s+to\s+[a-z].+"
+    r")\s*$"
+)
+# Same pattern mid-blob (glued paragraph), used to split already-joined items.
+_CHECKBOX_OWNER_ACTION_SPLIT_RE = re.compile(
+    r"(?:(?<=^)|(?<=\s))[Il|]\s+"
+    r"(?=[A-Z][\w\-']*(?:\s+(?:[A-Z][\w\-']+|team|customer|staff|group|vendor)){0,4}"
+    r"\s+to\s+[a-z])"
+)
+# Embedded Title-Case / ALL CAPS meeting section headers inside a glued blob.
+_MEETING_HEADER_EMBEDDED_RE = re.compile(
+    r"(?:(?<=^)|(?<=\s))"
+    r"(?P<header>"
+    r"Executive\s+Summary|Action\s+Items?|Key\s+Decisions?|Decisions?|"
+    r"Open\s+Questions?|Attendees|Participants|Next\s+Steps|Agenda|"
+    r"Discussion|Notes|Follow[\s-]?Ups?"
+    r")"
+    r"(?=\s|$)",
+    re.IGNORECASE,
+)
+
+
+def _is_meeting_section_heading_line(stripped: str) -> bool:
+    """True when a standalone line is a meeting-summary section header.
+
+    Uses the shared ``meeting_section_header`` SemanticRule (embeddings online,
+    ``detect_section`` lexical offline). Not gated to form pages — summary
+    front-matter is the primary consumer.
+    """
+    s = (stripped or "").strip()
+    if not s:
+        return False
+    try:
+        from app.core.semantic_rules import is_meeting_section_header
+
+        return bool(is_meeting_section_header(s))
+    except Exception:
+        try:
+            from app.core.normalizers import detect_section
+
+            return detect_section(s) is not None
+        except Exception:
+            return False
+
+
+def _canonical_meeting_section_heading(stripped: str) -> str:
+    """Canonical display label for a meeting section header line."""
+    try:
+        from app.core.normalizers import detect_section
+
+        return detect_section(stripped) or stripped.strip().rstrip(":")
+    except Exception:
+        return stripped.strip().rstrip(":")
+
+
+def _checkbox_owner_action_body(stripped: str) -> str | None:
+    """Return bullet body when line is a checkbox→``I Owner to verb…`` item."""
+    m = _CHECKBOX_OWNER_ACTION_RE.match(stripped or "")
+    if not m:
+        return None
+    body = (m.group("body") or "").strip()
+    return body or None
+
+
+def _meeting_section_connective(section_path: list[str]) -> tuple[str | None, str | None]:
+    """Return ``(list_section slug, section_header)`` from the deepest meeting heading."""
+    try:
+        from app.core.normalizers import detect_section, meeting_section_slug
+    except Exception:
+        return None, None
+    for part in reversed(section_path or []):
+        label = detect_section(str(part)) or (
+            str(part).strip() if meeting_section_slug(str(part)) else None
+        )
+        if not label:
+            # Accept path parts that are already canonical display labels.
+            slug = meeting_section_slug(str(part))
+            if slug:
+                return slug, str(part).strip()
+            continue
+        slug = meeting_section_slug(label)
+        if slug:
+            return slug, label
+    return None, None
+
+
+def _split_glued_meeting_summary_paragraph(
+    text: str,
+) -> tuple[list[dict[str, Any]], str | None] | None:
+    """Repair a glued meeting-summary paragraph into sectioned bullet blocks.
+
+    Handles the common PDF failure mode where Title-Case headers
+    (``Action Items``, ``Key Decisions``) and checkbox-``I`` bullets were
+    joined into one prose atom.
+
+    Returns ``(blocks, trailing_header)`` when repaired, else ``None``.
+    ``trailing_header`` is set when the blob ends on a section label with no
+    bullets beneath it — the caller should stamp that heading onto the next
+    bullet_list block.
+    """
+    raw = (text or "").strip()
+    if not raw or len(raw) < 40:
+        return None
+    headers = list(_MEETING_HEADER_EMBEDDED_RE.finditer(raw))
+    action_starts = list(_CHECKBOX_OWNER_ACTION_SPLIT_RE.finditer(raw))
+    if not headers and len(action_starts) < 2:
+        return None
+    if not headers and not re.search(
+        r"\b(?:action\s+items?|key\s+decisions?|executive\s+summary)\b",
+        raw,
+        re.I,
+    ):
+        return None
+
+    cuts: list[tuple[int, str, str | None]] = []
+    for m in headers:
+        cuts.append((m.start(), "header", _canonical_meeting_section_heading(m.group("header"))))
+    for m in action_starts:
+        cuts.append((m.start(), "action", None))
+    cuts.sort(key=lambda c: c[0])
+    if not cuts:
+        return None
+
+    blocks: list[dict[str, Any]] = []
+    current_heading: str | None = None
+    bullet_items: list[dict[str, str]] = []
+    trailing_header: str | None = None
+
+    def flush_bullets() -> None:
+        nonlocal bullet_items
+        if bullet_items:
+            blocks.append(
+                {
+                    "kind": "bullet_list",
+                    "items": list(bullet_items),
+                    "meeting_section": current_heading,
+                }
+            )
+            bullet_items = []
+
+    for i, (pos, kind, label) in enumerate(cuts):
+        end = cuts[i + 1][0] if i + 1 < len(cuts) else len(raw)
+        chunk = raw[pos:end].strip()
+        if not chunk:
+            continue
+        if kind == "header":
+            flush_bullets()
+            current_heading = label
+            trailing_header = label  # may clear if bullets follow
+            rest = chunk
+            if label:
+                m_head = re.match(
+                    re.escape(label).replace(r"\ ", r"\s+"),
+                    chunk,
+                    re.IGNORECASE,
+                )
+                if m_head:
+                    rest = chunk[m_head.end():].strip()
+            if not rest:
+                continue
+            body = _checkbox_owner_action_body(rest)
+            if body is None and rest[:1].isupper():
+                body = _checkbox_owner_action_body("I " + rest)
+            if body:
+                bullet_items.append({"text": body})
+                trailing_header = None
+            continue
+        trailing_header = None
+        body = _checkbox_owner_action_body(chunk)
+        if body:
+            bullet_items.append({"text": body})
+        else:
+            cleaned = re.sub(r"^\s*[Il|]\s+", "", chunk).strip()
+            if cleaned:
+                bullet_items.append({"text": cleaned})
+
+    flush_bullets()
+    n_bullets = sum(len(b.get("items") or []) for b in blocks if b.get("kind") == "bullet_list")
+    if n_bullets < 2 and not trailing_header:
+        return None
+    if n_bullets < 2 and trailing_header and not blocks:
+        # Header-only carry (e.g. blob is just chrome before a real list).
+        return [], trailing_header
+    return blocks, trailing_header
+
+
 def _is_list_intro(text: str) -> bool:
     """A line that ends with a colon and so introduces the list below it
     ("Milestone billing schedule:", "PurTera will perform … new circuits:"). The
@@ -6214,7 +6589,17 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     # as SECTION headers so the questions below nest under them — instead of the
     # header leaking as a junk scope_item or vanishing. Gated to form pages so an
     # ordinary prose page's short Title-Case lines aren't promoted.
-    _is_form_pg = (page_text or "").count("?") >= 2
+    # Diarized transcript pages (dense ``Name [mm:ss]`` stamps) must NOT use
+    # form-page mode: speaker labels look like Title-Case headers and rhetorical
+    # questions trip the ``?`` gate, which then promotes every speaker stamp to
+    # a section heading and tags blocks form_field=True (disabling short drops).
+    try:
+        from app.core.hybrid_summary_transcript import count_speaker_timestamp_hits
+
+        _is_diarized_transcript = count_speaker_timestamp_hits(page_text or "") >= 2
+    except Exception:
+        _is_diarized_transcript = False
+    _is_form_pg = (not _is_diarized_transcript) and ((page_text or "").count("?") >= 2)
 
     def flush_paragraph() -> None:
         nonlocal paragraph_lines
@@ -6409,6 +6794,23 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         # section. Anchored by a provider sentence or Type/Qty table on the next
         # line + confirmed by the scope-activity SemanticRule.
         stripped = line.strip()
+        # Meeting-summary section headers (Executive Summary / Action Items /
+        # Key Decisions). Embeddings via meeting_section_header rule; lexical
+        # detect_section offline. NOT form-gated — summary front matter is the
+        # primary consumer, and diarized pages disable form mode.
+        if _is_meeting_section_heading_line(stripped):
+            flush_section()
+            current_heading = _canonical_meeting_section_heading(stripped)
+            continue
+
+        # Checkbox→``I Owner to verb…`` action lines (PDF extracts ☐ as ``I``).
+        action_body = _checkbox_owner_action_body(stripped)
+        if action_body:
+            flush_paragraph()
+            bullet_buffer.append(action_body)
+            pending_bullet = False
+            continue
+
         if _looks_like_scope_subheading(stripped, lines, idx):
             flush_section()
             current_heading = stripped

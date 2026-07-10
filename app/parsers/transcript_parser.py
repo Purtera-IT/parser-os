@@ -141,9 +141,22 @@ class TranscriptParser(BaseParser):
                     if parse_timestamp(line) is not None or detect_speaker(line) is not None:
                         speaker_or_ts = True
                         break
+                if not speaker_or_ts:
+                    # PDF/meeting exports often use ``Name [mm:ss]`` mid-paragraph.
+                    if re.search(
+                        r"[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z0-9.'\-]*){0,4}\s*"
+                        r"\[\d{1,2}:\d{2}(?::\d{2})?\]",
+                        text[:4000],
+                    ):
+                        speaker_or_ts = True
                 if speaker_or_ts:
                     confidence = 0.82
                     reasons.append("speaker_or_timestamp_markers")
+        # Filename/title cue: any artifact whose name contains "transcript"
+        # is a strong transcript candidate even when the sample is sparse.
+        if "transcript" in path.name.lower().replace("_", " ").replace("-", " "):
+            confidence = max(confidence, 0.78)
+            reasons.append("filename_transcript")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,

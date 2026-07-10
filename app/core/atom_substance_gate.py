@@ -29,9 +29,10 @@ never a specific name, deal, or domain term:
    (``email_body_context``) are kept. Body greetings are metadata tags on
    sibling atoms, not standalone ``email_addressee`` atoms.
 
-5. ``drop_transcript_conversational`` — raw transcript turns (page ≥ 1) that
+5. ``retag_transcript_conversational`` — raw transcript turns (page ≥ 1) that
    lack deal substance (no scope verb, no device/vendor entity, no structured
-   bullet) are conversational filler, not contractual scope.
+   bullet) are retagged to ``deal_metadata`` / ``kind=conversation_meta`` so
+   they stay auditable but do not infect neural/embedding/scope heads.
 
 6. ``drop_risk_fragments`` — a ``risk`` atom whose text is a mid-sentence
    clipping without a complete risk structure (no subject, no consequence) is
@@ -101,12 +102,12 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"\b(?:\+?\d[\d().\-\s]{7,}\d)\b")
 
 # a leading "Speaker Name [mm:ss]" transcript label to strip before the
-# substance test, so "Jacob Vander-Plaats [03:05] Yeah." is judged on "Yeah.".
+# substance test, so "Alex Rivera [03:05] Yeah." is judged on "Yeah.".
 _SPEAKER_LABEL_RE = re.compile(
     r"^[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z0-9.'\-]*){0,4}\s*\[\d{1,2}:\d{2}(?::\d{2})?\]\s*"
 )
 
-# The ENTIRE atom text is a transcript speaker header ("Daniel Peterson
+# The ENTIRE atom text is a transcript speaker header ("Alex Rivera
 # [00:48]") and nothing else. When a transcript is delivered as a PDF, the
 # color-driven segmenter emits each speaker-turn header as its own paragraph
 # block, which the fail-open PDF atomizer then turns into a standalone
@@ -404,7 +405,7 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
     """Partition into (kept, dropped). A generic-prose atom (scope_item / entity
     / note) is dropped as non-substantive when it is either:
 
-    * a bare transcript speaker header ("Daniel Peterson [00:48]") — pure
+    * a bare transcript speaker header ("Alex Rivera [00:48]") — pure
       chrome the segmenter should have kept as ``section_path`` context, or
     * a short utterance whose entire content — after stripping a leading
       transcript speaker label — is backchannel/filler/social function words
@@ -510,7 +511,7 @@ def drop_section_headers(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         if _SECTION_HEADER_RE.match(text):
             dropped.append(atom)
             continue
-        # "Full Transcript: Daniel Peterson [00:04]" — section header + speaker
+        # "Full Transcript: Alex Rivera [00:04]" — section header + speaker
         if re.match(r"^full\s+transcript\s*:\s*.+\[\d{1,2}:\d{2}", text, re.I):
             dropped.append(atom)
             continue
@@ -574,11 +575,33 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 
 
 def drop_transcript_conversational(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
-    """Drop raw transcript turns (page ≥ 1) that lack deal substance.
+    """Retag conversational transcript turns to ``conversation_meta``.
 
-  Executive-summary bullets (page 0) and substantive turns are always kept.
-  A turn with scope verbs, device/vendor entity_keys, or structured bullets
-  passes the substance check."""
+    Executive-summary bullets and substantive turns stay as-is. Greeting /
+    intro / logistics / filler turns become ``deal_metadata`` with
+    ``kind=conversation_meta`` so they remain auditable but do not feed
+    scope or neural heads.
+
+    Returns ``(kept, dropped)`` with ``dropped`` always empty (retag-in-place).
+    Name preserved for call-site compatibility.
+    """
+    try:
+        from app.core.hybrid_summary_transcript import retag_conversational_to_meta
+
+        # Never retag page-0 exec-summary bullets — peel them out first.
+        candidates: list[Any] = []
+        passthrough: list[Any] = []
+        for atom in atoms:
+            if _atom_type_str(atom) == "scope_item" and _is_exec_summary_bullet(atom):
+                passthrough.append(atom)
+            else:
+                candidates.append(atom)
+        retag_conversational_to_meta(candidates)
+        return passthrough + candidates, []
+    except Exception:
+        pass
+
+    # Legacy drop fallback (import failure only).
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
@@ -590,9 +613,6 @@ def drop_transcript_conversational(atoms: list[Any]) -> tuple[list[Any], list[An
             kept.append(atom)
             continue
         page = _atom_page(atom)
-        # Only gate raw transcript body turns (page ≥ 1). Page-0 content
-        # (executive summary bullets + action-items paragraph) is handled
-        # separately; unknown-page atoms are kept conservatively.
         if page is None or page < 1:
             kept.append(atom)
             continue
@@ -601,20 +621,14 @@ def drop_transcript_conversational(atoms: list[Any]) -> tuple[list[Any], list[An
         if _has_deal_substance(text, entity_keys):
             kept.append(atom)
             continue
-        # Strip speaker labels for the conversational test
         probe = _SPEAKER_LABEL_RE.sub("", text).strip()
-        # Multi-speaker QA-split blocks with substantive content are kept
         if val := _atom_value(atom):
             if val.get("qa_split") and len(probe.split()) > 15:
                 kept.append(atom)
                 continue
-        # Conversational opener with no deal substance — match anywhere in
-        # the utterance (multi-sentence greetings like "I know. Been a while.
-        # Hope life's been treating you well." are still social, not scope).
         if _CONVERSATIONAL_LEAD_RE.search(probe):
             dropped.append(atom)
             continue
-        # Short fragment without substance (< 8 words, no entity keys)
         tokens = [t for t in _content_tokens(probe) if t]
         if len(tokens) < 8 and not entity_keys:
             dropped.append(atom)

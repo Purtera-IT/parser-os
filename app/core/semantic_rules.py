@@ -354,3 +354,93 @@ def section_title_rule() -> "SemanticRule":
         )
         _RULE_CACHE["section_title"] = r
     return r
+
+
+def _meeting_section_header_lexical(text: str) -> bool:
+    """Offline net: line is exactly a known meeting-summary section label."""
+    try:
+        from app.core.normalizers import detect_section
+
+        return detect_section(text or "") is not None
+    except Exception:
+        t = (text or "").strip().rstrip(":").lower()
+        return t in {
+            "executive summary",
+            "action items",
+            "action item",
+            "key decisions",
+            "key decision",
+            "decisions",
+            "decision",
+            "open questions",
+            "open question",
+            "attendees",
+            "participants",
+            "next steps",
+            "agenda",
+            "discussion",
+            "notes",
+            "follow ups",
+            "follow-ups",
+            "follow up",
+        }
+
+
+def meeting_section_header_rule() -> "SemanticRule":
+    """Is a short standalone line a meeting-summary SECTION header
+    (Executive Summary / Action Items / Key Decisions) rather than a bullet
+    body or a speaker stamp?
+
+    Embeddings lead online; ``detect_section`` is the offline lexical net.
+    Callers must structurally gate (short line, not a speaker stamp, list/body
+    follows) so ordinary prose mentioning 'action items' never fires.
+    """
+    r = _RULE_CACHE.get("meeting_section_header")
+    if r is None:
+        r = SemanticRule(
+            name="meeting_section_header",
+            positives=[
+                "Executive Summary",
+                "Action Items",
+                "Key Decisions",
+                "Open Questions",
+                "Attendees",
+                "Participants",
+                "Next Steps",
+                "Agenda",
+                "Discussion",
+                "Follow Ups",
+                "Decisions",
+                "Notes",
+            ],
+            negatives=[
+                "Alex Rivera [00:04] Hey, how are you?",
+                "We discussed the executive summary briefly.",
+                "Jacob to send the full equipment list.",
+                "Badge readers and cameras are in scope.",
+                "Remote implementation was preferred over on-site work.",
+                "The contractor shall provide all materials",
+                "Yes",
+                "No",
+            ],
+            threshold=0.55,
+            lexical_fallback=_meeting_section_header_lexical,
+        )
+        _RULE_CACHE["meeting_section_header"] = r
+    return r
+
+
+def is_meeting_section_header(text: str) -> bool:
+    """Structural prefilter + meeting_section_header SemanticRule."""
+    t = (text or "").strip()
+    if not t or len(t) > 60:
+        return False
+    if t[-1:] in ".,;!?":
+        return False
+    words = _re.findall(r"[A-Za-z][A-Za-z'\-]*", t)
+    if not (1 <= len(words) <= 5):
+        return False
+    # Speaker stamps are never section headers.
+    if _re.search(r"\[\d{1,2}:\d{2}", t):
+        return False
+    return meeting_section_header_rule().fires(t)
