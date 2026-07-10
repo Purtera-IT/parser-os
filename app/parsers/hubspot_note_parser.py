@@ -18,6 +18,10 @@ from typing import Any
 
 from app.core.address_parse import US_STATES, find_us_addresses_in_text
 from app.core.ids import stable_id
+from app.core.internal_author import (
+    apply_internal_author_elevation,
+    classify_author_affiliation,
+)
 from app.core.normalizers import normalize_text
 from app.core.schemas import (
     ArtifactType,
@@ -50,6 +54,7 @@ _HS_NOTE_HEADER_RE = re.compile(r"^HubSpot Note\s*:", re.I | re.M)
 _HS_NOTE_ID_RE = re.compile(r"^HubSpot Note ID:\s*(\S+)", re.I | re.M)
 _HS_DATE_RE = re.compile(r"^Date:\s*(.+)$", re.I | re.M)
 _HS_AUTHOR_RE = re.compile(r"^Author:\s*(.+)$", re.I | re.M)
+_HS_AUTHOR_EMAIL_RE = re.compile(r"^Author-Email:\s*(.+)$", re.I | re.M)
 
 _ROM_RE = re.compile(
     r"\b(?:ROM|rough\s+order\s+of\s+magnitude)\b|"
@@ -105,12 +110,14 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
             "note_id": "",
             "date_raw": "",
             "author": "",
+            "author_email": "",
             "body": body,
         }
     title = ""
     note_id = ""
     date_raw = ""
     author = ""
+    author_email = ""
     body_lines: list[str] = []
     in_body = False
     for line in lines:
@@ -130,6 +137,10 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
             if m:
                 date_raw = m.group(1).strip()
                 continue
+            m = _HS_AUTHOR_EMAIL_RE.match(stripped)
+            if m:
+                author_email = m.group(1).strip()
+                continue
             m = _HS_AUTHOR_RE.match(stripped)
             if m:
                 author = m.group(1).strip()
@@ -137,7 +148,7 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
             if not stripped and title:
                 in_body = True
                 continue
-            if title and not note_id and not date_raw and not author:
+            if title and not note_id and not date_raw and not author and not author_email:
                 body_lines.append(stripped)
                 in_body = True
                 continue
@@ -153,6 +164,7 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
         "note_id": note_id,
         "date_raw": date_raw,
         "author": author,
+        "author_email": author_email,
         "body": body,
     }
 
@@ -269,10 +281,21 @@ class HubspotNoteParser(BaseParser):
         confidence: float = 0.8,
         review_flags: list[str] | None = None,
         entity_keys: list[str] | None = None,
+        author_affiliation: str = "unknown",
     ) -> EvidenceAtom:
         flags = list(review_flags or [])
         if "hubspot_note_parser" not in flags:
             flags.append("hubspot_note_parser")
+        val = dict(value)
+        conf = confidence
+        if author_affiliation == "internal":
+            conf, flags, val = apply_internal_author_elevation(
+                confidence=conf,
+                review_flags=flags,
+                value=val,
+            )
+        elif author_affiliation in {"external", "unknown"}:
+            val.setdefault("author_affiliation", author_affiliation)
         return EvidenceAtom(
             id=stable_id("atm", project_id, artifact_id, atom_type.value, text[:160]),
             project_id=project_id,
@@ -280,11 +303,11 @@ class HubspotNoteParser(BaseParser):
             atom_type=atom_type,
             raw_text=text[:4000],
             normalized_text=normalize_text(text),
-            value=value,
+            value=val,
             entity_keys=list(entity_keys or []),
             source_refs=[source_ref],
             authority_class=AuthorityClass.meeting_note,
-            confidence=confidence,
+            confidence=conf,
             review_status=ReviewStatus.auto_accepted,
             review_flags=flags,
             parser_version=self.parser_version,
@@ -302,7 +325,9 @@ class HubspotNoteParser(BaseParser):
         title = str(parsed.get("title") or "").strip()
         note_id = str(parsed.get("note_id") or "").strip()
         author = str(parsed.get("author") or "").strip()
+        author_email = str(parsed.get("author_email") or "").strip()
         date_raw = str(parsed.get("date_raw") or "").strip()
+        affiliation = classify_author_affiliation(author, author_email=author_email or None)
         source_ref = self._base_source_ref(artifact_id, filename)
         atoms: list[EvidenceAtom] = []
         train_rows: list[TrainingRow] = []
@@ -312,6 +337,10 @@ class HubspotNoteParser(BaseParser):
             meta_bits.append(f"note_id={note_id}")
         if author:
             meta_bits.append(f"author={author}")
+        if author_email:
+            meta_bits.append(f"author_email={author_email}")
+        if affiliation != "unknown":
+            meta_bits.append(f"author_affiliation={affiliation}")
         if date_raw:
             meta_bits.append(f"date={date_raw}")
         if meta_bits:
@@ -327,12 +356,15 @@ class HubspotNoteParser(BaseParser):
                         "field_name": "hubspot_note_meta",
                         "hubspot_note_id": note_id,
                         "author": author,
+                        "author_email": author_email,
+                        "author_affiliation": affiliation,
                         "date": date_raw,
                         "title": title,
                         "source": "hubspot_note",
                     },
                     source_ref=source_ref,
                     confidence=0.88,
+                    author_affiliation=affiliation,
                 )
             )
 
@@ -359,6 +391,9 @@ class HubspotNoteParser(BaseParser):
                     "hubspot_note_id": note_id,
                     "title": title,
                     "source": "hubspot_note",
+                    "author": author,
+                    "author_email": author_email,
+                    "author_affiliation": affiliation,
                 }
                 if at == AtomType.commercial_total:
                     amounts = re.findall(r"\$\s*(\d[\d,]*(?:\.\d{2})?)", body)
@@ -383,6 +418,7 @@ class HubspotNoteParser(BaseParser):
                         source_ref=source_ref,
                         confidence=0.84 if at == AtomType.scope_item else 0.8,
                         review_flags=["hubspot_note_training_row"] if at == AtomType.scope_item else [],
+                        author_affiliation=affiliation,
                     )
                 )
 
@@ -400,6 +436,7 @@ class HubspotNoteParser(BaseParser):
                         "note_id": note_id,
                         "title": title,
                         "source": "hubspot_note_parser",
+                        "author_affiliation": affiliation,
                     },
                 )
             )
@@ -445,11 +482,13 @@ class HubspotNoteParser(BaseParser):
                         "zip": parsed_addr.zip,
                         "inferred": True,
                         "source_context": corpus[:600],
+                        "author_affiliation": affiliation,
                     },
                     source_ref=source_ref,
                     confidence=0.76,
                     entity_keys=[f"site:{slug}"],
                     review_flags=["hubspot_note_physical_site"],
+                    author_affiliation=affiliation,
                 )
             )
 
@@ -467,9 +506,11 @@ class HubspotNoteParser(BaseParser):
                         "text": fallback,
                         "hubspot_note_id": note_id,
                         "source": "hubspot_note",
+                        "author_affiliation": affiliation,
                     },
                     source_ref=source_ref,
                     confidence=0.7,
+                    author_affiliation=affiliation,
                 )
             )
 
@@ -479,9 +520,14 @@ class HubspotNoteParser(BaseParser):
 
     def _build_structured_doc(self, *, filename: str, parsed: dict[str, Any]) -> dict[str, Any]:
         body = str(parsed.get("body") or "").strip() or "(empty note)"
+        author = str(parsed.get("author") or "").strip()
+        author_email = str(parsed.get("author_email") or "").strip()
+        affiliation = classify_author_affiliation(author, author_email=author_email or None)
         meta = [
             f"note_id: {parsed.get('note_id') or ''}",
-            f"author: {parsed.get('author') or ''}",
+            f"author: {author}",
+            f"author-email: {author_email}",
+            f"author_affiliation: {affiliation}",
             f"date: {parsed.get('date_raw') or ''}",
         ]
         page = make_page(
