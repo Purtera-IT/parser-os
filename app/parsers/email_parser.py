@@ -1281,7 +1281,6 @@ def parse_email_thread_headers(path: Path) -> dict[str, Any]:
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
-    internal_domains = ("purtera", "internal")
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,
@@ -1837,7 +1836,9 @@ class EmailParser(BaseParser):
         if block["quoted"]:
             return AuthorityClass.quoted_old_email
         sender = normalize_text(str(block.get("sender", "")))
-        if any(domain in sender for domain in self.internal_domains):
+        from app.core.internal_author import is_internal_author
+
+        if is_internal_author(sender):
             return AuthorityClass.machine_extractor
         return AuthorityClass.customer_current_authored
 
