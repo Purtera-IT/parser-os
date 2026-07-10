@@ -97,7 +97,14 @@ _LOGISTICS_RE = re.compile(
     r"(?:joining\s+now|ran\s+over|on\s+another\s+call)|"
     r"(?:can\s+you\s+(?:hear|repeat)|i(?:'m| am)\s+not\s+hearing)|"
     r"(?:sorry|apolog|no\s+worries|excuse\s+me)|"
-    r"(?:call\s+him\s+on\s+(?:his\s+)?cell|team'?s?\s+message)"
+    r"(?:call\s+him\s+on\s+(?:his\s+)?cell|team'?s?\s+message)|"
+    # Call / meeting-room chrome — not deal scope.
+    r"(?:forwarded\s+to\s+voicemail|voicemail)|"
+    r"(?:having\s+trouble\s+with\s+the\s+(?:link|call|audio|video))|"
+    r"(?:trouble\s+with\s+the\s+(?:link|call|audio|video))|"
+    r"(?:i(?:'m| am)\s+sending\s+it\s+to\s+(?:him|her|them)\s+this\s+way)|"
+    r"(?:ping\s+(?:him|her|them)|let\s+me\s+ping)|"
+    r"(?:hop(?:ping)?\s+(?:in|on)|should\s+be\s+joining)"
     r")",
     re.IGNORECASE,
 )
@@ -796,7 +803,7 @@ def _emit_deal_turn_atoms(
             except Exception:
                 pass
         if atoms:
-            return list(atoms)
+            return _collapse_hybrid_turn_atoms(list(atoms))
     except Exception:
         pass
 
@@ -831,6 +838,53 @@ def _emit_deal_turn_atoms(
             parser_version=parser_version,
         )
     ]
+
+
+# One primary typed atom per utterance (plus site entities). TranscriptParser
+# often fires action_item+open_question (or decision+meeting_commitment) on the
+# same short turn — that duplicates audit rows and pollutes heads.
+_HYBRID_TYPE_RANK: dict[str, int] = {
+    "physical_site": 0,  # always kept separately
+    "decision": 10,
+    "action_item": 20,
+    "customer_instruction": 30,
+    "constraint": 40,
+    "exclusion": 50,
+    "quantity": 60,
+    "risk": 70,
+    "scope_item": 80,
+    "meeting_commitment": 90,
+    "open_question": 100,
+}
+
+
+def _collapse_hybrid_turn_atoms(atoms: list[Any]) -> list[Any]:
+    """Keep physical_site atoms + a single best typed atom per raw_text."""
+    if len(atoms) <= 1:
+        return atoms
+    sites: list[Any] = []
+    by_text: dict[str, list[Any]] = {}
+    for atom in atoms:
+        at = _atom_type_str(atom)
+        if at == "physical_site":
+            sites.append(atom)
+            continue
+        key = (getattr(atom, "normalized_text", None) or getattr(atom, "raw_text", None) or "").strip().lower()
+        by_text.setdefault(key, []).append(atom)
+    primary: list[Any] = []
+    for group in by_text.values():
+        if len(group) == 1:
+            primary.append(group[0])
+            continue
+        group_sorted = sorted(
+            group,
+            key=lambda a: (
+                _HYBRID_TYPE_RANK.get(_atom_type_str(a), 500),
+                -float(getattr(a, "confidence", 0) or 0),
+            ),
+        )
+        primary.append(group_sorted[0])
+    return sites + primary
 
 
 __all__ = [

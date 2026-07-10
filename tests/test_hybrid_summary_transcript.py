@@ -458,17 +458,94 @@ def test_split_does_not_absorb_section_chrome_across_newline():
     assert all("\n" not in (s or "") for s in speakers)
 
 
-def test_classify_co_founder_space_and_signoff():
+def test_classify_call_logistics_voicemail_and_link():
     assert (
         classify_transcript_turn_role(
-            "Yep. I can start. I'm Alex Rivera. I am one of the co founders of Acme."
+            "It. Your call has been forwarded to voicemail."
         )
-        == "intro"
+        == "logistics"
     )
     assert (
-        classify_transcript_turn_role("All right, I'll sit on my end. Thank you guys.")
-        == "filler"
+        classify_transcript_turn_role(
+            "Having trouble with the link. I don't know why. That would be everybody else's end."
+        )
+        == "logistics"
     )
+    assert (
+        classify_transcript_turn_role("I'm sending it to him this way.")
+        == "logistics"
+    )
+
+
+def test_rewrite_collapses_duplicate_typed_atoms_per_turn():
+    """One utterance must not mint both action_item and open_question."""
+    filename = "Acme_Meeting_Summary_and_Full_Transcript.pdf"
+    structured = {
+        "document": {"title": "Meeting Summary and Full Transcript"},
+        "pages": [
+            {
+                "page": 0,
+                "sections": [
+                    {
+                        "heading": "Executive Summary",
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [{"text": "Badge access is in scope."}],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "page": 1,
+                "sections": [
+                    {
+                        "heading": "Full Transcript",
+                        "blocks": [
+                            {
+                                "kind": "paragraph",
+                                "text": (
+                                    "Alex Rivera [01:59] Did you. Pat, did you send him that?\n"
+                                    "Sam Chen [02:02] I did, sure.\n"
+                                    "Alex Rivera [06:10] We need to configure badge zones and cameras with SSO."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    atoms = [
+        _mk_scope("Badge access is in scope.", page=0, filename=filename),
+        _mk_scope(
+            "Alex Rivera [01:59] Did you. Pat, did you send him that?",
+            page=1,
+            filename=filename,
+        ),
+    ]
+    atoms[0].value = {"kind": "bullet", "depth": 1, "text": atoms[0].raw_text}
+    atoms[0].source_refs[0].locator = {"page": 0, "block_kind": "bullet_list"}
+
+    out = rewrite_hybrid_pdf_atoms(
+        atoms=atoms,
+        structured_doc=structured,
+        filename=filename,
+        project_id="proj_demo",
+        artifact_id="art_demo",
+        parser_version="test_v1",
+    )
+    send_him = [
+        a
+        for a in out
+        if "send him that" in (a.raw_text or "").lower()
+        or "send him that" in str((a.value or {}).get("text") or "").lower()
+    ]
+    assert send_him, "question turn must survive"
+    # Exactly one typed atom for that utterance (not action_item + open_question).
+    assert len(send_him) == 1
+
 
 
 def test_rewrite_strips_sticky_key_decisions_chrome():
