@@ -413,7 +413,13 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
 
     Conservative: the utterance test only fires on short turns where EVERY
     content token is non-substantive, so a single real deal word ("cameras",
-    "Okta", "switch") always keeps the atom."""
+    "Okta", "switch") always keeps the atom.
+
+    Speaker-stamped transcript turns are KEPT here so
+    ``drop_transcript_conversational`` can retag them to ``conversation_meta``
+    with reply-to adjacency — hard-dropping would orphan acknowledgments
+    like ``Good.`` from audit and destroy conversational structure.
+    """
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
@@ -424,6 +430,10 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
         # A standalone speaker/timestamp header line is chrome, never content.
         if _SPEAKER_LABEL_ONLY_RE.match(text.strip()):
             dropped.append(atom)
+            continue
+        # Diarized transcript turns: defer to conversation_meta retag + reply-to.
+        if _SPEAKER_LABEL_RE.match(text):
+            kept.append(atom)
             continue
         tokens = [t for t in _content_tokens(text) if t]
         # Only judge short utterances; a long paragraph is never "just filler".

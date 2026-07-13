@@ -141,11 +141,27 @@ _PROTECTED_META_KINDS: frozenset = frozenset({
 
 
 def _is_protected_email_atom(atom) -> bool:
-    """True for non-deal communication metadata (email + transcript chrome)."""
+    """True for non-deal communication metadata (email + transcript chrome).
+
+    Also honors ``head_exclude`` / ``non_deal`` so acknowledgment atoms with
+    reply-to adjacency never enter admission-head scoring.
+    """
+    try:
+        from app.core.hybrid_summary_transcript import is_head_excluded_atom
+
+        if is_head_excluded_atom(atom):
+            return True
+    except Exception:
+        pass
     val = getattr(atom, "value", None)
     if not isinstance(val, dict):
         return False
-    return str(val.get("kind") or "") in _PROTECTED_META_KINDS
+    if str(val.get("kind") or "") in _PROTECTED_META_KINDS:
+        return True
+    if val.get("head_exclude") is True or val.get("non_deal") is True:
+        return True
+    flags = getattr(atom, "review_flags", None) or []
+    return "conversation_meta" in flags or "head_exclude" in flags
 
 # The specific types a retained atom may be recovered into — the span-recall
 # targets plus the commercial categories. Only valid AtomType values.

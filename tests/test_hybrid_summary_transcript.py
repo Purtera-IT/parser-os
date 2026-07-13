@@ -6,13 +6,18 @@ person from production data.
 
 from __future__ import annotations
 
+import re
+
 from app.core.hybrid_summary_transcript import (
     CONVERSATION_META_KIND,
     classify_transcript_turn_role,
+    collapse_greeting_clusters,
     detect_hybrid_summary_transcript,
+    is_head_excluded_atom,
     is_non_deal_meta_atom,
     rewrite_hybrid_pdf_atoms,
     split_speaker_timestamp_turns,
+    stamp_conversation_reply_adjacency,
 )
 from app.core.normalizers import detect_speaker, parse_timestamp, split_transcript_segments
 from app.core.schemas import (
@@ -152,7 +157,9 @@ def test_classify_greeting_intro_vs_deal():
         )
         == "logistics"
     )
-    assert classify_transcript_turn_role("Yeah.") == "filler"
+    assert classify_transcript_turn_role("Yeah.") == "acknowledgment"
+    assert classify_transcript_turn_role("Good.") == "acknowledgment"
+    assert classify_transcript_turn_role("Thanks.") == "acknowledgment"
     assert (
         classify_transcript_turn_role(
             "We need to configure badge readers and integrate with SSO."
@@ -177,7 +184,7 @@ def test_classify_greeting_intro_vs_deal():
         classify_transcript_turn_role(
             "Daniel Peterson [00:48] We'll touch on this... Hey Patrick. How are you?"
         )
-        == "filler"
+        == "greeting"
     )
 
 
@@ -663,3 +670,262 @@ def test_no_gecko_hardcodes_in_hybrid_module():
         "trent torrence",
     ):
         assert banned not in text, f"deal-specific string leaked: {banned}"
+
+
+def test_how_are_you_good_reply_adjacency():
+    """'How are you?' → 'Good.' must stamp in_reply_to so heads never see an orphan."""
+    from app.core.hybrid_summary_transcript import (
+        collapse_greeting_clusters,
+        is_head_excluded_atom,
+        stamp_conversation_reply_adjacency,
+    )
+
+    filename = "Acme_Meeting_Summary_and_Full_Transcript.pdf"
+    structured = {
+        "document": {"title": "Meeting Summary and Full Transcript"},
+        "pages": [
+            {
+                "page": 0,
+                "sections": [
+                    {
+                        "heading": "Executive Summary",
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [{"text": "Badge access is in scope."}],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "page": 1,
+                "sections": [
+                    {
+                        "heading": "Full Transcript",
+                        "blocks": [
+                            {
+                                "kind": "paragraph",
+                                "text": (
+                                    "Alex Rivera [00:48] We'll touch on this after the call. "
+                                    "Well, hey, Patrick. How are you?\n"
+                                    "Sam Chen [00:56] Good.\n"
+                                    "Alex Rivera [00:56] Looks like we're just waiting for Eddie. "
+                                    "Long time no talk.\n"
+                                    "Alex Rivera [06:10] We need to configure badge zones and cameras with SSO."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    atoms = [
+        _mk_scope("Badge access is in scope.", page=0, filename=filename),
+        _mk_scope(
+            "Alex Rivera [00:48] How are you? Sam Chen [00:56] Good.",
+            page=1,
+            filename=filename,
+        ),
+    ]
+    atoms[0].value = {"kind": "bullet", "depth": 1, "text": atoms[0].raw_text}
+    atoms[0].source_refs[0].locator = {"page": 0, "block_kind": "bullet_list"}
+
+    out = rewrite_hybrid_pdf_atoms(
+        atoms=atoms,
+        structured_doc=structured,
+        filename=filename,
+        project_id="proj_demo",
+        artifact_id="art_demo",
+        parser_version="test_v1",
+    )
+
+    good = [
+        a
+        for a in out
+        if a.atom_type == AtomType.deal_metadata
+        and isinstance(a.value, dict)
+        and a.value.get("kind") == CONVERSATION_META_KIND
+        and re.search(r"\bGood\.?\b", a.raw_text or "", re.I)
+    ]
+    assert good, "acknowledgment 'Good.' must survive as conversation_meta"
+    ack = good[0]
+    assert is_head_excluded_atom(ack)
+    assert ack.value.get("non_deal") is True
+    assert ack.value.get("head_exclude") is True
+    assert ack.value.get("role") in {"acknowledgment", "greeting_cluster"}
+    # Reply-to context — what "Good." is answering.
+    prev_text = (
+        (ack.value.get("in_reply_to") or {}).get("text")
+        or ack.value.get("previous_text")
+        or ""
+    )
+    assert "how are you" in prev_text.lower(), f"expected How are you? context, got {prev_text!r}"
+    assert ack.value.get("previous_speaker") or (ack.value.get("in_reply_to") or {}).get(
+        "speaker"
+    ), "previous speaker required"
+    assert _is_protected_email_atom(ack)
+
+    # Optional collapse: greeting → ack becomes one cluster with reply-to preserved.
+    pair = [
+        a
+        for a in out
+        if a.atom_type == AtomType.deal_metadata
+        and isinstance(a.value, dict)
+        and a.value.get("kind") == CONVERSATION_META_KIND
+        and a.value.get("role") in {"greeting", "filler", "acknowledgment"}
+        and (a.source_refs[0].locator or {}).get("page") == 1
+    ]
+    if len(pair) >= 2:
+        stamp_conversation_reply_adjacency(pair)
+        collapsed, n = collapse_greeting_clusters(list(pair))
+        if n:
+            clusters = [
+                a
+                for a in collapsed
+                if isinstance(a.value, dict) and a.value.get("role") == "greeting_cluster"
+            ]
+            assert clusters
+            assert clusters[0].value.get("in_reply_to") or clusters[0].value.get("previous_text")
+
+
+def test_stitch_cross_page_speaker_turns_unit():
+    """Page-break continuation without a new [mm:ss] merges into prior turn."""
+    from app.core.hybrid_summary_transcript import (
+        SpeakerTurn,
+        stitch_cross_page_speaker_turns,
+    )
+
+    page_turns = [
+        (
+            1,
+            [
+                SpeakerTurn(
+                    speaker="Alex Rivera",
+                    timestamp="02:10",
+                    text="",
+                    char_start=0,
+                    char_end=20,
+                )
+            ],
+        ),
+        (
+            2,
+            [
+                SpeakerTurn(
+                    speaker=None,
+                    timestamp=None,
+                    text="Call it, actually.",
+                    char_start=0,
+                    char_end=18,
+                ),
+                SpeakerTurn(
+                    speaker="Sam Chen",
+                    timestamp="02:11",
+                    text="All right, next topic.",
+                    char_start=19,
+                    char_end=50,
+                ),
+            ],
+        ),
+    ]
+    out = stitch_cross_page_speaker_turns(page_turns)
+    assert len(out) == 2
+    assert out[0].turn.speaker == "Alex Rivera"
+    assert out[0].turn.timestamp == "02:10"
+    assert "Call it, actually." in (out[0].turn.text or "")
+    assert out[0].page_end == 2
+    assert out[1].turn.speaker == "Sam Chen"
+    assert out[1].page_end is None
+
+
+def test_rewrite_stitches_cross_page_transcript_continuation():
+    """Hybrid rewrite must emit one atom for a turn split across PDF pages."""
+    filename = "Acme_Meeting_Summary_and_Full_Transcript.pdf"
+    structured = {
+        "document": {"title": "Meeting Summary and Full Transcript"},
+        "pages": [
+            {
+                "page": 0,
+                "sections": [
+                    {
+                        "heading": "Executive Summary",
+                        "blocks": [
+                            {"kind": "bullet_list", "items": [{"text": "SSO is in scope."}]}
+                        ],
+                    }
+                ],
+            },
+            {
+                "page": 1,
+                "sections": [
+                    {
+                        "heading": "Full Transcript",
+                        "blocks": [
+                            {
+                                "kind": "paragraph",
+                                "text": (
+                                    "Alex Rivera [02:05] Before we jump in I want to\n"
+                                    "Alex Rivera [02:10]"
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "page": 2,
+                "sections": [
+                    {
+                        "heading": "Full Transcript",
+                        "blocks": [
+                            {
+                                "kind": "paragraph",
+                                "text": (
+                                    "Call it, actually.\n"
+                                    "Sam Chen [02:11] All right, Jacob, while we're waiting."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    atoms = [
+        _mk_scope("SSO is in scope.", page=0, filename=filename),
+        _mk_scope("Alex Rivera [02:10]", page=1, filename=filename),
+        _mk_scope("Call it, actually.", page=2, filename=filename),
+    ]
+
+    out = rewrite_hybrid_pdf_atoms(
+        atoms=atoms,
+        structured_doc=structured,
+        filename=filename,
+        project_id="proj_demo",
+        artifact_id="art_demo",
+        parser_version="test_v1",
+    )
+
+    # Orphan continuation must not survive as its own atom.
+    orphans = [
+        a
+        for a in out
+        if (a.raw_text or "").strip() == "Call it, actually."
+        or (isinstance(a.value, dict) and (a.value.get("text") or "").strip() == "Call it, actually.")
+    ]
+    assert not orphans, f"continuation must be stitched, found orphan: {orphans}"
+
+    stitched = [
+        a
+        for a in out
+        if "Call it, actually." in (a.raw_text or "")
+        and "Alex Rivera" in (a.raw_text or "")
+    ]
+    assert stitched, "expected one stitched Alex Rivera turn spanning pages"
+    loc = stitched[0].source_refs[0].locator or {}
+    assert loc.get("cross_page_stitched") is True
+    assert loc.get("page_end") == 2
+    assert loc.get("page") == 1
+

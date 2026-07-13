@@ -136,8 +136,41 @@ def test_backchannel_filler_dropped():
         _mk("scope_item", "Alex Rivera [03:05] Yeah."),
     ]
     kept, dropped = drop_nonsubstantive_fragments(atoms)
-    assert kept == []
-    assert len(dropped) == 3
+    # Bare filler still hard-drops. Speaker-stamped turns are kept so the
+    # conversational retag pass can stamp conversation_meta + reply-to.
+    assert len(dropped) == 2
+    assert all("Yeah." in (a.raw_text or "") or "Okay" in (a.raw_text or "") for a in dropped)
+    assert len(kept) == 1
+    assert "Alex Rivera" in (kept[0].raw_text or "")
+
+
+def test_speaker_stamped_filler_retagged_not_dropped():
+    """Diarized 'Yeah.' must become conversation_meta, not vanish."""
+    from app.core.atom_substance_gate import apply_substance_gate
+    from app.core.hybrid_summary_transcript import CONVERSATION_META_KIND
+
+    atoms = [
+        _mk(
+            "scope_item",
+            "Alex Rivera [03:05] Yeah.",
+            value={"kind": "paragraph", "text": "Alex Rivera [03:05] Yeah."},
+        )
+    ]
+    # Give it a transcript page so retag fires.
+    atoms[0].source_refs[0].locator = {"page": 1, "block_kind": "paragraph"}
+    kept, dropped = apply_substance_gate(atoms)
+    assert dropped == [] or all(
+        "Yeah" not in (getattr(a, "raw_text", "") or "") for a in dropped
+    )
+    meta = [
+        a
+        for a in kept
+        if isinstance(getattr(a, "value", None), dict)
+        and a.value.get("kind") == CONVERSATION_META_KIND
+    ]
+    assert meta
+    assert meta[0].value.get("non_deal") is True
+    assert meta[0].value.get("head_exclude") is True
 
 
 def test_real_scope_kept_even_when_short():
