@@ -52,13 +52,13 @@ ANSWERED_FLAG = "answered_in_corpus"
 NOISE_FLAG = "not_pm_actionable_question"
 
 _TRANSCRIPT_SPEAKER_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\s*\[\d{1,2}:\d{2}\]")
+# Literal "?" noise that is NOT a PM blocker when it appears in free-prose FAQ
+# dumps. Transcript diarized turns are exempt — they are conversation-graph
+# atoms (pricing Q→A, remote-vs-onsite, etc.) and must stay in the stream.
 _UNHELPFUL_QUESTION_RE = re.compile(
     r"\b("
     r"have\s+the\s+what|"
-    r"anything\s+else\s+you\s+need|"
-    r"how\s+much\s+is\s+it\s+for|"
-    r"how\s+quickly\s+do\s+you\s+think|"
-    r"did\s+you\s+want\s+this\s+done\s+remotely\s+or\s+on\s+site"
+    r"anything\s+else\s+you\s+need"
     r")\b",
     re.I,
 )
@@ -90,15 +90,33 @@ def is_answered_question(atom: Any) -> bool:
 
 
 def is_unhelpful_pm_question(atom: Any) -> bool:
-    """True when a literal question is transcript/dialogue noise, not a PM gap."""
+    """True when a literal question is transcript/dialogue noise, not a PM gap.
+
+    Diarized hybrid-transcript turns (``block_kind=transcript_turn``) are
+    NEVER unhelpful here — they belong to the conversation graph (pricing
+    Q→A, signature routing, remote-vs-onsite) and must remain auditable
+    and head-eligible. The PM-gap filter only targets free-prose FAQ noise.
+    """
     if _atom_type_str(atom) != "open_question":
         return False
+    # Conversation-graph turns from hybrid rewrite — keep always.
+    refs = getattr(atom, "source_refs", None) or []
+    if refs:
+        loc = getattr(refs[0], "locator", None) or {}
+        if isinstance(loc, dict) and (
+            loc.get("block_kind") == "transcript_turn"
+            or loc.get("hybrid_plan")
+            or loc.get("utterance_index") is not None
+        ):
+            return False
     val = getattr(atom, "value", None) or {}
     if isinstance(val, dict):
         if val.get("kind") == "visual_page_marker":
             return False
         if val.get("answered") is True:
             return True
+        if val.get("kind") == "transcript_turn" or val.get("speaker"):
+            return False
     text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
     if not text:
         return False

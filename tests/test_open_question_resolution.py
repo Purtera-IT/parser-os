@@ -129,6 +129,24 @@ def test_transcript_dialogue_questions_are_filtered_from_pm_gaps():
     assert all(is_unhelpful_pm_question(q) for q in dropped)
 
 
+def test_hybrid_transcript_pricing_question_kept_for_conversation_graph():
+    """Diarized 'How much is it for?' must stay — not PM-gap noise."""
+    q = _atom(AtomType.open_question, "How much is it for?", rid="atm_price_q")
+    q.source_refs[0].locator = {
+        "page": 2,
+        "block_kind": "transcript_turn",
+        "utterance_index": 20,
+        "speaker": "Jacob Vander-Plaats",
+        "timestamp_start": "02:53",
+        "hybrid_plan": "hybrid",
+    }
+    q.value = {"kind": "transcript_turn", "speaker": "Jacob Vander-Plaats", "text": "How much is it for?"}
+    kept, dropped = filter_unhelpful_open_questions([q])
+    assert kept == [q]
+    assert dropped == []
+    assert not is_unhelpful_pm_question(q)
+
+
 def test_real_pm_question_survives_quality_filter():
     atoms = [
         _atom(AtomType.open_question, "Who is the on-site contact for the Pittsburgh office?", rid="atm_real"),

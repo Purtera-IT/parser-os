@@ -18,10 +18,12 @@ Public API
 - ``rewrite_hybrid_pdf_atoms`` — replace transcript-page prose atoms
 - ``retag_conversational_to_meta`` — scope fluff → ``deal_metadata`` /
   ``kind=conversation_meta`` so heads ignore it while audit keeps it
-- ``stamp_conversation_reply_adjacency`` — short acks ("Good.") carry
-  ``in_reply_to`` / ``previous_*`` so they are never orphan tokens
+- ``stamp_conversation_reply_adjacency`` — short acks ("Good.") AND
+  substantive Q→A pairs carry ``in_reply_to`` / ``previous_*`` so heads
+  and audit never see orphan answers
 - ``collapse_greeting_clusters`` — optional greeting→ack merge into one meta atom
 - ``stitch_cross_page_speaker_turns`` — merge turns split at PDF page breaks
+  (speaker-less lead or incomplete mid-sentence ending)
 - ``is_head_excluded_atom`` — heads must skip ``non_deal`` / conversation_meta
 """
 
@@ -141,7 +143,68 @@ _DEAL_SUBSTANCE_RE = re.compile(
     r"switch|router|access\s+point|reader|doorbell|equipment|hardware|"
     r"parts?\s+list|sow|quote|statement\s+of\s+work|scope|"
     r"idp|identity\s+provider|sso|saml|scim|okta|unifi|uid\s+enterprise|"
-    r"nvr|dream\s+machine|hub|sensor|mount)\b",
+    r"nvr|dream\s+machine|hub|sensor|mount|"
+    # Commercial / pricing / paperwork — short turns must not fall to filler.
+    r"time\s+and\s+materials|t\s*&\s*m|hourly|fixed\s+(?:price|cost|fee|bid)|"
+    r"per\s+hour|how\s+much|pricing|signature|agreement|"
+    r"available\s+to)\b",
+    re.IGNORECASE,
+)
+
+# Pricing / commercial questions (substance — never filler / head_exclude).
+_PRICING_QUESTION_RE = re.compile(
+    r"(?:"
+    r"how\s+much(?:\s+is|\s+does|\s+will|\s+would|\s+for)?"
+    r"|what(?:'s|\s+is|\s+are)\s+(?:the\s+)?(?:price|cost|rate|fee|budget)"
+    r"|what(?:'s|\s+is)\s+it\s+(?:for|cost|run)"
+    r"|is\s+it\s+(?:t\s*&\s*m|time\s+and\s+materials|fixed|hourly)"
+    r")",
+    re.IGNORECASE,
+)
+# Contact / routing / signature questions (not call-logistics "sending it this way").
+_CONTACT_QUESTION_RE = re.compile(
+    r"(?:"
+    r"who\s+should\s+i\s+(?:be\s+)?send"
+    r"|send(?:ing)?\s+(?:that|it|this)\s+to\b[^?.!]{0,80}\b(?:for\s+)?signature"
+    r"|for\s+signature"
+    r"|who(?:'s|\s+is)\s+(?:the\s+)?(?:contact|signer|approver)"
+    r"|whose\s+(?:inbox|email|desk)"
+    r")",
+    re.IGNORECASE,
+)
+# Pricing / commercial answers (T&M, rates, etc.).
+_PRICING_ANSWER_RE = re.compile(
+    r"(?:"
+    r"time\s+and\s+materials|t\s*&\s*m"
+    r"|\$\s*\d|\b\d+\s*(?:dollars?|bucks|an\s+hour|per\s+hour)"
+    r"|hourly|fixed\s+(?:price|fee|bid)|per\s+hour"
+    r"|it(?:'s|\s+is)\s+just\s+(?:time|materials|t\s*&\s*m)"
+    r")",
+    re.IGNORECASE,
+)
+# Contact / routing answers ("available to Tom. Tom Amble.").
+_CONTACT_ANSWER_RE = re.compile(
+    r"(?:"
+    r"available\s+to\b"
+    r"|send(?:\s+it)?\s+to\s+[A-Z][a-z]+"  # "send it to Morgan" / "send to Tom"
+    r"|his\s+(?:email|inbox)|her\s+(?:email|inbox)"
+    # Trailing First Last contact handoff.
+    r"|(?:^|[.!?]\s+)[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\s*[.!]?\s*$"
+    r")",
+)
+# Incomplete utterance ending — mid-sentence page-break / OCR cut.
+_INCOMPLETE_END_RE = re.compile(
+    r"(?:"
+    r"[,;:\-–—]\s*$"  # trailing comma / dash
+    r"|,\.\s*$"  # OCR "support,."
+    r"|\b(?:and|or|the|a|an|to|for|with|of|that|you|know|so|be|just)\s*$"
+    r")",
+    re.IGNORECASE,
+)
+# Pure social / wellness questions — still greeting, not deal.
+_GREETING_QUESTION_RE = re.compile(
+    r"^(?:how\s+are\s+you(?:\s+doing)?|how(?:'s|\s+is)\s+it\s+going|"
+    r"how\s+have\s+you\s+been|what(?:'s|\s+is)\s+up)\??\s*$",
     re.IGNORECASE,
 )
 
@@ -387,6 +450,10 @@ def stitch_cross_page_speaker_turns(
     ``Name [mm:ss]`` stamp), append that text to the prior turn. Do not
     emit two atoms for one spoken turn.
 
+    Also stitches when the prior turn ends mid-sentence (trailing comma /
+    dangling connective) and the next page opens with the **same speaker**
+    stamp (OCR often re-stamps the continuing speaker at the page head).
+
     ``page_turns`` must be in ascending page order. Returns a flat list
     preserving document order with page provenance.
     """
@@ -402,13 +469,10 @@ def stitch_cross_page_speaker_turns(
     i = 0
     while i < len(flat):
         cur = flat[i]
-        # Pull forward any following speaker-less page-lead continuations.
+        # Pull forward any following page-lead continuations.
         while i + 1 < len(flat):
             nxt = flat[i + 1]
             if nxt.page_idx <= cur.page_idx:
-                break
-            # Continuation: next page opens without a new speaker stamp.
-            if nxt.turn.speaker is not None or nxt.turn.timestamp is not None:
                 break
             # Need a real prior speaker to attribute the continuation to.
             if not cur.turn.speaker:
@@ -418,6 +482,16 @@ def stitch_cross_page_speaker_turns(
                 i += 1
                 continue
             prior_body = (cur.turn.text or "").strip()
+            speaker_less = nxt.turn.speaker is None and nxt.turn.timestamp is None
+            same_speaker = (
+                nxt.turn.speaker is not None
+                and _speakers_equal(cur.turn.speaker, nxt.turn.speaker)
+                and bool(_INCOMPLETE_END_RE.search(prior_body))
+            )
+            # Continuation: speaker-less page lead, OR same speaker after
+            # an incomplete mid-sentence ending (page-break re-stamp).
+            if not speaker_less and not same_speaker:
+                break
             merged = f"{prior_body} {cont}".strip() if prior_body else cont
             cur = StitchedSpeakerTurn(
                 page_idx=cur.page_idx,
@@ -434,6 +508,14 @@ def stitch_cross_page_speaker_turns(
         out.append(cur)
         i += 1
     return out
+
+
+def _speakers_equal(a: str | None, b: str | None) -> bool:
+    if not a or not b:
+        return False
+    na = re.sub(r"[^a-z0-9]+", " ", a.lower()).strip()
+    nb = re.sub(r"[^a-z0-9]+", " ", b.lower()).strip()
+    return bool(na) and na == nb
 
 
 def strip_transcript_section_chrome(text: str) -> str:
@@ -482,6 +564,65 @@ def _utterance_body(text: str) -> str:
     return _SPEAKER_TS_RE.sub("", probe, count=1).strip() or probe
 
 
+def _is_question_body(body: str) -> bool:
+    probe = (body or "").strip()
+    if not probe:
+        return False
+    if probe.endswith("?"):
+        return True
+    return bool(
+        _PRICING_QUESTION_RE.search(probe) or _CONTACT_QUESTION_RE.search(probe)
+    )
+
+
+def _question_kind(body: str) -> str | None:
+    """Return ``pricing`` / ``contact`` / ``generic`` / None for a turn body."""
+    probe = (body or "").strip()
+    if not probe:
+        return None
+    if _GREETING_QUESTION_RE.match(probe):
+        return None  # social — not a deal question
+    if _PRICING_QUESTION_RE.search(probe):
+        return "pricing"
+    if _CONTACT_QUESTION_RE.search(probe):
+        return "contact"
+    if not probe.endswith("?"):
+        return None
+    # Interrogative short questions without greeting chrome → generic deal Q.
+    tokens = [t for t in re.findall(r"[a-z0-9]+", probe.lower()) if t]
+    if tokens and tokens[0] in {
+        "who",
+        "what",
+        "when",
+        "where",
+        "why",
+        "how",
+        "can",
+        "could",
+        "would",
+        "should",
+        "is",
+        "are",
+        "do",
+        "does",
+        "did",
+        "will",
+    }:
+        return "generic"
+    return "generic"
+
+
+def _answer_kind(body: str) -> str | None:
+    probe = (body or "").strip()
+    if not probe:
+        return None
+    if _PRICING_ANSWER_RE.search(probe):
+        return "pricing"
+    if _CONTACT_ANSWER_RE.search(probe):
+        return "contact"
+    return None
+
+
 def classify_transcript_turn_role(text: str) -> TurnRole:
     """Classify a single utterance as greeting/intro/logistics/filler/deal.
 
@@ -490,6 +631,9 @@ def classify_transcript_turn_role(text: str) -> TurnRole:
 
     Short backchannel ("Good.", "Yeah.", "Thanks.") is ``acknowledgment`` —
     never deal substance, and always eligible for reply-to adjacency stamps.
+
+    Real questions ("How much is it for?", signature routing) are ``deal`` —
+    never filler / head_exclude. Social wellness questions stay greeting.
     """
     # Classify the spoken body — speaker stamps inflate token counts and
     # flip soft social ("I don't remember…") into false ``deal``.
@@ -504,6 +648,13 @@ def classify_transcript_turn_role(text: str) -> TurnRole:
     # this after the call… How are you?" is still a greeting turn for audit.
     if _GREETING_RE.search(probe):
         return "greeting"
+    # Deal questions / commercial answers before short-filler heuristic.
+    # "How much is it for?" is 5 tokens — must NOT become filler.
+    q_kind = _question_kind(probe)
+    if q_kind is not None:
+        return "deal"
+    if _answer_kind(probe) is not None:
+        return "deal"
     if _SOFT_SOCIAL_RE.search(probe):
         return "filler"
     if _INTRO_RE.search(probe):
@@ -691,9 +842,30 @@ def _apply_conversation_meta(atom: Any, AtomType: Any, *, role: str, text: str) 
 
 
 def _truncate_reply_text(text: str, limit: int = _REPLY_TO_TEXT_MAX) -> str:
-    cleaned = " ".join((text or "").split())
+    """Clip prior-turn text for reply-to stamps.
+
+    Prefer the question-bearing tail of long turns so audit shows
+    ``who should I be sending that to for signature?`` rather than the
+    turn's opening filler ("Okay. All right, let me…").
+    """
+    cleaned = " ".join((text or "").strip().split())
+    if not cleaned:
+        return ""
     if len(cleaned) <= limit:
         return cleaned
+    if "?" in cleaned:
+        q_idx = cleaned.rfind("?")
+        # Sentence start: after prior `.` / `!` / `?`, else start of string.
+        start = 0
+        for sep in (". ", "! ", "? "):
+            pos = cleaned.rfind(sep, 0, q_idx)
+            if pos >= start:
+                start = pos + len(sep)
+        frag = cleaned[start : q_idx + 1].strip()
+        if frag:
+            if len(frag) <= limit:
+                return frag
+            return "…" + frag[-(limit - 1) :].lstrip()
     return cleaned[: max(0, limit - 1)].rstrip() + "…"
 
 
@@ -740,70 +912,162 @@ def _prior_turn_snapshot(atom: Any) -> dict[str, Any]:
     return snap
 
 
-def stamp_conversation_reply_adjacency(atoms: list[Any]) -> int:
-    """Stamp ``in_reply_to`` / ``previous_*`` on short acknowledgments.
+def _atom_speaker(atom: Any) -> str | None:
+    val = getattr(atom, "value", None)
+    val = val if isinstance(val, dict) else {}
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else {}
+    if not isinstance(loc, dict):
+        loc = {}
+    speaker = val.get("speaker") or loc.get("speaker")
+    return str(speaker).strip() if speaker else None
 
-    Universal: walks transcript turns in page + utterance order. Any
-    ``acknowledgment`` (or short filler) that follows another speaker turn
-    inherits that prior turn's speaker + text so heads/audit never see an
-    orphan token like ``Good.`` with no conversational context.
+
+def _find_reply_target(
+    ordered: list[Any],
+    idx: int,
+    *,
+    body: str,
+    prefer_ack_prev: bool,
+) -> Any | None:
+    """Pick the prior turn this utterance answers.
+
+    Preference order:
+    1. Immediate previous turn when it is a question (Q→A adjacency)
+    2. Matching question kind within a short lookback (pricing↔T&M,
+       contact/signature↔"available to Tom")
+    3. For short acknowledgments: immediate previous turn (any)
+    """
+    if idx <= 0:
+        return None
+    prev = ordered[idx - 1]
+    prev_body = _utterance_body(_atom_text(prev))
+    prev_q = _question_kind(prev_body) if prev_body else None
+    ans = _answer_kind(body)
+
+    # Strong adjacency: prior turn is a question → answer it.
+    if prev_q is not None:
+        return prev
+
+    # Kind-matched lookback for substance answers that aren't immediately
+    # after their question (e.g. contact answer after a pricing digression).
+    if ans is not None:
+        window = 8
+        for j in range(idx - 1, max(-1, idx - 1 - window), -1):
+            cand = ordered[j]
+            cand_body = _utterance_body(_atom_text(cand))
+            qk = _question_kind(cand_body) if cand_body else None
+            if qk is None:
+                continue
+            if qk == ans or qk == "generic" or ans == "generic":
+                return cand
+
+    if prefer_ack_prev:
+        return prev
+    return None
+
+
+def stamp_conversation_reply_adjacency(atoms: list[Any]) -> int:
+    """Stamp ``in_reply_to`` / ``previous_*`` on acks AND substantive Q→A.
+
+    Universal: walks transcript turns in page + utterance order.
+
+    - Short acknowledgments ("Good.", "Okay.") always inherit the prior
+      turn so they are never orphan tokens.
+    - Substance answers that follow a question (pricing Q → T&M, contact Q
+      → "available to Tom") get the same connective tissue — without
+      ``head_exclude`` — so heads see the answer *with* reply context.
+    - Audit UI surfaces ``↳ reply to …`` from these stamps.
 
     Returns the number of atoms stamped.
     """
-    # Order all atoms that look like transcript turns.
     ordered = sorted(atoms, key=_turn_sort_key)
-    stamped = 0
-    prev: Any | None = None
+    # Dense index of transcript-ish turns only.
+    turns: list[Any] = []
     for atom in ordered:
-        # Only consider turns with a page locator (transcript / hybrid).
-        if _atom_page(atom) is None and not (
-            isinstance(getattr(atom, "value", None), dict)
-            and (atom.value.get("speaker") or atom.value.get("kind") == CONVERSATION_META_KIND)
+        page = _atom_page(atom)
+        text = _atom_text(atom)
+        val = getattr(atom, "value", None)
+        val = val if isinstance(val, dict) else {}
+        if page is None and not (
+            val.get("speaker")
+            or val.get("kind") == CONVERSATION_META_KIND
+            or _SPEAKER_TS_RE.search(text)
         ):
-            # Still advance prev for speaker-stamped text without page.
-            text = _atom_text(atom)
-            if _SPEAKER_TS_RE.search(text) or (
-                isinstance(getattr(atom, "value", None), dict) and atom.value.get("speaker")
-            ):
-                prev = atom
             continue
+        if not text.strip():
+            continue
+        turns.append(atom)
 
+    stamped = 0
+    for i, atom in enumerate(turns):
         val = getattr(atom, "value", None)
         val = val if isinstance(val, dict) else {}
         role = str(val.get("role") or "")
         body = _utterance_body(_atom_text(atom))
-        needs_reply = (
+        is_ack = (
             role == "acknowledgment"
             or (role == "filler" and bool(_ACK_ONLY_RE.match(body or "")))
             or (
                 is_conversation_meta_atom(atom)
                 and bool(_ACK_ONLY_RE.match(body or ""))
             )
+            or bool(_ACK_ONLY_RE.match(body or ""))
         )
-        if needs_reply and prev is not None and prev is not atom:
-            snap = _prior_turn_snapshot(prev)
-            # Don't self-reply when prior is empty chrome.
-            if snap.get("text") or snap.get("speaker"):
-                new_val = dict(val)
-                new_val["in_reply_to"] = snap
-                new_val["previous_speaker"] = snap.get("speaker")
-                new_val["previous_text"] = snap.get("text")
-                new_val["previous_timestamp"] = snap.get("timestamp")
-                # Promote bare filler ack → acknowledgment once context exists.
-                if new_val.get("role") == "filler" and _ACK_ONLY_RE.match(body or ""):
-                    new_val["role"] = "acknowledgment"
-                new_val["non_deal"] = True
-                new_val["head_exclude"] = True
-                atom.value = new_val
-                flags = list(getattr(atom, "review_flags", None) or [])
-                if "reply_adjacency" not in flags:
-                    flags.append("reply_adjacency")
-                atom.review_flags = flags
-                stamped += 1
-        # Advance previous turn pointer for any real utterance.
-        text = _atom_text(atom)
-        if text.strip():
-            prev = atom
+        # Don't stamp a question as answering the prior turn.
+        if _question_kind(body or "") is not None and not is_ack:
+            continue
+
+        target = _find_reply_target(
+            turns,
+            i,
+            body=body or "",
+            prefer_ack_prev=is_ack,
+        )
+        if target is None or target is atom:
+            continue
+
+        # Avoid self-speaker echo for substance (same person continuing).
+        # Acks may reply to anyone including same speaker ("Good." after own?).
+        if not is_ack:
+            sp_a = _atom_speaker(atom)
+            sp_t = _atom_speaker(target)
+            if sp_a and sp_t and _speakers_equal(sp_a, sp_t):
+                # Same speaker — only link when target is clearly a question
+                # they are answering for the room (rare); skip by default.
+                continue
+            # Require a question target for substance (not random prior).
+            tgt_body = _utterance_body(_atom_text(target))
+            if _question_kind(tgt_body or "") is None:
+                continue
+
+        snap = _prior_turn_snapshot(target)
+        if not (snap.get("text") or snap.get("speaker")):
+            continue
+
+        new_val = dict(val)
+        new_val["in_reply_to"] = snap
+        new_val["previous_speaker"] = snap.get("speaker")
+        new_val["previous_text"] = snap.get("text")
+        new_val["previous_timestamp"] = snap.get("timestamp")
+        if is_ack:
+            # Promote bare filler ack → acknowledgment once context exists.
+            if new_val.get("role") == "filler" and _ACK_ONLY_RE.match(body or ""):
+                new_val["role"] = "acknowledgment"
+            new_val["non_deal"] = True
+            new_val["head_exclude"] = True
+        elif new_val.get("kind") != CONVERSATION_META_KIND:
+            # Substance Q→A: keep head-eligible; never force head_exclude.
+            new_val["non_deal"] = False
+            new_val["head_exclude"] = False
+        atom.value = new_val
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if "reply_adjacency" not in flags:
+            flags.append("reply_adjacency")
+        if not is_ack and "qa_adjacency" not in flags:
+            flags.append("qa_adjacency")
+        atom.review_flags = flags
+        stamped += 1
     return stamped
 
 
@@ -1034,6 +1298,7 @@ def rewrite_hybrid_pdf_atoms(
             if not _SPEAKER_TS_RE.search(display):
                 continue
         role = classify_transcript_turn_role(body or display)
+        q_kind = _question_kind(body or "") if role == "deal" else None
         locator: dict[str, Any] = {
             "page": page_idx,
             "block_kind": "transcript_turn",
@@ -1045,6 +1310,8 @@ def rewrite_hybrid_pdf_atoms(
         if st.page_end is not None and st.page_end != page_idx:
             locator["page_end"] = st.page_end
             locator["cross_page_stitched"] = True
+        if q_kind:
+            locator["question_kind"] = q_kind
         source = SourceRef(
             id=stable_id(
                 "src",
@@ -1122,6 +1389,18 @@ def rewrite_hybrid_pdf_atoms(
             ReviewStatus=ReviewStatus,
             stable_id=stable_id,
         )
+        if q_kind:
+            for atom in typed_atoms:
+                flags = list(getattr(atom, "review_flags", None) or [])
+                for f in ("deal_question", f"question_kind:{q_kind}", "qa_adjacency_v2"):
+                    if f not in flags:
+                        flags.append(f)
+                atom.review_flags = flags
+                val = getattr(atom, "value", None)
+                if isinstance(val, dict):
+                    new_val = dict(val)
+                    new_val["question_kind"] = q_kind
+                    atom.value = new_val
         new_atoms.extend(typed_atoms)
 
     # Reply-to adjacency: "Good." must carry what it answers.
@@ -1173,6 +1452,8 @@ def _emit_deal_turn_atoms(
             segment=segment,
         )
         # Stamp PDF page onto source locators so substance gates / UI keep page.
+        src_loc = getattr(source, "locator", None)
+        src_loc = src_loc if isinstance(src_loc, dict) else {}
         for atom in atoms:
             for ref in getattr(atom, "source_refs", None) or []:
                 loc = getattr(ref, "locator", None)
@@ -1180,6 +1461,10 @@ def _emit_deal_turn_atoms(
                     loc["page"] = page_idx
                     loc["block_kind"] = "transcript_turn"
                     loc["hybrid_plan"] = "rewritten"
+                    if src_loc.get("page_end") is not None:
+                        loc["page_end"] = src_loc["page_end"]
+                    if src_loc.get("cross_page_stitched"):
+                        loc["cross_page_stitched"] = True
             # Prefer PDF artifact type for hybrid PDF source.
             try:
                 from app.core.schemas import ArtifactType
@@ -1190,7 +1475,28 @@ def _emit_deal_turn_atoms(
             except Exception:
                 pass
         if atoms:
-            return _collapse_hybrid_turn_atoms(list(atoms))
+            collapsed = _collapse_hybrid_turn_atoms(list(atoms))
+            # Surface speaker-stamped display text for audit + conversation graph
+            # (TranscriptParser emits body-only raw_text).
+            for atom in collapsed:
+                val = getattr(atom, "value", None)
+                if not isinstance(val, dict):
+                    val = {}
+                else:
+                    val = dict(val)
+                if speaker and not val.get("speaker"):
+                    val["speaker"] = speaker
+                if timestamp and not val.get("timestamp"):
+                    val["timestamp"] = timestamp
+                if body and not val.get("text"):
+                    val["text"] = body
+                atom.value = val
+                if display and (not (atom.raw_text or "").strip() or (
+                    speaker and speaker not in (atom.raw_text or "")
+                )):
+                    atom.raw_text = display
+                    atom.normalized_text = display.strip()
+            return collapsed
     except Exception:
         pass
 

@@ -929,3 +929,196 @@ def test_rewrite_stitches_cross_page_transcript_continuation():
     assert loc.get("page_end") == 2
     assert loc.get("page") == 1
 
+
+def test_pricing_and_contact_questions_are_deal_not_filler():
+    """Short commercial questions must never fall to filler/head_exclude."""
+    assert classify_transcript_turn_role("How much is it for?") == "deal"
+    assert classify_transcript_turn_role("What is the price?") == "deal"
+    assert (
+        classify_transcript_turn_role(
+            "Now that Morgan's not there, who should I be sending that to for signature?"
+        )
+        == "deal"
+    )
+    assert classify_transcript_turn_role("It's just time and materials,") == "deal"
+    assert classify_transcript_turn_role("It's available to Tom. Tom Amble.") == "deal"
+    # Social wellness stays greeting / acknowledgment.
+    assert classify_transcript_turn_role("How are you?") == "greeting"
+    assert classify_transcript_turn_role("Good.") == "acknowledgment"
+
+
+def test_pricing_qa_reply_adjacency_and_head_eligible():
+    """How much? → T&M answer must carry in_reply_to and stay head-eligible."""
+    filename = "Acme_Meeting_Summary_and_Full_Transcript.pdf"
+    structured = {
+        "document": {"title": "Meeting Summary and Full Transcript"},
+        "pages": [
+            {
+                "page": 0,
+                "sections": [
+                    {
+                        "heading": "Executive Summary",
+                        "blocks": [
+                            {
+                                "kind": "bullet_list",
+                                "items": [{"text": "Support agreement is open."}],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "page": 1,
+                "sections": [
+                    {
+                        "heading": "Full Transcript",
+                        "blocks": [
+                            {
+                                "kind": "paragraph",
+                                "text": (
+                                    "Alex Rivera [02:50] Before we wrap, who should I be "
+                                    "sending that to for signature?\n"
+                                    "Sam Chen [02:53] How much is it for?\n"
+                                    "Alex Rivera [02:55] It's just time and materials, "
+                                    "so I'd be happy to put an agreement together.\n"
+                                    "Sam Chen [03:02] It's available to Tom. Tom Amble.\n"
+                                    "Alex Rivera [03:05] Okay."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    atoms = [
+        _mk_scope("Support agreement is open.", page=0, filename=filename),
+        _mk_scope(
+            "Sam Chen [02:53] How much is it for?",
+            page=1,
+            filename=filename,
+        ),
+    ]
+    atoms[0].value = {"kind": "bullet", "depth": 1, "text": atoms[0].raw_text}
+    atoms[0].source_refs[0].locator = {"page": 0, "block_kind": "bullet_list"}
+
+    out = rewrite_hybrid_pdf_atoms(
+        atoms=atoms,
+        structured_doc=structured,
+        filename=filename,
+        project_id="proj_demo",
+        artifact_id="art_demo",
+        parser_version="test_v1",
+    )
+
+    how_much = [
+        a
+        for a in out
+        if re.search(r"how much is it for", a.raw_text or "", re.I)
+    ]
+    assert how_much, "pricing question must survive"
+    hm = how_much[0]
+    assert not is_head_excluded_atom(hm), "pricing question must be head-eligible"
+    assert not (
+        isinstance(hm.value, dict)
+        and hm.value.get("kind") == CONVERSATION_META_KIND
+        and hm.value.get("role") == "filler"
+    ), "must not be conversation_meta filler"
+
+    tm = [
+        a
+        for a in out
+        if re.search(r"time and materials", a.raw_text or "", re.I)
+    ]
+    assert tm, "T&M answer must survive"
+    ans = tm[0]
+    assert not is_head_excluded_atom(ans), "T&M answer must be head-eligible"
+    prev = (
+        (ans.value.get("in_reply_to") or {}).get("text")
+        if isinstance(ans.value, dict)
+        else ""
+    ) or (ans.value.get("previous_text") if isinstance(ans.value, dict) else "") or ""
+    assert "how much" in prev.lower(), f"T&M must reply to pricing Q, got {prev!r}"
+
+    contact = [
+        a
+        for a in out
+        if re.search(r"tom amble", a.raw_text or "", re.I)
+    ]
+    assert contact, "contact answer must survive as deal substance"
+    ct = contact[0]
+    assert not is_head_excluded_atom(ct)
+    assert not (
+        isinstance(ct.value, dict)
+        and ct.value.get("kind") == CONVERSATION_META_KIND
+        and ct.value.get("role") == "filler"
+    )
+    cprev = (
+        (ct.value.get("in_reply_to") or {}).get("text")
+        if isinstance(ct.value, dict)
+        else ""
+    ) or ""
+    assert "signature" in cprev.lower() or "sending" in cprev.lower(), (
+        f"contact answer must reply to signature Q, got {cprev!r}"
+    )
+
+    okay = [
+        a
+        for a in out
+        if isinstance(a.value, dict)
+        and a.value.get("kind") == CONVERSATION_META_KIND
+        and re.search(r"\bOkay\.?\b", a.raw_text or "", re.I)
+    ]
+    assert okay
+    assert is_head_excluded_atom(okay[0])
+    assert okay[0].value.get("in_reply_to") or okay[0].value.get("previous_text")
+
+
+def test_stitch_incomplete_same_speaker_across_page():
+    """Mid-sentence comma cut + same-speaker re-stamp on next page merges."""
+    from app.core.hybrid_summary_transcript import (
+        SpeakerTurn,
+        stitch_cross_page_speaker_turns,
+    )
+
+    page_turns = [
+        (
+            2,
+            [
+                SpeakerTurn(
+                    speaker="Alex Rivera",
+                    timestamp="02:55",
+                    text="It's just time and materials,",
+                    char_start=0,
+                    char_end=40,
+                )
+            ],
+        ),
+        (
+            3,
+            [
+                SpeakerTurn(
+                    speaker="Alex Rivera",
+                    timestamp="02:55",
+                    text="so I'd be happy to put an agreement together.",
+                    char_start=0,
+                    char_end=50,
+                ),
+                SpeakerTurn(
+                    speaker="Sam Chen",
+                    timestamp="03:02",
+                    text="It's available to Tom.",
+                    char_start=51,
+                    char_end=80,
+                ),
+            ],
+        ),
+    ]
+    out = stitch_cross_page_speaker_turns(page_turns)
+    assert len(out) == 2
+    assert out[0].turn.speaker == "Alex Rivera"
+    assert "time and materials" in (out[0].turn.text or "")
+    assert "agreement together" in (out[0].turn.text or "")
+    assert out[0].page_end == 3
+    assert out[1].turn.speaker == "Sam Chen"
+
