@@ -463,12 +463,10 @@ Caption hint (may be empty): "{caption}"
 _DESCRIBE_PROMPT = """You are describing an image as an AV / UC field engineer
 reviewing a site photo or annotated room image from a conference-room install.
 
-Describe ONLY what is visible — but be dense and concrete. Sparse page labels
-like "Room Pictures" are NOT grounding; trust the pixels.
+Describe ONLY install-relevant pixels. Sparse page labels like "Room Pictures"
+are NOT grounding; trust the image.
 
-Cover when visible:
-- ROOM: type (huddle/conference/lobby), furniture (table shape, chair count),
-  walls/glass/windows/doors, finishes, lighting/glare risks.
+MUST cover when visible (dense, concrete facts):
 - DISPLAYS: count, wall/cart/ceiling, approx size class, brand/model if readable,
   height/placement relative to table or camera.
 - CAMERAS / BARS / CODECS: wall/table/ceiling mount, above/below/offset from
@@ -484,20 +482,22 @@ Cover when visible:
 - RISKS: ONLY when an on-image annotation or obvious physical blocker supports
   it (e.g. "behind the wall", blocked pathway, abandoned mount). Do NOT invent
   soft aesthetic risks (carpet color, "may pose trip hazard", HVAC FOV guesses).
-- AESTHETIC / CONCEALMENT: If cables are surface-mounted OR annotations say
-  "behind the wall" / "clean" / "professional" / "hide", emit an explicit
-  annotation/cable fact quoting the note — not a speculative risk sentence.
+
+DO NOT emit facts about: furniture/chairs/tablecloths, posters/banners, exit
+signs, lighting ambiance, room spaciousness, or "professional appearance".
+If cables are surface-mounted or annotations say "behind the wall" / "hide",
+emit a cable or annotation fact quoting the note — never an aesthetic risk.
 
 {envelope}
 
 Return JSON only:
-{{"description": "2-5 short paragraphs OR dense bullets covering the checklist above",
-  "facts": [{{"kind": "equipment|mount|cable|placement|site_condition|annotation|power_data|risk|other",
+{{"description": "1-2 short sentences of install context only (plain string, never a JSON array)",
+  "facts": [{{"kind": "equipment|mount|cable|placement|site_condition|annotation|power_data|risk",
               "text": "one atomic install fact (device + placement + cable/mount detail)"}}]}}
 
-Emit 8-14 facts when the image supports it. Prefer cable runs, mounts, device
-placements, and on-image annotations over vague room adjectives. description
-must be a plain string (never a JSON array).
+Emit 8-14 install facts when the image supports it. Prefer cable runs, mounts,
+device placements, power/data, and on-image annotations. Skip furniture/room
+ambiance. Never use kind "other", "furniture", or "aesthetic".
 /no_think
 """
 
@@ -684,9 +684,10 @@ def _apply_caption_mismatch(atoms: list[EvidenceAtom], caption: str, *, min_over
     if not caption.strip() or not atoms:
         return
     head = next((a for a in atoms if a.value.get("fact_kind") == "image_description"), None)
-    if head is None:
-        return
-    if _caption_overlap(caption, head.raw_text) >= min_overlap:
+    probe = (head.raw_text if head is not None else "") or " ".join(
+        a.raw_text for a in atoms[:4]
+    )
+    if _caption_overlap(caption, probe) >= min_overlap:
         return
     for a in atoms:
         a.review_flags = sorted(set(a.review_flags + ["image_answer_mismatch"]))
@@ -1040,17 +1041,20 @@ def _describe(
     if image_kind in _DESCRIBE_KINDS:
         conf = max(conf, 0.62)
     atoms: list[EvidenceAtom] = []
-    head = _emit_atom(
-        marker=marker, pdf_name=pdf_name, region_ref=region_ref,
-        page_index=page_index, text=description, image_kind=image_kind,
-        fact_kind="image_description", confidence=conf,
-        atom_type=AtomType.deal_metadata,
+    # P4: do NOT publish whole-room image_description blurbs — they dilute
+    # install density. Facts alone are the publishable vision stream.
+    _SKIP_FACT_KINDS = {
+        "other",
+        "furniture",
+        "room",
+        "aesthetic",
+        "aesthetic_concealment",
+    }
+    _AMBIANCE_FACT_RE = re.compile(
+        r"(?i)(?:tablecloth|office chairs?|chairs arranged|posters?|banners?|"
+        r"exit sign|lighting is even|room is spacious|no visible risks|"
+        r"professional yet approachable|ample space for movement)"
     )
-    if head:
-        # Blurbs are secondary: mark so Orbit evidence ranker can demote.
-        head.value["head_exclude"] = False
-        head.value["evidence_rank"] = "blurb"
-        atoms.append(head)
     facts = obj.get("facts") or []
     if isinstance(facts, list):
         for f in facts:
@@ -1060,6 +1064,8 @@ def _describe(
             if not ftext:
                 continue
             fk = str(f.get("kind") or "other").strip().lower()
+            if fk in _SKIP_FACT_KINDS or _AMBIANCE_FACT_RE.search(ftext):
+                continue
             # Prefer scope_item / risk for install-relevant facts so OrbitBrief sees them.
             # P12: site_condition is install-relevant → scope_item.
             if fk == "risk":
@@ -1070,7 +1076,7 @@ def _describe(
             }:
                 at = AtomType.scope_item
             else:
-                at = AtomType.deal_metadata
+                continue
             a = _emit_atom(
                 marker=marker, pdf_name=pdf_name, region_ref=region_ref,
                 page_index=page_index, text=ftext, image_kind=image_kind,
@@ -1079,6 +1085,9 @@ def _describe(
             )
             if a:
                 a.value["evidence_rank"] = "fact"
+                # Keep description only as private context on the first fact.
+                if description and "context_blurb" not in a.value:
+                    a.value["context_blurb"] = description[:240]
                 atoms.append(a)
     return atoms
 

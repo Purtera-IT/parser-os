@@ -127,6 +127,36 @@ _INSTALL_FACT_KINDS = frozenset(
     }
 )
 
+# Vision kinds that dilute install density — never publish.
+_LOW_DENSITY_VISION_KINDS = frozenset(
+    {
+        "furniture",
+        "room",
+        "other",
+        "aesthetic",
+        "aesthetic_concealment",
+    }
+)
+
+_VISION_AMBIANCE_RE = re.compile(
+    r"(?i)(?:"
+    r"^the image (?:shows|depicts)|"
+    r"conference room setup with a long|"
+    r"\btablecloth|"
+    r"\boffice chairs?\b|"
+    r"chairs arranged around|"
+    r"\bposters?\b|\bbanners?\b|"
+    r"exit sign|"
+    r"lighting is even|"
+    r"no significant glare|"
+    r"room is spacious|"
+    r"ample space for movement|"
+    r"professional yet approachable|"
+    r"no visible risks? (?:are )?(?:annotated|apparent)|"
+    r"^no visible risks"
+    r")"
+)
+
 
 def _atom_text(atom: Any) -> str:
     if isinstance(atom, dict):
@@ -298,6 +328,34 @@ def is_speculative_risk_text(text: str, *, atom_type: str | None = None) -> bool
     return True
 
 
+def is_low_density_vision_fact(atom: Any) -> bool:
+    """P4 / density — drop blurbs, furniture, ambiance, empty risks."""
+    val = _atom_value(atom)
+    fk = str(val.get("fact_kind") or "").lower()
+    via = str(val.get("via") or "")
+    text = _atom_text(atom)
+    is_vision = "pdf_image_vision" in via or fk.startswith("image_")
+    if not is_vision:
+        return False
+    if fk in {"image_description", "image_instructions_summary"}:
+        return True
+    kind = fk.split(":", 1)[1] if fk.startswith("image_fact:") else ""
+    if kind in _LOW_DENSITY_VISION_KINDS:
+        return True
+    if _VISION_AMBIANCE_RE.search(text):
+        # Keep hard install language even if ambiance words appear.
+        if _HARD_GROUNDED_RISK_RE.search(text):
+            return False
+        if re.search(
+            r"(?i)\b(?:hdmi|yealink|neat|vesa|replicator|behind\s+the\s+wall|"
+            r"raceway|floor\s+box|codec|soundbar|display|mount|cable)\b",
+            text,
+        ):
+            return False
+        return True
+    return False
+
+
 def is_soft_aesthetic_fact(atom: Any) -> bool:
     """Vision aesthetic / concealment vibes — keep substance elsewhere, drop these."""
     at = _atom_type_str(atom)
@@ -412,6 +470,18 @@ def drop_speculative_risks(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     return kept, dropped
 
 
+def drop_low_density_vision(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """P4 — publish install facts only; drop blurbs / furniture / ambiance."""
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        if is_low_density_vision_fact(atom):
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
 def unwrap_vision_atom_texts(atoms: list[Any]) -> int:
     """P3 — mutate atom texts in place; return count unwrapped."""
     n = 0
@@ -511,6 +581,7 @@ def apply_universal_atom_hygiene(atoms: list[Any]) -> tuple[list[Any], list[Any]
         "dropped_stubs": 0,
         "dropped_chrome": 0,
         "dropped_spec_risk": 0,
+        "dropped_low_density_vision": 0,
         "dropped_dedupe": 0,
     }
     stats["unwrapped"] = unwrap_vision_atom_texts(atoms)
@@ -529,6 +600,10 @@ def apply_universal_atom_hygiene(atoms: list[Any]) -> tuple[list[Any], list[Any]
     stats["dropped_spec_risk"] = len(d)
     all_dropped.extend(d)
 
+    kept, d = drop_low_density_vision(kept)
+    stats["dropped_low_density_vision"] = len(d)
+    all_dropped.extend(d)
+
     kept, d = dedupe_near_vision_facts(kept)
     stats["dropped_dedupe"] = len(d)
     all_dropped.extend(d)
@@ -540,9 +615,11 @@ __all__ = [
     "apply_universal_atom_hygiene",
     "dedupe_near_vision_facts",
     "drop_chrome_and_shred",
+    "drop_low_density_vision",
     "drop_resolved_vision_stubs",
     "drop_speculative_risks",
     "is_email_or_marketing_chrome",
+    "is_low_density_vision_fact",
     "is_shred_atom",
     "is_soft_aesthetic_fact",
     "is_sow_authoring_template",

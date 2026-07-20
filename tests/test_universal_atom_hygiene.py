@@ -68,6 +68,29 @@ def test_shred_and_sow_template():
     )
 
 
+def test_low_density_vision_dropped():
+    from app.core.universal_atom_hygiene import is_low_density_vision_fact
+
+    blurb = SimpleNamespace(
+        raw_text="The image depicts a conference room setup with a long table.",
+        atom_type="deal_metadata",
+        value={"via": "pdf_image_vision", "fact_kind": "image_description"},
+    )
+    furniture = SimpleNamespace(
+        raw_text="Multiple office chairs with wheels are arranged around the table.",
+        atom_type="deal_metadata",
+        value={"via": "pdf_image_vision", "fact_kind": "image_fact:furniture"},
+    )
+    cable = SimpleNamespace(
+        raw_text="Cables are not concealed and are running along the wall.",
+        atom_type="scope_item",
+        value={"via": "pdf_image_vision", "fact_kind": "image_fact:cable"},
+    )
+    assert is_low_density_vision_fact(blurb)
+    assert is_low_density_vision_fact(furniture)
+    assert not is_low_density_vision_fact(cable)
+
+
 def test_drop_stubs_even_when_vision_succeeds_same_region():
     stub = SimpleNamespace(
         raw_text="[Image extracted - awaiting OCR / vision] page9/image67",
@@ -157,7 +180,8 @@ def test_apply_universal_hygiene_end_to_end():
     kept, dropped, stats = apply_universal_atom_hygiene(atoms)
     texts = [a.raw_text for a in kept]
     assert any("10 feet" in t for t in texts)
-    assert any("conference room" in t.lower() for t in texts)  # unwrapped blurb kept
+    # P4: whole-room blurbs are not publishable (density).
+    assert not any("conference room" in t.lower() for t in texts)
     assert not any("Quotes in 24" in t for t in texts)
     assert not any("may pose" in t for t in texts)
     assert not any("awaiting OCR" in t for t in texts)
@@ -165,6 +189,7 @@ def test_apply_universal_hygiene_end_to_end():
     assert stats["dropped_stubs"] >= 1
     assert stats["dropped_chrome"] >= 1
     assert stats["dropped_spec_risk"] >= 1
+    assert stats["dropped_low_density_vision"] >= 1
     # P12: cable fact retagged to scope_item
     cable = next(a for a in kept if "10 feet" in a.raw_text)
     at = getattr(cable.atom_type, "value", cable.atom_type)
