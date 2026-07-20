@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -170,20 +171,86 @@ def _iter_image_markers(atoms: list[Any]):
             continue
 
 
+_WORKING_OLLAMA_HOST: str | None = None
+
+
+def _ollama_hosts_to_try() -> list[str]:
+    """Prefer live OLLAMA_HOST (usually Tailscale after entrypoint), then HTTPS
+    Azure proxy fallback preserved as OLLAMA_HOST_PROXY."""
+    hosts: list[str] = []
+    for key in (
+        "OLLAMA_HOST",
+        "OLLAMA_HOST_PROXY",
+        "OLLAMA_HOST_TAILSCALE",
+        "SOWSMITH_OLLAMA_URL",
+    ):
+        raw = (os.environ.get(key) or "").strip().rstrip("/")
+        if raw and raw not in hosts:
+            hosts.append(raw)
+    if not hosts:
+        try:
+            from app.core.vision_extraction import _DEFAULT_HOST
+            hosts.append(_DEFAULT_HOST.rstrip("/"))
+        except Exception:
+            hosts.append("http://100.114.102.122:11434")
+    return hosts
+
+
+def _session_for_host(host: str):
+    """requests Session tuned per host.
+
+    Tailscale ``http://100.x`` must use the entrypoint HTTP_PROXY (CONNECT via
+    tailscaled). The Azure HTTPS Ollama proxy must NOT — HTTP_PROXY breaks
+    private-endpoint TLS mid-stream (same fix as brief-gen ProxyHandler({})).
+    """
+    import requests
+    from urllib.parse import urlparse
+
+    s = requests.Session()
+    host_l = (host or "").lower()
+    parsed = urlparse(host)
+    hostname = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme == "https"
+        or "azurecontainerapps.io" in host_l
+        or "azurewebsites.net" in host_l
+        or hostname.endswith(".azure.com")
+    ):
+        s.trust_env = False
+        s.proxies = {"http": None, "https": None}
+    return s
+
+
+def _host_reachable(host: str, timeout: float = 5.0) -> bool:
+    if not host:
+        return False
+    try:
+        r = _session_for_host(host).get(f"{host.rstrip('/')}/api/tags", timeout=timeout)
+        return r.status_code == 200
+    except Exception as exc:
+        logger.info("pdf_image_vision: host unreachable host=%s err=%s", host, exc)
+        return False
+
+
+def _resolve_ollama_host() -> str | None:
+    global _WORKING_OLLAMA_HOST
+    if _WORKING_OLLAMA_HOST and _host_reachable(_WORKING_OLLAMA_HOST, timeout=3.0):
+        return _WORKING_OLLAMA_HOST
+    for host in _ollama_hosts_to_try():
+        if _host_reachable(host):
+            _WORKING_OLLAMA_HOST = host
+            logger.info("pdf_image_vision: pinned Ollama host=%s", host)
+            return host
+    _WORKING_OLLAMA_HOST = None
+    return None
+
+
 def _vision_reachable() -> bool:
     """True when the PDF-image path can actually call a VLM. When forcing Ollama
     (default), check the Ollama host — NOT the text teacher (DeepSeek is not
     multimodal and would make vision_endpoint_reachable() lie)."""
     if _use_ollama_for_pdf_images():
-        host = os.environ.get("OLLAMA_HOST", "").rstrip("/")
-        if not host:
-            return False
-        try:
-            import requests
-            r = requests.get(f"{host}/api/tags", timeout=5)
-            return r.status_code == 200
-        except Exception:
-            return False
+        return _resolve_ollama_host() is not None
     try:
         from app.core.vision_extraction import vision_endpoint_reachable
         return vision_endpoint_reachable()
@@ -196,10 +263,11 @@ def _ollama_vision_direct(
 ) -> str:
     """Call the local Ollama vision host directly — bypasses the text teacher
     (DeepSeek etc.) which is not multimodal and silently returns empty."""
-    import base64
-    import requests
-    from app.core.vision_extraction import _DEFAULT_HOST, _DEFAULT_VISION_MODEL, _encode_image_b64
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    from app.core.vision_extraction import _DEFAULT_VISION_MODEL, _encode_image_b64
+
+    host = _resolve_ollama_host()
+    if not host:
+        return ""
     mdl = model or os.environ.get("OLLAMA_VISION_MODEL", _DEFAULT_VISION_MODEL)
     payload = {
         "model": mdl,
@@ -209,12 +277,24 @@ def _ollama_vision_direct(
         "options": {"num_predict": max_tokens, "temperature": 0.1},
     }
     try:
-        r = requests.post(f"{host}/api/generate", json=payload, timeout=120)
+        # Large room photos + 32b describe can exceed 120s; allow headroom.
+        timeout = max(120, _int_env("SOWSMITH_PDF_IMAGE_VISION_TIMEOUT_S", 180))
+        r = _session_for_host(host).post(
+            f"{host}/api/generate", json=payload, timeout=timeout,
+        )
         if r.status_code != 200:
+            logger.warning(
+                "pdf_image_vision ollama HTTP %s host=%s model=%s",
+                r.status_code, host, mdl,
+            )
             return ""
         return r.json().get("response", "") or ""
     except Exception as e:
-        logger.warning("pdf_image_vision ollama call failed: %s", e)
+        logger.warning("pdf_image_vision ollama call failed host=%s: %s", host, e)
+        # Drop pinned host so the next call can try the proxy fallback.
+        global _WORKING_OLLAMA_HOST
+        if _WORKING_OLLAMA_HOST == host:
+            _WORKING_OLLAMA_HOST = None
         return ""
 
 
@@ -224,6 +304,15 @@ def _use_ollama_for_pdf_images() -> bool:
     return os.environ.get("SOWSMITH_PDF_IMAGE_FORCE_OLLAMA", "1").strip().lower() in (
         "1", "true", "yes", "on",
     )
+
+
+def _is_section_chrome_caption(caption: str) -> bool:
+    """Nav labels near room photos are not real captions — ignore for grounding."""
+    low = re.sub(r"\s+", " ", (caption or "").strip().lower())
+    return low in {
+        "room pictures", "project summary", "photos", "pictures", "images",
+        "site photos", "site pictures", "existing conditions", "photo",
+    }
 
 
 def _resolve_crop_path(saved_path: str) -> Path | None:
@@ -371,16 +460,44 @@ Caption hint (may be empty): "{caption}"
 """
 
 
-_DESCRIBE_PROMPT = """You are describing an image embedded in a technical
-document. Use the surrounding context to ground your description in THIS
-document's reality. Describe ONLY what is visible; do not invent details.
+_DESCRIBE_PROMPT = """You are describing an image as an AV / UC field engineer
+reviewing a site photo or annotated room image from a conference-room install.
+
+Describe ONLY what is visible — but be dense and concrete. Sparse page labels
+like "Room Pictures" are NOT grounding; trust the pixels.
+
+Cover when visible:
+- ROOM: type (huddle/conference/lobby), furniture (table shape, chair count),
+  walls/glass/windows/doors, finishes, lighting/glare risks.
+- DISPLAYS: count, wall/cart/ceiling, approx size class, brand/model if readable,
+  height/placement relative to table or camera.
+- CAMERAS / BARS / CODECS: wall/table/ceiling mount, above/below/offset from
+  display, brand/model (Neat, Yealink, Poly, Logitech, Cisco, etc.).
+- MICS / SPEAKERS: table mics, ceiling mics, soundbar, in-display — count + place.
+- CONTROL: wall panel / table controller / puck — location vs door/table.
+- CABLES / PATHWAYS: floor raceway, wall chase, ceiling drop, under-table loom,
+  floor boxes, poke-throughs, loose vs dressed, notable colors/bundles.
+- MOUNTS / HARDWARE: fixed/tilt/articulating display mount, camera bracket,
+  VESA, junction/wall/patch plates, abandoned mounts.
+- POWER / DATA: outlets, network drops, PoE gear if visible.
+- ANNOTATIONS ON IMAGE: quote arrows/circles/handwriting/callouts exactly.
+- RISKS: ONLY when an on-image annotation or obvious physical blocker supports
+  it (e.g. "behind the wall", blocked pathway, abandoned mount). Do NOT invent
+  soft aesthetic risks (carpet color, "may pose trip hazard", HVAC FOV guesses).
+- AESTHETIC / CONCEALMENT: If cables are surface-mounted OR annotations say
+  "behind the wall" / "clean" / "professional" / "hide", emit an explicit
+  annotation/cable fact quoting the note — not a speculative risk sentence.
 
 {envelope}
 
 Return JSON only:
-{{"description": "what the image shows, grounded in the context above",
-  "facts": [{{"kind": "equipment|site_condition|reading|component|label|connection|other",
-              "text": "one concrete fact visible in the image"}}]}}
+{{"description": "2-5 short paragraphs OR dense bullets covering the checklist above",
+  "facts": [{{"kind": "equipment|mount|cable|placement|site_condition|annotation|power_data|risk|other",
+              "text": "one atomic install fact (device + placement + cable/mount detail)"}}]}}
+
+Emit 8-14 facts when the image supports it. Prefer cable runs, mounts, device
+placements, and on-image annotations over vague room adjectives. description
+must be a plain string (never a JSON array).
 /no_think
 """
 
@@ -621,7 +738,20 @@ def _emit_atom(
     text: str, image_kind: str, fact_kind: str, confidence: float,
     atom_type: AtomType = AtomType.scope_item,
 ) -> EvidenceAtom | None:
-    text = (text or "").strip()
+    try:
+        from app.core.universal_atom_hygiene import (
+            is_speculative_risk_text,
+            unwrap_vision_text,
+        )
+
+        text = unwrap_vision_text(text or "")
+        # P5: soft aesthetic observations are not publishable risks.
+        if (fact_kind == "image_fact:risk" or atom_type == AtomType.risk) and is_speculative_risk_text(
+            text
+        ):
+            return None
+    except Exception:
+        text = (text or "").strip()
     if not text:
         return None
     project_id = getattr(marker, "project_id", "") or ""
@@ -671,41 +801,114 @@ def _emit_atom(
 # ── main entry ──────────────────────────────────────────────────────
 
 
+def _abstain_status_atom(
+    *, reason: str, marker: Any | None = None, detail: str = "",
+) -> EvidenceAtom:
+    """Loud non-question status when vision cannot run. Never open_question."""
+    project_id = (getattr(marker, "project_id", "") or "") if marker else ""
+    artifact_id = (getattr(marker, "artifact_id", "") or "") if marker else ""
+    parser_version = (
+        (getattr(marker, "parser_version", "") or "pdf_image_vision_v1")
+        if marker else "pdf_image_vision_v1"
+    )
+    text = f"image_vision_abstained: {reason}"
+    if detail:
+        text = f"{text} ({detail})"
+    atom_id = stable_id("atm", artifact_id or "none", "pdf_image_vision", "abstain", reason, text[:80])
+    pdf_name = ""
+    if marker is not None:
+        refs = getattr(marker, "source_refs", None) or []
+        if refs:
+            pdf_name = getattr(refs[0], "filename", "") or ""
+    src = SourceRef(
+        id=stable_id("src", atom_id),
+        artifact_id=artifact_id or "unknown",
+        artifact_type=ArtifactType.pdf,
+        filename=pdf_name or "unknown.pdf",
+        locator={"extraction": "pdf_image_vision_v1", "reason": reason},
+        extraction_method="pdf_image_vision_v1",
+        parser_version=parser_version,
+    )
+    return EvidenceAtom(
+        id=atom_id,
+        project_id=project_id or "unknown",
+        artifact_id=artifact_id or "unknown",
+        atom_type=AtomType.deal_metadata,
+        raw_text=text[:500],
+        normalized_text=normalize_text(text[:500]),
+        value={
+            "kind": "image_vision_abstained",
+            "reason": reason,
+            "via": "pdf_image_vision",
+            "detail": detail[:300],
+        },
+        entity_keys=[],
+        source_refs=[src],
+        receipts=[],
+        authority_class=AuthorityClass.meeting_note,
+        confidence=0.55,
+        confidence_raw=0.55,
+        calibrated_confidence=0.55,
+        review_status=ReviewStatus.needs_review,
+        review_flags=["pdf_image_vision", "image_vision_abstained"],
+        parser_version=parser_version,
+    )
+
+
 def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     """Describe / transcribe embedded PDF images into NEW atoms.
 
-    Returns [] when disabled, no vision endpoint, or nothing qualifies. Never
-    raises and never mutates the input atoms — purely additive."""
+    Returns [] when disabled or nothing qualifies. On unreachable VLM / no
+    usable crops, emits a loud ``image_vision_abstained`` deal_metadata atom
+    (never silent, never open_question). Never raises; never mutates inputs."""
     if not enabled() or not atoms:
         return []
-    try:
-        if not _vision_reachable():
-            logger.info("pdf_image_vision: no vision endpoint; abstaining")
-            return []
-    except Exception:
+
+    markers = list(_iter_image_markers(atoms))
+    if not markers:
         return []
 
-    max_images = _int_env("SOWSMITH_PDF_IMAGE_MAX", 40)
+    first_marker = markers[0][0]
+    try:
+        if not _vision_reachable():
+            tried = ", ".join(_ollama_hosts_to_try())
+            logger.error("pdf_image_vision: no vision endpoint; tried=%s", tried)
+            return [_abstain_status_atom(
+                reason="unreachable", marker=first_marker, detail=f"tried {tried}",
+            )]
+    except Exception as exc:
+        return [_abstain_status_atom(
+            reason="unreachable", marker=first_marker, detail=str(exc)[:200],
+        )]
+
+    # Cap default: room-photo PDFs (Catalyst) can have 14+ large crops; 32b
+    # describe at ~60–180s/image blows the 25min compile budget past ~10.
+    max_images = _int_env("SOWSMITH_PDF_IMAGE_MAX", 10)
     min_bytes = _int_env("SOWSMITH_PDF_IMAGE_MIN_BYTES", 3000)
     neighbor_chars = _int_env("SOWSMITH_PDF_IMAGE_NEIGHBOR_CHARS", 600)
     max_page_chars = _int_env("SOWSMITH_PDF_IMAGE_PAGE_CHARS", 4000)
-    guard_min = _float_env("SOWSMITH_PDF_IMAGE_GUARD_MIN", 0.25)
+    # Default lowered: photo path bypasses guard entirely; this only gates
+    # non-describe kinds that still want mild text grounding.
+    guard_min = _float_env("SOWSMITH_PDF_IMAGE_GUARD_MIN", 0.12)
     caption_min = _float_env("SOWSMITH_PDF_IMAGE_CAPTION_MIN", 0.2)
 
     out: list[EvidenceAtom] = []
     processed = 0
+    skipped_tiny = 0
     seen_hashes: set[str] = set()
-    for marker, pdf_name, page_index, region_ref, saved_path, caption in _iter_image_markers(atoms):
+    for marker, pdf_name, page_index, region_ref, saved_path, caption in markers:
         if processed >= max_images:
             break
         crop = _load_crop(saved_path)
         if len(crop) < min_bytes:
+            skipped_tiny += 1
             continue
         crop_hash = hashlib.sha256(crop).hexdigest()[:16]
         if crop_hash in seen_hashes:
             continue
         seen_hashes.add(crop_hash)
         processed += 1
+        t0 = time.time()
         try:
             new_atoms = _process_one(
                 marker=marker, pdf_name=pdf_name, page_index=page_index,
@@ -715,12 +918,35 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
                 caption_min=caption_min,
             )
             out.extend(new_atoms)
+            logger.info(
+                "pdf_image_vision: image %d/%d %s -> %d atoms in %.1fs",
+                processed, max_images, region_ref, len(new_atoms), time.time() - t0,
+            )
         except Exception as exc:  # one bad image never breaks the compile
-            logger.warning("pdf_image_vision: %s %s failed: %s", pdf_name, region_ref, exc)
+            logger.warning(
+                "pdf_image_vision: %s %s failed after %.1fs: %s",
+                pdf_name, region_ref, time.time() - t0, exc,
+            )
             continue
+    if processed == 0:
+        logger.error(
+            "pdf_image_vision: no usable crops markers=%d tiny_or_missing=%d min_bytes=%d",
+            len(markers), skipped_tiny, min_bytes,
+        )
+        return [_abstain_status_atom(
+            reason="no_usable_crops",
+            marker=first_marker,
+            detail=f"markers={len(markers)} tiny_or_missing={skipped_tiny} min_bytes={min_bytes}",
+        )]
     if out:
         logger.info(
-            "pdf_image_vision: %d atoms from %d images", len(out), processed,
+            "pdf_image_vision: %d atoms from %d images (host=%s)",
+            len(out), processed, _WORKING_OLLAMA_HOST or "?",
+        )
+    else:
+        logger.warning(
+            "pdf_image_vision: 0 atoms from %d usable crops (gate skip / describe empty)",
+            processed,
         )
     return out
 
@@ -731,11 +957,18 @@ def _process_one(
     neighbor_chars: int, max_page_chars: int, guard_min: float,
     caption_min: float,
 ) -> list[EvidenceAtom]:
+    if _is_section_chrome_caption(caption):
+        caption = ""
     meaningful, image_kind, via = _classify_image(
         crop=crop, caption=caption, saved_path=saved_path,
     )
     if not meaningful or image_kind in _SKIP_KINDS or not image_kind:
         return []
+    # Unknown / empty kind from a flaky gate: treat large crops as photos.
+    if image_kind not in (
+        _DESCRIBE_KINDS | _TRANSCRIBE_KINDS | _TABLE_KINDS | _SKIP_KINDS
+    ):
+        image_kind = "photo"
 
     this_text, prev_tail, next_head, page_count = _page_context(
         pdf_name, page_index, neighbor_chars,
@@ -780,40 +1013,72 @@ def _describe(
 ) -> list[EvidenceAtom]:
     raw = _vlm(
         crop, _DESCRIBE_PROMPT.format(envelope=envelope),
-        model=_describe_model(), max_tokens=900,
+        model=_describe_model(), max_tokens=1400,
     )
     obj = _parse_json_obj(raw)
-    description = str(obj.get("description") or "").strip()
+    try:
+        from app.core.universal_atom_hygiene import unwrap_vision_text
+    except Exception:
+        unwrap_vision_text = lambda t: (t or "").strip()  # noqa: E731
+
+    raw_desc = obj.get("description")
+    if isinstance(raw_desc, list) and raw_desc:
+        description = unwrap_vision_text(str(raw_desc[0] or ""))
+    else:
+        description = unwrap_vision_text(str(raw_desc or ""))
     if not description:
         return []
-    if not _context_guard(description, grounding, guard_min):
+    # Photos/diagrams/charts/maps: page text is usually useless chrome
+    # ("Room Pictures"). Do NOT abstain on weak token overlap — that was
+    # killing Catalyst room-install vision (describe OK → 0 atoms).
+    effective_guard = 0.0 if image_kind in _DESCRIBE_KINDS else guard_min
+    if not _context_guard(description, grounding, effective_guard):
         logger.info("pdf_image_vision: describe abstained (ungrounded) %s", region_ref)
         return []
     # Confidence: lower when there was no page text to verify against.
-    conf = 0.6 if grounding.strip() else 0.45
+    conf = 0.68 if grounding.strip() else 0.55
+    if image_kind in _DESCRIBE_KINDS:
+        conf = max(conf, 0.62)
     atoms: list[EvidenceAtom] = []
     head = _emit_atom(
         marker=marker, pdf_name=pdf_name, region_ref=region_ref,
         page_index=page_index, text=description, image_kind=image_kind,
         fact_kind="image_description", confidence=conf,
+        atom_type=AtomType.deal_metadata,
     )
     if head:
+        # Blurbs are secondary: mark so Orbit evidence ranker can demote.
+        head.value["head_exclude"] = False
+        head.value["evidence_rank"] = "blurb"
         atoms.append(head)
     facts = obj.get("facts") or []
     if isinstance(facts, list):
         for f in facts:
             if not isinstance(f, dict):
                 continue
-            ftext = str(f.get("text") or "").strip()
+            ftext = unwrap_vision_text(str(f.get("text") or ""))
             if not ftext:
                 continue
             fk = str(f.get("kind") or "other").strip().lower()
+            # Prefer scope_item / risk for install-relevant facts so OrbitBrief sees them.
+            # P12: site_condition is install-relevant → scope_item.
+            if fk == "risk":
+                at = AtomType.risk
+            elif fk in {
+                "equipment", "mount", "cable", "placement", "connection",
+                "power_data", "annotation", "site_condition",
+            }:
+                at = AtomType.scope_item
+            else:
+                at = AtomType.deal_metadata
             a = _emit_atom(
                 marker=marker, pdf_name=pdf_name, region_ref=region_ref,
                 page_index=page_index, text=ftext, image_kind=image_kind,
                 fact_kind=f"image_fact:{fk}", confidence=conf,
+                atom_type=at,
             )
             if a:
+                a.value["evidence_rank"] = "fact"
                 atoms.append(a)
     return atoms
 

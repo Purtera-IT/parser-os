@@ -759,6 +759,32 @@ def compile_project(
                 image_atoms = pdf_image_vision.process_image_markers(atoms)
                 if image_atoms:
                     atoms.extend(image_atoms)
+                # P1/P11: drop publishable awaiting-OCR stubs once vision runs
+                # (success or not — stubs must never pollute pack scoring).
+                try:
+                    from app.core.universal_atom_hygiene import drop_resolved_vision_stubs
+
+                    before_stubs = list(atoms)
+                    atoms, dropped_stubs = drop_resolved_vision_stubs(atoms)
+                    if dropped_stubs:
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(
+                                before_stubs,
+                                atoms,
+                                stage="pdf_image_vision",
+                                reason="OCR/vision stub not publishable (P1/P11)",
+                            ),
+                        )
+                        warnings.append(
+                            f"INFO: pdf_image_vision dropped {len(dropped_stubs)} "
+                            f"publishable OCR/vision stub(s)"
+                        )
+                except Exception as _stub_exc:
+                    warnings.append(
+                        f"WARNING: vision stub drop failed (non-fatal): "
+                        f"{type(_stub_exc).__name__}: {_stub_exc}"
+                    )
                 telemetry.end_stage(stage, output_count=len(image_atoms))
     except Exception as _piv_exc:
         warnings.append(
@@ -1125,6 +1151,7 @@ def compile_project(
         dropped_noise_q = []
         try:
             from app.core.open_question_resolution import (
+                demote_soft_commitments,
                 filter_unhelpful_open_questions,
                 resolve_open_questions,
             )
@@ -1146,6 +1173,11 @@ def compile_project(
                 warnings.append(
                     f"INFO: open_question_quality_filter diverted {len(dropped_noise_q)} "
                     f"non-actionable question atom(s)"
+                )
+            atoms, soft_n = demote_soft_commitments(atoms)
+            if soft_n:
+                warnings.append(
+                    f"INFO: open_question_resolution demoted {soft_n} soft transcript commitment(s)"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: open_question_resolution failed: {type(exc).__name__}: {exc}")
@@ -1394,6 +1426,22 @@ def compile_project(
             warnings.append(f"WARNING: hardware_evidence_backfill failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=hardware_bom_n)
 
+    with telemetry.stage("note_substance_backfill", input_count=len(atoms)) as stage:
+        substance_n = 0
+        try:
+            from app.core.note_substance_backfill import backfill_note_substance
+
+            atoms, substance_n = backfill_note_substance(
+                atoms, project_id=resolved_project_id
+            )
+            if substance_n:
+                warnings.append(
+                    f"INFO: note_substance_backfill minted {substance_n} structured atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: note_substance_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=substance_n)
+
     with telemetry.stage("site_facility_head", input_count=len(atoms)) as stage:
         facility_n = 0
         try:
@@ -1604,6 +1652,22 @@ def compile_project(
                 f"WARNING: post_backfill physical_site dedup failed: {type(exc).__name__}: {exc}"
             )
         telemetry.end_stage(stage, output_count=len(entities))
+
+    # After the last physical_site clean/dedupe — stamp skip/completed/survey
+    # lean so `_clean_physical_site_value` cannot wipe the flags.
+    with telemetry.stage("site_skip_lean", input_count=len(atoms)) as stage:
+        skip_n = 0
+        try:
+            from app.core.site_skip_lean import apply_site_skip_lean_flags
+
+            skip_n = apply_site_skip_lean_flags(atoms)
+            if skip_n:
+                warnings.append(
+                    f"INFO: site_skip_lean flagged {skip_n} physical_site atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_skip_lean failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=skip_n)
 
     # v48 FIX 6: Cross-doc conflict detection.
     # Build artifact_id → authority_tier map from filenames, then scan

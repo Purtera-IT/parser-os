@@ -767,6 +767,16 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     all_dropped.extend(d)
     kept, d = collapse_ambiguous_user_quantities(kept)
     all_dropped.extend(d)
+    # Universal P1–P12 publish hygiene (stubs, chrome, JSON unwrap, speculative
+    # risks, vision typing, near-dedupe). Runs last so typed/backfill heads
+    # cannot reintroduce chrome after earlier passes.
+    try:
+        from app.core.universal_atom_hygiene import apply_universal_atom_hygiene
+
+        kept, d, _stats = apply_universal_atom_hygiene(kept)
+        all_dropped.extend(d)
+    except Exception:
+        pass
     return kept, all_dropped
 
 
