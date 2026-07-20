@@ -40,8 +40,31 @@ def test_speculative_risk_vs_grounded():
     assert is_speculative_risk_text(
         "A backpack is placed on the floor near a chair, which could pose a minor obstruction or trip hazard."
     )
+    assert is_speculative_risk_text(
+        "The loose cables on the floor pose a potential trip hazard, as noted in the annotations."
+    )
+    assert is_speculative_risk_text(
+        "The cables under the table are not fully concealed, which may affect the room's aesthetic."
+    )
     assert not is_speculative_risk_text(
-        "Annotation: replication cable should be moved behind the wall."
+        "Replication cable should be moved behind the wall for concealment."
+    )
+    assert not is_speculative_risk_text(
+        "PurTera will furnish and install a floor cable raceway to reduce exposed cable and trip hazards.",
+        atom_type="task",
+    )
+
+
+def test_shred_and_sow_template():
+    from app.core.universal_atom_hygiene import is_sow_authoring_template
+
+    assert is_shred_atom("'Note'")
+    assert is_shred_atom('"Note"')
+    assert is_sow_authoring_template(
+        "[If this SOW is being governed by a NASPO contract, use this paragraph.]"
+    )
+    assert is_sow_authoring_template(
+        "[SHI does not have an MSA in place with the State of New Jersey. If this SOW is not being governed by a special contract vehicle, use this paragraph.]"
     )
 
 

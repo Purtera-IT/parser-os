@@ -58,13 +58,18 @@ _EMAIL_HEADER_LINE_RE = re.compile(
 _SPECULATIVE_RISK_RE = re.compile(
     r"(?i)(?:"
     r"(?:may|could|might)\s+pose|"
+    r"(?:may|could|might)\s+affect|"
     r"may\s+impact|"
     r"potentially\s+affecting|"
     r"slight\s+trip|"
     r"patterned\s+carpet|"
     r"field\s+of\s+view|"
     r"aesthetically\s+unappealing|"
-    r"trip\s+hazard\s+if\s+cables\s+are\s+not|"
+    r"\baesthetic\b|"
+    r"professional\s+appearance|"
+    r"cleaner\s+look|"
+    r"not\s+fully\s+conceal|"
+    r"trip\s+hazard|"
     r"pose\s+a\s+(?:potential\s+|minor\s+)?(?:obstruction|trip\s+hazard)|"
     r"posing\s+a\s+(?:potential\s+|minor\s+)?(?:obstruction|trip\s+hazard)|"
     r"pose\s+a\s+[^.]{0,40}?trip\s+hazard|"
@@ -75,21 +80,38 @@ _SPECULATIVE_RISK_RE = re.compile(
     r")"
 )
 
-_GROUNDED_RISK_HINT_RE = re.compile(
+# Only real install decisions rescue a soft-looking risk. Bare
+# "annotation" / "noted in the annotations" is NOT enough — floor trip
+# and aesthetic vibes are covered by mode pathway / conceal asks.
+_HARD_GROUNDED_RISK_RE = re.compile(
     r"(?i)(?:"
-    r"annotation|"
     r"behind\s+the\s+wall|"
-    r"drywall|"
-    r"raceway|"
-    r"noted\s+for|"
-    r"must\s+be|"
-    r"should\s+be\s+(?:moved|rerouted|hidden|removed)|"
+    r"drywall\s+(?:cut|patch|paint|own)|"
+    r"in[\-\s]?wall\s+(?:fish|path|hdmi|run)|"
+    r"keep\s+vs\s+remove|"
+    r"stay\s+in\s+place|"
+    r"replication\s+cable|"
+    r"should\s+be\s+(?:moved|rerouted|hidden)\s+behind|"
     r"hard\s+to\s+get"
+    r")"
+)
+
+_SOW_TEMPLATE_RE = re.compile(
+    r"(?i)^\[\s*(?:"
+    r"if\s+this\s+sow|"
+    r"shi\s+does\s+not\s+have\s+an\s+msa|"
+    r".{0,80}use\s+this\s+paragraph|"
+    r".{0,80}naspo\s+contract|"
+    r".{0,80}special\s+contract"
     r")"
 )
 
 _SHRED_RE = re.compile(
     r"(?i)^(?:ss|ph|&nbsp;|nbsp|;|&amp;|\u00b0shi|shi°?|\.|\-|–|—)+$"
+)
+
+_SHRED_LABEL_RE = re.compile(
+    r"(?i)^[\"']?(?:note|notes|n/?a|tbd|none|null|test)[\"']?$"
 )
 
 _INSTALL_FACT_KINDS = frozenset(
@@ -217,7 +239,25 @@ def is_shred_atom(text: str) -> bool:
         return True
     if _SHRED_RE.fullmatch(t):
         return True
+    if _SHRED_LABEL_RE.fullmatch(t):
+        return True
+    # Quoted crumb labels: 'Note', "Title", etc.
+    if re.fullmatch(r"[\"'][^\"']{1,24}[\"']", t):
+        return True
     if t in {"&nbsp;", "nbsp;", "SS", "Ph", "ss", "ph"}:
+        return True
+    return False
+
+
+def is_sow_authoring_template(text: str) -> bool:
+    """SOW authoring placeholders like [If this SOW is being governed…]."""
+    t = (text or "").strip()
+    if not t.startswith("["):
+        return False
+    if _SOW_TEMPLATE_RE.search(t):
+        return True
+    # Bracketed instructional aside with no customer substance.
+    if re.search(r"(?i)use\s+this\s+paragraph|making\s+the\s+appropriate\s+changes", t):
         return True
     return False
 
@@ -230,18 +270,52 @@ def is_email_or_marketing_chrome(text: str) -> bool:
         return True
     if _MARKETING_CHROME_RE.search(t):
         return True
+    if is_sow_authoring_template(t):
+        return True
     return False
 
 
-def is_speculative_risk_text(text: str) -> bool:
-    """P5 — soft aesthetic observations are not install risks."""
+_SOW_COMMITMENT_RE = re.compile(
+    r"(?i)\b(?:will\s+(?:furnish|install|provide|configure|deploy)|"
+    r"purtera\s+will|contractor\s+will|in[\-\s]?scope|shall\s+(?:furnish|install))\b"
+)
+
+
+def is_speculative_risk_text(text: str, *, atom_type: str | None = None) -> bool:
+    """P5 — soft aesthetic / trip-vibe observations are not install risks.
+
+    Affirmative SOW commitments that merely mention trip-hazard mitigation
+    (e.g. raceway install) are NOT speculative risks.
+    """
     t = text or ""
     if not _SPECULATIVE_RISK_RE.search(t):
         return False
-    # Keep if clearly annotation / SOW grounded.
-    if _GROUNDED_RISK_HINT_RE.search(t):
+    if _HARD_GROUNDED_RISK_RE.search(t):
+        return False
+    at = (atom_type or "").lower()
+    if at in {"task", "scope_item", "bom_line", "action_item"} and _SOW_COMMITMENT_RE.search(t):
         return False
     return True
+
+
+def is_soft_aesthetic_fact(atom: Any) -> bool:
+    """Vision aesthetic / concealment vibes — keep substance elsewhere, drop these."""
+    at = _atom_type_str(atom)
+    text = _atom_text(atom)
+    # Never treat affirmative SOW work as an aesthetic crumb.
+    if at in {"task", "bom_line", "action_item"} and _SOW_COMMITMENT_RE.search(text):
+        return False
+    val = _atom_value(atom)
+    fk = str(val.get("fact_kind") or "").lower()
+    if "aesthetic" in fk:
+        return True
+    if re.search(r"(?i)\b(?:aesthetic|professional\s+appearance|cleaner\s+look)\b", text):
+        if _HARD_GROUNDED_RISK_RE.search(text):
+            return False
+        if _SOW_COMMITMENT_RE.search(text):
+            return False
+        return True
+    return False
 
 
 def is_vision_success_atom(atom: Any) -> bool:
@@ -282,13 +356,16 @@ def drop_resolved_vision_stubs(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 
 
 def drop_chrome_and_shred(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
-    """P2 / P7 / P8 — chrome, headers, shred."""
+    """P2 / P7 / P8 — chrome, headers, shred, SOW authoring templates."""
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
         text = _atom_text(atom)
         at = _atom_type_str(atom)
         if is_shred_atom(text):
+            dropped.append(atom)
+            continue
+        if is_sow_authoring_template(text):
             dropped.append(atom)
             continue
         if is_email_or_marketing_chrome(text):
@@ -301,6 +378,7 @@ def drop_chrome_and_shred(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
                 "assumption",
                 "deal_metadata",
                 "bom_line",
+                "task",
             }:
                 dropped.append(atom)
                 continue
@@ -313,12 +391,21 @@ def drop_chrome_and_shred(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 
 
 def drop_speculative_risks(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
-    """P5 — drop soft aesthetic risks (any type that carries speculative text)."""
+    """P5 — drop soft aesthetic / trip-vibe risks and aesthetic vision crumbs."""
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
         text = _atom_text(atom)
-        if is_speculative_risk_text(text):
+        at = _atom_type_str(atom)
+        if is_speculative_risk_text(text, atom_type=at):
+            dropped.append(atom)
+            continue
+        if is_soft_aesthetic_fact(atom) and at in {
+            "risk",
+            "deal_metadata",
+            "scope_item",
+            "open_question",
+        }:
             dropped.append(atom)
             continue
         kept.append(atom)
@@ -457,6 +544,8 @@ __all__ = [
     "drop_speculative_risks",
     "is_email_or_marketing_chrome",
     "is_shred_atom",
+    "is_soft_aesthetic_fact",
+    "is_sow_authoring_template",
     "is_speculative_risk_text",
     "is_vision_stub",
     "retag_install_vision_types",
