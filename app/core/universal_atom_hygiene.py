@@ -57,7 +57,7 @@ _EMAIL_HEADER_LINE_RE = re.compile(
 
 _SPECULATIVE_RISK_RE = re.compile(
     r"(?i)(?:"
-    r"may\s+pose|"
+    r"(?:may|could|might)\s+pose|"
     r"may\s+impact|"
     r"potentially\s+affecting|"
     r"slight\s+trip|"
@@ -65,8 +65,12 @@ _SPECULATIVE_RISK_RE = re.compile(
     r"field\s+of\s+view|"
     r"aesthetically\s+unappealing|"
     r"trip\s+hazard\s+if\s+cables\s+are\s+not|"
-    r"pose\s+a\s+(?:potential\s+)?trip\s+hazard|"
-    r"posing\s+a\s+(?:potential\s+)?trip\s+hazard|"
+    r"pose\s+a\s+(?:potential\s+|minor\s+)?(?:obstruction|trip\s+hazard)|"
+    r"posing\s+a\s+(?:potential\s+|minor\s+)?(?:obstruction|trip\s+hazard)|"
+    r"pose\s+a\s+[^.]{0,40}?trip\s+hazard|"
+    r"\bbackpack\b|"
+    r"personal\s+(?:belongings|items|effects)|"
+    r"minor\s+obstruction|"
     r"non[\-\s]?standard\s+tile\s+layout"
     r")"
 )

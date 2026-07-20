@@ -37,6 +37,9 @@ def test_speculative_risk_vs_grounded():
     assert is_speculative_risk_text(
         "The floor is carpeted, which may pose a slight trip hazard if cables are not properly managed."
     )
+    assert is_speculative_risk_text(
+        "A backpack is placed on the floor near a chair, which could pose a minor obstruction or trip hazard."
+    )
     assert not is_speculative_risk_text(
         "Annotation: replication cable should be moved behind the wall."
     )
