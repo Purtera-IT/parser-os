@@ -204,13 +204,26 @@ def main() -> int:
         print(f"[nightly] calibrator fit skipped: {e}")
 
     # Persist the grown log + retrained heads back to blob for the worker to load.
+    # Timeout is generous on purpose. At 300s this silently killed the write-back
+    # EVERY night for weeks: the upload was non-incremental over a ~5GB / 14k-file
+    # append-only registry, so it could never finish, and every eval-gated
+    # promotion was thrown away before it reached blob. The upload is incremental
+    # now (seconds), and the job's own replicaTimeout (3600s) is the real ceiling.
     wb = "/write_back_ml.py"
     if os.path.exists(wb):
         try:
-            subprocess.run([sys.executable, wb], timeout=300, check=False)
-            print("[nightly] persisted heads + log to blob")
+            done = subprocess.run(
+                [sys.executable, wb],
+                timeout=int(os.getenv("NIGHTLY_WRITEBACK_TIMEOUT_S", "1800")),
+                check=False,
+            )
+            if done.returncode == 0:
+                print("[nightly] persisted heads + log to blob")
+            else:
+                # Loud: a silent write-back failure means the whole run is lost.
+                print(f"[nightly] WRITE-BACK FAILED rc={done.returncode} — this run was NOT persisted")
         except Exception as e:
-            print(f"[nightly] write-back skipped: {e}")
+            print(f"[nightly] WRITE-BACK FAILED: {e} — this run was NOT persisted")
     else:
         print("[nightly] /write_back_ml.py not present — skipping persist")
     return 0
