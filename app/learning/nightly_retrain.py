@@ -253,6 +253,26 @@ def main() -> int:
     except Exception as e:
         print(f"[nightly] calibrator fit skipped: {e}")
 
+    # Retention. This run just registered another candidate per relation, and
+    # nothing ever removed the old ones — the registry reached 14,165 files /
+    # ~5GB, most of the ~9GB ml-artifacts container, which the workers fetch onto
+    # 4-8Gi of ephemeral disk. That filled /tmp and killed every compile with
+    # OSError: [Errno 28]. Prune BEFORE the write-back so the deletions mirror to
+    # blob in the same pass. Champion and previous_champion are always kept, so
+    # serving and rollback are unaffected.
+    try:
+        from app.learning.head_registry import get_head_registry
+
+        _reg = get_head_registry()
+        if _reg is not None:
+            keep = int(os.getenv("HEAD_REGISTRY_KEEP", "5"))
+            dropped = _reg.prune(keep_per_relation=keep)
+            print(f"[nightly] registry prune: dropped {len(dropped)} old versions (keep={keep}/relation)")
+        else:
+            print("[nightly] registry prune skipped: no registry configured")
+    except Exception as e:
+        print(f"[nightly] registry prune skipped: {e}")
+
     # Persist the grown log + retrained heads back to blob for the worker to load.
     # Timeout is generous on purpose. At 300s this silently killed the write-back
     # EVERY night for weeks: the upload was non-incremental over a ~5GB / 14k-file

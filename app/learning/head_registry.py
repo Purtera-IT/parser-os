@@ -242,6 +242,56 @@ class HeadRegistry:
                 out.append(m)
         return out
 
+    def prune(self, keep_per_relation: int = 5) -> list[tuple[str, str]]:
+        """Drop old candidate versions. Returns the ``(relation, version)`` pairs
+        removed.
+
+        The registry is append-only: :meth:`register` adds a version per relation
+        on every nightly run and nothing ever removed them. It reached 14,165
+        files / ~5GB, which is most of the ~9GB `ml-artifacts` container — and
+        since the workers fetch that onto 4-8Gi of ephemeral disk, it filled
+        /tmp and every compile died with `OSError: [Errno 28]`. Unbounded growth
+        in a store nothing reads is a slow outage, so retention belongs here,
+        next to the code that creates the versions.
+
+        ALWAYS kept, regardless of ``keep_per_relation``:
+
+        * the current ``champion`` — it is serving;
+        * ``previous_champion`` — :meth:`rollback` restores it, and a retention
+          policy that silently breaks rollback is worse than the disk problem.
+
+        Beyond those, the most recent ``keep_per_relation`` versions survive
+        (version ids are ``h_<YYYYmmdd>_<HHMMSS>_<hash>``, so history order is
+        chronological). ``keep_per_relation <= 0`` keeps only the protected set.
+        """
+        removed: list[tuple[str, str]] = []
+        index = self._load_index()
+        for relation in list(index.keys()):
+            entry = index.get(relation) or {}
+            history = [v for v in (entry.get("history") or []) if v]
+            protected = {v for v in (entry.get("champion"), entry.get("previous_champion")) if v}
+            # Keep the tail of history (most recent) plus everything protected.
+            keep_recent = set(history[-keep_per_relation:]) if keep_per_relation > 0 else set()
+            keep = protected | keep_recent
+            doomed = [v for v in history if v not in keep]
+            if not doomed:
+                continue
+            for version in doomed:
+                for path in (self._head_path(relation, version), self._meta_path(relation, version)):
+                    try:
+                        if os.path.isfile(path):
+                            os.remove(path)
+                    except OSError:
+                        # A file we cannot delete must not abort the whole prune;
+                        # it just gets retried next run.
+                        continue
+                removed.append((relation, version))
+            entry["history"] = [v for v in history if v in keep]
+            index[relation] = entry
+        if removed:
+            self._save_index(index)
+        return removed
+
     def summary(self) -> dict[str, Any]:
         """A glanceable census: champion + metrics per relation."""
         out: dict[str, Any] = {}
