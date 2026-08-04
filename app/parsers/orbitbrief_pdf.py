@@ -3260,6 +3260,21 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             return _build_text_rich_page(page_index)
         return hv
 
+    # Embed every candidate line for the WHOLE document in one round trip
+    # before the page loop. The heading/lead-in/label semantic rules embed one
+    # line per call; on this corpus that is ~900 distinct lines per PDF, i.e.
+    # ~900 serial round trips (~38 min against the remote embedder) for a parse
+    # that should take seconds. Prewarming fills the shared embedding cache in a
+    # single request, so each rule call below is a local hit. Pure optimisation:
+    # no decision changes, and it silently no-ops when the embedder is offline.
+    try:
+        from app.core.semantic_rules import prewarm as _prewarm_semantic
+        _prewarm_semantic(
+            line for text in page_texts for line in (text or "").splitlines()
+        )
+    except Exception:  # pragma: no cover — a warm-up must never fail a parse
+        pass
+
     # NOTE: PyMuPDF is NOT thread-safe — running the page loop on a
     # ThreadPoolExecutor crashes with SIGSEGV inside libmupdf. The
     # text-rich fast path (above) is the dominant speedup; pages
