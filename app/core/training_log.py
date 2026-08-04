@@ -269,6 +269,18 @@ def log_rows(rows: list[TrainingRow]) -> int:
     if log is None:
         return 0
     try:
-        return log.add_many(rows)
+        written = log.add_many(rows)
     except Exception:
         return 0
+    # The log lives on ephemeral container storage, so without this every row a
+    # compile produces dies on recycle — which is why the shared log sat at 3
+    # rows and the eval gate had no holdout to score anything against. Mirror
+    # the batch to its own blob; the nightly merges them. Gated + best-effort:
+    # losing a training row is bad, failing a customer's compile is worse.
+    try:
+        from app.core.training_row_blob import upload_rows
+
+        upload_rows(rows)
+    except Exception:  # pragma: no cover - mirroring must never break a compile
+        pass
+    return written

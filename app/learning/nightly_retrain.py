@@ -169,6 +169,17 @@ def main() -> int:
         if log is not None:
             n = feedback_blob.sync_training_rows_into_log(log)
             print(f"[nightly] imported {n} PM gold rows into the training log")
+            # Silver from every compile. The workers mirror each batch to its own
+            # blob because /tmp does not survive a recycle; merging them here is
+            # what finally gives the eval gate a holdout to score against.
+            # Idempotent (row id is the PRIMARY KEY, add_many upserts).
+            try:
+                from app.core import training_row_blob
+
+                m = training_row_blob.sync_into_log(log)
+                print(f"[nightly] imported {m} compile training rows from blob")
+            except Exception as exc:
+                print(f"[nightly] compile-row import skipped: {exc}")
         else:
             print("[nightly] no training log (SOWSMITH_TRAINING_LOG_DB unset) — skipping gold import")
     except Exception as e:
