@@ -1345,6 +1345,30 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: bom_arithmetic_check failed: {type(exc).__name__}: {exc}")
 
+    # A PM answering an open question in the brief is usually stating deal truth
+    # that exists in no document. Admit it as evidence HERE — before graph_build
+    # and packetize — so it behaves like every other atom: it gets edges, lands
+    # in packets, can settle a cross-document conflict at pm_confirmed authority,
+    # and reaches the SOW. Anything later would only decorate the envelope.
+    # Gated + best-effort: no ledger, or no blob, is a normal no-op.
+    with telemetry.stage("pm_answers", input_count=len(atoms)) as stage:
+        pm_atoms = []
+        try:
+            from app.core.pm_answer_blob import load_pm_answer_atoms
+
+            existing_ids = {a.id for a in atoms}
+            pm_atoms = [
+                a
+                for a in load_pm_answer_atoms(
+                    project_id=resolved_project_id, deal_id=resolved_project_id
+                )
+                if a.id not in existing_ids
+            ]
+            atoms = atoms + pm_atoms
+        except Exception as exc:  # never let the ledger break a compile
+            warnings.append(f"WARNING: pm_answer atoms skipped: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(pm_atoms))
+
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:
         edges = build_edges(project_id=resolved_project_id, atoms=atoms, entities=entities)
         telemetry.end_stage(stage, output_count=len(edges))

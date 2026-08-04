@@ -444,6 +444,10 @@ _SITE_ACCESS_EVIDENCE_AUTHS: frozenset[AuthorityClass] = frozenset(
         AuthorityClass.contractual_scope,
         AuthorityClass.meeting_note,
         AuthorityClass.vendor_quote,
+        # A PM answered this in the brief. If a transcript line counts here, an
+        # explicit human answer certainly does — otherwise answering the
+        # question would make the evidence disappear from the packet.
+        AuthorityClass.pm_confirmed,
     }
 )
 
@@ -565,6 +569,8 @@ _SCOPE_INCLUSION_PRIMARY_AUTHORITIES: frozenset[AuthorityClass] = frozenset(
         AuthorityClass.approved_site_roster,
         AuthorityClass.customer_current_authored,
         AuthorityClass.contractual_scope,
+        # Deciding what is in scope is exactly what a PM answer settles.
+        AuthorityClass.pm_confirmed,
     }
 )
 
@@ -644,6 +650,7 @@ _CERTIFICATION_PRIMARY_AUTHS: frozenset[AuthorityClass] = frozenset(
         AuthorityClass.customer_current_authored,
         AuthorityClass.contractual_scope,
         AuthorityClass.meeting_note,
+        AuthorityClass.pm_confirmed,
     }
 )
 
@@ -750,6 +757,7 @@ _RACEWAY_PATHWAY_PRIMARY_AUTHS: frozenset[AuthorityClass] = frozenset(
         AuthorityClass.customer_current_authored,
         AuthorityClass.contractual_scope,
         AuthorityClass.meeting_note,
+        AuthorityClass.pm_confirmed,
     }
 )
 
@@ -911,6 +919,7 @@ _GOVERNANCE_POWER_EXCLUSION_AUTHS: frozenset[AuthorityClass] = frozenset(
         AuthorityClass.contractual_scope,
         AuthorityClass.approved_site_roster,
         AuthorityClass.meeting_note,
+        AuthorityClass.pm_confirmed,
     }
 )
 

@@ -9,6 +9,9 @@ from app.core.schemas import AtomType, AuthorityClass, AuthorityScore, EvidenceA
 
 AUTHORITY_RANKS: dict[AuthorityClass, int] = {
     AuthorityClass.contractual_scope: 100,
+    # Above every READ document, below signed scope: a PM explicitly answered
+    # this, so it should govern the SOW over a stale or ambiguous doc line.
+    AuthorityClass.pm_confirmed: 95,
     AuthorityClass.customer_current_authored: 90,
     AuthorityClass.approved_site_roster: 80,
     AuthorityClass.vendor_quote: 65,

@@ -30,6 +30,7 @@ class ArtifactType(str, Enum):
     ics = "ics"        # iCalendar invites (kickoff meetings, etc.)
     zip_archive = "zip" # ZIP containers; auto-listed contents
     msg = "msg"        # Outlook native email format
+    pm_answer = "pm_answer"  # a PM's answer to an open question in the brief
     odt = "odt"        # OpenDocument Text (LibreOffice / OpenOffice writer)
     ods = "ods"        # OpenDocument Spreadsheet
     vsdx = "vsdx"      # Microsoft Visio diagrams
@@ -227,6 +228,11 @@ class AtomType(str, Enum):
 
 class AuthorityClass(str, Enum):
     contractual_scope = "contractual_scope"
+    # A PM answering an open question in the brief. Outranks anything we merely
+    # READ from a document, because a human explicitly confirmed it — but never
+    # outranks signed contractual scope. This is what lets a PM's answer settle
+    # a cross-document conflict instead of becoming one more competing claim.
+    pm_confirmed = "pm_confirmed"
     customer_current_authored = "customer_current_authored"
     approved_site_roster = "approved_site_roster"
     vendor_quote = "vendor_quote"
