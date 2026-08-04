@@ -260,6 +260,57 @@ def _is_qty_node(atom: EvidenceAtom) -> bool:
     return False
 
 
+def _qty_node_rank(atom: EvidenceAtom) -> int:
+    """Preference when one source row produced several quantity-bearing atoms.
+
+    The ``vendor_line_item`` is the declared reconciliation node (it carries
+    quantity / normalized_item / comparison_key / inclusion state); the
+    standalone ``quantity`` atom derived from the same row is the redundant
+    copy kept for the legacy quantity_claim consumers.
+    """
+    at = getattr(atom, "atom_type", None)
+    if at == AtomType.vendor_line_item:
+        return 0
+    if at == AtomType.quantity:
+        return 1
+    return 2
+
+
+def _collapse_duplicate_row_nodes(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """One source row contributes ONE quantity to a total.
+
+    The quote parser emits BOTH a ``vendor_line_item`` and a redundant
+    ``quantity`` atom for the same spreadsheet row (the standalone atom is
+    still emitted unless ``SOWSMITH_DROP_QUANTITY_ATOM=1`` — removing it
+    breaks the quantity_claim packet family). Both satisfy ``_is_qty_node``,
+    so summing the list counted every vendor line TWICE: a 68-unit RJ45 line
+    reconciled as 136, and ``vendor_primary_sum`` was rendered doubled in the
+    PM-facing packet certificate.
+
+    Collapse on ``value.source_row_key`` — the parser's own row identity
+    (``quote.xlsx:Quote:row_4``) — keeping the line over the derived quantity
+    atom. Atoms carrying no row key are never merged, so roster-side quantity
+    atoms and any single-atom parser are untouched.
+    """
+    chosen: dict[str, EvidenceAtom] = {}
+    order: list[str] = []
+    unkeyed: list[EvidenceAtom] = []
+    for atom in atoms:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        raw_key = v.get("source_row_key")
+        key = raw_key.strip() if isinstance(raw_key, str) else ""
+        if not key:
+            unkeyed.append(atom)
+            continue
+        prev = chosen.get(key)
+        if prev is None:
+            chosen[key] = atom
+            order.append(key)
+        elif _qty_node_rank(atom) < _qty_node_rank(prev):
+            chosen[key] = atom
+    return [chosen[k] for k in order] + unkeyed
+
+
 def _quantity_material_identity(atom: EvidenceAtom) -> str | None:
     """Stable material/line identity from atom value (normalized_item preferred)."""
     if not _is_qty_node(atom):
@@ -332,22 +383,22 @@ def _roster_vendor_material_totals(
     ordered: list[EvidenceAtom], identity: str
 ) -> tuple[EvidenceAtom | None, float, list[EvidenceAtom], float, list[EvidenceAtom]]:
     """Roster anchor (aggregate when present), roster total, primary vendor atoms, primary vendor total, excluded vendor atoms."""
-    roster = [
+    roster = _collapse_duplicate_row_nodes([
         a
         for a in ordered
         if a.authority_class == AuthorityClass.approved_site_roster
         and _is_qty_node(a)
         and _canonical_material_key(a) == identity
         and _quantity_value(a) is not None
-    ]
-    vendor_all = [
+    ])
+    vendor_all = _collapse_duplicate_row_nodes([
         a
         for a in ordered
         if a.authority_class == AuthorityClass.vendor_quote
         and _is_qty_node(a)
         and _canonical_material_key(a) == identity
         and _quantity_value(a) is not None
-    ]
+    ])
     primary = [a for a in vendor_all if _vendor_quote_line_counts_for_primary_total(a)]
     excluded = [a for a in vendor_all if a not in primary]
     if not roster or not primary:
