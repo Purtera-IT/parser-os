@@ -106,10 +106,24 @@ def build_calibration_labels(
 
     PM gold is the primary, trustworthy signal: an atom a PM corrected was wrong
     (label 0). Silver labels bootstrap class balance so the fit has both classes
-    before much PM data exists — but they're derived from review_flags /
-    contradictions / verified-high-confidence, so the EVAL-GATE (Brier on a
-    holdout vs the heuristic) is what decides whether the resulting calibrator is
-    actually better than the heuristic; a circular/weak fit simply won't promote."""
+    before much PM data exists — but they are derived from review_flags /
+    contradictions / verified-high-confidence, i.e. from the system's own prior
+    opinion, so they are CIRCULAR by construction.
+
+    An earlier version of this docstring claimed the eval gate protected against
+    that ("a circular/weak fit simply won't promote"). It does not, and cannot:
+    the holdout is labelled by the same rule, so circularity inflates the
+    candidate and the baseline alike and a degenerate fit promotes MOST easily.
+    Two things guard it instead:
+
+    * features that literally encoded a silver label were removed
+      (``review_flag_count``, ``contradicting_atom_count`` — see
+      :mod:`app.learning.features`); with them present the model scored a Brier
+      of 0.0001 by memorising the label it had been handed;
+    * promotion is decided only on a PM-gold holdout of at least
+      ``MIN_GOLD_HOLDOUT`` labels (see :mod:`app.learning.nightly_retrain`).
+      Until that exists the deterministic gate keeps serving.
+    """
     pm = pm_corrected_atom_ids or set()
     atom_labels: list[dict[str, Any]] = []
     reviews: list[dict[str, Any]] = []

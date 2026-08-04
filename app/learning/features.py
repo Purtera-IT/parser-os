@@ -31,7 +31,11 @@ def build_atom_feature_row(atom: EvidenceAtom) -> dict[str, Any]:
         "receipt_verified_count": receipt_verified_count,
         "has_quantity": int(has_quantity),
         "entity_key_count": len(atom.entity_keys),
-        "review_flag_count": len(atom.review_flags),
+        # `review_flag_count` was removed on purpose. The silver label rule in
+        # calibration.build_calibration_labels assigns label=0 when
+        # review_flags is non-empty, so this feature WAS the label: the model
+        # only had to learn "count > 0 => wrong". That is what produced a
+        # Brier of 0.0001 — memorisation, not calibration.
         "artifact_type": _artifact_type(atom),
     }
 
@@ -56,7 +60,9 @@ def build_packet_feature_row(packet: EvidencePacket, atoms: list[EvidenceAtom]) 
         "raw_confidence": float(packet.confidence_raw if packet.confidence_raw is not None else packet.confidence),
         "governing_atom_count": len(packet.governing_atom_ids),
         "supporting_atom_count": len(packet.supporting_atom_ids),
-        "contradicting_atom_count": len(packet.contradicting_atom_ids),
+        # `contradicting_atom_count` removed for the same reason as
+        # review_flag_count above: the packet label is False iff
+        # contradicting_atom_ids is non-empty, so this feature WAS the label.
         "authority_rank_max": authority_rank_max,
         "ambiguity_score": float(packet.certificate.ambiguity_score if packet.certificate else 0.0),
         "evidence_completeness_score": float(

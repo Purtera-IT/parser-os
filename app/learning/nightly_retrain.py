@@ -25,6 +25,13 @@ import os
 import subprocess
 import sys
 
+# PM-gold holdout labels required before a calibrator may be promoted. Silver
+# labels are derived from the system's own review_flags / contradictions, so
+# validating against them is circular — a calibrator that merely rediscovers
+# that rule scores near-perfectly. Only human corrections are real evidence
+# about whether an output was right. Override with CALIBRATOR_MIN_GOLD.
+MIN_GOLD_HOLDOUT = int(os.getenv("CALIBRATOR_MIN_GOLD", "20"))
+
 
 def _embedder_live() -> bool:
     """True only if the embedder returns a real (non-zero) vector. Guards every
@@ -129,20 +136,52 @@ def _fit_calibrator() -> None:
             return
         by_id = {a.id: a for r in results for a in (getattr(r, "atoms", []) or [])}
         feats, ys, heur = [], [], []
+        # Kept index-aligned with feats/ys/heur so the gold subset can be sliced
+        # out below; `ho_atoms` itself is not, because atoms missing from the
+        # results are skipped.
+        ho_rows = []
         for r in ho_atoms:
             a = by_id.get(r["atom_id"])
             if a is None:
                 continue
             feats.append(build_atom_feature_row(a))
             ys.append(r["label"])
+            ho_rows.append(r)
             hc = getattr(a, "calibrated_confidence", None)
             heur.append(hc if hc is not None else (getattr(a, "confidence", 0.5) or 0.5))
         if len(ys) < 5 or len(set(ys)) < 2:
             print("[nightly] calibrator: holdout too thin — not promoting")
             return
-        probs = [float(p[1]) for p in am.predict_proba(feats)]
+
+        # Promotion MUST be decided on PM gold, not on silver.
+        #
+        # Silver labels come from review_flags / contradictions / high-confidence,
+        # i.e. from the system's own prior opinion — so a calibrator can score
+        # near-perfectly by rediscovering the rule that generated them. The
+        # previous gate could not catch that, because the holdout was labelled by
+        # the SAME rule: circularity inflated candidate and baseline alike, so a
+        # degenerate fit promoted most easily rather than least. Only a human
+        # correction is real evidence about whether an output was right.
+        gold_idx = [i for i, r in enumerate(ho_rows) if r["atom_id"] in pm_ids]
+        if len(gold_idx) < MIN_GOLD_HOLDOUT:
+            print(
+                f"[nightly] calibrator: only {len(gold_idx)} PM-gold holdout labels "
+                f"(need {MIN_GOLD_HOLDOUT}) — NOT promoting; deterministic gate serves. "
+                "Silver-only validation is circular and cannot justify a promotion."
+            )
+            return
+        probs_all = [float(p[1]) for p in am.predict_proba(feats)]
+        probs = [probs_all[i] for i in gold_idx]
+        ys = [ys[i] for i in gold_idx]
+        heur = [heur[i] for i in gold_idx]
+        if len(set(ys)) < 2:
+            print("[nightly] calibrator: PM-gold holdout is single-class — not promoting")
+            return
         b_cal, b_heur = C.brier_score(probs, ys), C.brier_score(heur, ys)
-        print(f"[nightly] calibrator Brier={b_cal:.4f} vs heuristic={b_heur:.4f} (holdout n={len(ys)})")
+        print(
+            f"[nightly] calibrator Brier={b_cal:.4f} vs heuristic={b_heur:.4f} "
+            f"(PM-gold holdout n={len(ys)})"
+        )
         if b_cal < b_heur:
             import shutil
             dst = Path(os.environ.get("ML_ARTIFACT_DIR", "/tmp/ml")) / "_calibrator"
