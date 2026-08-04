@@ -161,6 +161,24 @@ _GENERIC_SITE_IDS: frozenset[str] = frozenset({
 })
 
 
+def _is_structural_roster_atom(atom: Any) -> bool:
+    """Was this atom lifted from a declared site-roster TABLE (one row = one
+    site), rather than recovered from prose / promoted by a classifier?
+
+    The distinction is what makes the id-less rule below safe: a roster row is
+    ground truth even when the sheet ships no ID column, while an id-less atom
+    from prose really is a ghost.
+    """
+    for ref in (getattr(atom, "source_refs", None) or []):
+        method = str(getattr(ref, "extraction_method", "") or "")
+        if "site_roster" in method:
+            return True
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and "site_roster" in str(loc.get("extraction", "")):
+            return True
+    return False
+
+
 def _physical_site_id(atom: Any) -> str:
     val = getattr(atom, "value", None) or {}
     if not isinstance(val, dict):
@@ -174,7 +192,21 @@ def _physical_site_id(atom: Any) -> str:
     # atoms always carry an explicit site_id from a structured ID column.
     # Returning "" here causes such ghost atoms to be DROPPED in
     # _dedupe_physical_site_atoms (canonical_for returns None).
-    return _site_display_key(val.get("site_id") or val.get("id") or "")
+    sid = _site_display_key(val.get("site_id") or val.get("id") or "")
+    if sid:
+        return sid
+    # v58: …but a STRUCTURAL roster row is not a ghost. Some rosters simply
+    # ship no ID column (a store list keyed only on name + address). Dropping
+    # those cost a 437-site deal all but 20 of its locations. Derive a stable
+    # id from the row's own address/name so the row survives and still dedups
+    # against itself across documents. Prose/classifier atoms are untouched.
+    if not _is_structural_roster_atom(atom):
+        return ""
+    for field in ("street_address", "address", "facility_name", "name"):
+        derived = _site_display_key(val.get(field) or "")
+        if derived:
+            return derived[:64]
+    return ""
 
 
 def _is_bad_physical_site_id(site_id: str) -> bool:
@@ -454,6 +486,14 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 fk = _nf(v.get(field))
                 if fk and fk in facility_to_canonical:
                     return facility_to_canonical[fk]
+            # v58: a row lifted from a declared roster TABLE is its own
+            # evidence — it is a site because the document says the table
+            # lists sites, not because its id happens to look canonical.
+            # Never fold it into another site and never drop it; a big store
+            # roster is exactly the case where most rows share no id shape
+            # with the handful of atoms that made it into complete_ids.
+            if _is_structural_roster_atom(atom):
+                return sid
             # No match against any complete atom — ghost emission with a
             # synthetic site_id and no canonical address/facility to
             # merge into. Drop it. Safe: a genuine new site would have

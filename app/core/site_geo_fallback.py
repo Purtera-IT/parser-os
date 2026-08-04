@@ -66,6 +66,23 @@ def _has_real_site(atoms: list[Any]) -> bool:
         val = getattr(a, "value", None) or {}
         if isinstance(val, dict) and (val.get("id") or val.get("site_id")):
             return True
+        # v58: a row lifted from a declared site-roster TABLE anchors the deal
+        # just as firmly, id column or not. Without this a deal whose roster
+        # ships no ID column gets guessed "City, ST ZIP" sites minted on top
+        # of hundreds of real, fully-addressed ones.
+        if _is_roster_sourced(a):
+            return True
+    return False
+
+
+def _is_roster_sourced(atom: Any) -> bool:
+    """True when the atom came from a site-roster table extractor."""
+    for ref in (getattr(atom, "source_refs", None) or []):
+        if "site_roster" in str(getattr(ref, "extraction_method", "") or ""):
+            return True
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and "site_roster" in str(loc.get("extraction", "")):
+            return True
     return False
 
 

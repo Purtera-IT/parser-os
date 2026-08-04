@@ -94,6 +94,104 @@ _ROSTER_HEADER_PRESENCE_SIGNALS = (
 )
 
 
+# Fields that only a site roster carries. A ``site_id`` column alone is not
+# enough (BOMs, decision logs and port maps all reference a site); one of
+# these must be present for a table to be a roster. Shared with xlsx_parser
+# so the strict gate and the header finder agree on one definition.
+ROSTER_SPECIFIC_FIELDS: frozenset[str] = frozenset({
+    "facility_name", "street_address", "mdf_idf",
+    "access_window", "escort_owner", "city_state",
+})
+
+
+# Asset inventories (Asset ID / Serial / Model / IP / MAC / Hostname) mint
+# ghost sites: AST-001 matches the site-ID shape and "IP Address" matches the
+# street-address header. No real site roster ever carries these, so a single
+# hit is decisive — reject regardless of what else the header maps.
+_HARD_REJECT_HEADER_SIGNALS: frozenset[str] = frozenset({
+    "serial", "mac address", "ip address", "asset id", "asset tag", "hostname",
+})
+
+# Signals that a table is a requirements list / BOM / risk register / schedule
+# rather than a roster. These are NOT decisive on their own: real rosters
+# routinely carry an operational column ("Migration Status", "Open/Closed",
+# "Type", "Description"). Reject only when the roster evidence is weak — see
+# ``_roster_evidence_is_dominant``.
+_SOFT_REJECT_HEADER_SIGNALS: frozenset[str] = frozenset({
+    "requirement", "acceptance", "bom", "line item", "unit price",
+    "quantity", "risk id", "probability", "impact", "mitigation",
+    "checklist", "checkpoint", "deliverable", "criterion", "criteria",
+    "phase", "milestone", "task", "activity", "duration", "predecessor",
+    "status", "priority", "category", "description",
+    "part number", "part no", "model number", "model no", "sku",
+    "unit cost", "extended", "subtotal", "total cost",
+    "shall", "must", "will provide",
+})
+
+
+def _roster_evidence_is_dominant(columns: Sequence[str]) -> bool:
+    """Does the header map so strongly to roster fields that one incidental
+    non-roster column (a Status / Type / Description) cannot be the truth of
+    the table? Requires >=3 canonical fields AND >=2 roster-specific ones."""
+    present = set(map_columns_to_fields(columns).values())
+    return len(present) >= 3 and len(present & ROSTER_SPECIFIC_FIELDS) >= 2
+
+
+# A column that structurally IS the row's identifier: no spaces, short, and
+# carrying at least one digit (so human names — "David", "Bradshaw" — can
+# never be mistaken for site codes).
+_CODE_SHAPE_RE = re.compile(r"^(?=[^\d]*\d)[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_MAX_ID_LEN = 16
+# Pure-digit columns of these uniform widths are phone numbers / ZIPs /
+# ZIP+4 / EINs, not site codes. Real store codes vary in width (58, 268, 1054).
+_NON_ID_UNIFORM_DIGIT_WIDTHS: frozenset[int] = frozenset({5, 9, 10, 11})
+
+
+def detect_site_id_column(
+    columns: Sequence[str],
+    rows: Sequence[Any],
+    field_map: dict[int, str],
+) -> int | None:
+    """Find the site-identifier column by SHAPE when no header names one.
+
+    Every enterprise roster keys its rows on some code — but the header for it
+    is site-specific jargon ("HC", "Loc", "Br #", "Unit") that no keyword list
+    can enumerate. The identifier is recognisable structurally instead: the
+    column is near-fully populated, its values are unique, short, space-free
+    and digit-bearing. Returns the leftmost qualifying column index, or None.
+    """
+    if "site_id" in field_map.values():
+        return None  # a header already declared it
+    n = len(rows)
+    if n < 3:
+        return None
+    for i, _col in enumerate(columns):
+        if i in field_map:
+            continue
+        vals = [v for v in (_cell_value(r, columns, i).strip() for r in rows) if v]
+        if len(vals) < max(3, int(0.9 * n)):
+            continue  # identifiers are not sparse
+        if len(set(vals)) < 0.95 * len(vals):
+            continue  # identifiers are unique
+        if any(len(v) > _MAX_ID_LEN or not _CODE_SHAPE_RE.match(v) for v in vals):
+            continue
+        widths = {len(v) for v in vals if v.isdigit()}
+        if (len(widths) == 1 and all(v.isdigit() for v in vals)
+                and next(iter(widths)) in _NON_ID_UNIFORM_DIGIT_WIDTHS):
+            continue  # uniform-width digits: phone / ZIP / EIN, not a site code
+        return i
+    return None
+
+
+def _id_prefix_for(header: str) -> str:
+    """Namespace a bare numeric code by its own column header: ``896`` under an
+    ``HC`` column becomes ``HC-896``. A naked number is not a usable site id —
+    downstream gates read 4-digit integers as years/amounts and reject them,
+    and two sheets keyed on different numbering would collide."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "", header or "").upper()[:8]
+    return slug or "SITE"
+
+
 # Site-ID shape regex — used as a fallback when no header tells us
 # which column is the ID. Tries hard to recognize enterprise
 # site IDs across formats:
@@ -168,7 +266,42 @@ class SiteRosterRow:
 
 
 def _norm_header(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip().lower())
+    # Machine-generated sheets ship snake_case headers (``Site_Name``,
+    # ``Manager_Name``, ``Visit_Date``). Treat ``_`` as a word separator so
+    # they map to the same fields as their spaced equivalents — otherwise a
+    # perfectly good roster reads as a table of unknown columns.
+    return re.sub(r"\s+", " ", re.sub(r"_+", " ", (text or "")).strip().lower())
+
+
+def find_header_row(rows: Sequence[Any], scan_limit: int = 25) -> int:
+    """Index of the row that actually carries the column headers.
+
+    Real workbooks put a title banner above the header (``Site Master`` /
+    ``All in-scope sites with dispatch metadata`` / then the real header).
+    Anchoring on "first non-blank row" reads the banner as the entire header,
+    so the sheet maps to zero fields and the whole roster is invisible.
+
+    Returns the FIRST row that maps to >=2 canonical fields including at least
+    one roster-specific one — scanning forward, never into the data, because a
+    data row cannot out-score a header it sits beneath. Falls back to the first
+    non-blank row when nothing qualifies (previous behaviour).
+    """
+    first_nonblank = 0
+    seen_nonblank = False
+    limit = min(scan_limit, len(rows))
+    for i in range(limit):
+        cells = [str(c or "").strip() for c in (rows[i] or ())]
+        nonblank = [c for c in cells if c]
+        if not nonblank:
+            continue
+        if not seen_nonblank:
+            first_nonblank, seen_nonblank = i, True
+        if len(nonblank) < 2:
+            continue  # merged title / caption banner, not a header
+        present = set(map_columns_to_fields(cells).values())
+        if len(present) >= 2 and (present & ROSTER_SPECIFIC_FIELDS):
+            return i
+    return first_nonblank
 
 
 def map_columns_to_fields(
@@ -248,32 +381,18 @@ def looks_like_site_roster(
       3. ≥3 row's leftmost non-empty cell matches the site-ID shape
          regex (handles rosters that ship without column headers).
     """
-    # v48 FIX 3: Negative guard — if column headers contain strong
-    # non-roster signals (requirements / BOM / risk / acceptance /
-    # schedule / spec), REJECT immediately. This prevents the roster
-    # path from silently eating these tables and dropping their rows.
-    _NON_ROSTER_HEADER_SIGNALS: frozenset[str] = frozenset({
-        "requirement", "acceptance", "bom", "line item", "unit price",
-        "quantity", "risk id", "probability", "impact", "mitigation",
-        "checklist", "checkpoint", "deliverable", "criterion", "criteria",
-        "phase", "milestone", "task", "activity", "duration", "predecessor",
-        "status", "priority", "category", "description",
-        "part number", "part no", "model number", "model no", "sku",
-        "unit cost", "extended", "subtotal", "total cost",
-        "shall", "must", "will provide",
-        # Asset-inventory signals: an asset inventory (Asset ID / Serial /
-        # Model / IP Address / MAC Address / Hostname) is NOT a site
-        # roster. Without this guard, AST-001 matches the site-ID shape
-        # and "IP Address" matches the street-address header, producing
-        # ghost physical_site rows. One asset-inventory signal is enough
-        # to reject — real site rosters never carry serial/MAC/IP columns.
-        "serial", "mac address", "ip address", "asset id", "asset tag",
-        "hostname",
-    })
+    # v48 FIX 3 / v58: Negative guard. Asset-inventory signals are decisive
+    # (they mint ghost sites). Requirements / BOM / schedule signals are only
+    # decisive when the roster evidence is weak — a real store roster carries
+    # "Migration Status" and "Type" columns without ceasing to be a roster,
+    # and rejecting on one such hit silently drops the whole site list.
     if columns:
         header_blob = " ".join(c.lower() for c in columns)
-        if any(sig in header_blob for sig in _NON_ROSTER_HEADER_SIGNALS):
+        if any(sig in header_blob for sig in _HARD_REJECT_HEADER_SIGNALS):
             return False
+        if any(sig in header_blob for sig in _SOFT_REJECT_HEADER_SIGNALS):
+            if not _roster_evidence_is_dominant(columns):
+                return False
 
     # Signal 1: explicit declaration
     if _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text):
@@ -440,6 +559,15 @@ def extract_site_roster(
             if i < len(columns):
                 field_map[i] = fname
 
+    # No header named the identifier column ("HC", "Loc", "Br #", "Unit") —
+    # find it by shape. Without this every row arrives with site_id=None and
+    # is later discarded downstream as an id-less ghost.
+    id_prefix = ""
+    id_col = detect_site_id_column(columns, rows, field_map)
+    if id_col is not None:
+        field_map[id_col] = "site_id"
+        id_prefix = _id_prefix_for(str(columns[id_col]))
+
     out: list[SiteRosterRow] = []
     for row_index, row in enumerate(rows):
         if not isinstance(row, (dict, list, tuple)) and row is not None:
@@ -520,9 +648,16 @@ def extract_site_roster(
                 ):
                     cells["site_id"] = compact_underscore
 
-        # A row with neither a site_id nor a facility_name is just
-        # noise — skip it.
-        if not cells.get("site_id") and not cells.get("facility_name"):
+        # Namespace a bare numeric code by its column ("896" -> "HC-896").
+        if id_prefix and cells.get("site_id", "").isdigit():
+            cells["site_id"] = f"{id_prefix}-{cells['site_id']}"
+
+        # A row with no id, no name AND no address is just noise. An address
+        # alone IS a site: rosters routinely leave the display name blank for
+        # a store that hasn't been branded yet, and dropping those rows loses
+        # real, fully-addressed locations.
+        if not (cells.get("site_id") or cells.get("facility_name")
+                or cells.get("street_address")):
             continue
 
         # Bucket unknown fields
@@ -535,7 +670,12 @@ def extract_site_roster(
                 continue
             extras.append((col_name, val))
 
-        confidence = 0.85 if cells.get("site_id") else 0.6
+        if cells.get("site_id"):
+            confidence = 0.85
+        elif cells.get("facility_name"):
+            confidence = 0.6
+        else:
+            confidence = 0.5  # address-anchored only
         out.append(
             SiteRosterRow(
                 row_index=row_index,
@@ -563,8 +703,11 @@ def extract_site_roster(
 
 
 __all__ = [
+    "ROSTER_SPECIFIC_FIELDS",
     "SiteRosterRow",
+    "detect_site_id_column",
     "extract_site_roster",
+    "find_header_row",
     "looks_like_site_roster",
     "map_columns_to_fields",
 ]
