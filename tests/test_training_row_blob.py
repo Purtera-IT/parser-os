@@ -164,3 +164,44 @@ def test_one_unreadable_batch_does_not_stop_the_others(monkeypatch):
 
     monkeypatch.setattr(trb, "_container_client", lambda: Fake())
     assert trb.sync_into_log(Log()) == 1
+
+
+class _Row2:
+    """Minimal row stand-in for the placeholder filter."""
+
+    def __init__(self, label):
+        self.label = label
+
+
+def test_placeholder_labels_are_recognised():
+    assert trb.is_placeholder_label("_keep")
+    assert trb.is_placeholder_label("_anything_future")
+    assert not trb.is_placeholder_label("scope_item")
+    assert not trb.is_placeholder_label("site_implementation_note")
+
+
+def test_keep_rows_never_reach_the_training_log():
+    """`_keep` was 48.9% of all rows (16,336 of 33,394) — the admission stage's
+    "keep, type unknown" marker, not a taxonomy value. Training a TYPE head on it
+    inflates accuracy for free (always guess _keep -> ~49%) while teaching
+    nothing about the 42 real classes."""
+    good = trb.rows_to_jsonl([_row(label="service_line")])
+    junk = trb.rows_to_jsonl([_row(label="_keep")])
+    rows = trb.jsonl_to_rows(good + "\n" + junk)
+    assert [r.label for r in rows] == ["service_line"]
+
+
+def test_placeholder_rows_are_not_even_uploaded(monkeypatch):
+    sent = []
+
+    class Fake:
+        def upload_blob(self, name, data, overwrite=False):
+            sent.append(data)
+
+    monkeypatch.setattr(trb, "_container_client", lambda: Fake())
+    # An all-placeholder batch is not worth a blob at all.
+    assert trb.upload_rows([_row(label="_keep"), _row(label="_keep")]) is False
+    assert sent == []
+    # A mixed batch uploads, carrying only the real label.
+    assert trb.upload_rows([_row(label="_keep"), _row(label="risk")]) is True
+    assert b"_keep" not in sent[0] and b"risk" in sent[0]

@@ -69,6 +69,24 @@ def _container_client():
         return None
 
 
+def is_placeholder_label(label: str) -> bool:
+    """True for internal markers that are NOT taxonomy values.
+
+    ``_keep`` is the admission stage's "keep this atom, type unknown" marker. It
+    was **48.9% of every training row** (16,336 of 33,394), so the type head was
+    being taught that half the world is a placeholder. That inflates accuracy for
+    free — always guessing ``_keep`` scores ~49% — while teaching nothing about
+    the 42 real classes, each of which is only 2-6% of the data. The head ledger
+    already flags these as out-of-taxonomy and queues them for relabelling.
+
+    Underscore-prefixed is the rule rather than a hardcoded ``_keep`` list: every
+    internal marker in the corpus uses that convention (verified — ``_keep`` is
+    the only one present), and no real taxonomy value does, so future markers are
+    excluded automatically instead of silently poisoning the next head.
+    """
+    return label.startswith("_")
+
+
 def rows_to_jsonl(rows: Iterable["TrainingRow"]) -> str:
     """Serialize rows one-per-line. ``provenance`` stays a dict (not the
     JSON-string form ``to_row`` produces) so the reload is a clean round-trip."""
@@ -105,6 +123,8 @@ def jsonl_to_rows(text: str) -> list["TrainingRow"]:
         kwargs: dict[str, Any] = {k: v for k, v in d.items() if k in fields}
         if not kwargs.get("relation") or not kwargs.get("label"):
             continue
+        if is_placeholder_label(str(kwargs.get("label") or "")):
+            continue
         try:
             rows.append(TrainingRow(**kwargs))
         except Exception:
@@ -118,6 +138,11 @@ def upload_rows(rows: list["TrainingRow"]) -> bool:
         return False
     cc = _container_client()
     if cc is None:
+        return False
+    # Drop placeholder labels before they ever reach blob — no point storing,
+    # re-downloading and re-embedding rows the trainer must then discard.
+    rows = [r for r in rows if not is_placeholder_label(str(getattr(r, "label", "") or ""))]
+    if not rows:
         return False
     try:
         payload = rows_to_jsonl(rows)
