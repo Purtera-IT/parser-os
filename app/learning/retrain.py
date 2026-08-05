@@ -50,8 +50,37 @@ import numpy as np
 
 from app.core.neural_head import NeuralHead
 from app.core.shadow_eval import RelationReport, _head_feature, evaluate_relation_head
-from app.core.training_log import TrainingLog
+from app.core.training_log import TEACHER_PM, TrainingLog
 from app.learning.head_registry import HeadMeta, HeadRegistry
+
+# Cap on TRAIN rows embedded per relation in one fit.
+#
+# `fit_candidate` embeds every train row into a single array before fitting. The
+# training log is append-only and now grows by ~1,500 rows per compile, so this
+# scales with traffic and nothing bounded it: at 33,727 rows the nightly was
+# SIGKILLed by the OOM killer at 3h48m (0.55GB of raw 4096-dim vectors, several
+# times that once sklearn copies for the fit, inside a 4Gi container).
+#
+# Raising memory only moves the wall. A cap is the durable answer, because past
+# a few thousand well-spread rows more silver adds very little to a kNN head.
+MAX_TRAIN_ROWS = int(os.getenv("RETRAIN_MAX_TRAIN_ROWS", "8000"))
+
+
+def _cap_train_rows(rows: list, limit: int = MAX_TRAIN_ROWS) -> list:
+    """Bound a relation's train set, keeping EVERY PM-gold row.
+
+    Gold is scarce (single digits) and is the only thing that can lift a head
+    past the teacher it distills; silver is abundant and interchangeable. So the
+    cap falls entirely on silver, newest first — dropping a gold row to make room
+    for the 8,001st machine label would be exactly backwards.
+    """
+    if limit <= 0 or len(rows) <= limit:
+        return rows
+    gold = [r for r in rows if getattr(r, "teacher", "") == TEACHER_PM]
+    silver = [r for r in rows if getattr(r, "teacher", "") != TEACHER_PM]
+    room = max(0, limit - len(gold))
+    silver.sort(key=lambda r: getattr(r, "created_at", 0.0), reverse=True)
+    return gold + silver[:room]
 
 # How much worse than the champion (on unseen deals) a candidate may be on any
 # axis and still be considered "not a regression". Tight on purpose.
@@ -106,7 +135,7 @@ def fit_candidate(
 ) -> Optional[tuple[NeuralHead, int]]:
     """Fit a head on TRAIN rows for one relation. Returns (head, n_train) or
     None when there is nothing to learn from."""
-    train = log.rows(relation=relation, split="train")
+    train = _cap_train_rows(log.rows(relation=relation, split="train"))
     feats, y, w = [], [], []
     for r in train:
         f = _head_feature(r)
