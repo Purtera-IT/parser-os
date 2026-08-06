@@ -247,6 +247,83 @@ def suppress_vendor_sites(
     return kept, len(drop_ids)
 
 
+def enrich_site_geo(atoms: list[Any]) -> int:
+    """Fill missing ``city``/``state``/``zip`` on real ``physical_site`` atoms.
+
+    ``geo_fallback_sites`` below is all-or-nothing: it mints sites only when
+    the deal has none. That leaves the common middle case unserved — a site
+    that IS detected but whose address arrived as one lumped string, because
+    the summary table the customer wrote it in was terse::
+
+        | AUG-DC-06 | Augusta Data Center Annex (699 Broad St, Ste 1200) | ...
+
+    The full ``Augusta, GA 30901`` is two rows further down the same document,
+    in the access-window table. Everything downstream that reasons about
+    *where* a site is — site_readiness, mapping, dispatch planning — keys on
+    city/state/ZIP, so a site with an address string and no city is a site
+    nobody can route to.
+
+    Runs in two passes per site: its own address text first, then any atom
+    that names exactly one site (a paragraph listing three sites says nothing
+    about which address belongs to which). Only ever fills blanks; never
+    overwrites what an extractor already established. Pure function, no I/O,
+    no LLM — mutates ``value`` in place and returns how many sites it filled.
+    """
+    sites = [a for a in atoms if _atom_type_str(a) == "physical_site"]
+    if not sites:
+        return 0
+
+    def _fill(atom: Any, text: str) -> bool:
+        val = getattr(atom, "value", None)
+        if not isinstance(val, dict) or not text:
+            return False
+        if val.get("city") and val.get("state") and val.get("zip"):
+            return False
+        m = _CITY_STATE_ZIP_RE.search(str(text))
+        if not m:
+            return False
+        city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
+        if state not in _US_STATES:
+            return False
+        before = (val.get("city"), val.get("state"), val.get("zip"))
+        val.setdefault("city", city)
+        val.setdefault("state", state)
+        val.setdefault("zip", zipc)
+        return (val.get("city"), val.get("state"), val.get("zip")) != before
+
+    filled = 0
+    # Pass 1 — the site's own address/text.
+    for s in sites:
+        addr, ctx = _site_address_text(s)
+        if _fill(s, addr) or _fill(s, ctx):
+            filled += 1
+
+    # Pass 2 — a sibling atom that names this site and nothing else.
+    wanting = [s for s in sites
+               if isinstance(getattr(s, "value", None), dict)
+               and not (s.value.get("city") and s.value.get("state"))]
+    if not wanting:
+        return filled
+    keyed: list[tuple[str, Any]] = []
+    for s in wanting:
+        val = s.value
+        for alias in (val.get("site_id"), val.get("id"), val.get("name"),
+                      val.get("facility_name")):
+            if alias and len(str(alias)) >= 4:
+                keyed.append((_slug(str(alias)), s))
+    for atom in atoms:
+        text = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
+        if not text:
+            continue
+        hay = _slug(str(text))
+        matched = {id(s): s for k, s in keyed if k and k in hay}
+        if len(matched) != 1:
+            continue
+        if _fill(next(iter(matched.values())), text):
+            filled += 1
+    return filled
+
+
 def geo_fallback_sites(
     atoms: list[Any], *, project_id: str
 ) -> list[EvidenceAtom]:
@@ -329,4 +406,4 @@ def geo_fallback_sites(
     return out
 
 
-__all__ = ["geo_fallback_sites", "suppress_vendor_sites"]
+__all__ = ["enrich_site_geo", "geo_fallback_sites", "suppress_vendor_sites"]

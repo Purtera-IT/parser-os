@@ -1079,9 +1079,20 @@ def compile_project(
         else:
             try:
                 from app.core.site_geo_fallback import (
+                    enrich_site_geo,
                     geo_fallback_sites,
                     suppress_vendor_sites,
                 )
+                # 0) Fill city/state/ZIP on sites we DID detect but whose
+                #    address came through as one lumped string. Runs before
+                #    the fallback because it changes nothing about whether a
+                #    site exists — it only makes an existing one locatable.
+                enriched_geo = enrich_site_geo(atoms)
+                if enriched_geo:
+                    warnings.append(
+                        f"INFO: site_geo_fallback enriched {enriched_geo} physical_site "
+                        f"atom(s) with city/state/ZIP recovered from the document"
+                    )
                 # 1) Infer fallback physical_site atoms from bare City/State/ZIP
                 #    anchors. This must run FIRST: a vendor letterhead address
                 #    ("PurTera LLC … Alpharetta, GA 30009") only becomes a
