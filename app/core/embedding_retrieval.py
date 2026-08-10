@@ -41,6 +41,7 @@ from typing import Any
 
 import numpy as np
 import requests
+from app.core import ollama_host
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,7 @@ def _embed_model() -> str:
 
 def _embed_one(text: str) -> list[float] | None:
     """POST to /api/embeddings. Returns 4096-dim vector or None on failure."""
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
     timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     try:
@@ -250,7 +251,7 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
     if os.environ.get("SOWSMITH_EMBED_NO_BATCH"):
         _BATCH_ENDPOINT_OK = False
         return None
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
     timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     try:
@@ -481,7 +482,7 @@ def get_candidates_for_entity_type(
 def embedding_endpoint_reachable() -> bool:
     """Quick health check — used to fall back to chunked extraction
     when Griffin's Mac is unreachable or the embed model isn't loaded."""
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     try:
         r = requests.get(f"{host}/api/tags", timeout=3)
         if r.status_code != 200:

@@ -44,6 +44,7 @@ import os
 import re
 import urllib.request
 from typing import Any, Callable
+from app.core import ollama_host
 
 DEFAULT_HOST = "http://100.114.102.122:11434"
 DEFAULT_MODEL = "qwen3:14b"
@@ -2947,9 +2948,14 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     from app.core import llm_client
     if llm_client.teacher_api_enabled():
         return llm_client.complete(prompt, max_tokens=max_tokens)
-    host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(DEFAULT_HOST)
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    # A host that cannot return five tokens will not return this either, and
+    # the timeout above is measured in minutes. Probe once, then degrade to
+    # the deterministic path the same way an empty completion already does.
+    if not ollama_host.generation_ready(host, model):
+        return ""
     payload = {
         "model": model,
         "prompt": prompt,

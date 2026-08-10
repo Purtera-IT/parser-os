@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from app.core import ollama_host
 
 logger = logging.getLogger(__name__)
 
@@ -116,8 +117,12 @@ def call_vision_llm(
         return llm_client.complete_vision(
             prompt, _encode_image_b64(image_bytes), max_tokens=max_tokens,
         )
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(_DEFAULT_HOST)
     model = os.environ.get("OLLAMA_VISION_MODEL", _DEFAULT_VISION_MODEL)
+    # A vision model that cannot emit five tokens for a text ping cannot read
+    # an image either, and image calls are the most expensive to wait out.
+    if not ollama_host.generation_ready(host, model):
+        return ""
     payload = {
         "model": model,
         "prompt": prompt,
@@ -149,7 +154,7 @@ def vision_endpoint_reachable() -> bool:
     from app.core import llm_client
     if llm_client.teacher_api_enabled():
         return True
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(_DEFAULT_HOST)
     try:
         r = requests.get(f"{host}/api/tags", timeout=3)
         if r.status_code != 200:

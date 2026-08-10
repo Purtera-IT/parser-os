@@ -32,6 +32,7 @@ import urllib.request
 
 # Reuse the same Ollama endpoint the rest of the pipeline targets.
 from app.core.multi_entity_llm import DEFAULT_HOST
+from app.core import ollama_host
 
 # A deliberately tiny, fast, NON-thinking model — role classification is a
 # one-token decision, not a reasoning task. Overridable per deployment.
@@ -65,8 +66,10 @@ def _post_generate(prompt: str, *, timeout: int, model: str | None = None) -> st
     from app.core import llm_client
     if llm_client.teacher_api_enabled():
         return llm_client.complete(prompt, max_tokens=64, timeout=timeout)
-    host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(DEFAULT_HOST)
     model = model or os.environ.get("OLLAMA_ROLE_MODEL") or DEFAULT_ROLE_MODEL
+    if not ollama_host.generation_ready(host, model):
+        return ""
     payload = {
         "model": model,
         "prompt": prompt,
