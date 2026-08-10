@@ -217,6 +217,13 @@ def _embed_one(text: str) -> list[float] | None:
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
     timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    # Preflight: a dead embed endpoint must cost seconds, not the full
+    # SOWSMITH_EMBED_TIMEOUT on every call. enrich_atoms embeds repeatedly, so
+    # an ungated 180s timeout is what put one deal in enrich_entities for 21
+    # minutes against an endpoint that was returning 500s the whole time.
+    if not ollama_host.embed_ready(host, model):
+        return None
+
     try:
         r = requests.post(
             f"{host}/api/embeddings",
@@ -254,6 +261,13 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
     timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    # Preflight: a dead embed endpoint must cost seconds, not the full
+    # SOWSMITH_EMBED_TIMEOUT on every call. enrich_atoms embeds repeatedly, so
+    # an ungated 180s timeout is what put one deal in enrich_entities for 21
+    # minutes against an endpoint that was returning 500s the whole time.
+    if not ollama_host.embed_ready(host, model):
+        return None
+
     try:
         r = requests.post(
             f"{host}/api/embed",
@@ -480,18 +494,15 @@ def get_candidates_for_entity_type(
 
 
 def embedding_endpoint_reachable() -> bool:
-    """Quick health check — used to fall back to chunked extraction
-    when Griffin's Mac is unreachable or the embed model isn't loaded."""
+    """Can the endpoint actually embed — not merely list models.
+
+    This used to GET /api/tags and call a 200 reachable, the same lie that let
+    the generate path hang: a box answers /api/tags in milliseconds while its
+    model is unloaded or its proxy is returning 500s. Ask for a vector instead.
+    """
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
-    try:
-        r = requests.get(f"{host}/api/tags", timeout=3)
-        if r.status_code != 200:
-            return False
-        models = [m.get("name", "") for m in r.json().get("models", [])]
-        model = os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
-        return any(model in m for m in models)
-    except Exception:
-        return False
+    model = os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
+    return ollama_host.embed_ready(host, model)
 
 
 __all__ = [
