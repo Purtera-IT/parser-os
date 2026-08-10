@@ -311,6 +311,42 @@ def build_orbitbrief_envelope(
         import logging as _lg_v49
         _lg_v49.getLogger(__name__).warning("v49 site attribute passthrough failed: %s", _v49_exc)
 
+    # The passthrough above can only name a site a physical_site atom
+    # anchors. Sites the deal mentions only in prose become rows with no
+    # name at all, so the dossier shows the PM ``site:prudential_center_
+    # office`` where the document said "Prudential Center office". Recover
+    # the readable form from evidence the compile already holds. Fills
+    # blanks only — an all-anchored deal (Clayton's 437 roster sites) does
+    # no work here and is left byte-identical.
+    try:
+        from app.core.site_naming import recover_site_display_names
+        _sr_rows = ((envelope.get("site_readiness") or {}).get("sites") or [])
+        _recovered = recover_site_display_names(
+            sites=_sr_rows, atoms=atoms, documents=documents,
+        )
+        for _row in _sr_rows:
+            _name = _recovered.get(_row.get("site") or "")
+            if not _name:
+                continue
+            _row["facility_name"] = _name
+            # Anchored rows carry their name in ``aliases`` too (the
+            # passthrough copies ``value.names`` in). Match that shape so
+            # every consumer sees prose sites the same way as roster ones.
+            _row_aliases = _row.setdefault("aliases", [])
+            if _name not in _row_aliases:
+                _row_aliases.insert(0, _name)
+        if _recovered:
+            import logging as _lg_naming_ok
+            _lg_naming_ok.getLogger(__name__).info(
+                "site_naming recovered %d display name(s): %s",
+                len(_recovered), ", ".join(sorted(_recovered)),
+            )
+    except Exception as _naming_exc:
+        import logging as _lg_naming
+        _lg_naming.getLogger(__name__).warning(
+            "site display-name recovery failed: %s", _naming_exc
+        )
+
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
 
     # Deal header / financials / BOM — PM-facing assembly of the
