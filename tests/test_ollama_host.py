@@ -156,3 +156,55 @@ def test_the_preflight_is_bounded_well_below_the_call_timeout(monkeypatch):
     monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _capture)
     ollama_host.generation_ready(PROXY, "qwen2.5:3b")
     assert captured["timeout"] <= 30
+
+
+# ── embed preflight ──────────────────────────────────────────────────────
+
+def test_embed_and_generate_are_separate_verdicts(monkeypatch):
+    """A box that cannot generate may still embed, and vice versa. The generate
+    fix missed this, and an ungated embed path is what put one deal in
+    enrich_entities for 21 minutes against a dead endpoint."""
+    seen = []
+
+    def _by_endpoint(req, timeout=None, *a, **k):
+        seen.append(req.full_url)
+        if req.full_url.endswith("/api/generate"):
+            raise TimeoutError("wedged")
+        return _Resp(json.dumps({"embedding": [0.1, 0.2, 0.3]}))
+    monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _by_endpoint)
+    assert ollama_host.generation_ready(PROXY, "qwen3:14b") is False
+    assert ollama_host.embed_ready(PROXY, "qwen3-embedding:8b") is True
+    assert any(u.endswith("/api/embeddings") for u in seen)
+
+
+def test_a_dead_embed_endpoint_is_not_ready(monkeypatch):
+    def _timeout(*a, **k):
+        raise TimeoutError("The read operation timed out")
+    monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _timeout)
+    assert ollama_host.embed_ready(PROXY, "qwen3-embedding:8b") is False
+
+
+def test_a_200_with_no_vector_is_not_ready(monkeypatch):
+    monkeypatch.setattr(ollama_host.urllib.request, "urlopen",
+                        lambda *a, **k: _Resp(json.dumps({"embedding": []})))
+    assert ollama_host.embed_ready(PROXY, "m") is False
+
+
+def test_the_embed_verdict_is_cached_too(monkeypatch):
+    calls = []
+
+    def _once(*a, **k):
+        calls.append(1)
+        return _Resp(json.dumps({"embedding": [1.0]}))
+    monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _once)
+    for _ in range(4):
+        ollama_host.embed_ready(PROXY, "m")
+    assert len(calls) == 1
+
+
+def test_the_kill_switch_covers_embeddings(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("SOWSMITH_DISABLE_LLM must not reach the network")
+    monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _boom)
+    monkeypatch.setenv("SOWSMITH_DISABLE_LLM", "1")
+    assert ollama_host.embed_ready(PROXY, "m") is False

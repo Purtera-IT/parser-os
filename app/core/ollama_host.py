@@ -53,7 +53,7 @@ _DEFAULT_PREFLIGHT_TOKENS = 5
 _DEFAULT_PREFLIGHT_TTL = 300
 
 _lock = threading.Lock()
-_verdicts: dict[tuple[str, str], tuple[bool, float]] = {}
+_verdicts: dict[tuple, tuple[bool, float]] = {}
 
 
 def _int_env(name: str, default: int) -> int:
@@ -117,7 +117,7 @@ def generation_ready(host: str, model: str, *, timeout: int | None = None) -> bo
     if not host or not model:
         return False
 
-    key = (host.rstrip("/"), model)
+    key = ("generate", host.rstrip("/"), model)
     ttl = _int_env("PARSER_OS_LLM_PREFLIGHT_TTL", _DEFAULT_PREFLIGHT_TTL)
     now = time.monotonic()
     with _lock:
@@ -125,10 +125,66 @@ def generation_ready(host: str, model: str, *, timeout: int | None = None) -> bo
         if cached is not None and (now - cached[1]) < ttl:
             return cached[0]
 
-    verdict = _probe(key[0], model, timeout if timeout is not None else preflight_timeout())
+    verdict = _probe(key[1], model, timeout if timeout is not None else preflight_timeout())
     with _lock:
         _verdicts[key] = (verdict, time.monotonic())
     return verdict
+
+
+def embed_ready(host: str, model: str, *, timeout: int | None = None) -> bool:
+    """Can ``model`` on ``host`` return an embedding right now?
+
+    The generate preflight above does not cover this: embeddings go to
+    ``/api/embeddings``, so a box that cannot generate may still embed, and a box
+    that can generate may have unloaded the embed model. They are separate
+    verdicts and must be probed separately.
+
+    This gap is why the generate fix was incomplete. Every generate caller
+    degrades in seconds while ``embed_texts`` still paid the full
+    ``SOWSMITH_EMBED_TIMEOUT`` — 180s by default — on every call, and
+    ``enrich_atoms`` embeds repeatedly. One deal sat in ``enrich_entities`` for
+    21 minutes against a dead endpoint with nothing to short-circuit it.
+    """
+    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+        return False
+    if not host or not model:
+        return False
+
+    key = ("embed", host.rstrip("/"), model)
+    ttl = _int_env("PARSER_OS_LLM_PREFLIGHT_TTL", _DEFAULT_PREFLIGHT_TTL)
+    now = time.monotonic()
+    with _lock:
+        cached = _verdicts.get(key)
+        if cached is not None and (now - cached[1]) < ttl:
+            return cached[0]
+
+    verdict = _probe_embed(
+        key[1], model, timeout if timeout is not None else preflight_timeout()
+    )
+    with _lock:
+        _verdicts[key] = (verdict, time.monotonic())
+    return verdict
+
+
+def _probe_embed(host: str, model: str, timeout: int) -> bool:
+    payload = {"model": model, "prompt": "ping"}
+    req = urllib.request.Request(
+        f"{host}/api/embeddings",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            body = resp.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return False
+    try:
+        vector = json.loads(body).get("embedding")
+        return bool(isinstance(vector, list) and vector)
+    except (json.JSONDecodeError, AttributeError):
+        return False
 
 
 def _probe(host: str, model: str, timeout: int) -> bool:
@@ -166,6 +222,7 @@ def reset_preflight_cache() -> None:
 
 __all__ = [
     "FALLBACK_HOST",
+    "embed_ready",
     "generation_ready",
     "preflight_timeout",
     "reset_preflight_cache",
