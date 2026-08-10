@@ -51,6 +51,7 @@ import sys
 import time
 import urllib.request
 from typing import Any
+from app.core import ollama_host
 
 DEFAULT_HOST = "http://100.114.102.122:11434"
 DEFAULT_MODEL = "qwen2.5:3b"
@@ -1045,13 +1046,19 @@ def _parse_response(response_text: str) -> dict[str, dict[str, Any]]:
 
 
 def _ollama_reachable() -> bool:
-    host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
-    try:
-        req = urllib.request.Request(f"{host}/api/tags")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+    """Can the host actually classify, not merely answer.
+
+    This used to GET ``/api/tags`` and call a 200 reachable. A host whose
+    models are resident but have no headroom left to run answers that in
+    milliseconds and then never returns from ``/api/generate`` — so the check
+    passed and every classification stalled for the full 180-second timeout.
+    Ask for tokens instead.
+    """
+    host = ollama_host.resolve_host(DEFAULT_HOST)
+    model = os.environ.get("SOWSMITH_TYPED_CLASSIFIER_MODEL") or os.environ.get(
+        "OLLAMA_MODEL", DEFAULT_MODEL
+    )
+    return ollama_host.generation_ready(host, model)
 
 
 def _call_ollama(prompt: str, *, max_tokens: int = 4096) -> str:
@@ -1070,9 +1077,14 @@ def _call_ollama(prompt: str, *, max_tokens: int = 4096) -> str:
     from app.core import llm_client
     if llm_client.teacher_api_enabled():
         return llm_client.complete(prompt, max_tokens=max_tokens)
-    host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(DEFAULT_HOST)
     model = os.environ.get("SOWSMITH_TYPED_CLASSIFIER_MODEL") or os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    # A host that cannot return five tokens will not return this either, and
+    # the timeout above is measured in minutes. Probe once, then degrade to
+    # the deterministic path the same way an empty completion already does.
+    if not ollama_host.generation_ready(host, model):
+        return ""
 
     payload = {
         "model": model,
