@@ -64,6 +64,17 @@ NOISE_TYPES = frozenset({
     "pricing_assumption", "commercial_total", "rate_card", "line_item",
 })
 
+# Round-robin order. Types that describe the WORK go first, so when the budget
+# runs out it is bookkeeping that gets cut rather than scope. Worth +0.017
+# macro-F1 over alphabetical order at no token cost; dropping cross-deal
+# boilerplate (+0.003) and un-truncating FILES (0.000) were measured at the same
+# time and earn nothing, so neither is done.
+_TYPE_PRIORITY: tuple[str, ...] = (
+    "scope_item", "exclusion", "deliverable", "task", "requirement",
+    "assumption", "acceptance_criterion", "change_order_rule",
+    "site_implementation_note", "milestone_phase", "bom_line", "site_attribute",
+)
+
 _MAX_SCOPE_LINES = 40
 _MAX_LINE_CHARS = 200
 _MIN_LINE_CHARS = 8
@@ -199,9 +210,11 @@ def build_scope_summary(
     # budget the way roster rows did.
     scope_lines: list[str] = []
     cursors = {t: 0 for t in collapsed}
+    order = [t for t in _TYPE_PRIORITY if t in collapsed]
+    order += sorted(t for t in collapsed if t not in _TYPE_PRIORITY)
     while len(scope_lines) < max_scope_lines:
         progressed = False
-        for atype in sorted(collapsed):
+        for atype in order:
             i = cursors[atype]
             if i >= len(collapsed[atype]):
                 continue
