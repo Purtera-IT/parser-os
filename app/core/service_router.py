@@ -17,6 +17,7 @@ Off by default. Enable with ``SOWSMITH_SERVICE_ROUTING=1``; head dir via
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Any
 
@@ -127,12 +128,28 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
     head = _load_head()
     if head is None:
         return {"enabled": False}
+    # Record the EXACT string the head embeds. Every router eval so far has
+    # rebuilt this from envelope.json and measured a different function: replaying
+    # the shipped head over envelope-derived summaries reproduced only 2 of 9 live
+    # routes (2026-08-10), because production strides 40 atoms over the FULL parse
+    # while the envelope keeps a compacted subset. Without this the router's input
+    # is unobservable and no accuracy number means anything. Bounded by
+    # construction: _CAP atoms x 160 chars + a 200-char FILES line, ~6.6 KB.
     try:
-        res = head.classify(_scope_summary(atoms, documents))
+        summary = _scope_summary(atoms, documents)
+    except Exception:
+        summary = ""
+    prov = {
+        "scope_summary": summary,
+        "scope_summary_sha256": hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16],
+        "scope_summary_chars": len(summary),
+    }
+    try:
+        res = head.classify(summary)
     except Exception:
         return {"enabled": False}
     if not res:
-        return {"enabled": True, "primary": None, "confidence": 0.0, "abstained": True}
+        return {"enabled": True, "primary": None, "confidence": 0.0, "abstained": True, **prov}
     label, conf = res
     # Calibration guard: report a CLAMPED confidence (raw kept for transparency).
     # The head's raw score saturates near 1.0 even though its held-out accuracy
@@ -145,7 +162,7 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
     # can't route confidently). Treat that — and the parser's AMBIGUOUS abstain
     # target — as "no opinion" so brief-gen's keyword router stays in charge.
     if str(label).lower() in ("other", "ambiguous"):
-        return {"enabled": True, "primary": None, "confidence": conf, "raw_confidence": raw_conf, "abstained": True}
+        return {"enabled": True, "primary": None, "confidence": conf, "raw_confidence": raw_conf, "abstained": True, **prov}
     return {
         "enabled": True,
         "primary": label,
@@ -153,4 +170,5 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
         "confidence": conf,
         "raw_confidence": raw_conf,
         "source": "service_router_head",
+        **prov,
     }
