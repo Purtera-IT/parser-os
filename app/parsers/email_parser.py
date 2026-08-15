@@ -81,17 +81,73 @@ CONSTRAINT_PATTERNS = [
 ]
 
 
+#: Separates cells of one table row in the flattened text stream. Chosen
+#: because it survives normalize_text, does not occur in ordinary prose, and
+#: reads as a row to both the downstream splitters and a human in source replay.
+_CELL_SEP = " | "
+
+
+def _flatten_tables_in_place(soup: BeautifulSoup) -> int:
+    """Rewrite every ``<table>`` as one line per ``<tr>``, cells joined by ``|``.
+
+    ``soup.get_text(separator="\\n")`` emits every cell on its own line, which
+    silently destroys the only thing a table means: which cell belongs to which
+    row. A site-count table arrives as ``Arkansas``, ``327``, ``Idaho``, ``42``
+    with nothing tying a state to its number, and no later stage can rebuild the
+    pairing — ``table_rollup`` runs on the flattened text and is a no-op.
+
+    Rewriting the element before the text pass keeps the row intact
+    (``Arkansas | 327 | Arkansas | 312``) for every consumer downstream.
+
+    Returns the number of tables rewritten.
+    """
+    count = 0
+    for table in soup.find_all("table"):
+        lines: list[str] = []
+        for row in table.find_all("tr"):
+            cells = [
+                c.get_text(separator=" ", strip=True)
+                for c in row.find_all(["th", "td"])
+            ]
+            # Outlook pads tables with empty spacer cells; dropping them keeps
+            # the row readable without shifting the columns that carry data.
+            cells = [c for c in cells if c]
+            if cells:
+                lines.append(_CELL_SEP.join(cells))
+        if lines:
+            table.replace_with("\n" + "\n".join(lines) + "\n")
+            count += 1
+    return count
+
+
 def _extract_email_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".eml":
         raw = path.read_bytes()
         msg = BytesParser(policy=policy.default).parsebytes(raw)
-        body = msg.get_body(preferencelist=("plain", "html"))
-        content = body.get_content() if body is not None else raw.decode("utf-8", errors="ignore")
+        # Prefer the HTML alternative when the sender put a table in it.
+        #
+        # Mail clients ship the same message twice, and Outlook's plain-text
+        # alternative flattens tables to one value per line before we ever see
+        # the file. The HTML alternative still has <tr>/<td>, so for a message
+        # that carries a table it is strictly the richer source. Prose-only
+        # mail keeps taking the plain part, which is cleaner (no style noise,
+        # no tracking markup) and is the overwhelming majority of traffic.
+        html_body = msg.get_body(preferencelist=("html",))
+        plain_body = msg.get_body(preferencelist=("plain",))
+        content = None
+        if html_body is not None:
+            html_content = html_body.get_content()
+            if "<table" in html_content.lower():
+                content = html_content
+        if content is None:
+            body = plain_body if plain_body is not None else html_body
+            content = body.get_content() if body is not None else raw.decode("utf-8", errors="ignore")
     else:
         content = path.read_text(encoding="utf-8", errors="ignore")
-    if "<html" in content.lower():
+    if "<html" in content.lower() or "<table" in content.lower():
         soup = BeautifulSoup(content, "html.parser")
+        _flatten_tables_in_place(soup)
         return soup.get_text(separator="\n", strip=True)
     return content
 
