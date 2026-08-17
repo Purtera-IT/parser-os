@@ -24,6 +24,7 @@ from app.core.normalizers import (
 )
 from app.core.schemas import ArtifactType, SourceRef
 from app.core.segments import ArtifactSegment, make_segment
+from app.parsers.email_body import _extract_email_text
 
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
@@ -145,21 +146,6 @@ def segment_xlsx(
                 )
             )
     return segments
-
-
-def _extract_email_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".eml":
-        raw = path.read_bytes()
-        msg = BytesParser(policy=policy.default).parsebytes(raw)
-        body = msg.get_body(preferencelist=("plain", "html"))
-        content = body.get_content() if body is not None else raw.decode("utf-8", errors="ignore")
-    else:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-    if "<html" in content.lower():
-        soup = BeautifulSoup(content, "html.parser")
-        return soup.get_text(separator="\n", strip=True)
-    return content
 
 
 def segment_email(
