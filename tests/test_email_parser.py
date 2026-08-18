@@ -105,3 +105,28 @@ def test_both_parsers_share_one_reader():
     from app.parsers.email_parser import _extract_email_text as a
     from app.parsers.segmenters import _extract_email_text as b
     assert a is b
+
+
+def test_email_header_is_metadata_not_scope(tmp_path):
+    # A From/To/Subject line is correspondence metadata, not a unit of work.
+    # Typed as scope_item it entered the SOW pipeline as customer-authored
+    # scope, auto-accepted, one per .eml.
+    from app.core.schemas import AtomType
+    from app.parsers.email_parser import EmailParser
+    p = tmp_path / "m.eml"
+    p.write_bytes(
+        b"From: a@x.com\r\nTo: b@y.com\r\nSubject: Site counts\r\n"
+        b"Date: Mon, 08 Jun 2026 22:00:21 +0000\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\nbody text here\r\n"
+    )
+    atoms = EmailParser().parse_artifact("proj", "art", p)
+    hdr = [a for a in atoms if isinstance(a.value, dict) and a.value.get("kind") == "email_header"]
+    assert len(hdr) == 1
+    assert hdr[0].atom_type == AtomType.deal_metadata
+    assert "Subject: Site counts" in (hdr[0].raw_text or "")
+
+
+def test_header_atom_is_declared_in_the_capability():
+    from app.core.schemas import AtomType
+    from app.parsers.email_parser import EmailParser
+    assert AtomType.deal_metadata in EmailParser.capability.emitted_atom_types

@@ -91,7 +91,7 @@ class EmailParser(BaseParser):
         parser_version=parser_version,
         supported_extensions=[".eml", ".txt", ".md"],
         supported_artifact_types=[ArtifactType.email, ArtifactType.txt],
-        emitted_atom_types=[AtomType.exclusion, AtomType.customer_instruction, AtomType.constraint, AtomType.open_question],
+        emitted_atom_types=[AtomType.exclusion, AtomType.customer_instruction, AtomType.constraint, AtomType.open_question, AtomType.deal_metadata],
         supported_domain_packs=["*"],
         requires_binary=False,
         supports_source_replay=True,
@@ -238,7 +238,13 @@ class EmailParser(BaseParser):
             id=stable_id("atm", project_id, artifact_id, "email_header", text),
             project_id=project_id,
             artifact_id=artifact_id,
-            atom_type=AtomType.scope_item,
+            # A From/To/Subject line is not a unit of work. Typed as scope_item
+            # it entered the SOW pipeline as customer-authored scope at 0.86,
+            # auto-accepted, one per .eml — and downstream had to grow text
+            # heuristics to claw it back out (graph_builder._looks_like_email_
+            # header suppresses it from exclusion fan-out by regex). It is
+            # correspondence metadata, which is what deal_metadata is for.
+            atom_type=AtomType.deal_metadata,
             raw_text=text,
             normalized_text=normalize_text(text),
             value={"kind": "email_header", **values},
