@@ -478,7 +478,7 @@ def _foreign_artifacts(
             # "Marcos New Store Installs" is not. When the deal's own account
             # name shows up in the filename, say so, so the reader can tell a
             # shared document from a misfiled one without opening it.
-            "same_account_hint": _account_appears_in(crm, name),
+            "account_match": _account_match(crm, name),
         })
     return out
 
@@ -504,25 +504,61 @@ def _names_from_crm(crm: Mapping[str, Any]) -> list[str]:
     deal = str(crm.get("deal_name") or "")
     # Drop the leading number and keep the descriptive half.
     out.append(re.sub(r"^\d{6}\s*[-_\s]\s*", "", deal))
-    return [n.strip().lower() for n in out if len(n.strip()) >= 4]
+    # 3 is deliberate: plenty of accounts are initialisms (CDW, GHA, SHI)
+    # and dropping them made every one of their documents look foreign.
+    return [n.strip().lower() for n in out if len(n.strip()) >= 3]
 
 
-def _account_appears_in(crm: Mapping[str, Any] | None, filename: str) -> bool:
-    """True when this deal's customer is recognisable in the filename."""
+#: Filename furniture that names no customer: document kinds, version and date
+#: markers, and the boilerplate every deal folder repeats.
+_FILENAME_FURNITURE = frozenset({
+    "deal", "kit", "cost", "breakdown", "quote", "quotation", "estimate",
+    "final", "draft", "copy", "signed", "redlines", "redline", "notes", "note",
+    "scope", "work", "statement", "proposal", "summary", "photos", "photo",
+    "image", "images", "screenshot", "survey", "install", "installation",
+    "rollout", "swap", "upgrade", "refresh", "migration", "docx", "xlsx",
+    "pdf", "pptx", "jpeg", "email", "note", "attachment", "version",
+})
+
+
+def _distinctive_words(text: str) -> list[str]:
+    """Words in a filename that could plausibly name a customer."""
+    words = re.findall(r"[a-z]{4,}", text.lower())
+    return [
+        w for w in words
+        if w not in _ACCOUNT_STOPWORDS
+        and w not in _FILENAME_FURNITURE
+        and not re.fullmatch(r"v\d+|\d+", w)
+    ]
+
+
+def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
+    """``same`` | ``different`` | ``unknown`` — whose customer this file names.
+
+    The two-state version conflated "names a different customer" with "names no
+    customer at all", and most misfiled documents are called ``Deal Kit.xlsx``.
+    Five of seven flagged rows were generic filenames of that shape, reported as
+    a different customer purely because the host customer's name was absent —
+    which it was always going to be. Absence of a name is not evidence.
+    """
     if not isinstance(crm, Mapping):
-        return False
+        return "unknown"
     hay = filename.lower()
     for name in _names_from_crm(crm):
-        if name in hay:
-            return True
+        # Word-boundary, not substring: a three-letter account like CDW would
+        # otherwise match inside an unrelated word.
+        if re.search(r"\b" + re.escape(name) + r"\b", hay):
+            return "same"
         words = [w for w in re.findall(r"[a-z]{4,}", name) if w not in _ACCOUNT_STOPWORDS]
-        if not words:
-            continue
         # Any distinctive word carrying over is enough: "Marcos" links
         # "CentricsIT Marcos - MOMS POS" to "Marcos New Store Installs".
-        if any(w in hay for w in words):
-            return True
-    return False
+        if words and any(w in hay for w in words):
+            return "same"
+    # Strip the leading deal number before asking whether anything is left that
+    # could be a customer name at all.
+    stem = re.sub(r"^\d{6}\s*[-_\s]*", "", filename)
+    stem = re.sub(r"\.[a-z0-9]{2,5}$", "", stem, flags=re.IGNORECASE)
+    return "different" if _distinctive_words(stem) else "unknown"
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:

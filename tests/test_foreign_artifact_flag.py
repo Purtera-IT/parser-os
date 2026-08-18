@@ -71,7 +71,7 @@ def test_hint_reads_the_deal_name_not_just_the_account():
         crm=CENTRICS, documents=_docs("010013 Marcos New Store Installs (6.12.26_v2).docx")
     )
     assert len(out) == 1
-    assert out[0]["same_account_hint"] is True
+    assert out[0]["account_match"] == "same"
 
 
 def test_a_genuinely_different_customer_still_reads_false():
@@ -79,7 +79,7 @@ def test_a_genuinely_different_customer_still_reads_false():
         crm={"deal_name": "010129 - GHA Assa Abbloy network swap", "account_name": "GHA Technologies"},
         documents=_docs("010013 Marcos New Store Installs (6.12.26_v2).docx"),
     )
-    assert out[0]["same_account_hint"] is False
+    assert out[0]["account_match"] == "different"
 
 
 def test_generic_words_alone_do_not_link_a_document():
@@ -89,4 +89,34 @@ def test_generic_words_alone_do_not_link_a_document():
         crm={"deal_name": "010200 - Acme Installation Services", "account_name": "Acme"},
         documents=_docs("010111 - Globex Installation Services.docx"),
     )
-    assert out[0]["same_account_hint"] is False
+    assert out[0]["account_match"] == "different"
+
+
+def test_a_filename_naming_no_customer_is_unknown_not_foreign():
+    # Most misfiled documents are called "Deal Kit.xlsx". Reporting those as a
+    # different customer purely because the host name is absent — which it was
+    # always going to be — made 5 of 7 flagged rows wrong. Absence of a name is
+    # not evidence.
+    out = _foreign_artifacts(
+        crm={"deal_name": "010192 - NTT DATA - Google", "account_name": "NTT DATA"},
+        documents=_docs("010189  Deal Kit-3.xlsx"),
+    )
+    assert out[0]["account_match"] == "unknown"
+
+
+def test_a_short_account_initialism_still_matches():
+    # CDW, GHA, SHI. Requiring 4+ characters made every one of their documents
+    # look foreign.
+    out = _foreign_artifacts(
+        crm={"deal_name": "010101 - CDW Sodexo SD WAN Install", "account_name": "CDW"},
+        documents=_docs("010147 - Denver Office Equipment Move CDW.docx"),
+    )
+    assert out[0]["account_match"] == "same"
+
+
+def test_a_short_name_does_not_match_inside_another_word():
+    out = _foreign_artifacts(
+        crm={"deal_name": "010101 - ABC Corp", "account_name": "ABC"},
+        documents=_docs("010147 - fabcdef Widget Install.docx"),
+    )
+    assert out[0]["account_match"] == "different"
