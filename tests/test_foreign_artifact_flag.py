@@ -54,3 +54,39 @@ def test_no_crm_means_no_claim():
     # Without an authoritative deal number, guessing one from the documents
     # being checked would let a contaminated deal validate itself.
     assert _foreign_artifacts(crm=None, documents=_docs("010013 Marcos.docx")) == []
+
+
+CENTRICS = {
+    "deal_name": "010128 - CentricsIT Marcos - MOMS POS Installation- Harrisburg, PA",
+    "account_name": "CentricsIT",
+}
+
+
+def test_hint_reads_the_deal_name_not_just_the_account():
+    # The account is often the reseller while the document names the end
+    # customer. CentricsIT's deal is for Marco's, and the shared runbook is
+    # "010013 Marcos New Store Installs" — recognisable from the deal name,
+    # invisible from the account alone.
+    out = _foreign_artifacts(
+        crm=CENTRICS, documents=_docs("010013 Marcos New Store Installs (6.12.26_v2).docx")
+    )
+    assert len(out) == 1
+    assert out[0]["same_account_hint"] is True
+
+
+def test_a_genuinely_different_customer_still_reads_false():
+    out = _foreign_artifacts(
+        crm={"deal_name": "010129 - GHA Assa Abbloy network swap", "account_name": "GHA Technologies"},
+        documents=_docs("010013 Marcos New Store Installs (6.12.26_v2).docx"),
+    )
+    assert out[0]["same_account_hint"] is False
+
+
+def test_generic_words_alone_do_not_link_a_document():
+    # "Installation" and "Services" appear everywhere; matching on them would
+    # mark every misfile as a sibling.
+    out = _foreign_artifacts(
+        crm={"deal_name": "010200 - Acme Installation Services", "account_name": "Acme"},
+        documents=_docs("010111 - Globex Installation Services.docx"),
+    )
+    assert out[0]["same_account_hint"] is False

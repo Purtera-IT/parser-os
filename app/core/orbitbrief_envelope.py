@@ -483,21 +483,46 @@ def _foreign_artifacts(
     return out
 
 
+#: Words too generic to identify a customer by.
+_ACCOUNT_STOPWORDS = frozenset({
+    "technologies", "technology", "inc", "llc", "corp", "company", "group",
+    "solutions", "services", "systems", "install", "installation", "project",
+})
+
+
+def _names_from_crm(crm: Mapping[str, Any]) -> list[str]:
+    """Customer names worth recognising in a filename.
+
+    Both the account and the deal name matter, because the account is often the
+    reseller while the document names the end customer. Deal 010128's account
+    is "CentricsIT" but its name is "010128 - CentricsIT Marcos - MOMS POS
+    Installation", and the shared runbook on it is called "010013 Marcos New
+    Store Installs" — recognisable from the deal name, invisible from the
+    account alone.
+    """
+    out = [str(crm.get("account_name") or "")]
+    deal = str(crm.get("deal_name") or "")
+    # Drop the leading number and keep the descriptive half.
+    out.append(re.sub(r"^\d{6}\s*[-_\s]\s*", "", deal))
+    return [n.strip().lower() for n in out if len(n.strip()) >= 4]
+
+
 def _account_appears_in(crm: Mapping[str, Any] | None, filename: str) -> bool:
-    """True when the deal's account name is recognisable in the filename."""
+    """True when this deal's customer is recognisable in the filename."""
     if not isinstance(crm, Mapping):
         return False
-    account = str(crm.get("account_name") or "").strip().lower()
-    if len(account) < 4:
-        return False
     hay = filename.lower()
-    if account in hay:
-        return True
-    # "Dollar Tree" vs "Dollar Tree - DC7": match on the distinctive words
-    # rather than the whole string, ignoring corporate suffixes.
-    words = [w for w in re.findall(r"[a-z]{4,}", account)
-             if w not in {"technologies", "technology", "inc", "llc", "corp", "company", "group", "solutions"}]
-    return bool(words) and all(w in hay for w in words)
+    for name in _names_from_crm(crm):
+        if name in hay:
+            return True
+        words = [w for w in re.findall(r"[a-z]{4,}", name) if w not in _ACCOUNT_STOPWORDS]
+        if not words:
+            continue
+        # Any distinctive word carrying over is enough: "Marcos" links
+        # "CentricsIT Marcos - MOMS POS" to "Marcos New Store Installs".
+        if any(w in hay for w in words):
+            return True
+    return False
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
