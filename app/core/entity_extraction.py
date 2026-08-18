@@ -3929,6 +3929,27 @@ def extract_keys(
             continue
         if _is_obvious_non_site is not None and _is_obvious_non_site(phrase):
             continue
+        # Fail closed on an EMPTY catalog, not open.
+        #
+        # `authoritative_sites and ...` skips this filter entirely when the
+        # catalog is an empty set, so a deal the site detector found nothing
+        # for got NO gate at all — the least constrained extraction handed to
+        # exactly the deals that can least afford it. An empty catalog is not
+        # missing information; it is the detector having read every atom and
+        # declined to vouch for anything.
+        #
+        # A GHA/Intralot SOW covering 3,713 rooftops across 8 states listed
+        # them only as "Arkansas | 327" rows — counts by state, no address
+        # anywhere — so the catalog came back empty. Ungated, _emit_sites took
+        # the one title-case run in the Project Overview and the deal's only
+        # site became "very small aperture terminal", the acronym expansion out
+        # of "removal of VSAT (Very Small Aperture Terminal) equipment". Four
+        # PM questions were then addressed to it. No sites is the honest answer
+        # for that deal; an invented one is not.
+        #
+        # None still means no catalog was computed and keeps prior behaviour.
+        if authoritative_sites is not None and not authoritative_sites:
+            continue
         if authoritative_sites and not phrase_is_in_catalog(
             phrase, authoritative_sites
         ):
