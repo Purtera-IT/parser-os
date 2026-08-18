@@ -70,7 +70,9 @@ is the "swallow it whole" view; the compile result is the audit log.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -193,6 +195,9 @@ def build_orbitbrief_envelope(
     crm = _load_manifest_crm(project_dir)
     if crm:
         summary["crm"] = crm
+    foreign = _foreign_artifacts(crm=crm, documents=documents)
+    if foreign:
+        summary["foreign_artifacts"] = foreign
     # v57.3.5: filter site:* entities + redirect ghost atom keys
     # BEFORE building the indexes — because orbitbrief-core's cluster
     # builder reads from ``envelope.indexes.atoms_by_entity_key`` to
@@ -401,6 +406,98 @@ def build_orbitbrief_envelope(
     if crm:
         envelope["crm"] = crm
     return envelope
+
+
+#: A PurTera deal number as it prefixes an artifact filename:
+#: ``010129-hs-email-...``, ``000116 - GHA -Thyssenkrupp...``, ``010162  Deal Kit.xlsx``.
+#: Anchored deliberately — an unanchored six-digit search pulls numbers out of
+#: UUID fragments (``...b878374bd7c1``) and screenshot stamps
+#: (``Screenshot 2026-08-17 150656``), which is noise, not identity.
+_ARTIFACT_DEAL_NUM_RE = re.compile(r"^(\d{6})\s*[-_\s]")
+
+#: How far apart two deal numbers must be before the artifact is treated as
+#: foreign. Adjacent numbers are overwhelmingly the same customer and project —
+#: "010143 WSS Presbyterian" holding "010142 WSS Presbyterian", a renumber or a
+#: sibling survey/install pair. Across the corpus 60 of 79 number mismatches
+#: were adjacent like that; flagging them would make the signal 76% false and
+#: teach everyone to ignore it. Only distant numbers indicate a document filed
+#: against the wrong deal.
+_FOREIGN_DEAL_DISTANCE = 2
+
+
+def _deal_number_from_crm(crm: Mapping[str, Any] | None) -> str | None:
+    """The deal's own number, taken from the CRM deal name it is filed under.
+
+    ``context.crm.deal_name`` reads ``"010114 - CDW Checkout Wireless Wifi"``,
+    so the number prefixes it. This is authoritative: it comes from the deal
+    record rather than from the documents being checked.
+    """
+    if not isinstance(crm, Mapping):
+        return None
+    m = _ARTIFACT_DEAL_NUM_RE.match(str(crm.get("deal_name") or "").strip())
+    return m.group(1) if m else None
+
+
+def _foreign_artifacts(
+    *, crm: Mapping[str, Any] | None, documents: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Artifacts on this deal whose filename claims a different deal.
+
+    Nothing anywhere checked this, and the failure is silent and total: one deal
+    held five artifacts belonging to three other opportunities — Marco's Pizza
+    and Vodafone — and OrbitBrief produced a fluent, confident brief about
+    Marco's Pizza under a GHA Technologies deal name. A PM reading it has no
+    signal that anything is wrong. Incomplete is recoverable; confidently about
+    the wrong company is not.
+
+    Reported, never dropped. A related document is sometimes filed on purpose,
+    and deleting evidence on a filename heuristic would be its own bug.
+    """
+    own = _deal_number_from_crm(crm)
+    if not own:
+        return []
+    out: list[dict[str, Any]] = []
+    for doc in documents or []:
+        if not isinstance(doc, Mapping):
+            continue
+        name = str(doc.get("filename") or "")
+        m = _ARTIFACT_DEAL_NUM_RE.match(name)
+        if not m or m.group(1) == own:
+            continue
+        if abs(int(m.group(1)) - int(own)) <= _FOREIGN_DEAL_DISTANCE:
+            continue
+        out.append({
+            "filename": name,
+            "claims_deal": m.group(1),
+            "deal_number": own,
+            "artifact_id": doc.get("artifact_id"),
+            # Distance alone does not separate "another opportunity for the
+            # same customer" from "a different company's project". Deal
+            # 010106 "Dollar Tree DC7 WAP" holding 010091 "Dollar Tree DC7 WAP
+            # Install" is a sibling; deal 010129 "GHA Assa Abbloy" holding
+            # "Marcos New Store Installs" is not. When the deal's own account
+            # name shows up in the filename, say so, so the reader can tell a
+            # shared document from a misfiled one without opening it.
+            "same_account_hint": _account_appears_in(crm, name),
+        })
+    return out
+
+
+def _account_appears_in(crm: Mapping[str, Any] | None, filename: str) -> bool:
+    """True when the deal's account name is recognisable in the filename."""
+    if not isinstance(crm, Mapping):
+        return False
+    account = str(crm.get("account_name") or "").strip().lower()
+    if len(account) < 4:
+        return False
+    hay = filename.lower()
+    if account in hay:
+        return True
+    # "Dollar Tree" vs "Dollar Tree - DC7": match on the distinctive words
+    # rather than the whole string, ignoring corporate suffixes.
+    words = [w for w in re.findall(r"[a-z]{4,}", account)
+             if w not in {"technologies", "technology", "inc", "llc", "corp", "company", "group", "solutions"}]
+    return bool(words) and all(w in hay for w in words)
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
