@@ -35,6 +35,7 @@ class ArtifactType(str, Enum):
     ods = "ods"        # OpenDocument Spreadsheet
     vsdx = "vsdx"      # Microsoft Visio diagrams
     mpp = "mpp"        # Microsoft Project schedule files
+    json = "json"      # Structured JSON intake / manifest / API export / config
 
 
 class AtomType(str, Enum):
@@ -789,6 +790,7 @@ class CompileResult(BaseModel):
     project_dir: str | None = None
     ranked_atoms: list[AuthorityRankedAtom] = Field(default_factory=list)
     entity_edges: list[EntityEdge] = Field(default_factory=list)
+    compile_capabilities: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -813,6 +815,7 @@ class CompileResult(BaseModel):
                 "project_dir": data.get("project_dir"),
                 "ranked_atoms": data.get("ranked_atoms", []),
                 "entity_edges": data.get("entity_edges", []),
+                "compile_capabilities": data.get("compile_capabilities"),
             }
         return data
 

@@ -9,10 +9,10 @@ address anywhere, so the regular site detectors find nothing, zero
 brief goes RED with "no confirmed physical site" while the 15%
 site-readiness score component sits at 0.
 
-This module is a *fallback*: it runs only when no real ``physical_site``
-atom exists, scans every atom for a ``City, ST ZIP`` anchor, and emits a
-single low-confidence ``physical_site`` atom (flagged ``geo_fallback_site``,
-``needs_review``) per distinct ZIP so the deal has a locational anchor
+This module is a *fallback*: it scans atoms for ``City, ST ZIP`` anchors
+when the deal lacks sufficient structured site coverage, and emits
+low-confidence ``physical_site`` atoms (flagged ``geo_fallback_site``,
+``needs_review``) per distinct address so the deal has locational anchors
 the PM can confirm — instead of a blank RED. Pure function, no I/O, no
 LLM.
 """
@@ -23,6 +23,11 @@ import os
 import re
 from typing import Any
 
+from app.core.address_parse import (
+    US_STATES,
+    find_us_addresses_in_text,
+    normalized_address_key,
+)
 from app.core.ids import stable_id
 from app.core.schemas import (
     ArtifactType,
@@ -33,23 +38,7 @@ from app.core.schemas import (
     SourceRef,
 )
 
-_US_STATES: frozenset[str] = frozenset({
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-    "DC",
-})
-
-# "Santa Fe, NM 87506" / "Santa Fe NM 87506" — multiword title-case city,
-# 2-letter state, 5(+4) ZIP. City is 1-4 capitalized tokens.
-_CITY_STATE_ZIP_RE = re.compile(
-    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3}),?\s+"
-    r"([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b"
-)
-
-_MAX_FALLBACK_SITES = 5
+_MAX_FALLBACK_SITES = 8
 
 
 def _atom_type_str(atom: Any) -> str:
@@ -57,32 +46,79 @@ def _atom_type_str(atom: Any) -> str:
     return at.value if hasattr(at, "value") else str(at or "")
 
 
-def _has_real_site(atoms: list[Any]) -> bool:
-    """A ``physical_site`` atom carrying an explicit id/site_id already
-    anchors the deal — don't second-guess it with a geo guess."""
-    for a in atoms:
-        if _atom_type_str(a) != "physical_site":
-            continue
-        val = getattr(a, "value", None) or {}
-        if isinstance(val, dict) and (val.get("id") or val.get("site_id")):
-            return True
-        # v58: a row lifted from a declared site-roster TABLE anchors the deal
-        # just as firmly, id column or not. Without this a deal whose roster
-        # ships no ID column gets guessed "City, ST ZIP" sites minted on top
-        # of hundreds of real, fully-addressed ones.
-        if _is_roster_sourced(a):
-            return True
-    return False
-
-
 def _is_roster_sourced(atom: Any) -> bool:
-    """True when the atom came from a site-roster table extractor."""
+    """True when the atom came from a site-roster table extractor.
+
+    A row lifted from a declared site-roster TABLE anchors the deal whether or
+    not it carries an id column. Without this, a deal whose roster ships no ID
+    column gets guessed "City, ST ZIP" sites minted on top of hundreds of real,
+    fully-addressed ones.
+    """
     for ref in (getattr(atom, "source_refs", None) or []):
         if "site_roster" in str(getattr(ref, "extraction_method", "") or ""):
             return True
         loc = getattr(ref, "locator", None)
         if isinstance(loc, dict) and "site_roster" in str(loc.get("extraction", "")):
             return True
+    return False
+
+
+def _site_location_score(val: dict[str, Any]) -> int:
+    """Higher = more structured location (0 = name/id only)."""
+    if not isinstance(val, dict):
+        return 0
+    street = str(val.get("street_address") or val.get("address") or "").strip()
+    city = str(val.get("city") or "").strip()
+    state = str(val.get("state") or "").strip().upper()
+    zipc = str(val.get("zip") or "").strip()
+    if street and city and state:
+        return 3
+    if city and state and zipc:
+        return 2
+    if city and state:
+        return 2
+    if val.get("site_id") or val.get("id"):
+        return 1
+    return 0
+
+
+def _atom_site_score(atom: Any) -> int:
+    """Location score for an atom, crediting its provenance.
+
+    A roster-sourced row is a declared site, so it scores as well-structured
+    even when its cells are sparse -- the document said the table lists sites.
+    Scoring it on cells alone let a roster with no ID column read as a weak
+    ghost, which is the opposite of the truth.
+    """
+    score = _site_location_score(getattr(atom, "value", None) or {})
+    if _is_roster_sourced(atom):
+        return max(score, 2)
+    return score
+
+
+def _physical_site_atoms(atoms: list[Any]) -> list[Any]:
+    return [a for a in atoms if _atom_type_str(a) == "physical_site"]
+
+
+def _should_skip_geo_fallback(atoms: list[Any]) -> bool:
+    """Skip only when the deal already has multiple well-structured sites.
+
+    A single weak ``physical_site`` (name-only / misparsed geo) must NOT block
+    discovering additional addresses -- the MBrany failure mode. This is why a
+    binary "has any real site" test is wrong here: one id-bearing ghost would
+    suppress every genuine address on the deal.
+    """
+    sites = _physical_site_atoms(atoms)
+    if not sites:
+        return False
+    scores = [_atom_site_score(a) for a in sites]
+    high = sum(1 for s in scores if s >= 2)
+    # Two well-structured sites -- skip fallback. One high + one weak ghost
+    # (typed_atom under full ML) must not block geo inference (MBrany class).
+    if high >= 2:
+        return True
+    if len(sites) >= 3 and high >= 1:
+        return True
     return False
 
 
@@ -169,15 +205,20 @@ def suppress_vendor_sites(
     """Drop ``physical_site`` atoms whose address is the vendor's own
     office / letterhead / billing address rather than a job site.
 
-    Semantic, content-derived (no vendor-name keyword list): each site's
-    address role is classified by a small local LLM. Safe by construction —
-    returns the atoms unchanged when:
+    Deterministic PurTera corporate-address ban runs first and applies even
+    when the banned address is the deal's only site (PurTera HQ is never a
+    job site). Semantic LLM suppression runs afterward. Safe by construction —
+    the LLM path returns the atoms unchanged when:
 
     * the LLM is disabled / unreachable (classify_role yields ``None``), or
     * fewer than two physical_site atoms exist (never remove the deal's only
-      locational anchor), or
+      locational anchor — except known PurTera vendor addresses above), or
     * suppression would remove *every* site (always keep at least one).
     """
+    from app.core.vendor_site_ban import drop_banned_vendor_physical_sites
+
+    atoms, det_dropped = drop_banned_vendor_physical_sites(atoms)
+
     # Route the address-role judgment through the universal decide() chokepoint.
     # Phase 2: the feedback store is not yet wired, so decide() is a transparent
     # pass-through to semantic_role.classify_role (same model, same instruction,
@@ -191,7 +232,7 @@ def suppress_vendor_sites(
 
     sites = [a for a in atoms if _atom_type_str(a) == "physical_site"]
     if len(sites) < 2:
-        return atoms, 0
+        return atoms, det_dropped
 
     scope = DecisionScope(deal_id=project_id or "")
     drop_ids: set[str] = set()
@@ -238,13 +279,24 @@ def suppress_vendor_sites(
             _stamp_decision(a, decision)
 
     if not drop_ids:
-        return atoms, 0
+        return atoms, det_dropped
     # Never strip the deal down to zero sites.
     if len(drop_ids) >= len(sites):
-        return atoms, 0
+        return atoms, det_dropped
 
     kept = [a for a in atoms if getattr(a, "id", None) not in drop_ids]
-    return kept, len(drop_ids)
+    return kept, det_dropped + len(drop_ids)
+
+
+def _existing_address_keys(atoms: list[Any]) -> set[str]:
+    keys: set[str] = set()
+    for a in _physical_site_atoms(atoms):
+        val = getattr(a, "value", None) or {}
+        if isinstance(val, dict):
+            k = normalized_address_key(val)
+            if k:
+                keys.add(k)
+    return keys
 
 
 def enrich_site_geo(atoms: list[Any]) -> int:
@@ -327,32 +379,48 @@ def enrich_site_geo(atoms: list[Any]) -> int:
 def geo_fallback_sites(
     atoms: list[Any], *, project_id: str
 ) -> list[EvidenceAtom]:
-    """Emit fallback ``physical_site`` atoms from ``City, ST ZIP`` anchors.
+    """Emit fallback ``physical_site`` atoms from address anchors in atom text.
 
-    Returns an empty list when a real site already exists or when no
-    valid geographic anchor is found, so it never competes with genuine
-    site detection.
+    Returns an empty list when site coverage is already sufficient or when no
+    valid geographic anchor is found.
     """
-    if not atoms or _has_real_site(atoms):
+    if not atoms or _should_skip_geo_fallback(atoms):
         return []
 
-    seen_zip: set[str] = set()
+    seen_keys = _existing_address_keys(atoms)
     out: list[EvidenceAtom] = []
     for atom in atoms:
         text = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
         if not text:
             continue
-        for m in _CITY_STATE_ZIP_RE.finditer(str(text)):
-            city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
-            if state not in _US_STATES or zipc in seen_zip:
+        text_s = str(text)
+        for parsed_item in find_us_addresses_in_text(text_s):
+            if not parsed_item.city or not parsed_item.state or parsed_item.state not in US_STATES:
                 continue
-            seen_zip.add(zipc)
-            slug = f"{_slug(city)}_{zipc}"
-            name = f"{city}, {state} {zipc}"
+            dedup_fields = {
+                "street_address": parsed_item.street_address,
+                "city": parsed_item.city,
+                "state": parsed_item.state,
+                "zip": parsed_item.zip,
+            }
+            addr_key = normalized_address_key(dedup_fields)
+            if not addr_key or addr_key in seen_keys:
+                continue
+            from app.core.vendor_site_ban import is_purtera_vendor_address
+
+            if is_purtera_vendor_address(text=text_s):
+                continue
+            seen_keys.add(addr_key)
+
+            city, state, zipc = parsed_item.city, parsed_item.state, parsed_item.zip or ""
+            slug = _slug(f"{city}_{state}_{zipc or parsed_item.street_address or 'site'}")
+            name = (
+                f"{parsed_item.street_address}, {city}, {state} {zipc}".strip(", ")
+                if parsed_item.street_address
+                else f"{city}, {state} {zipc}".strip()
+            )
             artifact_id = getattr(atom, "artifact_id", "") or ""
             atom_id = stable_id("atm", artifact_id, "physical_site", slug)
-            # Borrow the anchoring atom's provenance; synthesize a minimal
-            # ref if it carries none (every EvidenceAtom needs ≥1 SourceRef).
             src_refs = list(getattr(atom, "source_refs", None) or [])
             if not src_refs:
                 src_refs = [
@@ -363,7 +431,7 @@ def geo_fallback_sites(
                         filename=getattr(atom, "artifact_id", "") or "geo_fallback",
                         locator={"extraction": "site_geo_fallback"},
                         extraction_method="site_geo_fallback",
-                        parser_version="site_geo_fallback_v1",
+                        parser_version="site_geo_fallback_v2",
                     )
                 ]
             out.append(
@@ -380,14 +448,13 @@ def geo_fallback_sites(
                         "site_id": slug,
                         "name": name,
                         "names": [name, city],
+                        "street_address": parsed_item.street_address,
+                        "address": parsed_item.street_address,
                         "city": city,
                         "state": state,
-                        "zip": zipc,
+                        "zip": zipc or None,
                         "inferred": True,
-                        # Preserve the originating text so a later semantic
-                        # role gate can see any company name / letterhead the
-                        # bare "City, ST ZIP" was lifted from.
-                        "source_context": str(text)[:600],
+                        "source_context": text_s[:600],
                     },
                     entity_keys=[f"site:{slug}"],
                     source_refs=src_refs,
@@ -398,7 +465,7 @@ def geo_fallback_sites(
                     calibrated_confidence=0.5,
                     review_status=ReviewStatus.needs_review,
                     review_flags=["geo_fallback_site"],
-                    parser_version="site_geo_fallback_v1",
+                    parser_version="site_geo_fallback_v2",
                 )
             )
             if len(out) >= _MAX_FALLBACK_SITES:

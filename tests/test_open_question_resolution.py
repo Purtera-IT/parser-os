@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from app.core.open_question_resolution import (
+    filter_unhelpful_open_questions,
     generate_gap_questions,
     is_answered_question,
+    is_unhelpful_pm_question,
     resolve_open_questions,
 )
 from app.core.schemas import (
@@ -104,6 +106,36 @@ def test_generic_site_key_does_not_answer():
     ]
     # site: is intentionally NOT answer-bearing
     assert resolve_open_questions(atoms) == 0
+
+
+def test_transcript_dialogue_questions_are_filtered_from_pm_gaps():
+    noisy = [
+        _atom(AtomType.open_question, "have the what G6?  Yeah, we have some.", rid="atm_n1"),
+        _atom(
+            AtomType.open_question,
+            "Part of it. Jacob Vander-Plaats [21:50] Yep. Daniel Peterson [21:51] How quickly do you think you could be able to have the style over?",
+            rid="atm_n2",
+        ),
+        _atom(
+            AtomType.open_question,
+            "Yeah, we'll start working on it now. Eddie, is there anything else you need in order to start getting the price?",
+            rid="atm_n3",
+        ),
+        _atom(AtomType.open_question, "How much is it for? Daniel Peterson [02:55] It's just time and materials.", rid="atm_n4"),
+    ]
+    kept, dropped = filter_unhelpful_open_questions(noisy)
+    assert kept == []
+    assert len(dropped) == 4
+    assert all(is_unhelpful_pm_question(q) for q in dropped)
+
+
+def test_real_pm_question_survives_quality_filter():
+    atoms = [
+        _atom(AtomType.open_question, "Who is the on-site contact for the Pittsburgh office?", rid="atm_real"),
+    ]
+    kept, dropped = filter_unhelpful_open_questions(atoms)
+    assert kept == atoms
+    assert dropped == []
 
 
 def test_generate_gap_questions_from_missing():

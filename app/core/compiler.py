@@ -654,6 +654,67 @@ def compile_project(
             f"atom(s) (e.g. whole-sheet drops) to the suppressed sidecar"
         )
 
+    # Email threading: each .eml is a separate artifact, so a short reply
+    # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
+    # Reconstruct the conversation across files (RFC In-Reply-To/References,
+    # subject-norm fallback) and stamp every atom with its thread position +
+    # the gist of the message it replies to. Purely additive: no atom is
+    # removed, retyped, or re-id'd here — runs before dedup so the surviving
+    # copy of a quoted/duplicated line keeps its thread context.
+    with telemetry.stage("email_threading", input_count=len(atoms)) as stage:
+        thread_summary: dict = {}
+        try:
+            from app.core.email_threading import thread_emails
+
+            atoms, thread_summary = thread_emails(atoms, project_id=resolved_project_id)
+            tc = int(thread_summary.get("thread_count", 0))
+            mm = int(thread_summary.get("multi_message_threads", 0))
+            mc = int(thread_summary.get("threaded_message_count", 0))
+            if mc:
+                warnings.append(
+                    f"INFO: email_threading linked {mc} email(s) into {tc} "
+                    f"thread(s) ({mm} multi-message)"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: email_threading failed: {type(exc).__name__}: {exc}"
+            )
+        telemetry.end_stage(stage, output_count=len(atoms))
+
+    # Quoted-history dedup: in a long thread every reply re-quotes the whole
+    # history, so the same sentence is emitted once per reply (the #010045
+    # 9,452-atom flood). Drop a QUOTED echo when the same content already exists
+    # in the thread as authored text or an earlier quoted copy — the authored
+    # original is always kept, only redundant echoes are diverted to the ledger.
+    # Runs right after threading so thread membership/order is available and
+    # before the generic dedup stages so they operate on the slim set.
+    with telemetry.stage("quoted_history_dedup", input_count=len(atoms)) as stage:
+        try:
+            from app.core.email_threading import dedup_quoted_history
+
+            before_qh_atoms = list(atoms)
+            atoms, dropped_qh = dedup_quoted_history(
+                atoms, project_id=resolved_project_id
+            )
+            if dropped_qh:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_qh_atoms, atoms,
+                        stage="quoted_history_dedup",
+                        reason="quoted email history already present in the thread (authored original kept)",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: quoted_history_dedup diverted {len(dropped_qh)} "
+                    f"redundant quoted-history atom(s) to the ledger"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: quoted_history_dedup failed: {type(exc).__name__}: {exc}"
+            )
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # Register {artifact_id: Path} with the vision module so its leaf
     # fitz.open() calls — invoked from enrich_entities via atom
     # source_refs, which only carry basenames — can resolve to the
@@ -698,6 +759,24 @@ def compile_project(
             )
             warnings.extend(replay_warnings)
         telemetry.end_stage(stage, output_count=len(atoms), warnings=replay_warnings)
+
+    # PDF embedded-image understanding (SEPARATE from schematics). Describes /
+    # transcribes raster images the parser saved as image_marker atoms. Purely
+    # additive + abstain-first; the whole stage is a no-op unless
+    # SOWSMITH_PDF_IMAGE_VISION is set, so the default path is unchanged.
+    try:
+        from app.core import pdf_image_vision
+        if pdf_image_vision.enabled():
+            with telemetry.stage("pdf_image_vision", input_count=len(atoms)) as stage:
+                image_atoms = pdf_image_vision.process_image_markers(atoms)
+                if image_atoms:
+                    atoms.extend(image_atoms)
+                telemetry.end_stage(stage, output_count=len(image_atoms))
+    except Exception as _piv_exc:
+        warnings.append(
+            f"WARNING: pdf_image_vision pass failed (non-fatal): "
+            f"{type(_piv_exc).__name__}: {_piv_exc}"
+        )
 
     # Hardening: enforce a confidence floor so atoms whose extractor was very
     # uncertain can't quietly govern packets.  We intentionally don't drop the
@@ -1055,14 +1134,34 @@ def compile_project(
     # literal "?" detection. Deterministic, no LLM.
     with telemetry.stage("open_question_resolution", input_count=len(atoms)) as stage:
         resolved_q = 0
+        dropped_noise_q = []
         try:
-            from app.core.open_question_resolution import resolve_open_questions
+            from app.core.open_question_resolution import (
+                filter_unhelpful_open_questions,
+                resolve_open_questions,
+            )
             resolved_q = resolve_open_questions(atoms)
             if resolved_q:
                 warnings.append(f"INFO: open_question_resolution flagged {resolved_q} already-answered question(s)")
+            before_q_filter = list(atoms)
+            atoms, dropped_noise_q = filter_unhelpful_open_questions(atoms)
+            if dropped_noise_q:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_q_filter,
+                        atoms,
+                        stage="open_question_quality_filter",
+                        reason="literal transcript/dialogue question is not a PM-actionable gap",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: open_question_quality_filter diverted {len(dropped_noise_q)} "
+                    f"non-actionable question atom(s)"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: open_question_resolution failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=resolved_q)
+        telemetry.end_stage(stage, output_count=resolved_q + len(dropped_noise_q))
 
     with telemetry.stage("site_geo_fallback", input_count=len(atoms)) as stage:
         added_geo = 0
@@ -1193,6 +1292,211 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    with telemetry.stage("note_provenance_backfill", input_count=len(atoms)) as stage:
+        note_prov_n = 0
+        try:
+            from app.core.note_provenance_backfill import ensure_hubspot_note_provenance
+
+            atoms, note_prov_n = ensure_hubspot_note_provenance(
+                atoms,
+                project_id=resolved_project_id,
+                artifact_paths=artifact_paths,
+            )
+            if note_prov_n:
+                warnings.append(
+                    f"INFO: note_provenance_backfill minted {note_prov_n} provenance atom(s) "
+                    f"for HubSpot notes that lost atoms in dedup"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: note_provenance_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=note_prov_n)
+
+    # HubSpot notes / short email bullets often carry quote-level work units
+    # before a SOW exists, but the type classifier may leave them as scope_item
+    # or open_question because they are terse or phrased as a request.
+    with telemetry.stage("task_atom_backfill", input_count=len(atoms)) as stage:
+        task_backfill_n = 0
+        try:
+            from app.core.task_atom_backfill import backfill_quote_task_atoms
+
+            atoms, task_backfill_n = backfill_quote_task_atoms(
+                atoms, project_id=resolved_project_id
+            )
+            if task_backfill_n:
+                warnings.append(
+                    f"INFO: task_atom_backfill minted {task_backfill_n} quote-level task atom(s) "
+                    f"from notes/email scope"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: task_atom_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=task_backfill_n)
+
+    # Single-facility deals: tasks often parse with device:* keys only.
+    # After dedup the roster is final — link orphans to the one confirmed site.
+    with telemetry.stage("site_task_anchor", input_count=len(atoms)) as stage:
+        linked_site = 0
+        try:
+            from app.core.site_task_anchor import anchor_orphan_atoms_to_confirmed_site
+
+            atoms, linked_site = anchor_orphan_atoms_to_confirmed_site(atoms)
+            if linked_site:
+                warnings.append(
+                    f"INFO: site_task_anchor linked {linked_site} task/note atom(s) "
+                    f"to the sole confirmed job site"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_task_anchor failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=linked_site)
+
+    # Parent vs child task tiers — quote-level work units vs runbook steps.
+    with telemetry.stage("task_tier_classification", input_count=len(atoms)) as stage:
+        tier_stamped = 0
+        try:
+            from app.core.task_tier_classifier import classify_task_tiers
+
+            atoms, tier_stamped = classify_task_tiers(atoms)
+            if tier_stamped:
+                warnings.append(
+                    f"INFO: task_tier_classification stamped {tier_stamped} task atom(s) "
+                    f"with parent/child quote-line tiers"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: task_tier_classification failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=tier_stamped)
+
+    # Quote-context head seam — classifies the commercial delivery model
+    # (configuration-only vs install/buildout vs survey/design) with a promoted
+    # neural head when available. Cold start logs a trainable row and uses a
+    # conservative source-grounded fallback, so Deal Kit does not need to encode
+    # this as frontend-only heuristics.
+    with telemetry.stage("quote_context_head", input_count=len(atoms)) as stage:
+        quote_context_n = 0
+        try:
+            from app.core.quote_context_head import annotate_quote_context
+
+            atoms, quote_context_n = annotate_quote_context(
+                atoms, project_id=resolved_project_id
+            )
+            if quote_context_n:
+                warnings.append(
+                    f"INFO: quote_context_head annotated {quote_context_n} quote-level task atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: quote_context_head failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=quote_context_n)
+
+    with telemetry.stage("quote_line_head", input_count=len(atoms)) as stage:
+        quote_line_n = 0
+        try:
+            from app.core.quote_line_head import consolidate_quote_line_tasks
+
+            atoms, quote_line_n = consolidate_quote_line_tasks(
+                atoms, project_id=resolved_project_id
+            )
+            if quote_line_n:
+                warnings.append(
+                    f"INFO: quote_line_head consolidated {quote_line_n} quote-level task atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: quote_line_head failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=quote_line_n)
+
+    with telemetry.stage("hardware_evidence_backfill", input_count=len(atoms)) as stage:
+        hardware_bom_n = 0
+        try:
+            from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+
+            atoms, hardware_bom_n = backfill_hardware_bom_lines(
+                atoms, project_id=resolved_project_id
+            )
+            if hardware_bom_n:
+                warnings.append(
+                    f"INFO: hardware_evidence_backfill minted {hardware_bom_n} bom_line atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: hardware_evidence_backfill failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=hardware_bom_n)
+
+    with telemetry.stage("site_facility_head", input_count=len(atoms)) as stage:
+        facility_n = 0
+        try:
+            from app.core.site_facility_head import annotate_site_facility_labels
+
+            atoms, facility_n = annotate_site_facility_labels(
+                atoms, project_id=resolved_project_id
+            )
+            if facility_n:
+                warnings.append(
+                    f"INFO: site_facility_head labeled {facility_n} physical_site atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_facility_head failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=facility_n)
+
+    # Noise suppression (learning-loop gate): divert reference/template atoms
+    # (master rate-card / materials-catalog rows, rate-label-as-person) out of
+    # scope using the store-only ``atom_noise_admission`` gate. Guess-free and
+    # opt-in (SOWSMITH_NOISE_SUPPRESSION); a no-op byte-for-byte when disabled,
+    # no store is wired, or the store has nothing confident to say. Runs after
+    # dedup so the gate sees canonical atoms, and before packetization /
+    # scorecards so suppressed noise never inflates totals or stakeholder counts.
+    with telemetry.stage("noise_suppression", input_count=len(atoms)) as stage:
+        try:
+            from app.core.noise_suppression import suppress_noise_atoms
+
+            before_noise_atoms = list(atoms)
+            atoms, dropped_noise = suppress_noise_atoms(
+                atoms, project_id=resolved_project_id
+            )
+            if dropped_noise:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_noise_atoms, atoms,
+                        stage="noise_suppression",
+                        reason="reference/template content (rate-card / catalog row or rate-label-as-person), not deal scope",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: noise_suppression diverted {len(dropped_noise)} "
+                    f"reference/template atom(s) out of scope"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: noise_suppression failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
+    # Substance gate: drop context-free atom fragments (bare-name stakeholders,
+    # backchannel filler) AFTER every backfill/dedup head has finished — the
+    # typed classifier, semantic dedup, and task/quote heads can still mint or
+    # re-type atoms late in the pipeline; running here ensures sign-off name
+    # fragments ("Tom Amble.") and salutations re-classified as stakeholder are
+    # caught. Lossless: dropped atoms go to the suppression ledger.
+    with telemetry.stage("substance_gate", input_count=len(atoms)) as stage:
+        gate_dropped = 0
+        try:
+            from app.core.atom_substance_gate import apply_substance_gate
+
+            before_gate = list(atoms)
+            atoms, dropped_gate = apply_substance_gate(atoms)
+            if dropped_gate:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_gate,
+                        atoms,
+                        stage="substance_gate",
+                        reason="context-free fragment (bare-name stakeholder or backchannel filler) — not actionable to any head",
+                    ),
+                )
+                gate_dropped = len(dropped_gate)
+                warnings.append(
+                    f"INFO: substance_gate diverted {gate_dropped} context-free "
+                    f"fragment(s) (bare-name stakeholders / backchannel filler)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: substance_gate failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=gate_dropped)
+
     # v53 SMART CONFIDENCE — recalibrate every atom from hardcoded
     # provenance defaults (0.82/0.85) to content-aware scoring:
     # semantic-key anchored + value completeness + cross-doc
@@ -1248,6 +1552,81 @@ def compile_project(
         entities = fuse_alias_groups(
             entities, site_alias_groups + stakeholder_alias_groups
         )
+        backfill_n = 0
+        try:
+            from app.core.site_atom_backfill import backfill_physical_sites_from_entities
+
+            atoms, backfill_n = backfill_physical_sites_from_entities(
+                atoms, entities, project_id=resolved_project_id
+            )
+            if backfill_n:
+                warnings.append(
+                    f"INFO: site_atom_backfill minted {backfill_n} physical_site atom(s) "
+                    f"from site entities (roster was empty after dedup)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: site_atom_backfill failed: {type(exc).__name__}: {exc}")
+        try:
+            # Backfill runs after semantic_dedup; minted entity_backfill sites can
+            # duplicate the roster atom for the same address (MBrany-class).
+            from app.core.semantic_dedup import _dedupe_physical_site_atoms
+
+            phys_before = sum(
+                1
+                for a in atoms
+                if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))
+                == "physical_site"
+            )
+            atoms = _dedupe_physical_site_atoms(atoms)
+            phys_after = sum(
+                1
+                for a in atoms
+                if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))
+                == "physical_site"
+            )
+            if phys_after < phys_before:
+                warnings.append(
+                    f"INFO: post_backfill physical_site dedup collapsed "
+                    f"{phys_before} -> {phys_after} site atom(s)"
+                )
+            before_post_vendor = list(atoms)
+            from app.core.site_geo_fallback import suppress_vendor_sites as _suppress_vendor_sites
+
+            atoms, post_vendor_dropped = _suppress_vendor_sites(
+                atoms, project_id=resolved_project_id
+            )
+            if post_vendor_dropped:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_post_vendor,
+                        atoms,
+                        stage="entity_resolution",
+                        reason="vendor / selling-party letterhead address, not a job site",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: post_backfill suppressed {post_vendor_dropped} "
+                    f"vendor/letterhead address(es) misread as job sites"
+                )
+            try:
+                from app.core.site_facility_head import annotate_site_facility_labels
+
+                atoms, post_facility_n = annotate_site_facility_labels(
+                    atoms, project_id=resolved_project_id
+                )
+                if post_facility_n:
+                    warnings.append(
+                        f"INFO: site_facility_head labeled {post_facility_n} post-backfill physical_site atom(s)"
+                    )
+            except Exception as exc:
+                warnings.append(
+                    f"WARNING: post_backfill site_facility_head failed: {type(exc).__name__}: {exc}"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: post_backfill physical_site dedup failed: {type(exc).__name__}: {exc}"
+            )
         telemetry.end_stage(stage, output_count=len(entities))
 
     # v48 FIX 6: Cross-doc conflict detection.
@@ -1544,5 +1923,22 @@ def compile_project(
                 ]
             )
         )
+
+    try:
+        from app.core.ml_capabilities import build_compile_capabilities
+
+        result.compile_capabilities = build_compile_capabilities()
+    except Exception:
+        result.compile_capabilities = None
+
+    try:
+        from app.learning.worker_retrain import maybe_retrain_after_compile
+
+        maybe_retrain_after_compile(
+            compile_id=result.compile_id,
+            project_id=result.project_id,
+        )
+    except Exception:
+        pass
 
     return result

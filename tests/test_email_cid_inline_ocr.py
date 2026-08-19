@@ -1,0 +1,793 @@
+from __future__ import annotations
+
+import base64
+from email import policy
+from email.parser import BytesParser
+from pathlib import Path
+
+import pytest
+
+from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+from app.core.schemas import AtomType
+from app.parsers.email_parser import EmailParser
+
+# 1x1 PNG
+_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+_OCR_EQUIPMENT_TEXT = "\n".join(
+    [
+        "Access Point E7 Enterprise × 6",
+        "Switch Pro Max 48 PoE × 1",
+        "Enterprise NVR × 1",
+        "G6 Pro Turret × 4",
+        "Card Reader × 3",
+    ]
+)
+
+
+def _build_multipart_eml(*, cid: str = "07131976-d75d-4133-b5d2-52a8919274ba") -> bytes:
+  mixed = "=_Mixed_test"
+  related = "=_Related_test"
+  png_b64 = base64.b64encode(_TINY_PNG).decode("ascii")
+  lines = [
+      "From: patrick@example.com",
+      "To: buyer@example.com",
+      "Subject: Equipment list",
+      "MIME-Version: 1.0",
+      f'Content-Type: multipart/mixed; boundary="{mixed}"',
+      "",
+      f"--{mixed}",
+      f'Content-Type: multipart/related; boundary="{related}"',
+      "",
+      f"--{related}",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      f"Full equipment list below.\n[cid:{cid}]\n",
+      f"--{related}",
+      "Content-Type: text/html; charset=utf-8",
+      "",
+      f'<p>Full equipment list below.</p><img src="cid:{cid}" />',
+      f"--{related}",
+      "Content-Type: image/png",
+      "Content-Transfer-Encoding: base64",
+      f"Content-ID: <{cid}@hubspot-ingest>",
+      "",
+      png_b64,
+      f"--{related}--",
+      f"--{mixed}--",
+      "",
+  ]
+  return "\r\n".join(lines).encode("utf-8")
+
+
+_HUBSPOT_ORDER_TABLE_TEXT = "\n".join(
+    [
+        "Order Details",
+        "Access Card × 10",
+        "Protect All-In-One Sensor × 2",
+        "Switch Pro Max 48 PoE × 2",
+        "Access Point E7 × 6",
+        "Enterprise NVR × 1",
+        "G6 PTZ Mount × 6",
+        "Access G3 Reader × 4",
+        "Dream Machine Beast × 2",
+        "Camera G6 Pro Turret × 9",
+    ]
+)
+
+
+def test_cid_image_ocr_helper_exists() -> None:
+    from app.parsers import email_parser as ep
+
+    assert callable(ep._ocr_text_from_cid_image)
+
+
+def test_transcript_pdf_cid_does_not_emit_spoken_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": (
+            "Meeting Summary and Full Transcript\n"
+            "Jacob Vander-Plaats [07:16]\n"
+            "We have like 4E7 APS. We have two UDM beast for like, their.\n"
+        ),
+    )
+    eml = tmp_path / "transcript-inline.eml"
+    eml.write_bytes(_build_multipart_eml())
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_transcript_pdf", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment == []
+
+
+def test_order_details_table_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": _HUBSPOT_ORDER_TABLE_TEXT,
+    )
+    eml = tmp_path / "order-table.eml"
+    eml.write_bytes(_build_multipart_eml())
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_order_table", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 8
+
+
+def test_order_details_table_mints_full_bom() -> None:
+    class _Scope:
+        def __init__(self, text: str, qty: int):
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": "email_cid_equipment_line", "quantity": qty}
+
+    lines = [
+        _Scope(line, int(line.rsplit("×", 1)[-1].strip()))
+        for line in _HUBSPOT_ORDER_TABLE_TEXT.splitlines()
+        if "×" in line
+    ]
+    out, minted = backfill_hardware_bom_lines(lines, project_id="deal-gecko")
+    assert minted >= 8
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-ACCESS-CARD") == 10
+    assert bom.get("UBNT-PROTECT-SENSOR") == 2
+    assert bom.get("UBNT-SW-PRO") == 2
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-G6-PTZ-MOUNT") == 6
+    assert bom.get("UBNT-ACCESS-G3-READER") == 4
+    assert bom.get("UBNT-UDM-BEAST") == 2
+
+
+def test_multipart_eml_cid_pdf_ocr_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": _OCR_EQUIPMENT_TEXT,
+    )
+    eml = tmp_path / "inline-equipment-pdf.eml"
+    eml.write_bytes(_build_multipart_eml(cid="pdf-cid-1"))
+    raw = eml.read_bytes().replace(b"image/png", b"application/pdf")
+    eml.write_bytes(raw)
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_inline_pdf", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment
+
+def test_multipart_eml_cid_image_ocr_emits_equipment_atoms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": _OCR_EQUIPMENT_TEXT,
+    )
+    eml = tmp_path / "inline-equipment-img.eml"
+    eml.write_bytes(_build_multipart_eml())
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_inline_img", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert equipment
+
+
+def test_multipart_eml_missing_cid_part_emits_unresolved(tmp_path) -> None:
+    eml = tmp_path / "missing-inline.eml"
+    eml.write_text(
+        "\n".join(
+            [
+                "From: a@b.com",
+                "Subject: test",
+                "Content-Type: text/plain; charset=utf-8",
+                "",
+                "See [cid:missing-image-uuid]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_missing", eml)
+    unresolved = [a for a in atoms if a.value.get("kind") == "email_cid_unresolved"]
+    assert len(unresolved) == 1
+    assert "missing-image-uuid" in unresolved[0].value.get("content_ids", [])
+
+
+def test_present_cid_empty_ocr_does_not_mint_unresolved(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MIME part exists but OCR returns nothing — not an unresolved-CID open_question."""
+    monkeypatch.setattr("app.parsers.email_parser._ocr_cid_part", lambda _part: "")
+    eml = tmp_path / "empty-ocr.eml"
+    eml.write_bytes(_build_multipart_eml())
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_empty_ocr", eml)
+    unresolved = [a for a in atoms if a.value.get("kind") == "email_cid_unresolved"]
+    assert unresolved == []
+
+
+def test_hardware_backfill_mints_bom_from_cid_equipment_lines() -> None:
+    class _Scope:
+        def __init__(self, text: str, atom_id: str):
+            self.id = atom_id
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": "email_cid_equipment_line"}
+
+    atoms = [
+        _Scope("Access Point E7 Enterprise × 6", "scope-e7"),
+        _Scope("Switch Pro Max 48 PoE × 1", "scope-sw"),
+        _Scope("Enterprise NVR × 1", "scope-nvr"),
+        _Scope("G6 Pro Turret × 4", "scope-g6"),
+        _Scope("Card Reader × 3", "scope-reader"),
+    ]
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    assert minted >= 4
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-SW-PRO") == 1
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-G6-TURRET") == 4 or bom.get("UBNT-G6-PRO-DB") == 4
+    assert bom.get("UBNT-BADGE-READER") == 3 or bom.get("UBNT-ACCESS-G3-READER") == 3
+    email_bom = [
+        a for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+        and a.value.get("source") == "email_cid_equipment_line"
+    ]
+    assert len(email_bom) >= 4
+    remaining_scope = [
+        a for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "scope_item"
+        and getattr(a, "value", {}).get("kind") == "email_cid_equipment_line"
+    ]
+    assert remaining_scope == []
+
+
+def test_hardware_backfill_maps_order_list_product_names() -> None:
+    class _Scope:
+        def __init__(self, text: str, qty: int | None = None, atom_id: str = ""):
+            self.id = atom_id or f"scope-{text[:24]}"
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": "email_cid_equipment_line", "quantity": qty}
+
+    lines = [
+        _Scope("Access Point E7 Enterprise × 6", 6, "s1"),
+        _Scope("Switch Pro Max 48 PoE × 1", 1, "s2"),
+        _Scope("Enterprise NVR × 1", 1, "s3"),
+        _Scope("G6 Pro Turret × 4", 4, "s4"),
+        _Scope("Access G3 Reader × 7", 7, "s5"),
+        _Scope("Access Card × 25", 25, "s6"),
+        # HubSpot Order Details screenshot rows (name … qty, no × glyph).
+        _Scope("Access Point E7          6", atom_id="s7"),
+        _Scope("Switch Pro Max 48 PoE    2", atom_id="s8"),
+        _Scope("Camera G6 Pro Turret     9", atom_id="s9"),
+        _Scope("Access G3 Reader         4", atom_id="s10"),
+        _Scope("Dream Machine Beast      2", atom_id="s11"),
+        _Scope("Access Card             10", atom_id="s12"),
+    ]
+    out, minted = backfill_hardware_bom_lines(lines, project_id="deal-gecko")
+    assert minted >= 5
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-SW-PRO") in (1, 2)
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-G6-TURRET") in (4, 9)
+    assert bom.get("UBNT-ACCESS-G3-READER") in (4, 7) or bom.get("UBNT-BADGE-READER") in (4, 7)
+    assert bom.get("UBNT-ACCESS-CARD") in (10, 25)
+    assert bom.get("UBNT-UDM-BEAST") == 2
+
+
+def test_cid_pdf_prefers_digital_text_layer(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import fitz
+
+    digital = "\n".join(
+        [
+            "Order Details",
+            "Access Point E7 Enterprise × 6",
+            "Switch Pro Max 48 PoE × 1",
+            "Enterprise NVR × 1",
+        ]
+    )
+
+    class _Page:
+        def get_text(self, mode="text"):
+            if mode == "text":
+                return digital
+            if mode == "dict":
+                return {"blocks": []}
+            return ""
+
+        def find_tables(self):
+            class _Finder:
+                tables = []
+
+            return _Finder()
+
+    class _Doc:
+        def __iter__(self):
+            yield _Page()
+
+    monkeypatch.setattr("fitz.open", lambda *a, **k: _Doc())
+    called = {"ocr": 0}
+
+    def _boom(_page):
+        called["ocr"] += 1
+        return {"text": "4E7 APS", "backend": "fake", "confidence": 0.1, "notes": []}
+
+    monkeypatch.setattr("app.parsers._ocr_chain.ocr_pdf_page", _boom)
+    from app.parsers.email_parser import _ocr_text_from_cid_pdf
+
+    text = _ocr_text_from_cid_pdf(b"%PDF-fake")
+    assert "Access Point E7 Enterprise × 6" in text
+    assert "Switch Pro Max 48 PoE × 1" in text
+    assert called["ocr"] == 0
+
+
+def test_trailing_order_qty_ignores_switch_model_number() -> None:
+    from app.parsers.email_parser import (
+        _hardware_atoms_from_equipment_text,
+        _sanity_order_qty,
+        _trailing_order_qty,
+    )
+
+    assert _trailing_order_qty("Switch Pro Max 48 PoE          2") == 2
+    assert _sanity_order_qty("Switch Pro Max 48 PoE", 48) is None
+    assert _sanity_order_qty("Switch Pro Max 48 PoE", 2) == 2
+
+    text = "\n".join(
+        [
+            "Order Details",
+            "Access Point E7 Enterprise          6",
+            "Switch Pro Max 48 PoE               2",
+            "Enterprise NVR                      1",
+            "Access G3 Reader Pro                4",
+            "Access Card                        10",
+            "Protect All-In-One Sensor           2",
+        ]
+    )
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art1",
+        filename="e.eml",
+        text=text,
+        content_id="cid1",
+        parser_version="test",
+    )
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 5
+    by_item = {a.value.get("item", ""): a.value.get("quantity") for a in equipment}
+    assert by_item.get("Access Point E7 Enterprise") == 6
+    assert by_item.get("Switch Pro Max 48 PoE") == 2
+    assert by_item.get("Enterprise NVR") == 1
+
+
+def test_garbled_ocr_equipment_line_emits_atom(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Glued / truncated OCR rows repair into product+qty equipment atoms."""
+    monkeypatch.setattr(
+        "app.parsers.email_parser._ocr_text_from_cid_inline",
+        lambda _payload, content_type="": (
+            "4E7 APS\n"
+            "Switch Pro × 2\n"
+            "Enterprise NVR × 1\n"
+            "I Access Reader Pro Juncti ... 5\n"
+            "Camera Al Multi Sensor 4 1\n"
+        ),
+    )
+    eml = tmp_path / "garbled-inline.eml"
+    eml.write_bytes(_build_multipart_eml())
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_garbled", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 4
+    qty_by_item = {a.value.get("item"): a.value.get("quantity") for a in equipment}
+    assert qty_by_item.get("4E7 APS") == 4 or any(
+        a.value.get("quantity") == 4 and "e7" in (a.raw_text or "").lower() for a in equipment
+    )
+    assert qty_by_item.get("Access Reader Pro Juncti") == 5
+    assert qty_by_item.get("Camera AI Multi Sensor 4") == 1
+
+
+def test_score_cid_ocr_prefers_order_details_over_transcript() -> None:
+    from app.parsers.email_parser import _score_cid_ocr_text
+
+    transcript = (
+        "Meeting Summary and Full Transcript\n"
+        "Jacob Vander-Plaats [07:16]\n"
+        "We have like 4E7 APS. We have two UDM beast for like, their.\n"
+    )
+    order = _HUBSPOT_ORDER_TABLE_TEXT
+    assert _score_cid_ocr_text(order) > _score_cid_ocr_text(transcript)
+
+
+def test_picks_best_cid_when_multiple_inline_images(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transcript_cid = "transcript-cid-uuid"
+    order_cid = "07131976-d75d-4133-b5d2-52a8919274ba"
+
+    def _fake_ocr_part(part: dict) -> str:
+        cid = str(part.get("content_id") or "")
+        if cid == order_cid:
+            return _HUBSPOT_ORDER_TABLE_TEXT
+        return (
+            "Meeting Summary and Full Transcript\n"
+            "Jacob Vander-Plaats [07:16]\n"
+            "We have like 4E7 APS.\n"
+        )
+
+    monkeypatch.setattr("app.parsers.email_parser._ocr_cid_part", _fake_ocr_part)
+
+    mixed = "=_Mixed_dual"
+    related = "=_Related_dual"
+    png_b64 = base64.b64encode(_TINY_PNG).decode("ascii")
+    lines = [
+        "From: patrick@example.com",
+        "Subject: Equipment list",
+        f'Content-Type: multipart/mixed; boundary="{mixed}"',
+        "",
+        f"--{mixed}",
+        f'Content-Type: multipart/related; boundary="{related}"',
+        "",
+        f"--{related}",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        f"Full equipment list below.\n[cid:{order_cid}]\n",
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{transcript_cid}@hubspot-ingest>",
+        "",
+        png_b64,
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{order_cid}@hubspot-ingest>",
+        "",
+        png_b64,
+        f"--{related}--",
+        f"--{mixed}--",
+        "",
+    ]
+    eml = tmp_path / "dual-inline.eml"
+    eml.write_bytes("\r\n".join(lines).encode("utf-8"))
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_dual_cid", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) >= 8
+    cids = {a.value.get("content_id") for a in equipment}
+    assert order_cid in cids
+    assert transcript_cid not in cids
+    # Reading-order locators: CID rows sit after the body intro line.
+    assert all(isinstance(a.source_refs[0].locator.get("line_start"), int) for a in equipment)
+    assert all(a.source_refs[0].locator.get("kind") == "email_cid_inline" for a in equipment)
+
+
+def test_iter_cid_inline_parts_finds_image_part() -> None:
+    msg = BytesParser(policy=policy.default).parsebytes(_build_multipart_eml())
+    from app.parsers.email_parser import _iter_cid_inline_parts
+
+    parts = _iter_cid_inline_parts(msg)
+    assert "07131976-d75d-4133-b5d2-52a8919274ba" in parts
+    assert parts["07131976-d75d-4133-b5d2-52a8919274ba"]["is_image"] is True
+
+
+def test_glued_trailing_qty_on_garbled_switch_and_protect() -> None:
+    from app.parsers.email_parser import _hardware_atoms_from_equipment_text
+
+    text = "\n".join(
+        [
+            "Protect All-In-One Sensor 2",
+            "Switch Pro Max 48 PoE 2",
+        ]
+    )
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art1",
+        filename="e.eml",
+        text=text,
+        content_id="cid-order",
+        parser_version="test",
+    )
+    by_item = {a.value.get("item", ""): a.value.get("quantity") for a in atoms}
+    assert by_item.get("Protect All-In-One Sensor") == 2
+    assert by_item.get("Switch Pro Max 48 PoE") == 2
+
+
+def test_equipment_list_ocr_picks_richest_table_over_transcript(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transcript_cid = "07131976-d75d-4133-b5d2-52a8919274ba"
+    order_cid = "f41c1a3b-2993-42e3-a181-e2441b3942d0"
+    transcript_ocr = "\n".join(
+        [
+            "Meeting Summary and Full Transcript",
+            "Protect All-In-One Sensor 2",
+            "Switch Pro Max 48 PoE 2",
+        ]
+    )
+
+    def _fake_ocr_part(part: dict) -> str:
+        cid = str(part.get("content_id") or "")
+        if cid == order_cid:
+            return _HUBSPOT_ORDER_TABLE_TEXT
+        if cid == transcript_cid:
+            return transcript_ocr
+        return ""
+
+    monkeypatch.setattr("app.parsers.email_parser._ocr_cid_part", _fake_ocr_part)
+
+    mixed = "=_Mixed_gecko"
+    related = "=_Related_gecko"
+    png_b64 = base64.b64encode(_TINY_PNG).decode("ascii")
+    body = "Below is the full equipment list.\n"
+    lines = [
+        "From: patrick@example.com",
+        "Subject: Equipment list",
+        f'Content-Type: multipart/mixed; boundary="{mixed}"',
+        "",
+        f"--{mixed}",
+        f'Content-Type: multipart/related; boundary="{related}"',
+        "",
+        f"--{related}",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        body + f"[cid:{transcript_cid}]\n[cid:{order_cid}]\n",
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{transcript_cid}@hubspot-ingest>",
+        "",
+        png_b64,
+        f"--{related}",
+        "Content-Type: image/png",
+        "Content-Transfer-Encoding: base64",
+        f"Content-ID: <{order_cid}@hubspot-ingest>",
+        "",
+        png_b64 + "x" * 120,
+        f"--{related}--",
+        f"--{mixed}--",
+        "",
+    ]
+    eml = tmp_path / "gecko-dual-inline.eml"
+    eml.write_bytes("\r\n".join(lines).encode("utf-8"))
+
+    atoms = EmailParser().parse_artifact("deal-gecko", "art_gecko_dual", eml)
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    unresolved = [a for a in atoms if a.value.get("kind") == "email_cid_unresolved"]
+    assert len(equipment) >= 8
+    assert {a.value.get("content_id") for a in equipment} == {order_cid}
+    assert unresolved == []
+def test_hardware_backfill_glued_ocr_order_rows() -> None:
+    from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+
+    class _Scope:
+        def __init__(self, text: str, row_index: int = 0):
+            self.atom_type = type("T", (), {"value": "scope_item"})()
+            self.raw_text = text
+            self.text = text
+            self.value = {
+                "text": text,
+                "kind": "email_cid_equipment_line",
+                "row_index": row_index,
+            }
+
+    glued_rows = [
+        "Access Point E7 6",
+        "Switch Pro Max 48 PoE 2",
+        "Enterprise NVR 1",
+        "Access G3 Reader 4",
+        "Reader G6 Entry 6",
+        "G6/G5 PTZ Pendant Mount 6",
+        "Camera G6 Pro Turret 4",
+        "Protect All-In-One Sensor 2",
+        "Access Card 10",
+    ]
+    atoms = [_Scope(row, i) for i, row in enumerate(glued_rows)]
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    assert minted >= 9
+    bom = {
+        a.value["sku"]: a.value["quantity"]
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    }
+    assert bom.get("UBNT-E7-AP") == 6
+    assert bom.get("UBNT-SW-PRO") == 2
+    assert bom.get("UBNT-NVR") == 1
+    assert bom.get("UBNT-ACCESS-G3-READER") == 4
+    assert bom.get("UBNT-READER-G6-ENTRY") == 6
+    assert bom.get("UBNT-G6-PTZ-MOUNT") == 6
+    assert bom.get("UBNT-G6-TURRET") == 4
+    assert bom.get("UBNT-PROTECT-SENSOR") == 2
+    assert bom.get("UBNT-ACCESS-CARD") == 10
+
+
+_FULL_HUBSPOT_ORDER_OCR = "\n".join(
+    [
+        "Order Details",
+        "Access Card 10",
+        "Protect All-In-One Sensor 2",
+        "I Access Reader Pro Juncti ... 5",
+        "Access Rescue KeySwitch 2",
+        "G6/G5 PTZ Pendant Mount 6",
+        "Switch Pro Max 48 PoE 2",
+        "Power Distribution Pro 2",
+        "Enterprise NVR 1",
+        "Access Point E7 6",
+        "Enterprise Access Hub 1",
+        "Access G3 Reader 4",
+        "Access Intercom Viewer 3",
+        "Camera G6 Pro 360 2",
+        "Reader G6 Entry 6",
+        "Camera Al Multi Sensor 4 1",
+        "Camera G6 Pro Turret 9",
+        "25G Direct Attach Cable 3",
+        "Dream Machine Beast 2",
+        "G6 Entry Wedge Mount 1",
+        "G6 Entry Wedge Mount 5",
+    ]
+)
+
+
+def test_rejoin_split_doc_intel_qty_lines() -> None:
+    """Doc Intel often puts HubSpot order qty on the next OCR line."""
+    from app.parsers.email_parser import (
+        _focus_cid_equipment_text,
+        _hardware_atoms_from_equipment_text,
+    )
+
+    split = "\n".join(
+        [
+            "Order Details",
+            "· Delivered",
+            "Access Card",
+            "10",
+            "Enterprise NVR",
+            "1",
+            "Access Point E7",
+            "6",
+            "Camera G6 Pro Turret",
+            "9",
+            "25G Direct Attach Cable",
+            "3",
+            "G6 Entry Wedge Mount",
+            "1",
+            "G6 Entry Wedge Mount",
+            "5",
+        ]
+    )
+    focused = _focus_cid_equipment_text(split)
+    assert "Access Card 10" in focused
+    assert "Enterprise NVR 1" in focused
+    assert "Access Point E7 6" in focused
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art_split",
+        filename="e.eml",
+        text=focused,
+        content_id="cid-order",
+        parser_version="test",
+        lead_in=["Below is the full equipment list."],
+    )
+    by_item = {a.value.get("item"): a.value.get("quantity") for a in atoms}
+    assert by_item.get("Access Card") == 10
+    assert by_item.get("Enterprise NVR") == 1
+    assert by_item.get("Access Point E7") == 6
+    assert by_item.get("Camera G6 Pro Turret") == 9
+    assert by_item.get("25G Direct Attach Cable") == 3
+    wedges = [a for a in atoms if a.value.get("item") == "G6 Entry Wedge Mount"]
+    assert sorted(int(a.value.get("quantity") or 0) for a in wedges) == [1, 5]
+
+
+def test_full_hubspot_order_table_emits_all_rows_with_qty() -> None:
+    from app.parsers.email_parser import (
+        _equipment_list_lead_in,
+        _hardware_atoms_from_equipment_text,
+    )
+
+    lead = _equipment_list_lead_in(
+        "Below is the full equipment list. One hard requirement for him is Otka integration."
+    )
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art_order",
+        filename="e.eml",
+        text=_FULL_HUBSPOT_ORDER_OCR,
+        content_id="07131976-d75d-4133-b5d2-52a8919274ba",
+        parser_version="test",
+        lead_in=lead,
+    )
+    equipment = [a for a in atoms if a.value.get("kind") == "email_cid_equipment_line"]
+    assert len(equipment) == 20
+    assert all(int(a.value.get("quantity") or 0) > 0 for a in equipment)
+    assert all(a.value.get("lead_in") for a in equipment)
+    assert all(
+        "Equipment list" in ((a.source_refs[0].locator or {}).get("section_path") or [])
+        for a in equipment
+    )
+    by_item = {a.value.get("item"): a.value.get("quantity") for a in equipment}
+    assert by_item.get("Access Card") == 10
+    assert by_item.get("Switch Pro Max 48 PoE") == 2
+    assert by_item.get("Access Reader Pro Juncti") == 5
+    assert by_item.get("Camera AI Multi Sensor 4") == 1
+    assert by_item.get("Power Distribution Pro") == 2
+    assert by_item.get("Enterprise Access Hub") == 1
+    wedge = [a for a in equipment if a.value.get("item") == "G6 Entry Wedge Mount"]
+    assert sorted(int(a.value.get("quantity") or 0) for a in wedge) == [1, 5]
+
+
+def test_full_hubspot_order_table_mints_complete_bom() -> None:
+    from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+    from app.parsers.email_parser import (
+        _equipment_list_lead_in,
+        _hardware_atoms_from_equipment_text,
+    )
+
+    lead = _equipment_list_lead_in("Below is the full equipment list.")
+    atoms = _hardware_atoms_from_equipment_text(
+        project_id="deal-gecko",
+        artifact_id="art_order",
+        filename="e.eml",
+        text=_FULL_HUBSPOT_ORDER_OCR,
+        content_id="07131976-d75d-4133-b5d2-52a8919274ba",
+        parser_version="test",
+        lead_in=lead,
+    )
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    bom = [
+        a
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    ]
+    assert minted == 20
+    assert len(bom) == 20
+    by_sku = {a.value["sku"]: a.value["quantity"] for a in bom}
+    assert by_sku.get("UBNT-ACCESS-CARD") == 10
+    assert by_sku.get("UBNT-SW-PRO") == 2
+    assert by_sku.get("UBNT-E7-AP") == 6
+    assert by_sku.get("UBNT-ACCESS-G3-READER") == 4
+    assert by_sku.get("UBNT-READER-G6-ENTRY") == 6
+    assert by_sku.get("UBNT-G6-PRO-360") == 2
+    assert by_sku.get("UBNT-POWER-DIST-PRO") == 2
+    assert by_sku.get("UBNT-ACCESS-HUB") == 1
+    assert by_sku.get("UBNT-AI-MULTI-SENSOR") == 1
+    assert by_sku.get("UBNT-25G-DAC") == 3
+    assert by_sku.get("UBNT-ACCESS-READER-PRO") == 5
+    assert by_sku.get("UBNT-ACCESS-RESCUE-KEYSWITCH") == 2
+    wedges = [a for a in bom if a.value.get("sku") == "UBNT-G6-ENTRY-WEDGE"]
+    assert sorted(int(a.value.get("quantity") or 0) for a in wedges) == [1, 5]
+    # Connective tissue from body lead-in survives on BOM locators.
+    loc = (bom[0].source_refs[0].locator or {}) if bom[0].source_refs else {}
+    assert loc.get("lead_in") or bom[0].value.get("lead_in")
+    assert "Equipment list" in (loc.get("section_path") or [])
+    assert all(f"quantity:{a.value['quantity']}" in (a.entity_keys or []) for a in bom)
+
+
+def test_hardware_backfill_skips_transcript_prose_when_cid_equipment_present() -> None:
+    from app.core.hardware_evidence_backfill import backfill_hardware_bom_lines
+
+    class _Atom:
+        def __init__(self, *, kind: str, text: str, atom_type: str = "scope_item"):
+            self.atom_type = type("T", (), {"value": atom_type})()
+            self.raw_text = text
+            self.text = text
+            self.value = {"text": text, "kind": kind}
+
+    atoms = [
+        _Atom(kind="email_cid_equipment_line", text="Access G3 Reader 4"),
+        _Atom(
+            kind="",
+            text="We need seven badge readers on every door.",
+            atom_type="customer_instruction",
+        ),
+    ]
+    out, minted = backfill_hardware_bom_lines(atoms, project_id="deal-gecko")
+    bom = [
+        a
+        for a in out
+        if getattr(getattr(a, "atom_type", None), "value", "") == "bom_line"
+    ]
+    assert len(bom) == 1
+    assert bom[0].value.get("sku") == "UBNT-ACCESS-G3-READER"
+    assert bom[0].value.get("quantity") == 4
+    assert bom[0].value.get("source") == "email_cid_equipment_line"

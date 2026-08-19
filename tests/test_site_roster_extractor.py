@@ -259,7 +259,8 @@ def test_extract_location_then_address_columns():
     out = _rosterized(cols, rows)
     assert out[0].site_id == "STORE-142"
     assert out[0].facility_name == "Cherry Creek"
-    assert out[0].street_address == "3030 E 1st Ave, Denver CO"
+    assert out[0].street_address == "3030 E 1st Ave"
+    assert out[0].city == "Denver"
 
 
 def test_extract_building_use_columns():
@@ -292,7 +293,8 @@ def test_extract_street_header():
     out = _rosterized(cols, rows)
     assert out[0].site_id == "SEA-HQ-01"
     assert out[0].street_address == "1200 5th Ave"
-    assert out[0].city_state == "Seattle" or out[0].city_state == "WA"
+    assert out[0].city == "Seattle"
+    assert out[0].state == "WA"
     assert out[0].zip == "98101"
 
 

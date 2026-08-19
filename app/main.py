@@ -16,6 +16,12 @@ from app.storage.db import init_db
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    try:
+        from app.learning.fetch_ml import maybe_fetch_on_startup
+
+        maybe_fetch_on_startup()
+    except Exception:
+        pass
     print(json.dumps({"event": "app_startup", "service": "purtera_evidence_compiler"}), file=sys.stderr)
     yield
 

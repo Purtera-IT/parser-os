@@ -25,10 +25,12 @@ def _ensure_defaults() -> None:
     from app.parsers.docx_parser import DocxParser
     from app.parsers.email_parser import EmailParser
     from app.parsers.image_parser import ImageParser
+    from app.parsers.json_parser import JsonParser
     from app.parsers.markdown_parser import MarkdownParser
     from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
     from app.parsers.pptx_parser import PptxParser
     from app.parsers.quote_parser import QuoteParser
+    from app.parsers.hubspot_note_parser import HubspotNoteParser
     from app.parsers.transcript_parser import TranscriptParser
     from app.parsers.universal_parsers import (
         HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
@@ -43,7 +45,9 @@ def _ensure_defaults() -> None:
         XlsxParser(),
         QuoteParser(),
         EmailParser(),
+        HubspotNoteParser(),
         TranscriptParser(),
+        JsonParser(),
         DocxParser(),
         PptxParser(),
         ImageParser(),
@@ -106,6 +110,8 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.vsdx
     if suffix == ".mpp":
         return ArtifactType.mpp
+    if suffix in {".json", ".jsonl"}:
+        return ArtifactType.json
     return ArtifactType.txt
 
 
@@ -117,12 +123,16 @@ def _deterministic_tie_break(
     name = path.name.lower()
     lowered = normalize_text(sample_text)
     by_name = {match.parser_name: (parser, match) for parser, match in candidates}
+    if "hubspot_note" in by_name and (
+        "-hs-note-" in name or "hubspot note:" in lowered
+    ):
+        return by_name["hubspot_note"]
     if {"email", "transcript"}.issubset(by_name):
         email_markers = ("from:" in lowered and "sent:" in lowered) or (" wrote:" in lowered)
         meeting_markers = ("decisions:" in lowered) or ("open questions:" in lowered) or ("[00:" in lowered)
         if email_markers and not meeting_markers:
             return by_name["email"]
-        if meeting_markers:
+        if meeting_markers and "hubspot note:" not in lowered:
             return by_name["transcript"]
     if {"quote", "xlsx"}.issubset(by_name):
         from app.parsers.spreadsheet_route_signals import resolve_quote_vs_xlsx_tie
@@ -195,7 +205,7 @@ def choose_parser(
     domain_pack: DomainPack | None = None,
 ) -> tuple[ArtifactParser | None, ParserMatch, list[ParserMatch]]:
     sample_text: str | None = None
-    if path.suffix.lower() in {".txt", ".md", ".eml", ".json", ".csv", ".vtt", ".srt"}:
+    if path.suffix.lower() in {".txt", ".md", ".eml", ".json", ".jsonl", ".csv", ".vtt", ".srt"}:
         try:
             sample_text = path.read_text(encoding="utf-8", errors="ignore")[:4000]
         except Exception:

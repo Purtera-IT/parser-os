@@ -40,6 +40,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Worker image installs these explicitly; declare for local dev / pip install .[ocr].
+ocr = [
+  "pytesseract>=0.3.10",
+]
 dev = [
   # pytest 9.x triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409) on Windows /
   # CPython 3.12.3 in the demo dev environment.  Cap until pytest 9 is

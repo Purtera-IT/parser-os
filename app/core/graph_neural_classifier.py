@@ -39,6 +39,7 @@ verify-gate retirement path, never a hard cutover.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -225,6 +226,90 @@ class GraphNeuralClassifier:
             return EdgePrediction(edge_type=None, route_fallback=True, trained=self.trained)
 
 
+def _edge_family(edge: Any) -> str:
+    md = getattr(edge, "metadata", {}) or {}
+    return str(md.get("edge_family", ""))
+
+
+def _edge_type_str(edge: Any) -> str:
+    et = getattr(edge, "edge_type", None)
+    return getattr(et, "value", str(et))
+
+
+def _has_ambiguous_edges(edges: list, ambiguous_families: set[str]) -> bool:
+    return any(_edge_family(e) in ambiguous_families for e in edges)
+
+
+def _build_labeled_pairs(
+    ordered: list,
+    edges: list,
+    idx_of: dict[str, int],
+    *,
+    high_precision_families: set[str],
+    min_train: int,
+) -> list[tuple[int, int, str]]:
+    """Self-supervised training triples without embedding (cheap preflight)."""
+    labeled: list[tuple[int, int, str]] = []
+    for e in edges:
+        if _edge_family(e) not in high_precision_families:
+            continue
+        i = idx_of.get(getattr(e, "from_atom_id", None))
+        j = idx_of.get(getattr(e, "to_atom_id", None))
+        if i is not None and j is not None:
+            labeled.append((i, j, _edge_type_str(e)))
+
+    keysets = [set(_atom_entity_keys(a)) for a in ordered]
+    rng = np.random.default_rng(_SEED)
+    n = len(ordered)
+    tries, want = 0, max(len(labeled), min_train)
+    while len([p for p in labeled if p[2] == NO_EDGE]) < want and tries < want * 20:
+        tries += 1
+        i, j = int(rng.integers(0, n)), int(rng.integers(0, n))
+        if i != j and not (keysets[i] & keysets[j]):
+            labeled.append((i, j, NO_EDGE))
+    return labeled
+
+
+def _head_would_learn(labeled: list[tuple[int, int, str]], *, min_per_class: int = 3) -> bool:
+    """Mirror NeuralHead.fit learnable gate — skip embed when head stays cold."""
+    if not labeled:
+        return False
+    labels = [lbl for _, _, lbl in labeled]
+    classes = set(labels)
+    if len(classes) < 2:
+        return False
+    counts = {c: labels.count(c) for c in classes}
+    return min(counts.values()) >= min_per_class
+
+
+def gate_can_run(
+    atoms: list,
+    edges: list,
+    *,
+    high_precision_families: set[str],
+    ambiguous_families: set[str],
+    min_train: int = 6,
+) -> bool:
+    """True only when the gate could drop ambiguous edges (not cold/abstain)."""
+    if not edges or len(atoms) < 3:
+        return False
+    if not _has_ambiguous_edges(edges, ambiguous_families):
+        return False
+    ordered = list(atoms)
+    idx_of = {getattr(a, "id", i): i for i, a in enumerate(ordered)}
+    labeled = _build_labeled_pairs(
+        ordered,
+        edges,
+        idx_of,
+        high_precision_families=high_precision_families,
+        min_train=min_train,
+    )
+    distinct = {lbl for _, _, lbl in labeled}
+    if len(labeled) < min_train or len(distinct) < 2:
+        return False
+    return _head_would_learn(labeled)
+
+
 def neural_edge_gate(
     atoms: list,
     edges: list,
@@ -256,44 +341,29 @@ def neural_edge_gate(
     and unit-testable; production passes ``embedding_retrieval.embed_texts``.
     """
     try:
-        if not edges or len(atoms) < 3:
+        if not gate_can_run(
+            atoms,
+            edges,
+            high_precision_families=high_precision_families,
+            ambiguous_families=ambiguous_families,
+            min_train=min_train,
+        ):
             return edges, 0
+
         ordered = list(atoms)
         idx_of = {getattr(a, "id", i): i for i, a in enumerate(ordered)}
+        labeled = _build_labeled_pairs(
+            ordered,
+            edges,
+            idx_of,
+            high_precision_families=high_precision_families,
+            min_train=min_train,
+        )
+
+        # Cold-start fast path: abstain without embedding every atom over Ollama.
         texts = [str(getattr(a, "normalized_text", "") or getattr(a, "raw_text", "")) for a in ordered]
         node_vecs = embed_fn(texts)
         if node_vecs is None or getattr(node_vecs, "shape", (0,))[0] != len(ordered):
-            return edges, 0
-
-        def _fam(e) -> str:
-            md = getattr(e, "metadata", {}) or {}
-            return str(md.get("edge_family", ""))
-
-        def _et(e) -> str:
-            et = getattr(e, "edge_type", None)
-            return getattr(et, "value", str(et))
-
-        labeled: list[tuple[int, int, str]] = []
-        for e in edges:
-            if _fam(e) in high_precision_families:
-                i = idx_of.get(getattr(e, "from_atom_id", None))
-                j = idx_of.get(getattr(e, "to_atom_id", None))
-                if i is not None and j is not None:
-                    labeled.append((i, j, _et(e)))
-
-        # negative (no_edge) sampling: pairs with disjoint entity keys
-        keysets = [set(_atom_entity_keys(a)) for a in ordered]
-        rng = np.random.default_rng(_SEED)
-        n = len(ordered)
-        tries, want = 0, max(len(labeled), min_train)
-        while len([p for p in labeled if p[2] == NO_EDGE]) < want and tries < want * 20:
-            tries += 1
-            i, j = int(rng.integers(0, n)), int(rng.integers(0, n))
-            if i != j and not (keysets[i] & keysets[j]):
-                labeled.append((i, j, NO_EDGE))
-
-        distinct = {lbl for _, _, lbl in labeled}
-        if len(labeled) < min_train or len(distinct) < 2:
             return edges, 0
 
         gnc = GraphNeuralClassifier()
@@ -304,7 +374,7 @@ def neural_edge_gate(
         cands = sorted(distinct)
         kept, dropped = [], 0
         for e in edges:
-            if _fam(e) not in ambiguous_families:
+            if _edge_family(e) not in ambiguous_families:
                 kept.append(e)
                 continue
             i = idx_of.get(getattr(e, "from_atom_id", None))
@@ -328,6 +398,7 @@ __all__ = [
     "EdgePrediction",
     "build_adjacency",
     "diffuse",
+    "gate_can_run",
     "pair_feature",
     "neural_edge_gate",
     "NO_EDGE",

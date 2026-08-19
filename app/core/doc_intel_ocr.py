@@ -33,10 +33,23 @@ def doc_intel_available() -> bool:
     )
 
 
+def _lines_from_doc_intel_result(result: Any) -> list[str]:
+    """Prefer per-line OCR (keeps HubSpot name/qty columns separable)."""
+    lines: list[str] = []
+    for page in getattr(result, "pages", None) or []:
+        for line in getattr(page, "lines", None) or []:
+            text = str(getattr(line, "content", "") or "").strip()
+            if text:
+                lines.append(text)
+    return lines
+
+
 def extract_text_from_image_bytes(image_bytes: bytes) -> str:
     """Run Azure Doc Intel ``prebuilt-read`` on image bytes (PNG/JPG/PDF page).
 
     Returns extracted text content or empty string on failure.
+    Prefer page lines over flattened ``content`` so order-table quantities
+    that OCR onto their own line stay recoverable by the email parser.
     """
     if not doc_intel_available() or not image_bytes:
         return ""
@@ -60,6 +73,9 @@ def extract_text_from_image_bytes(image_bytes: bytes) -> str:
             content_type="application/octet-stream",
         )
         result = poller.result()
+        lines = _lines_from_doc_intel_result(result)
+        if lines:
+            return "\n".join(lines)
         if hasattr(result, "content") and result.content:
             return str(result.content)
     except Exception:

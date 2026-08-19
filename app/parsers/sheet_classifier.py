@@ -231,6 +231,54 @@ def _priced_table_header(rows: list[list[Any]]) -> bool:
     return False
 
 
+_TECH_RATE_COL = re.compile(
+    r"(?:networking\s+)?l[12]\s+(?:euc|technician)|hour\s+minimum|hr\.?\s*min",
+    re.I,
+)
+
+
+def _first_header_row(rows: list[list[Any]]) -> int | None:
+    for i, row in enumerate(rows[:20]):
+        nonblank = [str(c).strip() for c in row if str(c or "").strip()]
+        if len(nonblank) >= 2:
+            return i
+    return None
+
+
+def _country_rate_card_fraction(rows: list[list[Any]]) -> float:
+    """Fraction of data rows on a per-country labor rate table."""
+    hdr_i = _first_header_row(rows)
+    if hdr_i is None:
+        return 0.0
+    hdr = [str(c or "").strip().lower() for c in rows[hdr_i]]
+    if not any(h == "country" or h.startswith("country") for h in hdr):
+        return 0.0
+    if not any(_TECH_RATE_COL.search(h) or "technician" in h for h in hdr):
+        return 0.0
+    data = [
+        r for r in rows[hdr_i + 1 :]
+        if any(str(c or "").strip() for c in r)
+    ]
+    if not data:
+        return 0.0
+    country_rows = 0
+    for r in data:
+        label = str(r[0] or "").strip()
+        if not label:
+            continue
+        if label.replace(",", "").replace(".", "").replace("$", "").lstrip("-").isdigit():
+            continue
+        country_rows += 1
+    return country_rows / len(data)
+
+
+def _looks_like_country_rate_card(rows: list[list[Any]]) -> bool:
+    """True when the sheet is a global per-country technician rate table."""
+    frac = _country_rate_card_fraction(rows)
+    nb = _nonblank_rows(rows)
+    return frac >= 0.35 and nb >= 5
+
+
 def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassification:
     """Classify a worksheet by role for atom-emission gating.
 
@@ -268,7 +316,16 @@ def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassificatio
             confidence=0.95, signals={"name_norm": norm},
         )
 
-    # 2. Content-based rate-card / dropdown backing list. Catches helper
+    # 2b. Content-based per-country labor rate card (Deal Kit "Country" tables).
+    # Catches renamed tabs whose content is a global technician rate matrix.
+    if _looks_like_country_rate_card(rows) and not has_data_header:
+        return SheetClassification(
+            role=SheetRole.RATE_CARD, suppress=True,
+            reason="country_rate_card_table", confidence=0.9,
+            signals={"country_rate_fraction": round(_country_rate_card_fraction(rows), 3)},
+        )
+
+    # 3. Content-based rate-card / dropdown backing list. Catches helper
     #    sheets even when renamed: a dense block of rate codes
     #    (PS-L1-ENG-LABOR-...), skill levels (L0-L4), or billing types
     #    with no real data header.

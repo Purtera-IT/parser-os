@@ -438,6 +438,20 @@ class FeedbackStore:
         """
         if not self._enable_head:
             return None
+        # HeadRegistry champion (eval-gated nightly retrain) takes precedence
+        # over the inline per-compile fit when ready.
+        try:
+            from app.learning.head_registry import get_head_registry
+
+            registry = get_head_registry()
+            if registry is not None:
+                champ = registry.champion(relation)
+                if champ is not None:
+                    head, meta = champ
+                    if meta.ready and head.trained:
+                        return head
+        except Exception:
+            pass
         # Scope-visible corrections for this relation (verdict need NOT be in
         # `allowed` here — the head learns the full boundary, e.g. job_site vs
         # vendor, even if the caller's candidate set is a subset; classify()
@@ -790,6 +804,26 @@ def seed_default_corrections(store: "FeedbackStore") -> int:
         from app.core.site_role_seed import site_role_gate_corrections
 
         for corr in site_role_gate_corrections():
+            store.add(corr)
+            seeded += 1
+    except Exception:  # pragma: no cover - seed module must never break init
+        pass
+
+    # Universal noise-suppression gate (rate-card / materials-catalog rows and
+    # rate-label-as-person). Lazy import; a seed failure must never break init.
+    try:
+        from app.core.noise_suppression_seed import noise_gate_corrections
+
+        for corr in noise_gate_corrections():
+            store.add(corr)
+            seeded += 1
+    except Exception:  # pragma: no cover - seed module must never break init
+        pass
+
+    try:
+        from app.core.parse_quality_seed import parse_quality_corrections
+
+        for corr in parse_quality_corrections():
             store.add(corr)
             seeded += 1
     except Exception:  # pragma: no cover - seed module must never break init

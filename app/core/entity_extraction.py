@@ -4935,6 +4935,75 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         "physical_site",
     }
 
+    def _atom_value_dict(atom: Any) -> dict[str, Any]:
+        """Return structured fields from ``value`` or envelope ``structured``."""
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict) and val:
+            return val
+        struct = getattr(atom, "structured", None)
+        if isinstance(struct, dict):
+            return struct
+        return {}
+
+    def _inherit_site_key_from_section(atom: Any, authoritative_sites: set[str]) -> bool:
+        """Link task/note atoms to a site named in their section path."""
+        if not authoritative_sites:
+            return False
+        parts: list[str] = []
+        sp = getattr(atom, "section_path", None) or []
+        if isinstance(sp, list):
+            parts.extend(str(p) for p in sp if p)
+        loc = getattr(atom, "locator", None) or {}
+        if isinstance(loc, dict):
+            loc_sp = loc.get("section_path") or []
+            if isinstance(loc_sp, list):
+                parts.extend(str(p) for p in loc_sp if p)
+        hay = " ".join(parts).lower()
+        if not hay.strip():
+            return False
+        for site_name in authoritative_sites:
+            sn = site_name.lower().strip()
+            if len(sn) < 4:
+                continue
+            if sn in hay or hay in sn:
+                slug = re.sub(r"[^a-z0-9]+", "_", sn).strip("_")
+                if not slug:
+                    continue
+                target = f"site:{slug}"
+                existing = list(getattr(atom, "entity_keys", []) or [])
+                if target in existing:
+                    return False
+                atom.entity_keys = sorted(set(existing) | {target})
+                val = _atom_value_dict(atom)
+                if not val.get("site"):
+                    if isinstance(getattr(atom, "value", None), dict):
+                        atom.value["site"] = site_name
+                    elif isinstance(getattr(atom, "structured", None), dict):
+                        atom.structured["site"] = site_name
+                return True
+        return False
+
+    def _emit_site_key_from_value(atom: Any) -> bool:
+        """Attach ``site:<slug>`` from structured ``value.site`` / ``site_id`` fields."""
+        val = _atom_value_dict(atom)
+        site_ref = (
+            val.get("site")
+            or val.get("site_id")
+            or val.get("location")
+            or val.get("facility")
+        )
+        if not isinstance(site_ref, str) or not site_ref.strip():
+            return False
+        slug = re.sub(r"[^a-z0-9]+", "_", site_ref.strip().lower()).strip("_")
+        if not slug:
+            return False
+        target = f"site:{slug}"
+        existing = list(getattr(atom, "entity_keys", []) or [])
+        if target in existing:
+            return False
+        atom.entity_keys = sorted(set(existing) | {target})
+        return True
+
     def _emit_one_site_key_from_value(atom: Any) -> bool:
         """v56: for atoms in _SKIP_ENRICHMENT_TYPES that have a
         ``value.site_id`` (physical_site rows specifically), ensure the
@@ -4944,9 +5013,7 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
 
         Returns True when a key was added/modified, False otherwise.
         """
-        val = getattr(atom, "value", None) or {}
-        if not isinstance(val, dict):
-            return False
+        val = _atom_value_dict(atom)
         sid = val.get("site_id") or val.get("id") or ""
         if not isinstance(sid, str) or not sid.strip():
             return False
@@ -4978,6 +5045,17 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     atoms_enriched += 1
                     total_keys_added += 1
             continue
+
+        # Structured site reference on task / site note atoms (no regex guessing).
+        if _atype_str in {"task", "site_implementation_note"}:
+            if _emit_site_key_from_value(atom):
+                atoms_enriched += 1
+                total_keys_added += 1
+                continue
+            if _inherit_site_key_from_section(atom, authoritative_sites):
+                atoms_enriched += 1
+                total_keys_added += 1
+                continue
 
         existing = list(getattr(atom, "entity_keys", []) or [])
         text = getattr(atom, "raw_text", "") or ""

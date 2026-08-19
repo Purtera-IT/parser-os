@@ -171,6 +171,84 @@ def test_complaint_gated_commits_with_controls(monkeypatch):
     assert body["failed_invariants"] == []
 
 
+def test_complaint_ungated_survives_stateless_db(monkeypatch):
+    """Regression: stateless service has no sqlite DB — complaint must not 500."""
+    import sqlite3
+
+    def _boom(_pid):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(rf, "_load_compile_result", _boom)
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/complaint",
+        json={
+            "relation": "atom_type",
+            "desired_verdict": "work_scope_item",
+            "candidates": ["scope_item", "work_scope_item"],
+            "text": "Install forty-eight wireless access points",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["committed"] is False
+    assert "UNGATED" in body["report"]
+
+
+def test_correction_chip_commits(monkeypatch):
+    monkeypatch.setattr(
+        rf,
+        "_load_compile_result",
+        lambda pid: CompileResult(project_id=pid, atoms=[], entities=[], edges=[], packets=[]),
+    )
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/correction",
+        json={
+            "head": "type",
+            "text": "Install forty-eight wireless access points",
+            "old_value": "scope_item",
+            "new_value": "work_scope_item",
+            "candidates": ["scope_item", "work_scope_item"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["committed"] is True
+    assert body["relation"] == "atom_type"
+    assert body["verdict"] == "work_scope_item"
+    assert _client().get("/projects/p1/feedback/corrections").json()["total"] == 1
+
+
+def test_correction_chip_survives_stateless_db(monkeypatch):
+    """Regression: on the stateless service the compile-result sqlite DB can't be
+    opened. A chip correction must still commit (result is best-effort context),
+    not 500. Mirrors live `sqlite3.OperationalError: unable to open database file`.
+    """
+    import sqlite3
+
+    def _boom(_pid):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(rf, "_load_compile_result", _boom)
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/correction",
+        json={
+            "head": "image",
+            "text": "MDF rack elevation diagram",
+            "old_value": "table_image",
+            "new_value": "diagram",
+            "candidates": ["table_image", "diagram", "photo", "chart"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["committed"] is True
+    assert body["relation"] == "pdf_image_kind"
+    assert body["verdict"] == "diagram"
+
+
 def test_endpoints_409_without_store(monkeypatch):
     # Ensure no store and no env-driven wiring.
     set_store(None)
@@ -178,6 +256,10 @@ def test_endpoints_409_without_store(monkeypatch):
     client = _client()
     r1 = client.post("/projects/p1/feedback/rule", json={"sentence": "x"})
     r2 = client.get("/projects/p1/feedback/corrections")
+    r3 = client.post(
+        "/projects/p1/feedback/correction",
+        json={"head": "type", "text": "x", "new_value": "work_scope_item"},
+    )
     assert r1.status_code == 409
     assert r2.status_code == 409
 
@@ -255,3 +337,4 @@ def test_correction_without_exemplar_is_refused():
         json={"head": "gap", "text": "   ", "new_value": "not_relevant"},
     )
     assert r.status_code == 422
+    assert r3.status_code == 409

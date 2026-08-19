@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.domain import get_active_domain_pack
+from app.core.address_parse import US_STATES, find_us_addresses_in_text
 from app.core.ids import stable_id
 from app.core.normalizers import (
     detect_speaker,
@@ -140,9 +141,22 @@ class TranscriptParser(BaseParser):
                     if parse_timestamp(line) is not None or detect_speaker(line) is not None:
                         speaker_or_ts = True
                         break
+                if not speaker_or_ts:
+                    # PDF/meeting exports often use ``Name [mm:ss]`` mid-paragraph.
+                    if re.search(
+                        r"[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z0-9.'\-]*){0,4}\s*"
+                        r"\[\d{1,2}:\d{2}(?::\d{2})?\]",
+                        text[:4000],
+                    ):
+                        speaker_or_ts = True
                 if speaker_or_ts:
                     confidence = 0.82
                     reasons.append("speaker_or_timestamp_markers")
+        # Filename/title cue: any artifact whose name contains "transcript"
+        # is a strong transcript candidate even when the sample is sparse.
+        if "transcript" in path.name.lower().replace("_", " ").replace("-", " "):
+            confidence = max(confidence, 0.78)
+            reasons.append("filename_transcript")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,
@@ -372,21 +386,25 @@ class TranscriptParser(BaseParser):
         return "unknown"
 
     def _base_source_ref(self, artifact_id: str, filename: str, segment: dict[str, Any], speaker_role: str) -> SourceRef:
+        section = segment.get("section")
+        locator: dict[str, Any] = {
+            "line_start": segment["line_start"],
+            "line_end": segment["line_end"],
+            "speaker": segment.get("speaker"),
+            "speaker_role": speaker_role,
+            "timestamp_start": segment.get("timestamp_start"),
+            "timestamp_end": segment.get("timestamp_end"),
+            "section": section,
+            "utterance_index": segment["utterance_index"],
+        }
+        if section:
+            locator["section_path"] = [str(section)]
         return SourceRef(
             id=stable_id("src", artifact_id, segment["utterance_index"], segment["line_start"], segment["text"]),
             artifact_id=artifact_id,
             artifact_type=ArtifactType.transcript,
             filename=filename,
-            locator={
-                "line_start": segment["line_start"],
-                "line_end": segment["line_end"],
-                "speaker": segment.get("speaker"),
-                "speaker_role": speaker_role,
-                "timestamp_start": segment.get("timestamp_start"),
-                "timestamp_end": segment.get("timestamp_end"),
-                "section": segment.get("section"),
-                "utterance_index": segment["utterance_index"],
-            },
+            locator=locator,
             extraction_method="transcript_rule_engine",
             parser_version=self.parser_version,
         )
@@ -454,6 +472,62 @@ class TranscriptParser(BaseParser):
             atom_types.append(AtomType.open_question)
 
         atoms: list[EvidenceAtom] = []
+        try:
+            from app.core.vendor_site_ban import is_purtera_vendor_address
+
+            banned_vendor_addr = is_purtera_vendor_address(text=text)
+        except Exception:
+            banned_vendor_addr = False
+        if not banned_vendor_addr:
+            for parsed in find_us_addresses_in_text(text):
+                if (
+                    not parsed.city
+                    or not parsed.state
+                    or parsed.state not in US_STATES
+                    or not parsed.street_address
+                ):
+                    continue
+                slug = re.sub(
+                    r"[^a-z0-9]+",
+                    "_",
+                    f"{parsed.city}_{parsed.state}_{parsed.zip or parsed.street_address}".lower(),
+                ).strip("_")
+                display = f"{parsed.street_address}, {parsed.city}, {parsed.state} {parsed.zip or ''}".strip()
+                site_keys = list(dict.fromkeys([*entity_keys, f"site:{slug}"]))
+                aliases = list(dict.fromkeys(parsed.aliases))
+                names = list(dict.fromkeys([display, parsed.city, *aliases]))
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id("atm", project_id, artifact_id, "transcript_note_physical_site", slug),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.physical_site,
+                        raw_text=display,
+                        normalized_text=normalize_text(display),
+                        value={
+                            "kind": "physical_site",
+                            "id": slug,
+                            "site_id": slug,
+                            "name": display,
+                            "names": names,
+                            "aliases": aliases,
+                            "street_address": parsed.street_address,
+                            "address": parsed.street_address,
+                            "city": parsed.city,
+                            "state": parsed.state,
+                            "zip": parsed.zip,
+                            "inferred": True,
+                            "source_context": text[:600],
+                        },
+                        entity_keys=site_keys,
+                        source_refs=[source_ref],
+                        authority_class=AuthorityClass.meeting_note,
+                        confidence=0.72,
+                        review_status=ReviewStatus.needs_review,
+                        review_flags=["transcript_note_physical_site"],
+                        parser_version=self.parser_version,
+                    )
+                )
         deduped_types: list[AtomType] = []
         for atom_type in atom_types:
             if atom_type not in deduped_types:
