@@ -24,7 +24,9 @@ import re
 from typing import Any
 
 from app.core.address_parse import (
+    _CITY_STATE_ZIP_RE,
     US_STATES,
+    US_STATES as _US_STATES,
     find_us_addresses_in_text,
     normalized_address_key,
 )

@@ -1174,21 +1174,6 @@ def _cid_reading_anchor(
     return fallback_msg, fallback_line
 
 
-def _extract_email_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".eml":
-        raw = path.read_bytes()
-        msg = BytesParser(policy=policy.default).parsebytes(raw)
-        body = msg.get_body(preferencelist=("plain", "html"))
-        content = body.get_content() if body is not None else raw.decode("utf-8", errors="ignore")
-    else:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-    if "<html" in content.lower():
-        soup = BeautifulSoup(content, "html.parser")
-        return soup.get_text(separator="\n", strip=True)
-    return content
-
-
 # Subject prefixes stripped to find the conversation root: Re:, Fwd:, FW:,
 # Aw: (German), Rv: (Spanish/Italian) — repeated, in any case. The HubSpot deal
 # number prefix (e.g. "010065") is KEPT: it is a strong, deliberate thread key.

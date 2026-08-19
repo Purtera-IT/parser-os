@@ -203,7 +203,7 @@ def test_correction_chip_commits(monkeypatch):
     )
     set_store(_store())
     r = _client().post(
-        "/projects/p1/feedback/correction",
+        "/projects/p1/feedback/correction/chip",
         json={
             "head": "type",
             "text": "Install forty-eight wireless access points",
@@ -233,7 +233,7 @@ def test_correction_chip_survives_stateless_db(monkeypatch):
     monkeypatch.setattr(rf, "_load_compile_result", _boom)
     set_store(_store())
     r = _client().post(
-        "/projects/p1/feedback/correction",
+        "/projects/p1/feedback/correction/chip",
         json={
             "head": "image",
             "text": "MDF rack elevation diagram",
@@ -337,4 +337,3 @@ def test_correction_without_exemplar_is_refused():
         json={"head": "gap", "text": "   ", "new_value": "not_relevant"},
     )
     assert r.status_code == 422
-    assert r3.status_code == 409

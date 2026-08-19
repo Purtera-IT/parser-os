@@ -262,8 +262,19 @@ def feedback_complaint(project_id: str, req: ComplaintRequest) -> FeedbackRespon
     )
 
 
-@router.post("/{project_id}/feedback/correction", response_model=FeedbackResponse)
-def feedback_correction(project_id: str, req: CorrectionRequest) -> FeedbackResponse:
+# PATH COLLISION (merge 2026-08-18): both branches independently built a
+# /feedback/correction endpoint with this same function name. FastAPI keeps the
+# FIRST registration, so this one silently shadowed the per-head PM loop below
+# and every PM correction came back with a corr_<uuid> id instead of
+# pm_<head>_<hash> -- which is what tests/test_routes_feedback.py asserts and
+# what purpulse-frontend v2/reviewCorrections.ts posts for.
+#
+# The canonical /feedback/correction is the per-head loop (a new head needs no
+# new endpoint). This one-tap chip endpoint keeps its behaviour on an explicit
+# path. REVIEW: if anything still posts chips to the bare path, it needs
+# updating to /feedback/correction/chip.
+@router.post("/{project_id}/feedback/correction/chip", response_model=FeedbackResponse)
+def feedback_correction_chip(project_id: str, req: CorrectionRequest) -> FeedbackResponse:
     """PM one-tap chip → instant FeedbackStore correction + gold training row.
 
   Chip corrections are explicit PM verdict picks (not free-text rules), so we

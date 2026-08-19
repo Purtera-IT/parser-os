@@ -94,4 +94,9 @@ def test_build_service_routing_emits_wireless_when_anchors_present(monkeypatch) 
     assert out["enabled"] is True
     assert out.get("abstained") is not True
     assert out["primary"] == "wireless"
-    assert out["confidence"] == 0.91
+    # Reported confidence is CLAMPED (_conf_ceiling, default 0.8): the head's raw
+    # similarity saturates near 1.0 while held-out accuracy is far lower, and
+    # OrbitBrief's gap checklist would treat a confidently-wrong domain label as
+    # certain. The uncapped score stays available as raw_confidence.
+    assert out["confidence"] == 0.8
+    assert out["raw_confidence"] == 0.91
