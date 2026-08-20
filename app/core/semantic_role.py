@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import urllib.request
 
 # Reuse the same Ollama endpoint the rest of the pipeline targets.
@@ -54,7 +56,7 @@ def reset_reachability() -> None:
 
 
 def _llm_disabled() -> bool:
-    return os.environ.get("SOWSMITH_DISABLE_LLM", "").strip().lower() in {
+    return env_get("PARSER_OS_DISABLE_LLM", "").strip().lower() in {
         "1", "true", "yes", "on",
     }
 

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -34,7 +36,7 @@ _PROTO_CACHE: dict[str, object] = {}  # rule-name -> (pos_matrix, neg_matrix)
 # the prewarm request.
 _PREWARM_MAX_CHARS = 400
 # Ceiling on one prewarm request so a 500-page dump can't build a giant payload.
-_PREWARM_MAX_TEXTS = int(os.environ.get("SOWSMITH_SEMANTIC_PREWARM_MAX", "4000"))
+_PREWARM_MAX_TEXTS = int(env_get("PARSER_OS_SEMANTIC_PREWARM_MAX", "4000"))
 
 
 def prewarm(texts: Iterable[str]) -> int:
@@ -88,8 +90,7 @@ _THRESHOLD_REGISTRY: dict | None = None
 
 
 def _threshold_registry_path() -> Path:
-    return Path(os.environ.get(
-        "SOWSMITH_RULE_THRESHOLDS",
+    return Path(env_get("PARSER_OS_RULE_THRESHOLDS",
         str(Path(__file__).resolve().parents[2] / "models" / "semantic_rule_thresholds.json"),
     ))
 
@@ -120,7 +121,7 @@ def _log_decision(name: str, text: str, best_pos: float, best_neg: float,
     ``SOWSMITH_RULE_LOG`` points at a path. The reviewer's accept/reject on the
     resulting atom is later joined to these rows to label them — that labelled
     set is what the trainer re-fits the threshold on. Off (no env) -> zero cost."""
-    path = os.environ.get("SOWSMITH_RULE_LOG")
+    path = env_get("PARSER_OS_RULE_LOG")
     if not path:
         return
     try:
@@ -161,7 +162,7 @@ class SemanticRule:
     def _disabled() -> bool:
         # global kill-switch: force the lexical fallback everywhere (CI / offline
         # determinism / debugging a regression to the embedder).
-        return os.environ.get("SOWSMITH_SEMANTIC_RULES", "1") == "0"
+        return env_get("PARSER_OS_SEMANTIC_RULES", "1") == "0"
 
     def _reachable(self) -> bool:
         try:

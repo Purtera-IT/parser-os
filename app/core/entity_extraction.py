@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import functools
 import os
+
+from app.core.env import env_get
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -5127,7 +5129,7 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         # DeepSeek teacher configured and idle. The compile still "succeeded",
         # just with no semantics and no images read.
         do_multi = (
-            not os.environ.get("SOWSMITH_MULTI_ENTITY_DISABLE")
+            not env_get("PARSER_OS_MULTI_ENTITY_DISABLE")
             and (_llm.teacher_api_enabled() or ollama_reachable())
         )
     except Exception:

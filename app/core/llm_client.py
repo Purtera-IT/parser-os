@@ -45,6 +45,8 @@ import hashlib
 import io
 import json
 import os
+
+from app.core.env import env_get
 import random
 import re
 import threading
@@ -228,7 +230,7 @@ _VCACHE_PATH = None
 
 def _vision_cache_conn():
     global _VCACHE_CONN, _VCACHE_PATH
-    path = os.environ.get("SOWSMITH_VISION_CACHE_DB")
+    path = env_get("PARSER_OS_VISION_CACHE_DB")
     if not path:
         return None
     with _VCACHE_LOCK:
@@ -322,7 +324,7 @@ def pool_budget_seconds(default_per_call: int = _DEFAULT_API_TIMEOUT) -> int:
     ``urlopen(timeout=...)`` hang past its nominal timeout (seen with a Tailscale
     tunnel to a vanished host); bounding the whole pool guarantees a deal can
     never freeze on the teacher. Override with ``SOWSMITH_LLM_POOL_TIMEOUT``."""
-    v = os.environ.get("SOWSMITH_LLM_POOL_TIMEOUT")
+    v = env_get("PARSER_OS_LLM_POOL_TIMEOUT")
     if v:
         try:
             return max(30, int(v))

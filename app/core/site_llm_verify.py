@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import re
 import urllib.request
 from typing import Any
@@ -1161,7 +1163,7 @@ def _call_ollama(prompt: str, *, max_tokens: int = 2048) -> str:
     """POST to /api/generate. Returns the raw response.text or ''."""
     # Global kill-switch: SOWSMITH_DISABLE_LLM forces the deterministic
     # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return ""
     # Hosted-teacher route (default-off): if TEACHER_API_BASE is set, serve via
     # the OpenAI-compatible client; otherwise use the local Ollama below.
@@ -1170,7 +1172,7 @@ def _call_ollama(prompt: str, *, max_tokens: int = 2048) -> str:
         return llm_client.complete(prompt, max_tokens=max_tokens)
     host = ollama_host.resolve_host(DEFAULT_HOST)
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
-    timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    timeout = int(env_get("PARSER_OS_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
 
     # A model that cannot produce five tokens will not produce a site
     # verdict either, and this call is made once per candidate batch — so

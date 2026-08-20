@@ -33,6 +33,8 @@ registers a store via :func:`set_store` and the precedence above goes live.
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -150,7 +152,7 @@ def _dump_stats_atexit() -> None:
     """If SOWSMITH_DECIDE_STATS_OUT is set, write the decision telemetry on
     process exit. Lets a subprocess compile report its LLM call-rate without an
     in-process handle — used by the live multi-deal validation harness."""
-    path = os.environ.get("SOWSMITH_DECIDE_STATS_OUT", "").strip()
+    path = env_get("PARSER_OS_DECIDE_STATS_OUT", "").strip()
     if not path or _STATS["decisions"] == 0:
         return
     try:
@@ -170,11 +172,11 @@ _atexit.register(_dump_stats_atexit)
 # verdict as a weak correction so the head learns that region and stops paying
 # for the LLM there next time. Opt-in (a compile that writes to the store is
 # mutating shared state) — enabled for live validation via the env flag.
-_TEACHER_MIN_CONF = float(os.environ.get("SOWSMITH_TEACHER_MIN_CONF", "0.85"))
+_TEACHER_MIN_CONF = float(env_get("PARSER_OS_TEACHER_MIN_CONF", "0.85"))
 
 
 def _teacher_cache_enabled() -> bool:
-    return os.environ.get("SOWSMITH_TEACHER_CACHE", "") not in ("", "0", "false")
+    return env_get("PARSER_OS_TEACHER_CACHE", "") not in ("", "0", "false")
 
 
 def decide(

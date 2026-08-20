@@ -28,6 +28,8 @@ class (parsed-but-unpromoted) from code into text.
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 from typing import Iterable, Optional
 
 from app.core.decide import DecisionScope, decide
@@ -167,7 +169,7 @@ def _load_admission_heads():
     try:
         from app.core.admission_head import AdmissionRegistry
         from app.core.embedding_retrieval import _embed_model
-        reg = os.environ.get("SOWSMITH_ADMISSION_REGISTRY", "_admission_heads")
+        reg = env_get("PARSER_OS_ADMISSION_REGISTRY", "_admission_heads")
         return AdmissionRegistry(reg).load_all(embed_model=_embed_model())
     except Exception:
         return {}

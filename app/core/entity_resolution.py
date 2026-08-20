@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import re
 from difflib import SequenceMatcher
 
@@ -164,7 +166,7 @@ def extract_entity_records(
     # if yes, which is better". Union-find merges the entity records
     # that pass the test.
     import os as _os
-    if not _os.environ.get("SOWSMITH_FINAL_DEDUP_DISABLE") and len(records) >= 4:
+    if not env_get("PARSER_OS_FINAL_DEDUP_DISABLE") and len(records) >= 4:
         try:
             from app.core.rag_extras import run_tournament
             from app.core.embedding_retrieval import (
@@ -408,7 +410,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         #      O(n · cap): once a bucket holds `cap` distinct reps we stop
         #      growing it (exact-dedup already ran above, so the marginal
         #      near-dup beyond `cap` distinct prose items is negligible).
-        max_reps = max(1, int(os.environ.get("SOWSMITH_FUZZY_DEDUP_MAX_REPS", "400")))
+        max_reps = max(1, int(env_get("PARSER_OS_FUZZY_DEDUP_MAX_REPS", "400")))
         fuzzy_buckets: dict[tuple[str, str], list[str]] = {}
         for atom in progress.track(
             unique, desc=f"dedup {str(aid)[:8]}", total=len(unique), min_total=500
@@ -659,7 +661,7 @@ def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
       * no feedback store is wired (decide() returns fallback for every pair →
         zero merges → byte-identical to the deterministic pipeline).
     """
-    if os.environ.get("SOWSMITH_NEURAL_SITE_FUSION", "") in ("", "0", "false"):
+    if env_get("PARSER_OS_NEURAL_SITE_FUSION", "") in ("", "0", "false"):
         return []
     keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
     if len(keys) < 2:
@@ -702,7 +704,7 @@ def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
     # cap, undecided pairs simply stay separate + flagged (the safe default) —
     # never a guessed merge.
     try:
-        llm_budget = int(os.environ.get("SOWSMITH_SITE_FUSION_LLM_BUDGET", "80"))
+        llm_budget = int(env_get("PARSER_OS_SITE_FUSION_LLM_BUDGET", "80"))
     except ValueError:
         llm_budget = 80
 
@@ -799,7 +801,7 @@ def semantic_site_role_drops(site_keys: set[str]) -> set[str]:
     # set the flag to "0"/"false" to disable. Safe-degrading regardless: with no
     # store wired or the embedder unreachable, every decide() abstains → empty
     # drop set → byte-identical to not running the gate.
-    if os.environ.get("SOWSMITH_NEURAL_SITE_ROLE_GATE", "1").strip().lower() in ("0", "false", "no", "off"):
+    if env_get("PARSER_OS_NEURAL_SITE_ROLE_GATE", "1").strip().lower() in ("0", "false", "no", "off"):
         return set()
     keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
     if not keys:

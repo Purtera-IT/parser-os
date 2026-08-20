@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import threading
 from typing import Any
 
@@ -32,12 +34,12 @@ _holder: dict[str, Any] = {}
 
 
 def _head_dir() -> str:
-    return os.environ.get("SOWSMITH_TYPE_HEAD_GPU_DIR", "_type_head_gpu/best")
+    return env_get("PARSER_OS_TYPE_HEAD_GPU_DIR", "_type_head_gpu/best")
 
 
 def _conf_bar() -> float:
     try:
-        return float(os.environ.get("SOWSMITH_TYPE_HEAD_GPU_CONF", str(_DEFAULT_CONF)))
+        return float(env_get("PARSER_OS_TYPE_HEAD_GPU_CONF", str(_DEFAULT_CONF)))
     except ValueError:
         return _DEFAULT_CONF
 

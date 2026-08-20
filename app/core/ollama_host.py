@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import threading
 import time
 import urllib.request
@@ -112,7 +114,7 @@ def generation_ready(host: str, model: str, *, timeout: int | None = None) -> bo
     treats a falsy result exactly as it treats an empty completion, and takes
     its deterministic path.
     """
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return False
     if not host or not model:
         return False
@@ -145,7 +147,7 @@ def embed_ready(host: str, model: str, *, timeout: int | None = None) -> bool:
     ``enrich_atoms`` embeds repeatedly. One deal sat in ``enrich_entities`` for
     21 minutes against a dead endpoint with nothing to short-circuit it.
     """
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return False
     if not host or not model:
         return False

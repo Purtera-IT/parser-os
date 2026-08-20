@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import logging
 import os
+
+from app.core.env import env_get
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
@@ -373,7 +375,7 @@ def page_level_iterative_recall(
 
     cost: 1 LLM call per page × low-coverage pages, capped at max_pages.
     """
-    if os.environ.get("SOWSMITH_PLIR_DISABLE"):
+    if env_get("PARSER_OS_PLIR_DISABLE"):
         return []
     # Pick pages to scan — low-coverage first, then high-sentence-count
     candidates = sorted(
@@ -454,7 +456,7 @@ def dual_model_canonicalize(
 
     Cost: 2x per canonicalize call. Opt-in via SOWSMITH_MULTI_MODEL=1.
     """
-    if not os.environ.get("SOWSMITH_MULTI_MODEL"):
+    if not env_get("PARSER_OS_MULTI_MODEL"):
         return None
     r14 = canonicalize_fn_14b(sentence, entity_type)
     r32 = canonicalize_fn_32b(sentence, entity_type)

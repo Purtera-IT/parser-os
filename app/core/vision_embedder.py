@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import io
 import os
+
+from app.core.env import env_get
 from typing import Any
 
 import numpy as np
@@ -41,7 +43,7 @@ import numpy as np
 #: Small is deliberate: 22M parameters, 384-dim, CPU-friendly. The larger
 #: DINOv2 variants are better still, but a schematic page can carry hundreds of
 #: glyph crops and this runs inside a compile.
-_MODEL_ID = os.environ.get("SOWSMITH_GLYPH_EMBED_MODEL", "facebook/dinov2-small")
+_MODEL_ID = env_get("PARSER_OS_GLYPH_EMBED_MODEL", "facebook/dinov2-small")
 #: Two views concatenated -- see DinoV2Embedder.embed for why.
 _VIEW_DIM = 384
 _DIM = _VIEW_DIM * 2
@@ -52,7 +54,7 @@ _TRIED = False
 
 
 def _disabled() -> bool:
-    return os.environ.get("SOWSMITH_GLYPH_EMBED_DINOV2", "1").strip().lower() in {
+    return env_get("PARSER_OS_GLYPH_EMBED_DINOV2", "1").strip().lower() in {
         "0", "false", "no", "off",
     }
 

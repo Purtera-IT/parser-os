@@ -20,6 +20,8 @@ from __future__ import annotations
 import io
 import math
 import os
+
+from app.core.env import env_get
 from dataclasses import dataclass
 
 import numpy as np
@@ -173,7 +175,7 @@ def default_embedder():
     if _DEFAULT_TRIED:
         return _DEFAULT_EMBEDDER
     _DEFAULT_TRIED = True
-    path = os.environ.get("SOWSMITH_SYMBOL_EMBEDDER")
+    path = env_get("PARSER_OS_SYMBOL_EMBEDDER")
     if path and _TORCH:
         try:
             _DEFAULT_EMBEDDER = SchematicEmbedder.load(path)

@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -173,8 +175,7 @@ class FeedbackStore:
         # sentence*, not by hand-balancing example strings. One anchor per
         # correction → a gentle, calibrated nudge (not the recall-killing flood a
         # pile of exemplars causes). Off → byte-identical to exemplar-only fits.
-        self._enable_nl = os.getenv(
-            "SOWSMITH_NEURAL_NL_LEARN", "1"
+        self._enable_nl = env_get("PARSER_OS_NEURAL_NL_LEARN", "1"
         ).strip().lower() not in ("0", "false", "no", "off")
         # Per-correction matrix of its individual (normalized) exemplar vectors,
         # built alongside the mean prototype. Backs the optional max-similarity
@@ -183,8 +184,7 @@ class FeedbackStore:
         # query scores against its single NEAREST exemplar (ColBERT-style late
         # interaction, lite). Off by default → byte-identical to the mean path.
         self._proto_ex: dict[str, np.ndarray] = {}
-        self._enable_maxsim = os.getenv(
-            "SOWSMITH_NEURAL_MAXSIM", ""
+        self._enable_maxsim = env_get("PARSER_OS_NEURAL_MAXSIM", ""
         ).strip().lower() in ("1", "true", "yes", "on")
         # Cross-encoder reranker (retrieve-then-rerank). The bi-encoder above is
         # stage-1 recall; an optional cross-encoder is stage-2 precision. Off by
@@ -192,8 +192,7 @@ class FeedbackStore:
         # an injectable scorer (tests); otherwise the env-selected backend in
         # app.core.reranker is used when SOWSMITH_NEURAL_RERANK is set.
         self._rerank_fn = rerank_fn
-        self._enable_rerank = os.getenv(
-            "SOWSMITH_NEURAL_RERANK", ""
+        self._enable_rerank = env_get("PARSER_OS_NEURAL_RERANK", ""
         ).strip().lower() in ("1", "true", "yes", "on")
 
     # ── embedding plumbing (lazy import keeps this module import-light) ──

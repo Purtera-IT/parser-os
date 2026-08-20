@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import sys
 import threading
 from contextlib import contextmanager
@@ -40,7 +42,7 @@ _HB_THREAD: threading.Thread | None = None
 
 def _heartbeat_interval() -> float:
     try:
-        v = float(os.environ.get("SOWSMITH_HEARTBEAT_SECS", "30"))
+        v = float(env_get("PARSER_OS_HEARTBEAT_SECS", "30"))
     except (TypeError, ValueError):
         v = 30.0
     return v if v > 0 else 0.0  # 0 (or negative) disables heartbeats

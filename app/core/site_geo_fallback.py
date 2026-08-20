@@ -20,6 +20,8 @@ LLM.
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import re
 from typing import Any
 
@@ -205,7 +207,7 @@ def suppress_vendor_sites(
     # unchanged; huge site rosters stay fast and complete.
     import os as _os
     try:
-        llm_budget = max(0, int(_os.environ.get("SOWSMITH_VENDOR_SUPPRESS_LLM_MAX", "60")))
+        llm_budget = max(0, int(env_get("PARSER_OS_VENDOR_SUPPRESS_LLM_MAX", "60")))
     except Exception:
         llm_budget = 60
     for a in sites:

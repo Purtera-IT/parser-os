@@ -26,6 +26,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+
+from app.core.env import env_get
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -123,7 +125,7 @@ def train_span_head(
     little data."""
     from sklearn.linear_model import LogisticRegression
 
-    log_db = log_db or os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
+    log_db = log_db or env_get("PARSER_OS_TRAINING_LOG_DB", "_training_deepseek.db")
     if embed_fn is None:
         from app.core.embedding_retrieval import embed_texts
         embed_fn = embed_texts
@@ -183,7 +185,7 @@ def train_span_head(
 # ── learnable registry: eval-gated promotion + rollback (recall-monotonic) ─────
 
 def _reg_dir() -> str:
-    return os.environ.get("SOWSMITH_SPAN_HEAD_DIR", "_span_heads")
+    return env_get("PARSER_OS_SPAN_HEAD_DIR", "_span_heads")
 
 
 def _paths(relation: str):
@@ -288,7 +290,7 @@ def augment_enrich_results(results: dict, atoms: list, force: set | None = None)
     are ALWAYS filled from the heads (the heads are their sole source). Otherwise
     gated by SOWSMITH_SPAN_AUGMENT. Returns the number of items added."""
     force = force or set()
-    augment_on = os.environ.get("SOWSMITH_SPAN_AUGMENT", "").strip().lower() in ("1", "true", "yes", "on")
+    augment_on = env_get("PARSER_OS_SPAN_AUGMENT", "").strip().lower() in ("1", "true", "yes", "on")
     if not augment_on and not force:
         return 0
     need = [r for r in _VERBATIM_VALUE if augment_on or r in force]

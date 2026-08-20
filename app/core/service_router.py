@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+
+from app.core.env import env_get
 from typing import Any
 
 _CAP = 40  # atoms sampled for the scope summary — matches _label_service_types._scope_summary
@@ -35,11 +37,11 @@ _NOISE_TYPES = frozenset({
 
 
 def _router_dir() -> str:
-    return os.environ.get("SOWSMITH_SERVICE_ROUTER_DIR", "_contrastive_router")
+    return env_get("PARSER_OS_SERVICE_ROUTER_DIR", "_contrastive_router")
 
 
 def _enabled() -> bool:
-    return os.environ.get("SOWSMITH_SERVICE_ROUTING", "").strip().lower() in (
+    return env_get("PARSER_OS_SERVICE_ROUTING", "").strip().lower() in (
         "1", "true", "yes", "on",
     )
 
@@ -111,7 +113,7 @@ def _conf_ceiling() -> float:
     confidence until the calibrated contrastive head lands. Configurable via
     SOWSMITH_ROUTER_CONF_CEILING; default 0.8."""
     try:
-        return float(os.environ.get("SOWSMITH_ROUTER_CONF_CEILING", "0.8"))
+        return float(env_get("PARSER_OS_ROUTER_CONF_CEILING", "0.8"))
     except ValueError:
         return 0.8
 

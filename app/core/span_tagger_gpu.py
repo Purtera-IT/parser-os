@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import threading
 from typing import Any
 
@@ -28,11 +30,11 @@ _cache: dict[str, Any] = {}
 
 
 def enabled() -> bool:
-    return os.environ.get("SOWSMITH_SPAN_GPU", "").strip().lower() in ("1", "true", "yes", "on")
+    return env_get("PARSER_OS_SPAN_GPU", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _base() -> str:
-    return os.environ.get("SOWSMITH_SPAN_GPU_DIR", "_span_gpu")
+    return env_get("PARSER_OS_SPAN_GPU_DIR", "_span_gpu")
 
 
 def _rel_dir(rel: str) -> str | None:

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -231,7 +233,7 @@ def _richer_text(di_text: str, fitz_text: str) -> str:
 
 
 def _doc_intel_disabled() -> bool:
-    return os.environ.get("SOWSMITH_PDF_TABLES_DOC_INTEL", "1").strip().lower() in {
+    return env_get("PARSER_OS_PDF_TABLES_DOC_INTEL", "1").strip().lower() in {
         "0", "false", "no", "off",
     }
 
@@ -1865,7 +1867,7 @@ def _pdf_image_markers(
     # pass can read it (the marker points AT the saved file instead of "0
     # bytes"). Save dir is env-overridable; defaults to a project-local folder.
     import os as _os
-    img_root = Path(_os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
+    img_root = Path(env_get("PARSER_OS_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
     saved_by_xref: dict[int, tuple[str, int]] = {}  # xref -> (saved_path, size); same image reused across pages
     emitted_xrefs: set[int] = set()  # one marker atom per UNIQUE image, not per page
     # The most recent "Upload N photos showing X" instruction — a field-report's

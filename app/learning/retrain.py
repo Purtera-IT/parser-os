@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+
+from app.core.env import env_get
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -361,7 +363,7 @@ def _embed_model_id() -> str:
                 return v
         except Exception:
             pass
-    return os.environ.get("SOWSMITH_EMBED_MODEL", "unknown")
+    return env_get("PARSER_OS_EMBED_MODEL", "unknown")
 
 
 def main() -> None:
@@ -371,7 +373,7 @@ def main() -> None:
     log = get_training_log()
     if log is None:
         raise SystemExit("set SOWSMITH_TRAINING_LOG_DB to the training-log DB first")
-    registry_dir = os.environ.get("SOWSMITH_HEAD_REGISTRY_DIR")
+    registry_dir = env_get("PARSER_OS_HEAD_REGISTRY_DIR")
     if not registry_dir:
         raise SystemExit("set SOWSMITH_HEAD_REGISTRY_DIR to the registry path first")
     registry = HeadRegistry(registry_dir)

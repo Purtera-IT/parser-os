@@ -5,6 +5,8 @@ universal. Loads the RunPod-trained weights from SOWSMITH_SYMBOL_DETECTOR; retur
 from __future__ import annotations
 import io
 import os
+
+from app.core.env import env_get
 from dataclasses import dataclass
 
 _MODEL = None
@@ -22,7 +24,7 @@ def _load():
     if _TRIED:
         return _MODEL
     _TRIED = True
-    path = os.environ.get("SOWSMITH_SYMBOL_DETECTOR")
+    path = env_get("PARSER_OS_SYMBOL_DETECTOR")
     if not path or not os.path.exists(path):
         return None
     try:
