@@ -5116,9 +5116,19 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     try:
         from app.core.multi_entity_llm import extract_multi_entities_with_llm
         from app.core.site_llm_verify import ollama_reachable
+        from app.core import llm_client as _llm
+        # A hosted teacher is a complete substitute for the local host here --
+        # extract_all_entities_with_llm routes through llm_client when
+        # TEACHER_API_BASE is set, and so does the vision pass inside it. Gating
+        # on ollama_reachable() ALONE meant that whenever the tailnet box was
+        # down (or up but refusing work with "maximum pending requests
+        # exceeded", as on 2026-08-19) every LLM entity extractor AND the whole
+        # vision pass were skipped in silence -- with a perfectly good Azure /
+        # DeepSeek teacher configured and idle. The compile still "succeeded",
+        # just with no semantics and no images read.
         do_multi = (
             not os.environ.get("SOWSMITH_MULTI_ENTITY_DISABLE")
-            and ollama_reachable()
+            and (_llm.teacher_api_enabled() or ollama_reachable())
         )
     except Exception:
         do_multi = False

@@ -111,6 +111,124 @@ _DECLARATIVE_TAIL_BOUNDARY = re.compile(
 _NBSP_REWRITE = re.compile(r"(?:&nbsp;|&#160;| )+")
 
 
+
+
+_REVISION_ROW_RE = re.compile(
+    r"^rev(?:ision)?\s*[:#]?\s*\d+(?:\.\d+)?", re.IGNORECASE
+)
+_TOOL_ROW_RE = re.compile(r"^item\s*:\s*\d+\s*\|\s*description\s*:", re.IGNORECASE)
+
+
+def _looks_like_document_control_row(row_text: str, columns: list[str] | None = None) -> bool:
+    """True for a table row that describes the DOCUMENT, not the work.
+
+    Two kinds show up in every vendor install spec and both were landing as
+    ``scope_item`` -- i.e. as contractual scope a quote/scope head reads:
+
+      * revision history ("Rev 1.4 | 12/03/2025 | Add roll door installation")
+        -- a changelog of the PDF, not work anyone is buying.
+      * the tools list ("Item: 1 | Description: Cordless Drill") -- what the
+        installer brings in their van. A cordless drill is not a deliverable.
+
+    On the Xtra Lease spec that was 20 of 123 scope items (17%). Both stay as
+    atoms (the census still needs the region covered, and the revision date is
+    genuinely useful provenance) -- they are just typed as metadata instead of
+    scope.
+    """
+    t = " ".join(str(row_text or "").split())
+    if not t:
+        return False
+    cols = {str(c or "").strip().lower() for c in (columns or [])}
+    if _TOOL_ROW_RE.match(t):
+        return True
+    if _REVISION_ROW_RE.match(t.split("|")[0].strip()):
+        return True
+    if {"revision", "date"} <= cols or {"item", "description"} <= cols:
+        return True
+    return False
+
+
+def _same_glyphs(a: str, b: str) -> bool:
+    """Same characters, different order — the transposition bug and nothing else.
+
+    A repair can reorder glyphs; it can never add, drop or change one. So an
+    anagram is safe to accept: whatever the clip returned, it is built from
+    exactly the characters ``extract()`` already had.
+    """
+    return sorted(a.replace(" ", "")) == sorted(b.replace(" ", ""))
+
+
+def _same_but_for_underscores(a: str, b: str) -> bool:
+    """Identical once underscores and spaces are removed.
+
+    Measured across the stored corpus, the table extractor mishandles the
+    underscore in two ways. Usually it relocates it to the end of the cell and
+    leaves a space behind ("quantity_conflict" -> "quantity conflict _"), which
+    ``_same_glyphs`` already catches. Sometimes it drops the character outright:
+
+        extract()  'Send to russell r@aps.edu'
+        clip       'Send to russell_r@aps.edu'
+
+    That is not an anagram, so the anagram guard let it through — and the result
+    is not a cosmetic blemish, it is an email address that no longer resolves.
+    Snake_case part numbers and file names fail the same way.
+
+    Accepting the clip here is still safe. The two strings agree on every
+    character that is not an underscore or a space, so the substitution cannot
+    introduce a different word; it can only restore a separator the extractor
+    lost. The guard stays tight against the real hazards: a sliced glyph or a
+    neighbouring cell bleeding in both change non-underscore characters and are
+    still rejected.
+    """
+    strip = str.maketrans("", "", "_ ")
+    return a.translate(strip) == b.translate(strip)
+
+
+def _table_rows_repaired(page: Any, table: Any) -> list[list[Any]]:
+    """``table.extract()`` with transposed glyphs repaired from the page text.
+
+    PyMuPDF's table extractor re-reads each cell and can emit its glyphs out of
+    order: the Xtra Lease install spec came back with "Initail document",
+    "order of executoin" and "add lifgtate operatoin" where the page itself
+    says Initial / execution / liftgate. 9 of 54 cells (17%) were corrupted,
+    and nothing downstream can tell -- the words are plausible, just wrong, and
+    they flow into the SOW.
+
+    ``page.get_text(clip=cell)`` reads the same rectangle correctly, but it is
+    not a blanket replacement: a clip boundary can slice a glyph off the edge
+    (one cell here lost its leading "f", giving "ication:" for "fication:"), and
+    a loose bbox can pull in a neighbour. So substitute only under a guard that
+    a repair can satisfy and a corruption cannot -- see ``_same_glyphs`` and
+    ``_same_but_for_underscores``.
+    """
+    import fitz  # type: ignore[import-not-found]
+
+    rows = table.extract()
+    try:
+        cell_rows = list(getattr(table, "rows", []) or [])
+    except Exception:
+        return rows
+    for ri, row in enumerate(cell_rows):
+        if ri >= len(rows):
+            break
+        for ci, cell in enumerate(getattr(row, "cells", []) or []):
+            if cell is None or ci >= len(rows[ri]):
+                continue
+            original = rows[ri][ci]
+            if not original:
+                continue
+            a = " ".join(str(original).split())
+            try:
+                b = " ".join((page.get_text("text", clip=fitz.Rect(cell)) or "").split())
+            except Exception:
+                continue
+            if not b or a == b:
+                continue
+            if _same_glyphs(a, b) or _same_but_for_underscores(a, b):
+                rows[ri][ci] = b
+    return rows
+
+
 def _decode_html_entities(text: str) -> str:
     """Replace common HTML entities + non-breaking-space runs with a
     single regular space.
@@ -1880,7 +1998,7 @@ def _fitz_site_roster_fallback(
                 continue
             for table_index, table in enumerate(tables):
                 try:
-                    extracted = table.extract()
+                    extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
                 if not extracted or len(extracted) < 2:
@@ -2414,7 +2532,7 @@ def _fitz_generic_table_fallback(
                 continue
             for table_index, table in enumerate(tables):
                 try:
-                    extracted = table.extract()
+                    extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
                 if not extracted or len(extracted) < 2:
@@ -2477,6 +2595,9 @@ def _fitz_generic_table_fallback(
                     # Skip rows whose text is a form-field / page-footer
                     if _looks_like_form_field(row_text) or _looks_like_page_footer(row_text):
                         continue
+                    row_atom_type = atom_type
+                    if _looks_like_document_control_row(row_text, columns):
+                        row_atom_type = AtomType.deal_metadata
                     out.append(
                         _make_atom(
                             text=row_text,
@@ -2484,7 +2605,7 @@ def _fitz_generic_table_fallback(
                             artifact_id=artifact_id,
                             filename=pdf_path.name,
                             parser_version=parser_version,
-                            atom_type=atom_type,
+                            atom_type=row_atom_type,
                             authority_class=authority,
                             confidence=TABLE_ROW_CONFIDENCE,
                             locator={**locator_base, "row_index": row_index},
@@ -4964,7 +5085,7 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
             tables = list(getattr(finder, "tables", []) or [])
             for table in tables:
                 try:
-                    extracted = table.extract()
+                    extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
                 if not extracted or len(extracted) < 2:
