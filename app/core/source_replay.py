@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import csv
 import json
 import re
@@ -502,12 +504,12 @@ def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) ->
         # No usable line locator. Rather than fail outright, confirm the
         # atom text against the whole file — a real provenance receipt
         # even though the precise line offsets are absent.
-        body = path.read_text(encoding="utf-8", errors="ignore")
+        body = read_text(path)
         fallback = _whole_document_text_fallback(
             atom, source_ref, body, label="Text locator missing line range"
         )
         return fallback or _receipt(atom, source_ref, "unsupported", "Line-range locator missing or invalid")
-    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    lines = read_text(path).splitlines()
     if line_end > len(lines):
         return _receipt(atom, source_ref, "failed", f"Line range {line_start}-{line_end} is out of bounds")
     snippet = "\n".join(lines[line_start - 1 : line_end])

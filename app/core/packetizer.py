@@ -362,6 +362,10 @@ PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
         AtomType.addendum_qa,
         # Intermediate row type — classified into a concrete type upstream.
         AtomType.raw_table_row,
+        # The speech analogue of raw_table_row: an utterance that matched no
+        # semantic pattern, kept so the transcript has full coverage. Typing it
+        # happens upstream; on its own it is not something a packet is about.
+        AtomType.raw_utterance,
         # Retained-suppression marker — never anchors a packet; lives in the
         # suppressed sidecar for audit / omission-complaint localization.
         AtomType.dropped_sheet,

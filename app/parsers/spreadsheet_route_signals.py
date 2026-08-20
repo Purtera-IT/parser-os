@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import csv
 import re
 from pathlib import Path
@@ -156,7 +158,7 @@ def _first_sheet_rows_xlsx(path: Path, max_rows: int = 80) -> list[list[Any]] | 
 
 def _first_sheet_rows_csv(path: Path, max_rows: int = 80) -> list[list[Any]] | None:
     try:
-        text_head = path.read_text(encoding="utf-8", errors="ignore")[:65536]
+        text_head = read_text(path)[:65536]
         first_line = text_head.splitlines()[0] if text_head else ""
         delimiter = ","
         if first_line.count("|") > first_line.count(",") and "|" in first_line:

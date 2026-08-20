@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 from pathlib import Path
 
+from app.core.filetype import sniff
 from app.core.normalizers import normalize_text
 from app.core.schemas import ArtifactType, ParserMatch
 from app.domain.schemas import DomainPack
@@ -72,8 +75,8 @@ def get_registered_parsers() -> list[ArtifactParser]:
     return list(_REGISTERED)
 
 
-def _artifact_type_for_path(path: Path) -> ArtifactType:
-    suffix = path.suffix.lower()
+def _artifact_type_for_suffix(suffix: str) -> ArtifactType:
+    suffix = (suffix or "").lower()
     if suffix == ".xlsx":
         return ArtifactType.xlsx
     if suffix == ".csv":
@@ -113,6 +116,34 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
     if suffix in {".json", ".jsonl"}:
         return ArtifactType.json
     return ArtifactType.txt
+
+
+def _artifact_type_for_path(path: Path) -> ArtifactType:
+    """Route on what the file *is*, falling back to what it is called.
+
+    The extension is right almost always and is far cheaper, so it is tried
+    first and kept unless the bytes disagree. Two cases where they do:
+
+      * no usable extension -- an email attachment saved as "message", a DMS
+        export named for its document number. The suffix table returns ``txt``
+        and the file reaches a parser that cannot read it, or none at all.
+      * a wrong extension -- a .docx renamed contract.pdf goes to the PDF
+        parser, which cannot open a ZIP.
+
+    A magic-number match is decisive in a way a filename is not, so when the
+    sniffer has an opinion *and* that opinion is a format we parse, it wins.
+    Silence from the sniffer (a CSV has no signature) leaves the suffix alone.
+    """
+    by_suffix = _artifact_type_for_suffix(path.suffix)
+    sniffed = sniff(path)
+    if not sniffed:
+        return by_suffix
+    by_content = _artifact_type_for_suffix(sniffed)
+    if by_content is ArtifactType.txt:
+        return by_suffix  # the sniffer saw something we have no parser for
+    if by_content is not by_suffix:
+        return by_content
+    return by_suffix
 
 
 def _deterministic_tie_break(
@@ -156,6 +187,14 @@ _SNIFF_TYPE_TO_CLASS = {
     ArtifactType.pptx: "PptxParser",
     ArtifactType.zip_archive: "ZipParser",
     ArtifactType.rtf: "RtfParser",
+    ArtifactType.email: "EmailParser",
+    ArtifactType.transcript: "TranscriptParser",
+    ArtifactType.html: "HtmlParser",
+    ArtifactType.mbox: "MboxParser",
+    ArtifactType.ics: "IcsParser",
+    ArtifactType.odt: "OdtParser",
+    ArtifactType.ods: "OdsParser",
+    ArtifactType.vsdx: "VsdxParser",
 }
 
 
@@ -178,20 +217,14 @@ def _ooxml_or_zip(path: Path) -> ArtifactType:
 
 
 def _sniff_parser(path: Path) -> tuple[ArtifactParser | None, ArtifactType | None]:
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(8)
-    except Exception:
+    # Previously PDF/OOXML/RTF only, which left every text-based format --
+    # .eml, .vtt, .html, .ics -- unroutable without its extension, even though
+    # each one opens with a literal self-declaration of what it is.
+    sniffed = sniff(path)
+    if not sniffed:
         return None, None
-    if head.startswith(b"%PDF"):
-        atype: ArtifactType | None = ArtifactType.pdf
-    elif head.startswith(b"PK\x03\x04"):
-        atype = _ooxml_or_zip(path)
-    elif head[:5].lower().startswith(b"{\\rtf"):
-        atype = ArtifactType.rtf
-    else:
-        atype = None
-    if atype is None:
+    atype = _artifact_type_for_suffix(sniffed)
+    if atype is ArtifactType.txt:
         return None, None
     cls_name = _SNIFF_TYPE_TO_CLASS.get(atype)
     for parser in get_registered_parsers():
@@ -200,14 +233,68 @@ def _sniff_parser(path: Path) -> tuple[ArtifactParser | None, ArtifactType | Non
     return None, None
 
 
+def _content_override(
+    path: Path,
+    sniffed_ext: str | None,
+    match: ParserMatch,
+    winner: ArtifactParser,
+) -> tuple[ArtifactParser, ParserMatch] | None:
+    """Prefer the file's own signature when it contradicts its name.
+
+    Fires only when the sniffer is confident -- a magic number or a literal
+    format declaration -- *and* names a format that disagrees with the parser
+    the suffix selected. A .docx renamed contract.pdf otherwise reaches the
+    PDF parser, which cannot open a ZIP.
+
+    Deliberately narrow: silence from the sniffer, or agreement between the
+    two, changes nothing, so this can never re-route a correctly routed file.
+    """
+    if not sniffed_ext:
+        return None
+    by_content = _artifact_type_for_suffix(sniffed_ext)
+    if by_content is ArtifactType.txt:
+        return None
+    # Compare against the SUFFIX, not against the parser that won. Several
+    # parsers legitimately handle one format -- a vendor quote and a generic
+    # workbook are both .xlsx, and the quote parser wins on content confidence.
+    # Testing against match.artifact_type treated that specialisation as a
+    # disagreement and demoted every quote to the generic xlsx parser.
+    # The only thing this is entitled to correct is a filename that lied.
+    if by_content is _artifact_type_for_suffix(path.suffix):
+        return None
+    cls_name = _SNIFF_TYPE_TO_CLASS.get(by_content)
+    if not cls_name:
+        return None
+    for parser in get_registered_parsers():
+        if type(parser).__name__ == cls_name:
+            if parser is winner or type(parser) is type(winner):
+                # Already the right parser. Several parsers sniff their own
+                # magic bytes, so the winner may have reached the same answer
+                # by itself -- overriding then changes nothing except the
+                # reason string, which callers and tests read.
+                return None
+            return parser, ParserMatch(
+                parser_name=parser.capability.parser_name,
+                confidence=max(match.confidence, 0.6),
+                reasons=[f"content_overrides_suffix:{sniffed_ext}"],
+                artifact_type=by_content,
+            )
+    return None
+
+
 def choose_parser(
     path: Path,
     domain_pack: DomainPack | None = None,
 ) -> tuple[ArtifactParser | None, ParserMatch, list[ParserMatch]]:
     sample_text: str | None = None
-    if path.suffix.lower() in {".txt", ".md", ".eml", ".json", ".jsonl", ".csv", ".vtt", ".srt"}:
+    # Content first: an .eml attachment saved as "message" has no suffix to
+    # match on, so without this the text parsers never see its body at all.
+    _sniffed_ext = sniff(path)
+    _effective_suffix = (_sniffed_ext or path.suffix).lower()
+    if _effective_suffix in {".txt", ".md", ".eml", ".json", ".jsonl", ".csv",
+                             ".vtt", ".srt", ".html", ".mbox", ".ics"}:
         try:
-            sample_text = path.read_text(encoding="utf-8", errors="ignore")[:4000]
+            sample_text = read_text(path)[:4000]
         except Exception:
             sample_text = ""
     parsers = get_registered_parsers()
@@ -250,6 +337,9 @@ def choose_parser(
     top = [(parser, match) for parser, match in viable if abs(match.confidence - max_confidence) < 1e-9]
     if len(top) == 1:
         parser, match = top[0]
+        override = _content_override(path, _sniffed_ext, match, parser)
+        if override is not None:
+            return override[0], override[1], sorted_matches
         return parser, match, sorted_matches
     parser, match = _deterministic_tie_break(path, sample_text or "", top)
     return parser, match, sorted_matches

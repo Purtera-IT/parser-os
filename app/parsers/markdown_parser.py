@@ -25,6 +25,8 @@ the atom back to the raw line range.
 from __future__ import annotations
 
 import re
+
+from app.core.phones import find_phones, has_phone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -466,7 +468,7 @@ class MarkdownParser(BaseParser):
                     value["table_cells"] = cells
                     name_cell = next((c for c in cells if _looks_like_person_name(c)), None)
                     email_cell = next((c for c in cells if _EMAIL_RE.search(c)), None)
-                    phone_cell = next((c for c in cells if _PHONE_RE.search(c)), None)
+                    phone_cell = next((c for c in cells if has_phone(c)), None)
                     role_cell = next(
                         (c for c in cells if c and c != name_cell and c != email_cell and c != phone_cell),
                         None,
@@ -488,9 +490,9 @@ class MarkdownParser(BaseParser):
                             if email_key not in entity_keys:
                                 entity_keys = sorted(set(entity_keys) | {email_key})
                     if phone_cell:
-                        m = _PHONE_RE.search(phone_cell)
-                        if m:
-                            value["phone"] = m.group(0)
+                        found = find_phones(phone_cell)
+                        if found:
+                            value["phone"] = found[0].raw
 
             # PR4 — risk-row payload. When a markdown table row gets
             # typed as risk, parse the | … | … | cells so downstream
@@ -701,12 +703,12 @@ def _looks_like_stakeholder_row(text: str, section_blob: str, block_kind: str) -
     if len(cells) < 2:
         return False
     has_email = any(_EMAIL_RE.search(c) for c in cells)
-    has_phone = any(_PHONE_RE.search(c) for c in cells)
+    has_phone_cell = any(has_phone(c) for c in cells)
     has_name = any(_looks_like_person_name(c) for c in cells)
     in_stakeholder_section = bool(_STAKEHOLDER_SECTION_RE.search(section_blob))
     # Stakeholder row signals: name + (email OR phone) anywhere
     # OR we're inside a Stakeholders section with a name.
-    return (has_name and (has_email or has_phone)) or (in_stakeholder_section and has_name)
+    return (has_name and (has_email or has_phone_cell)) or (in_stakeholder_section and has_name)
 
 
 _SEVERITY_PROB_TOKEN = re.compile(

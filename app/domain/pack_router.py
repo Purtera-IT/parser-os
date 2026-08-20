@@ -28,6 +28,8 @@ operators can see *why* a pack was selected.
 
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -191,7 +193,7 @@ def _read_source_notes(project_dir: Path) -> str:
     if not candidate.is_file():
         return ""
     try:
-        return candidate.read_text(encoding="utf-8", errors="ignore")
+        return read_text(candidate)
     except Exception:  # pragma: no cover
         return ""
 
@@ -362,7 +364,7 @@ def _read_text_preview(path: Path, max_bytes: int = 6 * 1024) -> str:
     suffix = path.suffix.lower()
     if suffix in {".txt", ".md", ".csv"}:
         try:
-            return path.read_text(encoding="utf-8", errors="ignore")[:max_bytes]
+            return read_text(path)[:max_bytes]
         except Exception:
             return ""
     if suffix == ".docx":

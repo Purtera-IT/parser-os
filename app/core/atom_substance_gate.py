@@ -51,6 +51,8 @@ kept, and only ``stakeholder`` / generic-prose types are ever examined.
 from __future__ import annotations
 
 import re
+
+from app.core.phones import has_phone
 from typing import Any
 
 # ── general role / title vocabulary (universal, not a name list) ──
@@ -312,7 +314,10 @@ def _has_role_context(text: str, value: dict, entity_keys: list[str]) -> bool:
         if ks.startswith(("org:", "email:", "role:", "company:", "vendor:")):
             return True
     lowered = text.lower()
-    if _EMAIL_RE.search(text) or _PHONE_RE.search(text):
+    # libphonenumber, not a shape match: the old pattern read
+    # "invoice 2026-05-14 total 18,500" as a phone number and let it
+    # through the substance gate on that basis.
+    if _EMAIL_RE.search(text) or has_phone(text):
         return True
     if _RELATION_RE.search(text):
         return True

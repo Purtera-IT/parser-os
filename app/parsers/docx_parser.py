@@ -438,6 +438,15 @@ class DocxParser(BaseParser):
             )
         )
         atoms.extend(
+            self._emit_header_footer_atoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                document=document,
+                already_emitted=already_emitted,
+            )
+        )
+        atoms.extend(
             self._emit_embedded_media_markers(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -1638,6 +1647,121 @@ class DocxParser(BaseParser):
         return atoms
 
     # -- never-detected recovery: content python-docx's body view can't see --
+    def _emit_header_footer_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        document: Any,
+        already_emitted: set[str],
+    ) -> list[EvidenceAtom]:
+        """Recover the header and footer stories.
+
+        Word keeps headers and footers in separate story parts, so they are
+        invisible to ``document.paragraphs`` and to the body walk in
+        ``_recover_nested_region_atoms`` alike -- the same *never-detected*
+        loss class, one story further out. Measured on a document with the
+        customer name in the header and a confidentiality notice in the
+        footer, both were lost outright.
+
+        This is where templated SOWs put the things that are true of the whole
+        document and therefore said exactly once: the customer, the contract
+        or revision number, the effective date, the confidentiality basis.
+
+        Each section carries three variants (default / first page / even
+        page). All are read, because "first page only" is precisely how a
+        template carries the customer name. ``is_linked_to_previous`` sections
+        repeat the previous section's story, so dedup by normalized text stops
+        a five-section document emitting the same footer five times.
+        """
+        sections = getattr(document, "sections", None)
+        if not sections:
+            return []
+
+        seen = set(already_emitted)
+        atoms: list[EvidenceAtom] = []
+        variants = (
+            ("header", "default"), ("first_page_header", "first_page"),
+            ("even_page_header", "even_page"), ("footer", "default"),
+            ("first_page_footer", "first_page"), ("even_page_footer", "even_page"),
+        )
+
+        for sec_idx, section in enumerate(sections):
+            for attr, variant in variants:
+                story = getattr(section, attr, None)
+                if story is None:
+                    continue
+                story_kind = "header" if "header" in attr else "footer"
+                # Paragraphs, then tables -- a header table holding the
+                # customer/logo/contract-number block is a common template.
+                texts: list[str] = []
+                try:
+                    texts.extend((para.text or "").strip() for para in story.paragraphs)
+                except Exception:  # pragma: no cover - malformed story part
+                    pass
+                try:
+                    for table in getattr(story, "tables", []) or []:
+                        for row in table.rows:
+                            cells = [(c.text or "").strip() for c in row.cells]
+                            joined = " | ".join(c for c in cells if c)
+                            if joined:
+                                texts.append(joined)
+                except Exception:  # pragma: no cover - malformed story part
+                    pass
+
+                for text in texts:
+                    if not text:
+                        continue
+                    key = normalize_text(text)
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    # UNCONDITIONAL, mirroring the orphan-table-row path.
+                    # Routing this through _emit_atoms_for_text loses it: the
+                    # prose gate wants a scope verb, and "Xtra Lease -- Master
+                    # Lease Agreement" is a bare noun phrase. Measured, the
+                    # gate returned zero atoms for both the header and the
+                    # footer of a document that plainly carried the customer.
+                    atom_id = stable_id("atm", artifact_id, "hdrftr", story_kind, variant, sec_idx, key)
+                    src = SourceRef(
+                        id=stable_id("src", atom_id),
+                        artifact_id=artifact_id,
+                        artifact_type=ArtifactType.docx,
+                        filename=filename,
+                        locator={
+                            "story": story_kind,
+                            "story_variant": variant,
+                            "section_index": sec_idx,
+                            "extraction": "docx_header_footer",
+                        },
+                        extraction_method="docx_header_footer",
+                        parser_version=self.parser_version,
+                    )
+                    atoms.append(EvidenceAtom(
+                        id=atom_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item,
+                        raw_text=text[:4000],
+                        normalized_text=key[:4000],
+                        value={"kind": "page_furniture", "story": story_kind},
+                        entity_keys=self._extract_entity_keys(text),
+                        source_refs=[src],
+                        receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        # Below the body-prose default: this is chrome until
+                        # something downstream decides otherwise, and the
+                        # locator carries the story so it can.
+                        confidence=0.6,
+                        confidence_raw=0.6,
+                        calibrated_confidence=0.6,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=["docx_header_footer"],
+                        parser_version=self.parser_version,
+                    ))
+        return atoms
+
     def _recover_nested_region_atoms(
         self,
         *,

@@ -12,6 +12,8 @@ extensions.
 """
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import email
 import os
 import re
@@ -501,7 +503,7 @@ class IcsParser(BaseParser):
 
     def parse_artifact_full(self, *, project_id: str, artifact_id: str, path: Path, domain_pack: DomainPack | None = None) -> ParserOutput:
         del domain_pack
-        raw = path.read_text(encoding="utf-8", errors="ignore")
+        raw = read_text(path)
         # ICS line-folding: lines starting with a space are continuations.
         raw = re.sub(r"\r?\n[ \t]", "", raw)
         atoms: list[EvidenceAtom] = []

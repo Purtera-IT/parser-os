@@ -33,6 +33,8 @@ masking.
 from __future__ import annotations
 
 import re
+
+from app.core.phones import sub_phones
 from dataclasses import dataclass, field
 
 # Role placeholder vocabulary. Stable tokens — the heads train on these, so
@@ -157,7 +159,9 @@ def _mask_literals(text: str) -> tuple[str, list[tuple[str, str]]]:
     text = _apply(_ADDR_RE, LIT_ADDR, text)
     text = _apply(_MONEY_RE, LIT_MONEY, text)
     text = _apply(_DATE_RE, LIT_DATE, text)
-    text = _apply(_PHONE_RE, LIT_PHONE, text)
+    # Span-based rather than regex-based: a validated match cannot
+    # swallow a purchase-order number the way the old pattern could.
+    text = sub_phones(text, LIT_PHONE, lambda orig, ph: subs.append((orig, ph)))
     text = _apply(_QTY_FIELD_RE, LIT_QTY, text)
     text = _apply(_PARTNO_RE, LIT_PARTNO, text)
     text = _apply(_ZIP_RE, LIT_ZIP, text)

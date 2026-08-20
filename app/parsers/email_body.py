@@ -6,6 +6,8 @@ copy now, imported by both.
 """
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import re
 from email import policy
 from email.parser import BytesParser
@@ -192,7 +194,7 @@ def _extract_email_text(path: Path) -> str:
             else:
                 content = raw.decode("utf-8", errors="ignore")
     else:
-        content = path.read_text(encoding="utf-8", errors="ignore")
+        content = read_text(path)
     if "<html" in content.lower() or "<table" in content.lower():
         soup = BeautifulSoup(content, "html.parser")
         _flatten_tables_in_place(soup)

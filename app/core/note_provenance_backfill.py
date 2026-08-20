@@ -8,6 +8,8 @@ that note. This stage re-mints lightweight provenance atoms on the note
 
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -254,7 +256,7 @@ def ensure_hubspot_note_provenance(
         if not _HS_NOTE_FILENAME_RE.search(path.name) and not is_hubspot_note_path(path):
             continue
         try:
-            raw = path.read_text(encoding="utf-8", errors="ignore")
+            raw = read_text(path)
         except Exception:
             continue
         parsed = parse_hubspot_note_text(raw)

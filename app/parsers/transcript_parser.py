@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import json
 import re
 from pathlib import Path
@@ -43,6 +45,10 @@ from app.parsers.structured_projection import (
 from app.domain.schemas import DomainPack
 
 STRUCTURED_SCHEMA_TRANSCRIPT = "orbitbrief.transcript.structured.v1"
+
+#: W3C voice span, e.g. ``<v.loud Cliff Creech>text</v>``. Only the
+#: dependency-free fallback needs this -- webvtt-py handles it natively.
+_VTT_VOICE_SPAN_RE = re.compile(r"<v(?:\.[^\s>]+)*\s+([^>]+)>(.*?)(?:</v>|$)", re.I | re.S)
 
 DECISION_RE = re.compile(
     r"\b(decision:|decided|agreed|confirmed|approved|we will|the plan is|final decision)\b",
@@ -299,7 +305,7 @@ class TranscriptParser(BaseParser):
 
     def _segments_from_path(self, path: Path) -> list[dict[str, Any]]:
         suffix = path.suffix.lower()
-        raw = path.read_text(encoding="utf-8", errors="ignore")
+        raw = read_text(path)
         if suffix == ".json":
             return self._segments_from_json(raw)
         if suffix == ".vtt":
@@ -346,14 +352,70 @@ class TranscriptParser(BaseParser):
         return split_transcript_segments(text)
 
     def _clean_vtt(self, raw_text: str) -> str:
+        """Reduce a WebVTT file to ``Speaker: text`` lines.
+
+        The previous version dropped the ``WEBVTT`` banner, the timing lines
+        and blank lines, and kept everything else verbatim. Three things went
+        wrong with that, all visible on a file Teams would produce:
+
+        * ``<v Cliff Creech>`` is the W3C voice span -- the standard way every
+          major platform names a speaker -- and it survived into the atom as
+          literal markup, with the speaker recorded as ``None``.
+        * a cue *identifier* is an optional line before the timing line, and
+          it is usually just ``1``, ``2``, ``3``. Those became atoms whose
+          entire text was a digit. (``_clean_srt`` directly below already
+          skipped these; VTT never got the same treatment.)
+        * ``NOTE`` comments, ``STYLE`` and ``REGION`` blocks and the other cue
+          payload tags (``<c>``, ``<i>``, inline timestamps) were all kept as
+          if they were speech.
+
+        ``webvtt-py`` implements the spec, so the parsing is delegated rather
+        than re-derived: it separates identifier, timing and payload, strips
+        cue tags, and exposes the voice span as ``caption.voice``. The old
+        line filter remains as the fallback for a file the library refuses, so
+        a malformed transcript degrades instead of raising.
+        """
+        try:
+            import webvtt
+        except Exception:  # pragma: no cover - dependency-free fallback
+            return self._clean_vtt_fallback(raw_text)
+        try:
+            captions = list(webvtt.from_string(raw_text))
+        except Exception:
+            # Malformed, or not actually VTT -- keep the old behaviour.
+            return self._clean_vtt_fallback(raw_text)
+        if not captions:
+            return self._clean_vtt_fallback(raw_text)
+
+        lines: list[str] = []
+        for caption in captions:
+            text = " ".join((caption.text or "").split())
+            if not text:
+                continue
+            speaker = " ".join((caption.voice or "").split())
+            lines.append(f"{speaker}: {text}" if speaker else text)
+        return "\n".join(lines)
+
+    def _clean_vtt_fallback(self, raw_text: str) -> str:
+        """The pre-library line filter, plus the cue-identifier skip it lacked."""
         lines = []
         for line in raw_text.splitlines():
-            if line.strip().upper() == "WEBVTT":
+            stripped = line.strip()
+            if stripped.upper() == "WEBVTT":
+                continue
+            if stripped.upper().startswith(("NOTE", "STYLE", "REGION")):
                 continue
             if "-->" in line:
                 continue
-            if not line.strip():
+            if not stripped:
                 continue
+            if stripped.isdigit():  # a cue identifier, not speech
+                continue
+            match = _VTT_VOICE_SPAN_RE.search(line)
+            if match:
+                speaker = " ".join(match.group(1).split())
+                said = " ".join(match.group(2).split())
+                line = f"{speaker}: {said}" if said else speaker
             lines.append(line)
         return "\n".join(lines)
 
@@ -533,11 +595,35 @@ class TranscriptParser(BaseParser):
             if atom_type not in deduped_types:
                 deduped_types.append(atom_type)
 
+        # Coverage floor. Every branch above is a *pattern* -- a keyword, an
+        # alias, a question mark. When none fires the loop below runs zero
+        # times and the utterance is gone: no atom, no receipt, nothing that
+        # records it was ever said. Measured on a ten-turn call written in
+        # ordinary language, five turns vanished, and they were the wrong
+        # five: the scope ("forty sites before end of Q3"), the access
+        # constraint ("dock is only open until two"), the exclusion ("not
+        # paying for the mid-turn jumpers") and the part number all went,
+        # while "Understood", "Noted" and "Good" survived on their keywords.
+        #
+        # So the utterance is kept untyped instead. Typing it is a judgement
+        # that belongs downstream where it can be learned and corrected;
+        # deciding it was never spoken is not a judgement this layer is
+        # entitled to make.
+        if not deduped_types:
+            deduped_types.append(AtomType.raw_utterance)
+
         for atom_type in deduped_types:
             value: dict[str, Any] = {"text": text}
             review_status = ReviewStatus.auto_accepted
             review_flags: list[str] = []
             confidence = 0.78
+
+            if atom_type == AtomType.raw_utterance:
+                # Deliberately the lowest confidence any transcript atom
+                # carries, so it never outranks a typed one covering the same
+                # words and never reads as an assertion about the deal.
+                confidence = 0.40
+                review_flags.append("unclassified_utterance")
 
             if atom_type == AtomType.quantity:
                 match = QUANTITY_RE.search(text)

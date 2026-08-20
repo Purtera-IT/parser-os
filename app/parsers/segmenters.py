@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import csv
 import json
 import re
@@ -374,7 +376,7 @@ def segment_transcript(
     path: Path,
     parser_version: str = "segmenter_transcript_v1",
 ) -> list[ArtifactSegment]:
-    raw = path.read_text(encoding="utf-8", errors="ignore")
+    raw = read_text(path)
     suffix = path.suffix.lower()
     artifact_type = ArtifactType.transcript if suffix in {".vtt", ".srt", ".json"} else ArtifactType.txt
     if suffix == ".json":
@@ -501,7 +503,7 @@ def segment_quote(
         with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
             source_rows = [("csv", [list(row) for row in csv.reader(handle)], ArtifactType.csv)]
     elif suffix == ".txt":
-        content = path.read_text(encoding="utf-8", errors="ignore")
+        content = read_text(path)
         source_rows = [("txt", [re.split(r"[,\t|]", line) for line in content.splitlines() if line.strip()], ArtifactType.txt)]
     else:
         return []
@@ -550,7 +552,7 @@ def segment_text(
     parser_version: str = "segmenter_text_v1",
 ) -> list[ArtifactSegment]:
     artifact_type = ArtifactType.txt
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
     segments: list[ArtifactSegment] = []
     line_cursor = 1

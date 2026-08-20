@@ -85,7 +85,19 @@ def feature_sha(feat: np.ndarray) -> str:
 
 
 def _cos(a: np.ndarray, b: np.ndarray) -> float:
-    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+    """Cosine similarity, clamped to the range cosine is actually defined on.
+
+    The embedder L2-normalises only to within 1e-3, so the product of the two
+    norms can sit just below 1.0 while the dot product sits at 1.0, and the
+    ratio comes out fractionally greater than one. Observed:
+    ``1.0000001182092892``, which failed ``assert -1.0 <= sim <= 1.0`` roughly
+    two runs in five and read as a flaky test rather than as arithmetic.
+
+    Any excess is floating-point error, never signal -- no pair of real vectors
+    has cosine above 1 -- so clamping is the correct answer and not a fudge.
+    """
+    v = float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+    return max(-1.0, min(1.0, v))
 
 
 # ── per-document legend matching (the generalization mechanism) ────────────────

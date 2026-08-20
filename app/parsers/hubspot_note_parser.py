@@ -12,6 +12,8 @@ typed atoms with ``artifact_id`` provenance for the Files UI.
 
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import re
 from pathlib import Path
 from typing import Any
@@ -242,7 +244,7 @@ class HubspotNoteParser(BaseParser):
         domain_pack: DomainPack | None = None,
     ) -> ParserOutput:
         del domain_pack
-        raw = path.read_text(encoding="utf-8", errors="ignore")
+        raw = read_text(path)
         parsed = parse_hubspot_note_text(raw)
         atoms = self._atoms_from_note(
             project_id=project_id,

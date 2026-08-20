@@ -217,6 +217,13 @@ class AtomType(str, Enum):
     # value so a single central function can classify them via the column
     # schema registry. Replaces the v49 per-parser inline schema calls.
     raw_table_row = "raw_table_row"
+    #: An utterance that matched no semantic pattern. The transcript parser
+    #: used to emit nothing at all for these, so half of a real call left no
+    #: atom, no receipt and no coverage record -- decode-time deletion driven
+    #: by an interpretation rule. This is the speech analogue of
+    #: ``raw_table_row``: the unit survives untyped, and typing stays a
+    #: separate decision made later by something that can learn.
+    raw_utterance = "raw_utterance"
 
     # ─── Retained-suppression marker (parse-time whole-sheet drop) ───
     # When the xlsx sheet-role router classifies a whole sheet DROP (empty /

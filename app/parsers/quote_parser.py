@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import csv
 import os
 import re
@@ -1137,7 +1139,7 @@ class QuoteParser(BaseParser):
 
     def _collect_sheet_rows_csv(self, path: Path) -> list[dict[str, Any]]:
         try:
-            text_head = path.read_text(encoding="utf-8", errors="ignore")[:8192]
+            text_head = read_text(path)[:8192]
             first_line = text_head.splitlines()[0] if text_head else ""
             delimiter = ","
             if first_line.count("|") > first_line.count(",") and "|" in first_line:
@@ -1153,7 +1155,7 @@ class QuoteParser(BaseParser):
 
     def _collect_sheet_rows_txt(self, path: Path) -> list[dict[str, Any]]:
         try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
+            content = read_text(path)
             lines = [line for line in content.splitlines() if line.strip()]
             rows = [re.split(r"[,\t|]", line) for line in lines]
             return [{"name": "text", "rows": rows}]
@@ -1259,7 +1261,7 @@ class QuoteParser(BaseParser):
                         if not bad:
                             return True
             elif suffix in {".csv", ".txt"}:
-                content = path.read_text(encoding="utf-8", errors="ignore")
+                content = read_text(path)
                 sample_rows = [re.split(r"[,\t|]", line) for line in content.splitlines()[:45] if line.strip()]
                 idx, hmap, _, _ = _detect_header_advanced(sample_rows, scan_limit=40)
                 if idx is not None and _qualifies_quote_header(hmap, strict_minimum_signals=True):
@@ -1337,7 +1339,7 @@ class QuoteParser(BaseParser):
         return atoms
 
     def _parse_csv(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
-        text_head = path.read_text(encoding="utf-8", errors="ignore")[:8192]
+        text_head = read_text(path)[:8192]
         first_line = text_head.splitlines()[0] if text_head else ""
         delimiter = ","
         if first_line.count("|") > first_line.count(",") and "|" in first_line:
@@ -1357,7 +1359,7 @@ class QuoteParser(BaseParser):
         )
 
     def _parse_txt(self, project_id: str, artifact_id: str, path: Path) -> list[EvidenceAtom]:
-        content = path.read_text(encoding="utf-8", errors="ignore")
+        content = read_text(path)
         lines = [line for line in content.splitlines() if line.strip()]
         rows = [re.split(r"[,\t|]", line) for line in lines]
         return self._parse_sheet(
