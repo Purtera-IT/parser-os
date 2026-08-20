@@ -24,6 +24,8 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # A suite that hangs should fail loudly, not sit on a runner for six hours.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -56,8 +58,22 @@ jobs:
 
       - name: Run the suite
         env:
-          # tests/conftest.py sets this per-test, but an explicit value keeps a
-          # future test that bypasses the fixture from dialling a Tailscale
-          # address with a 180-second timeout on a runner that cannot reach it.
+          # Ten modules in app/core default to _DEFAULT_HOST =
+          # http://100.114.102.122:11434 -- a Tailscale CGNAT address -- with
+          # _DEFAULT_TIMEOUT = 180.  A GitHub runner has no route into that
+          # range, so packets are dropped rather than refused and every call
+          # sits for the full three minutes.  The first run of this workflow
+          # spent over 1h40m that way.
+          #
+          # 127.0.0.1:1 is refused instantly, so the same calls fail in
+          # microseconds and take their existing offline branches.  This makes
+          # the suite fast; it does not hide anything, because a test that
+          # genuinely needs a model was never going to reach one here.
+          OLLAMA_HOST: http://127.0.0.1:1
+          SOWSMITH_OLLAMA_URL: http://127.0.0.1:1
+          SOWSMITH_EMBED_TIMEOUT: '1'
+          # Read by the feature branches' conftest fixture. main has no such
+          # fixture, which is the other half of why this was slow -- but set it
+          # so the same workflow behaves on a branch that does.
           SOWSMITH_DISABLE_LLM: '1'
         run: pytest tests -q --durations=15
