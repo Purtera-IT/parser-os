@@ -105,7 +105,17 @@ def _marker_atom(
         id=atom_id,
         project_id=project_id,
         artifact_id=artifact_id,
-        atom_type=AtomType.open_question,
+        # NOT open_question. A marker says "there is a region here nobody has
+        # read yet" -- that is coverage bookkeeping about the artifact, not a
+        # question the customer can answer. Typing it open_question put every
+        # unread image straight onto the PM's question surface: the Xtra Lease
+        # install spec (200 images over 39 pages) produced 180 of them, and the
+        # UI's "181 to review" badge was 99% "there is a picture here". Real
+        # questions were buried. deal_metadata records the region without
+        # claiming anyone owes an answer; the census still reconciles it as
+        # MARKED, because that match is on the locator's region_ref, not on
+        # atom_type.
+        atom_type=AtomType.deal_metadata,
         raw_text=text,
         normalized_text=normalize_text(text),
         value={"kind": kind, "region_ref": region_ref, "size_bytes": size,
@@ -252,7 +262,17 @@ def attachment_marker(
         id=atom_id,
         project_id=project_id,
         artifact_id=artifact_id,
-        atom_type=AtomType.open_question,
+        # NOT open_question. A marker says "there is a region here nobody has
+        # read yet" -- that is coverage bookkeeping about the artifact, not a
+        # question the customer can answer. Typing it open_question put every
+        # unread image straight onto the PM's question surface: the Xtra Lease
+        # install spec (200 images over 39 pages) produced 180 of them, and the
+        # UI's "181 to review" badge was 99% "there is a picture here". Real
+        # questions were buried. deal_metadata records the region without
+        # claiming anyone owes an answer; the census still reconciles it as
+        # MARKED, because that match is on the locator's region_ref, not on
+        # atom_type.
+        atom_type=AtomType.deal_metadata,
         raw_text=text,
         normalized_text=normalize_text(text),
         value={"kind": "attachment_marker", "region_ref": ref,

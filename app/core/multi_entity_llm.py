@@ -729,6 +729,22 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
                     )
                     if vision_results:
                         results["vision_rows"] = vision_results
+                        # Close the loop: every marker on a page vision just
+                        # read stops claiming nobody has read it. Content stays
+                        # in its own atoms; this only updates coverage status.
+                        try:
+                            from app.core.vision_extraction import (
+                                reconcile_image_markers,
+                            )
+                            n_res = reconcile_image_markers(atoms, vision_results)
+                            results["vision_markers_resolved"] = n_res
+                            logging.getLogger(__name__).info(
+                                "vision: resolved %d image markers", n_res,
+                            )
+                        except Exception as _rex:
+                            logging.getLogger(__name__).warning(
+                                "marker reconciliation failed: %s", _rex,
+                            )
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(

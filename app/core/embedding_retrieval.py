@@ -208,12 +208,82 @@ def sentence_split(text: str, max_sentence_chars: int = 500) -> list[str]:
 # ────────────────────────────────────────────────────────────────────
 
 
+
+# ── backend selection ────────────────────────────────────────────────
+# The embedder lived on ONE box (a Mac Studio on the tailnet). When that box is
+# unreachable -- or, as on 2026-08-19, reachable but refusing work with
+# "maximum pending requests exceeded" -- every embed call returns None, the
+# compile degrades to keyword behaviour, and NOTHING says so. A whole deal can
+# parse "successfully" with no semantics in it.
+#
+# So: a second backend, and one switch to leave the box entirely.
+#
+#   SOWSMITH_EMBED_BACKEND = ollama (default) | azure
+#   PARSER_OS_NO_LOCAL_MODELS = 1   -> force azure, and make any attempt to
+#                                      dial the local host a LOUD failure
+#
+# Azure uses the OpenAI-compatible /openai/v1/ route, so it is the same request
+# shape with a Bearer key -- no SDK, no api-version juggling.
+_AZURE_EMBED_MODEL_DEFAULT = "text-embedding-3-small"
+
+
+def no_local_models() -> bool:
+    """True when this run must not touch the local (tailnet) model host."""
+    return str(os.environ.get("PARSER_OS_NO_LOCAL_MODELS", "")).strip().lower() in {"1", "true", "yes"}
+
+
+def embed_backend() -> str:
+    if no_local_models():
+        return "azure"
+    return (os.environ.get("SOWSMITH_EMBED_BACKEND") or "ollama").strip().lower()
+
+
+def _azure_embed_conf() -> tuple[str, str, str]:
+    base = (os.environ.get("AZURE_OPENAI_EMBED_BASE") or os.environ.get("AZURE_OPENAI_BASE") or "").rstrip("/")
+    key = os.environ.get("AZURE_OPENAI_EMBED_KEY") or os.environ.get("AZURE_OPENAI_KEY") or ""
+    model = os.environ.get("AZURE_OPENAI_EMBED_MODEL", _AZURE_EMBED_MODEL_DEFAULT)
+    return base, key, model
+
+
+def _embed_azure(texts: list[str]) -> list[list[float] | None]:
+    """Embed a batch through Azure OpenAI. Returns one vector (or None) per text."""
+    import json as _json
+    import urllib.request
+
+    base, key, model = _azure_embed_conf()
+    if not base or not key:
+        raise RuntimeError(
+            "azure embed backend selected but AZURE_OPENAI_EMBED_BASE / "
+            "AZURE_OPENAI_EMBED_KEY are not set"
+        )
+    timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", "60"))
+    payload = {"model": model, "input": [t[:8000] for t in texts]}
+    req = urllib.request.Request(
+        f"{base}/embeddings",
+        data=_json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = _json.loads(resp.read().decode("utf-8", errors="ignore"))
+    out: list[list[float] | None] = [None] * len(texts)
+    for row in body.get("data") or []:
+        i = int(row.get("index", -1))
+        if 0 <= i < len(out):
+            out[i] = row.get("embedding")
+    return out
+
+
 def _embed_model() -> str:
     return os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
 
 
 def _embed_one(text: str) -> list[float] | None:
     """POST to /api/embeddings. Returns 4096-dim vector or None on failure."""
+    if no_local_models():
+        raise RuntimeError(
+            "PARSER_OS_NO_LOCAL_MODELS is set but the local embed path was "
+            "dialled — this run must not depend on the tailnet model host"
+        )
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
     timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
@@ -292,6 +362,16 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
 def _embed_uncached(texts: list[str]) -> list[list[float] | None]:
     """Embed texts with no caching. Prefers the one-round-trip batch endpoint;
     falls back to the legacy ThreadPoolExecutor per-text path."""
+    if embed_backend() == "azure":
+        # Deliberately NOT wrapped in a try/except that returns None per text.
+        # Silent degradation is the failure mode this backend exists to escape:
+        # if Azure is misconfigured we want the compile to fail loudly here,
+        # not to quietly emit a deal with no semantics in it.
+        chunk = int(os.environ.get("SOWSMITH_EMBED_AZURE_BATCH", "128"))
+        out: list[list[float] | None] = []
+        for i in range(0, len(texts), chunk):
+            out.extend(_embed_azure(texts[i:i + chunk]))
+        return out
     batched = _embed_batch_endpoint(texts)
     if batched is not None:
         return batched
