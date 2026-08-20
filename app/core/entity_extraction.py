@@ -29,6 +29,7 @@ import unicodedata
 from collections.abc import Iterable
 from typing import Any
 
+from app.core.phones import find_phones
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.domain.schemas import DomainPack
@@ -3606,24 +3607,14 @@ def _emit_phone_keys(text: str) -> set[str]:
         up by the digits-only pattern)
     """
     keys: set[str] = set()
-    for m in _PHONE_REGEX.finditer(text):
-        digits = (m.group(1) or "") + m.group(2) + m.group(3) + m.group(4)
-        digits = re.sub(r"\D", "", digits)
-        # Strip the US country-code prefix so 11-digit "1XXXXXXXXXX"
-        # collapses to canonical 10-digit "XXXXXXXXXX".
-        if len(digits) == 11 and digits.startswith("1"):
-            digits = digits[1:]
-        if len(digits) != 10:
-            continue
-        # Real US area codes start with 2-9. Leading 0 or 1 = lot
-        # number / document ID misread as a phone.
-        if digits[0] in {"0", "1"}:
-            continue
-        # Real US central-office codes (digits 4-6) also start with
-        # 2-9. Drops "8001234567" patterns where digit 4 is 0 or 1.
-        if digits[3] in {"0", "1"}:
-            continue
-        keys.add(f"phone:{digits}")
+    # The country-code strip, the ten-digit length check and the "area and
+    # central-office codes start 2-9" rules that stood here were a partial
+    # hand-build of the North American Numbering Plan. libphonenumber knows
+    # those rules, and the equivalent rules for every other country, so the
+    # whole block is one call. ``national_digits`` reproduces the same
+    # canonical ten-digit form, which keeps every stored key valid.
+    for match in find_phones(text):
+        keys.add(f"phone:{match.national_digits}")
     return keys
 
 
@@ -5194,9 +5185,19 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     try:
         from app.core.multi_entity_llm import extract_multi_entities_with_llm
         from app.core.site_llm_verify import ollama_reachable
+        from app.core import llm_client as _llm
+        # A hosted teacher is a complete substitute for the local host here --
+        # extract_all_entities_with_llm routes through llm_client when
+        # TEACHER_API_BASE is set, and so does the vision pass inside it. Gating
+        # on ollama_reachable() ALONE meant that whenever the tailnet box was
+        # down (or up but refusing work with "maximum pending requests
+        # exceeded", as on 2026-08-19) every LLM entity extractor AND the whole
+        # vision pass were skipped in silence -- with a perfectly good Azure /
+        # DeepSeek teacher configured and idle. The compile still "succeeded",
+        # just with no semantics and no images read.
         do_multi = (
             not os.environ.get("SOWSMITH_MULTI_ENTITY_DISABLE")
-            and ollama_reachable()
+            and (_llm.teacher_api_enabled() or ollama_reachable())
         )
     except Exception:
         do_multi = False
