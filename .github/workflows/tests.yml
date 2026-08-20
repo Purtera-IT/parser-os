@@ -8,9 +8,13 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    # feat/clean-rubric-heads as well as main: parser-os-worker's deploy-dev.yml
+    # bundles that branch, not main (its parser_os_ref defaults to it). Gating
+    # only main would leave the code that actually ships ungated -- which is the
+    # shape of the incident where prod ran a month-old image for weeks.
+    branches: [main, feat/clean-rubric-heads]
   push:
-    branches: [main]
+    branches: [main, feat/clean-rubric-heads]
   workflow_dispatch:
 
 # A newer push to the same PR supersedes the run in flight.
