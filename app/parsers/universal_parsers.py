@@ -35,7 +35,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
-from app.parsers.binary_markers import attachment_marker, region_marker
+from app.coverage.binary_regions import attachment_marker, region_marker
 
 
 # Shared atom-type heuristic — same families the docx/pptx parsers use

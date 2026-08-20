@@ -20,7 +20,7 @@ from app.core.content_census import (
     Region,
     RegionKind,
 )
-from app.parsers.census_docx import census_docx
+from app.coverage.census_docx import census_docx
 from app.parsers.docx_parser import DocxParser
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"

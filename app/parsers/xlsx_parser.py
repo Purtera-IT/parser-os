@@ -28,7 +28,7 @@ from app.core.schemas import (
     ParserMatch,
 )
 from app.parsers.base import BaseParser
-from app.parsers.binary_markers import emit_zip_binary_markers
+from app.coverage.binary_regions import emit_zip_binary_markers
 from app.parsers.segmenters import segment_xlsx
 from app.parsers.sheet_classifier import (
     SheetDestination,

@@ -10,6 +10,7 @@ otherwise returns "" so the caller emits the existing marker atom:
 
   1. PyMuPDF built-in OCR (``page.get_textpage_ocr``) — requires
      a Tesseract binary on PATH. Best path on a configured server.
+  0. Azure Document Intelligence (prebuilt-read) when configured.
   2. pytesseract — same binary requirement; works on PIL images.
   3. easyocr — pure-Python (PyTorch). Heavy install, no system deps.
   4. Ollama vision model — calls a vision-capable Ollama model
@@ -84,6 +85,28 @@ def ocr_pdf_page(page) -> dict[str, Any]:
     notes: list[str] = []
     if _ocr_disabled():
         return _empty(["OCR disabled via PARSER_OS_OCR_DISABLE"])
+
+    # 0) Azure Document Intelligence. Tried first because the rest of this
+    #    chain is the fallback it was bought to replace: prebuilt-read returns
+    #    clean text with layout, where tesseract on a scanned bid PDF gives
+    #    column misalignment, character noise and missed signatures -- the
+    #    reason doc_intel_ocr.py was written. It then had ZERO callers, so the
+    #    subscription was paid for and the code never ran.
+    #
+    #    Also removes two heavy dependencies from the hot path (easyocr pulls
+    #    PyTorch) and the Ollama hop to the Mac, which is the same offline
+    #    fragility that made every LLM call wait 180s on an unreachable
+    #    Tailscale address.
+    try:
+        from app.core.doc_intel_ocr import doc_intel_available, extract_text_from_image_bytes
+
+        if doc_intel_available():
+            pix = page.get_pixmap(dpi=200)
+            text = extract_text_from_image_bytes(pix.tobytes("png")) or ""
+            if text.strip():
+                return {"text": text, "backend": "doc_intel", "notes": []}
+    except Exception:
+        pass  # any failure falls through to the legacy chain below
 
     # 1) PyMuPDF built-in OCR
     try:

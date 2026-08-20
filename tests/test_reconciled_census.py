@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.core.content_census import CoverageStatus
-from app.parsers.census import reconciled_census
+from app.coverage.census import reconciled_census
 
 
 class _Atom:

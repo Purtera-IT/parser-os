@@ -25,7 +25,7 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.email_body import _extract_email_text
-from app.parsers.binary_markers import attachment_marker
+from app.coverage.binary_regions import attachment_marker
 from app.parsers.segmenters import segment_email
 from app.parsers.structured_projection import (
     derived_files_for,
