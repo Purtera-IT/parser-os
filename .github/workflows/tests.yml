@@ -76,4 +76,31 @@ jobs:
           # fixture, which is the other half of why this was slow -- but set it
           # so the same workflow behaves on a branch that does.
           SOWSMITH_DISABLE_LLM: '1'
-        run: pytest tests -q --durations=15
+        run: |
+          # Deselect the known-failing baseline so a NEW failure turns this red
+          # immediately. tests/known_failures.txt carries the list and the rule.
+          mapfile -t known < <(grep -vE '^\s*(#|$)' tests/known_failures.txt)
+          args=(); for t in "${known[@]}"; do args+=(--deselect "$t"); done
+          echo "deselecting ${#known[@]} known failures"
+          pytest tests -q --durations=15 "${args[@]}"
+
+      - name: Known failures — has anything started passing?
+        # Non-blocking. A deselect list that only ever grows is an amnesty; this
+        # step is what makes it a ratchet, by naming the entries that are now
+        # green so they can be deleted from the file.
+        if: always()
+        env:
+          OLLAMA_HOST: http://127.0.0.1:1
+          SOWSMITH_OLLAMA_URL: http://127.0.0.1:1
+          SOWSMITH_EMBED_TIMEOUT: '1'
+          SOWSMITH_DISABLE_LLM: '1'
+        run: |
+          mapfile -t known < <(grep -vE '^\s*(#|$)' tests/known_failures.txt)
+          pytest -q --no-header -rA --continue-on-collection-errors "${known[@]}" 2>/dev/null | grep '^PASSED' > now_passing.txt || true
+          n=$(wc -l < now_passing.txt)
+          if [ "$n" -gt 0 ]; then
+            echo "::warning::$n known-failing test(s) now pass — delete them from tests/known_failures.txt"
+            cat now_passing.txt
+          else
+            echo "all ${#known[@]} known failures still fail; nothing to remove"
+          fi
