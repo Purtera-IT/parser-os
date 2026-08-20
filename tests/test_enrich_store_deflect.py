@@ -15,6 +15,8 @@ it is NOT called on a deflection and IS called on an abstain. No network.
 
 from __future__ import annotations
 
+import zlib
+
 import numpy as np
 import pytest
 
@@ -29,7 +31,11 @@ _REL = "entity_keep:site"
 def _fake_embed(texts: list[str]) -> np.ndarray:
     out = np.zeros((len(texts), _D), dtype=np.float32)
     for i, t in enumerate(texts):
-        h = abs(hash(t.lower().strip()))
+# zlib.crc32, not hash(): hash() on a str is salted per process (PEP 456),
+# so these components are different noise on every run. A model trained on
+# them is trained partly on randomness, and the assertions below then pass
+# or fail by luck. crc32 is stable across processes and machines.
+        h = zlib.crc32(t.lower().strip().encode("utf-8"))
         out[i, h % _D] = 1.0
         out[i, (h // _D) % _D] += 0.5
     n = np.linalg.norm(out, axis=1, keepdims=True)
