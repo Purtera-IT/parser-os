@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import os
+
+from app.core.env import env_get
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -1851,7 +1853,7 @@ class QuoteParser(BaseParser):
             # every deal — is the Phase-2 conflicts/verify refactor), but it is
             # suppressed from the head's view as a reconciliation-only input.
             # Set SOWSMITH_DROP_QUANTITY_ATOM=1 to stop emitting entirely.
-            if os.environ.get("SOWSMITH_DROP_QUANTITY_ATOM") != "1":
+            if env_get("PARSER_OS_DROP_QUANTITY_ATOM") != "1":
                 append_atom(
                     AtomType.quantity,
                     (f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}"

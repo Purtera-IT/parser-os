@@ -29,6 +29,8 @@ from __future__ import annotations
 import array
 import hashlib
 import os
+
+from app.core.env import env_get
 import sqlite3
 import threading
 from pathlib import Path
@@ -137,10 +139,10 @@ def get_cache() -> EmbeddingCache | None:
         if _CACHE_INIT:
             return _CACHE
         _CACHE_INIT = True
-        if os.environ.get("SOWSMITH_EMBED_CACHE_DISABLE"):
+        if env_get("PARSER_OS_EMBED_CACHE_DISABLE"):
             _CACHE = None
             return None
-        raw = os.environ.get("SOWSMITH_EMBED_CACHE_DB")
+        raw = env_get("PARSER_OS_EMBED_CACHE_DB")
         path = Path(raw) if raw else _default_path()
         try:
             _CACHE = EmbeddingCache(path)

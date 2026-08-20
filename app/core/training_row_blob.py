@@ -34,6 +34,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+
+from app.core.env import env_get
 import uuid
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -45,7 +47,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _enabled() -> bool:
-    return os.getenv("SOWSMITH_FEEDBACK_BLOB", "").strip().lower() in _TRUTHY
+    return env_get("PARSER_OS_FEEDBACK_BLOB", "").strip().lower() in _TRUTHY
 
 
 def _container_client():
@@ -59,8 +61,7 @@ def _container_client():
         from azure.storage.blob import BlobServiceClient
     except Exception:
         return None
-    container = os.environ.get(
-        "SOWSMITH_FEEDBACK_BLOB_CONTAINER", "orbitbrief-artifacts"
+    container = env_get("PARSER_OS_FEEDBACK_BLOB_CONTAINER", "orbitbrief-artifacts"
     ).strip() or "orbitbrief-artifacts"
     try:
         svc = BlobServiceClient.from_connection_string(conn)

@@ -36,6 +36,8 @@ touches the compile path or mutates the training log.
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import sqlite3
 import time
 import uuid
@@ -243,7 +245,7 @@ def get_shadow_history() -> ShadowHistory | None:
     global _HISTORY
     if _HISTORY is not None:
         return _HISTORY
-    db = os.environ.get("SOWSMITH_SHADOW_HISTORY_DB")
+    db = env_get("PARSER_OS_SHADOW_HISTORY_DB")
     if not db:
         return None
     try:

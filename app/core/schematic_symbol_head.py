@@ -34,6 +34,8 @@ import hashlib
 import io
 import json
 import os
+
+from app.core.env import env_get
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -185,7 +187,7 @@ class SymbolRow:
 
 class SchematicSymbolStore:
     def __init__(self, path: str | None = None):
-        self.path = path or os.environ.get("SOWSMITH_SCHEMATIC_HEAD_DB", ":memory:")
+        self.path = path or env_get("PARSER_OS_SCHEMATIC_HEAD_DB", ":memory:")
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.execute(_SCHEMA)
         self.conn.commit()

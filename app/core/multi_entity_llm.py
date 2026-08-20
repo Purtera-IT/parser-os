@@ -41,6 +41,8 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+
+from app.core.env import env_get
 import re
 import urllib.request
 from typing import Any, Callable
@@ -105,7 +107,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     that fails returns its zero-value (None / []) so downstream code
     sees a stable shape regardless of partial failures.
     """
-    if os.environ.get("SOWSMITH_MULTI_ENTITY_DISABLE"):
+    if env_get("PARSER_OS_MULTI_ENTITY_DISABLE"):
         return _empty_result()
     if not atoms:
         return _empty_result()
@@ -148,14 +150,14 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     #   - customer:      1 canonical per pack; cover-page-heavy.
     #   - milestones:    typically 0-25; LLM finds them in any
     #                    moderate-sized excerpt.
-    parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
+    parallel = int(env_get("PARSER_OS_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
 
     # v38: embedding-retrieval extractors for the recall-heavy entity
     # types (requirements, stakeholders, sites). Default-on; falls back
     # to chunked path when SOWSMITH_RETRIEVAL_DISABLE is set OR the
     # embedding endpoint is unreachable.
     use_retrieval = (
-        not os.environ.get("SOWSMITH_RETRIEVAL_DISABLE")
+        not env_get("PARSER_OS_RETRIEVAL_DISABLE")
     )
     if use_retrieval:
         try:
@@ -273,7 +275,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # from heads after the pool. Safe by construction (no-op until a relation is
     # certified). Flag-gated SOWSMITH_SPAN_SKIP.
     _skip = set()
-    if os.environ.get("SOWSMITH_SPAN_SKIP", "").strip().lower() in ("1", "true", "yes", "on"):
+    if env_get("PARSER_OS_SPAN_SKIP", "").strip().lower() in ("1", "true", "yes", "on"):
         try:
             from app.core.span_extractor import skip_eligible_relations
             _skip = set(skip_eligible_relations())
@@ -347,7 +349,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # contradict each other (Net-30 vs Net-45, 99.5% vs 99.99% uptime,
     # different coverage limits, etc.). Auto-emits reconciliation_flag
     # records for PM review.
-    if not os.environ.get("SOWSMITH_CONTRADICTION_DISABLE"):
+    if not env_get("PARSER_OS_CONTRADICTION_DISABLE"):
         try:
             from app.core.rag_extras import detect_cross_doc_contradictions
             from app.core.embedding_retrieval import embed_texts as _embed_texts
@@ -400,7 +402,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # types (sites, milestones), expands via graph neighbors of the
     # well-populated anchors (customer, stakeholders).
     # ────────────────────────────────────────────────────────────
-    if not os.environ.get("SOWSMITH_GRAPHRAG_DISABLE"):
+    if not env_get("PARSER_OS_GRAPHRAG_DISABLE"):
         try:
             from app.core.rag_extras import (
                 build_cooccurrence_graph,
@@ -484,7 +486,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     #      section headings.
     # All gated by SOWSMITH_ZERO_MISS_DISABLE.
     # ────────────────────────────────────────────────────────────
-    if not os.environ.get("SOWSMITH_ZERO_MISS_DISABLE"):
+    if not env_get("PARSER_OS_ZERO_MISS_DISABLE"):
         try:
             from app.core.zero_miss import (
                 pm_vocab_sweep,
@@ -699,7 +701,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # cells, etc.) and tags them with entity_type kind. Stashed under
     # `vision_rows` for downstream injection.
     # ────────────────────────────────────────────────────────────
-    if not os.environ.get("SOWSMITH_VISION_DISABLE"):
+    if not env_get("PARSER_OS_VISION_DISABLE"):
         try:
             from app.core.vision_extraction import (
                 find_all_pages_needing_vision,
@@ -721,10 +723,10 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
                     vision_results = extract_visual_pages(
                         visual_pages,
                         max_parallel=int(
-                            os.environ.get("SOWSMITH_VISION_PARALLEL", "3")
+                            env_get("PARSER_OS_VISION_PARALLEL", "3")
                         ),
                         max_pages=int(
-                            os.environ.get("SOWSMITH_VISION_MAX_PAGES", "30")
+                            env_get("PARSER_OS_VISION_MAX_PAGES", "30")
                         ),
                     )
                     if vision_results:
@@ -1187,7 +1189,7 @@ def _filter_by_artifact(
     fall back to passing through unchanged so the extractor still has
     SOMETHING to work with.
     """
-    if os.environ.get("SOWSMITH_RELEVANCE_GATE_DISABLE"):
+    if env_get("PARSER_OS_RELEVANCE_GATE_DISABLE"):
         return by_artifact
     filtered: dict[str, dict[str, Any]] = {}
     for aid, slot in by_artifact.items():
@@ -1269,7 +1271,7 @@ def _active_extractor_keys(
     extractor with ≥1 relevant document, drops the rest. Order preserved.
     No-op when the relevance gate is disabled.
     """
-    if os.environ.get("SOWSMITH_RELEVANCE_GATE_DISABLE"):
+    if env_get("PARSER_OS_RELEVANCE_GATE_DISABLE"):
         return list(ordered_keys)
     out: list[str] = []
     for k in ordered_keys:
@@ -1653,7 +1655,7 @@ _CHUNK_CHARS = 40000  # ~10K tokens per LLM call — well under qwen3:14b's 40K 
 # real-world bid packs. Configurable via env so Azure can dial it
 # down for cost / up for huge docs.
 _MAX_CHUNKS_PER_ARTIFACT = int(
-    os.environ.get("SOWSMITH_LLM_MAX_CHUNKS_PER_ARTIFACT", "32")
+    env_get("PARSER_OS_LLM_MAX_CHUNKS_PER_ARTIFACT", "32")
 )
 
 
@@ -2227,8 +2229,7 @@ _CANONICALIZE_PROMPTS: dict[str, str] = {
 # so this can be measured on a real deal (Yonah) before it fronts the hot path.
 
 def _enrich_deflect_enabled() -> bool:
-    return os.environ.get(
-        "SOWSMITH_ENRICH_STORE_DEFLECT", ""
+    return env_get("PARSER_OS_ENRICH_STORE_DEFLECT", ""
     ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
@@ -2372,7 +2373,7 @@ def _run_retrieval_extract(
         )
 
     # Try v39 hybrid pipeline first (now with augmented exemplars)
-    use_v39 = not os.environ.get("SOWSMITH_V39_DISABLE")
+    use_v39 = not env_get("PARSER_OS_V39_DISABLE")
     candidates: list[dict[str, Any]] = []
     if use_v39:
         try:
@@ -2448,7 +2449,7 @@ def _run_retrieval_extract(
     # rarely hit (8 outer × 8 inner = 64). Queueing at Ollama is fine;
     # higher canonicalize concurrency drops per-extractor wall time
     # when its candidate list is large (requirements top_k=600).
-    parallel = int(os.environ.get("SOWSMITH_CANONICALIZE_PARALLEL", "8"))
+    parallel = int(env_get("PARSER_OS_CANONICALIZE_PARALLEL", "8"))
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -2520,7 +2521,7 @@ def _run_retrieval_extract(
     # ────────────────────────────────────────────────────────────
     # v42: now ITERATIVE — runs up to 2 passes for stronger convergence.
     use_sicrl = (
-        not os.environ.get("SOWSMITH_SICRL_DISABLE")
+        not env_get("PARSER_OS_SICRL_DISABLE")
         and entity_type in ("requirement", "stakeholder", "quantity")
     )
     if use_sicrl and results:
@@ -2532,7 +2533,7 @@ def _run_retrieval_extract(
             )
             text_map = _build_artifact_text_map(by_artifact)
             if text_map:
-                sicrl_iters = int(os.environ.get("SOWSMITH_SICRL_ITERS", "2"))
+                sicrl_iters = int(env_get("PARSER_OS_SICRL_ITERS", "2"))
                 for _ in range(sicrl_iters):
                     prev_count = len(results)
                     augmented = run_sicrl(
@@ -2563,7 +2564,7 @@ def _run_retrieval_extract(
     # v42: TOURNAMENT canonicalization — cross-doc dedup via N²/2
     # pairwise LLM judging when items have high cosine similarity
     # ────────────────────────────────────────────────────────────
-    if results and len(results) >= 2 and not os.environ.get("SOWSMITH_TOURNAMENT_DISABLE"):
+    if results and len(results) >= 2 and not env_get("PARSER_OS_TOURNAMENT_DISABLE"):
         try:
             from app.core.rag_extras import run_tournament
             from app.core.embedding_retrieval import embed_texts as _embed_texts
@@ -2618,7 +2619,7 @@ def _extract_requirements_retrieved(
     exemplars = list(REQUIREMENT_EXEMPLARS)
     # v44: domain-aware exemplar routing
     try:
-        project_dir_name = os.environ.get("SOWSMITH_PROJECT_DIR_NAME")
+        project_dir_name = env_get("PARSER_OS_PROJECT_DIR_NAME")
         if project_dir_name:
             extras = detect_domain_extras(project_dir_name)
             if extras:
@@ -2956,7 +2957,7 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     # Global kill-switch: SOWSMITH_DISABLE_LLM forces every LLM path to its
     # deterministic fallback (empty == "no LLM result"). Also prevents a
     # wedged/unreachable host from blocking a compile in offline/CI runs.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return ""
     # Hosted-teacher route: when a TEACHER_API_BASE is configured, serve this
     # teacher call from the OpenAI-compatible client (DeepSeek/etc.) instead of
@@ -2966,7 +2967,7 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
         return llm_client.complete(prompt, max_tokens=max_tokens)
     host = ollama_host.resolve_host(DEFAULT_HOST)
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
-    timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    timeout = int(env_get("PARSER_OS_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
     # A host that cannot return five tokens will not return this either, and
     # the timeout above is measured in minutes. Probe once, then degrade to
     # the deterministic path the same way an empty completion already does.

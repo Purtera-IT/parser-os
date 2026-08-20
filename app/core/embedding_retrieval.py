@@ -34,6 +34,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+
+from app.core.env import env_get
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -235,7 +237,7 @@ def no_local_models() -> bool:
 def embed_backend() -> str:
     if no_local_models():
         return "azure"
-    return (os.environ.get("SOWSMITH_EMBED_BACKEND") or "ollama").strip().lower()
+    return (env_get("PARSER_OS_EMBED_BACKEND") or "ollama").strip().lower()
 
 
 def _azure_embed_conf() -> tuple[str, str, str]:
@@ -256,7 +258,7 @@ def _embed_azure(texts: list[str]) -> list[list[float] | None]:
             "azure embed backend selected but AZURE_OPENAI_EMBED_BASE / "
             "AZURE_OPENAI_EMBED_KEY are not set"
         )
-    timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", "60"))
+    timeout = int(env_get("PARSER_OS_EMBED_TIMEOUT", "60"))
     payload = {"model": model, "input": [t[:8000] for t in texts]}
     req = urllib.request.Request(
         f"{base}/embeddings",
@@ -286,7 +288,7 @@ def _embed_one(text: str) -> list[float] | None:
         )
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
-    timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    timeout = int(env_get("PARSER_OS_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     # Preflight: a dead embed endpoint must cost seconds, not the full
     # SOWSMITH_EMBED_TIMEOUT on every call. enrich_atoms embeds repeatedly, so
     # an ungated 180s timeout is what put one deal in enrich_entities for 21
@@ -325,12 +327,12 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
     global _BATCH_ENDPOINT_OK
     if _BATCH_ENDPOINT_OK is False:
         return None
-    if os.environ.get("SOWSMITH_EMBED_NO_BATCH"):
+    if env_get("PARSER_OS_EMBED_NO_BATCH"):
         _BATCH_ENDPOINT_OK = False
         return None
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = _embed_model()
-    timeout = int(os.environ.get("SOWSMITH_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    timeout = int(env_get("PARSER_OS_EMBED_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     # Preflight: a dead embed endpoint must cost seconds, not the full
     # SOWSMITH_EMBED_TIMEOUT on every call. enrich_atoms embeds repeatedly, so
     # an ungated 180s timeout is what put one deal in enrich_entities for 21
@@ -367,7 +369,7 @@ def _embed_uncached(texts: list[str]) -> list[list[float] | None]:
         # Silent degradation is the failure mode this backend exists to escape:
         # if Azure is misconfigured we want the compile to fail loudly here,
         # not to quietly emit a deal with no semantics in it.
-        chunk = int(os.environ.get("SOWSMITH_EMBED_AZURE_BATCH", "128"))
+        chunk = int(env_get("PARSER_OS_EMBED_AZURE_BATCH", "128"))
         out: list[list[float] | None] = []
         for i in range(0, len(texts), chunk):
             out.extend(_embed_azure(texts[i:i + chunk]))
@@ -375,7 +377,7 @@ def _embed_uncached(texts: list[str]) -> list[list[float] | None]:
     batched = _embed_batch_endpoint(texts)
     if batched is not None:
         return batched
-    parallel = int(os.environ.get("SOWSMITH_EMBED_PARALLEL", str(_BATCH_SIZE)))
+    parallel = int(env_get("PARSER_OS_EMBED_PARALLEL", str(_BATCH_SIZE)))
     out: list[list[float] | None] = [None] * len(texts)
     with ThreadPoolExecutor(max_workers=parallel) as ex:
         futures = {ex.submit(_embed_one, t): i for i, t in enumerate(texts)}

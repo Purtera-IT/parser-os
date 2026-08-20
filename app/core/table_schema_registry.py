@@ -10,6 +10,8 @@ of typed atoms for each row so every fact gets its own typed atom.
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import re
 from typing import Any
 
@@ -487,7 +489,7 @@ def emit_atoms_for_schema(
         # the row, not its own fact — exploding it into N site_allocation atoms
         # is over-extraction (same mistake as a standalone quantity atom). Folded
         # onto the line above; emit the split atoms only when explicitly asked.
-        if os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") != "1":
+        if env_get("PARSER_OS_DROP_DERIVED_SUBATOMS") != "1":
             for alloc in _parse_site_allocation(site_alloc_raw):
                 site_code = alloc["site"]
                 site_qty = alloc["qty"]
@@ -507,7 +509,7 @@ def emit_atoms_for_schema(
         # Lead time is also a sub-field of the row (already on the line). Same
         # one-atom-per-row rule: emit the separate constraint atom only when
         # explicitly asked.
-        if lead_time_raw and os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") != "1":
+        if lead_time_raw and env_get("PARSER_OS_DROP_DERIVED_SUBATOMS") != "1":
             lt_days = None
             m = re.search(r"(\d+)", lead_time_raw)
             if m:
@@ -721,7 +723,7 @@ def emit_atoms_for_schema(
             # The predecessor link is a SUB-FIELD of the task row (already on the
             # task's value.dependency). Emit the separate Gantt-edge atom only
             # when explicitly asked — same one-atom-per-row rule as site_allocation.
-            if dependency and os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") != "1":
+            if dependency and env_get("PARSER_OS_DROP_DERIVED_SUBATOMS") != "1":
                 atoms.append(_atom(
                     "task_dep",
                     AtomType.dependency,

@@ -39,6 +39,8 @@ import hashlib
 import json
 import logging
 import os
+
+from app.core.env import env_get
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -156,7 +158,7 @@ def load_or_generate_hyde(
 
     Returns list of hypothetical sentences to AUGMENT the exemplar set.
     """
-    if os.environ.get("SOWSMITH_HYDE_DISABLE"):
+    if env_get("PARSER_OS_HYDE_DISABLE"):
         return []
     cache = _hyde_cache_path(entity_type)
     if not force_regenerate and cache.exists():
@@ -209,7 +211,7 @@ def _neg_cache_path(entity_type: str) -> Path:
 def load_bootstrapped_negatives(entity_type: str, *, max_count: int = 200) -> list[str]:
     """Load accumulated negative exemplars from disk.
     Returns at most `max_count` (most recent if file is bigger)."""
-    if os.environ.get("SOWSMITH_NEG_BOOTSTRAP_DISABLE"):
+    if env_get("PARSER_OS_NEG_BOOTSTRAP_DISABLE"):
         return []
     p = _neg_cache_path(entity_type)
     if not p.exists():
@@ -235,7 +237,7 @@ def append_bootstrapped_negative(
     Used after canonicalize returns keep=False with HIGH confidence
     (clear noise). Caps at max_total most-recent entries.
     """
-    if os.environ.get("SOWSMITH_NEG_BOOTSTRAP_DISABLE"):
+    if env_get("PARSER_OS_NEG_BOOTSTRAP_DISABLE"):
         return
     if not rejected_sentence or len(rejected_sentence) < 20:
         return
@@ -302,7 +304,7 @@ def run_tournament(
 
     Returns deduped items (some merged).
     """
-    if os.environ.get("SOWSMITH_TOURNAMENT_DISABLE"):
+    if env_get("PARSER_OS_TOURNAMENT_DISABLE"):
         return items
     if len(items) < 2 or item_embeddings.size == 0:
         return items
@@ -335,7 +337,7 @@ def run_tournament(
         if px != py:
             parent[px] = py
 
-    parallel = int(os.environ.get("SOWSMITH_TOURNAMENT_PARALLEL", "8"))
+    parallel = int(env_get("PARSER_OS_TOURNAMENT_PARALLEL", "8"))
     merge_canons: dict[int, str] = {}
 
     def judge(pair_data):
@@ -445,7 +447,7 @@ def detect_cross_doc_contradictions(
     Returns list of contradiction flags:
       {kind, explanation, item_a, item_b, source_a, source_b}
     """
-    if os.environ.get("SOWSMITH_CONTRADICTION_DISABLE"):
+    if env_get("PARSER_OS_CONTRADICTION_DISABLE"):
         return []
     if len(items) < 2 or item_embeddings.size == 0:
         return []
@@ -467,7 +469,7 @@ def detect_cross_doc_contradictions(
     if not pairs:
         return []
 
-    parallel = int(os.environ.get("SOWSMITH_CONTRADICTION_PARALLEL", "8"))
+    parallel = int(env_get("PARSER_OS_CONTRADICTION_PARALLEL", "8"))
     flags: list[dict[str, Any]] = []
 
     def judge(pair_data):

@@ -20,6 +20,8 @@ default (``SOWSMITH_FACET_SECTIONS``).
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 from typing import Any
 
 # Order = display order of the dashboard sections.
@@ -27,11 +29,11 @@ FACETS = ("WORK", "SITE", "COMMERCIAL", "COMPLIANCE", "PARTY", "TIMING", "META")
 
 
 def _facet_dir() -> str:
-    return os.environ.get("SOWSMITH_CONTRASTIVE_FACET_DIR", "_contrastive_facet")
+    return env_get("PARSER_OS_CONTRASTIVE_FACET_DIR", "_contrastive_facet")
 
 
 def _enabled() -> bool:
-    return os.environ.get("SOWSMITH_FACET_SECTIONS", "").strip().lower() in (
+    return env_get("PARSER_OS_FACET_SECTIONS", "").strip().lower() in (
         "1", "true", "yes", "on")
 
 

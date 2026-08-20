@@ -39,6 +39,8 @@ from __future__ import annotations
 import logging
 import math
 import os
+
+from app.core.env import env_get
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -69,25 +71,25 @@ def set_reranker(fn: Optional[Callable[[str, list[str]], Optional[list[float]]]]
 
 
 def enabled() -> bool:
-    return os.getenv("SOWSMITH_NEURAL_RERANK", "").strip().lower() in (
+    return env_get("PARSER_OS_NEURAL_RERANK", "").strip().lower() in (
         "1", "true", "yes", "on",
     )
 
 
 def backend() -> str:
-    return os.getenv("SOWSMITH_RERANK_BACKEND", "st").strip().lower()
+    return env_get("PARSER_OS_RERANK_BACKEND", "st").strip().lower()
 
 
 def threshold() -> float:
     try:
-        return float(os.getenv("SOWSMITH_RERANK_THRESHOLD", "0.5"))
+        return float(env_get("PARSER_OS_RERANK_THRESHOLD", "0.5"))
     except ValueError:
         return 0.5
 
 
 def top_k() -> int:
     try:
-        return max(1, int(os.getenv("SOWSMITH_RERANK_TOPK", "20")))
+        return max(1, int(env_get("PARSER_OS_RERANK_TOPK", "20")))
     except ValueError:
         return 20
 
@@ -104,7 +106,7 @@ def available() -> bool:
     if b == "st":
         return _load_st() is not None
     if b == "http":
-        return bool(os.getenv("SOWSMITH_RERANK_URL"))
+        return bool(env_get("PARSER_OS_RERANK_URL"))
     return False
 
 
@@ -143,7 +145,7 @@ def _load_st():
         return None
     try:
         from sentence_transformers import CrossEncoder
-        model_name = os.getenv("SOWSMITH_RERANK_MODEL", _DEFAULT_MODEL)
+        model_name = env_get("PARSER_OS_RERANK_MODEL", _DEFAULT_MODEL)
         _ST_MODEL = CrossEncoder(model_name)
         logger.info("reranker: loaded CrossEncoder %s", model_name)
         return _ST_MODEL
@@ -166,11 +168,11 @@ def _rerank_st(query: str, documents: list[str]) -> Optional[list[float]]:
 
 
 def _rerank_http(query: str, documents: list[str]) -> Optional[list[float]]:
-    url = os.getenv("SOWSMITH_RERANK_URL")
+    url = env_get("PARSER_OS_RERANK_URL")
     if not url:
         return None
     import requests
-    timeout = int(os.getenv("SOWSMITH_RERANK_TIMEOUT", str(_DEFAULT_HTTP_TIMEOUT)))
+    timeout = int(env_get("PARSER_OS_RERANK_TIMEOUT", str(_DEFAULT_HTTP_TIMEOUT)))
     base = url.rstrip("/")
     endpoint = base if base.endswith("rerank") else base + "/rerank"
     try:
@@ -239,7 +241,7 @@ def rerank(query: str, documents: list[str]) -> Optional[list[float]]:
         return scored
     # Global kill-switch: skip the real model backends (fail-open to the
     # bi-encoder). Test-injected overrides above still run.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return None
     if not enabled():
         return None

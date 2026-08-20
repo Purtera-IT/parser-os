@@ -16,6 +16,8 @@ Design constraints:
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import sys
 from typing import Iterable, Iterator, TypeVar
 
@@ -28,7 +30,7 @@ except Exception:  # pragma: no cover - exercised only when tqdm is missing
 
 
 def _enabled() -> bool:
-    return os.environ.get("SOWSMITH_PROGRESS", "1").strip().lower() not in (
+    return env_get("PARSER_OS_PROGRESS", "1").strip().lower() not in (
         "0",
         "false",
         "no",

@@ -37,6 +37,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+
+from app.core.env import env_get
 import sqlite3
 import time
 import uuid
@@ -241,7 +243,7 @@ def get_training_log() -> TrainingLog | None:
     global _LOG
     if _LOG is not None:
         return _LOG
-    db = os.environ.get("SOWSMITH_TRAINING_LOG_DB")
+    db = env_get("PARSER_OS_TRAINING_LOG_DB")
     if not db:
         return None
     try:

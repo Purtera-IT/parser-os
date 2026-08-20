@@ -36,6 +36,8 @@ Pure functions, no I/O. Built once per compile, passed through
 """
 from __future__ import annotations
 
+from app.core.env import env_get
+
 import re
 from typing import Any, Iterable
 
@@ -661,7 +663,7 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     # The structural 6-tier regex catalog is the deterministic
     # fallback for when the LLM is unreachable or returns nothing.
     import os
-    llm_disabled = bool(os.environ.get("SOWSMITH_SITE_LLM_DISABLE"))
+    llm_disabled = bool(env_get("PARSER_OS_SITE_LLM_DISABLE"))
     hygiene_fn = None
     if not llm_disabled:
         try:

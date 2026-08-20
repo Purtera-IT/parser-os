@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import pickle
 from dataclasses import dataclass
 
@@ -48,7 +50,7 @@ class RetrainResult:
 
 class ContinualSymbolHead:
     def __init__(self, db_path: str | None = None, feature_fn=None, min_gain: float = 0.0):
-        self.db_path = db_path or os.environ.get("SOWSMITH_CONTINUAL_HEAD_DB", ":memory:")
+        self.db_path = db_path or env_get("PARSER_OS_CONTINUAL_HEAD_DB", ":memory:")
         self.store = SchematicSymbolStore(self.db_path)
         self.feature_fn = feature_fn or crop_feature
         self.min_gain = min_gain

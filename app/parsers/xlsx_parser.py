@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import os
+
+from app.core.env import env_get
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1436,7 +1438,7 @@ def _emit_scope_constraint_atoms(
     # that just restates something already on the row. In one-atom-per-row mode
     # they fold onto the row (same rule as site_allocation / column-entities);
     # the brittle keyword typing they encode is the head's job, not the parser's.
-    if os.environ.get("SOWSMITH_DROP_DERIVED_SUBATOMS") == "1":
+    if env_get("PARSER_OS_DROP_DERIVED_SUBATOMS") == "1":
         return
 
     def ap(
@@ -3219,7 +3221,7 @@ class XlsxParser(BaseParser):
         # atomizer splits the sheet into title/header/rows blocks, so every atom
         # carries a real path (sheet > title) and each row is keyed to ITS block's
         # column headers — the organization signal the heads need.
-        if os.environ.get("SOWSMITH_XLSX_BLOCKS", "1") != "0":
+        if env_get("PARSER_OS_XLSX_BLOCKS", "1") != "0":
             block_atoms = self._emit_block_structured_rows(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -4799,8 +4801,7 @@ class XlsxParser(BaseParser):
         # SUB-FIELD extractions (the Site/Floor/Room column already lives on the
         # row atom) used for entity resolution — emit them only when not in
         # one-atom-per-row mode, same rule as site_allocation / dependency.
-        for field, etype, label in () if os.environ.get(
-            "SOWSMITH_DROP_DERIVED_SUBATOMS"
+        for field, etype, label in () if env_get("PARSER_OS_DROP_DERIVED_SUBATOMS"
         ) == "1" else (
             ("site", "site", "Site"),
             ("building", "building", "Building"),

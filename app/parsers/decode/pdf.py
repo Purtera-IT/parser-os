@@ -24,6 +24,8 @@ through the transposition and underscore repairs.
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import warnings
 from pathlib import Path
 from typing import Any
@@ -34,7 +36,7 @@ _PDF_MAGIC = b"%PDF-"
 
 
 def _disabled() -> bool:
-    return os.environ.get("SOWSMITH_PDF_TABLES_DOC_INTEL", "1").strip().lower() in {
+    return env_get("PARSER_OS_PDF_TABLES_DOC_INTEL", "1").strip().lower() in {
         "0", "false", "no", "off",
     }
 

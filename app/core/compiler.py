@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.env import env_get
+
 import functools
 import json
 import re
@@ -309,7 +311,7 @@ def _maybe_wire_feedback_store() -> None:
         return
     import os as _os
 
-    db_path = _os.environ.get("SOWSMITH_FEEDBACK_STORE_DB", "").strip()
+    db_path = env_get("PARSER_OS_FEEDBACK_STORE_DB", "").strip()
     if not db_path:
         return
     _FEEDBACK_STORE_WIRED = True  # one attempt per process, success or not
@@ -395,7 +397,10 @@ def compile_project(
     # Used by app.core.exemplars.detect_domain_extras() to add domain-
     # specific exemplars (POS / ITAD / cabling / wireless / etc.).
     import os as _os
+    # Written under both spellings: readers now go through env_get, which
+    # prefers PARSER_OS_*, and a subprocess may read either directly.
     _os.environ["SOWSMITH_PROJECT_DIR_NAME"] = project_dir.name
+    _os.environ["PARSER_OS_PROJECT_DIR_NAME"] = project_dir.name
     if isinstance(domain_pack, DomainPack):
         # Pre-loaded pack from caller wins outright (e.g. tests)
         resolved_domain_pack = domain_pack

@@ -45,6 +45,8 @@ Universality contract
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 from collections import OrderedDict
 from typing import Any
 
@@ -265,7 +267,7 @@ def roll_up_table_rows(atoms: list[Any]) -> tuple[list[Any], dict[str, int]]:
     #    UNSET → no cap → EVERY site is emitted as its own atom so the deliverable
     #    (Deal Kit / site list) is complete. The money-table fold above always runs
     #    (it is an enrich-cost necessity); only the site cap is gated here.
-    _site_keep_env = os.environ.get("SOWSMITH_SITE_ROLLUP_KEEP")
+    _site_keep_env = env_get("PARSER_OS_SITE_ROLLUP_KEEP")
     if _site_keep_env is not None:
         site_keep = _env_int("SOWSMITH_SITE_ROLLUP_KEEP", _DEFAULT_SITE_KEEP)
         site_min = _env_int("SOWSMITH_SITE_ROLLUP_MIN", _DEFAULT_SITE_MIN)

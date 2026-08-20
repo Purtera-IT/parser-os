@@ -37,6 +37,8 @@ from __future__ import annotations
 import io
 import json
 import os
+
+from app.core.env import env_get
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -320,7 +322,7 @@ def get_head_registry() -> HeadRegistry | None:
     global _REGISTRY
     if _REGISTRY is not None:
         return _REGISTRY
-    root = os.environ.get("SOWSMITH_HEAD_REGISTRY_DIR")
+    root = env_get("PARSER_OS_HEAD_REGISTRY_DIR")
     if not root:
         return None
     try:

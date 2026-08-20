@@ -19,6 +19,8 @@ every call abstains -> byte-identical to the LLM-only path. OFF by default
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import threading
 from typing import Any
 
@@ -29,12 +31,12 @@ _holder: dict[str, Any] = {}
 
 
 def _gate_dir() -> str:
-    return os.environ.get("SOWSMITH_RUBRIC_GATE_DIR", "_gate_rubric/best")
+    return env_get("PARSER_OS_RUBRIC_GATE_DIR", "_gate_rubric/best")
 
 
 def _conf_bar() -> float:
     try:
-        return float(os.environ.get("SOWSMITH_RUBRIC_GATE_CONF", str(_DEFAULT_CONF)))
+        return float(env_get("PARSER_OS_RUBRIC_GATE_CONF", str(_DEFAULT_CONF)))
     except ValueError:
         return _DEFAULT_CONF
 

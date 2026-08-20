@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+
+from app.core.env import env_get
 import re
 from typing import Any
 
@@ -1520,7 +1522,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     # confident are spurious — never a high-precision contradiction, never an
     # added edge. Abstains (keeps everything) on a cold/under-trained head, so
     # the default pipeline is byte-identical. Set SOWSMITH_NEURAL_EDGE_GATE=1.
-    if os.environ.get("SOWSMITH_NEURAL_EDGE_GATE"):
+    if env_get("PARSER_OS_NEURAL_EDGE_GATE"):
         try:
             from app.core.graph_neural_classifier import neural_edge_gate
             from app.core.embedding_retrieval import embed_texts

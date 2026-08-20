@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -382,7 +384,7 @@ def _extract_json_object(text: str) -> dict:
 def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     # Global kill-switch: SOWSMITH_DISABLE_LLM forces the deterministic
     # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return ""
     # Hosted-teacher route (default-off): TEACHER_API_BASE → OpenAI-compatible
     # client; otherwise the local Ollama below.
@@ -393,10 +395,10 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     import urllib.request
 
     host = ollama_host.resolve_host(_DEFAULT_HOST)
-    model = os.environ.get("SOWSMITH_RULE_MODEL") or os.environ.get(
+    model = env_get("PARSER_OS_RULE_MODEL") or os.environ.get(
         "OLLAMA_BIG_MODEL", _DEFAULT_MODEL
     )
-    timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    timeout = int(env_get("PARSER_OS_LLM_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     # A host that cannot return five tokens will not return this either, and
     # the timeout above is measured in minutes. Probe once, then degrade to
     # the deterministic path the same way an empty completion already does.

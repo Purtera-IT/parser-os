@@ -46,6 +46,8 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+
+from app.core.env import env_get
 import re
 import sys
 import time
@@ -266,8 +268,7 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
 
 
 def _atom_type_deflect_enabled() -> bool:
-    return os.environ.get(
-        "SOWSMITH_ATOM_TYPE_DEFLECT", ""
+    return env_get("PARSER_OS_ATOM_TYPE_DEFLECT", ""
     ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
@@ -279,8 +280,7 @@ def _typed_student_enabled() -> bool:
     cutover gate. With it off, or with an empty training log, the student
     abstains everywhere and this stage is byte-identical to the LLM-only path.
     """
-    return os.environ.get(
-        "SOWSMITH_TYPED_STUDENT", ""
+    return env_get("PARSER_OS_TYPED_STUDENT", ""
     ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
@@ -413,7 +413,7 @@ def _atom_lead_in(atom: Any) -> str:
 
 def _atom_decide_text(atom: Any) -> str:
     bound = None
-    if os.environ.get("SOWSMITH_ATOM_BIND_HEADERS", "1") != "0":
+    if env_get("PARSER_OS_ATOM_BIND_HEADERS", "1") != "0":
         bound = _atom_bound_text(atom)
     text = bound or _atom_text(atom).replace("\n", " ").strip()
     table_ref = _atom_table_ref(atom)
@@ -440,13 +440,13 @@ def classify_atoms(atoms: list[Any]) -> int:
     """
     if not atoms:
         return 0
-    if os.environ.get("SOWSMITH_TYPED_CLASSIFIER_DISABLE"):
+    if env_get("PARSER_OS_TYPED_CLASSIFIER_DISABLE"):
         return 0
     # Honour the global LLM kill-switch: this stage drives promotion via an
     # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
     # previously ignored the flag and spent ~46s/compile hitting a reachable
     # but slow remote model even in "no-LLM" runs).
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return 0
 
     promotable = [a for a in atoms if _atom_type_str(a) in _PROMOTABLE_FROM]
@@ -574,7 +574,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # LLM for that atom. Same value-light contract + guess-free abstain as the CPU
     # head below — this just swaps the sklearn-over-frozen-embeddings backend for the
     # GPU-fine-tuned encoder. OFF by default; cold/abstain -> byte-identical to LLM-only.
-    if os.environ.get("SOWSMITH_TYPE_HEAD_GPU", "").strip().lower() in ("1", "true", "yes", "on"):
+    if env_get("PARSER_OS_TYPE_HEAD_GPU", "").strip().lower() in ("1", "true", "yes", "on"):
         _t = _lap()
         try:
             from app.core.schemas import AtomType as _AT
@@ -606,7 +606,7 @@ def classify_atoms(atoms: list[Any]) -> int:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
 
-    if os.environ.get("SOWSMITH_TYPE_HEAD_DEFLECT", "").strip().lower() in ("1", "true", "yes", "on"):
+    if env_get("PARSER_OS_TYPE_HEAD_DEFLECT", "").strip().lower() in ("1", "true", "yes", "on"):
         _t = _lap()
         try:
             from app.core.schemas import AtomType as _AT
@@ -645,7 +645,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # only act on a confident _keep verdict (never emit a positive type here), so a
     # wrong abstain just falls through to the LLM as before. Instant-learning store;
     # OFF by default; cold/abstain -> byte-identical to the LLM-only path.
-    if os.environ.get("SOWSMITH_CONTRASTIVE_TYPE", "").strip().lower() in ("1", "true", "yes", "on"):
+    if env_get("PARSER_OS_CONTRASTIVE_TYPE", "").strip().lower() in ("1", "true", "yes", "on"):
         _t = _lap()
         try:
             from app.core.contrastive_type_knn import load_promoted as _load_cknn
@@ -672,7 +672,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # confidently-_keep atoms off the LLM typing stage; they stay _keep. Guess-free
     # + safe by direction (only acts on a confident _keep verdict). OFF by default;
     # abstains (no-op) if torch/transformers or the model are absent.
-    if os.environ.get("SOWSMITH_RUBRIC_GATE", "").strip().lower() in ("1", "true", "yes", "on"):
+    if env_get("PARSER_OS_RUBRIC_GATE", "").strip().lower() in ("1", "true", "yes", "on"):
         _t = _lap()
         try:
             from app.core.rubric_gate import keep_deflect_flags
@@ -700,8 +700,8 @@ def classify_atoms(atoms: list[Any]) -> int:
         _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
         return head_deflected
 
-    batch_size = int(os.environ.get("SOWSMITH_TYPED_CLASSIFIER_BATCH", str(DEFAULT_BATCH_SIZE)))
-    parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
+    batch_size = int(env_get("PARSER_OS_TYPED_CLASSIFIER_BATCH", str(DEFAULT_BATCH_SIZE)))
+    parallel = int(env_get("PARSER_OS_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
     batches = [promotable[i:i + batch_size] for i in range(0, len(promotable), batch_size)]
 
     _t_llm0 = time.perf_counter()
@@ -1057,7 +1057,7 @@ def _ollama_reachable() -> bool:
     Ask for tokens instead.
     """
     host = ollama_host.resolve_host(DEFAULT_HOST)
-    model = os.environ.get("SOWSMITH_TYPED_CLASSIFIER_MODEL") or os.environ.get(
+    model = env_get("PARSER_OS_TYPED_CLASSIFIER_MODEL") or os.environ.get(
         "OLLAMA_MODEL", DEFAULT_MODEL
     )
     return ollama_host.generation_ready(host, model)
@@ -1080,8 +1080,8 @@ def _call_ollama(prompt: str, *, max_tokens: int = 4096) -> str:
     if llm_client.teacher_api_enabled():
         return llm_client.complete(prompt, max_tokens=max_tokens)
     host = ollama_host.resolve_host(DEFAULT_HOST)
-    model = os.environ.get("SOWSMITH_TYPED_CLASSIFIER_MODEL") or os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
-    timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    model = env_get("PARSER_OS_TYPED_CLASSIFIER_MODEL") or os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
+    timeout = int(env_get("PARSER_OS_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
     # A host that cannot return five tokens will not return this either, and
     # the timeout above is measured in minutes. Probe once, then degrade to
     # the deterministic path the same way an empty completion already does.

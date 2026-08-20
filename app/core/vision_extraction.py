@@ -26,6 +26,8 @@ import io
 import json
 import logging
 import os
+
+from app.core.env import env_get
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -147,7 +149,7 @@ def vision_endpoint_reachable() -> bool:
     """Quick health check for the vision model."""
     # Global kill-switch: vision is an LLM path, so SOWSMITH_DISABLE_LLM
     # disables it too (callers gate the vision pass on this predicate).
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if env_get("PARSER_OS_DISABLE_LLM"):
         return False
     # Hosted teacher: the vision pass routes to the API (see call_vision_llm),
     # so the local-host health check is irrelevant — report reachable.
@@ -218,8 +220,8 @@ def _tile_grid_for(png_bytes: bytes) -> int:
     edge. Returns 1 (no tiling) for normal-size pages so small docs are
     unchanged. Capped to bound cost."""
     try:
-        target = int(os.environ.get("SOWSMITH_VISION_TILE_TARGET_PX", "1800"))
-        cap = int(os.environ.get("SOWSMITH_VISION_TILE_MAX", "6"))
+        target = int(env_get("PARSER_OS_VISION_TILE_TARGET_PX", "1800"))
+        cap = int(env_get("PARSER_OS_VISION_TILE_MAX", "6"))
     except Exception:
         target, cap = 1800, 6
     try:
@@ -727,7 +729,7 @@ def _verify_pass(
     v44.5 — closes the recall gap on dense tables where the first
     pass might skip rows in a 30-row BOM.
     """
-    if os.environ.get("SOWSMITH_VISION_VERIFY_DISABLE"):
+    if env_get("PARSER_OS_VISION_VERIFY_DISABLE"):
         return []
     summary = prior_extraction.get("summary", "")
     # Build a compact representation of prior extraction
@@ -797,13 +799,13 @@ def extract_visual_pages(
        "raw_extraction": <specialized prompt output>,
        "rows": [{"kind", "text", "category"}]}
     """
-    if not pages or os.environ.get("SOWSMITH_VISION_DISABLE"):
+    if not pages or env_get("PARSER_OS_VISION_DISABLE"):
         return []
     if not vision_endpoint_reachable():
         logger.info("vision endpoint not reachable, skipping vision pass")
         return []
     pages_to_process = pages[:max_pages]
-    parallel = int(os.environ.get("SOWSMITH_VISION_PARALLEL", str(max_parallel)))
+    parallel = int(env_get("PARSER_OS_VISION_PARALLEL", str(max_parallel)))
 
     def process(pair):
         pdf_path, page_num = pair
@@ -827,7 +829,7 @@ def extract_visual_pages(
         # drawings) render to ~10000px; sent whole to the model the schedule
         # text downscales below readability and recall collapses (MEASURED ~0
         # rows). So auto-tile big pages, extract per tile, merge + dedup.
-        tile_on = os.environ.get("SOWSMITH_VISION_TILE", "1") not in ("0", "false", "")
+        tile_on = env_get("PARSER_OS_VISION_TILE", "1") not in ("0", "false", "")
         grid_n = _tile_grid_for(img) if tile_on else 1
         first_parsed: dict[str, Any] = {}
         if grid_n <= 1:
@@ -842,7 +844,7 @@ def extract_visual_pages(
                 (isinstance(parsed.get(k), list) and parsed.get(k))
                 for k in ("line_items", "people", "phases", "sites", "specs", "items", "rows")
             )
-            if has_content and not os.environ.get("SOWSMITH_VISION_VERIFY_DISABLE"):
+            if has_content and not env_get("PARSER_OS_VISION_VERIFY_DISABLE"):
                 rows.extend(_verify_pass(img, parsed, page_kind))
         else:
             # Large sheet: tile, extract per tile, merge + dedup.
@@ -1191,7 +1193,7 @@ def find_scanned_pages(pdf_path: str) -> list[int]:
 def ocr_scanned_page(pdf_path: str, page_num: int) -> str:
     """OCR a single scanned page via qwen2.5vl:7b vision LLM. Returns
     plain transcribed text (or empty string on failure)."""
-    if os.environ.get("SOWSMITH_OCR_DISABLE"):
+    if env_get("PARSER_OS_OCR_DISABLE"):
         return ""
     img = render_pdf_page(pdf_path, page_num, dpi=200)
     if not img:
@@ -1211,7 +1213,7 @@ def ocr_all_scanned_pages(
 
     Throttled to avoid saturating the vision-LLM endpoint.
     """
-    if os.environ.get("SOWSMITH_OCR_DISABLE"):
+    if env_get("PARSER_OS_OCR_DISABLE"):
         return {}
     if not vision_endpoint_reachable():
         return {}

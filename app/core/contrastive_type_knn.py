@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -38,7 +40,7 @@ _DEFAULT_TAU = 0.30        # vote-margin operating point if knn_meta omits one
 
 
 def _registry_dir() -> str:
-    return os.environ.get("SOWSMITH_CONTRASTIVE_TYPE_DIR", "_contrastive_type")
+    return env_get("PARSER_OS_CONTRASTIVE_TYPE_DIR", "_contrastive_type")
 
 
 def _norm(v: np.ndarray) -> np.ndarray:

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.env import env_get
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -48,7 +50,7 @@ def _split(deal_id: str) -> str:
         _SPLIT_MAP = {}
         try:
             import sqlite3
-            db = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "")
+            db = env_get("PARSER_OS_TRAINING_LOG_DB", "")
             if db:
                 con = sqlite3.connect(db)
                 for d, s in con.execute(
@@ -120,7 +122,7 @@ def _load_rows(log_db: str):
     # Prefer the rubric-cleaned facet (facet_clean) when SOWSMITH_TYPE_HEAD_FACET=1 and
     # the column exists — this trains the step-5 facet LR head on clean labels. Default
     # stays on the micro `label` so the current value-light runtime contract is unchanged.
-    use_facet = os.environ.get("SOWSMITH_TYPE_HEAD_FACET", "").strip().lower() in ("1", "true", "yes", "on")
+    use_facet = env_get("PARSER_OS_TYPE_HEAD_FACET", "").strip().lower() in ("1", "true", "yes", "on")
     has_fc = use_facet and any(
         r[1] == "facet_clean" for r in con.execute("PRAGMA table_info(training_rows)"))
     label_expr = "COALESCE(NULLIF(facet_clean,''), label)" if has_fc else "label"
@@ -145,7 +147,7 @@ def train_type_head(
     eval-gates promotion via the returned metrics."""
     from sklearn.linear_model import LogisticRegression
 
-    log_db = log_db or os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
+    log_db = log_db or env_get("PARSER_OS_TRAINING_LOG_DB", "_training_deepseek.db")
     if embed_fn is None:
         from app.core.embedding_retrieval import embed_texts
         embed_fn = embed_texts
@@ -201,7 +203,7 @@ def train_type_head(
 # ── registry: eval-gated promotion + rollback (monotonic quality) ──────────────
 
 def _registry_dir() -> str:
-    return os.environ.get("SOWSMITH_TYPE_HEAD_DIR", "_type_head")
+    return env_get("PARSER_OS_TYPE_HEAD_DIR", "_type_head")
 
 
 def _meta_path() -> str:
@@ -249,7 +251,7 @@ def retrain_if_stale(
 
     # staleness check: skip retrain if the log hasn't grown enough.
     import sqlite3
-    db = log_db or os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
+    db = log_db or env_get("PARSER_OS_TRAINING_LOG_DB", "_training_deepseek.db")
     try:
         n_now = sqlite3.connect(db).execute(
             "SELECT COUNT(*) FROM training_rows WHERE relation='atom_type'").fetchone()[0]

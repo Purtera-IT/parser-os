@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.env import env_get
+
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +88,7 @@ def default_calibrator_path() -> Path | None:
     artifact (e.g. ``/tmp/ml/_calibrator/calibrator.joblib``) to turn it on."""
     import os
 
-    p = os.environ.get("SOWSMITH_CALIBRATOR_PATH", "").strip()
+    p = env_get("PARSER_OS_CALIBRATOR_PATH", "").strip()
     return Path(p) if p and Path(p).is_file() else None
 
 
