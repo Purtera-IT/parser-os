@@ -1,0 +1,38 @@
+# Tests known to fail on feat/clean-rubric-heads as of 2026-08-20.
+#
+# This is the branch parser-os-worker actually deploys, so this is the
+# baseline that matters. It is NOT main's list: main fails 41, this branch
+# fails 17, and 26 of main's failures are already fixed here. main is the
+# stale branch, not this one.
+#
+# A ratchet, not an amnesty. CI deselects these so a NEW failure turns the
+# build red immediately, and separately re-runs the list and warns about any
+# entry that now passes. Delete the line when it does -- the list only shrinks.
+
+# ---------------------------------------------------------------------------
+# Cannot pass on a runner: compile from test_deals/, which is not tracked (3)
+# ---------------------------------------------------------------------------
+tests/test_pack_regressions_optbot_aps.py::test_aps_attachment_b_numeric_roster_regression
+tests/test_pack_regressions_optbot_aps.py::test_optbot_pack_regression_counts_and_site_hygiene
+tests/test_schematic_real_gold.py::test_every_schematic_case_dir_has_artifacts_and_labels
+
+# ---------------------------------------------------------------------------
+# Real behavioural failures (14)
+#
+# Three of these are in test_training_log.py -- the module that produces the
+# corpus every head learns from. Worth reading first.
+# ---------------------------------------------------------------------------
+tests/test_compiler_e2e.py::test_compiler_e2e_golden_regression
+tests/test_embedding_cache.py::test_batch_endpoint_returns_aligned_vectors
+tests/test_embedding_cache.py::test_batch_endpoint_used_then_disabled_on_404
+tests/test_entity_extraction.py::TestSiteExtraction::test_andrews_information_systems_bldg
+tests/test_extraction_tap.py::test_every_extractor_shape_is_logged
+tests/test_gate_bootstrap.py::test_bootstrap_default_store_skips_unreproducible_gates
+tests/test_packet_certificates.py::test_scope_exclusion_rationale_mentions_customer_authored_when_governed
+tests/test_packet_invalidation.py::test_changing_customer_exclusion_invalidates_scope_exclusion
+tests/test_quote_parser.py::test_quote_parser_false_positive_no_line_items
+tests/test_schematic_round3_fixes.py::test_rotated_text_is_classified_as_title_block_furniture
+tests/test_training_log.py::test_list_item_with_category_logs_that_category_as_label
+tests/test_training_log.py::test_list_item_without_subtype_is_skipped_not_relabelled_to_relation
+tests/test_training_log.py::test_mixed_batch_keeps_only_categorised_items
+tests/test_week5_dx.py::TestTwoWordOrgSites::test_virginia_tech
