@@ -24,7 +24,7 @@ Readers, by family:
 
 Binary regions (images/charts/drawings/embedded objects/attachments) are
 registered with a ``location`` equal to the ``region_ref`` the parser's
-markers use (see ``app/parsers/binary_markers.py``), so a marked binary region
+markers use (see ``app/coverage/binary_regions.py``), so a marked binary region
 reconciles as MARKED.
 """
 
@@ -37,7 +37,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from app.core.content_census import ContentCensus, Region, RegionKind
-from app.parsers.census_docx import census_docx
+from app.coverage.census_docx import census_docx
 
 # OOXML/ODF binary dir -> region kind. Locations match binary_markers refs.
 _BIN_KINDS = {

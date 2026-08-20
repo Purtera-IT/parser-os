@@ -30,7 +30,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
-from app.parsers.binary_markers import emit_zip_binary_markers
+from app.coverage.binary_regions import emit_zip_binary_markers
 
 
 def _make_atom(

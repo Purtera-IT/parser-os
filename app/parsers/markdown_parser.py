@@ -44,7 +44,7 @@ from app.core.schemas import (
 )
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
-from app.parsers.binary_markers import region_marker
+from app.coverage.binary_regions import region_marker
 
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(?P<title>.+?)\s*$")

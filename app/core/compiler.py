@@ -282,7 +282,7 @@ def project_census(project_dir: Path | str, atoms):
     network; safe to call after any compile from ``(project_dir, result.atoms)``.
     Never raises — returns an empty census on any failure.
     """
-    from app.parsers.census import reconciled_census
+    from app.coverage.census import reconciled_census
 
     try:
         root = Path(project_dir).resolve()

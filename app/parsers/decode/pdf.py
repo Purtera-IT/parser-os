@@ -30,6 +30,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+from app.parsers.decode._tables import _table_rows_repaired
 from app.parsers.decode.base import Block, DecodedDoc, Figure, Locator, Table
 
 _PDF_MAGIC = b"%PDF-"
@@ -164,9 +165,6 @@ class PdfDecoder:
                     fitz_grids: list[tuple[list[list[str]], Any]] = []
                     for t in fitz_tabs:
                         try:
-                            from app.parsers.orbitbrief_pdf import (
-                                _table_rows_repaired,
-                            )
                             rows = _table_rows_repaired(page, t)
                         except Exception:
                             try:
