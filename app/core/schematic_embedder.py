@@ -177,8 +177,35 @@ def default_embedder():
     if path and _TORCH:
         try:
             _DEFAULT_EMBEDDER = SchematicEmbedder.load(path)
+            return _DEFAULT_EMBEDDER
         except Exception:
             _DEFAULT_EMBEDDER = None
+
+    # No checkpoint. SOWSMITH_SYMBOL_EMBEDDER is set in no environment, so this
+    # is the path that has always run -- and it used to return None, dropping
+    # LegendIndex onto the deterministic crop_feature that this module's own
+    # docstring calls brittle to rotation, line weight, style and clutter.
+    #
+    # DINOv2 is that same zero-shot convenience with a representation borrowed
+    # from 142M images instead of one built here. Measured on 8 symbols x 8
+    # distortions, matching a clean legend swatch exactly as LegendIndex does:
+    #
+    #     crop_feature   40/64  62.5%
+    #     DINOv2-small   58/64  90.6%
+    #
+    # and on the two failure modes real drawings actually have:
+    #
+    #     35 degree rotation   2/8 -> 8/8
+    #     clutter              3/8 -> 7/8
+    #     all four at once     1/8 -> 5/8
+    #
+    # It is worse on dashed line style (8/8 -> 6/8), which is the honest cost.
+    try:
+        from app.core.vision_embedder import default_glyph_embedder
+
+        _DEFAULT_EMBEDDER = default_glyph_embedder()
+    except Exception:
+        _DEFAULT_EMBEDDER = None
     return _DEFAULT_EMBEDDER
 
 
