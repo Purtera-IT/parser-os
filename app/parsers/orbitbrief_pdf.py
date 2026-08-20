@@ -201,6 +201,38 @@ def _doc_intel_pages(pdf_path: Any) -> list[dict[str, Any]]:
     return pages
 
 
+#: Text Document Intelligence labelled page_header / page_footer / page_number,
+#: for the document currently being parsed. Populated by doc_intel_page_texts.
+#:
+#: The layout model labels these natively and correctly -- on the Phillips
+#: Connect spec, 88 blocks across 54 footers, 27 page numbers and 7 headers,
+#: including the letterhead "5231 California Avenue, Suite 110 | Irvine, CA
+#: 92617" that _BARE_URL_RE does not match at all, while that same pattern
+#: strips a line reading "report.docx" as furniture.
+#:
+#: Consulted by _looks_like_page_footer BEFORE its heuristics, so a document
+#: read by Document Intelligence gets the model's answer and one read by fitz
+#: still gets the regex. The regexes are the fallback now, not the primary.
+_DI_FURNITURE: set[str] = set()
+
+
+def _furniture_key(text: str) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def doc_intel_furniture(pdf_path: Any) -> set[str]:
+    """Normalised text of every paragraph the layout model called furniture."""
+    out: set[str] = set()
+    for page in _doc_intel_pages(pdf_path):
+        for para in page.get("paragraphs") or []:
+            role = (para.get("role") or "").replace("_", "").lower()
+            if role in {"pageheader", "pagefooter", "pagenumber"}:
+                k = _furniture_key(para.get("text") or "")
+                if k:
+                    out.add(k)
+    return out
+
+
 def doc_intel_page_texts(pdf_path: Any) -> dict[int, str]:
     """Reading-order page text from Document Intelligence, by 0-based page.
 
@@ -225,6 +257,9 @@ def doc_intel_page_texts(pdf_path: Any) -> dict[int, str]:
             continue
         if n > 0 and (page.get("text") or "").strip():
             out[n - 1] = page["text"]
+    # Refresh the furniture set for the document now being parsed.
+    global _DI_FURNITURE
+    _DI_FURNITURE = doc_intel_furniture(pdf_path)
     return out
 
 
@@ -1040,6 +1075,11 @@ def _looks_like_page_footer(text: str) -> bool:
     # A standalone URL / bare domain ('www.purtera-it.com', 'WWW.X.COM',
     # 'https://x.com') is a footer / letterhead band, never deal content — strip
     # it so it can't glue onto the start of a real clause.
+    # The layout model already labelled this document's headers, footers and
+    # page numbers. Trust that over the heuristics below, which exist to guess
+    # at it from line shape.
+    if _DI_FURNITURE and _furniture_key(text) in _DI_FURNITURE:
+        return True
     if _BARE_URL_RE.fullmatch(text.strip()):
         return True
     if len(text) > 240:
@@ -3252,11 +3292,24 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             if skipped_msg not in seen_metadata:
                 seen_metadata.add(skipped_msg)
                 document_metadata.append(skipped_msg)
+        # The decode seam. Every atom this parser emits descends from
+        # page_texts, so this is the one place the reader choice actually
+        # reaches the compile. doc_intel_page_texts returns per-page text only
+        # where the layout model recovered MORE than fitz did -- measured on
+        # the Phillips Connect install spec, 433 fitz lines against 942 -- and
+        # returns nothing when unconfigured, so an offline image is unchanged.
+        #
+        # It also populates _DI_FURNITURE for this document, which is what lets
+        # _looks_like_page_footer use the model's own page_header/page_footer/
+        # page_number labels instead of guessing from line shape.
+        _di_page_text = doc_intel_page_texts(pdf_path)
+
         for page_idx in range(page_count):
             try:
                 page_text = doc[page_idx].get_text("text") or ""
             except Exception:  # pragma: no cover — bad page shouldn't kill compile
                 page_text = ""
+            page_text = _richer_text(_di_page_text.get(page_idx, ""), page_text)
             page_texts.append(page_text)
             page_text_lengths.append(len(page_text.strip()))
             try:
@@ -6795,6 +6848,45 @@ _PDF_HEADER_LABELS_RE = re.compile(
 _DATE_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
 
 
+def _normalise_date(value: str) -> str:
+    """Pull an ISO date out of a field, whatever format it was written in.
+
+    ``_DATE_RE`` matches ISO-8601 and nothing else, so a target_go_live written
+    the ordinary American way was silently not extracted:
+
+        '2026-05-14'    -> 2026-05-14
+        '5/14/2026'     -> missed
+        'May 14, 2026'  -> missed
+        '2099-99-99'    -> extracted, despite not being a date
+
+    dateutil handles the real formats and rejects the impossible one. It is
+    reached only after the ISO fast path, and it is deliberately NOT used as a
+    general date detector elsewhere: dateutil is over-eager -- it reads "12" as
+    a date -- which is fine for a field already known to hold one and wrong for
+    deciding whether a line IS one. That is why ``_BARE_DATE_RE`` stays a
+    regex; it answers a different question.
+    """
+    text = (value or "").strip()
+    if not text:
+        return ""
+    m = _DATE_RE.search(text)
+    if m:
+        iso = m.group(0)
+        try:
+            from datetime import date
+
+            date(*(int(x) for x in iso.split("-")))
+            return iso
+        except Exception:
+            pass  # ISO-shaped but not a real date -- fall through
+    try:
+        from dateutil import parser as _dtp
+
+        return _dtp.parse(text, fuzzy=False).date().isoformat()
+    except Exception:
+        return ""
+
+
 _HEADER_LABEL_LINE_RE = re.compile(
     r"^\s*(CUSTOMER|SERVICE\s+LINE|TARGET\s+GO[-\s]?LIVE)\s*:?\s*$",
     re.I,
@@ -6853,9 +6945,7 @@ def _pdf_header_field_atoms_from_text(
             j += 1
         value = " ".join(value_parts).strip()
         if field == "target_go_live":
-            date_match = _DATE_RE.search(value)
-            if date_match:
-                value = date_match.group(0)
+            value = _normalise_date(value) or value
         if value:
             field_values.setdefault(field, value)
         i = j

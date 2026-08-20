@@ -124,6 +124,29 @@ def extract_pdf_pages(pdf_bytes: bytes) -> list[dict[str, Any]]:
             "cells": cells_out,
         })
 
+    # Paragraph roles, indexed by page. prebuilt-layout labels TITLE,
+    # SECTION_HEADING, PAGE_HEADER, PAGE_FOOTER and PAGE_NUMBER natively --
+    # which is exactly what a pile of regexes in orbitbrief_pdf.py exists to
+    # GUESS, less accurately. Measured on the Phillips Connect install spec:
+    # 21 titles, 22 section headings, 54 footers, 27 page numbers, including a
+    # letterhead address ("5231 California Avenue, Suite 110 | Irvine, CA
+    # 92617") that the bare-URL footer heuristic does not match at all -- while
+    # that same heuristic strips a line reading "report.docx" as furniture.
+    #
+    # Reading these and then inferring them from line shape anyway is paying
+    # for a good reader and using a worse one.
+    paras_by_page: dict[int, list[dict[str, Any]]] = {}
+    for para in getattr(result, "paragraphs", None) or []:
+        regions = getattr(para, "bounding_regions", None) or []
+        pnum = regions[0].page_number if regions else 1
+        role = getattr(para, "role", None)
+        paras_by_page.setdefault(pnum, []).append({
+            "text": getattr(para, "content", "") or "",
+            # role is an SDK enum; normalise to a plain lowercase string so no
+            # caller has to import azure.ai to compare against it.
+            "role": (str(role).rsplit(".", 1)[-1].lower() if role else ""),
+        })
+
     for page in pages:
         pn = getattr(page, "page_number", 0)
         lines = getattr(page, "lines", None) or []
@@ -132,6 +155,7 @@ def extract_pdf_pages(pdf_bytes: bytes) -> list[dict[str, Any]]:
             "page_number": pn,
             "text": text,
             "tables": tables_by_page.get(pn, []),
+            "paragraphs": paras_by_page.get(pn, []),
         })
     return pages_out
 

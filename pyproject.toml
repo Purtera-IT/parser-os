@@ -37,6 +37,12 @@ dependencies = [
   # placeholder atom and the email body/attachments are lost. The parser already
   # uses it when present; declare it so the prod image installs it.
   "extract-msg>=0.48",
+  # Declared, not inherited. dateutil was already importable transitively and
+  # used in zero modules; _normalise_date now depends on it to read a
+  # target_go_live written "5/14/2026" instead of silently dropping it. An
+  # undeclared transitive dep is a fix that works locally and no-ops in the
+  # worker image.
+  "python-dateutil>=2.8",
 ]
 
 [project.optional-dependencies]

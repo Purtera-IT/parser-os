@@ -60,6 +60,32 @@ def _di_pages(path: Path) -> list[dict[str, Any]]:
         return []
 
 
+#: Document Intelligence paragraph roles -> the layout kinds a Block may carry.
+#: Deliberately a small fixed map: a decoder reports how a document TYPESET a
+#: run of text, never what that text means.
+_ROLE_TO_KIND = {
+    "title": "heading",
+    "sectionheading": "heading",
+    "pageheader": "page_furniture",
+    "pagefooter": "page_furniture",
+    "pagenumber": "page_furniture",
+    "footnote": "caption",
+}
+
+
+def _kind_from_role(role: str) -> str:
+    """Map a Document Intelligence role onto a layout kind.
+
+    The SDK spells these SECTION_HEADING / PAGE_FOOTER, and the REST shape is
+    sectionHeading / pageFooter. Underscores and case are stripped so both
+    spellings land on the same kind -- an earlier version keyed on the REST
+    spelling only and silently classified every footer and section heading as
+    an ordinary paragraph, which looks exactly like the feature working.
+    """
+    key = (role or "").strip().lower().replace("_", "")
+    return _ROLE_TO_KIND.get(key, "paragraph")
+
+
 def _lines(text: str) -> int:
     return sum(1 for ln in (text or "").splitlines() if ln.strip())
 
@@ -137,21 +163,47 @@ class PdfDecoder:
                     except Exception:
                         fitz_text = ""
                     di_text = di.get("text") or ""
+                    di_paras = di.get("paragraphs") or []
                     if _lines(di_text) > _lines(fitz_text):
-                        chosen, src = di_text, "doc_intel"
                         backends["text"] = "doc_intel"
-                    else:
-                        chosen, src = fitz_text, "fitz"
-                    for line in chosen.splitlines():
-                        if line.strip():
+                        # Paragraphs carry ROLES -- title, sectionHeading,
+                        # pageHeader, pageFooter, pageNumber -- assigned by the
+                        # layout model. Emitting them keeps the structure a
+                        # dozen regexes downstream exist to re-derive from line
+                        # shape, less accurately.
+                        for para in di_paras:
+                            t = (para.get("text") or "").strip()
+                            if not t:
+                                continue
                             blocks.append(Block(
-                                text=line,
-                                kind="paragraph",
-                                locator=Locator(page=page_index + 1,
-                                                extra={"reader": src}),
+                                text=t,
+                                kind=_kind_from_role(para.get("role") or ""),
+                                locator=Locator(
+                                    page=page_index + 1,
+                                    extra={"reader": "doc_intel",
+                                           "role": para.get("role") or ""},
+                                ),
                                 order=order,
                             ))
                             order += 1
+                        if not di_paras:
+                            for line in di_text.splitlines():
+                                if line.strip():
+                                    blocks.append(Block(
+                                        text=line, kind="paragraph",
+                                        locator=Locator(page=page_index + 1,
+                                                        extra={"reader": "doc_intel"}),
+                                        order=order))
+                                    order += 1
+                    else:
+                        for line in fitz_text.splitlines():
+                            if line.strip():
+                                blocks.append(Block(
+                                    text=line, kind="paragraph",
+                                    locator=Locator(page=page_index + 1,
+                                                    extra={"reader": "fitz"}),
+                                    order=order))
+                                order += 1
 
                     # ---- tables: same rule, measured in cells --------------
                     di_grids = _di_tables_for(di) if di else []

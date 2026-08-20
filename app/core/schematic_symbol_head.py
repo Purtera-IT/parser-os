@@ -87,7 +87,20 @@ def feature_sha(feat: np.ndarray) -> str:
 
 
 def _cos(a: np.ndarray, b: np.ndarray) -> float:
-    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+    """Cosine similarity, clamped to its mathematical range.
+
+    Float32 arithmetic overshoots: two near-identical glyph vectors have been
+    measured at 1.0000000586046518, which is not a rounding curiosity to a
+    caller that treats the value as a probability-like score or asserts a
+    bound. ``test_embedder_plugs_into_legend_index`` failed on roughly one hash
+    seed in six for exactly this, and it read as a flaky test rather than as a
+    function returning a value outside the range it documents.
+
+    Clamping here rather than loosening the assertion, because every consumer of
+    ``match()`` is entitled to a similarity in [-1, 1].
+    """
+    v = float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+    return max(-1.0, min(1.0, v))
 
 
 # ── per-document legend matching (the generalization mechanism) ────────────────
