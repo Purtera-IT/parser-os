@@ -1,5 +1,7 @@
 """#71 span-extractor: per-relation recall head trains, is recall-tuned, the
 eval-gate is recall-monotonic, and SpanExtractorSet identifies items."""
+import zlib
+
 import numpy as np
 from app.core import span_extractor as SE
 
@@ -10,7 +12,11 @@ def _embed(texts):
         v = np.zeros(8, dtype=np.float32)
         if "shall" in t.lower() or "must" in t.lower():
             v[0] = 3.0          # requirement signal
-        v[3:] = (hash(t) % 5) / 5.0
+# zlib.crc32, not hash(): hash() on a str is salted per process (PEP 456),
+# so these components are different noise on every run. A model trained on
+# them is trained partly on randomness, and the assertions below then pass
+# or fail by luck. crc32 is stable across processes and machines.
+        v[3:] = (zlib.crc32(t.encode("utf-8")) % 5) / 5.0
         out.append(v)
     return np.vstack(out)
 
