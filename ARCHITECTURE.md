@@ -17,6 +17,13 @@ PDF / DOCX / XLSX artifacts
   -> JSON envelope
 ```
 
+## Where the code lives
+
+See [LAYERS.md](LAYERS.md). In short: `decode` (bytes to structure, commodity,
+never learns) / `segment` (blocks to atoms with receipts) / `interpret` (atoms
+to meaning, judgments, always learn). Decoding has a correct answer;
+interpretation has an opinion, and only the second is worth training.
+
 ## Current contract after the v54 accuracy patch
 
 The most important invariant is that authoritative roster rows become `atom_type=physical_site` atoms with strict physical-site-shaped values. Generic `atom_type=entity` values such as `{"entity_type":"site"}` are removed once a physical-site roster exists.
