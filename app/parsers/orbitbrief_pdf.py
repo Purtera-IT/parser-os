@@ -148,6 +148,200 @@ def _looks_like_document_control_row(row_text: str, columns: list[str] | None = 
     return False
 
 
+_DOC_INTEL_PAGE_CACHE: dict[tuple[str, float, int], list[dict[str, Any]]] = {}
+_DOC_INTEL_TABLE_CACHE: dict[tuple[str, float, int], dict[int, list[list[list[str]]]]] = {}
+
+
+def _doc_intel_key(pdf_path: Any) -> tuple[str, float, int] | None:
+    try:
+        p = Path(str(pdf_path))
+        st = p.stat()
+        return (str(p), st.st_mtime, st.st_size)
+    except Exception:
+        return None
+
+
+def _doc_intel_pages(pdf_path: Any) -> list[dict[str, Any]]:
+    """The raw ``prebuilt-layout`` result for this PDF, cached per file.
+
+    One network call serves both the table path and the text path, so wanting
+    reading-order text costs nothing once tables have already been fetched.
+    """
+    if _doc_intel_disabled():
+        return []
+    key = _doc_intel_key(pdf_path)
+    if key is None:
+        return []
+    cached = _DOC_INTEL_PAGE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pages: list[dict[str, Any]] = []
+    try:
+        from app.core.doc_intel_ocr import doc_intel_available, extract_pdf_pages
+
+        if doc_intel_available():
+            pages = extract_pdf_pages(Path(str(pdf_path)).read_bytes()) or []
+    except Exception:
+        pages = []
+    if len(_DOC_INTEL_PAGE_CACHE) > 8:
+        _DOC_INTEL_PAGE_CACHE.pop(next(iter(_DOC_INTEL_PAGE_CACHE)), None)
+    _DOC_INTEL_PAGE_CACHE[key] = pages
+    return pages
+
+
+def doc_intel_page_texts(pdf_path: Any) -> dict[int, str]:
+    """Reading-order page text from Document Intelligence, by 0-based page.
+
+    ``page.get_text()`` returns glyphs in the order the PDF happens to store
+    them, which on a multi-column or figure-heavy page is not the order a human
+    reads. Measured on the Phillips Connect install spec (K298):
+
+        page.get_text()      433 non-empty lines
+        prebuilt-layout      942
+
+    More than half the document was absent from the text the atomizer sees --
+    not corrupted, simply never emitted. The table census that preceded this
+    change compared only cells fitz already found and so could not see it.
+
+    Empty when unconfigured or on failure; callers keep the fitz text.
+    """
+    out: dict[int, str] = {}
+    for page in _doc_intel_pages(pdf_path):
+        try:
+            n = int(page.get("page_number") or 0)
+        except Exception:
+            continue
+        if n > 0 and (page.get("text") or "").strip():
+            out[n - 1] = page["text"]
+    return out
+
+
+def _richer_text(di_text: str, fitz_text: str) -> str:
+    """Whichever of the two carries more content; fitz wins ties.
+
+    Same policy as _pick_table_source, for the same reason: DI is decisively
+    better on messy documents and occasionally worse on clean ones, so the
+    choice is made per page on what was actually recovered rather than on a
+    blanket preference.
+    """
+    def lines(t: str) -> int:
+        return sum(1 for ln in (t or "").splitlines() if ln.strip())
+
+    return di_text if lines(di_text) > lines(fitz_text) else fitz_text
+
+
+def _doc_intel_disabled() -> bool:
+    return os.environ.get("SOWSMITH_PDF_TABLES_DOC_INTEL", "1").strip().lower() in {
+        "0", "false", "no", "off",
+    }
+
+
+def doc_intel_tables_by_page(pdf_path: Any) -> dict[int, list[list[list[str]]]]:
+    """Every table in the PDF as rows-of-cells, keyed by 0-based page index.
+
+    ``fitz.find_tables()`` does not miss cells so much as miss TABLES. Measured
+    on APS_fiber_Attachment_B.pdf, a real site roster:
+
+        fitz.find_tables()      2 tables,  13 cells
+        prebuilt-layout         4 tables, 964 cells
+
+    The 951 cells it never saw are the roster itself -- school names and GPS
+    coordinates, one row per site. That is not a rendering blemish; it is the
+    payload of the document, and it is why
+    test_aps_attachment_b_numeric_roster_regression asserts 0 == 159.
+
+    An earlier census of this same corpus compared only the cells fitz DID
+    find, concluded 0.73% were materially corrupt, and called the extraction
+    swap low priority. That census could not see a table fitz never reported,
+    which is the failure that actually matters.
+
+    Document Intelligence is one network call for the whole PDF, so it is
+    cached per (path, mtime, size) and shared by every table call site. Returns
+    an empty mapping when unconfigured, disabled, or on any failure -- callers
+    fall back to the fitz path, so an outage degrades quality rather than
+    breaking a compile.
+    """
+    if _doc_intel_disabled():
+        return {}
+    key = _doc_intel_key(pdf_path)
+    if key is None:
+        return {}
+    cached = _DOC_INTEL_TABLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    out: dict[int, list[list[list[str]]]] = {}
+    try:
+        for page in _doc_intel_pages(pdf_path):
+            page_no = int(page.get("page_number") or 0)
+            if page_no <= 0:
+                continue
+            for table in page.get("tables") or []:
+                cells = table.get("cells") or []
+                if not cells:
+                    continue
+                n_rows = max(int(c.get("row", 0)) for c in cells) + 1
+                n_cols = max(int(c.get("col", 0)) for c in cells) + 1
+                grid = [["" for _ in range(n_cols)] for _ in range(n_rows)]
+                for c in cells:
+                    grid[int(c.get("row", 0))][int(c.get("col", 0))] = (
+                        c.get("text") or ""
+                    )
+                out.setdefault(page_no - 1, []).append(grid)
+    except Exception:
+        out = {}
+    if len(_DOC_INTEL_TABLE_CACHE) > 8:
+        _DOC_INTEL_TABLE_CACHE.pop(next(iter(_DOC_INTEL_TABLE_CACHE)), None)
+    _DOC_INTEL_TABLE_CACHE[key] = out
+    return out
+
+
+def _pick_table_source(
+    di_page_tables: list[list[list[str]]], page: Any, fitz_tables: list[Any]
+) -> tuple[list[list[list[str]]], bool]:
+    """Choose Document Intelligence or fitz for THIS page, by what each recovered.
+
+    Neither wins everywhere. Measured across nine real deal documents:
+
+        Phillips Connect K298    fitz  53 cells   DI 233   (0 cells unique to fitz)
+        APS Attachment B         fitz  13         DI 964   (the site roster)
+        Beaufort RFP             fitz  60         DI 512
+        B704 Fitness SOW         fitz  crashed    DI ok
+        CFC Conference BOM       fitz 134         DI 130   <- fitz wins
+        Livano Virginia Beach    fitz  76         DI  77   <- fitz wins by content
+
+    DI is decisively better on large or structurally messy documents and
+    marginally worse on small clean ones. Preferring DI unconditionally would
+    have discarded ~10 real cells on CFC and Livano, so the choice is made per
+    page on the only thing that matters: which one actually recovered more
+    non-empty cells. Ties go to fitz, because its output has already been
+    through the transposition and underscore repairs.
+    """
+    if not di_page_tables:
+        return [], False
+
+    def _di_cells() -> int:
+        return sum(
+            1 for t in di_page_tables for row in t for c in row if str(c or "").strip()
+        )
+
+    def _fitz_cells() -> int:
+        n = 0
+        for t in fitz_tables:
+            try:
+                rows = _table_rows_repaired(page, t)
+            except Exception:
+                continue
+            n += sum(1 for row in rows for c in row if str(c or "").strip())
+        return n
+
+    try:
+        return (di_page_tables, True) if _di_cells() > _fitz_cells() else ([], False)
+    except Exception:
+        # A comparison must never decide the parse by raising.
+        return (di_page_tables, True) if not fitz_tables else ([], False)
+
+
 def _same_glyphs(a: str, b: str) -> bool:
     """Same characters, different order — the transposition bug and nothing else.
 
@@ -1977,28 +2171,39 @@ def _fitz_site_roster_fallback(
     try:
         # Pull the document-level surrounding text once so the
         # extractor can spot ``kind=physical_site`` declarations.
+        di_text = doc_intel_page_texts(pdf_path)
         page_texts: list[str] = []
         try:
-            for p in doc:
+            for _pi, p in enumerate(doc):
                 try:
-                    page_texts.append(p.get_text() or "")
+                    page_texts.append(
+                        _richer_text(di_text.get(_pi, ""), p.get_text() or "")
+                    )
                 except Exception:
                     continue
         except Exception:
             page_texts = []
         document_text = "\n".join(page_texts)
 
+        di_tables = doc_intel_tables_by_page(pdf_path)
+
         for page_index, page in enumerate(doc):
             try:
                 tables_finder = page.find_tables()
+                fitz_tables = list(getattr(tables_finder, "tables", []) or [])
             except Exception:
-                continue
-            tables = list(getattr(tables_finder, "tables", []) or [])
+                fitz_tables = []
+            di_here, use_di = _pick_table_source(
+                di_tables.get(page_index) or [], page, fitz_tables
+            )
+            tables = di_here if use_di else fitz_tables
             if not tables:
                 continue
             for table_index, table in enumerate(tables):
                 try:
-                    extracted = _table_rows_repaired(page, table)
+                    extracted = (
+                        table if use_di else _table_rows_repaired(page, table)
+                    )
                 except Exception:
                     continue
                 if not extracted or len(extracted) < 2:
@@ -2250,10 +2455,13 @@ def _text_based_site_roster_extract(
 
     out: list[EvidenceAtom] = []
     try:
+        di_text = doc_intel_page_texts(pdf_path)
         page_texts: list[str] = []
-        for p in doc:
+        for _pi, p in enumerate(doc):
             try:
-                page_texts.append(p.get_text() or "")
+                page_texts.append(
+                    _richer_text(di_text.get(_pi, ""), p.get_text() or "")
+                )
             except Exception:
                 continue
         document_text = "\n".join(page_texts)
@@ -2522,17 +2730,25 @@ def _fitz_generic_table_fallback(
     except Exception:
         return []
     try:
+        di_tables = doc_intel_tables_by_page(pdf_path)
+
         for page_index, page in enumerate(doc):
             try:
                 tables_finder = page.find_tables()
+                fitz_tables = list(getattr(tables_finder, "tables", []) or [])
             except Exception:
-                continue
-            tables = list(getattr(tables_finder, "tables", []) or [])
+                fitz_tables = []
+            di_here, use_di = _pick_table_source(
+                di_tables.get(page_index) or [], page, fitz_tables
+            )
+            tables = di_here if use_di else fitz_tables
             if not tables:
                 continue
             for table_index, table in enumerate(tables):
                 try:
-                    extracted = _table_rows_repaired(page, table)
+                    extracted = (
+                        table if use_di else _table_rows_repaired(page, table)
+                    )
                 except Exception:
                     continue
                 if not extracted or len(extracted) < 2:
