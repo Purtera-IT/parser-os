@@ -515,11 +515,31 @@ class IcsParser(BaseParser):
             end = fields.get("DTEND") or ""
             location = fields.get("LOCATION") or ""
             organizer = fields.get("ORGANIZER") or ""
+            # DESCRIPTION was parsed into ``fields`` and then never used. On a
+            # real invite that is the field carrying the working detail --
+            # "escort required at the dock, gate code 4512", the dial-in, the
+            # site contact -- while SUMMARY is usually just "Cutover window".
+            # Unfolding already happens above, so the continuation lines were
+            # being reassembled correctly and thrown away at the last step.
+            #
+            # RFC 5545 escapes inside a text value: \n is a line break, and
+            # \, \; \\ are literal characters.
+            description = fields.get("DESCRIPTION") or ""
+            if description:
+                description = (
+                    description.replace("\\n", " ")
+                    .replace("\\N", " ")
+                    .replace("\\,", ",")
+                    .replace("\\;", ";")
+                    .replace("\\\\", "\\")
+                )
+                description = " ".join(description.split())
             text = (
                 f"Meeting: {summary} | "
                 f"{start} → {end}"
                 + (f" | at: {location}" if location else "")
                 + (f" | organizer: {organizer}" if organizer else "")
+                + (f" | details: {description}" if description else "")
             )
             atoms.append(_make_atom(
                 project_id=project_id, artifact_id=artifact_id, filename=path.name,
@@ -532,6 +552,7 @@ class IcsParser(BaseParser):
                     "kind": "calendar_event",
                     "summary": summary, "dtstart": start, "dtend": end,
                     "location": location, "organizer": organizer,
+                    "description": description,
                 },
             ))
         return ParserOutput(atoms=atoms, derived_files=[])
@@ -729,6 +750,27 @@ def _zip_recursive_extract(
             except Exception:
                 continue
             if parser is None:
+                # A member nothing can parse is a coverage fact, not a
+                # non-event. The sibling branch below records a child that
+                # RAISED, so a child that simply had no parser was the one
+                # outcome that vanished -- the archive summary still counted
+                # it as extracted, and its contents were gone with nothing
+                # saying so. Unparsed .txt is reported at the top level too
+                # ("No parser matched artifact"); inside a ZIP that report
+                # never happened, because the ZIP is the artifact.
+                atoms.append(_make_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                    artifact_type=ArtifactType.zip_archive,
+                    text=(
+                        f"[ZIP member not read - no parser matched "
+                        f"`{info.filename}`. Extract the archive and re-run "
+                        f"parser-os on the folder to read it.]"
+                    ),
+                    locator={"kind": "zip_child_unparsed", "entry_name": info.filename},
+                    extraction_method="zip_recursive",
+                    parser_version=parser_version,
+                    atom_type=AtomType.open_question,
+                ))
                 continue
             try:
                 child_atoms = parser.parse_artifact(

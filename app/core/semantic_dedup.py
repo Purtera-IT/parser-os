@@ -1412,7 +1412,19 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
         # otherwise collapse, dropping the only atom type that drives the
         # missing_info packet. Never collapse questions across types; let them
         # survive on their own axis (intra-type dups are semantic_dedup's job).
-        if _atom_type_value(atom) == "open_question":
+        # A decision is the same kind of exception, for the same reason. The
+        # kickoff line "Confirmed, West Wing will be treated as excluded
+        # pending written confirmation" is emitted as BOTH a decision and an
+        # exclusion, and they are not two readings of one fact: the exclusion
+        # says what is out of scope, the decision says that somebody committed
+        # to it on the call, which is what a meeting_decision packet is for.
+        #
+        # "decision" is absent from _CROSS_TYPE_PRIORITY, so it takes the
+        # default 3 and loses to exclusion's 5 every time -- and a kickoff
+        # decision almost always also states an exclusion or a constraint. The
+        # effect was that the meeting_decision family could not form at all on
+        # the demo deal, because the only decision in it was outranked.
+        if _atom_type_value(atom) in {"open_question", "decision"}:
             passthrough.append(atom)
             continue
         key = _cross_type_text_key(atom)

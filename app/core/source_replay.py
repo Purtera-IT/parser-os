@@ -842,7 +842,22 @@ def replay_source_ref(atom: EvidenceAtom, source_ref: SourceRef, artifact_paths:
     try:
         if source_ref.locator.get("row") is not None and source_ref.locator.get("columns"):
             return _verify_spreadsheet_row(atom, source_ref, path)
-        if source_ref.locator.get("line_start") is not None and source_ref.locator.get("line_end") is not None:
+        # Line numbers are checked BEFORE the artifact type, which is right for
+        # a text file and wrong for a format that has its own verifier. The
+        # colour-driven PDF parser records block line indices in its locator,
+        # so every atom it produced was handed to the plain-text line reader:
+        # the PDF's bytes were decoded as lines, line 9 was whatever that
+        # produced, and all 18 receipts came back "Line-range snippet did not
+        # match atom content" -- a failure of the verifier, not of the atom.
+        #
+        # PDF and DOCX are excluded here because each has a dedicated verifier
+        # below that reads the real structure. Every other suffix keeps the
+        # previous behaviour.
+        if (
+            source_ref.locator.get("line_start") is not None
+            and source_ref.locator.get("line_end") is not None
+            and suffix not in {".pdf", ".docx"}
+        ):
             return _verify_line_range(atom, source_ref, path)
         if suffix == ".docx":
             return _verify_docx_locator(atom, source_ref, path)
