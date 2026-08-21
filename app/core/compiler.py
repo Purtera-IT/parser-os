@@ -1828,6 +1828,34 @@ def compile_project(
     # on every compile.  output_signature is content-addressed over the result
     # pre-validation; validation messages are excluded from the signature so a
     # warning later doesn't recursively change the signature.
+    # Final receipt sweep. The backfill above runs mid-pipeline, and several
+    # stages after it still MINT atoms -- quote_line_head consolidating a
+    # bom_line is the one that surfaced this. Such an atom carries source_refs
+    # it never got receipts for, and the validator treats "source_refs but no
+    # receipts while source files are available" as a hard ERROR, so a single
+    # late-minted atom fails the whole compile. Observed on a real deal: one
+    # bom_line out of ~2,000 atoms, and nothing else wrong with the run.
+    #
+    # Idempotent and free when there is nothing to do -- it only touches atoms
+    # that have source_refs and no receipts -- so running it once more here
+    # costs a no-op pass and closes the window for every future late stage
+    # rather than for this one caller.
+    late_backfilled = 0
+    try:
+        for atom in result.atoms:
+            if getattr(atom, "source_refs", None) and not getattr(atom, "receipts", None):
+                atom.receipts = replay_atom_receipts(atom, artifact_paths)
+                late_backfilled += 1
+    except Exception as exc:  # never fail a compile inside the safety net
+        warnings.append(
+            f"WARNING: final receipt sweep failed: {type(exc).__name__}: {exc}"
+        )
+    if late_backfilled:
+        warnings.append(
+            f"INFO: final receipt sweep attached receipts to {late_backfilled} "
+            "atom(s) minted after receipt_backfill"
+        )
+
     output_signature = compute_output_signature(result)
     result.manifest = finalize_manifest(manifest, output_signature)
     with telemetry.stage("quality_gates", input_count=len(result.packets)) as stage:

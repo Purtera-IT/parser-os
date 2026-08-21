@@ -753,7 +753,33 @@ def collapse_ambiguous_user_quantities(atoms: list[Any]) -> tuple[list[Any], lis
             non_qty.append(atom)
             continue
         val = _atom_value(atom)
-        noun = str(val.get("noun") or "").strip().lower()
+        # What the quantity is OF. ``noun`` is the prose extractor's field and
+        # is empty for anything tabular, so a spreadsheet row fell back to the
+        # empty string and every quantity in it shared one group.
+        #
+        # A drop schedule is one row per plate with one COLUMN per material:
+        #
+        #     Plate ID | Location | RJ45 | Cat6 UTP | Cat6 STP
+        #     TOTALS   |          |  72  |    66    |     6
+        #
+        # All three totals are row 34 of the same sheet, so they keyed
+        # identically and the collapse kept only the largest -- 72 survived,
+        # "Total Cat6 UTP 66" and "Total Cat6 STP 6" were suppressed. The
+        # reconciliation then had no STP roster figure at all (no edge), and
+        # fell back to a single per-plate row for UTP, reporting "roster 4 vs
+        # vendor 60, short by 56" where the truth is 66 vs 60, short by 6. A
+        # wrong number on the comparison the product exists to make.
+        #
+        # ``normalized_item`` already carries the canonical identity
+        # (rj45 / cat6_utp / cat6_stp), so the grouping simply has to read it.
+        # Two quantities are candidates for collapse only when they describe
+        # the same thing; different materials never are.
+        noun = str(
+            val.get("noun")
+            or val.get("normalized_item")
+            or val.get("item")
+            or ""
+        ).strip().lower()
         loc_key = _quantity_locator_key(atom)
         qty_by_group[(noun, loc_key)].append(atom)
 
