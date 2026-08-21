@@ -204,13 +204,40 @@ class HubspotNoteParser(BaseParser):
             )
         reasons: list[str] = []
         confidence = 0.0
-        if _HS_NOTE_FILENAME_RE.search(path.name):
-            confidence = 0.97
-            reasons.append("filename:hs-note")
+        # These two were inverted: the NAME scored 0.97 and the parser's own
+        # CONTENT signal scored 0.94, so "-hs-note-" in a filename outranked
+        # an actual "HubSpot Note:" header -- and 0.97 was the highest
+        # confidence anywhere in the registry, above RFC-5322 headers (0.91)
+        # and document structure (0.90).
+        #
+        # Swept over 2500 real artifacts: renaming any .txt to
+        # "acme-hs-note-99213.txt" moved it here at 0.97 regardless of what
+        # was in it, including files whose content routes to TranscriptParser.
+        #
+        # Content now ranks above the name. The name stays ABOVE
+        # MATCH_THRESHOLD, deliberately and unlike the other filename priors
+        # in this router: "-hs-note-" is emitted by HubSpot's own exporter
+        # rather than chosen by a person, and no local corpus contains a
+        # single hs-note file, so there is no evidence that header-less
+        # exports do not exist. Demoting it below threshold on no data could
+        # silently drop a whole class of artifact. It is placed at 0.90 --
+        # under this parser's header signal and under every content signal in
+        # the registry.
+        #
+        # It sits at the EXTENSION tier (0.58) rather than the filename tier,
+        # which is the honest classification: "-hs-note-" is a convention --
+        # checkable, forgeable, machine-generated -- exactly what an extension
+        # is. That placement keeps a header-less export claimable (0.58 clears
+        # MATCH_THRESHOLD, so no class of artifact is dropped on no data)
+        # while losing to every real content signal, so a transcript that
+        # merely carries the token in its name stays a transcript.
         text = sample_text or ""
         if _HS_NOTE_HEADER_RE.search(text[:2000]):
-            confidence = max(confidence, 0.94)
+            confidence = 0.94
             reasons.append("header:hubspot_note")
+        if _HS_NOTE_FILENAME_RE.search(path.name):
+            confidence = max(confidence, 0.58)
+            reasons.append("filename:hs-note")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,

@@ -154,9 +154,17 @@ def _deterministic_tie_break(
     name = path.name.lower()
     lowered = normalize_text(sample_text)
     by_name = {match.parser_name: (parser, match) for parser, match in candidates}
-    if "hubspot_note" in by_name and (
-        "-hs-note-" in name or "hubspot note:" in lowered
-    ):
+    # The name half of this condition used to be an override: "-hs-note-" in
+    # the FILENAME forced the choice regardless of what any other parser had
+    # found in the file. Same defect as the quote/xlsx tie-break, one level up.
+    #
+    # Only the content half remains. A file whose name carries the token but
+    # whose body is something else now falls through to ordinary confidence
+    # ordering, where HubspotNoteParser scores 0.58 on the token (the
+    # extension tier -- it is an exporter convention) and loses to any real
+    # content signal. A header-less export with nothing else claiming it still
+    # wins on that 0.58, so no artifact class is dropped.
+    if "hubspot_note" in by_name and "hubspot note:" in lowered:
         return by_name["hubspot_note"]
     if {"email", "transcript"}.issubset(by_name):
         email_markers = ("from:" in lowered and "sent:" in lowered) or (" wrote:" in lowered)

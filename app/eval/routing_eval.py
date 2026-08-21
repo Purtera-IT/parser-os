@@ -219,7 +219,58 @@ def _quote_xlsx(rel: str) -> Callable[[Path], Path]:
     return build
 
 
+def _roster_xlsx(rel: str) -> Callable[[Path], Path]:
+    def build(root: Path) -> Path:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Site", "Drops", "Notes"])
+        for i in range(10):
+            ws.append([f"ATL-{i:02d}", 24, "escort required"])
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(p)
+        return p
+
+    return build
+
+
 DEFAULT_CASES: tuple[RoutingCase, ...] = (
+    # ── a name belonging to another parser must not hijack the file ──────
+    # Swept over 2500 real artifacts, each copied to an adversarial name with
+    # its content untouched: 2146 changed parser, all traceable to two priors
+    # that let a NAME create a claim above MATCH_THRESHOLD.
+    RoutingCase(
+        "spreadsheet_named_transcript", "XlsxParser",
+        _roster_xlsx("Q3_transcript_summary.xlsx"),
+        "filename_transcript scored 0.78 and applied to ANY suffix, so 82 "
+        "real .xlsx files moved to TranscriptParser on their name alone -- a "
+        "binary ZIP handed to a text parser, for an extension not in its "
+        "capability at all. No adversary required to hit this one.",
+    ),
+    RoutingCase(
+        "transcript_named_like_an_hs_note", "TranscriptParser",
+        _w("acme-hs-note-99213.txt",
+           "\n".join(f"[00:0{i % 10}:12] Speaker {i % 3}: forty sites by Q3."
+                     for i in range(30))),
+        "'-hs-note-' in the NAME scored 0.97 -- the highest confidence in the "
+        "registry, above this parser's own header signal (0.94) and above "
+        "RFC-5322 headers (0.91) -- and the registry tie-break took the name "
+        "as an outright override.",
+    ),
+    RoutingCase(
+        "header_less_hs_note_export", "HubspotNoteParser",
+        _w("acme-hs-note-99214.txt",
+           "ROM is approximately $45,000 for the Ubiquiti refresh.\n"
+           "Customer would like 12 APs configured onsite.\n"
+           "Good 2 go on the badge readers.\n"),
+        "The other half of that fix: no local corpus holds a single hs-note "
+        "file, so demoting the token below threshold would drop a class of "
+        "artifact on no evidence. It sits at the EXTENSION tier (0.58) -- a "
+        "machine-generated convention -- so it still claims a file nothing "
+        "else wants while losing to any content signal.",
+    ),
     RoutingCase(
         "rfp_as_text", "MarkdownParser",
         _w("rfp_original.txt",

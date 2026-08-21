@@ -199,10 +199,33 @@ class TranscriptParser(BaseParser):
                 if speaker_or_ts:
                     confidence = 0.82
                     reasons.append("speaker_or_timestamp_markers")
-        # Filename/title cue: any artifact whose name contains "transcript"
-        # is a strong transcript candidate even when the sample is sparse.
-        if "transcript" in path.name.lower().replace("_", " ").replace("-", " "):
-            confidence = max(confidence, 0.78)
+        # Filename/title cue. This was 0.78 -- above MATCH_THRESHOLD -- and
+        # applied to ANY suffix, so the name alone both created a claim and
+        # created it for file types this parser does not support.
+        #
+        # Swept across 2500 real artifacts, renaming each without touching a
+        # byte of content:
+        #
+        #   .json  NONE(0.00)        -> named "meeting_transcript" -> 0.78   2062
+        #   .xlsx  XlsxParser(0.58)  -> named "meeting_transcript" -> 0.78     82
+        #
+        # The second is the bad one: a spreadsheet handed to this parser, which
+        # reads it as text -- and .xlsx is not in supported_extensions at all.
+        # "Q3_transcript_summary.xlsx" is an ordinary filename, so this needs
+        # no adversary to happen.
+        #
+        # The same sweep answered whether the prior is load-bearing: of 2500
+        # real artifacts, ZERO change parser when their name is neutralised.
+        # Nothing relies on it. Timestamps, speaker density and the
+        # own-line-speaker fold claim real transcripts on their own evidence.
+        #
+        # So: restricted to the extensions this parser actually supports, and
+        # scored below MATCH_THRESHOLD, where a prior belongs. Kept in the
+        # reasons so routing stays explainable.
+        if suffix in {".txt", ".md", ".vtt", ".srt", ".json"} and (
+            "transcript" in path.name.lower().replace("_", " ").replace("-", " ")
+        ):
+            confidence = max(confidence, 0.45)
             reasons.append("filename_transcript")
         return ParserMatch(
             parser_name=self.parser_name,

@@ -285,6 +285,75 @@ def test_content_signature_overrules_the_name(tmp_path: Path, renamed: str, buil
         assert _parser_name(target) == "EmailParser"
 
 
+# ── a name that belongs to another parser must not hijack the file ───────
+#
+# Swept across 2500 real artifacts by copying each to an adversarial name
+# without touching a byte of content. 2146 changed parser; all of them traced
+# to two priors that let a NAME create a claim above MATCH_THRESHOLD.
+
+
+def test_a_spreadsheet_named_transcript_is_still_a_spreadsheet(tmp_path: Path) -> None:
+    """The worst of the 2146, and it needs no adversary.
+
+    ``filename_transcript`` scored 0.78 and applied to ANY suffix, so 82 real
+    .xlsx files moved from XlsxParser(0.58) to TranscriptParser(0.78) purely
+    on their name -- handing a binary ZIP to a parser that reads it as text,
+    for a file type not in its supported_extensions at all.
+    ``Q3_transcript_summary.xlsx`` is an ordinary filename.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Site", "Drops", "Notes"])
+    for i in range(10):
+        ws.append([f"ATL-{i:02d}", 24, "escort required"])
+    target = tmp_path / "Q3_transcript_summary.xlsx"
+    wb.save(target)
+    assert _parser_name(target) != "TranscriptParser"
+
+
+def test_transcript_filename_cannot_claim_an_unparseable_file(tmp_path: Path) -> None:
+    """A name is a prior; it may raise a claim, never create one."""
+    target = tmp_path / "meeting_transcript.json"
+    target.write_bytes(b"\x00\x01 not json, not text \xff")
+    assert _parser_name(target) != "TranscriptParser"
+
+
+def test_hs_note_name_loses_to_transcript_content(tmp_path: Path) -> None:
+    """``-hs-note-`` scored 0.97 -- the highest confidence in the registry.
+
+    Higher than this parser's OWN content signal (``^HubSpot Note:`` at 0.94),
+    higher than RFC-5322 headers (0.91) and document structure (0.90). The
+    registry tie-break then took the filename as an outright override. Real
+    transcript content must win.
+    """
+    target = tmp_path / "acme-hs-note-99213.txt"
+    target.write_text(
+        "\n".join(f"[00:0{i % 10}:12] Speaker {i % 3}: we need forty sites by Q3."
+                  for i in range(30)),
+        encoding="utf-8",
+    )
+    assert _parser_name(target) == "TranscriptParser"
+
+
+def test_header_less_hs_note_export_is_still_claimed(tmp_path: Path) -> None:
+    """The other half: demoting the prior must not drop an artifact class.
+
+    No local corpus contains a single hs-note file, so there is no evidence
+    that header-less exports do not exist. The token sits at the EXTENSION
+    tier (0.58) -- it is a machine-generated convention, which is what an
+    extension is -- so it still claims a file nothing else wants, while losing
+    to any real content signal.
+    """
+    target = tmp_path / "acme-hs-note-99213.txt"
+    target.write_text(
+        "ROM is approximately $45,000 for the Ubiquiti refresh.\n"
+        "Customer would like 12 APs configured onsite.\n"
+        "Good 2 go on the badge readers.\n",
+        encoding="utf-8",
+    )
+    assert _parser_name(target) == "HubspotNoteParser"
+
+
 # ── the Otter / Rev / Zoom dialect ───────────────────────────────────────
 
 
