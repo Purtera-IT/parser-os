@@ -1055,15 +1055,38 @@ class QuoteParser(BaseParser):
 
         from app.parsers.spreadsheet_route_signals import path_quote_filename_hint
 
-        if path_quote_filename_hint(path):
-            confidence = 0.95
-            reasons.append("filename_quote_hint")
-        elif self.looks_like_quote_artifact(path):
+        # Evidence in order of strength, not order of convenience.
+        #
+        # This used to read `if filename ... elif content ... elif text`, so a
+        # quote-ish filename SHORT-CIRCUITED the content check: for seven real
+        # vendor quotes, looks_like_quote_artifact() was never called at all.
+        # That also made a filename the highest-confidence signal in the whole
+        # registry (0.95) -- above RFC-5322 headers (0.91) and document
+        # structure (0.90) -- which is exactly backwards, since a filename is
+        # the one attribute of a document anybody can set to anything.
+        #
+        # Measured before changing it: of the 7 spreadsheets in the real packs
+        # whose NAME says quote, all 7 also return True from
+        # looks_like_quote_artifact(). The prior was contributing nothing that
+        # the content did not already prove -- it was only running first.
+        #
+        # So content decides, and the name is recorded but scored below
+        # MATCH_THRESHOLD, where it cannot carry a document by itself. Two real
+        # PM notes named "..._pricing_schedule_not_scope.txt" and
+        # "...purchase_order_partial_award.txt" were claimed on their names
+        # alone and produced ZERO atoms here; they now reach the prose path.
+        if self.looks_like_quote_artifact(path):
             confidence = 0.86
             reasons.append("header_quote_hint")
         elif sample_text and "part number" in normalize_text(sample_text):
             confidence = 0.8
             reasons.append("text_part_number_hint")
+        if path_quote_filename_hint(path):
+            # A prior, never a verdict: it can raise a weak content claim but
+            # cannot create one. Kept in the reasons so routing stays
+            # explainable.
+            confidence = max(confidence, 0.45)
+            reasons.append("filename_quote_hint")
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=confidence,
@@ -1241,12 +1264,27 @@ class QuoteParser(BaseParser):
     def looks_like_quote_artifact(cls, path: Path) -> bool:
         from app.parsers.spreadsheet_route_signals import (
             likely_site_roster_header_row,
-            path_quote_filename_hint,
         )
 
-        if path_quote_filename_hint(path):
-            return True
-
+        # This used to open with `if path_quote_filename_hint(path): return
+        # True` -- a predicate named looks_like_quote_ARTIFACT that answered
+        # from the file's NAME without opening the artifact at all. Every
+        # caller asking "is this really a quote?" got "it is called one".
+        #
+        # It also made the reordering in match() useless: content was moved
+        # ahead of the filename, and the content check then short-circuited on
+        # the filename anyway.
+        #
+        # Measured with the short-circuit bypassed, on the real packs: all 7
+        # spreadsheets whose name says quote ALSO qualify on their own header
+        # rows, so nothing is lost by removing it -- while the two .txt PM
+        # notes it was carrying ("..._pricing_schedule_not_scope.txt",
+        # "...purchase_order_partial_award.txt") correctly return False. Those
+        # two produced ZERO atoms through this parser; they belong on the prose
+        # path.
+        #
+        # The filename still applies in match(), as a prior scored below
+        # MATCH_THRESHOLD, which is where a prior belongs.
         suffix = path.suffix.lower()
         try:
             if suffix == ".xlsx":

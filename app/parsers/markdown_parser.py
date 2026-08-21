@@ -124,10 +124,19 @@ class MarkdownBlock:
 
 
 #: A plain-text file is worth parsing when it has a body, not just a line.
-#: Measured on 19 real deal .txt files the smallest is 4 non-empty lines /
-#: 258 characters, while the contentless case is 1 line / 44.
+#:
+#: LINES is the load-bearing signal: a document is several lines, a fragment is
+#: one. Measured on 19 real deal .txt files the smallest is 4 non-empty lines,
+#: while both contentless cases seen -- pytest's "just filler words with no
+#: structured signals" and a one-line note inside a zip -- are exactly 1.
+#:
+#: The character floor is only a guard against three lines of nothing. It was
+#: 200, chosen from the smallest real file (258 chars), and that rejected a
+#: perfectly ordinary four-line scope note of 185 characters -- caught by
+#: test_prose_text_with_a_body_is_claimed. Set well below any real document and
+#: well above the fragments, since it is the secondary signal, not the test.
 _MIN_TEXT_LINES = 3
-_MIN_TEXT_CHARS = 200
+_MIN_TEXT_CHARS = 100
 
 
 def _has_parseable_body(path: Path) -> bool:

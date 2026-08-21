@@ -1351,7 +1351,19 @@ class EmailParser(BaseParser):
                     if needle in text
                 )
                 if email_hits >= 1:
-                    confidence = 0.55
+                    # This existed so a keyword-bearing text file "isn't
+                    # silently dropped" -- a real concern when NOTHING claimed
+                    # .txt. MarkdownParser now floors that format, so the
+                    # fallback is redundant, and at 0.55 it outranked the floor
+                    # and took files it had no evidence for: a pipe-delimited
+                    # site table containing "escort required" thirty times was
+                    # claimed as an email.
+                    #
+                    # One scope phrase is not evidence of correspondence.
+                    # Below threshold: the reason stays in the trace, the claim
+                    # does not stand. Real email still claims at 0.91 on
+                    # RFC-5322 headers and 0.83 on thread markers.
+                    confidence = max(confidence, 0.45)
                     reasons.append(f"email_keyword_heuristic({email_hits})")
         return ParserMatch(
             parser_name=self.parser_name,
