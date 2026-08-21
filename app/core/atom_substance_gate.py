@@ -687,20 +687,53 @@ def drop_risk_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 
 
 def _quantity_locator_key(atom: Any) -> str:
-    """Stable key for grouping quantity atoms from the same source utterance."""
+    """Stable key for grouping quantity atoms from the same source utterance.
+
+    Only PDF and transcript coordinates were read here -- page, block, line,
+    message. A spreadsheet locator carries none of those; it carries sheet and
+    row. So every quantity atom from every workbook in a deal produced the
+    same empty key ``"|||"`` and they were all treated as one group, from
+    which ``collapse_ambiguous_user_quantities`` keeps only the largest.
+
+    On the demo deal that silently deleted the roster's 50 and 41 and the
+    vendor quote's 72 -- atoms in two different files -- leaving only the
+    grand total 91. Those three are the reconciliation inputs, so the compile
+    then produced zero contradiction edges, zero ``quantity_conflict`` packets
+    and zero ``vendor_mismatch`` packets: the vendor-versus-roster comparison
+    the packet families exist to make had nothing left to compare.
+
+    Two rules keep that from recurring:
+
+    * the artifact is part of the key, because two documents are never the
+      same utterance no matter how their coordinates line up;
+    * an atom with no positional information at all is keyed by its own id,
+      so it groups with nothing. Collapsing requires positive evidence that
+      two atoms share a source; the absence of a locator is not that evidence.
+    """
     refs = getattr(atom, "source_refs", None) or []
     if not refs:
         return str(getattr(atom, "id", ""))
     loc = getattr(refs[0], "locator", None) or {}
     if not isinstance(loc, dict):
         return str(getattr(atom, "id", ""))
-    parts = [
+    positional = [
         str(loc.get("page", "")),
         str(loc.get("block_id", "")),
         str(loc.get("line_start", "")),
         str(loc.get("message_index", "")),
+        # Spreadsheet coordinates — the half that was missing.
+        str(loc.get("sheet", "")),
+        str(loc.get("row", "")),
+        str(loc.get("table_index", "")),
     ]
-    return "|".join(parts)
+    if not any(positional):
+        return str(getattr(atom, "id", ""))
+    artifact = str(
+        getattr(atom, "artifact_id", "")
+        or getattr(refs[0], "artifact_id", "")
+        or ""
+    )
+    return "|".join([artifact, *positional])
 
 
 def collapse_ambiguous_user_quantities(atoms: list[Any]) -> tuple[list[Any], list[Any]]:

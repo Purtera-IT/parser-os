@@ -32,13 +32,50 @@ _HOUSE_NUMBER_RE = re.compile(r"^\d{1,6}\b")
 # IGNORECASE: HubSpot notes are often typed all-lowercase
 # (``100 south ashley drive suite 500 tampa fl 33602``). Title-case-only
 # matching silently dropped those into deal_metadata with no physical_site.
-_CITY_STATE_ZIP_RE = re.compile(
-    r"\b([A-Za-z][A-Za-z.'\-]+(?:\s+[A-Za-z][A-Za-z.'\-]+){0,3})\s*,?\s+"
+_CITY_STATE_ZIP_BODY = (
+    r"\s*,?\s+"
     # HubSpot notes are often typed as "PITTSBURGH, PA15212-5359" (no
     # space between state and ZIP). Accept both "PA 15212" and "PA15212".
-    r"([A-Za-z]{2})\s*(\d{5})(?:-\d{4})?\b",
+    r"([A-Za-z]{2})\s*(\d{5})(?:-\d{4})?\b"
+)
+
+#: Strict: every city word must START uppercase. Used first, because when a
+#: document carries case information that information is the only thing
+#: separating the place name from the sentence around it. Under IGNORECASE the
+#: four-word city group swallowed whatever ran in front of it -- "location
+#: Santa Fe, NM 87506" parsed its city as "location Santa Fe", and "at San
+#: Luis Obispo, CA 93401" as "at San Luis Obispo". ALL-CAPS still matches,
+#: since "PITTSBURGH" begins with a capital.
+_CITY_STATE_ZIP_STRICT = re.compile(
+    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})" + _CITY_STATE_ZIP_BODY
+)
+
+#: Loose: the original case-insensitive pattern. Some notes are typed entirely
+#: in lower case ("100 south ashley drive suite 500 tampa fl 33602"), and there
+#: the strict pattern finds nothing at all. A document with no case information
+#: cannot be read using case, so this runs only when the strict pass fails --
+#: it never gets the chance to over-capture a phrase the strict pass parsed.
+_CITY_STATE_ZIP_LOOSE = re.compile(
+    r"\b([A-Za-z][A-Za-z.'\-]+(?:\s+[A-Za-z][A-Za-z.'\-]+){0,3})" + _CITY_STATE_ZIP_BODY,
     re.IGNORECASE,
 )
+
+
+class _CityStateZip:
+    """Strict-then-loose matcher with the ``re`` API the call sites expect."""
+
+    @staticmethod
+    def search(text: str):
+        return (_CITY_STATE_ZIP_STRICT.search(text)
+                or _CITY_STATE_ZIP_LOOSE.search(text))
+
+    @staticmethod
+    def finditer(text: str):
+        found = list(_CITY_STATE_ZIP_STRICT.finditer(text))
+        return iter(found) if found else _CITY_STATE_ZIP_LOOSE.finditer(text)
+
+
+_CITY_STATE_ZIP_RE = _CityStateZip()
 
 
 @dataclass(frozen=True)

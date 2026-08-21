@@ -2240,7 +2240,12 @@ def _has_site_corroboration(sentence: str, span_start: int, span_end: int) -> bo
 # the new non-site filter dropping real sites like
 # "Innovation Tower" / "Atlanta Headquarters".
 _SITE_TAIL_NOUNS: frozenset[str] = frozenset({
-    "building", "tower", "campus", "headquarters", "hq", "office",
+    # "bldg" is the form that actually appears on drawings and in scope lines
+    # -- "Andrews Information Systems Bldg, 1700 Pratt Drive" emitted no site
+    # key at all, while the same phrase spelled "Building" emitted one. The
+    # abbreviation is not an edge case in construction documents; it is the
+    # common case.
+    "building", "bldg", "tower", "campus", "headquarters", "hq", "office",
     "branch", "center", "centre", "facility", "annex", "warehouse",
     "garage", "deck", "structure", "lot", "boardroom", "datacenter",
     "data", "school", "college", "university", "academy", "hospital",
