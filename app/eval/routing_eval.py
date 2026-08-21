@@ -25,6 +25,14 @@ hand-written rules, and the honest end state is a learned router that can be
 corrected by a PM the way every other decision in this system can. That
 replacement is only safe if there is a score to compare against, and this is
 it.
+
+READ THE NUMBER HONESTLY. Every case here was written from a misroute that has
+since been fixed, so 100% is a REGRESSION result and not a generalisation
+result -- it says the known failures stay fixed, and says nothing about shapes
+nobody has looked at yet. The structure that makes it worth reading is
+``currently_supported``: a case the router gets wrong belongs in this file
+NOW, marked as a gap, counted separately, and reported the moment it starts
+passing. A corpus containing only wins is a corpus that cannot teach anything.
 """
 
 from __future__ import annotations
@@ -48,6 +56,12 @@ class RoutingCase:
     build: Callable[[Path], Path]
     #: Why this case exists -- usually the misroute it was written for.
     note: str = ""
+    #: False when the router is KNOWN to get this wrong today. A corpus built
+    #: only from cases already fixed scores 100% and measures nothing; the
+    #: gaps are the part that makes the number worth reading. A known gap that
+    #: starts passing is reported, so it is noticed rather than quietly
+    #: absorbed.
+    currently_supported: bool = True
 
 
 @dataclass
@@ -86,21 +100,43 @@ class RoutingReport:
                 slot[0] += 1
         return {k: (v[0], v[1]) for k, v in out.items()}
 
+    @property
+    def regressions(self) -> list[RoutingResult]:
+        """Supported cases that broke. These are failures in the real sense."""
+        return [r for r in self.results if r.case.currently_supported and not r.correct]
+
+    @property
+    def closed_gaps(self) -> list[RoutingResult]:
+        """Known-broken cases that now pass -- promote them."""
+        return [r for r in self.results if not r.case.currently_supported and r.correct]
+
     def summary(self) -> str:
+        supported = [r for r in self.results if r.case.currently_supported]
+        gaps = [r for r in self.results if not r.case.currently_supported]
+        ok = sum(1 for r in supported if r.correct)
         lines = [
             f"routing accuracy: {self.accuracy * 100:.1f}%  "
-            f"({sum(1 for r in self.results if r.correct)}/{len(self.results)})",
+            f"({sum(1 for r in self.results if r.correct)}/{len(self.results)} overall)",
+            f"  supported cases : {ok}/{len(supported)}"
+            + ("" if ok == len(supported) else "   <-- REGRESSION"),
+            f"  known gaps      : {sum(1 for r in gaps if r.correct)}/{len(gaps)} now passing",
             "",
         ]
-        for parser, (ok, total) in sorted(self.per_parser().items()):
-            lines.append(f"  {parser:<20} {ok}/{total}")
+        for parser, (hit, total) in sorted(self.per_parser().items()):
+            lines.append(f"  {parser:<20} {hit}/{total}")
         if self.failures:
             lines += ["", "  misroutes:"]
             for r in self.failures:
+                tag = "REGRESSION" if r.case.currently_supported else "known gap "
                 lines.append(
-                    f"    {r.case.name:<34} expected {r.case.expected_parser:<18} "
-                    f"got {r.actual_parser} ({r.confidence:.2f} {r.reason})"
+                    f"    [{tag}] {r.case.name:<26} expected "
+                    f"{r.case.expected_parser:<18} got {r.actual_parser} "
+                    f"({r.confidence:.2f} {r.reason})"
                 )
+        if self.closed_gaps:
+            lines += ["", "  known gaps that now PASS -- promote them:"]
+            for r in self.closed_gaps:
+                lines.append(f"    {r.case.name}")
         return "\n".join(lines)
 
 
@@ -243,6 +279,27 @@ DEFAULT_CASES: tuple[RoutingCase, ...] = (
         "contentless_text", "NONE",
         _w("random.txt", "just filler words with no structured signals"),
         "the warning IS the coverage record; must stay unclaimed",
+    ),
+    RoutingCase(
+        "otter_style_transcript", "TranscriptParser",
+        _w("otter_export.txt",
+           chr(10).join(sum([["Cliff Creech", f"we need forty sites by Q3, point {i}.",
+                              "Dana Whitfield", f"escort is required at point {i}."]
+                             for i in range(10)], []))),
+        "Otter/Rev/Zoom put the speaker on its OWN line, so colon density "
+        "reads 0% and this landed on the prose floor -- read, but with every "
+        "utterance unattributed. fold_standalone_speaker_lines canonicalises "
+        "the dialect; the router asks the same function.",
+    ),
+    RoutingCase(
+        "quote_named_like_a_roster", "QuoteParser",
+        _quote_xlsx("site_list_schedule.xlsx"),
+        "QuoteParser used to return a hard 0.00 on a filename substring, "
+        "before reading anything -- so a real vendor quote under a "
+        "roster-ish name never entered the candidate list, while its twin "
+        "named attachment_b.xlsx was claimed at 0.86 on the same headers. "
+        "The cede now asks the content first; a true site_list roster still "
+        "cedes, which is the case it was written for.",
     ),
     RoutingCase(
         "prose_with_a_body", "MarkdownParser",

@@ -708,7 +708,9 @@ def classify_atoms(atoms: list[Any]) -> int:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
 
-    if not _ollama_reachable():
+    from app.core import llm_client as _llm
+    # hosted teacher substitutes for the local host (see entity_extraction)
+    if not (_llm.teacher_api_enabled() or _ollama_reachable()):
         _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
         return head_deflected
 

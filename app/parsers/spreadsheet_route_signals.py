@@ -254,7 +254,33 @@ def _wide_schedule_material_count(row: list[Any]) -> int:
 
 
 def sniff_xlsx_roster_schedule_strength(path: Path) -> tuple[float, list[str]]:
-    """0..1 strength that this is roster/schedule rather than quote."""
+    """0..1 strength that this is roster/schedule rather than quote.
+
+    NOT a pure content score, despite the name. ``path_roster_schedule_hint``
+    contributes +0.45 below -- the single largest term in the function, larger
+    than the header tokens (+0.20) and the wide-material columns (+0.25) that
+    actually read the sheet. A caller testing ``xscore >= 0.45`` as a content
+    threshold can therefore have it satisfied by the FILENAME alone.
+
+    Two consequences, both real, neither yet fixed here:
+
+    * ``xlsx_parser.match`` adds +0.14 for ``path_roster_schedule_hint`` and
+      then adds ``0.22 * xscore``, which already contains +0.45 from that same
+      hint. The filename is counted twice.
+    * Every threshold tuned against this number (0.35 and 0.45 in
+      ``resolve_quote_vs_xlsx_tie``, the 0.22 weight above) was tuned with the
+      path term baked in, so removing it is a recalibration, not a deletion.
+
+    Separating them needs a spreadsheet corpus with real vendor quotes in it to
+    re-derive the thresholds against; the packs available locally contain none
+    (15 spreadsheets, 0 with quote headers). Recorded rather than guessed at --
+    the last time a filename prior in this area was changed without measuring,
+    COPPER went from 3 contradiction edges to 0.
+
+    The ordering bug that made this contamination *decisive* is fixed: callers
+    consult content before the name, so a name-inflated ``xscore`` can no
+    longer override a header row it disagrees with.
+    """
     from app.parsers.quote_parser import _detect_header_advanced
 
     reasons: list[str] = []
@@ -315,28 +341,52 @@ def resolve_quote_vs_xlsx_tie(path: Path) -> tuple[str | None, list[str]]:
             comm_score = quote_commercial_header_score(hmap)
             reasons.append(f"tie:commercial_header_score={comm_score:.2f}")
 
-    if qpath and not rpath:
-        reasons.append("tie_resolve:quote_path_tokens_only")
-        return "quote", reasons
-    if rpath and not qpath:
-        reasons.append("tie_resolve:roster_schedule_path_tokens_only")
-        return "xlsx", reasons
-
     if qpath and rpath:
         reasons.append("tie:path_has_both_quote_and_schedule_tokens")
 
+    # ── content first ────────────────────────────────────────────────────
+    #
+    # These four lines used to sit BELOW two path-only returns:
+    #
+    #     if qpath and not rpath: return "quote"
+    #     if rpath and not qpath: return "xlsx"
+    #
+    # so ``quote_ok`` -- real header-row evidence, computed at the top of
+    # this function -- was gathered into a local and then stepped over. A
+    # genuine vendor quote named ``site_list_schedule.xlsx`` went to the
+    # generic spreadsheet path on its NAME while the identical table named
+    # ``attachment_b.xlsx`` was claimed on its headers. Same disease as
+    # ``looks_like_quote_artifact`` opening with a filename check, and worse
+    # here, because the content answer was already in scope.
+    #
+    # A quote header row with no schedule signal is a quote whatever the
+    # file is called; a schedule with no quote headers is a schedule
+    # whatever it is called.
     if quote_ok and xscore < 0.35:
         reasons.append("tie_resolve:quote_headers_clear_low_schedule_signal")
         return "quote", reasons
-    if not quote_ok and (rpath or xscore >= 0.45):
-        reasons.append("tie_resolve:not_quote_headers_or_strong_schedule")
+    if not quote_ok and xscore >= 0.45:
+        reasons.append("tie_resolve:not_quote_headers_strong_schedule")
         return "xlsx", reasons
 
+    # Both signals present: commercial columns (unit price, extended price,
+    # part number) are content, and they are what a quote IS.
     if quote_ok and (rpath or xscore >= 0.45):
         if comm_score >= 0.25:
             reasons.append("tie_resolve:ambiguous_prefer_quote_commercial_headers")
             return "quote", reasons
         reasons.append("tie_resolve:ambiguous_prefer_xlsx_schedule_roster_signals")
+        return "xlsx", reasons
+    if not quote_ok and rpath:
+        reasons.append("tie_resolve:not_quote_headers_roster_name")
+        return "xlsx", reasons
+
+    # ── only now the filename, and only to break a tie content did not ───
+    if qpath and not rpath:
+        reasons.append("tie_resolve:quote_path_tokens_only")
+        return "quote", reasons
+    if rpath and not qpath:
+        reasons.append("tie_resolve:roster_schedule_path_tokens_only")
         return "xlsx", reasons
 
     if not quote_ok and not rpath and qpath and xscore < 0.35:

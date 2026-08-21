@@ -152,6 +152,115 @@ def normalize_transcript_text(text: str) -> str:
     return text.strip()
 
 
+# ── the Otter / Rev / Zoom dialect: the speaker gets its OWN line ─────────
+#
+# Those exporters write
+#
+#     Cliff Creech
+#     we need forty sites by Q3.
+#
+# where Teams and the meeting PDFs write ``Cliff Creech: we need forty...``.
+# Everything downstream -- detect_speaker, the utterance segmenter,
+# speaker_role, the meeting_decision family -- speaks the colon dialect, so
+# rather than teach each of them a second grammar, this folds the dialect
+# into the one they already know. The router calls the SAME function to ask
+# whether folding would produce turns, which is the point: routing and
+# parsing cannot disagree about what the file is, because they are reading
+# the same evidence through the same code.
+#
+# A name token is a capital followed by letters, or a capital and a period
+# for an initial. A trailing period on a multi-letter word is NOT a name
+# token, so an ordinary sentence cannot be mistaken for a speaker line.
+_STANDALONE_SPEAKER_RE = re.compile(
+    r"^(?P<name>[A-Z](?:[A-Za-z'\-]+|\.)(?:[ \t]+[A-Z](?:[A-Za-z0-9'\-]+|\.)){0,3})"
+    r"(?P<role>[ \t]*\([^)]{1,40}\))?"
+    r"(?:[ \t]+\[?(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\]?)?$"
+)
+_SPEAKER_LINE_MAX_CHARS = 48
+
+
+def fold_standalone_speaker_lines(text: str) -> tuple[str, dict[str, Any]]:
+    """Rewrite own-line speaker labels as ``Name: body``.
+
+    Returns the folded text and the statistics the decision was made on, so a
+    caller that only wants to KNOW (the router) and a caller that wants the
+    rewrite (the parser) share one implementation.
+
+    Four conditions have to hold together, and each one is there to exclude a
+    specific document that would otherwise look like a transcript:
+
+    * **a name line is followed by a non-name line.** An attendee roster is
+      names all the way down, so every line disqualifies the one above it and
+      the roster folds to nothing. This is the strongest of the four.
+    * **names recur.** Turn-taking is what a transcript IS. Section headings
+      in a spec are title-case and short, but each appears once; requiring
+      1.5 folds per distinct name separates a conversation from an outline.
+    * **few distinct names.** A meeting has a handful of participants; a
+      specification has dozens of headings.
+    * **a quarter of the document.** Below that it is a document with some
+      capitalised lines in it, not a transcript.
+
+    Line numbering is preserved -- the speaker line is blanked, never deleted
+    -- so ``line_start`` in every locator still points at the true source
+    line and receipt replay keeps verifying.
+    """
+    lines = text.splitlines()
+    filled = [i for i, ln in enumerate(lines) if ln.strip()]
+
+    candidates: dict[int, Any] = {}
+    for i in filled:
+        stripped = lines[i].strip()
+        if len(stripped) > _SPEAKER_LINE_MAX_CHARS:
+            continue
+        match = _STANDALONE_SPEAKER_RE.match(stripped)
+        if match:
+            candidates[i] = match
+
+    folds: list[tuple[int, int]] = []
+    for position, i in enumerate(filled):
+        if i not in candidates or position + 1 >= len(filled):
+            continue
+        following = filled[position + 1]
+        if following in candidates:
+            # A name under a name is a roster line, not a turn.
+            continue
+        folds.append((i, following))
+
+    names = {candidates[i].group("name").strip() for i, _ in folds}
+    stats: dict[str, Any] = {
+        "folds": len(folds),
+        "distinct_speakers": len(names),
+        "line_count": len(filled),
+        "density": (len(folds) / len(filled)) if filled else 0.0,
+        "qualifies": False,
+    }
+    stats["qualifies"] = (
+        len(folds) >= 4
+        and 0 < len(names) <= 12
+        and len(folds) >= len(names) * 1.5
+        and stats["density"] >= 0.25
+    )
+    if not stats["qualifies"]:
+        return text, stats
+
+    out = list(lines)
+    for i, following in folds:
+        match = candidates[i]
+        speaker = match.group("name").strip()
+        role = (match.group("role") or "").strip()
+        if role:
+            # Keep the parenthetical: "(Purtera)" is who the speaker works
+            # for, and dropping it here would lose it silently.
+            speaker = f"{speaker} {role}"
+        stamp = match.group("ts")
+        body = out[following].strip()
+        # ``Name [mm:ss]: body`` is the dialect _NAME_BRACKET_TS_RE already
+        # reads, so a timestamped export keeps its clock.
+        out[following] = f"{speaker} [{stamp}]: {body}" if stamp else f"{speaker}: {body}"
+        out[i] = ""
+    return "\n".join(out), stats
+
+
 def parse_timestamp(line: str) -> str | None:
     match = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", line)
     if match:
@@ -253,6 +362,14 @@ def meeting_section_slug(label: str | None) -> str | None:
 
 def split_transcript_segments(text: str) -> list[dict[str, Any]]:
     normalized = normalize_transcript_text(text)
+    # Fold HERE rather than inside normalize_transcript_text: that function
+    # strips, it is called twice on the way in (segment_transcript normalises
+    # and then split_transcript_segments normalises again), and the second
+    # strip ate the blank line the fold leaves behind -- shifting every line
+    # number by one and breaking receipt replay on exactly the files the fold
+    # was added to support. Folding against the same list whose indices become
+    # line numbers makes that class of bug unrepresentable.
+    normalized, _fold_stats = fold_standalone_speaker_lines(normalized)
     lines = normalized.splitlines()
     segments: list[dict[str, Any]] = []
     current_section: str | None = None

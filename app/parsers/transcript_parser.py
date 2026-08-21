@@ -14,6 +14,7 @@ from app.core.normalizers import (
     detect_speaker,
     detect_section,
     extract_meeting_entities,
+    fold_standalone_speaker_lines,
     normalize_text,
     normalize_transcript_text,
     parse_timestamp,
@@ -172,6 +173,21 @@ class TranscriptParser(BaseParser):
                     turns = sum(1 for ln in scan if detect_speaker(ln) is not None)
                     if turns / len(scan) >= 0.50:
                         speaker_or_ts = True
+                if not speaker_or_ts:
+                    # Otter, Rev and Zoom put the speaker on its OWN line, so
+                    # the colon density above reads 0% and a real transcript
+                    # landed on the prose floor -- read, but with every
+                    # utterance unattributed. Ask the folder, which is the
+                    # same function the parser uses to canonicalise the file,
+                    # so this decision and that rewrite can never disagree.
+                    _folded, fold_stats = fold_standalone_speaker_lines(text)
+                    if fold_stats["qualifies"]:
+                        speaker_or_ts = True
+                        reasons.append(
+                            "standalone_speaker_lines("
+                            f"{fold_stats['folds']} turns, "
+                            f"{fold_stats['distinct_speakers']} speakers)"
+                        )
                 if not speaker_or_ts:
                     # PDF/meeting exports often use ``Name [mm:ss]`` mid-paragraph.
                     if re.search(

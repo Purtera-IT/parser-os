@@ -1022,12 +1022,31 @@ class QuoteParser(BaseParser):
         # / ``support_entitlement`` AtomTypes (PR2). Letting the quote
         # parser claim them collapses the rich structured fields into
         # vendor_line_item + quantity atoms only.
+        #
+        # The cede is right; issuing it from the FILENAME was not. This ran
+        # before any content was read and returned a hard zero, so a genuine
+        # vendor quote named ``site_list_schedule.xlsx`` -- Part Number, Qty,
+        # Unit Price, Extended, all of it -- never entered the candidate list
+        # at all. Its identical twin named ``attachment_b.xlsx`` was claimed
+        # at 0.86 on those same header rows.
+        #
+        # Third instance of one disease. ``looks_like_quote_artifact`` opened
+        # by returning True on the name; ``resolve_quote_vs_xlsx_tie``
+        # computed ``quote_ok`` and then returned on the name two lines later;
+        # this zeroed the parser on the name before content was consulted.
+        #
+        # So the cede now asks the content first. A real site_list.csv has
+        # roster headers, ``looks_like_quote_artifact`` returns False, and the
+        # cede stands -- which is the case it was written for. A real quote
+        # under one of these names keeps its claim, and the quote/xlsx
+        # tie-break (content-first as of this change) is what decides it.
         _STRUCTURED_FILENAMES = {
             "asset_inventory", "site_list", "risk_register",
             "license_support_matrix", "support_matrix", "lifecycle",
         }
         stem = path.stem.lower().replace("-", "_")
-        if any(s in stem for s in _STRUCTURED_FILENAMES):
+        content_is_quote = self.looks_like_quote_artifact(path)
+        if any(s in stem for s in _STRUCTURED_FILENAMES) and not content_is_quote:
             return ParserMatch(
                 parser_name=self.parser_name,
                 confidence=0.0,
@@ -1075,7 +1094,7 @@ class QuoteParser(BaseParser):
         # PM notes named "..._pricing_schedule_not_scope.txt" and
         # "...purchase_order_partial_award.txt" were claimed on their names
         # alone and produced ZERO atoms here; they now reach the prose path.
-        if self.looks_like_quote_artifact(path):
+        if content_is_quote:  # computed once above, before the filename cede
             confidence = 0.86
             reasons.append("header_quote_hint")
         elif sample_text and "part number" in normalize_text(sample_text):

@@ -122,6 +122,63 @@ def test_quote_is_recognised_without_a_helpful_filename(tmp_path: Path) -> None:
     assert _parser_name(neutral) == "QuoteParser"
 
 
+def _quote_sheet(target: Path) -> Path:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Part Number", "Description", "Qty", "Unit Price", "Extended"])
+    ws.append(["CAM-IP-001", "IP Camera, 4MP dome", 192, 338.71, 65032.32])
+    ws.append(["BRK-88-B117", "Mounting bracket", 64, 12.50, 800.00])
+    wb.save(target)
+    return target
+
+
+def _roster_sheet(target: Path) -> Path:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Site", "Building", "Room", "Drops", "Plate Type", "Access Window"])
+    for i in range(12):
+        ws.append([f"ATL-{i:02d}", "Building C", f"IDF {i}", 24, "RJ45 quad",
+                   "after hours, escort required"])
+    wb.save(target)
+    return target
+
+
+def test_a_quote_under_a_roster_name_is_still_a_quote(tmp_path: Path) -> None:
+    """Identical tables, two names, and they must route the same way.
+
+    ``QuoteParser.match`` returned a hard 0.00 on a filename substring before
+    reading anything, so this file never entered the candidate list -- while
+    its twin named ``attachment_b.xlsx`` was claimed at 0.86 on the very same
+    header rows. Two more layers had the same defect: the quote/xlsx
+    tie-break computed ``quote_ok`` and then returned on the name two lines
+    later, and ``looks_like_quote_artifact`` once opened by returning True on
+    the name.
+    """
+    assert _parser_name(_quote_sheet(tmp_path / "site_list_schedule.xlsx")) == "QuoteParser"
+    assert _parser_name(_quote_sheet(tmp_path / "attachment_b.xlsx")) == "QuoteParser"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["site_list.xlsx", "asset_inventory.xlsx", "risk_register.xlsx",
+     "license_support_matrix.xlsx"],
+)
+def test_the_cede_still_holds_for_a_real_roster(tmp_path: Path, filename: str) -> None:
+    """The other half, and the reason the cede exists at all.
+
+    These filenames carry richer AtomTypes -- ``site_roster``,
+    ``asset_record``, ``risk``, ``support_entitlement`` -- and letting the
+    quote parser claim them collapses those structured fields into
+    ``vendor_line_item`` plus ``quantity``. Making the cede consult content
+    must not cost that: a roster with roster headers still cedes.
+    """
+    from app.parsers.quote_parser import QuoteParser
+
+    match = QuoteParser().match(_roster_sheet(tmp_path / filename), None, None)
+    assert match.confidence == 0.0
+    assert "ceded_to_xlsx_typed_row_profiler" in match.reasons
+
+
 def test_quote_filename_alone_cannot_claim_a_file(tmp_path: Path) -> None:
     """A quote-ish name over content that is plainly not a quote."""
     fake = tmp_path / "vendor_quote_notes.txt"
@@ -226,3 +283,83 @@ def test_content_signature_overrules_the_name(tmp_path: Path, renamed: str, buil
             b"Forty sites by Q3.\r\n"
         )
         assert _parser_name(target) == "EmailParser"
+
+
+# ── the Otter / Rev / Zoom dialect ───────────────────────────────────────
+
+
+def _otter(root: Path, turns: int = 10) -> Path:
+    """Speaker on its own line, body on the next -- two people alternating."""
+    lines: list[str] = []
+    for i in range(turns):
+        lines += ["Cliff Creech", f"we need forty cameras at site {i}, escort required."]
+        lines += ["Dana Whitfield", f"mid-turn jumpers are excluded at site {i}."]
+    target = root / "otter_export.txt"
+    target.write_text("\n".join(lines), encoding="utf-8")
+    return target
+
+
+def test_own_line_speakers_route_to_transcript(tmp_path: Path) -> None:
+    """Colon density is 0% here, and it is still a transcript.
+
+    Otter, Rev and Zoom put the speaker on its own line. The density rule
+    reads that as prose -- a safe landing, but every utterance arrives
+    unattributed, which costs speaker_role and the whole meeting_decision
+    family.
+    """
+    assert _parser_name(_otter(tmp_path)) == "TranscriptParser"
+
+
+def test_folded_utterances_keep_their_true_line_numbers(tmp_path: Path) -> None:
+    """The subtle half, and the one that actually bit.
+
+    Folding blanks the speaker line rather than deleting it, so line numbers
+    survive. That guarantee was defeated once already: the fold ran inside
+    ``normalize_transcript_text``, which strips, and which is called twice on
+    the way in -- the second strip removed the leading blank and shifted every
+    locator by one. Receipt replay would have failed on precisely the files
+    the fold was written to support.
+    """
+    target = _otter(tmp_path)
+    source = target.read_text(encoding="utf-8").splitlines()
+    parser, _match, _all = choose_parser(target)
+    output = parser.parse_artifact(project_id="p", artifact_id="a", path=target)
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    assert atoms, "the fold must not cost coverage"
+
+    attributed = 0
+    for atom in atoms:
+        locator = (atom.source_refs[0].locator if atom.source_refs else {}) or {}
+        if locator.get("speaker"):
+            attributed += 1
+        line = locator.get("line_start")
+        if line is None:
+            continue
+        assert atom.raw_text.strip()[:30].lower() in source[line - 1].lower(), (
+            f"locator line {line} holds {source[line - 1]!r}, "
+            f"not {atom.raw_text[:40]!r}"
+        )
+    assert attributed == len(atoms), "every folded utterance must carry its speaker"
+
+
+@pytest.mark.parametrize(
+    "name, body",
+    [
+        # Names all the way down: every line disqualifies the one above it.
+        ("attendee_roster", "\n".join(
+            ["Attendees", "Cliff Creech", "Dana Whitfield", "Marcus Lee",
+             "Priya Raman", "Tom Alvarez", "Nina Osei"])),
+        # Title-case headings are short and capitalised too -- but each
+        # appears once, and a conversation is defined by recurrence.
+        ("spec_headings", "\n".join(
+            f"Section Heading {c}\nContractor shall install conduit and certify each drop."
+            for c in "ABCDEFGHIJKLMNOP")),
+    ],
+)
+def test_transcript_lookalikes_do_not_fold(name: str, body: str) -> None:
+    """The fold has to be narrow or it becomes the misroute it replaced."""
+    from app.core.normalizers import fold_standalone_speaker_lines
+
+    folded, stats = fold_standalone_speaker_lines(body)
+    assert not stats["qualifies"], f"{name} folded: {stats}"
+    assert folded == body, f"{name} was rewritten despite not qualifying"
