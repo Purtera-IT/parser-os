@@ -142,11 +142,36 @@ class TranscriptParser(BaseParser):
                 # bare ``.+$`` end-of-string anchor inside detect_speaker
                 # fails when the full document has more than one line.
                 # Walk the first ~40 lines and accept on any single hit.
+                # A TIMESTAMP is unambiguous transcript evidence. A bare
+                # "Name:" line is not -- ``detect_speaker`` matches any
+                # "Label: value", which is what business documents are made
+                # of. Accepting one such line in the first forty and stopping
+                # meant "School District Contact:" on page one of a Request
+                # for Proposals claimed the whole document at 0.82.
+                #
+                # Measured across 19 real .txt files: eight RFPs, SOWs, specs
+                # and addenda were taken this way, while the two files that
+                # actually ARE meeting notes have a speaker-line density of
+                # 0.0% and qualify through ``meeting_sections_detected``
+                # above. The highest densities in the corpus -- 37% to 43% --
+                # are customer emails. The signal was never measuring
+                # transcript-ness.
+                #
+                # So: timestamps qualify on sight; speaker labels qualify only
+                # when they are how the document is BUILT, which is what a
+                # transcript is. The threshold sits above every business
+                # document measured (RFP 3.2-7.6%, SOW 1.7%, specs 1.3%,
+                # addendum 10.2%, Q&A 15.2%) and above email headers, which
+                # are short files where a few header lines dominate -- those
+                # are claimed by EmailParser on its own evidence anyway.
                 speaker_or_ts = False
-                for line in text.splitlines()[:40]:
-                    if parse_timestamp(line) is not None or detect_speaker(line) is not None:
+                scan = [ln for ln in text.splitlines()[:400] if ln.strip()]
+                if any(parse_timestamp(ln) is not None for ln in scan):
+                    speaker_or_ts = True
+                elif len(scan) >= 8:
+                    turns = sum(1 for ln in scan if detect_speaker(ln) is not None)
+                    if turns / len(scan) >= 0.50:
                         speaker_or_ts = True
-                        break
                 if not speaker_or_ts:
                     # PDF/meeting exports often use ``Name [mm:ss]`` mid-paragraph.
                     if re.search(

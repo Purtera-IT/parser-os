@@ -122,6 +122,26 @@ class MarkdownBlock:
     block_kind: str
 
 
+
+#: A plain-text file is worth parsing when it has a body, not just a line.
+#: Measured on 19 real deal .txt files the smallest is 4 non-empty lines /
+#: 258 characters, while the contentless case is 1 line / 44.
+_MIN_TEXT_LINES = 3
+_MIN_TEXT_CHARS = 200
+
+
+def _has_parseable_body(path: Path) -> bool:
+    """True when a .txt holds enough to be a document rather than a fragment."""
+    try:
+        from app.core.textio import read_text
+
+        text = read_text(path, max_bytes=65_536)
+    except Exception:  # pragma: no cover - unreadable file routes elsewhere
+        return False
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return len(lines) >= _MIN_TEXT_LINES and len(text.strip()) >= _MIN_TEXT_CHARS
+
+
 class MarkdownParser(BaseParser):
     parser_name = "markdown"
     parser_version = "markdown_parser_v1"
@@ -160,6 +180,33 @@ class MarkdownParser(BaseParser):
                 reasons=["markdown_extension"],
                 artifact_type=ArtifactType.txt,
             )
+        # Floor for plain text with something in it.
+        #
+        # RFPs, SOWs, specifications and addenda arrive as .txt constantly --
+        # 19 of them across three real deal packs -- and no parser claimed the
+        # format, so they were taken by whichever content heuristic fired
+        # first. On one 1,334-line RFP that cost 56,000 characters, all 42
+        # quantity atoms and all 88 constraint atoms versus reading it as
+        # prose. Markdown is the right floor because plain text is a subset of
+        # it: prose stays prose, and "- item" still parses as a list.
+        #
+        # Gated on having content, because an unrecognised .txt with nothing
+        # in it SHOULD report "No parser matched artifact" -- that warning is
+        # the coverage record, and saying "I did not read this" is more honest
+        # than manufacturing atoms from filler. Every real deal file measured
+        # is at least 4 non-empty lines and 258 characters; the filler case
+        # this has to leave alone is one line and 44.
+        #
+        # At MATCH_THRESHOLD exactly, so any parser with real content evidence
+        # outranks it and this only ever claims what nothing else wanted.
+        if path.suffix.lower() in {".txt", ".text"}:
+            if _has_parseable_body(path):
+                return ParserMatch(
+                    parser_name=self.parser_name,
+                    confidence=0.5,
+                    reasons=["plain_text_floor"],
+                    artifact_type=ArtifactType.txt,
+                )
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=0.0,
@@ -194,6 +241,15 @@ class MarkdownParser(BaseParser):
         text = path.read_text(encoding="utf-8", errors="replace")
         atoms: list[EvidenceAtom] = []
         for idx, block in enumerate(_iter_markdown_blocks(text)):
+            # A list marker with nothing after it -- a bare "1." left behind by
+            # a PDF-to-text conversion -- yields a block whose text strips to
+            # "". EvidenceAtom rejects empty raw_text, so building one raised
+            # ValidationError and took the whole parse down. Any .md with a
+            # stray marker would have done the same; it surfaced when real .txt
+            # documents started routing here. An empty block carries nothing,
+            # so there is nothing to lose by skipping it.
+            if not (block.text or "").strip():
+                continue
             atoms.extend(
                 self._emit_atoms_for_block(
                     project_id=project_id,
