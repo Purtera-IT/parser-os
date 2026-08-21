@@ -246,9 +246,17 @@ def detect_hybrid_summary_transcript(
     - body has dense ``Name [mm:ss]`` speaker stamps
     """
     reasons: list[str] = []
-    blob_title = " ".join(x for x in (filename or "", title or "") if x)
-    if looks_like_transcript_filename(filename) or _TRANSCRIPT_TOKEN_RE.search(blob_title or ""):
-        reasons.append("title_or_filename_transcript")
+    # The filename and the document title used to be concatenated into one
+    # blob and reported as a single reason, "title_or_filename_transcript" --
+    # so a caller could not tell which had fired, and the two are not the same
+    # kind of evidence at all. ``title`` here is a page heading lifted out of
+    # the document (see document_title in orbitbrief_pdf); the filename is the
+    # one attribute of a document anybody can set to anything.
+    title_blob = (title or "").replace("_", " ").replace("-", " ")
+    if _TRANSCRIPT_TOKEN_RE.search(title_blob):
+        reasons.append("title_transcript")
+    if looks_like_transcript_filename(filename):
+        reasons.append("filename_transcript")
 
     pages = list(page_texts or [])
     if text and not pages:
@@ -269,15 +277,33 @@ def detect_hybrid_summary_transcript(
 
     has_summary = bool(
         looks_like_summary_filename(filename)
-        or _SUMMARY_TOKEN_RE.search(blob_title or "")
+        or _SUMMARY_TOKEN_RE.search(title_blob)
         or _EXEC_SUMMARY_MARKER_RE.search(joined[:2500] if joined else "")
     )
     if has_summary:
         reasons.append("summary_signal")
 
-    # Need at least a transcript signal (filename/marker/density).
+    # A transcript signal from CONTENT is required. The filename may raise a
+    # weak one -- see the ``speaker_timestamp_sparse`` branch above, where a
+    # single speaker stamp qualifies because ``reasons`` already holds the
+    # name -- but it may not create one on its own.
+    #
+    # It could before. "title_or_filename" satisfied this gate, so a PDF whose
+    # NAME contained "transcript", with no speaker stamps and no Full
+    # Transcript marker, fell through to kind="transcript_only" and had its
+    # prose re-atomised as conversation turns. Measured on one document
+    # rendered twice from identical text:
+    #
+    #   scope_of_work.pdf                -> no plan          atom: exclusion
+    #   kickoff_meeting_transcript.pdf   -> transcript_only  atom: action_item
+    #
+    # The filename changed the atom TYPE, and exclusion vs action_item is the
+    # difference between a scope-governing fact and a follow-up note.
+    #
+    # On the 35 real PDFs available, zero produce a plan at all, so this
+    # removes a failure mode without touching anything that currently fires.
     transcriptish = any(
-        r.startswith(("title_or_filename", "full_transcript", "speaker_timestamp"))
+        r.startswith(("title_transcript", "full_transcript", "speaker_timestamp"))
         for r in reasons
     )
     if not transcriptish:
