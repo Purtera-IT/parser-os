@@ -1,6 +1,7 @@
 """#71 span-extractor: per-relation recall head trains, is recall-tuned, the
 eval-gate is recall-monotonic, and SpanExtractorSet identifies items."""
 import numpy as np
+import zlib
 from app.core import span_extractor as SE
 
 
@@ -10,7 +11,14 @@ def _embed(texts):
         v = np.zeros(8, dtype=np.float32)
         if "shall" in t.lower() or "must" in t.lower():
             v[0] = 3.0          # requirement signal
-        v[3:] = (hash(t) % 5) / 5.0
+        # crc32, not hash(): str hashing is randomised per process unless
+        # PYTHONHASHSEED is pinned, so these filler dimensions changed on every
+        # run, the head trained on different vectors each time, and its metrics
+        # wandered across the recall >= 0.7 / precision >= 0.8 boundary. The
+        # test failed roughly one run in six -- on this branch and on an
+        # untouched baseline worktree alike. The trainer itself is seeded
+        # (span_extractor calls random.seed(0)); the randomness was here.
+        v[3:] = (zlib.crc32(t.encode("utf-8")) % 5) / 5.0
         out.append(v)
     return np.vstack(out)
 
