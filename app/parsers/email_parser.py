@@ -1264,6 +1264,47 @@ def parse_email_thread_headers(path: Path) -> dict[str, Any]:
     }
 
 
+
+#: A line is only split when it plainly holds more than one real sentence.
+#: Short fragments ("Hi.", "Thanks.") and anything table- or header-shaped are
+#: left whole, so the common case is byte-identical to the previous behaviour.
+_MIN_SENTENCE_CHARS = 12
+
+
+def _expand_lines_to_sentences(
+    lines: list[str], line_start: int
+) -> list[tuple[int, str]]:
+    """Yield ``(source_line_number, text)`` with prose lines split by sentence.
+
+    Returns the line unchanged unless every resulting piece is a substantial
+    sentence, so a signature, a table row or a greeting never fragments. The
+    line number is the ORIGINAL one for every piece: splitting changes what a
+    single atom covers, never where it came from.
+    """
+    from app.core.sentences import split_sentences
+
+    out: list[tuple[int, str]] = []
+    for line_idx, line in enumerate(lines):
+        line_num = line_start + line_idx
+        stripped = (line or "").strip()
+        # Table rows, header lines and quoted-only markers are not prose.
+        if not stripped or "|" in stripped or stripped.count(".") < 2:
+            out.append((line_num, line))
+            continue
+        try:
+            pieces = [p.strip() for p in split_sentences(stripped) if p.strip()]
+        except Exception:  # pragma: no cover - never fail a parse over this
+            out.append((line_num, line))
+            continue
+        if len(pieces) < 2 or any(len(p) < _MIN_SENTENCE_CHARS for p in pieces):
+            out.append((line_num, line))
+            continue
+        prefix = line[: len(line) - len(line.lstrip("> "))]
+        for piece in pieces:
+            out.append((line_num, prefix + piece))
+    return out
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -1977,8 +2018,21 @@ class EmailParser(BaseParser):
         pending_lead_in: list[str] = []
         active_lead_in: list[str] = []
 
-        for line_idx, line in enumerate(block["lines"]):
-            line_num = int(block["line_start"]) + line_idx
+        # One physical line can hold several sentences with different speech
+        # acts, and typing the line as a whole makes them fight. The customer
+        # email "Please remove West Wing from scope. Main Campus requires
+        # escort access after 5pm." is one line and two facts: an exclusion and
+        # a constraint. Typed together the constraint cue wins, so the
+        # customer's own exclusion is never emitted as an exclusion -- and
+        # ``prefer_customer_exclusion`` looks for exactly that, so the West
+        # Wing packet ended up governed by a PM's transcript note (meeting_note,
+        # rank 55) instead of the customer's written instruction (rank 90).
+        #
+        # The line number is preserved on every piece, so locators, replay and
+        # document order are unchanged; only the granularity of typing moves.
+        for line_num, line in _expand_lines_to_sentences(
+            block["lines"], int(block["line_start"])
+        ):
             raw_cleaned = line.lstrip("> ").strip()
             if not raw_cleaned:
                 continue
