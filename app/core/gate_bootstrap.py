@@ -280,7 +280,11 @@ def verify_gate(
 
 
 def bootstrap_default_store(
-    db_path: str, *, embed_fn: Callable | None = None, verify: bool = True
+    db_path: str,
+    *,
+    embed_fn: Callable | None = None,
+    reachable_fn: Callable[[], bool] | None = None,
+    verify: bool = True,
 ) -> int:
     """Create/populate a feedback-store DB with the base learning layer plus the
     built-in global corrections (PurTera). For ops to prime
@@ -296,8 +300,17 @@ def bootstrap_default_store(
     collateral-prone bare-token corrections. The contextual knowledge still
     enters the store the right way: as rich exemplars from real-deal / PM
     corrections. Set ``verify=False`` to force-seed every gate (e.g. with a
-    deterministic embedder in tests)."""
-    store = FeedbackStore(db_path, embed_fn=embed_fn)
+    deterministic embedder in tests).
+
+    ``reachable_fn`` is the other half of the ``embed_fn`` seam. The store
+    silences itself when its embedding endpoint does not answer, and the probe
+    consults a real host -- so injecting a deterministic embedder while leaving
+    the probe alone produces a store that never speaks: every exemplar comes
+    back ``silent``, every gate reproduces 0/N, and verify=True skips
+    everything including the gates that are perfectly clean. Passing an
+    embedder without being able to pass the probe made the injection useless
+    for exactly the callers it exists for."""
+    store = FeedbackStore(db_path, embed_fn=embed_fn, reachable_fn=reachable_fn)
     n = 0
     for spec in default_gate_specs():
         if verify:

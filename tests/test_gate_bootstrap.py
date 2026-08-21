@@ -222,8 +222,17 @@ def test_bootstrap_default_store_skips_unreproducible_gates(monkeypatch):
     )
     monkeypatch.setattr(gb, "default_gate_specs", lambda: [clean, dirty])
 
-    verified = bootstrap_default_store(":memory:", embed_fn=_fake_embed, verify=True)
-    forced = bootstrap_default_store(":memory:", embed_fn=_fake_embed, verify=False)
+    # reachable_fn: _fake_embed is deterministic and local, but the store's
+    # default probe asks a real embedding endpoint whether it is up. Offline
+    # that returns False, the store goes silent, every gate reproduces 0/N and
+    # verify=True skips the clean spec too -- which is not what this test is
+    # about.
+    verified = bootstrap_default_store(
+        ":memory:", embed_fn=_fake_embed, reachable_fn=lambda: True, verify=True
+    )
+    forced = bootstrap_default_store(
+        ":memory:", embed_fn=_fake_embed, reachable_fn=lambda: True, verify=False
+    )
     # verify=True drops the 2 dirty exemplars; verify=False seeds everything.
     assert forced - verified == 2
 

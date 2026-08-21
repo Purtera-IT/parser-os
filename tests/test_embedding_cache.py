@@ -99,7 +99,23 @@ def test_disable_env_bypasses_cache(tmp_path, monkeypatch):
         ec.reset_cache()
 
 
-def test_batch_endpoint_used_then_disabled_on_404(monkeypatch):
+
+# The two tests below exercise the /api/embed batch path itself. Since 429d6b5
+# that path is fronted by a preflight -- ``ollama_host.embed_ready(host, model)``
+# -- so a dead endpoint costs a probe instead of the full 180s embed timeout on
+# every call, which is what once left a deal in enrich_entities for 21 minutes.
+#
+# These tests predate the preflight. They stub ``requests.post`` but not the
+# probe, so with no live embedder they returned before reaching the HTTP call
+# they exist to test, and asserted None against their own fixtures. Stubbing
+# the probe restores what they were written to check; the preflight has its own
+# behaviour and is not what is under test here.
+@pytest.fixture
+def _embed_endpoint_reachable(monkeypatch):
+    monkeypatch.setattr(er.ollama_host, "embed_ready", lambda host, model: True)
+
+
+def test_batch_endpoint_used_then_disabled_on_404(monkeypatch, _embed_endpoint_reachable):
     # When /api/embed returns 404, we permanently fall back and never retry it.
     er._BATCH_ENDPOINT_OK = None
 
@@ -127,7 +143,7 @@ def test_batch_endpoint_used_then_disabled_on_404(monkeypatch):
     er._BATCH_ENDPOINT_OK = None  # reset module global for other tests
 
 
-def test_batch_endpoint_returns_aligned_vectors(monkeypatch):
+def test_batch_endpoint_returns_aligned_vectors(monkeypatch, _embed_endpoint_reachable):
     er._BATCH_ENDPOINT_OK = None
 
     class Resp:
