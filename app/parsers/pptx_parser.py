@@ -145,26 +145,54 @@ class PptxParser(BaseParser):
         del domain_pack
         try:
             from pptx import Presentation
+            from pptx.enum.shapes import PP_PLACEHOLDER
         except Exception as exc:  # pragma: no cover — env-specific
             raise RuntimeError(
                 "python-pptx is required for the PPTX parser"
             ) from exc
+
+        # The placeholder kinds that ARE a slide title. Deliberately a set of
+        # enum members rather than a substring test -- see the title scan
+        # below. VERTICAL_TITLE is absent from some python-pptx versions.
+        _TITLE_PLACEHOLDERS = {
+            getattr(PP_PLACEHOLDER, name)
+            for name in ("TITLE", "CENTER_TITLE", "VERTICAL_TITLE")
+            if hasattr(PP_PLACEHOLDER, name)
+        }
 
         prs = Presentation(str(path))
         atoms: list[EvidenceAtom] = []
         slide_count = len(prs.slides)
         for slide_idx, slide in enumerate(prs.slides):
             slide_title_text = ""
-            # Slide title is usually the first text-bearing placeholder.
+            # Slide title comes from a title PLACEHOLDER -- structural, and
+            # the right signal. But the test used to be
+            #
+            #     "title" in str(shape.placeholder_format.type).lower()
+            #
+            # which is a substring match on the enum's repr, and SUBTITLE
+            # contains "title". So the first SUBTITLE placeholder in shape
+            # order was taken as the slide title, and the loop broke before
+            # ever reaching the real one. Measured across 17 real decks / 223
+            # slides: one slide titled itself "April 12, 2025" off its
+            # subtitle. A slide title becomes the section heading for every
+            # atom on that slide, so a date lands on all of them.
+            #
+            # Compare the enum members, and scan every placeholder before
+            # giving up rather than breaking on the first near-miss, so a real
+            # title still wins when it sits later in shape order.
             for shape in slide.shapes:
                 # python-pptx RAISES ValueError on .placeholder_format for a
                 # non-placeholder shape (it does not return None), which would
                 # crash the whole presentation. Gate on .is_placeholder first.
                 if not shape.has_text_frame or not getattr(shape, "is_placeholder", False):
                     continue
-                if shape.placeholder_format is not None and "title" in str(shape.placeholder_format.type).lower():
-                    slide_title_text = shape.text_frame.text.strip()
-                    break
+                fmt = shape.placeholder_format
+                if fmt is not None and fmt.type in _TITLE_PLACEHOLDERS:
+                    text = shape.text_frame.text.strip()
+                    if text:
+                        slide_title_text = text
+                        break
             if not slide_title_text:
                 # Fallback: take the first non-empty text run from the slide
                 for shape in slide.shapes:

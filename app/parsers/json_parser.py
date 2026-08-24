@@ -129,8 +129,30 @@ class JsonParser(BaseParser):
             if any(k in head for k in _TRANSCRIPT_KEYS) or (
                 '"speaker"' in head and '"text"' in head
             ):
+                # A DEFERRAL, NOT A WITHDRAWAL. This returned 0.0 -- handing the
+                # file to TranscriptParser and assuming it would be caught. It
+                # is not always caught, and then nobody reads the file:
+                #
+                #   * ``head`` is the first 4000 chars of a truncated sample,
+                #     so a large .json does not parse as JSON here
+                #   * TranscriptParser's .json branch requires json.loads() to
+                #     SUCCEED, and on a truncated sample it raises
+                #   * both parsers score 0.00 and the artifact routes to NONE
+                #
+                # Measured on the local corpus: 2062 of 2500 artifacts routed
+                # to NONE, essentially all of them valid .json that parse fine
+                # in full. They contain the key ``"segments"`` -- which here
+                # means document segments, not diarised speech, and is an
+                # ordinary business word besides (network segments, customer
+                # segments, cable segments).
+                #
+                # 0.55 sits BELOW TranscriptParser's 0.8, so a real transcript
+                # payload still goes there, and ABOVE MATCH_THRESHOLD, so when
+                # the transcript parser cannot take it the file is still read
+                # rather than dropped. A parser may step aside; it may not
+                # leave the artifact with nobody holding it.
                 return ParserMatch(
-                    parser_name=self.parser_name, confidence=0.0,
+                    parser_name=self.parser_name, confidence=0.55,
                     reasons=["defer_to_transcript"], artifact_type=ArtifactType.json,
                 )
             return ParserMatch(

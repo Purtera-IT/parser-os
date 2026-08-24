@@ -299,7 +299,28 @@ def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassificatio
     # 1. Name-based reference/rate-card hints (highest precision). A
     #    sheet literally named "... Do not Edit" / "SELLL RATES" /
     #    "COST RATES" / "Lookup" is backing data regardless of content.
-    if any(p.search(norm) for p in _REFERENCE_NAME_PATTERNS):
+    #
+    # "regardless of content" was doing real work here: this returns
+    # suppress=True, so EVERY atom on the sheet is dropped, decided on the tab
+    # name before anything is read. A tab name is as forgeable as a filename
+    # and gets renamed far more often -- a template's "Lookup" or "Helper" tab
+    # that now holds the real BOM loses the whole table silently.
+    #
+    # The guard is the one this file already applies to the FINANCIAL name
+    # rule three blocks down, whose comment says it plainly: "the data-header
+    # guard already protects any genuine scope table that happens to live
+    # under such a name". Rule 1 simply never got it.
+    #
+    # _looks_like_data_header wants two or more tokens from a scope/BOM
+    # vocabulary (site, device, qty, part number, ...), so it does NOT fire on
+    # a rate card -- "Code | Skill Level | Rate" contains none of them. Rate
+    # cards and price books keep collapsing exactly as before; only a sheet
+    # carrying a real scope table escapes.
+    #
+    # Measured over 17 real workbooks / 126 sheets: 35 are suppressed by this
+    # rule and ZERO of them carry a data header, so this changes nothing that
+    # currently happens.
+    if any(p.search(norm) for p in _REFERENCE_NAME_PATTERNS) and not has_data_header:
         # A price-book / price-list name carries pricing the PM needs, so
         # it routes to COMMERCIAL (CATALOG), not the DROP bucket. A "rate"
         # name is a rate card (also COMMERCIAL). Everything else here

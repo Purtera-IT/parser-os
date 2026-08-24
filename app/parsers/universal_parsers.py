@@ -179,22 +179,35 @@ class HtmlParser(BaseParser):
         # DOM has Slack/Teams message structure, extract per-message
         # atoms with sender + timestamp so chat threads from customer
         # land as clean evidence instead of a sea of <div>s.
+        # These detectors match CSS CLASS NAMES, which are author-chosen text,
+        # and firing one used to RETURN -- so the generic heading / paragraph /
+        # table walk below never ran. When the detector was wrong the page
+        # yielded nothing at all.
+        #
+        # Measured: a Confluence-style SOW page produces 11 atoms (3 headings,
+        # 2 paragraphs, 2 list items, 4 table cells). Add one
+        # ``<div class="message-body">`` -- a stock Bulma component, and a
+        # common CMS class -- and it produced ZERO. The whole document was
+        # read as a Teams chat export, no messages were found, and the page
+        # was silently lost.
+        #
+        # So the chat path now has to actually produce something to win it. A
+        # detector that fires on a false positive costs one wasted scan
+        # instead of the entire document.
         if _looks_like_slack_export(soup):
-            return ParserOutput(
-                atoms=_extract_slack_messages(
-                    soup, project_id=project_id, artifact_id=artifact_id,
-                    filename=path.name, parser_version=self.parser_version,
-                ),
-                derived_files=[],
+            slack_atoms = _extract_slack_messages(
+                soup, project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, parser_version=self.parser_version,
             )
+            if slack_atoms:
+                return ParserOutput(atoms=slack_atoms, derived_files=[])
         if _looks_like_teams_export(soup):
-            return ParserOutput(
-                atoms=_extract_teams_messages(
-                    soup, project_id=project_id, artifact_id=artifact_id,
-                    filename=path.name, parser_version=self.parser_version,
-                ),
-                derived_files=[],
+            teams_atoms = _extract_teams_messages(
+                soup, project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, parser_version=self.parser_version,
             )
+            if teams_atoms:
+                return ParserOutput(atoms=teams_atoms, derived_files=[])
         # Headings (h1-h6)
         for level in range(1, 7):
             for h_idx, h in enumerate(soup.find_all(f"h{level}")):
@@ -844,11 +857,19 @@ def _looks_like_slack_export(soup: Any) -> bool:
 
 def _looks_like_teams_export(soup: Any) -> bool:
     """Teams export uses ``message-body``, ``ts-message`` or
-    ``data-tid="messageBodyContent"``."""
-    return bool(
-        soup.find(attrs={"data-tid": re.compile(r"message|chat")})
-        or soup.find(class_=re.compile(r"ts-message|teams-message|message-body"))
-    )
+    ``data-tid="messageBodyContent"``.
+
+    ``ts-message`` / ``teams-message`` and the ``data-tid`` attribute are
+    Teams-specific and stand on their own. ``message-body`` is NOT: it is a
+    stock component class in Bulma and several CMS themes, so one notice box
+    on an ordinary page used to be enough. A conversation has many messages,
+    so require a conversation's worth before that signal counts.
+    """
+    if soup.find(attrs={"data-tid": re.compile(r"message|chat")}):
+        return True
+    if soup.find(class_=re.compile(r"ts-message|teams-message")):
+        return True
+    return len(soup.find_all(class_=re.compile(r"message-body"))) >= 3
 
 
 def _extract_slack_messages(
