@@ -37,6 +37,19 @@ dependencies = [
   # placeholder atom and the email body/attachments are lost. The parser already
   # uses it when present; declare it so the prod image installs it.
   "extract-msg>=0.48",
+  "striprtf>=0.0.26",
+  "icalendar>=6.0",
+  # Decode-layer libraries. Each is soft-imported with a working fallback, so a
+  # missing one degrades quality rather than raising -- which is exactly why they
+  # must be declared: the failure mode is silent. Measured against the fallbacks:
+  #   python-dateutil  date coverage 9/14 -> 14/14 spellings (app/core/dates.py)
+  #   pysbd            sentence splitting stops severing "Part No." from its
+  #                    part number (app/core/sentences.py)
+  #   puremagic        content-based routing, so a .docx named contract.pdf does
+  #                    not reach the PDF parser (app/core/filetype.py)
+  "python-dateutil>=2.8",
+  "pysbd>=0.3.4",
+  "puremagic>=1.15",
 ]
 
 [project.optional-dependencies]

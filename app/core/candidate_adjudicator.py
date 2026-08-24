@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import re
 from pathlib import Path
 
@@ -90,7 +92,7 @@ def _span_matches_candidate(candidate: CandidateAtom, artifact_paths: dict[str, 
             continue
         if path.suffix.lower() in _TEXT_ARTIFACT_SUFFIXES:
             checked = True
-            body = normalize_text(path.read_text(encoding="utf-8", errors="ignore"))
+            body = normalize_text(read_text(path))
             if span in body:
                 return True
     if not checked:

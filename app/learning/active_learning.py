@@ -262,7 +262,14 @@ def build_active_learning_queue(
     compile_payload: dict[str, Any],
     *,
     max_items: int | None = None,
+    class_counts: dict[Any, int] | None = None,
+    relation: str = "atom_type",
+    threshold: float = 0.72,
 ) -> list[ReviewQueueItem]:
+    """Rank what needs a human. Pass ``class_counts`` (see
+    :func:`app.learning.gold_priority.class_counts_from_log`) to additionally
+    rank by what each answer would TEACH — without it the behaviour is
+    unchanged, so existing callers keep their exact ordering."""
     created_at = _queue_created_at(compile_payload)
     packets = [row for row in (compile_payload.get("packets") or []) if isinstance(row, dict)]
     candidates = [row for row in (compile_payload.get("rejected_candidates") or []) if isinstance(row, dict)]
@@ -293,6 +300,40 @@ def build_active_learning_queue(
 
     for link in semantic_links:
         queue.append(_semantic_queue_item(link, created_at=created_at))
+
+    # Re-score by TEACHING value before ranking. The scores above answer "what is
+    # most likely wrong?" — triage. `gold_priority` answers "what will teach the
+    # heads most?", which is a different question: it peaks at the decision
+    # boundary instead of at zero confidence, and it rewards labels the training
+    # log has few or no examples of. Purely additive — tier and anchor still lead
+    # the sort, so triage order is preserved and this only breaks ties within it.
+    if class_counts:
+        from app.learning.gold_priority import gold_priority
+
+        rescored = []
+        for item in queue:
+            try:
+                gp = gold_priority(
+                    confidence=1.0 - float(item.ambiguity_score or 0.0),
+                    label=item.family_or_type or "",
+                    relation=relation,
+                    class_counts=class_counts,
+                    threshold=threshold,
+                    governs_packet=item.item_type == "packet",
+                )
+                reasons = list(item.priority_reasons) + [f"gold:{r}" for r in gp.reasons]
+                rescored.append(
+                    item.model_copy(
+                        update={
+                            "priority_score": round(item.priority_score + gp.score, 6),
+                            "priority_reasons": reasons,
+                        }
+                    )
+                )
+            except Exception:
+                # A ranking refinement must never drop an item from review.
+                rescored.append(item)
+        queue = rescored
 
     queue.sort(
         key=lambda item: (

@@ -376,6 +376,18 @@ def compile_project(
     # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
     # No-op otherwise, so default compiles (and the test suite) are unchanged.
     _maybe_wire_feedback_store()
+    # Cross-container instant learning: pull PM corrections the SERVICE mirrored
+    # to blob into this worker's live store so decide() honors them on THIS
+    # compile. Gated + best-effort; no-op unless SOWSMITH_FEEDBACK_BLOB is on.
+    try:
+        from app.core import feedback_blob as _fb
+        from app.core.decide import get_store as _get_store
+
+        _st = _get_store()
+        if _st is not None:
+            _fb.sync_into_store(_st)
+    except Exception:  # pragma: no cover - sync must never break a compile
+        pass
 
     resolved_project_id = project_id or project_dir.name
 
@@ -1166,9 +1178,20 @@ def compile_project(
         else:
             try:
                 from app.core.site_geo_fallback import (
+                    enrich_site_geo,
                     geo_fallback_sites,
                     suppress_vendor_sites,
                 )
+                # 0) Fill city/state/ZIP on sites we DID detect but whose
+                #    address came through as one lumped string. Runs before
+                #    the fallback because it changes nothing about whether a
+                #    site exists — it only makes an existing one locatable.
+                enriched_geo = enrich_site_geo(atoms)
+                if enriched_geo:
+                    warnings.append(
+                        f"INFO: site_geo_fallback enriched {enriched_geo} physical_site "
+                        f"atom(s) with city/state/ZIP recovered from the document"
+                    )
                 # 1) Infer fallback physical_site atoms from bare City/State/ZIP
                 #    anchors. This must run FIRST: a vendor letterhead address
                 #    ("PurTera LLC … Alpharetta, GA 30009") only becomes a
@@ -1501,6 +1524,7 @@ def compile_project(
                 )
             recal_count = recalibrate_confidence(
                 atoms, artifact_authority=_artifact_tier, edges=[],
+                abstain_threshold=abstain_threshold,
             )
         except Exception as exc:
             warnings.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
@@ -1711,6 +1735,30 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: bom_arithmetic_check failed: {type(exc).__name__}: {exc}")
 
+    # A PM answering an open question in the brief is usually stating deal truth
+    # that exists in no document. Admit it as evidence HERE — before graph_build
+    # and packetize — so it behaves like every other atom: it gets edges, lands
+    # in packets, can settle a cross-document conflict at pm_confirmed authority,
+    # and reaches the SOW. Anything later would only decorate the envelope.
+    # Gated + best-effort: no ledger, or no blob, is a normal no-op.
+    with telemetry.stage("pm_answers", input_count=len(atoms)) as stage:
+        pm_atoms = []
+        try:
+            from app.core.pm_answer_blob import load_pm_answer_atoms
+
+            existing_ids = {a.id for a in atoms}
+            pm_atoms = [
+                a
+                for a in load_pm_answer_atoms(
+                    project_id=resolved_project_id, deal_id=resolved_project_id
+                )
+                if a.id not in existing_ids
+            ]
+            atoms = atoms + pm_atoms
+        except Exception as exc:  # never let the ledger break a compile
+            warnings.append(f"WARNING: pm_answer atoms skipped: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(pm_atoms))
+
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:
         edges = build_edges(project_id=resolved_project_id, atoms=atoms, entities=entities)
         telemetry.end_stage(stage, output_count=len(edges))
@@ -1780,6 +1828,34 @@ def compile_project(
     # on every compile.  output_signature is content-addressed over the result
     # pre-validation; validation messages are excluded from the signature so a
     # warning later doesn't recursively change the signature.
+    # Final receipt sweep. The backfill above runs mid-pipeline, and several
+    # stages after it still MINT atoms -- quote_line_head consolidating a
+    # bom_line is the one that surfaced this. Such an atom carries source_refs
+    # it never got receipts for, and the validator treats "source_refs but no
+    # receipts while source files are available" as a hard ERROR, so a single
+    # late-minted atom fails the whole compile. Observed on a real deal: one
+    # bom_line out of ~2,000 atoms, and nothing else wrong with the run.
+    #
+    # Idempotent and free when there is nothing to do -- it only touches atoms
+    # that have source_refs and no receipts -- so running it once more here
+    # costs a no-op pass and closes the window for every future late stage
+    # rather than for this one caller.
+    late_backfilled = 0
+    try:
+        for atom in result.atoms:
+            if getattr(atom, "source_refs", None) and not getattr(atom, "receipts", None):
+                atom.receipts = replay_atom_receipts(atom, artifact_paths)
+                late_backfilled += 1
+    except Exception as exc:  # never fail a compile inside the safety net
+        warnings.append(
+            f"WARNING: final receipt sweep failed: {type(exc).__name__}: {exc}"
+        )
+    if late_backfilled:
+        warnings.append(
+            f"INFO: final receipt sweep attached receipts to {late_backfilled} "
+            "atom(s) minted after receipt_backfill"
+        )
+
     output_signature = compute_output_signature(result)
     result.manifest = finalize_manifest(manifest, output_signature)
     with telemetry.stage("quality_gates", input_count=len(result.packets)) as stage:

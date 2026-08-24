@@ -73,10 +73,33 @@ def test_schematic_gold_case_passes_every_declared_metric(case_id: str) -> None:
 
 
 def test_every_schematic_case_dir_has_artifacts_and_labels() -> None:
+    """Labels are committed; the drawings they describe are not.
+
+    ``.gitignore`` ignores ``real_data_cases/*/artifacts/*`` and explicitly
+    un-ignores ``real_data_cases/*/labels/*.json`` -- the drawings are real
+    customer documents and stay out of the repository by design, while the gold
+    labels that describe them are tracked.
+
+    So the label half of this check is a real invariant and is asserted
+    unconditionally. The artifact half can only hold where someone has synced
+    the case data locally, and asserting it in a clean checkout reported a
+    deliberate policy as a failure. It is checked when the drawings are present
+    and skipped, with the reason, when they are not.
+    """
     for case_id in CASE_IDS:
         case_dir = CASES_DIR / case_id
-        assert (case_dir / "artifacts" / "drawings.pdf").is_file(), case_id
         assert (case_dir / "labels" / "gold_standard.json").is_file(), case_id
+
+    missing = [
+        case_id
+        for case_id in CASE_IDS
+        if not (CASES_DIR / case_id / "artifacts" / "drawings.pdf").is_file()
+    ]
+    if missing:
+        pytest.skip(
+            "schematic drawings are gitignored (real customer documents); "
+            f"not synced locally for: {', '.join(sorted(missing))}"
+        )
 
 
 def test_schematic_corpus_has_at_least_five_cases() -> None:

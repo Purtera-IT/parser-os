@@ -34,6 +34,7 @@ import os
 import re
 import urllib.request
 from typing import Any
+from app.core import ollama_host
 
 DEFAULT_HOST = "http://100.114.102.122:11434"
 # qwen3:14b is the speed/quality sweet spot. The strict prompt +
@@ -60,7 +61,7 @@ def ollama_reachable() -> bool:
     request timeout per compile. Returns ``True`` on a 200 response
     to ``/api/tags`` within ``DEFAULT_PROBE_TIMEOUT`` seconds.
     """
-    host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(DEFAULT_HOST)
     try:
         req = urllib.request.Request(f"{host}/api/tags")
         with urllib.request.urlopen(req, timeout=DEFAULT_PROBE_TIMEOUT) as resp:
@@ -735,6 +736,21 @@ def _has_spec_label_token(normalized: str) -> bool:
     return False
 
 
+#: Institutional org tails that make a two-word proper noun a place with a
+#: campus rather than a company: "Virginia Tech", "Pratt Institute", "Boston
+#: College". Mirrors ``entity_extraction._ORG_SUFFIX_TWO_WORD``, which is the
+#: side that emits these phrases -- the two lists disagreeing is what caused
+#: this module to drop what the other one had just found.
+#:
+#: Deliberately narrower than that list: "company", "corporation", "trust",
+#: "society" and friends name organisations that need not have a site at all,
+#: and are left out rather than risk turning every vendor into a location.
+_INSTITUTIONAL_TAIL_SUFFIXES: frozenset[str] = frozenset({
+    "tech", "polytechnic", "institute", "university", "college", "academy",
+    "hospital", "clinic", "school", "schools", "district", "campus",
+})
+
+
 def _has_positive_site_signal(normalized: str) -> bool:
     """Return True iff phrase has at least one signal of being a
     real site.
@@ -756,6 +772,21 @@ def _has_positive_site_signal(normalized: str) -> bool:
     for desc in _INSTITUTIONAL_DESCRIPTORS:
         if desc in normalized:
             return True
+    # TRAILING institutional suffix — "Virginia Tech", "Rensselaer
+    # Polytechnic", "Pratt Institute". ``entity_extraction`` already treats
+    # these as site-bearing org names, and this module recognised none of
+    # them, so a phrase it emitted was dropped here for lacking a signal the
+    # other half of the pipeline had already found. "Boston Tech" only
+    # survived by accident: two tokens of =<6 characters look like a site
+    # code (ATL-HQ), which "Virginia Tech" is too long to imitate.
+    #
+    # Matched as the FINAL TOKEN, never as a substring. "tech" inside
+    # "technologies" is a vendor signal, not an institution -- a substring
+    # test here would make "Link Technologies WebSmartt" a site and undo the
+    # vendor-brand detector this module exists for.
+    tail = normalized.replace("-", " ").split()
+    if tail and tail[-1].strip(".,") in _INSTITUTIONAL_TAIL_SUFFIXES:
+        return True
     # Meaningful (≥3 char) word count — split on whitespace AND
     # hyphens so "atl-west-01" counts as {"atl","west"} (digit
     # tokens are also kept for site-code recognition).
@@ -884,7 +915,12 @@ _STRONG_FACILITY_ANCHORS: frozenset[str] = frozenset({
 _WEAK_FACILITY_ANCHORS: frozenset[str] = frozenset({
     "center", "centre", "complex",
     "office", "facility", "facilities",
-    "building", "room", "area", "zone", "wing", "floor",
+    # "bldg" is how drawings and scope lines actually spell it. Without it
+    # "Andrews Information Systems Bldg, 1700 Pratt Drive" had no facility
+    # anchor, so _looks_like_vendor_brand saw the vendor signal "systems"
+    # with nothing anchoring it and discarded the site -- while the identical
+    # phrase spelled "Building" was kept. An abbreviation is the same thing.
+    "building", "bldg", "room", "area", "zone", "wing", "floor",
     "annex", "suite",
     "plaza", "square",
     "terminal",  # POS terminal is NOT a site
@@ -1167,9 +1203,17 @@ def _call_ollama(prompt: str, *, max_tokens: int = 2048) -> str:
     from app.core import llm_client
     if llm_client.teacher_api_enabled():
         return llm_client.complete(prompt, max_tokens=max_tokens)
-    host = os.environ.get("OLLAMA_HOST", DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(DEFAULT_HOST)
     model = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
     timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+
+    # A model that cannot produce five tokens will not produce a site
+    # verdict either, and this call is made once per candidate batch — so
+    # waiting out the full timeout to learn that, repeatedly, is what turns
+    # a wedged host into a compile that looks hung. Empty is the caller's
+    # existing "no LLM result" signal.
+    if not ollama_host.generation_ready(host, model):
+        return ""
 
     payload = {
         "model": model,

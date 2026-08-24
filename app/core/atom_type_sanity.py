@@ -31,6 +31,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.sentences import split_sentences
+
 # --- financial / meta tokens that disqualify a "quantity" --------------
 
 # Currency, percentage and pricing vocabulary. A quantity carrying any of
@@ -353,6 +355,9 @@ def _canonical_quantity_noun(raw: str) -> str:
     return noun
 
 
+#: Kept only so existing callers importing this name still resolve; the
+#: splitting itself now goes through ``split_sentences``, which does not
+#: break "Part No. 77-K298" or "St. Louis" the way this pattern does.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
 
@@ -365,7 +370,7 @@ def _context_sentence(text: str, span: tuple[int, int]) -> str:
         return ""
     start, end = span
     cursor = 0
-    for sentence in _SENTENCE_SPLIT_RE.split(text):
+    for sentence in split_sentences(text):
         seg_start = text.find(sentence, cursor)
         if seg_start < 0:
             seg_start = cursor

@@ -51,6 +51,8 @@ kept, and only ``stakeholder`` / generic-prose types are ever examined.
 from __future__ import annotations
 
 import re
+
+from app.core.phones import has_phone
 from typing import Any
 
 # ── general role / title vocabulary (universal, not a name list) ──
@@ -312,7 +314,10 @@ def _has_role_context(text: str, value: dict, entity_keys: list[str]) -> bool:
         if ks.startswith(("org:", "email:", "role:", "company:", "vendor:")):
             return True
     lowered = text.lower()
-    if _EMAIL_RE.search(text) or _PHONE_RE.search(text):
+    # libphonenumber, not a shape match: the old pattern read
+    # "invoice 2026-05-14 total 18,500" as a phone number and let it
+    # through the substance gate on that basis.
+    if _EMAIL_RE.search(text) or has_phone(text):
         return True
     if _RELATION_RE.search(text):
         return True
@@ -682,20 +687,53 @@ def drop_risk_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 
 
 def _quantity_locator_key(atom: Any) -> str:
-    """Stable key for grouping quantity atoms from the same source utterance."""
+    """Stable key for grouping quantity atoms from the same source utterance.
+
+    Only PDF and transcript coordinates were read here -- page, block, line,
+    message. A spreadsheet locator carries none of those; it carries sheet and
+    row. So every quantity atom from every workbook in a deal produced the
+    same empty key ``"|||"`` and they were all treated as one group, from
+    which ``collapse_ambiguous_user_quantities`` keeps only the largest.
+
+    On the demo deal that silently deleted the roster's 50 and 41 and the
+    vendor quote's 72 -- atoms in two different files -- leaving only the
+    grand total 91. Those three are the reconciliation inputs, so the compile
+    then produced zero contradiction edges, zero ``quantity_conflict`` packets
+    and zero ``vendor_mismatch`` packets: the vendor-versus-roster comparison
+    the packet families exist to make had nothing left to compare.
+
+    Two rules keep that from recurring:
+
+    * the artifact is part of the key, because two documents are never the
+      same utterance no matter how their coordinates line up;
+    * an atom with no positional information at all is keyed by its own id,
+      so it groups with nothing. Collapsing requires positive evidence that
+      two atoms share a source; the absence of a locator is not that evidence.
+    """
     refs = getattr(atom, "source_refs", None) or []
     if not refs:
         return str(getattr(atom, "id", ""))
     loc = getattr(refs[0], "locator", None) or {}
     if not isinstance(loc, dict):
         return str(getattr(atom, "id", ""))
-    parts = [
+    positional = [
         str(loc.get("page", "")),
         str(loc.get("block_id", "")),
         str(loc.get("line_start", "")),
         str(loc.get("message_index", "")),
+        # Spreadsheet coordinates — the half that was missing.
+        str(loc.get("sheet", "")),
+        str(loc.get("row", "")),
+        str(loc.get("table_index", "")),
     ]
-    return "|".join(parts)
+    if not any(positional):
+        return str(getattr(atom, "id", ""))
+    artifact = str(
+        getattr(atom, "artifact_id", "")
+        or getattr(refs[0], "artifact_id", "")
+        or ""
+    )
+    return "|".join([artifact, *positional])
 
 
 def collapse_ambiguous_user_quantities(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
@@ -715,7 +753,33 @@ def collapse_ambiguous_user_quantities(atoms: list[Any]) -> tuple[list[Any], lis
             non_qty.append(atom)
             continue
         val = _atom_value(atom)
-        noun = str(val.get("noun") or "").strip().lower()
+        # What the quantity is OF. ``noun`` is the prose extractor's field and
+        # is empty for anything tabular, so a spreadsheet row fell back to the
+        # empty string and every quantity in it shared one group.
+        #
+        # A drop schedule is one row per plate with one COLUMN per material:
+        #
+        #     Plate ID | Location | RJ45 | Cat6 UTP | Cat6 STP
+        #     TOTALS   |          |  72  |    66    |     6
+        #
+        # All three totals are row 34 of the same sheet, so they keyed
+        # identically and the collapse kept only the largest -- 72 survived,
+        # "Total Cat6 UTP 66" and "Total Cat6 STP 6" were suppressed. The
+        # reconciliation then had no STP roster figure at all (no edge), and
+        # fell back to a single per-plate row for UTP, reporting "roster 4 vs
+        # vendor 60, short by 56" where the truth is 66 vs 60, short by 6. A
+        # wrong number on the comparison the product exists to make.
+        #
+        # ``normalized_item`` already carries the canonical identity
+        # (rj45 / cat6_utp / cat6_stp), so the grouping simply has to read it.
+        # Two quantities are candidates for collapse only when they describe
+        # the same thing; different materials never are.
+        noun = str(
+            val.get("noun")
+            or val.get("normalized_item")
+            or val.get("item")
+            or ""
+        ).strip().lower()
         loc_key = _quantity_locator_key(atom)
         qty_by_group[(noun, loc_key)].append(atom)
 

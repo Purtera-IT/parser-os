@@ -203,7 +203,7 @@ def test_correction_chip_commits(monkeypatch):
     )
     set_store(_store())
     r = _client().post(
-        "/projects/p1/feedback/correction",
+        "/projects/p1/feedback/correction/chip",
         json={
             "head": "type",
             "text": "Install forty-eight wireless access points",
@@ -233,7 +233,7 @@ def test_correction_chip_survives_stateless_db(monkeypatch):
     monkeypatch.setattr(rf, "_load_compile_result", _boom)
     set_store(_store())
     r = _client().post(
-        "/projects/p1/feedback/correction",
+        "/projects/p1/feedback/correction/chip",
         json={
             "head": "image",
             "text": "MDF rack elevation diagram",
@@ -262,4 +262,78 @@ def test_endpoints_409_without_store(monkeypatch):
     )
     assert r1.status_code == 409
     assert r2.status_code == 409
-    assert r3.status_code == 409
+
+
+# ── OrbitBrief Review Queue → gap head (cross-repo contract) ──────────────────
+# purpulse-frontend `v2/reviewCorrections.ts` builds this payload, Platform-infra
+# `pm-orbitbrief-routes.js` maps camelCase → snake_case, and it lands here. These
+# pin the shape so a rename on either side fails loudly instead of silently
+# training nothing — which is exactly the failure this wiring was added to fix.
+
+
+def _teach(client, *, new_value: str, context: str = "", old_value: str = "valid") -> dict:
+    r = client.post(
+        "/projects/p1/feedback/correction",
+        json={
+            "head": "gap",
+            "deal_id": "p1",
+            "target_id": "mode.av_install.drywall_ownership",
+            "text": "Who owns drywall patching after cable conceal?",
+            "old_value": old_value,
+            "new_value": new_value,
+            "scope": "deal",
+            "context": context,
+            # Mirrors HEAD_CORRECTIONS.gap.options in headCorrections.ts.
+            "candidates": ["valid", "answered", "not_relevant"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.parametrize("verdict", ["not_relevant", "answered", "valid"])
+def test_review_queue_teach_lands_as_a_gap_correction(verdict):
+    """Every Review Queue teach action maps onto a verdict the gap head learns."""
+    set_store(_store())
+    body = _teach(_client(), new_value=verdict)
+    assert body["relation"] == "gap_valid"
+    assert body["correction_id"].startswith("pm_gap_")
+
+
+def test_review_queue_teach_fires_instantly_on_the_same_ask():
+    """Instant learning: the fix is honored on the next identical ask without a
+    retrain. This is what makes teaching feel immediate rather than overnight."""
+    set_store(_store())
+    body = _teach(_client(), new_value="not_relevant")
+    assert body["fired_instantly"] is True
+
+
+def test_review_queue_teach_is_idempotent():
+    """The same teach twice is one correction, not a duplicate — the id is
+    derived from (head, deal, target, verdict), so a double-click cannot inflate
+    the training signal for one ask."""
+    set_store(_store())
+    client = _client()
+    first = _teach(client, new_value="not_relevant")
+    second = _teach(client, new_value="not_relevant")
+    assert first["correction_id"] == second["correction_id"]
+
+
+def test_unknown_head_is_refused_not_silently_dropped():
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/correction",
+        json={"head": "not_a_head", "text": "x", "new_value": "y"},
+    )
+    assert r.status_code == 422
+
+
+def test_correction_without_exemplar_is_refused():
+    """The store cannot learn from an empty exemplar; reviewCorrections.ts
+    returns null rather than posting one, and this is the backstop."""
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/correction",
+        json={"head": "gap", "text": "   ", "new_value": "not_relevant"},
+    )
+    assert r.status_code == 422

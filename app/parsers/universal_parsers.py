@@ -12,6 +12,8 @@ extensions.
 """
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import email
 import os
 import re
@@ -40,37 +42,19 @@ from app.parsers.binary_markers import attachment_marker, region_marker
 
 # Shared atom-type heuristic — same families the docx/pptx parsers use
 # so packetization sees these atoms in the same buckets.
-_EXCLUSION_RE = re.compile(
-    r"\b(out\s+of\s+scope|excluded?|not\s+included|"
-    r"explicitly\s+excludes?|exclusion[s]?:)",
-    re.IGNORECASE,
-)
-_CONSTRAINT_RE = re.compile(
-    r"\b(must|shall|required?|requirement|after-?hours|escort|"
-    r"badge|lift|compliance|regulatory)\b",
-    re.IGNORECASE,
-)
-_ASSUMPTION_RE = re.compile(
-    r"\b(assume[ds]?|assumption[s]?|we\s+assume|"
-    r"customer\s+provides?|customer\s+supplies)\b",
-    re.IGNORECASE,
-)
-_QUESTION_RE = re.compile(
-    r"\?$|^(?:question|tbd|open\s+question|to\s+confirm)\b",
-    re.IGNORECASE,
-)
 
 
-def _classify(text: str) -> AtomType:
-    if _EXCLUSION_RE.search(text):
-        return AtomType.exclusion
-    if _ASSUMPTION_RE.search(text):
-        return AtomType.assumption
-    if _QUESTION_RE.search(text):
-        return AtomType.open_question
-    if _CONSTRAINT_RE.search(text):
-        return AtomType.constraint
-    return AtomType.scope_item
+# One typing vocabulary for every format -- see app/core/atom_typing.py.
+# Three diverged copies of these regexes gave 4.0% of real held-out sentences
+# a different TYPE depending on which format they arrived in. The local names
+# survive as aliases so call sites and tests keep working.
+from app.core.atom_typing import (  # noqa: E402
+    ASSUMPTION_RE as _ASSUMPTION_RE,
+    CONSTRAINT_RE as _CONSTRAINT_RE,
+    EXCLUSION_RE as _EXCLUSION_RE,
+    QUESTION_RE as _QUESTION_RE,
+    classify_prose as _classify,
+)
 
 
 def _make_atom(
@@ -177,22 +161,35 @@ class HtmlParser(BaseParser):
         # DOM has Slack/Teams message structure, extract per-message
         # atoms with sender + timestamp so chat threads from customer
         # land as clean evidence instead of a sea of <div>s.
+        # These detectors match CSS CLASS NAMES, which are author-chosen text,
+        # and firing one used to RETURN -- so the generic heading / paragraph /
+        # table walk below never ran. When the detector was wrong the page
+        # yielded nothing at all.
+        #
+        # Measured: a Confluence-style SOW page produces 11 atoms (3 headings,
+        # 2 paragraphs, 2 list items, 4 table cells). Add one
+        # ``<div class="message-body">`` -- a stock Bulma component, and a
+        # common CMS class -- and it produced ZERO. The whole document was
+        # read as a Teams chat export, no messages were found, and the page
+        # was silently lost.
+        #
+        # So the chat path now has to actually produce something to win it. A
+        # detector that fires on a false positive costs one wasted scan
+        # instead of the entire document.
         if _looks_like_slack_export(soup):
-            return ParserOutput(
-                atoms=_extract_slack_messages(
-                    soup, project_id=project_id, artifact_id=artifact_id,
-                    filename=path.name, parser_version=self.parser_version,
-                ),
-                derived_files=[],
+            slack_atoms = _extract_slack_messages(
+                soup, project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, parser_version=self.parser_version,
             )
+            if slack_atoms:
+                return ParserOutput(atoms=slack_atoms, derived_files=[])
         if _looks_like_teams_export(soup):
-            return ParserOutput(
-                atoms=_extract_teams_messages(
-                    soup, project_id=project_id, artifact_id=artifact_id,
-                    filename=path.name, parser_version=self.parser_version,
-                ),
-                derived_files=[],
+            teams_atoms = _extract_teams_messages(
+                soup, project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, parser_version=self.parser_version,
             )
+            if teams_atoms:
+                return ParserOutput(atoms=teams_atoms, derived_files=[])
         # Headings (h1-h6)
         for level in range(1, 7):
             for h_idx, h in enumerate(soup.find_all(f"h{level}")):
@@ -311,7 +308,15 @@ class MboxParser(BaseParser):
                         locator={"message": msg_idx, "kind": "header"},
                         extraction_method="mbox_stdlib",
                         parser_version=self.parser_version,
-                        atom_type=AtomType.scope_item,
+                        # The third container carrying this defect, and the
+                        # same one EmailParser._header_atom describes fixing:
+                        # "A From/To/Subject line is not a unit of work. Typed
+                        # as scope_item it entered the SOW pipeline as
+                        # customer-authored scope, auto-accepted." .eml emits
+                        # deal_metadata, the .txt export does now, and mbox was
+                        # still minting one phantom scope_item per message.
+                        atom_type=AtomType.deal_metadata,
+                        authority_class=AuthorityClass.machine_extractor,
                         value_extra={"kind": "email_header", "subject": subject, "from": sender, "date": date},
                     ))
                 # Body
@@ -319,17 +324,34 @@ class MboxParser(BaseParser):
                 if body_text.strip():
                     # Split body by paragraphs / blank lines so each
                     # paragraph becomes its own atom.
+                    from app.core.sentences import split_sentences
+
                     for para_idx, para in enumerate(re.split(r"\n\s*\n", body_text)):
                         para = para.strip()
                         if not para or len(para) < 4:
                             continue
-                        atoms.append(_make_atom(
-                            project_id=project_id, artifact_id=artifact_id, filename=path.name,
-                            artifact_type=ArtifactType.mbox, text=para[:600],
-                            locator={"message": msg_idx, "kind": "body", "paragraph": para_idx},
-                            extraction_method="mbox_stdlib",
-                            parser_version=self.parser_version,
-                        ))
+                        # Blank lines alone left a whole message as a single
+                        # 336-character atom, while EmailParser gave the same
+                        # content five typed atoms. mbox IS email, so the two
+                        # must not disagree about what a unit of evidence is.
+                        #
+                        # An atom is the unit of TYPING: fuse an exclusion into
+                        # a paragraph of scope and it can never be typed as an
+                        # exclusion, which is exactly how a customer exclusion
+                        # loses to a PM note further down the pipeline.
+                        for piece in (split_sentences(para) or [para]):
+                            piece = piece.strip()
+                            if len(piece) < 4:
+                                continue
+                            atoms.append(_make_atom(
+                                project_id=project_id, artifact_id=artifact_id,
+                                filename=path.name,
+                                artifact_type=ArtifactType.mbox, text=piece[:600],
+                                locator={"message": msg_idx, "kind": "body",
+                                         "paragraph": para_idx},
+                                extraction_method="mbox_stdlib",
+                                parser_version=self.parser_version,
+                            ))
                 # Attachments — emit a located marker so a per-message
                 # attachment can't silently vanish (census reconciles MARKED).
                 try:
@@ -380,13 +402,24 @@ _RTF_HEX_RE = re.compile(r"\\'([0-9a-fA-F]{2})")
 
 
 def _strip_rtf(rtf_text: str) -> str:
-    """Strip RTF control words / groups to plain text.
+    """RTF to plain text: ``striprtf`` first, the regex stripper as fallback.
 
-    Tolerant lossy stripper. Sufficient for most SOW / contract
-    templates which are 95% prose + minimal formatting. For RTF
-    with complex tables / images, a dedicated library would
-    recover more.
+    The regex version below is a tolerant lossy stripper written for prose
+    documents. It cannot handle nested groups, unicode escapes (``\\u8217?``),
+    or the destination groups Word emits (``{\\*\\generator ...}``) -- those
+    leak control words into the text or drop characters silently. ``striprtf``
+    is the maintained implementation of the actual spec; same soft-import
+    pattern as ``rapidfuzz`` in entity_resolution, so an environment without
+    the wheel degrades to the old behaviour instead of failing.
     """
+    try:
+        from striprtf.striprtf import rtf_to_text
+
+        return rtf_to_text(rtf_text, errors="ignore")
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - malformed RTF: fall through, degrade
+        pass
     # Hex escapes (\'AE → ®). Decode best-effort to ASCII.
     def _hex_sub(m: re.Match[str]) -> str:
         try:
@@ -461,6 +494,55 @@ _ICS_VEVENT_BLOCK_RE = re.compile(r"BEGIN:VEVENT(.+?)END:VEVENT", re.DOTALL | re
 _ICS_FIELD_RE = re.compile(r"^([A-Z\-]+)(?:;[^:]*)?:(.+)$", re.MULTILINE)
 
 
+def _ics_events(raw: str) -> list[dict[str, str]]:
+    """Field dicts for each VEVENT: ``icalendar`` first, regex as fallback.
+
+    The hand parser below unfolds continuation lines and regex-splits
+    ``NAME;params:value`` -- workable for simple invites, but RFC 5545 has
+    teeth the regex does not: quoted parameter values containing colons
+    (``CN="Smith: PM"``), RFC 6868 caret escaping, VALARM sub-components whose
+    DESCRIPTION shadows the event's own, and timezone-parameterised dates.
+    ``icalendar`` is the maintained implementation of the actual grammar.
+
+    Values are rendered with ``to_ical()`` -- the property's own wire form --
+    so both paths return byte-identical strings for the same file. This
+    matters more than it looks: if the library's PRESENCE changed the atom
+    text, the environment would be deciding the evidence, which is the exact
+    class of defect this parser suite exists to prevent.
+
+    Soft-import, same pattern as ``rapidfuzz``: no wheel, old behaviour.
+    """
+    fields_wanted = ("SUMMARY", "DTSTART", "DTEND", "LOCATION", "ORGANIZER", "DESCRIPTION")
+    try:
+        import icalendar
+
+        cal = icalendar.Calendar.from_ical(raw)
+        events: list[dict[str, str]] = []
+        for component in cal.walk("VEVENT"):
+            fields: dict[str, str] = {}
+            for name in fields_wanted:
+                prop = component.get(name)
+                if prop is None:
+                    continue
+                try:
+                    value = prop.to_ical()
+                    fields[name] = (value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)).strip()
+                except Exception:  # noqa: BLE001 - one bad property, keep the rest
+                    fields[name] = str(prop).strip()
+            events.append(fields)
+        return events
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - malformed calendar: degrade to regex
+        pass
+
+    unfolded = re.sub(r"\r?\n[ \t]", "", raw)
+    return [
+        {fm.group(1).upper(): fm.group(2).strip() for fm in _ICS_FIELD_RE.finditer(m.group(1))}
+        for m in _ICS_VEVENT_BLOCK_RE.finditer(unfolded)
+    ]
+
+
 class IcsParser(BaseParser):
     """Parse iCalendar (.ics) invites.
 
@@ -501,18 +583,43 @@ class IcsParser(BaseParser):
 
     def parse_artifact_full(self, *, project_id: str, artifact_id: str, path: Path, domain_pack: DomainPack | None = None) -> ParserOutput:
         del domain_pack
-        raw = path.read_text(encoding="utf-8", errors="ignore")
-        # ICS line-folding: lines starting with a space are continuations.
-        raw = re.sub(r"\r?\n[ \t]", "", raw)
+        raw = read_text(path)
         atoms: list[EvidenceAtom] = []
-        for ev_idx, m in enumerate(_ICS_VEVENT_BLOCK_RE.finditer(raw)):
-            block = m.group(1)
-            fields = {fm.group(1).upper(): fm.group(2).strip() for fm in _ICS_FIELD_RE.finditer(block)}
+        for ev_idx, fields in enumerate(_ics_events(raw)):
             summary = fields.get("SUMMARY") or "(no subject)"
             start = fields.get("DTSTART") or ""
             end = fields.get("DTEND") or ""
             location = fields.get("LOCATION") or ""
             organizer = fields.get("ORGANIZER") or ""
+            # DESCRIPTION was parsed into ``fields`` and then never used. On a
+            # real invite that is the field carrying the working detail --
+            # "escort required at the dock, gate code 4512", the dial-in, the
+            # site contact -- while SUMMARY is usually just "Cutover window".
+            # Unfolding already happens above, so the continuation lines were
+            # being reassembled correctly and thrown away at the last step.
+            #
+            # RFC 5545 escapes inside a text value: \n is a line break, and
+            # \, \; \\ are literal characters.
+            description = fields.get("DESCRIPTION") or ""
+            if description:
+                description = (
+                    description.replace("\\n", " ")
+                    .replace("\\N", " ")
+                    .replace("\\,", ",")
+                    .replace("\\;", ";")
+                    .replace("\\\\", "\\")
+                )
+                description = " ".join(description.split())
+            # The event atom is the calendar COMMITMENT -- who, where, when.
+            # The description is working detail, and fusing the two produced a
+            # single 394-character meeting_commitment: "escort access is
+            # required before 2pm" and "mid-turn jumpers are excluded" were
+            # inside an atom typed as a meeting commitment, so neither could
+            # ever be read as a constraint or an exclusion.
+            #
+            # The description is emitted below as its own classified atoms, so
+            # it is carried once, not twice: this line keeps the event record
+            # intact and stops appending the detail to it.
             text = (
                 f"Meeting: {summary} | "
                 f"{start} → {end}"
@@ -530,8 +637,32 @@ class IcsParser(BaseParser):
                     "kind": "calendar_event",
                     "summary": summary, "dtstart": start, "dtend": end,
                     "location": location, "organizer": organizer,
+                    "description": description,
                 },
             ))
+            # The working detail, one classified atom per sentence. On a real
+            # invite this is where "escort required at the dock, gate code
+            # 4512" and the site contact live; SUMMARY is usually just
+            # "Cutover window". Classified rather than forced, so an exclusion
+            # in an invite is an exclusion.
+            if description:
+                from app.core.sentences import split_sentences
+
+                for sent_idx, sentence in enumerate(split_sentences(description) or [description]):
+                    sentence = sentence.strip()
+                    if len(sentence) < 8:
+                        continue
+                    atoms.append(_make_atom(
+                        project_id=project_id, artifact_id=artifact_id,
+                        filename=path.name,
+                        artifact_type=ArtifactType.ics, text=sentence[:600],
+                        locator={"event": ev_idx, "kind": "vevent_description",
+                                 "sentence": sent_idx},
+                        extraction_method="ics_text_parse",
+                        parser_version=self.parser_version,
+                        value_extra={"kind": "calendar_event_detail",
+                                     "summary": summary},
+                    ))
         return ParserOutput(atoms=atoms, derived_files=[])
 
 
@@ -727,6 +858,27 @@ def _zip_recursive_extract(
             except Exception:
                 continue
             if parser is None:
+                # A member nothing can parse is a coverage fact, not a
+                # non-event. The sibling branch below records a child that
+                # RAISED, so a child that simply had no parser was the one
+                # outcome that vanished -- the archive summary still counted
+                # it as extracted, and its contents were gone with nothing
+                # saying so. Unparsed .txt is reported at the top level too
+                # ("No parser matched artifact"); inside a ZIP that report
+                # never happened, because the ZIP is the artifact.
+                atoms.append(_make_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                    artifact_type=ArtifactType.zip_archive,
+                    text=(
+                        f"[ZIP member not read - no parser matched "
+                        f"`{info.filename}`. Extract the archive and re-run "
+                        f"parser-os on the folder to read it.]"
+                    ),
+                    locator={"kind": "zip_child_unparsed", "entry_name": info.filename},
+                    extraction_method="zip_recursive",
+                    parser_version=parser_version,
+                    atom_type=AtomType.open_question,
+                ))
                 continue
             try:
                 child_atoms = parser.parse_artifact(
@@ -800,11 +952,19 @@ def _looks_like_slack_export(soup: Any) -> bool:
 
 def _looks_like_teams_export(soup: Any) -> bool:
     """Teams export uses ``message-body``, ``ts-message`` or
-    ``data-tid="messageBodyContent"``."""
-    return bool(
-        soup.find(attrs={"data-tid": re.compile(r"message|chat")})
-        or soup.find(class_=re.compile(r"ts-message|teams-message|message-body"))
-    )
+    ``data-tid="messageBodyContent"``.
+
+    ``ts-message`` / ``teams-message`` and the ``data-tid`` attribute are
+    Teams-specific and stand on their own. ``message-body`` is NOT: it is a
+    stock component class in Bulma and several CMS themes, so one notice box
+    on an ordinary page used to be enough. A conversation has many messages,
+    so require a conversation's worth before that signal counts.
+    """
+    if soup.find(attrs={"data-tid": re.compile(r"message|chat")}):
+        return True
+    if soup.find(class_=re.compile(r"ts-message|teams-message")):
+        return True
+    return len(soup.find_all(class_=re.compile(r"message-body"))) >= 3
 
 
 def _extract_slack_messages(

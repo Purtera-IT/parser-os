@@ -2108,19 +2108,19 @@ class XlsxParser(BaseParser):
         """
         try:
             from app.parsers.site_roster_extractor import (
+                ROSTER_SPECIFIC_FIELDS,
                 extract_site_roster,
+                find_header_row,
                 looks_like_site_roster,
             )
         except Exception:  # pragma: no cover
             return []
         if not rows:
             return []
-        # Skip blank leading rows
-        first_data_row = 0
-        for i, r in enumerate(rows):
-            if any(str(c or "").strip() for c in (r or ())):
-                first_data_row = i
-                break
+        # Find the real header row. Operational workbooks stack a title banner
+        # ("Site Master" / "All in-scope sites…") above it; treating the banner
+        # as the header maps zero fields and loses the entire roster.
+        first_data_row = find_header_row(rows)
         body = rows[first_data_row:]
         if len(body) < 2:
             return []
@@ -2147,14 +2147,13 @@ class XlsxParser(BaseParser):
             # sheet as a roster.
             from app.parsers.site_roster_extractor import map_columns_to_fields
             field_map = map_columns_to_fields(header_raw)
-            roster_specific = {
-                "facility_name", "street_address", "mdf_idf",
-                "access_window", "escort_owner", "city_state", "city", "state",
-            }
             mapped = set(field_map.values())
             has_name = "facility_name" in mapped
             has_location = bool(mapped & {"street_address", "city", "state", "city_state"})
-            if not (mapped & roster_specific) and not (has_name and has_location):
+            # A roster-specific column is sufficient on its own; otherwise the
+            # sheet must name a facility AND place it somewhere. A sheet with
+            # neither is a generic table, not a site roster.
+            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location):
                 return []
             roster_rows = extract_site_roster(
                 columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
@@ -2166,7 +2165,9 @@ class XlsxParser(BaseParser):
         out: list[EvidenceAtom] = []
         for site_row in roster_rows:
             sid = (site_row.site_id or "").strip()
-            canon_id = sid or site_row.facility_name or ""
+            # An address identifies a site just as well as a name does; a
+            # roster row with a blank display name is still a real location.
+            canon_id = sid or site_row.facility_name or site_row.street_address or ""
             if not canon_id:
                 continue
             row_index = first_data_row + 1 + site_row.row_index

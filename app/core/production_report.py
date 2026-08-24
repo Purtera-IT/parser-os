@@ -585,10 +585,14 @@ def build_production_report(
     trace_path = out_dir / "trace.json"
 
     # 1) Compile (the same call shape used by `parser-os compile`).
+    # Lazy import: calibration pulls in sklearn; keep it off the module import path.
+    from app.learning.calibration import default_calibrator_path as _default_calibrator_path
     result = compile_project(
         project_dir=project_dir,
         domain_pack=domain_pack,
-        calibrator_path=None,
+        # Use the trained calibrator when SOWSMITH_CALIBRATOR_PATH points at a
+        # real artifact; None (default) keeps the prod path a no-op until then.
+        calibrator_path=_default_calibrator_path(),
         abstain_threshold=abstain_threshold,
         use_cache=not no_cache,
         allow_errors=allow_errors,

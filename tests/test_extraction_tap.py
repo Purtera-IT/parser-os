@@ -74,8 +74,19 @@ def test_every_extractor_shape_is_logged():
         "compliance_obligations": [{"obligation": "OSHA logs retained"}],
     }
     log = _capture(results)
-    # 1 customer + 7 list items = 8 rows, none dropped.
-    assert log.count() == 8
+    # 1 customer + 7 list items = 8 SPAN rows, none dropped -- which is what
+    # this test was written to prove and still proves.
+    #
+    # Plus one CATEGORY row. Since ee4cc47 an item carrying a sub-type also
+    # banks ``relation=<key>__cat, label=<sub-type>``, and the stakeholder here
+    # has ``role: PM``. That is extra signal in its own relation, not a
+    # duplicate and not a drop, so the count is 9. Asserted per-relation below
+    # so a future extractor adding a sub-type cannot silently break this on
+    # the total alone.
+    assert log.count(relation="stakeholders__cat") == 1
+    span_rows = [r for r in log.rows() if not r.relation.endswith("__cat")]
+    assert len(span_rows) == 8
+    assert log.count() == 9
     # The previously-dropped shapes are present with their real text.
     risk_rows = log.rows(relation="risks")
     assert risk_rows and risk_rows[0].raw_text == "schedule slip risk"

@@ -3,6 +3,7 @@ eval-gate is recall-monotonic, and SpanExtractorSet identifies items."""
 import zlib
 
 import numpy as np
+import zlib
 from app.core import span_extractor as SE
 
 
@@ -12,10 +13,13 @@ def _embed(texts):
         v = np.zeros(8, dtype=np.float32)
         if "shall" in t.lower() or "must" in t.lower():
             v[0] = 3.0          # requirement signal
-# zlib.crc32, not hash(): hash() on a str is salted per process (PEP 456),
-# so these components are different noise on every run. A model trained on
-# them is trained partly on randomness, and the assertions below then pass
-# or fail by luck. crc32 is stable across processes and machines.
+        # crc32, not hash(): str hashing is randomised per process unless
+        # PYTHONHASHSEED is pinned, so these filler dimensions changed on every
+        # run, the head trained on different vectors each time, and its metrics
+        # wandered across the recall >= 0.7 / precision >= 0.8 boundary. The
+        # test failed roughly one run in six -- on this branch and on an
+        # untouched baseline worktree alike. The trainer itself is seeded
+        # (span_extractor calls random.seed(0)); the randomness was here.
         v[3:] = (zlib.crc32(t.encode("utf-8")) % 5) / 5.0
         out.append(v)
     return np.vstack(out)

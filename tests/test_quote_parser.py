@@ -332,13 +332,41 @@ def test_quote_money_parsing() -> None:
 
 
 def test_quote_parser_false_positive_no_line_items(tmp_path: Path) -> None:
+    """An instructions / terms / cover sheet yields no commercial content.
+
+    This asserted zero atoms, which was the contract when it was written. Since
+    ba55c7d a skipped sheet leaves exactly one self-explaining ``dropped_sheet``
+    marker instead -- "no silent data loss", auditable in the labeler -- and
+    ``test_helper_sheet_drops_to_marker`` asserts that directly ("never zero
+    atoms, and never a scope/commercial atom"). Zero atoms is now the thing
+    that would be wrong.
+
+    What this test is for is unchanged: none of these sheets may produce a line
+    item, a quantity, or a price.
+    """
+    commercial = {
+        AtomType.vendor_line_item,
+        AtomType.quantity,
+        AtomType.commercial_total,
+        AtomType.pricing_assumption,
+        AtomType.scope_item,
+    }
+
+    def _check(atoms, label: str) -> None:
+        assert not [a for a in atoms if a.atom_type in commercial], (
+            f"{label}: a non-deal sheet produced commercial atoms "
+            f"{[a.atom_type for a in atoms]}"
+        )
+        # The skip is recorded rather than silent.
+        assert all(a.atom_type == AtomType.dropped_sheet for a in atoms), label
+
     instr = tmp_path / "instructions_only.xlsx"
     wb = Workbook()
     ws = wb.active
     ws.append(["INSTRUCTIONS TO BIDDERS"])
     ws.append(["Submit pricing in the attached Excel template."])
     wb.save(instr)
-    assert QuoteParser().parse_artifact("p", "i", instr) == []
+    _check(QuoteParser().parse_artifact("p", "i", instr), "instructions")
 
     terms = tmp_path / "terms_only.xlsx"
     wb2 = Workbook()
@@ -346,7 +374,7 @@ def test_quote_parser_false_positive_no_line_items(tmp_path: Path) -> None:
     ws2.append(["Terms and Conditions"])
     ws2.append(["Payment net 30."])
     wb2.save(terms)
-    assert QuoteParser().parse_artifact("p", "t", terms) == []
+    _check(QuoteParser().parse_artifact("p", "t", terms), "terms")
 
     cover = tmp_path / "cover_only.xlsx"
     wb3 = Workbook()
@@ -354,7 +382,7 @@ def test_quote_parser_false_positive_no_line_items(tmp_path: Path) -> None:
     ws3.append(["Acme Low Voltage Inc."])
     ws3.append(["Quote for Auditorium Renovation"])
     wb3.save(cover)
-    assert QuoteParser().parse_artifact("p", "c", cover) == []
+    _check(QuoteParser().parse_artifact("p", "c", cover), "cover")
 
 
 def test_quote_parser_source_replay_all_verified(tmp_path: Path) -> None:

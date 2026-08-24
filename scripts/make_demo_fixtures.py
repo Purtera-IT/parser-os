@@ -115,7 +115,17 @@ def create_demo_project(base_dir: Path) -> Path:
             "vendor_mismatch": ["device:ip_camera"],
             "scope_exclusion": ["site:west_wing", "site:unknown"],
             "site_access": ["site:main_campus", "site:west_wing", "unknown"],
-            "scope_inclusion": ["device:unknown"],
+            # "device:unknown" is the anchor the packetizer produced when it
+            # could not resolve an entity for a scope_inclusion. It now
+            # resolves real ones -- site:main_campus for the camera rollout --
+            # so the expectation was pinning a degraded value and had been
+            # failing since before the anchors improved. Asserted as a real
+            # site rather than an admission of failure. (The test uses
+            # ``any(anchor in observed)``, so listing one true anchor is
+            # enough; date: and stakeholder: anchors also appear on this family
+            # and are a separate question about anchor quality, not about
+            # whether the golden matches the code.)
+            "scope_inclusion": ["site:main_campus"],
             "meeting_decision": ["meeting_decision:confirmed_west_wing_will_be_treated_as_excluded_pending_written_confirmation"],
             "action_item": [
                 "action_item:customer:customer_will_provide_lift_access_for_lobby_camera_installation",

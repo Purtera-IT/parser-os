@@ -50,8 +50,37 @@ import numpy as np
 
 from app.core.neural_head import NeuralHead
 from app.core.shadow_eval import RelationReport, _head_feature, evaluate_relation_head
-from app.core.training_log import TrainingLog
+from app.core.training_log import TEACHER_PM, TrainingLog
 from app.learning.head_registry import HeadMeta, HeadRegistry
+
+# Cap on TRAIN rows embedded per relation in one fit.
+#
+# `fit_candidate` embeds every train row into a single array before fitting. The
+# training log is append-only and now grows by ~1,500 rows per compile, so this
+# scales with traffic and nothing bounded it: at 33,727 rows the nightly was
+# SIGKILLed by the OOM killer at 3h48m (0.55GB of raw 4096-dim vectors, several
+# times that once sklearn copies for the fit, inside a 4Gi container).
+#
+# Raising memory only moves the wall. A cap is the durable answer, because past
+# a few thousand well-spread rows more silver adds very little to a kNN head.
+MAX_TRAIN_ROWS = int(os.getenv("RETRAIN_MAX_TRAIN_ROWS", "8000"))
+
+
+def _cap_train_rows(rows: list, limit: int = MAX_TRAIN_ROWS) -> list:
+    """Bound a relation's train set, keeping EVERY PM-gold row.
+
+    Gold is scarce (single digits) and is the only thing that can lift a head
+    past the teacher it distills; silver is abundant and interchangeable. So the
+    cap falls entirely on silver, newest first — dropping a gold row to make room
+    for the 8,001st machine label would be exactly backwards.
+    """
+    if limit <= 0 or len(rows) <= limit:
+        return rows
+    gold = [r for r in rows if getattr(r, "teacher", "") == TEACHER_PM]
+    silver = [r for r in rows if getattr(r, "teacher", "") != TEACHER_PM]
+    room = max(0, limit - len(gold))
+    silver.sort(key=lambda r: getattr(r, "created_at", 0.0), reverse=True)
+    return gold + silver[:room]
 
 # How much worse than the champion (on unseen deals) a candidate may be on any
 # axis and still be considered "not a regression". Tight on purpose.
@@ -106,7 +135,7 @@ def fit_candidate(
 ) -> Optional[tuple[NeuralHead, int]]:
     """Fit a head on TRAIN rows for one relation. Returns (head, n_train) or
     None when there is nothing to learn from."""
-    train = log.rows(relation=relation, split="train")
+    train = _cap_train_rows(log.rows(relation=relation, split="train"))
     feats, y, w = [], [], []
     for r in train:
         f = _head_feature(r)
@@ -262,6 +291,30 @@ def retrain_all(
 ) -> list[RetrainResult]:
     """Retrain + eval-gate every relation present in the log (or a given subset).
     Records the serving metrics into the shadow-history curve."""
+    # Safety guard: NEVER train on a dead embedder. embed_texts returns
+    # zero-vectors (not an error) when the qwen3-Mac/Ollama host is offline, so
+    # an unguarded scheduled run during an outage would fit + eval-gate heads on
+    # garbage and could promote a degenerate champion. Probe first; abort the
+    # whole run cleanly (no-op) if the embedder is unreachable.
+    try:
+        _probe = np.asarray(embed_fn(["__embed_probe__"]))
+        if _probe.size == 0 or float(np.linalg.norm(_probe.reshape(-1))) == 0.0:
+            print("[retrain] embedder unreachable (zero-vector probe) — aborting; no training this run")
+            return []
+    except Exception as _e:  # pragma: no cover - probe failure must abort, not train
+        print(f"[retrain] embedder probe failed ({_e}) — aborting; no training this run")
+        return []
+    # Pull any PM gold rows the SERVICE mirrored to blob into this log first, so
+    # the retrain learns from corrections written on the other container (the
+    # feedback endpoint runs on the service; retrain runs here on the worker).
+    # Gated + best-effort: no-op unless SOWSMITH_FEEDBACK_BLOB is on.
+    try:
+        from app.core import feedback_blob as _fb
+        _n = _fb.sync_training_rows_into_log(log)
+        if _n:
+            print(f"[retrain] imported {_n} PM gold rows from blob")
+    except Exception:
+        pass
     if relations is None:
         relations = sorted({r.relation for r in log.rows()})
     results: list[RetrainResult] = []

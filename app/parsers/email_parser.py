@@ -25,6 +25,7 @@ from app.core.schemas import (
     ParserMatch,
 )
 from app.parsers.base import BaseParser
+from app.parsers.email_body import _extract_email_text
 from app.parsers.binary_markers import attachment_marker
 from app.parsers.segmenters import segment_email
 from app.parsers.structured_projection import (
@@ -1173,21 +1174,6 @@ def _cid_reading_anchor(
     return fallback_msg, fallback_line
 
 
-def _extract_email_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".eml":
-        raw = path.read_bytes()
-        msg = BytesParser(policy=policy.default).parsebytes(raw)
-        body = msg.get_body(preferencelist=("plain", "html"))
-        content = body.get_content() if body is not None else raw.decode("utf-8", errors="ignore")
-    else:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-    if "<html" in content.lower():
-        soup = BeautifulSoup(content, "html.parser")
-        return soup.get_text(separator="\n", strip=True)
-    return content
-
-
 # Subject prefixes stripped to find the conversation root: Re:, Fwd:, FW:,
 # Aw: (German), Rv: (Spanish/Italian) — repeated, in any case. The HubSpot deal
 # number prefix (e.g. "010065") is KEPT: it is a strong, deliberate thread key.
@@ -1278,6 +1264,97 @@ def parse_email_thread_headers(path: Path) -> dict[str, Any]:
     }
 
 
+
+#: A line is only split when it plainly holds more than one real sentence.
+#: Short fragments ("Hi.", "Thanks.") and anything table- or header-shaped are
+#: left whole, so the common case is byte-identical to the previous behaviour.
+_MIN_SENTENCE_CHARS = 12
+
+
+def _expand_lines_to_sentences(
+    lines: list[str], line_start: int
+) -> list[tuple[int, str]]:
+    """Yield ``(source_line_number, text)`` with prose lines split by sentence.
+
+    Returns the line unchanged unless every resulting piece is a substantial
+    sentence, so a signature, a table row or a greeting never fragments. The
+    line number is the ORIGINAL one for every piece: splitting changes what a
+    single atom covers, never where it came from.
+    """
+    from app.core.sentences import split_sentences
+
+    out: list[tuple[int, str]] = []
+    for line_idx, line in enumerate(lines):
+        line_num = line_start + line_idx
+        stripped = (line or "").strip()
+        # Table rows, header lines and quoted-only markers are not prose.
+        if not stripped or "|" in stripped or stripped.count(".") < 2:
+            out.append((line_num, line))
+            continue
+        try:
+            pieces = [p.strip() for p in split_sentences(stripped) if p.strip()]
+        except Exception:  # pragma: no cover - never fail a parse over this
+            out.append((line_num, line))
+            continue
+        if len(pieces) < 2 or any(len(p) < _MIN_SENTENCE_CHARS for p in pieces):
+            out.append((line_num, line))
+            continue
+        prefix = line[: len(line) - len(line.lstrip("> "))]
+        for piece in pieces:
+            out.append((line_num, prefix + piece))
+    return out
+
+
+_PSEUDO_HEADER_RE = re.compile(
+    r"^(from|sent|date|to|cc|bcc|subject|reply-to|importance|attachments)"
+    r"\s*:\s*(.*)$",
+    re.IGNORECASE,
+)
+
+
+def _split_leading_pseudo_headers(text: str) -> tuple[dict[str, str], str]:
+    """Peel an Outlook "save as text" header block off the top of a body.
+
+    Returns ``(values, remaining_text)``. Only the LEADING run is taken, so a
+    quoted reply further down keeps its own headers inside its quoted block --
+    those already carry ``quoted_old_email`` authority and are the quoted
+    message, not this one.
+
+    Conservative on purpose, because the alternative is eating real content:
+    at least two header lines, and one of them must be ``from`` or ``subject``,
+    so an ordinary body opening "Note: ..." over "Owner: ..." is left alone.
+    """
+    lines = text.splitlines()
+    values: dict[str, str] = {}
+    consumed = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            # A blank line ends the block, but only once something matched;
+            # leading blank lines are just leading blank lines.
+            if values:
+                consumed = index + 1
+                break
+            consumed = index + 1
+            continue
+        match = _PSEUDO_HEADER_RE.match(stripped)
+        if not match:
+            break
+        key = match.group(1).lower()
+        if key not in values:
+            values[key] = match.group(2).strip()
+        consumed = index + 1
+    if len(values) < 2 or not ({"from", "subject"} & set(values)):
+        return {}, text
+    # Blank the header lines rather than dropping them: every locator
+    # downstream records a line number against the ORIGINAL file, and deleting
+    # the block shifts the whole body up by ``consumed``. Receipt replay then
+    # verifies each atom against the wrong line. Exactly the failure the
+    # transcript speaker-fold hit, so it is worth stating twice: a rewrite that
+    # changes line COUNT is a rewrite that breaks provenance.
+    return values, "\n".join([""] * consumed + lines[consumed:])
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -1286,7 +1363,7 @@ class EmailParser(BaseParser):
         parser_version=parser_version,
         supported_extensions=[".eml", ".txt", ".md"],
         supported_artifact_types=[ArtifactType.email, ArtifactType.txt],
-        emitted_atom_types=[AtomType.exclusion, AtomType.customer_instruction, AtomType.constraint, AtomType.open_question],
+        emitted_atom_types=[AtomType.exclusion, AtomType.customer_instruction, AtomType.constraint, AtomType.open_question, AtomType.deal_metadata],
         supported_domain_packs=["*"],
         requires_binary=False,
         supports_source_replay=True,
@@ -1324,7 +1401,19 @@ class EmailParser(BaseParser):
                     if needle in text
                 )
                 if email_hits >= 1:
-                    confidence = 0.55
+                    # This existed so a keyword-bearing text file "isn't
+                    # silently dropped" -- a real concern when NOTHING claimed
+                    # .txt. MarkdownParser now floors that format, so the
+                    # fallback is redundant, and at 0.55 it outranked the floor
+                    # and took files it had no evidence for: a pipe-delimited
+                    # site table containing "escort required" thirty times was
+                    # claimed as an email.
+                    #
+                    # One scope phrase is not evidence of correspondence.
+                    # Below threshold: the reason stays in the trace, the claim
+                    # does not stand. Real email still claims at 0.91 on
+                    # RFC-5322 headers and 0.83 on thread markers.
+                    confidence = max(confidence, 0.45)
                     reasons.append(f"email_keyword_heuristic({email_hits})")
         return ParserMatch(
             parser_name=self.parser_name,
@@ -1363,6 +1452,28 @@ class EmailParser(BaseParser):
     ) -> ParserOutput:
         del domain_pack
         text = _extract_email_text(path)
+        # An Outlook "save as text" .txt carries the SAME From/Sent/To/Subject
+        # block a .eml does, just as body text rather than as MIME headers. It
+        # therefore reached _extract_atoms_from_block and each header line
+        # became its own scope_item at customer_current_authored -- which is
+        # exactly the defect _header_atom's comment below describes having
+        # fixed, surviving in the other container.
+        #
+        # Measured on one message written both ways:
+        #
+        #   .eml   6 atoms   headers -> one deal_metadata atom
+        #   .txt   9 atoms   headers -> four scope_item atoms at rank 90
+        #                               "From: jane.customer@acme.example"
+        #                               "Sent: Wednesday, January 15, 2026..."
+        #                               "To: pm@purtera.example"
+        #                               "Subject: Scope update"
+        #
+        # Same content, different container, four phantom units of work in the
+        # customer-authored tier. Split the leading header run off the body so
+        # both containers agree.
+        pseudo_headers: dict[str, str] = {}
+        if path.suffix.lower() != ".eml":
+            pseudo_headers, text = _split_leading_pseudo_headers(text)
         blocks = self._split_blocks(text)
         atoms: list[EvidenceAtom] = []
         for block in blocks:
@@ -1384,6 +1495,12 @@ class EmailParser(BaseParser):
         header_atom = self._header_atom(
             project_id=project_id, artifact_id=artifact_id, path=path
         )
+        if header_atom is None and pseudo_headers:
+            # Same treatment for the .txt shape: surfaced, never scope.
+            header_atom = self._pseudo_header_atom(
+                project_id=project_id, artifact_id=artifact_id, path=path,
+                values=pseudo_headers,
+            )
         if header_atom is not None:
             atoms.append(header_atom)
         # Attachments are the real deal docs more often than the body — mark
@@ -1412,6 +1529,49 @@ class EmailParser(BaseParser):
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _pseudo_header_atom(
+        self, *, project_id: str, artifact_id: str, path: Path, values: dict[str, str]
+    ) -> EvidenceAtom | None:
+        """The .eml header atom, for a message saved as plain text.
+
+        Deliberately mirrors ``_header_atom``: same ``deal_metadata`` type,
+        same ``email_header`` locator kind, so a message carries the same
+        evidence whichever way the PM exported it. ``artifact_type`` follows
+        the real file so source replay still verifies against a .txt.
+        """
+        parts = [
+            f"{field.capitalize()}: {values[field]}"
+            for field in ("from", "sent", "date", "to", "cc", "subject")
+            if values.get(field)
+        ]
+        if not parts:
+            return None
+        text = " | ".join(parts)
+        artifact_type = ArtifactType.txt
+        src = SourceRef(
+            id=stable_id("src", artifact_id, "email_header"),
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=path.name,
+            locator={"kind": "email_header"},
+            extraction_method="email_headers_plaintext",
+            parser_version=self.parser_version,
+        )
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, "email_header", text),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=text,
+            normalized_text=normalize_text(text),
+            value={"kind": "email_header", **values},
+            authority_class=AuthorityClass.machine_extractor,
+            confidence=0.86,
+            review_status=ReviewStatus.auto_accepted,
+            parser_version=self.parser_version,
+            source_refs=[src],
         )
 
     def _header_atom(
@@ -1452,10 +1612,15 @@ class EmailParser(BaseParser):
             id=stable_id("atm", project_id, artifact_id, "email_header", text),
             project_id=project_id,
             artifact_id=artifact_id,
-            # The header block is routing/threading metadata, not scope. Typing
-            # it as deal_metadata (not scope_item) keeps it out of the
-            # contractual-scope surface a quote/scope head reads, while still
-            # surfacing it as a first-class atom the census can reconcile.
+            # A From/To/Subject line is not a unit of work. Typed as scope_item
+            # it entered the SOW pipeline as customer-authored scope at 0.86,
+            # auto-accepted, one per .eml -- and downstream had to grow text
+            # heuristics to claw it back out (graph_builder._looks_like_email_
+            # header suppresses it from exclusion fan-out by regex). It is
+            # correspondence metadata, which is what deal_metadata is for.
+            # Typing it deal_metadata keeps it out of the contractual-scope
+            # surface a quote/scope head reads, while still surfacing it as a
+            # first-class atom the census can reconcile.
             atom_type=AtomType.deal_metadata,
             raw_text=text,
             normalized_text=normalize_text(text),
@@ -1986,8 +2151,21 @@ class EmailParser(BaseParser):
         pending_lead_in: list[str] = []
         active_lead_in: list[str] = []
 
-        for line_idx, line in enumerate(block["lines"]):
-            line_num = int(block["line_start"]) + line_idx
+        # One physical line can hold several sentences with different speech
+        # acts, and typing the line as a whole makes them fight. The customer
+        # email "Please remove West Wing from scope. Main Campus requires
+        # escort access after 5pm." is one line and two facts: an exclusion and
+        # a constraint. Typed together the constraint cue wins, so the
+        # customer's own exclusion is never emitted as an exclusion -- and
+        # ``prefer_customer_exclusion`` looks for exactly that, so the West
+        # Wing packet ended up governed by a PM's transcript note (meeting_note,
+        # rank 55) instead of the customer's written instruction (rank 90).
+        #
+        # The line number is preserved on every piece, so locators, replay and
+        # document order are unchanged; only the granularity of typing moves.
+        for line_num, line in _expand_lines_to_sentences(
+            block["lines"], int(block["line_start"])
+        ):
             raw_cleaned = line.lstrip("> ").strip()
             if not raw_cleaned:
                 continue

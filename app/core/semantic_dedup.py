@@ -163,6 +163,24 @@ _GENERIC_SITE_IDS: frozenset[str] = frozenset({
 })
 
 
+def _is_structural_roster_atom(atom: Any) -> bool:
+    """Was this atom lifted from a declared site-roster TABLE (one row = one
+    site), rather than recovered from prose / promoted by a classifier?
+
+    The distinction is what makes the id-less rule below safe: a roster row is
+    ground truth even when the sheet ships no ID column, while an id-less atom
+    from prose really is a ghost.
+    """
+    for ref in (getattr(atom, "source_refs", None) or []):
+        method = str(getattr(ref, "extraction_method", "") or "")
+        if "site_roster" in method:
+            return True
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and "site_roster" in str(loc.get("extraction", "")):
+            return True
+    return False
+
+
 def _physical_site_id(atom: Any) -> str:
     val = getattr(atom, "value", None) or {}
     if not isinstance(val, dict):
@@ -176,7 +194,21 @@ def _physical_site_id(atom: Any) -> str:
     # atoms always carry an explicit site_id from a structured ID column.
     # Returning "" here causes such ghost atoms to be DROPPED in
     # _dedupe_physical_site_atoms (canonical_for returns None).
-    return _site_display_key(val.get("site_id") or val.get("id") or "")
+    sid = _site_display_key(val.get("site_id") or val.get("id") or "")
+    if sid:
+        return sid
+    # v58: …but a STRUCTURAL roster row is not a ghost. Some rosters simply
+    # ship no ID column (a store list keyed only on name + address). Dropping
+    # those cost a 437-site deal all but 20 of its locations. Derive a stable
+    # id from the row's own address/name so the row survives and still dedups
+    # against itself across documents. Prose/classifier atoms are untouched.
+    if not _is_structural_roster_atom(atom):
+        return ""
+    for field in ("street_address", "address", "facility_name", "name"):
+        derived = _site_display_key(val.get(field) or "")
+        if derived:
+            return derived[:64]
+    return ""
 
 
 def _is_bad_physical_site_id(site_id: str) -> bool:
@@ -798,13 +830,21 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 fk = _nf(v.get(field))
                 if fk and fk in facility_to_canonical:
                     return facility_to_canonical[fk]
-            # HubSpot / email address notes mint real job sites with
-            # city_st_zip slugs (``tampa_fl_33602``). Those are not
-            # OPTBOT-style facility-name ghosts — keep them even when a
-            # structural roster exists elsewhere on the deal.
+            # Two independent reasons a physical_site must survive dedup, each
+            # about provenance rather than name shape:
+            #   - a row lifted from a declared roster TABLE is its own evidence
+            #     -- it is a site because the document says the table lists
+            #     sites, not because its id looks canonical. A big store roster
+            #     is exactly where most rows share no id shape with the handful
+            #     of atoms that reached complete_ids.
+            #   - HubSpot / email address notes mint real job sites with
+            #     city_st_zip slugs (``tampa_fl_33602``). Those are not
+            #     OPTBOT-style facility-name ghosts.
+            # Either alone drops the other's sites, so this is an OR.
             flags = list(getattr(atom, "review_flags", None) or [])
             if (
-                "hubspot_note_physical_site" in flags
+                _is_structural_roster_atom(atom)
+                or "hubspot_note_physical_site" in flags
                 or "email_note_physical_site" in flags
                 or _is_geo_fallback_physical_site(atom)
             ):
@@ -1372,7 +1412,19 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
         # otherwise collapse, dropping the only atom type that drives the
         # missing_info packet. Never collapse questions across types; let them
         # survive on their own axis (intra-type dups are semantic_dedup's job).
-        if _atom_type_value(atom) == "open_question":
+        # A decision is the same kind of exception, for the same reason. The
+        # kickoff line "Confirmed, West Wing will be treated as excluded
+        # pending written confirmation" is emitted as BOTH a decision and an
+        # exclusion, and they are not two readings of one fact: the exclusion
+        # says what is out of scope, the decision says that somebody committed
+        # to it on the call, which is what a meeting_decision packet is for.
+        #
+        # "decision" is absent from _CROSS_TYPE_PRIORITY, so it takes the
+        # default 3 and loses to exclusion's 5 every time -- and a kickoff
+        # decision almost always also states an exclusion or a constraint. The
+        # effect was that the meeting_decision family could not form at all on
+        # the demo deal, because the only decision in it was outranked.
+        if _atom_type_value(atom) in {"open_question", "decision"}:
             passthrough.append(atom)
             continue
         key = _cross_type_text_key(atom)

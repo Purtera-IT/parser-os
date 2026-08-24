@@ -24,7 +24,9 @@ import re
 from typing import Any
 
 from app.core.address_parse import (
+    _CITY_STATE_ZIP_RE,
     US_STATES,
+    US_STATES as _US_STATES,
     find_us_addresses_in_text,
     normalized_address_key,
 )
@@ -46,6 +48,23 @@ def _atom_type_str(atom: Any) -> str:
     return at.value if hasattr(at, "value") else str(at or "")
 
 
+def _is_roster_sourced(atom: Any) -> bool:
+    """True when the atom came from a site-roster table extractor.
+
+    A row lifted from a declared site-roster TABLE anchors the deal whether or
+    not it carries an id column. Without this, a deal whose roster ships no ID
+    column gets guessed "City, ST ZIP" sites minted on top of hundreds of real,
+    fully-addressed ones.
+    """
+    for ref in (getattr(atom, "source_refs", None) or []):
+        if "site_roster" in str(getattr(ref, "extraction_method", "") or ""):
+            return True
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and "site_roster" in str(loc.get("extraction", "")):
+            return True
+    return False
+
+
 def _site_location_score(val: dict[str, Any]) -> int:
     """Higher = more structured location (0 = name/id only)."""
     if not isinstance(val, dict):
@@ -65,6 +84,20 @@ def _site_location_score(val: dict[str, Any]) -> int:
     return 0
 
 
+def _atom_site_score(atom: Any) -> int:
+    """Location score for an atom, crediting its provenance.
+
+    A roster-sourced row is a declared site, so it scores as well-structured
+    even when its cells are sparse -- the document said the table lists sites.
+    Scoring it on cells alone let a roster with no ID column read as a weak
+    ghost, which is the opposite of the truth.
+    """
+    score = _site_location_score(getattr(atom, "value", None) or {})
+    if _is_roster_sourced(atom):
+        return max(score, 2)
+    return score
+
+
 def _physical_site_atoms(atoms: list[Any]) -> list[Any]:
     return [a for a in atoms if _atom_type_str(a) == "physical_site"]
 
@@ -72,15 +105,17 @@ def _physical_site_atoms(atoms: list[Any]) -> list[Any]:
 def _should_skip_geo_fallback(atoms: list[Any]) -> bool:
     """Skip only when the deal already has multiple well-structured sites.
 
-    A single weak ``physical_site`` (name-only / misparsed geo) must NOT
-    block discovering additional addresses — the MBrany failure mode.
+    A single weak ``physical_site`` (name-only / misparsed geo) must NOT block
+    discovering additional addresses -- the MBrany failure mode. This is why a
+    binary "has any real site" test is wrong here: one id-bearing ghost would
+    suppress every genuine address on the deal.
     """
     sites = _physical_site_atoms(atoms)
     if not sites:
         return False
-    scores = [_site_location_score(getattr(a, "value", None) or {}) for a in sites]
+    scores = [_atom_site_score(a) for a in sites]
     high = sum(1 for s in scores if s >= 2)
-    # Two well-structured sites — skip fallback. One high + one weak ghost
+    # Two well-structured sites -- skip fallback. One high + one weak ghost
     # (typed_atom under full ML) must not block geo inference (MBrany class).
     if high >= 2:
         return True
@@ -266,6 +301,83 @@ def _existing_address_keys(atoms: list[Any]) -> set[str]:
     return keys
 
 
+def enrich_site_geo(atoms: list[Any]) -> int:
+    """Fill missing ``city``/``state``/``zip`` on real ``physical_site`` atoms.
+
+    ``geo_fallback_sites`` below is all-or-nothing: it mints sites only when
+    the deal has none. That leaves the common middle case unserved — a site
+    that IS detected but whose address arrived as one lumped string, because
+    the summary table the customer wrote it in was terse::
+
+        | AUG-DC-06 | Augusta Data Center Annex (699 Broad St, Ste 1200) | ...
+
+    The full ``Augusta, GA 30901`` is two rows further down the same document,
+    in the access-window table. Everything downstream that reasons about
+    *where* a site is — site_readiness, mapping, dispatch planning — keys on
+    city/state/ZIP, so a site with an address string and no city is a site
+    nobody can route to.
+
+    Runs in two passes per site: its own address text first, then any atom
+    that names exactly one site (a paragraph listing three sites says nothing
+    about which address belongs to which). Only ever fills blanks; never
+    overwrites what an extractor already established. Pure function, no I/O,
+    no LLM — mutates ``value`` in place and returns how many sites it filled.
+    """
+    sites = [a for a in atoms if _atom_type_str(a) == "physical_site"]
+    if not sites:
+        return 0
+
+    def _fill(atom: Any, text: str) -> bool:
+        val = getattr(atom, "value", None)
+        if not isinstance(val, dict) or not text:
+            return False
+        if val.get("city") and val.get("state") and val.get("zip"):
+            return False
+        m = _CITY_STATE_ZIP_RE.search(str(text))
+        if not m:
+            return False
+        city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
+        if state not in _US_STATES:
+            return False
+        before = (val.get("city"), val.get("state"), val.get("zip"))
+        val.setdefault("city", city)
+        val.setdefault("state", state)
+        val.setdefault("zip", zipc)
+        return (val.get("city"), val.get("state"), val.get("zip")) != before
+
+    filled = 0
+    # Pass 1 — the site's own address/text.
+    for s in sites:
+        addr, ctx = _site_address_text(s)
+        if _fill(s, addr) or _fill(s, ctx):
+            filled += 1
+
+    # Pass 2 — a sibling atom that names this site and nothing else.
+    wanting = [s for s in sites
+               if isinstance(getattr(s, "value", None), dict)
+               and not (s.value.get("city") and s.value.get("state"))]
+    if not wanting:
+        return filled
+    keyed: list[tuple[str, Any]] = []
+    for s in wanting:
+        val = s.value
+        for alias in (val.get("site_id"), val.get("id"), val.get("name"),
+                      val.get("facility_name")):
+            if alias and len(str(alias)) >= 4:
+                keyed.append((_slug(str(alias)), s))
+    for atom in atoms:
+        text = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
+        if not text:
+            continue
+        hay = _slug(str(text))
+        matched = {id(s): s for k, s in keyed if k and k in hay}
+        if len(matched) != 1:
+            continue
+        if _fill(next(iter(matched.values())), text):
+            filled += 1
+    return filled
+
+
 def geo_fallback_sites(
     atoms: list[Any], *, project_id: str
 ) -> list[EvidenceAtom]:
@@ -363,4 +475,4 @@ def geo_fallback_sites(
     return out
 
 
-__all__ = ["geo_fallback_sites", "suppress_vendor_sites"]
+__all__ = ["enrich_site_geo", "geo_fallback_sites", "suppress_vendor_sites"]

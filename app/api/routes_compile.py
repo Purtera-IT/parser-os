@@ -19,5 +19,10 @@ def compile_endpoint(project_id: str):
     artifact_dir = Path(".purtera_artifacts") / project_id
     if not artifact_rows:
         artifact_dir.mkdir(parents=True, exist_ok=True)
-    result = compile_project(project_dir=artifact_dir, project_id=project_id, persistence_hook=save_compile_result)
+    from app.learning.calibration import default_calibrator_path
+    result = compile_project(
+        project_dir=artifact_dir, project_id=project_id,
+        persistence_hook=save_compile_result,
+        calibrator_path=default_calibrator_path(),
+    )
     return result

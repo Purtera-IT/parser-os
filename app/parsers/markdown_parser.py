@@ -25,6 +25,8 @@ the atom back to the raw line range.
 from __future__ import annotations
 
 import re
+
+from app.core.phones import find_phones, has_phone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -51,14 +53,14 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(?P<title>.+?)\s*$")
 _BULLET_RE = re.compile(r"^\s*[-*+]\s+(?P<text>.+?)\s*$")
 _NUMBERED_RE = re.compile(r"^\s*\d+[.)]\s+(?P<text>.+?)\s*$")
 
-_EXCLUSION_RE = re.compile(
-    r"\b(exclud(?:e|ed|es|ing)|out of scope|not included|not in scope|by others|nic|"
-    r"remove from scope|please remove|removed?\s+from\s+the\s+scope|"
-    r"cancel(?:led|ling|s)?(?:\s+the)?|cancellation|"
-    r"do not include|drop\s+(?:the|from)|deletion?|"
-    r"hold off|on hold|defer(?:red)?\s+from|postpone(?:d)?)\b",
-    re.I,
+# Shared typing vocabulary -- see app/core/atom_typing.py (this file's copy
+# knew "cancel / hold off / defer"; the others did not. Union'd there.)
+from app.core.atom_typing import (  # noqa: E402
+    ASSUMPTION_RE as _ASSUMPTION_RE,
+    CONSTRAINT_RE as _CONSTRAINT_RE,
+    EXCLUSION_RE as _EXCLUSION_RE,
 )
+
 _CHANGE_ORDER_RE = re.compile(
     r"\b(change\s+order|reduce\s+(?:scope|count|the\s+\w+)\s+(?:from|to)?|"
     r"revised\s+scope|approve(?:d)?\s+the\s+revised|"
@@ -72,21 +74,12 @@ _CHANGE_DELTA_RE = re.compile(
     r"\b(?:from|reduce(?:d)?\s+(?:from)?)\s+(\d{1,5})\s+to\s+(\d{1,5})\b",
     re.I,
 )
-_ASSUMPTION_RE = re.compile(
-    r"\b(assum(?:e|ed|ption|ptions)|subject to|provided by owner)\b",
-    re.I,
-)
 _OPEN_Q_RE = re.compile(
     r"\?"
     r"|\b(tbd|to\s+be\s+confirmed|to\s+be\s+determined|unknown|"
     r"open\s+question|please\s+confirm|need(?:s)?\s+confirmation|"
     r"awaiting\s+confirmation|still\s+(?:tbd|pending|outstanding)|"
     r"to\s+clarify|need(?:s)?\s+clarification|pending\s+(?:answer|response))\b",
-    re.I,
-)
-_CONSTRAINT_RE = re.compile(
-    r"\b(access window|escort|required|must|shall|badge|after[-\s]?hours|"
-    r"acceptance|completion|closeout)\b",
     re.I,
 )
 _QTY_RE = re.compile(
@@ -118,6 +111,35 @@ class MarkdownBlock:
     line_end: int
     section_path: tuple[str, ...]
     block_kind: str
+
+
+
+#: A plain-text file is worth parsing when it has a body, not just a line.
+#:
+#: LINES is the load-bearing signal: a document is several lines, a fragment is
+#: one. Measured on 19 real deal .txt files the smallest is 4 non-empty lines,
+#: while both contentless cases seen -- pytest's "just filler words with no
+#: structured signals" and a one-line note inside a zip -- are exactly 1.
+#:
+#: The character floor is only a guard against three lines of nothing. It was
+#: 200, chosen from the smallest real file (258 chars), and that rejected a
+#: perfectly ordinary four-line scope note of 185 characters -- caught by
+#: test_prose_text_with_a_body_is_claimed. Set well below any real document and
+#: well above the fragments, since it is the secondary signal, not the test.
+_MIN_TEXT_LINES = 3
+_MIN_TEXT_CHARS = 100
+
+
+def _has_parseable_body(path: Path) -> bool:
+    """True when a .txt holds enough to be a document rather than a fragment."""
+    try:
+        from app.core.textio import read_text
+
+        text = read_text(path, max_bytes=65_536)
+    except Exception:  # pragma: no cover - unreadable file routes elsewhere
+        return False
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return len(lines) >= _MIN_TEXT_LINES and len(text.strip()) >= _MIN_TEXT_CHARS
 
 
 class MarkdownParser(BaseParser):
@@ -158,6 +180,33 @@ class MarkdownParser(BaseParser):
                 reasons=["markdown_extension"],
                 artifact_type=ArtifactType.txt,
             )
+        # Floor for plain text with something in it.
+        #
+        # RFPs, SOWs, specifications and addenda arrive as .txt constantly --
+        # 19 of them across three real deal packs -- and no parser claimed the
+        # format, so they were taken by whichever content heuristic fired
+        # first. On one 1,334-line RFP that cost 56,000 characters, all 42
+        # quantity atoms and all 88 constraint atoms versus reading it as
+        # prose. Markdown is the right floor because plain text is a subset of
+        # it: prose stays prose, and "- item" still parses as a list.
+        #
+        # Gated on having content, because an unrecognised .txt with nothing
+        # in it SHOULD report "No parser matched artifact" -- that warning is
+        # the coverage record, and saying "I did not read this" is more honest
+        # than manufacturing atoms from filler. Every real deal file measured
+        # is at least 4 non-empty lines and 258 characters; the filler case
+        # this has to leave alone is one line and 44.
+        #
+        # At MATCH_THRESHOLD exactly, so any parser with real content evidence
+        # outranks it and this only ever claims what nothing else wanted.
+        if path.suffix.lower() in {".txt", ".text"}:
+            if _has_parseable_body(path):
+                return ParserMatch(
+                    parser_name=self.parser_name,
+                    confidence=0.5,
+                    reasons=["plain_text_floor"],
+                    artifact_type=ArtifactType.txt,
+                )
         return ParserMatch(
             parser_name=self.parser_name,
             confidence=0.0,
@@ -192,6 +241,15 @@ class MarkdownParser(BaseParser):
         text = path.read_text(encoding="utf-8", errors="replace")
         atoms: list[EvidenceAtom] = []
         for idx, block in enumerate(_iter_markdown_blocks(text)):
+            # A list marker with nothing after it -- a bare "1." left behind by
+            # a PDF-to-text conversion -- yields a block whose text strips to
+            # "". EvidenceAtom rejects empty raw_text, so building one raised
+            # ValidationError and took the whole parse down. Any .md with a
+            # stray marker would have done the same; it surfaced when real .txt
+            # documents started routing here. An empty block carries nothing,
+            # so there is nothing to lose by skipping it.
+            if not (block.text or "").strip():
+                continue
             atoms.extend(
                 self._emit_atoms_for_block(
                     project_id=project_id,
@@ -466,7 +524,7 @@ class MarkdownParser(BaseParser):
                     value["table_cells"] = cells
                     name_cell = next((c for c in cells if _looks_like_person_name(c)), None)
                     email_cell = next((c for c in cells if _EMAIL_RE.search(c)), None)
-                    phone_cell = next((c for c in cells if _PHONE_RE.search(c)), None)
+                    phone_cell = next((c for c in cells if has_phone(c)), None)
                     role_cell = next(
                         (c for c in cells if c and c != name_cell and c != email_cell and c != phone_cell),
                         None,
@@ -488,9 +546,9 @@ class MarkdownParser(BaseParser):
                             if email_key not in entity_keys:
                                 entity_keys = sorted(set(entity_keys) | {email_key})
                     if phone_cell:
-                        m = _PHONE_RE.search(phone_cell)
-                        if m:
-                            value["phone"] = m.group(0)
+                        found = find_phones(phone_cell)
+                        if found:
+                            value["phone"] = found[0].raw
 
             # PR4 — risk-row payload. When a markdown table row gets
             # typed as risk, parse the | … | … | cells so downstream
@@ -701,12 +759,12 @@ def _looks_like_stakeholder_row(text: str, section_blob: str, block_kind: str) -
     if len(cells) < 2:
         return False
     has_email = any(_EMAIL_RE.search(c) for c in cells)
-    has_phone = any(_PHONE_RE.search(c) for c in cells)
+    has_phone_cell = any(has_phone(c) for c in cells)
     has_name = any(_looks_like_person_name(c) for c in cells)
     in_stakeholder_section = bool(_STAKEHOLDER_SECTION_RE.search(section_blob))
     # Stakeholder row signals: name + (email OR phone) anywhere
     # OR we're inside a Stakeholders section with a name.
-    return (has_name and (has_email or has_phone)) or (in_stakeholder_section and has_name)
+    return (has_name and (has_email or has_phone_cell)) or (in_stakeholder_section and has_name)
 
 
 _SEVERITY_PROB_TOKEN = re.compile(

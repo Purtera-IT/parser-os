@@ -113,14 +113,26 @@ def test_log_rows_writes_when_injected():
         set_training_log(None)
 
 
-# ── teacher-logging seam: the label is the sub-type, never the relation ──
+# ── teacher-logging seam: span and category are SEPARATE relations ──
 #
-# Regression for the cross-deal label-schema poison: when the LLM returned a
-# requirement with no ``category``, the old fallback logged ``label == relation``
-# ("requirements"), so a deal whose model emitted real categories
-# (deliverable/security/...) and a deal whose model omitted them trained the
-# head on incompatible label schemas → 0% holdout accuracy. Guess-free: an
-# item with no teacher sub-type is UNDECIDED and must not be logged at all.
+# The hazard these tests were written for is real: when the LLM returned a
+# requirement with no ``category``, the old code logged ``label == relation``
+# into the same relation as genuinely categorised items, so a deal whose model
+# emitted real categories (deliverable/security/...) and a deal whose model
+# omitted them trained one head on two incompatible label schemas → 0%
+# holdout accuracy.
+#
+# The original fix was to drop uncategorised items. ee4cc47 replaced it with a
+# better one: split the relations.
+#
+#   relation=key        label=key        every item that has text  (SPAN)
+#   relation=key__cat   label=<sub-type> only when a sub-type exists (CATEGORY)
+#
+# The span relation now carries exactly one label on every deal, so it cannot
+# mix schemas; the category relation only ever holds real sub-types; and an
+# uncategorised item no longer has to be discarded to keep them clean, which
+# means the detection signal it carries is not lost. These tests assert that
+# contract -- the schemas stay separable, which is what mattered all along.
 
 
 def _log_results(results, atoms=()):
@@ -135,32 +147,47 @@ def _log_results(results, atoms=()):
     return log
 
 
-def test_list_item_with_category_logs_that_category_as_label():
+def test_list_item_with_category_banks_span_and_category_rows():
     log = _log_results({"requirements": [
         {"text": "Guest Wi-Fi must stay off the corporate VLAN.", "category": "security"},
     ]})
-    rows = log.rows(relation="requirements")
-    assert len(rows) == 1
-    assert rows[0].label == "security"
+    span = log.rows(relation="requirements")
+    assert len(span) == 1
+    assert span[0].label == "requirements"
+
+    cat = log.rows(relation="requirements__cat")
+    assert len(cat) == 1
+    assert cat[0].label == "security"
+    assert cat[0].raw_text == span[0].raw_text
 
 
-def test_list_item_without_subtype_is_skipped_not_relabelled_to_relation():
-    # The exact poison shape: text but no category/role/type. Must NOT log a
-    # row labelled with the bare relation name.
+def test_list_item_without_subtype_banks_no_category_row():
+    # The shape that caused the poison: text but no category/role/type. It may
+    # bank its span row -- that signal is real and losing it loses data -- but
+    # it must contribute NOTHING to the category relation, which is where the
+    # schema mixing did its damage.
     log = _log_results({"requirements": [
         {"text": "Either party may terminate this SOW upon material breach."},
         {"text": "invoice for the Total Fees", "category": ""},
     ]})
-    assert log.count(relation="requirements") == 0
-    # And no row anywhere was labelled with its own relation name.
-    assert all(r.label != r.relation for r in log.rows())
+    assert log.count(relation="requirements__cat") == 0
+    assert log.count(relation="requirements") == 2
+
+    # The span relation carries ONE label across every deal, which is the
+    # property that makes leave-one-deal-out safe.
+    assert {r.label for r in log.rows(relation="requirements")} == {"requirements"}
 
 
-def test_mixed_batch_keeps_only_categorised_items():
+def test_mixed_batch_separates_span_from_category():
     log = _log_results({"requirements": [
         {"text": "Rugged tablets must enrol into Intune before handoff.", "category": "deliverable"},
-        {"text": "taxes will be invoiced but are not included"},  # no category → skip
+        {"text": "taxes will be invoiced but are not included"},  # no sub-type
         {"text": "All rooms support one-touch calendar join.", "category": "acceptance"},
     ]})
-    labels = sorted(r.label for r in log.rows(relation="requirements"))
-    assert labels == ["acceptance", "deliverable"]
+    # Only the two categorised items reach the category relation...
+    assert sorted(r.label for r in log.rows(relation="requirements__cat")) == [
+        "acceptance", "deliverable",
+    ]
+    # ...while all three still contribute their span row, so the uncategorised
+    # item is not silently discarded.
+    assert log.count(relation="requirements") == 3

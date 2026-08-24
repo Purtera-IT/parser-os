@@ -26,7 +26,7 @@
       "unknown"
     ],
     "scope_inclusion": [
-      "device:unknown"
+      "site:main_campus"
     ],
     "meeting_decision": [
       "meeting_decision:confirmed_west_wing_will_be_treated_as_excluded_pending_written_confirmation"
@@ -41,6 +41,7 @@
     ]
   },
   "notes": [
-    "IDs are deterministic but content-sensitive; test families and anchors instead of hard-coded IDs."
+    "IDs are deterministic but content-sensitive; test families and anchors instead of hard-coded IDs.",
+    "scope_inclusion previously expected device:unknown - the anchor the packetizer emitted when it could not resolve an entity. It resolves real ones now (site:main_campus for the camera rollout), so the expectation was pinning a degraded value."
   ]
 }

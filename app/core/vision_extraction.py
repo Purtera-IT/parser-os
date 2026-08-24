@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from app.core import ollama_host
 
 logger = logging.getLogger(__name__)
 
@@ -116,8 +117,12 @@ def call_vision_llm(
         return llm_client.complete_vision(
             prompt, _encode_image_b64(image_bytes), max_tokens=max_tokens,
         )
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(_DEFAULT_HOST)
     model = os.environ.get("OLLAMA_VISION_MODEL", _DEFAULT_VISION_MODEL)
+    # A vision model that cannot emit five tokens for a text ping cannot read
+    # an image either, and image calls are the most expensive to wait out.
+    if not ollama_host.generation_ready(host, model):
+        return ""
     payload = {
         "model": model,
         "prompt": prompt,
@@ -149,7 +154,7 @@ def vision_endpoint_reachable() -> bool:
     from app.core import llm_client
     if llm_client.teacher_api_enabled():
         return True
-    host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
+    host = ollama_host.resolve_host(_DEFAULT_HOST)
     try:
         r = requests.get(f"{host}/api/tags", timeout=3)
         if r.status_code != 200:
@@ -1001,6 +1006,104 @@ def find_visual_pages_from_image_markers(atoms: list[Any]) -> list[tuple[str, in
     return pages
 
 
+
+def reconcile_image_markers(atoms: list[Any], vision_results: list[dict] | None) -> int:
+    """Resolve the image markers on every page the vision pass actually read.
+
+    Markers and vision output answer different questions and must not be merged:
+
+      * a marker answers "is this region accounted for?" -- one per image,
+        carrying the region_ref the content census reconciles against.
+      * vision output answers "what does this page say?" -- one set of rows per
+        PAGE, because a model reading a page of seven photos cannot honestly
+        attribute a row to one of them.
+
+    So vision keeps emitting its findings as their own atoms (they are content,
+    and content belongs in the graph where the SOW can reach it), and this
+    function goes back and updates the coverage record it just satisfied.
+
+    Without it the compile contradicts itself: the Xtra Lease spec shipped 180
+    markers still reading "awaiting OCR / vision" on pages vision had already
+    read, alongside the install detail read from those very images. Both claims
+    were in the same envelope. The marker was honest about coverage and stale
+    about status.
+
+    Returns the number of markers resolved.
+    """
+    import os as _os
+    import re as _re
+
+    read: dict[tuple[str, int], dict] = {}
+    for r in vision_results or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            key = (_os.path.basename(str(r.get("pdf_path") or "")), int(r.get("page_num")))
+        except (TypeError, ValueError):
+            continue
+        read[key] = r
+
+    if not read:
+        return 0
+
+    ref_pat = _re.compile(r"page(\d+)/", _re.IGNORECASE)
+    resolved = 0
+    for atom in atoms or []:
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if "binary_region_marker" not in flags or "vision_read" in flags:
+            continue
+        for ref in (getattr(atom, "source_refs", None) or []):
+            fname = _os.path.basename(str(getattr(ref, "filename", "") or ""))
+            loc = getattr(ref, "locator", None) or {}
+            if not isinstance(loc, dict):
+                continue
+            m = ref_pat.search(str(loc.get("region_ref", "") or ""))
+            if not m:
+                continue
+            hit = read.get((fname, int(m.group(1))))
+            if hit is None:
+                continue
+
+            kind = str(hit.get("page_kind") or "").strip()
+            summary = " ".join(str(hit.get("summary") or "").split())[:280]
+
+            # Keep the marker a marker: same id, same region_ref, same type.
+            # Only the status it reports changes, plus the page-level context a
+            # reviewer needs to judge whether the region was really covered.
+            try:
+                text = str(getattr(atom, "raw_text", "") or "")
+                if "awaiting OCR / vision" in text:
+                    text = text.replace(
+                        "awaiting OCR / vision",
+                        "read by vision" + (f" [{kind}]" if kind else ""),
+                    )
+                if summary:
+                    text = f"{text} \u2014 page reads: {summary}"
+                atom.raw_text = text
+            except Exception:
+                pass
+
+            try:
+                val = dict(getattr(atom, "value", None) or {})
+                val["vision_read"] = True
+                if kind:
+                    val["vision_page_kind"] = kind
+                if summary:
+                    val["vision_page_summary"] = summary
+                atom.value = val
+            except Exception:
+                pass
+
+            try:
+                atom.review_flags = flags + ["vision_read"]
+            except Exception:
+                pass
+
+            resolved += 1
+            break
+    return resolved
+
+
 def find_all_pages_needing_vision(atoms: list[Any]) -> list[tuple[str, int]]:
     """v45.1 — union of (parser-flagged visual pages) +
     (pymupdf-detected table pages) + (image-marker pages). Ensures vision-LLM
@@ -1305,4 +1408,5 @@ __all__ = [
     "classify_page",
     "inject_vision_rows_as_entities",
     "register_artifact_paths",
+    "reconcile_image_markers",
 ]

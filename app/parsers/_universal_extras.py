@@ -31,6 +31,7 @@ from app.core.schemas import (
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
 from app.parsers.binary_markers import emit_zip_binary_markers
+from app.parsers.universal_parsers import _classify
 
 
 def _make_atom(
@@ -43,7 +44,21 @@ def _make_atom(
     locator: dict[str, Any],
     extraction_method: str,
     parser_version: str,
-    atom_type: AtomType = AtomType.scope_item,
+    # ``None`` means "ask _classify", which is what the universal_parsers
+    # helper of the same name has always done. Here the default was the
+    # CONCLUSION scope_item, so no caller in this module ever classified
+    # anything: an .odt or .ods containing "Mid-turn jumpers are excluded from
+    # this bill of materials" and "Escort access is required before 2pm"
+    # produced six atoms, all typed scope_item.
+    #
+    # Measured against the identical six sentences in Markdown, which shares
+    # _classify: {scope_item: 2, constraint: 3, exclusion: 1}. An exclusion
+    # that never becomes an exclusion atom cannot govern scope, and a
+    # constraint that never becomes a constraint never reaches the PM as one.
+    #
+    # Callers that genuinely know their type (the open_question emitters
+    # below) still pass it explicitly and are unaffected.
+    atom_type: AtomType | None = None,
     authority_class: AuthorityClass = AuthorityClass.customer_current_authored,
     confidence: float = 0.85,
     value_extra: dict[str, Any] | None = None,
@@ -62,7 +77,7 @@ def _make_atom(
         id=stable_id("atm", project_id, artifact_id, text[:120], str(locator)),
         project_id=project_id,
         artifact_id=artifact_id,
-        atom_type=atom_type,
+        atom_type=atom_type or _classify(text),
         raw_text=text,
         normalized_text=text.lower(),
         value=value_extra or {},
@@ -131,25 +146,45 @@ class MsgParser(BaseParser):
                 body = (msg.body or "").strip()
                 attachments = [att.longFilename or att.shortFilename or "(unnamed)" for att in (msg.attachments or [])]
             header_text = f"From: {sender} | Subject: {subject} | Date: {date}"
+            # The FOURTH container found carrying the header defect. The .eml
+            # path fixed it first ("A From/To/Subject line is not a unit of
+            # work"), then the .txt save-as-text path, then .mbox -- and this
+            # one was still letting _classify type the header line, minting a
+            # phantom customer-authored scope item per message. A .msg is the
+            # same message as a .eml; the container must not change the
+            # evidence.
             atoms.append(_make_atom(
                 project_id=project_id, artifact_id=artifact_id, filename=path.name,
                 artifact_type=ArtifactType.msg, text=header_text,
                 locator={"kind": "msg_header"},
                 extraction_method="extract_msg",
                 parser_version=self.parser_version,
-                value_extra={"subject": subject, "from": sender, "date": date},
+                atom_type=AtomType.deal_metadata,
+                authority_class=AuthorityClass.machine_extractor,
+                value_extra={"kind": "email_header", "subject": subject, "from": sender, "date": date},
             ))
+            from app.core.sentences import split_sentences
+
             for para_idx, para in enumerate(re.split(r"\n\s*\n", body)):
                 para = para.strip()
                 if not para or len(para) < 4:
                     continue
-                atoms.append(_make_atom(
-                    project_id=project_id, artifact_id=artifact_id, filename=path.name,
-                    artifact_type=ArtifactType.msg, text=para[:1200],
-                    locator={"kind": "msg_body", "paragraph": para_idx},
-                    extraction_method="extract_msg",
-                    parser_version=self.parser_version,
-                ))
+                # Sentences, not paragraphs -- an atom is the unit of typing,
+                # and a paragraph fusing an exclusion into scope prose can
+                # never be typed as an exclusion. Same split the .eml and
+                # .mbox paths use, so all four containers agree on what a
+                # unit of evidence is.
+                for piece in (split_sentences(para) or [para]):
+                    piece = piece.strip()
+                    if len(piece) < 4:
+                        continue
+                    atoms.append(_make_atom(
+                        project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                        artifact_type=ArtifactType.msg, text=piece[:1200],
+                        locator={"kind": "msg_body", "paragraph": para_idx},
+                        extraction_method="extract_msg",
+                        parser_version=self.parser_version,
+                    ))
             if attachments:
                 atoms.append(_make_atom(
                     project_id=project_id, artifact_id=artifact_id, filename=path.name,

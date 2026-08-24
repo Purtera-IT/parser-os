@@ -674,7 +674,9 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             hygiene_fn = apply_site_hygiene
             # Quick reachability probe so offline environments don't
             # burn a 180-second request timeout per compile.
-            if ollama_reachable():
+            from app.core import llm_client as _llm
+            # hosted teacher substitutes for the local host (see entity_extraction)
+            if _llm.teacher_api_enabled() or ollama_reachable():
                 # Primary path: LLM reads the docs and tells us the
                 # sites directly. No regex involvement.
                 # v48: extract_sites_with_llm now returns list[dict] of

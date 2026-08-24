@@ -70,7 +70,9 @@ is the "swallow it whole" view; the compile result is the audit log.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -193,6 +195,9 @@ def build_orbitbrief_envelope(
     crm = _load_manifest_crm(project_dir)
     if crm:
         summary["crm"] = crm
+    foreign = _foreign_artifacts(crm=crm, documents=documents)
+    if foreign:
+        summary["foreign_artifacts"] = foreign
     # v57.3.5: filter site:* entities + redirect ghost atom keys
     # BEFORE building the indexes — because orbitbrief-core's cluster
     # builder reads from ``envelope.indexes.atoms_by_entity_key`` to
@@ -254,14 +259,41 @@ def build_orbitbrief_envelope(
     # null. Added ONLY when enabled + head present, so OFF -> key absent.
     from app.core.service_router import build_service_routing as _build_service_routing
 
-    _routing = _build_service_routing(atoms, documents)
-    if _routing.get("enabled"):
+    # ``project_id`` IS the deal key: a deal-scoped PM correction stores
+    # ``scope_key = project_id`` (routes_feedback._scope_from_chip), so passing
+    # it here is what lets a shadow observation and a later correction be
+    # joined on the same deal.
+    _routing = _build_service_routing(
+        atoms,
+        documents,
+        deal_id=compile_result.project_id,
+        project_id=compile_result.project_id,
+        base=None,
+        base_observed=False,
+    )
+    # Emitted whenever there is anything to say, not only when a head is
+    # loaded. With the head off -- every environment today -- the key still
+    # carries the ``candidates`` a correction chip needs to offer a choice, and
+    # the recorded input, so the observation travels with the deal instead of
+    # being thrown away on the one path that is always taken.
+    #
+    # Safe to widen: compute_output_signature hashes the CompileResult (atoms,
+    # entities, edges, packets), not the envelope, so no signature moves.
+    if _routing.get("enabled") or _routing.get("candidates"):
         envelope["service_routing"] = _routing
     # S+++++ cockpit surfaces — authority-weighted scope truth,
     # chronological change-order audit, per-site readiness rollup,
     # per-stakeholder workload matrix, and a single 0-100 project
     # vitals number that blends every signal above into one
     # auditable cockpit-header score.
+    # Phase-2 reconciliation: every contradicts-cluster resolved by the
+    # authority lattice with full receipts, or surfaced unresolved when the
+    # top tier ties. A verdict layer over the evidence -- no atom is mutated,
+    # so replay keeps verifying. Additive key; the output signature hashes
+    # the CompileResult, not the envelope.
+    from app.core.reconcile import build_reconciliation as _build_reconciliation
+
+    envelope["reconciliation"] = _build_reconciliation(atoms, edges)
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
     envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
@@ -312,6 +344,42 @@ def build_orbitbrief_envelope(
     except Exception as _v49_exc:
         import logging as _lg_v49
         _lg_v49.getLogger(__name__).warning("v49 site attribute passthrough failed: %s", _v49_exc)
+
+    # The passthrough above can only name a site a physical_site atom
+    # anchors. Sites the deal mentions only in prose become rows with no
+    # name at all, so the dossier shows the PM ``site:prudential_center_
+    # office`` where the document said "Prudential Center office". Recover
+    # the readable form from evidence the compile already holds. Fills
+    # blanks only — an all-anchored deal (Clayton's 437 roster sites) does
+    # no work here and is left byte-identical.
+    try:
+        from app.core.site_naming import recover_site_display_names
+        _sr_rows = ((envelope.get("site_readiness") or {}).get("sites") or [])
+        _recovered = recover_site_display_names(
+            sites=_sr_rows, atoms=atoms, documents=documents,
+        )
+        for _row in _sr_rows:
+            _name = _recovered.get(_row.get("site") or "")
+            if not _name:
+                continue
+            _row["facility_name"] = _name
+            # Anchored rows carry their name in ``aliases`` too (the
+            # passthrough copies ``value.names`` in). Match that shape so
+            # every consumer sees prose sites the same way as roster ones.
+            _row_aliases = _row.setdefault("aliases", [])
+            if _name not in _row_aliases:
+                _row_aliases.insert(0, _name)
+        if _recovered:
+            import logging as _lg_naming_ok
+            _lg_naming_ok.getLogger(__name__).info(
+                "site_naming recovered %d display name(s): %s",
+                len(_recovered), ", ".join(sorted(_recovered)),
+            )
+    except Exception as _naming_exc:
+        import logging as _lg_naming
+        _lg_naming.getLogger(__name__).warning(
+            "site display-name recovery failed: %s", _naming_exc
+        )
 
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
 
@@ -367,6 +435,159 @@ def build_orbitbrief_envelope(
     if crm:
         envelope["crm"] = crm
     return envelope
+
+
+#: A PurTera deal number as it prefixes an artifact filename:
+#: ``010129-hs-email-...``, ``000116 - GHA -Thyssenkrupp...``, ``010162  Deal Kit.xlsx``.
+#: Anchored deliberately — an unanchored six-digit search pulls numbers out of
+#: UUID fragments (``...b878374bd7c1``) and screenshot stamps
+#: (``Screenshot 2026-08-17 150656``), which is noise, not identity.
+_ARTIFACT_DEAL_NUM_RE = re.compile(r"^(\d{6})\s*[-_\s]")
+
+#: How far apart two deal numbers must be before the artifact is treated as
+#: foreign. Adjacent numbers are overwhelmingly the same customer and project —
+#: "010143 WSS Presbyterian" holding "010142 WSS Presbyterian", a renumber or a
+#: sibling survey/install pair. Across the corpus 60 of 79 number mismatches
+#: were adjacent like that; flagging them would make the signal 76% false and
+#: teach everyone to ignore it. Only distant numbers indicate a document filed
+#: against the wrong deal.
+_FOREIGN_DEAL_DISTANCE = 2
+
+
+def _deal_number_from_crm(crm: Mapping[str, Any] | None) -> str | None:
+    """The deal's own number, taken from the CRM deal name it is filed under.
+
+    ``context.crm.deal_name`` reads ``"010114 - CDW Checkout Wireless Wifi"``,
+    so the number prefixes it. This is authoritative: it comes from the deal
+    record rather than from the documents being checked.
+    """
+    if not isinstance(crm, Mapping):
+        return None
+    m = _ARTIFACT_DEAL_NUM_RE.match(str(crm.get("deal_name") or "").strip())
+    return m.group(1) if m else None
+
+
+def _foreign_artifacts(
+    *, crm: Mapping[str, Any] | None, documents: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Artifacts on this deal whose filename claims a different deal.
+
+    Nothing anywhere checked this, and the failure is silent and total: one deal
+    held five artifacts belonging to three other opportunities — Marco's Pizza
+    and Vodafone — and OrbitBrief produced a fluent, confident brief about
+    Marco's Pizza under a GHA Technologies deal name. A PM reading it has no
+    signal that anything is wrong. Incomplete is recoverable; confidently about
+    the wrong company is not.
+
+    Reported, never dropped. A related document is sometimes filed on purpose,
+    and deleting evidence on a filename heuristic would be its own bug.
+    """
+    own = _deal_number_from_crm(crm)
+    if not own:
+        return []
+    out: list[dict[str, Any]] = []
+    for doc in documents or []:
+        if not isinstance(doc, Mapping):
+            continue
+        name = str(doc.get("filename") or "")
+        m = _ARTIFACT_DEAL_NUM_RE.match(name)
+        if not m or m.group(1) == own:
+            continue
+        if abs(int(m.group(1)) - int(own)) <= _FOREIGN_DEAL_DISTANCE:
+            continue
+        out.append({
+            "filename": name,
+            "claims_deal": m.group(1),
+            "deal_number": own,
+            "artifact_id": doc.get("artifact_id"),
+            # Distance alone does not separate "another opportunity for the
+            # same customer" from "a different company's project". Deal
+            # 010106 "Dollar Tree DC7 WAP" holding 010091 "Dollar Tree DC7 WAP
+            # Install" is a sibling; deal 010129 "GHA Assa Abbloy" holding
+            # "Marcos New Store Installs" is not. When the deal's own account
+            # name shows up in the filename, say so, so the reader can tell a
+            # shared document from a misfiled one without opening it.
+            "account_match": _account_match(crm, name),
+        })
+    return out
+
+
+#: Words too generic to identify a customer by.
+_ACCOUNT_STOPWORDS = frozenset({
+    "technologies", "technology", "inc", "llc", "corp", "company", "group",
+    "solutions", "services", "systems", "install", "installation", "project",
+})
+
+
+def _names_from_crm(crm: Mapping[str, Any]) -> list[str]:
+    """Customer names worth recognising in a filename.
+
+    Both the account and the deal name matter, because the account is often the
+    reseller while the document names the end customer. Deal 010128's account
+    is "CentricsIT" but its name is "010128 - CentricsIT Marcos - MOMS POS
+    Installation", and the shared runbook on it is called "010013 Marcos New
+    Store Installs" — recognisable from the deal name, invisible from the
+    account alone.
+    """
+    out = [str(crm.get("account_name") or "")]
+    deal = str(crm.get("deal_name") or "")
+    # Drop the leading number and keep the descriptive half.
+    out.append(re.sub(r"^\d{6}\s*[-_\s]\s*", "", deal))
+    # 3 is deliberate: plenty of accounts are initialisms (CDW, GHA, SHI)
+    # and dropping them made every one of their documents look foreign.
+    return [n.strip().lower() for n in out if len(n.strip()) >= 3]
+
+
+#: Filename furniture that names no customer: document kinds, version and date
+#: markers, and the boilerplate every deal folder repeats.
+_FILENAME_FURNITURE = frozenset({
+    "deal", "kit", "cost", "breakdown", "quote", "quotation", "estimate",
+    "final", "draft", "copy", "signed", "redlines", "redline", "notes", "note",
+    "scope", "work", "statement", "proposal", "summary", "photos", "photo",
+    "image", "images", "screenshot", "survey", "install", "installation",
+    "rollout", "swap", "upgrade", "refresh", "migration", "docx", "xlsx",
+    "pdf", "pptx", "jpeg", "email", "note", "attachment", "version",
+})
+
+
+def _distinctive_words(text: str) -> list[str]:
+    """Words in a filename that could plausibly name a customer."""
+    words = re.findall(r"[a-z]{4,}", text.lower())
+    return [
+        w for w in words
+        if w not in _ACCOUNT_STOPWORDS
+        and w not in _FILENAME_FURNITURE
+        and not re.fullmatch(r"v\d+|\d+", w)
+    ]
+
+
+def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
+    """``same`` | ``different`` | ``unknown`` — whose customer this file names.
+
+    The two-state version conflated "names a different customer" with "names no
+    customer at all", and most misfiled documents are called ``Deal Kit.xlsx``.
+    Five of seven flagged rows were generic filenames of that shape, reported as
+    a different customer purely because the host customer's name was absent —
+    which it was always going to be. Absence of a name is not evidence.
+    """
+    if not isinstance(crm, Mapping):
+        return "unknown"
+    hay = filename.lower()
+    for name in _names_from_crm(crm):
+        # Word-boundary, not substring: a three-letter account like CDW would
+        # otherwise match inside an unrelated word.
+        if re.search(r"\b" + re.escape(name) + r"\b", hay):
+            return "same"
+        words = [w for w in re.findall(r"[a-z]{4,}", name) if w not in _ACCOUNT_STOPWORDS]
+        # Any distinctive word carrying over is enough: "Marcos" links
+        # "CentricsIT Marcos - MOMS POS" to "Marcos New Store Installs".
+        if words and any(w in hay for w in words):
+            return "same"
+    # Strip the leading deal number before asking whether anything is left that
+    # could be a customer name at all.
+    stem = re.sub(r"^\d{6}\s*[-_\s]*", "", filename)
+    stem = re.sub(r"\.[a-z0-9]{2,5}$", "", stem, flags=re.IGNORECASE)
+    return "different" if _distinctive_words(stem) else "unknown"
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
@@ -1320,6 +1541,14 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         # B6 (per-site pricing rollup), etc.
         "entity_keys": list(atom.entity_keys),
         "structured": dict(atom.value) if atom.value else {},
+        # Per-atom trust signal: the calibrated probability + the accept/
+        # needs_review verdict. Previously dropped on projection, so every
+        # consumer (PM-chip "unsure" gate, truth_gate, auto-accept) read null
+        # and fell back to the raw heuristic. confidence_raw lets consumers tell
+        # the calibrated value apart from the pre-calibration heuristic.
+        "calibrated_confidence": atom.calibrated_confidence,
+        "review_status": atom.review_status.value if hasattr(atom.review_status, "value") else atom.review_status,
+        "confidence_raw": getattr(atom, "confidence_raw", None),
     }
 
 

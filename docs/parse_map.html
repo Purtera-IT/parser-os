@@ -1,0 +1,1756 @@
+<title>Parse Path Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ink:#14181C; --ink-2:#3B444B; --mut:#6B747A;
+    --ground:#FBFCFD; --panel:#FFFFFF; --sunk:#F1F4F6; --rule:#DCE3E7;
+    --accent:#0E6E62; --accent-bg:#E3F1EE;
+    --cand:#9A6209;   --cand-bg:#FAF0DE;
+    --never:#27507F;  --never-bg:#E5ECF5;
+    --dead:#8A3324;   --dead-bg:#F8E7E3;
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --ink:#E7ECEF; --ink-2:#B6C0C7; --mut:#8B959C;
+    --ground:#0E1215; --panel:#161B1F; --sunk:#1B2126; --rule:#2A333A;
+    --accent:#5FC7B5; --accent-bg:#12312C; --cand:#E0A64B; --cand-bg:#33270F;
+    --never:#8FB3DE; --never-bg:#152439; --dead:#E08D7B; --dead-bg:#331914;
+  }}
+  :root[data-theme="dark"]{
+    --ink:#E7ECEF; --ink-2:#B6C0C7; --mut:#8B959C;
+    --ground:#0E1215; --panel:#161B1F; --sunk:#1B2126; --rule:#2A333A;
+    --accent:#5FC7B5; --accent-bg:#12312C; --cand:#E0A64B; --cand-bg:#33270F;
+    --never:#8FB3DE; --never-bg:#152439; --dead:#E08D7B; --dead-bg:#331914;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+       font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px;line-height:1.55}
+  .wrap{max-width:1120px;margin:0 auto;padding:44px 24px 96px}
+  code,.m{font-family:"IBM Plex Mono",ui-monospace,monospace}
+  header{border-bottom:1px solid var(--rule);padding-bottom:22px;margin-bottom:8px}
+  h1{font-size:30px;font-weight:600;margin:0 0 6px;letter-spacing:-.02em;text-wrap:balance}
+  .sub{color:var(--mut);font-size:14px;margin:0;max-width:76ch}
+  h2{font-size:20px;font-weight:600;margin:56px 0 6px;letter-spacing:-.01em}
+  h2 .n{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--mut);
+        display:block;letter-spacing:.15em;margin-bottom:5px;font-weight:500}
+  h3{font-size:15.5px;font-weight:600;margin:30px 0 4px}
+  .lede{color:var(--ink-2);margin:0 0 18px;max-width:70ch}
+  .plane{border:1px solid var(--rule);border-radius:11px;background:var(--panel);
+         padding:22px 24px 26px;margin:22px 0}
+  .plane.a{border-left:4px solid var(--accent)}
+  .plane.b{border-left:4px solid var(--never)}
+  .plane>.hd{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;
+             text-transform:uppercase;color:var(--mut);margin:0 0 12px}
+  figure{margin:0 0 6px}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{color:var(--mut);font-size:12.5px;margin-top:10px;font-family:"IBM Plex Mono",monospace}
+  table{width:100%;border-collapse:collapse;margin:14px 0 6px;font-size:13.5px}
+  th{text-align:left;font-weight:600;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+     color:var(--mut);padding:0 10px 7px 0;border-bottom:1px solid var(--rule)}
+  td{padding:9px 10px 9px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+  td.m{font-size:12.5px}
+  tbody tr:last-child td{border-bottom:none}
+  .scroll{overflow-x:auto}
+  .tag{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:500;
+       letter-spacing:.06em;padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .t-new{background:var(--accent-bg);color:var(--accent)}
+  .t-cand{background:var(--cand-bg);color:var(--cand)}
+  .t-never{background:var(--never-bg);color:var(--never)}
+  .t-dead{background:var(--dead-bg);color:var(--dead)}
+  s{color:var(--mut);text-decoration-thickness:1px}
+  .num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-weight:600}
+  .win{color:var(--accent)} .bad{color:var(--dead)}
+  .callout{border:1px solid var(--rule);border-left:3px solid var(--cand);background:var(--sunk);
+           border-radius:7px;padding:14px 16px;margin:18px 0}
+  .callout.ok{border-left-color:var(--accent)} .callout.inv{border-left-color:var(--never)}
+  .callout p{margin:0} .callout p+p{margin-top:9px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:18px 0 0;font-size:12.5px;color:var(--mut)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .callout.bad-callout{border-left-color:#b4432f}
+  .cand{color:var(--cand)}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>What runs when you click parse</h1>
+  <p class="sub">Two planes, drawn apart because they have opposite economics. Everything before atoms has a correct answer and is bought. Everything after is a judgment and is learned. Measured on 12 real documents / 374 pages, five of them public RFPs the parser had never seen &mdash; and, for the router section, on 2500 real artifacts renamed without touching a byte of their content.</p>
+</header>
+
+<div class="legend">
+  <span><i class="sw" style="background:var(--accent)"></i> replaced &amp; landed</span>
+  <span><i class="sw" style="background:var(--cand)"></i> kept after testing</span>
+  <span><i class="sw" style="background:var(--never)"></i> must never learn</span>
+  <span><i class="sw" style="background:var(--dead)"></i> removed / dead</span>
+</div>
+
+<!--MASTER-GRAPH-->
+<div class="plane" style="border-left:4px solid var(--accent)">
+<p class="hd">the whole path, one picture</p>
+<figure>
+<svg viewBox="0 0 1120 2322" role="img" aria-label="The full parser path: an artifact is routed by content signature before suffix, decoded by a per-format library into atoms carrying locators, where a coverage floor rides alongside every typed atom, and only then does the learning layer read them.">
+<defs>
+<marker id="mg-ar" markerWidth="9" markerHeight="7" refX="8.4" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="currentColor"/></marker>
+<marker id="mg-ar-a" markerWidth="9" markerHeight="7" refX="8.4" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="var(--accent)"/></marker>
+<marker id="mg-ar-d" markerWidth="9" markerHeight="7" refX="8.4" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="var(--dead)"/></marker>
+</defs>
+<style>.z{font:600 11px "IBM Plex Mono",monospace;letter-spacing:.18em;fill:var(--mut)}.zt{font:600 15px "IBM Plex Sans",sans-serif;fill:var(--ink)}.zs{font:12px "IBM Plex Sans",sans-serif;fill:var(--ink-2)}.f{font:600 12.5px "IBM Plex Mono",monospace;fill:var(--ink)}.lib{font:11.5px "IBM Plex Sans",sans-serif;fill:var(--ink-2)}.note{font:10.5px "IBM Plex Sans",sans-serif;fill:var(--mut)}.gone{font:10.5px "IBM Plex Sans",sans-serif;fill:var(--dead);text-decoration:line-through;text-decoration-thickness:1px}.sc{font:600 11px "IBM Plex Mono",monospace;fill:var(--accent)}.sc-n{font:600 11px "IBM Plex Mono",monospace;fill:var(--never)}.al{font:10.5px "IBM Plex Mono",monospace;fill:var(--mut)}.bx{fill:var(--panel);stroke:var(--rule);stroke-width:1}.bx-s{fill:var(--sunk);stroke:var(--rule);stroke-width:1}</style>
+<text class="z" x="24" y="22">0 &#183; INTAKE</text>
+<rect class="bx" x="24" y="34" width="250" height="52" rx="8"/>
+<text class="f" x="40" y="56">artifact in blob</text>
+<text class="note" x="40" y="72">one deal, many files</text>
+<line x1="274" y1="60" x2="352" y2="60" stroke="currentColor" stroke-width="1.4" marker-end="url(#mg-ar)"/>
+<text class="al" x="284" y="52">enqueue</text>
+<rect class="bx" x="352" y="34" width="250" height="52" rx="8"/>
+<text class="f" x="368" y="56">/v1/compile/async</text>
+<text class="note" x="368" y="72">parser-os-worker picks it up</text>
+<line x1="602" y1="60" x2="680" y2="60" stroke="currentColor" stroke-width="1.4" marker-end="url(#mg-ar)"/>
+<rect class="bx-s" x="680" y="34" width="416" height="52" rx="8"/>
+<text class="note" x="696" y="54">A compile here <tspan font-weight="600">parses</tspan>. Briefing is a second worker,</text>
+<text class="note" x="696" y="70">orbitbrief-core-worker, and it never re-parses.</text>
+<text class="z" x="24" y="128">1 &#183; ROUTE</text>
+<text class="zt" x="24" y="150">Before any parser sees the bytes</text>
+<text class="zs" x="24" y="169">Two readings of what this file is. They usually agree; when they do not, the bytes win.</text>
+<rect class="bx" x="24" y="186" width="330" height="86" rx="8"/>
+<text class="f" x="40" y="208">suffix table</text>
+<text class="note" x="40" y="226">path.suffix &#8594; ArtifactType, 22 formats</text>
+<text class="note" x="40" y="242">cheap, and right almost always</text>
+<text class="gone" x="40" y="260">ran alone, and first</text>
+<rect class="bx" x="392" y="186" width="330" height="86" rx="8" stroke="var(--accent)"/>
+<text class="f" x="408" y="208">content signature <tspan class="sc">new</tspan></text>
+<text class="note" x="408" y="226">magic bytes &#183; ZIP members (word/ xl/ ppt/)</text>
+<text class="note" x="408" y="242">text declarations: WEBVTT, BEGIN:VCALENDAR,</text>
+<text class="note" x="408" y="258">RFC-5322 headers, %PDF-, {\rtf</text>
+<rect class="bx-s" x="760" y="186" width="336" height="86" rx="8"/>
+<text class="f" x="776" y="208">disagree &#8594; content wins</text>
+<text class="note" x="776" y="226">a magic number is decisive; a filename is not</text>
+<text class="note" x="776" y="244">silence from the sniffer changes nothing, so a</text>
+<text class="note" x="776" y="260">correctly-routed file can never be re-routed</text>
+<line x1="354" y1="229" x2="390" y2="229" stroke="var(--rule)" stroke-width="1.2"/>
+<line x1="722" y1="229" x2="758" y2="229" stroke="currentColor" stroke-width="1.4" marker-end="url(#mg-ar)"/>
+<rect class="bx" x="24" y="286" width="536" height="46" rx="7" stroke="var(--dead)"/>
+<text class="note" x="40" y="305"><tspan class="f" fill="var(--dead)">contract.pdf</tspan>  (really a .docx)  &#8594;  went to the PDF parser</text>
+<text class="note" x="40" y="322">a ZIP handed to a reader that can only open PDFs</text>
+<rect class="bx" x="576" y="286" width="520" height="46" rx="7" stroke="var(--dead)"/>
+<text class="note" x="592" y="305"><tspan class="f" fill="var(--dead)">message</tspan>  (an .eml, no extension)  &#8594;  <tspan font-weight="600">no parser at all</tspan></text>
+<text class="note" x="592" y="322">the whole email silently produced nothing</text>
+<text class="al" x="24" y="350">both now route correctly &#183; 8 of 8 misnamed files</text>
+<text class="z" x="24" y="392">2 &#183; DECODE</text>
+<text class="zt" x="24" y="414">Commodity. Never learns.</text>
+<text class="zs" x="24" y="433">Decoding has a correct answer, so it is bought, not built. The badge is what each recovered from a file built to break it.</text>
+<text class="zs" x="24" y="450">All 21 registered parsers were measured this way: the nine below, plus md, json, ics, rtf, mbox, zip and quote, which scored 30/31 between them.</text>
+<rect class="bx" x="24" y="452" width="340" height="118" rx="8"/>
+<text class="f" x="39" y="475">.pdf</text>
+<text class="sc" x="349" y="475" text-anchor="end">16/16</text>
+<line x1="39" y1="485" x2="349" y2="485" stroke="var(--rule)"/>
+<text class="lib" x="39" y="504">Azure DI prebuilt-layout + fitz + box detector</text>
+<text class="note" x="39" y="523">2-col order · 90° rotated · footnote · furniture</text>
+<text class="gone" x="39" y="547">find_tables() alone — missed 951 cells</text>
+<rect class="bx" x="390" y="452" width="340" height="118" rx="8"/>
+<text class="f" x="405" y="475">.xlsx .csv .ods</text>
+<text class="sc" x="715" y="475" text-anchor="end">6/6 · 4/4</text>
+<line x1="405" y1="485" x2="715" y2="485" stroke="var(--rule)"/>
+<text class="lib" x="405" y="504">openpyxl</text>
+<text class="note" x="405" y="523">merged cells · cached formulas · hidden sheets</text>
+<text class="note" x="405" y="547" fill="var(--accent)">already the right library</text>
+<rect class="bx" x="756" y="452" width="340" height="118" rx="8"/>
+<text class="f" x="771" y="475">.docx .odt</text>
+<text class="sc" x="1081" y="475" text-anchor="end">6/6</text>
+<line x1="771" y1="485" x2="1081" y2="485" stroke="var(--rule)"/>
+<text class="lib" x="771" y="504">python-docx</text>
+<text class="note" x="771" y="523">w:sdt content controls · textboxes · tables</text>
+<text class="gone" x="771" y="547">header + footer stories never read</text>
+<rect class="bx" x="24" y="582" width="340" height="118" rx="8"/>
+<text class="f" x="39" y="605">.pptx</text>
+<text class="sc" x="349" y="605" text-anchor="end">4/4</text>
+<line x1="39" y1="615" x2="349" y2="615" stroke="var(--rule)"/>
+<text class="lib" x="39" y="634">python-pptx</text>
+<text class="note" x="39" y="653">slide text · tables · speaker notes</text>
+<text class="note" x="39" y="677" fill="var(--accent)">already the right library</text>
+<rect class="bx" x="390" y="582" width="340" height="118" rx="8"/>
+<text class="f" x="405" y="605">.eml .mbox</text>
+<text class="sc" x="715" y="605" text-anchor="end">5/5</text>
+<line x1="405" y1="615" x2="715" y2="615" stroke="var(--rule)"/>
+<text class="lib" x="405" y="634">stdlib email</text>
+<text class="note" x="405" y="653">quoted-printable · multipart · RFC-2047 subject</text>
+<text class="note" x="405" y="677" fill="var(--accent)">already the right library</text>
+<rect class="bx" x="756" y="582" width="340" height="118" rx="8"/>
+<text class="f" x="771" y="605">.html .htm</text>
+<text class="sc" x="1081" y="605" text-anchor="end">4/4</text>
+<line x1="771" y1="615" x2="1081" y2="615" stroke="var(--rule)"/>
+<text class="lib" x="771" y="634">BeautifulSoup</text>
+<text class="note" x="771" y="653">script/style suppressed · tables · lists</text>
+<text class="note" x="771" y="677" fill="var(--accent)">already the right library</text>
+<rect class="bx" x="24" y="712" width="340" height="118" rx="8"/>
+<text class="f" x="39" y="735">.vtt .srt</text>
+<text class="sc" x="349" y="735" text-anchor="end">4/4</text>
+<line x1="39" y1="745" x2="349" y2="745" stroke="var(--rule)"/>
+<text class="lib" x="39" y="764">webvtt-py</text>
+<text class="note" x="39" y="783">voice span → speaker · NOTE/STYLE dropped</text>
+<text class="gone" x="39" y="807">line-filter regex — no &lt;v&gt;, cue ids became atoms</text>
+<rect class="bx" x="390" y="712" width="340" height="118" rx="8"/>
+<text class="f" x="405" y="735">.msg .vsdx .mpp</text>
+<text class="sc-n" x="715" y="735" text-anchor="end">declared</text>
+<line x1="405" y1="745" x2="715" y2="745" stroke="var(--rule)"/>
+<text class="lib" x="405" y="764">extract-msg</text>
+<text class="note" x="405" y="783">declared in pyproject so the image installs it</text>
+<text class="note" x="405" y="807" fill="var(--accent)">already the right library</text>
+<rect class="bx" x="756" y="712" width="340" height="118" rx="8"/>
+<text class="f" x="771" y="735">images</text>
+<text class="sc" x="1081" y="735" text-anchor="end">replaced</text>
+<line x1="771" y1="745" x2="1081" y2="745" stroke="var(--rule)"/>
+<text class="lib" x="771" y="764">Azure DI prebuilt-read</text>
+<text class="note" x="771" y="783">markers say “unread region here”, not a question</text>
+<text class="gone" x="771" y="807">local OCR chain</text>
+<rect class="bx-s" x="24" y="846" width="1072" height="118" rx="8"/>
+<text class="z" x="40" y="868">SHARED BY EVERY DECODER</text>
+<text class="f" x="40" y="894">app/core/filetype.py</text>
+<text class="sc" x="360" y="894" text-anchor="end">8/8 misnamed files</text>
+<text class="lib" x="40" y="913">puremagic + ZIP member inspection</text>
+<text class="gone" x="40" y="934">suffix-only routing</text>
+<text class="f" x="400" y="894">app/core/dates.py</text>
+<text class="sc" x="720" y="894" text-anchor="end">14/14, 0 FP</text>
+<text class="lib" x="400" y="913">shape gate → dateutil</text>
+<text class="gone" x="400" y="934">_DATE_RE 1/14 · dateutil alone 3 false positives</text>
+<text class="f" x="760" y="894">app/core/sentences.py</text>
+<text class="sc" x="1080" y="894" text-anchor="end">6/6</text>
+<text class="lib" x="760" y="913">pysbd</text>
+<text class="gone" x="760" y="934">(?&lt;=[.!?])\s+ — split Part No. from 77-K298</text>
+<text class="al" x="40" y="954">each soft-imported with a working fallback — a missing one degrades quality, it never raises</text>
+<line x1="560" y1="972" x2="560" y2="1004" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mg-ar-a)"/>
+<text class="z" x="24" y="1030">3 &#183; THE SEAM</text>
+<text class="zt" x="24" y="1052">Atoms &#8212; where decoding stops and opinion starts</text>
+<text class="zs" x="24" y="1071">Every atom carries a locator, which is what makes a receipt possible. This is the line the heads sit above, and the reason it has to be right before any of them are trained.</text>
+<rect class="bx" x="24" y="1090" width="330" height="128" rx="8" stroke="var(--accent)"/>
+<text class="f" x="40" y="1113">EvidenceAtom</text>
+<line x1="40" y1="1123" x2="338" y2="1123" stroke="var(--rule)"/>
+<text class="note" x="40" y="1142">raw_text &#183; normalized_text</text>
+<text class="note" x="40" y="1160">atom_type  &#8212; an opinion</text>
+<text class="note" x="40" y="1178">locator    &#8212; page/bbox, sheet/row/col, story</text>
+<text class="note" x="40" y="1196">confidence &#183; review_status &#183; parser_version</text>
+<text class="al" x="40" y="1212">no locator = no receipt = nothing can cite it</text>
+<rect class="bx" x="392" y="1090" width="330" height="128" rx="8"/>
+<text class="f" x="408" y="1113">typed atoms</text>
+<line x1="408" y1="1123" x2="706" y2="1123" stroke="var(--rule)"/>
+<text class="note" x="408" y="1142">physical_site &#183; bom_line &#183; constraint &#183; decision</text>
+<text class="note" x="408" y="1160">exclusion &#183; quantity &#183; pricing_assumption &#8230;</text>
+<text class="note" x="408" y="1184">a judgement about what this content <tspan font-style="italic">is</tspan>.</text>
+<text class="note" x="408" y="1202">Preferred downstream. Correctable.</text>
+<rect class="bx" x="760" y="1090" width="336" height="128" rx="8" stroke="var(--accent)"/>
+<text class="f" x="776" y="1113">coverage floor <tspan class="sc">new</tspan></text>
+<line x1="776" y1="1123" x2="1080" y2="1123" stroke="var(--rule)"/>
+<text class="note" x="776" y="1142">raw_table_row &#183; raw_utterance</text>
+<text class="note" x="776" y="1160">the untouched unit, lower confidence</text>
+<text class="note" x="776" y="1184">rides <tspan font-weight="600">alongside</tspan> the typed atom, never instead</text>
+<text class="note" x="776" y="1202">of it. Nothing decoded is ever discarded.</text>
+<rect class="bx-s" x="24" y="1234" width="1072" height="74" rx="8" stroke="var(--dead)"/>
+<text class="f" x="40" y="1256" fill="var(--dead)">two real losses &#8212; and two the audit imagined</text>
+<text class="note" x="40" y="1276">Real: the docx header and footer were never read at all, and a keyword gate dropped 3 of 4 transcript cues so they left <tspan font-weight="600">no atom in any field</tspan>. <tspan fill="var(--dead)" font-weight="600">5 of 49</tspan> planted facts.</text>
+<text class="note" x="40" y="1294">Imagined: xlsx and csv looked like they dropped columns because the audit searched <tspan font-family="IBM Plex Mono,monospace">raw_text</tspan>. Every column was in <tspan font-family="IBM Plex Mono,monospace">value["cells"]</tspan> the whole time. That work was reverted.</text>
+<text class="z" x="24" y="1330">4 &#183; AFTER THE ATOMS</text>
+<text class="zt" x="24" y="1352">Forty stages run between a parsed atom and a written packet</text>
+<text class="zs" x="24" y="1371">The parsers were close to right out of the box. Nearly every defect found this session was in here &#8212; in the stages that filter, merge and</text>
+<text class="zs" x="24" y="1388">re-type atoms after parsing. Seven are marked; each was deleting or corrupting evidence that the parser had read correctly.</text>
+<rect class="bx" x="24" y="1426" width="209" height="26" rx="5"/>
+<text class="al" x="31" y="1443">01 discover_artifacts</text>
+<rect class="bx-s" x="239" y="1426" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="246" y="1443" fill="var(--dead)">02 parse_artifacts</text>
+<rect class="bx" x="454" y="1426" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1443">03 email_threading</text>
+<rect class="bx" x="669" y="1426" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1443">04 quoted_history_dedup</text>
+<rect class="bx" x="884" y="1426" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1443">05 candidate_adjudication</text>
+<rect class="bx-s" x="24" y="1461" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="31" y="1478" fill="var(--dead)">06 source_replay</text>
+<rect class="bx" x="239" y="1461" width="209" height="26" rx="5"/>
+<text class="al" x="246" y="1478">07 pdf_image_vision</text>
+<rect class="bx" x="454" y="1461" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1478">08 confidence_floor</text>
+<rect class="bx" x="669" y="1461" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1478">09 prose_list_split</text>
+<rect class="bx" x="884" y="1461" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1478">10 duplicate_atom_collapse</text>
+<rect class="bx" x="24" y="1496" width="209" height="26" rx="5"/>
+<text class="al" x="31" y="1513">11 execution_boilerplate_drop</text>
+<rect class="bx" x="239" y="1496" width="209" height="26" rx="5"/>
+<text class="al" x="246" y="1513">12 table_rollup</text>
+<rect class="bx" x="454" y="1496" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1513">13 enrich_entities</text>
+<rect class="bx-s" x="669" y="1496" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="676" y="1513" fill="var(--dead)">14 pre_classify_dedup</text>
+<rect class="bx" x="884" y="1496" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1513">15 typed_atom_classification</text>
+<rect class="bx" x="24" y="1531" width="209" height="26" rx="5"/>
+<text class="al" x="31" y="1548">16 atom_type_sanity</text>
+<rect class="bx" x="239" y="1531" width="209" height="26" rx="5"/>
+<text class="al" x="246" y="1548">17 span_admission</text>
+<rect class="bx" x="454" y="1531" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1548">18 open_question_resolution</text>
+<rect class="bx" x="669" y="1531" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1548">19 site_geo_fallback</text>
+<rect class="bx-s" x="884" y="1531" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="891" y="1548" fill="var(--dead)">20 receipt_backfill</text>
+<rect class="bx" x="24" y="1566" width="209" height="26" rx="5"/>
+<text class="al" x="31" y="1583">21 semantic_dedup</text>
+<rect class="bx" x="239" y="1566" width="209" height="26" rx="5"/>
+<text class="al" x="246" y="1583">22 note_provenance_backfill</text>
+<rect class="bx" x="454" y="1566" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1583">23 task_atom_backfill</text>
+<rect class="bx" x="669" y="1566" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1583">24 site_task_anchor</text>
+<rect class="bx" x="884" y="1566" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1583">25 task_tier_classification</text>
+<rect class="bx" x="24" y="1601" width="209" height="26" rx="5"/>
+<text class="al" x="31" y="1618">26 quote_context_head</text>
+<rect class="bx-s" x="239" y="1601" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="246" y="1618" fill="var(--dead)">27 quote_line_head</text>
+<rect class="bx" x="454" y="1601" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1618">28 hardware_evidence_backfill</text>
+<rect class="bx" x="669" y="1601" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1618">29 site_facility_head</text>
+<rect class="bx" x="884" y="1601" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1618">30 noise_suppression</text>
+<rect class="bx-s" x="24" y="1636" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="31" y="1653" fill="var(--dead)">31 substance_gate</text>
+<rect class="bx" x="239" y="1636" width="209" height="26" rx="5"/>
+<text class="al" x="246" y="1653">32 confidence_recalibration</text>
+<rect class="bx" x="454" y="1636" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1653">33 entity_resolution</text>
+<rect class="bx" x="669" y="1636" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1653">34 pm_answers</text>
+<rect class="bx" x="884" y="1636" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1653">35 graph_build</text>
+<rect class="bx-s" x="24" y="1671" width="209" height="26" rx="5" stroke="var(--dead)" stroke-width="1.4"/>
+<text class="al" x="31" y="1688" fill="var(--dead)">36 packetize</text>
+<rect class="bx" x="239" y="1671" width="209" height="26" rx="5"/>
+<text class="al" x="246" y="1688">37 packet_certificates</text>
+<rect class="bx" x="454" y="1671" width="209" height="26" rx="5"/>
+<text class="al" x="461" y="1688">38 confidence_calibration</text>
+<rect class="bx" x="669" y="1671" width="209" height="26" rx="5"/>
+<text class="al" x="676" y="1688">39 quality_gates</text>
+<rect class="bx" x="884" y="1671" width="209" height="26" rx="5"/>
+<text class="al" x="891" y="1688">40 persistence</text>
+<rect class="bx-s" x="24" y="1720" width="1072" height="150" rx="8" stroke="var(--dead)"/>
+<text class="f" x="40" y="1742" fill="var(--dead)">what each marked stage was doing to the evidence</text>
+<text class="note" x="40" y="1764"><tspan font-family="IBM Plex Mono,monospace" fill="var(--dead)">06 source_replay</tspan>  dispatched on the locator before the file type, so a PDF was verified as plain text. All 18 receipts failed and the compile aborted.</text>
+<text class="note" x="40" y="1782"><tspan font-family="IBM Plex Mono,monospace" fill="var(--dead)">14 pre_classify_dedup</tspan>  a decision that also states an exclusion lost to it on priority, so the meeting_decision family could never form at all.</text>
+<text class="note" x="40" y="1800"><tspan font-family="IBM Plex Mono,monospace" fill="var(--dead)">20 receipt_backfill</tspan>  runs here; stage 27 still mints atoms. One bom_line with no receipt is a hard validation ERROR that fails the entire compile.</text>
+<text class="note" x="40" y="1818"><tspan font-family="IBM Plex Mono,monospace" fill="var(--dead)">31 substance_gate</tspan>  collapsed every quantity in a deal into one group and kept the largest. Conflict detection produced zero edges; a drop schedule reported 56 where the truth was 6.</text>
+<text class="note" x="40" y="1836"><tspan font-family="IBM Plex Mono,monospace" fill="var(--dead)">36 packetize</tspan>  could not find the customer&#8217;s exclusion, so a PM&#8217;s meeting note (rank 55) governed her own written instruction (rank 90).</text>
+<text class="note" x="40" y="1854"><tspan font-family="IBM Plex Mono,monospace" fill="var(--dead)">02 parse_artifacts</tspan>  the parsers themselves: header/footer stories unread, transcript utterances dropped, &lt;v Speaker&gt; unparsed. 49/49 and 30/31 now.</text>
+<line x1="560" y1="1916" x2="560" y2="1948" stroke="var(--never)" stroke-width="1.6" marker-end="url(#mg-ar)"/>
+<text class="z" x="24" y="1974">5 &#183; INTERPRET</text>
+<text class="zt" x="24" y="1996">Ours. Always learns.</text>
+<text class="zs" x="24" y="2015">Everything above this line is the same for every customer. Everything below it is the product.</text>
+<rect class="bx" x="24" y="2034" width="330" height="112" rx="8" stroke="var(--never)"/>
+<text class="f" x="40" y="2057">baseline &#8212; rules</text>
+<line x1="40" y1="2067" x2="338" y2="2067" stroke="var(--rule)"/>
+<text class="note" x="40" y="2086">what actually decides today</text>
+<text class="note" x="40" y="2104">semantic rules, prototypes, schema registry</text>
+<text class="note" x="40" y="2122">deterministic, inspectable, no training data</text>
+<text class="al" x="40" y="2140">this is the thing a head has to beat</text>
+<rect class="bx" x="392" y="2034" width="330" height="112" rx="8" stroke="var(--never)"/>
+<text class="f" x="408" y="2057">heads</text>
+<line x1="408" y1="2067" x2="706" y2="2067" stroke="var(--rule)"/>
+<text class="note" x="408" y="2086">type &#183; span &#183; norm &#183; router &#183; calibration</text>
+<text class="note" x="408" y="2104">question-quality &#183; relation GNN</text>
+<text class="note" x="408" y="2122">all read atoms + locators, none read bytes</text>
+<text class="al" x="408" y="2140">status of each: _HEAD_LEDGER.md</text>
+<rect class="bx" x="760" y="2034" width="336" height="112" rx="8" stroke="var(--never)"/>
+<text class="f" x="776" y="2057">the correction loop</text>
+<line x1="776" y1="2067" x2="1080" y2="2067" stroke="var(--rule)"/>
+<text class="note" x="776" y="2086">PM fixes a field &#8594; gold row &#8594; retrain</text>
+<text class="note" x="776" y="2104">a PM answer becomes governing evidence</text>
+<text class="note" x="776" y="2122">corrections pool across formats, because they</text>
+<text class="note" x="776" y="2140">land on <tspan font-weight="600">atoms</tspan>, not on a per-parser shape</text>
+<rect class="bx-s" x="24" y="2164" width="1072" height="66" rx="8" stroke="var(--accent)"/>
+<text class="f" x="40" y="2186" fill="var(--accent)">why the seam had to come first</text>
+<text class="note" x="40" y="2206">A correction is only reusable if every format lands in the same shape. Fix the decoders after training and every pooled correction is keyed to a</text>
+<text class="note" x="40" y="2224">shape that no longer exists &#8212; so the order is not a preference, it is the only order in which the corrections survive.</text>
+<line x1="24" y1="2254" x2="1096" y2="2254" stroke="var(--rule)"/>
+<text class="al" x="24" y="2274"><tspan fill="var(--dead)" text-decoration="line-through">struck through</tspan> = replaced &#183; <tspan fill="var(--accent)">teal</tspan> = landed and measured &#183; <tspan fill="var(--never)">blue</tspan> = the learning layer, not yet trained</text>
+<text class="al" x="24" y="2292">every score is recovered planted facts on a file built to break that parser</text>
+</svg>
+<figcaption>One artifact, end to end. Zones 0&ndash;2 are bought and never learn; zone 4 is ours and always does; zone 3 is the seam that makes the two separable.</figcaption>
+</figure>
+</div>
+<!--/MASTER-GRAPH-->
+
+<h2><span class="n">PLANE ONE &mdash; BEFORE ATOMS</span>Pre-parse, routing, and decode</h2>
+<p class="lede">A file arrives. It is routed by its bytes, then every page is routed <i>again</i> by how much text it has &mdash; and that second routing is the fact that governs everything, because the three paths do completely different work.</p>
+
+<div class="plane a">
+<p class="hd">Plane one &middot; bytes &rarr; atoms</p>
+
+<figure>
+<svg viewBox="0 0 1180 620" role="img" aria-label="A file is routed by magic bytes, then every page is routed into one of three paths -- text length picks the band, and inside the middle band image count and prose, list or form shape decide: OCR for scanned pages, the box detector for mid-band pages, and text-rich sectioning for dense pages. Document Intelligence runs once per document and feeds all three. All converge on atoms.">
+<defs>
+  <marker id="k" markerWidth="9" markerHeight="7" refX="8.4" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="currentColor"/></marker>
+  <marker id="g" markerWidth="9" markerHeight="7" refX="8.4" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#0E6E62"/></marker>
+  <marker id="o" markerWidth="9" markerHeight="7" refX="8.4" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#9A6209"/></marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor">
+
+  <!-- ROW 1: intake -->
+  <rect x="14" y="238" width="92" height="54" rx="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <text x="60" y="261" text-anchor="middle" font-size="12">file</text>
+  <text x="60" y="277" text-anchor="middle" font-size="9.5" opacity=".6">any name</text>
+  <line x1="106" y1="265" x2="152" y2="265" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+
+  <rect x="154" y="232" width="126" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <text x="217" y="254" text-anchor="middle">magic bytes</text>
+  <text x="217" y="270" text-anchor="middle" font-size="9.5" opacity=".62">%PDF- · PK · RFC822</text>
+  <text x="217" y="286" text-anchor="middle" font-size="9.5" opacity=".62">the name is ignored</text>
+  <line x1="280" y1="265" x2="326" y2="265" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+
+  <!-- the router, flagged -->
+  <rect x="328" y="222" width="132" height="86" rx="6" fill="none" stroke="#9A6209" stroke-width="2"/>
+  <text x="394" y="245" text-anchor="middle" font-size="12" fill="#9A6209" font-weight="600">page router</text>
+  <text x="394" y="262" text-anchor="middle" font-size="9.5" fill="#9A6209">length picks the band</text>
+  <text x="394" y="278" text-anchor="middle" font-size="9.5" fill="#9A6209">80 / 1200 chars</text>
+  <text x="394" y="296" text-anchor="middle" font-size="9" fill="#9A6209" opacity=".9">thresholds unvalidated</text>
+
+  <!-- ROW 2: three paths, well separated -->
+  <line x1="460" y1="240" x2="556" y2="118" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+  <line x1="460" y1="265" x2="556" y2="265" stroke="#9A6209" stroke-width="1.9" marker-end="url(#o)"/>
+  <line x1="460" y1="290" x2="556" y2="412" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+
+  <rect x="558" y="74" width="288" height="88" rx="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <text x="702" y="97" text-anchor="middle" font-size="12">&lt; 80 chars &mdash; scanned</text>
+  <text x="702" y="115" text-anchor="middle" font-size="10">OCR chain</text>
+  <text x="702" y="132" text-anchor="middle" font-size="9.5" fill="#0E6E62">prebuilt-read tried first</text>
+  <text x="702" y="149" text-anchor="middle" font-size="9.5" opacity=".55">then tesseract / easyocr / Ollama</text>
+
+  <rect x="558" y="222" width="288" height="88" rx="6" fill="#FAF0DE" stroke="#9A6209" stroke-width="1.7"/>
+  <text x="702" y="245" text-anchor="middle" font-size="12" fill="#9A6209" font-weight="600">80&ndash;1199 &mdash; mid-band</text>
+  <text x="702" y="263" text-anchor="middle" font-size="10" fill="#9A6209">orbitbrief_page_os box detector</text>
+  <text x="702" y="280" text-anchor="middle" font-size="9.5" fill="#9A6209">detect boxes &rarr; clip-read each</text>
+  <text x="702" y="297" text-anchor="middle" font-size="9.5" fill="#9A6209">bullet-lists · notes · 25,551 lines</text>
+
+  <rect x="558" y="368" width="288" height="88" rx="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <text x="702" y="391" text-anchor="middle" font-size="12">&ge; 1200 chars &mdash; dense</text>
+  <text x="702" y="409" text-anchor="middle" font-size="10">_text_rich_sections</text>
+  <text x="702" y="426" text-anchor="middle" font-size="9.5" opacity=".62">prose sectioning + ruled tables</text>
+  <text x="702" y="443" text-anchor="middle" font-size="9.5" opacity=".62">the box detector never runs</text>
+
+  <!-- page-share column, clear of everything -->
+  <text x="866" y="122" font-size="10.5" fill="#0E6E62">61 pp</text>
+  <text x="866" y="137" font-size="10" opacity=".55">16%</text>
+  <text x="866" y="270" font-size="10.5" fill="#9A6209">95 pp</text>
+  <text x="866" y="285" font-size="10" opacity=".55">25%</text>
+  <text x="866" y="416" font-size="10.5">218 pp</text>
+  <text x="866" y="431" font-size="10" opacity=".55">58%</text>
+
+  <!-- DI spine along the bottom, feeding all three -->
+  <rect x="328" y="530" width="518" height="46" rx="6" fill="#E3F1EE" stroke="#0E6E62" stroke-width="1.8"/>
+  <text x="587" y="549" text-anchor="middle" font-size="11.5" fill="#0E6E62" font-weight="600">Document Intelligence · prebuilt-layout · one call per document</text>
+  <text x="587" y="565" text-anchor="middle" font-size="9.5" fill="#0E6E62">tables · reading-order text · paragraph roles · bounding rects</text>
+
+  <line x1="470" y1="530" x2="470" y2="166" stroke="#0E6E62" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#g)"/>
+  <line x1="530" y1="530" x2="530" y2="314" stroke="#0E6E62" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#g)"/>
+  <line x1="800" y1="530" x2="800" y2="460" stroke="#0E6E62" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#g)"/>
+
+  <!-- converge -->
+  <line x1="912" y1="118" x2="986" y2="242" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+  <line x1="912" y1="265" x2="986" y2="265" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+  <line x1="912" y1="412" x2="986" y2="290" stroke="currentColor" stroke-width="1.1" marker-end="url(#k)"/>
+
+  <rect x="988" y="230" width="124" height="72" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="1050" y="254" text-anchor="middle" font-size="12">atoms</text>
+  <text x="1050" y="271" text-anchor="middle" font-size="9.5" opacity=".62">+ receipts</text>
+  <text x="1050" y="287" text-anchor="middle" font-size="9.5" opacity=".62">+ page/bbox locator</text>
+
+  <text x="587" y="600" text-anchor="middle" font-size="10" opacity=".55">374 pages across 12 documents · routed per PAGE, so one PDF commonly uses all three paths</text>
+</g>
+</svg>
+<figcaption>Document Intelligence is a spine, not a branch &mdash; one call per document feeding whichever path each page takes.</figcaption>
+</figure>
+</div>
+
+<h3>Every format, not just PDF</h3>
+<p class="lede">22 formats route through the same intake. PDF gets the attention because it is the only one that does not declare its own structure &mdash; but it is a minority of the parser surface.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>format</th><th>parser</th><th>reads with</th><th>state</th></tr></thead>
+<tbody>
+<tr><td class="m">.pdf</td><td class="m">orbitbrief_pdf <span class="num">10,129</span></td><td>Doc Intelligence + fitz + orbitbrief_page_os</td><td><span class="tag t-new">audited &amp; replaced</span></td></tr>
+<tr><td class="m">.xlsx .csv .ods</td><td class="m">xlsx_parser <span class="num">4,998</span></td><td><code>openpyxl</code> + a formula evaluator</td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.docx .odt</td><td class="m">docx_parser <span class="num">1,838</span></td><td><code>python-docx</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">quotes (xlsx-shaped)</td><td class="m">quote_parser <span class="num">1,877</span></td><td><code>openpyxl</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.md .txt</td><td class="m">markdown_parser <span class="num">827</span></td><td>stdlib</td><td><span class="tag t-cand">nothing to buy</span></td></tr>
+<tr><td class="m">.html .mbox .rtf .ics .zip</td><td class="m">universal_parsers <span class="num">873</span></td><td><code>BeautifulSoup</code>, stdlib</td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.msg .vsdx .mpp</td><td class="m">_universal_extras <span class="num">645</span></td><td><code>extract-msg</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.eml</td><td class="m">email_parser + email_body <span class="num">805</span></td><td>stdlib <code>email</code> + <code>BeautifulSoup</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.vtt .srt</td><td class="m">transcript_parser <span class="num">528</span></td><td>stdlib</td><td><span class="tag t-cand">nothing to buy</span></td></tr>
+<tr><td class="m">.pptx</td><td class="m">pptx_parser <span class="num">337</span></td><td><code>python-pptx</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.png .jpg .heic .tiff &hellip;</td><td class="m">image_parser <span class="num">207</span></td><td>OCR chain &rarr; <span class="win">prebuilt-read</span></td><td><span class="tag t-new">replaced</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>&ldquo;Only PDF needed replacing&rdquo; was wrong, and the hard files proved it.</b> The claim was that a spreadsheet declares its cells and a docx declares its runs, so there is no recovery gap. True of the <i>libraries</i> &mdash; and irrelevant, because the losses were never in the library. They were in our own code sitting on top of it.</p>
+<p>Eight files were built with <b>49 facts planted where they are easy to lose</b>. Unmodified code already recovers <b>44</b>: the libraries get everything, and our layer loses exactly two things &mdash; the Word header/footer story, and three transcript cues. With those fixed, <b>49 of 49</b>.</p></div>
+
+<div class="callout">
+<p><b>The routing was half-right.</b> The ZIP-member check is real and correct &mdash; <code>.docx</code>, <code>.xlsx</code> and <code>.pptx</code> all begin <code>PK</code>, and the router opens the archive to find <code>word/</code>, <code>xl/</code> or <code>ppt/</code>. But it only ran <b>after</b> suffix routing had already failed to find any parser, and it covered binary formats only.</p>
+<p>So a <code>.docx</code> renamed <code class="bad">contract.pdf</code> went to the PDF parser, and an <code>.eml</code> saved as <code class="bad">message</code> reached <b>no parser at all</b> &mdash; both ordinary, both silent. Content sniffing now runs first, covers the text formats by their own opening declaration (<code>WEBVTT</code>, <code>BEGIN:VCALENDAR</code>, RFC&nbsp;5322 headers), and overrules a suffix that contradicts it. <span class="win">8 of 8</span> misnamed files now route correctly.</p></div>
+
+
+<h3>Audited on hard files &mdash; what each moat actually recovers</h3>
+<p class="lede">Seven documents built to break seven parsers, with 49 facts planted exactly where each format loses things: a merged cell, a hidden sheet, a Word header, speaker notes, a quoted-printable body, a WebVTT voice tag, a rotated PDF sidebar. Every atom is searched in full &mdash; not just <code>raw_text</code> &mdash; because the first pass did exactly that and reported two losses that were not real.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>moat</th><th>before</th><th>after</th><th>what was being lost, and why</th></tr></thead>
+<tbody>
+<tr><td class="m">.docx</td><td><span class="bad">4 / 6</span></td><td><span class="win">6 / 6</span></td><td>Header and footer are separate Word <i>stories</i>, invisible to <code>document.paragraphs</code>. The customer name and the confidentiality basis were in <b>no field of any atom</b>.</td></tr>
+<tr><td class="m">.vtt</td><td><span class="bad">1 / 4</span></td><td><span class="win">4 / 4</span></td><td>No support for <code>&lt;v Speaker&gt;</code> — the W3C tag Teams, Zoom and Fireflies emit. Then a keyword gate dropped every unmatched utterance, emitting <b>no atom at all</b>.</td></tr>
+<tr><td class="m">.xlsx .csv</td><td colspan="2"><span class="win">6 / 6 &middot; 4 / 4</span></td><td><b>Already clean.</b> I reported these as dropping <code>Qty</code> and <code>Notes</code>. They were not — every column was in <code>value["cells"]</code>, and the rate-card summary carries its rows in <code>value["rows"]</code>. My audit searched <code>raw_text</code>, which is a display field. <b>That change was reverted.</b></td></tr>
+<tr><td class="m">.pdf</td><td class="m">orbitbrief_pdf <span class="num">10,129</span></td><td>Doc Intelligence + fitz + orbitbrief_page_os</td><td><span class="tag t-new">audited &amp; replaced</span></td></tr>
+<tr><td class="m">.xlsx .csv .ods</td><td class="m">xlsx_parser <span class="num">4,998</span></td><td><code>openpyxl</code> + a formula evaluator</td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.docx .odt</td><td class="m">docx_parser <span class="num">1,838</span></td><td><code>python-docx</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">quotes (xlsx-shaped)</td><td class="m">quote_parser <span class="num">1,877</span></td><td><code>openpyxl</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.md .txt</td><td class="m">markdown_parser <span class="num">827</span></td><td>stdlib</td><td><span class="tag t-cand">nothing to buy</span></td></tr>
+<tr><td class="m">.html .mbox .rtf .ics .zip</td><td class="m">universal_parsers <span class="num">873</span></td><td><code>BeautifulSoup</code>, stdlib</td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.msg .vsdx .mpp</td><td class="m">_universal_extras <span class="num">645</span></td><td><code>extract-msg</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.eml</td><td class="m">email_parser + email_body <span class="num">805</span></td><td>stdlib <code>email</code> + <code>BeautifulSoup</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.vtt .srt</td><td class="m">transcript_parser <span class="num">528</span></td><td>stdlib</td><td><span class="tag t-cand">nothing to buy</span></td></tr>
+<tr><td class="m">.pptx</td><td class="m">pptx_parser <span class="num">337</span></td><td><code>python-pptx</code></td><td><span class="tag t-cand">library is right</span></td></tr>
+<tr><td class="m">.png .jpg .heic .tiff &hellip;</td><td class="m">image_parser <span class="num">207</span></td><td>OCR chain &rarr; <span class="win">prebuilt-read</span></td><td><span class="tag t-new">replaced</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>&ldquo;Only PDF needed replacing&rdquo; was wrong, and the hard files proved it.</b> The claim was that a spreadsheet declares its cells and a docx declares its runs, so there is no recovery gap. True of the <i>libraries</i> &mdash; and irrelevant, because the losses were never in the library. They were in our own code sitting on top of it.</p>
+<p>Seven files were built with <b>33 facts planted where they are easy to lose</b>. First run recovered <b>24</b>. The libraries got every one of them; our layer then discarded nine.</p></div>
+
+<div class="callout">
+<p><b>The routing was half-right.</b> The ZIP-member check is real and correct &mdash; <code>.docx</code>, <code>.xlsx</code> and <code>.pptx</code> all begin <code>PK</code>, and the router opens the archive to find <code>word/</code>, <code>xl/</code> or <code>ppt/</code>. But it only ran <b>after</b> suffix routing had already failed to find any parser, and it covered binary formats only.</p>
+<p>So a <code>.docx</code> renamed <code class="bad">contract.pdf</code> went to the PDF parser, and an <code>.eml</code> saved as <code class="bad">message</code> reached <b>no parser at all</b> &mdash; both ordinary, both silent. Content sniffing now runs first, covers the text formats by their own opening declaration (<code>WEBVTT</code>, <code>BEGIN:VCALENDAR</code>, RFC&nbsp;5322 headers), and overrules a suffix that contradicts it. <span class="win">8 of 8</span> misnamed files now route correctly.</p></div>
+
+
+<h3>Audited on hard files &mdash; what each moat actually recovers</h3>
+<p class="lede">Seven documents built to break seven parsers, with 33 facts planted exactly where each format loses things: a merged cell, a hidden sheet, a Word header, speaker notes, a quoted-printable body, a WebVTT voice tag. A miss here names a defect rather than lowering a score.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>moat</th><th>before</th><th>after</th><th>what was being lost, and why</th></tr></thead>
+<tbody>
+<tr><td class="m">.xlsx</td><td><span class="bad">5 / 6</span></td><td><span class="win">6 / 6</span></td><td>Sheet classed as a <b>site roster</b> &rarr; the specialised extractor returned early, so <code>Qty</code> got no atom. The rate card collapsed to <i>&ldquo;1 pricing line&rdquo;</i> and the role name was gone.</td></tr>
+<tr><td class="m">.csv</td><td><span class="bad">1 / 4</span></td><td><span class="win">4 / 4</span></td><td>Same root cause &mdash; CSV shares the roster path. Emitted <code>site_id</code> and <code>facility</code>; dropped <code>Notes</code>, where escort and access constraints live.</td></tr>
+<tr><td class="m">.docx</td><td><span class="bad">4 / 6</span></td><td><span class="win">6 / 6</span></td><td>Header and footer are separate Word <i>stories</i>, invisible to <code>document.paragraphs</code>. The customer name and the confidentiality basis were never read.</td></tr>
+<tr><td class="m">.vtt</td><td><span class="bad">1 / 4</span></td><td><span class="win">4 / 4</span></td><td>No support for <code>&lt;v Speaker&gt;</code> &mdash; the W3C tag Teams, Zoom and Fireflies emit. Then a keyword gate dropped every unmatched utterance outright.</td></tr>
+<tr><td class="m">.pdf</td><td colspan="2"><span class="win">16 / 16</span></td><td>Separate 3-page adversarial file: two-column reading order, a 90&deg; rotated sidebar, a footnote, page furniture, lines 0.12&Prime; apart. Lost nothing.</td></tr>
+<tr><td class="m">.pptx</td><td colspan="2"><span class="win">4 / 4</span></td><td>Title, textbox, table and <b>speaker notes</b> &mdash; where the margin detail usually hides.</td></tr>
+<tr><td class="m">.eml</td><td colspan="2"><span class="win">5 / 5</span></td><td>Quoted-printable, MIME multipart, RFC-2047 encoded subject, quoted history <i>and</i> signature block.</td></tr>
+<tr><td class="m">.html</td><td colspan="2"><span class="win">4 / 4</span></td><td>Heading, paragraph, table cell, list item; <code>&lt;script&gt;</code> and <code>&lt;style&gt;</code> correctly suppressed.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>What the whole-atom re-audit changed.</b> The first pass searched <code>raw_text</code> and reported 24/33. Searching the entire atom, unmodified code already scores <b>44/49</b> — and with the surviving fixes, <b>49/49</b>.</p>
+<p>Two losses are real, and they share a shape: <b>a plane-two judgement deciding what plane one is allowed to decode.</b> The transcript gate is the clean example — <i>&ldquo;this utterance isn&rsquo;t a decision&rdquo;</i> silently became <i>&ldquo;this utterance was never spoken&rdquo;</i>, leaving no atom, no receipt, nothing recoverable. The docx header/footer is simpler: a story part that was never opened.</p>
+<p>The other two were mine. A collapse that nests its rows in <code>value</code> is not a deletion, and I called it one because I checked the wrong field. The lesson is the harness, not the parser: <b>an audit that greps a display field measures the display, not the data.</b></p>
+</div>
+
+<div class="callout">
+<p><b>The transcript number is the one that survived scrutiny.</b> These utterances produced <b>no atom in any field</b> — not a summary, not a nested row, nothing. On a ten-turn call written in ordinary language the parser kept <span class="bad">5 of 10</span>, and kept the wrong five.</p>
+<p><b>Lost:</b> <i>&ldquo;forty sites before the end of Q3&rdquo;</i> (the scope and the deadline) &middot; <i>&ldquo;the dock is only open until two&rdquo;</i> (an access constraint) &middot; <i>&ldquo;we are not paying for the mid-turn jumpers&rdquo;</i> (a commercial exclusion) &middot; <i>&ldquo;Part 77-K298 &hellip; one hundred ninety two&rdquo;</i> (part number and quantity).</p>
+<p><b>Kept:</b> <i>&ldquo;Understood&rdquo;</i> &middot; <i>&ldquo;Noted&rdquo;</i> &middot; <i>&ldquo;Good&rdquo;</i>. The gate was keeping the chatter and discarding the content, because acknowledgements happen to contain the keywords. Now <span class="win">10 of 10</span>.</p>
+</div>
+
+
+<h3>The other fourteen parsers</h3>
+<p class="lede">The first audit covered the eight formats that carry most deals. These are the rest &mdash; seven files, 31 facts, planted in the places each of these formats specifically loses things: a folded RFC&nbsp;5545 line, an escaped RTF brace, a <code>&gt;From</code> inside an mbox body, a reference-style Markdown link.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>parser</th><th></th><th>survived</th></tr></thead>
+<tbody>
+<tr><td class="m">markdown</td><td><span class="win">7 / 7</span></td><td>YAML front matter, reference links, nested bullets, pipe table, blockquote</td></tr>
+<tr><td class="m">json</td><td><span class="win">6 / 6</span></td><td>four-deep nesting, numbers-as-strings, unicode names</td></tr>
+<tr><td class="m">quote</td><td><span class="win">5 / 5</span></td><td>vendor header block, cached formulas, freight line, dropped-sheet marker</td></tr>
+<tr><td class="m">ics</td><td><span class="win">4 / 4</span></td><td>line folding, escaped commas, and <code>DESCRIPTION</code> &mdash; <b>after a fix</b></td></tr>
+<tr><td class="m">mbox</td><td><span class="win">4 / 4</span></td><td>multi-message, <code>&gt;From</code> escaping, quoted-printable</td></tr>
+<tr><td class="m">rtf</td><td><span class="win">3 / 3</span></td><td>control words, <code>\u246?</code> escapes, nested groups</td></tr>
+<tr><td class="m">zip</td><td><span class="cand">1 / 2</span></td><td>recursive members; the unreadable one now leaves a marker &mdash; <b>by design</b></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>Two real defects, and one that turned out to be policy.</b></p>
+<p><b>ICS discarded <code>DESCRIPTION</code>.</b> It was parsed into the field dict and then never used &mdash; only summary, start, end, location and organiser reached the atom. On a real invite the summary is &ldquo;Cutover window&rdquo; and the description is <i>&ldquo;escort required at the dock, gate code 4512&rdquo;</i> plus the dial-in and the site contact. RFC&nbsp;5545 unfolding was already correct, so the continuation lines were being reassembled and thrown away at the last step.</p>
+<p><b>A ZIP member nobody could parse vanished.</b> The extractor emitted a marker for a child that <i>raised</i>, and did a bare <code>continue</code> for a child with no parser &mdash; while the archive summary still counted it as extracted. That one outcome had no record anywhere. It leaves the same kind of marker now. The content is still unread, which is correct; the difference is the gap is auditable.</p>
+<p><b>And <code>.txt</code> is claimed by no parser &mdash; deliberately.</b> A plain <code>notes.txt</code> reaches nothing, and <code>&ldquo;Customer: Xtra Lease&rdquo;</code> in a readme is won by the transcript parser because the label reads as a speaker. That looked like a bug and is not: <code>test_random_txt_produces_warning_no_crash</code> requires an unrecognised <code>.txt</code> to produce <i>&ldquo;No parser matched artifact&rdquo;</i>. The warning <b>is</b> the coverage record &mdash; saying &ldquo;I did not read this file&rdquo; is more honest than parsing filler into atoms and implying nothing was there. The fix was reverted; the ZIP marker is that same principle applied one level down, where the report genuinely was missing because the ZIP is the artifact.</p>
+</div>
+
+<div class="callout">
+<p><b>Four times the measuring instrument was the thing that was wrong.</b> Worth recording, because each would have shipped as a false finding and two nearly did: reading <code>raw_text</code> instead of the whole atom (reported xlsx and csv dropping columns that were sitting in <code>value["cells"]</code>); a case-sensitive needle against a lowercased blob (reported the quote parser losing a vendor name it had captured); a fixture written with <code>write_text</code> on Windows, turning every <code>\r\n</code> into <code>\r\r\n</code> and breaking the very RFC&nbsp;5545 folding it was testing; and pass/fail detection by string-matching pytest output, which reported a healthy test as failing 5&nbsp;times out of 5.</p>
+<p>On this codebase the instrument has been wrong more often than the code, and the tests encode reasoning that is not visible from the code alone.</p>
+</div>
+
+<h3>Hand-rolled where a library already exists</h3>
+<p class="lede">The other half of the audit: not &ldquo;does it work&rdquo; but &ldquo;why is this ours at all&rdquo;. Four libraries were already installed and imported in <b>zero</b> files.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>ours</th><th>measured</th><th>verdict</th></tr></thead>
+<tbody>
+<tr><td class="m">4 date regexes</td><td><code>_DATE_RE</code> 1/14 &middot; <code>_BARE_DATE_RE</code> 9/14 &middot; <code>dateutil</code> 14/14 <b>but 3 false positives</b> &mdash; it reads <code>192</code> and <code>10-4</code> as dates</td><td><span class="tag t-new">shape gate + dateutil</span> &mdash; <span class="win">14/14, zero FPs</span></td></tr>
+<tr><td class="m">sentence splitter</td><td>found <b>10 sentences where 6 exist</b>; severed <code>Part No.</code> from <code>77-K298</code></td><td><span class="tag t-new">pysbd</span> &mdash; <span class="win">6/6</span></td></tr>
+<tr><td class="m">suffix-only routing</td><td>a docx named <code>contract.pdf</code> &rarr; the PDF parser; an eml named <code>message</code> &rarr; nothing at all</td><td><span class="tag t-new">puremagic + container inspection</span> &mdash; <span class="win">8/8</span></td></tr>
+<tr><td class="m">4 phone regexes</td><td>they disagree with each other; one reads <code class="bad">invoice 2026-05-14 total 18,500</code> as a phone number</td><td><span class="tag t-cand">phonenumbers</span> &mdash; installed, not yet wired</td></tr>
+<tr><td class="m"><code>errors=ignore</code> &times;8</td><td>silently deletes undecodable bytes; the failure mode is a missing character, never an error</td><td><span class="tag t-cand">charset-normalizer + ftfy</span> &mdash; both installed, <b>0 imports</b></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>Already correct, and worth defending.</b> <code>entity_resolution</code> uses <code>rapidfuzz</code> with a documented <code>difflib</code> fallback and a note that the two ratios are mathematically identical. <code>_iter_block_items</code> descends into Word <code>w:sdt</code> content controls &mdash; a real-world template trap most parsers never handle. The xlsx reader opens hidden sheets. None of these are accidents and none should be touched.</p>
+</div>
+
+<div class="callout bad-callout">
+<p><b>The obvious drop-in that would be a mistake.</b> Microsoft&rsquo;s <code>markitdown</code> is installed. Run against the same hard files it scores <b>6/6 on xlsx and 4/4 on pptx</b> &mdash; it ties us where we are already good, <b>fails outright on docx</b>, and returns exactly three fields: <code>markdown</code>, <code>text_content</code>, <code>title</code>.</p>
+<p>No page. No bbox. No sheet or cell. Every receipt in this system is a locator, so adopting it wholesale would trade a 100% corpus for a system that cannot cite anything. The same argument rules out <code>unstructured</code> and <code>docling</code> as replacements. Worth writing down so nobody &ldquo;modernises&rdquo; into it later.</p>
+</div>
+
+<h3>The bbox join &mdash; how the two readers are married</h3>
+<p class="lede">The detector knows <b>where</b> content is and groups bullets and notes. Document Intelligence knows <b>what</b> each region is. Neither knows the other&rsquo;s half, so they are joined on geometry.</p>
+
+<div class="plane a" style="border-left-color:var(--cand)">
+<p class="hd">mid-band pages only &middot; 25% of pages</p>
+<figure>
+<svg viewBox="0 0 1120 300" role="img" aria-label="Detected boxes and Document Intelligence paragraphs are matched by symmetric overlap; a matched box gains a role label.">
+<defs><marker id="m2" markerWidth="9" markerHeight="7" refX="8.6" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="currentColor"/></marker></defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+  <rect x="16" y="40" width="230" height="72" rx="6" fill="#FAF0DE" stroke="#9A6209" stroke-width="1.5"/>
+  <text x="131" y="62" text-anchor="middle" fill="#9A6209" font-weight="600">detector boxes</text>
+  <text x="131" y="79" text-anchor="middle" font-size="9.5" fill="#9A6209">rect in PDF points</text>
+  <text x="131" y="95" text-anchor="middle" font-size="9.5" fill="#9A6209">no label at all</text>
+
+  <rect x="16" y="180" width="230" height="72" rx="6" fill="#E3F1EE" stroke="#0E6E62" stroke-width="1.5"/>
+  <text x="131" y="202" text-anchor="middle" fill="#0E6E62" font-weight="600">DI paragraphs</text>
+  <text x="131" y="219" text-anchor="middle" font-size="9.5" fill="#0E6E62">polygon &rarr; rect &times; 72 (inch&rarr;pt)</text>
+  <text x="131" y="235" text-anchor="middle" font-size="9.5" fill="#0E6E62">role: title/heading/footer/number</text>
+
+  <line x1="246" y1="76" x2="330" y2="130" stroke="#9A6209" stroke-width="1.6" marker-end="url(#m2)"/>
+  <line x1="246" y1="216" x2="330" y2="162" stroke="#0E6E62" stroke-width="1.6" marker-end="url(#m2)"/>
+
+  <rect x="332" y="112" width="290" height="68" rx="6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="477" y="136" text-anchor="middle" font-size="12">symmetric overlap</text>
+  <text x="477" y="153" text-anchor="middle" font-size="9.5" opacity=".7">intersection &divide; area of the SMALLER</text>
+  <text x="477" y="169" text-anchor="middle" font-size="9.5" opacity=".7">accept at &ge; 0.60</text>
+
+  <line x1="622" y1="146" x2="700" y2="146" stroke="currentColor" stroke-width="1.2" marker-end="url(#m2)"/>
+  <rect x="702" y="104" width="200" height="84" rx="6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <text x="802" y="128" text-anchor="middle" font-size="12">box gains a role</text>
+  <text x="802" y="146" text-anchor="middle" font-size="9.5" opacity=".7">boxes: unchanged</text>
+  <text x="802" y="162" text-anchor="middle" font-size="9.5" opacity=".7">blocks: unchanged</text>
+  <text x="802" y="178" text-anchor="middle" font-size="9.5" opacity=".7">atoms: unchanged</text>
+
+  <text x="915" y="130" font-size="10" fill="#0E6E62" font-weight="600">478 labelled</text>
+  <text x="915" y="146" font-size="10" fill="#0E6E62">21 of 28 pages</text>
+  <text x="915" y="164" font-size="9.5" opacity=".55">additive only</text>
+</g>
+</svg>
+<figcaption>A missed match costs a label, never a box &mdash; which is what makes this safe to run on the package producing most atoms.</figcaption>
+</figure>
+
+<div class="callout ok">
+<p><b>The fix that made it work.</b> The first version measured only how much of the DI paragraph fell <i>inside</i> the box, assuming a box wraps a paragraph. Against the real detector that is often backwards:</p>
+<p class="m" style="font-size:12px">DI&nbsp;&nbsp;[499.2, 762.4, 596.7, 774.8] &nbsp;&larr; the footer paragraph<br>box [535.2, 764.8, 598.4, 774.4] &nbsp;&larr; the detected box, <b>smaller</b></p>
+<p>That scored <b>0.49</b> and was rejected, though the box sits almost entirely inside the paragraph. Dividing by the <i>smaller</i> area accepts both shapes and still rejects a pair that merely clips a corner. Result: <b class="win">4 &rarr; 478</b> labels, <b class="win">3 &rarr; 21</b> of 28 pages.</p>
+</div>
+
+<div class="scroll">
+<table>
+<thead><tr><th>role</th><th>boxes</th><th>max box area</th><th>verified as</th></tr></thead>
+<tbody>
+<tr><td class="m">page_footer / header / number</td><td class="num">362</td><td class="num">607&nbsp;pt&sup2;</td><td>bottom band, y&nbsp;765&ndash;774 of 792. Zero boxes over 20,000&nbsp;pt&sup2;.</td></tr>
+<tr><td class="m">title</td><td class="num">135</td><td class="num">184&nbsp;pt&sup2;</td><td><code>[508, 47, 574, 51]</code> &mdash; the running header band.</td></tr>
+<tr><td class="m">section_heading</td><td class="num">4</td><td class="num">12,387&nbsp;pt&sup2;</td><td>full-width heading lines &mdash; correctly the <i>large</i> boxes.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="lede" style="margin-top:6px;font-size:13.5px">A full page is ~484,000&nbsp;pt&sup2;. No content-sized box is labelled furniture, so nothing real can be dropped by acting on these.</p>
+</div>
+
+<h3>Replaced before atoms, and why</h3>
+<div class="scroll">
+<table>
+<thead><tr><th>was</th><th>now</th><th>measured</th><th></th></tr></thead>
+<tbody>
+<tr><td class="m"><s>fitz.find_tables()</s></td><td class="m">prebuilt-layout</td><td>Phillips <span class="num">53</span>&rarr;<span class="num win">233</span> cells. APS roster <span class="num">13</span>&rarr;<span class="num win">964</span> &mdash; it missed a 159-site table entirely.</td><td><span class="tag t-new">landed</span></td></tr>
+<tr><td class="m"><s>page.get_text()</s></td><td class="m">prebuilt-layout</td><td><span class="num">433</span>&rarr;<span class="num win">942</span> lines. Half the document was absent, not corrupted.</td><td><span class="tag t-new">landed</span></td></tr>
+<tr><td class="m"><s>tesseract &rarr; easyocr &rarr; Ollama</s></td><td class="m">prebuilt-read</td><td>The module bought to replace tesseract had <b>zero callers</b>. Drops PyTorch and the Mac hop.</td><td><span class="tag t-new">landed</span></td></tr>
+<tr><td class="m"><s>ViTEncoder from scratch</s></td><td class="m">DINOv2-small</td><td>glyph match <span class="num">62.5%</span>&rarr;<span class="num win">92.2%</span>. The custom net never ran &mdash; no checkpoint existed.</td><td><span class="tag t-new">landed</span></td></tr>
+<tr><td class="m"><s>footer / heading regexes</s></td><td class="m">DI roles</td><td>Letterhead and a running header read as <i>deal content</i> on all 27 pages.</td><td><span class="tag t-new">landed</span></td></tr>
+<tr><td class="m"><s>_DATE_RE</s> ISO-only</td><td class="m">dateutil</td><td><code>5/14/2026</code> dropped silently; <code>2099-99-99</code> accepted.</td><td><span class="tag t-new">landed</span></td></tr>
+<tr><td class="m"><s>_BARE_URL_RE</s></td><td class="m">DI page_footer</td><td>Stripped <code>report.docx</code>, missed the actual letterhead. Backwards both ways.</td><td><span class="tag t-dead">superseded</span></td></tr>
+<tr><td class="m"><s>_HEADING_LINE_RE</s></td><td class="m">&mdash;</td><td>Zero use sites.</td><td><span class="tag t-dead">dead</span></td></tr>
+<tr><td class="m">_BARE_DATE_RE</td><td class="m">kept a regex</td><td>Answers &ldquo;is this line ONLY a date&rdquo; and never needs the value. dateutil reads <code>&quot;12&quot;</code> as a date and would eat content.</td><td><span class="tag t-cand">keep</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Tested for deletion &mdash; and kept</h3>
+<div class="callout">
+<p><code>orbitbrief_page_os</code> is 87 files and 25,551 lines and its name suggests a schematic parser. It is not: <b>33 of 34 import sites are the general PDF path</b>. It was measured against five public RFPs the parser had never seen.</p>
+</div>
+<div class="scroll">
+<table>
+<thead><tr><th>unseen public RFP</th><th>atoms with</th><th>without</th><th>scope_item</th></tr></thead>
+<tbody>
+<tr><td>Austin ISD &mdash; structured cabling</td><td class="num">938</td><td class="num">144</td><td class="num">875 &rarr; 139</td></tr>
+<tr><td>University of Florida &mdash; network infra</td><td class="num">441</td><td class="num">32</td><td class="num">315 &rarr; 28</td></tr>
+<tr><td>HRCSB &mdash; cabling RFP</td><td class="num">102</td><td class="num bad">1</td><td class="num">86 &rarr; <b>0</b></td></tr>
+<tr><td>USAC E-rate &mdash; Cat 2 cabling SOW</td><td class="num">52</td><td class="num bad">0</td><td class="num">38 &rarr; <b>0</b></td></tr>
+<tr><td>City of Savannah &mdash; low-voltage SOW</td><td class="num">67</td><td class="num">30</td><td class="num">45 &rarr; 20</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout">
+<p><b>Caveat, stated because the first version of this page overstated it.</b> That test stubbed <code>build_structured_document</code> entirely, which kills <i>all three</i> page paths &mdash; not just the box detector. Since 58% of pages are text-rich and never touch the detector, a large share of those atoms come from prose sectioning. The package is load-bearing on its 25% of pages; it is not the source of 100% of atoms.</p>
+</div>
+
+<h3>Where this has to be perfect &mdash; because no head can help here</h3>
+<p class="lede">Plane one cannot learn. There is no correction that teaches a router, so every decision it makes has to be right by construction. Measured across 374 pages, these are the places that are not.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>decision</th><th>decided by</th><th>how fragile</th><th>fix without a head</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>Which of three pipelines a page takes</b></td>
+  <td class="m">length band, then page shape</td>
+  <td class="bad"><b>11.5%</b> of pages sit within &plusmn;10% of the 80-char line. A page with 72 chars is OCR&rsquo;d; one with 88 goes to the box detector &mdash; different pipeline, different atoms, 16 characters apart.</td>
+  <td>Route on whether extraction <i>failed</i>, not on a count: image-area ratio, or simply whether Document Intelligence recovered text where fitz recovered none.</td>
+</tr>
+<tr>
+  <td>Which reader wins on a page</td>
+  <td class="m">cells / lines recovered</td>
+  <td>A count is a proxy for quality, not quality. It cannot tell 200 junk cells from 200 good ones.</td>
+  <td>Adequate today because the gap is large (13 vs 964). Worth revisiting only if two readers ever come close.</td>
+</tr>
+<tr>
+  <td>Whether a line is page furniture</td>
+  <td class="m">DI role, then regex</td>
+  <td>Was <b>backwards</b> before roles: stripped <code>report.docx</code>, kept the letterhead. Now correct on the DI path, still regex on the fitz fallback.</td>
+  <td class="win">Largely fixed. The regex remains only where DI did not run.</td>
+</tr>
+<tr>
+  <td>Where a claim came from</td>
+  <td class="m">receipts + locators</td>
+  <td>Must be exact. This is the one thing a competitor cannot copy, and a wrong receipt is worse than no receipt.</td>
+  <td><span class="tag t-never">never learn</span> &mdash; verified by replay, not predicted.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><b>The page router's thresholds are the unvalidated part of plane one</b>, and they are weak in a way that is invisible: nothing errors, a page just quietly goes down a pipeline built for a different kind of page. To be precise about what the router actually does &mdash; the earlier "text length only" label here was wrong &mdash; length picks the <i>band</i>, and inside the mid-band the decision consults image count and whether the page reads as multi-paragraph prose, a bulleted list or a form. The two outer bands are pure length, and that is where the sensitivity lives. 61 pages went to OCR and 95 to the box detector on this corpus &mdash; and 43 of them were within a rounding error of going somewhere else.</p>
+<p>Characters-per-page also does not measure the thing that matters. The question is <i>&ldquo;did text extraction succeed, and does this page carry visual structure?&rdquo;</i> &mdash; and both are directly observable without predicting anything.</p>
+</div>
+
+<h2><span class="n">THE ROUTERS</span>Every decision that picks a path</h2>
+<p class="lede">A router never returns a wrong answer. It returns a <i>plausible</i> one, down a pipeline built for a different kind of document &mdash; which is why every defect below was found by measurement and none of them by a stack trace.</p>
+
+<div class="plane a">
+<p class="hd">Seven routers &middot; what each one decides on</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Router</th><th>Decides</th><th>On</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr>
+  <td class="m">registry.choose_parser</td>
+  <td>Which parser reads the file</td>
+  <td class="m">container &rarr; content &rarr; extension &rarr; <span class="cand">filename (prior)</span></td>
+  <td class="win">Fixed. Evidence now ordered by strength; a name can raise a claim, never create one.</td>
+</tr>
+<tr>
+  <td class="m">pdf page router</td>
+  <td>OCR / box detector / prose, per page</td>
+  <td class="m">length band, then images + page shape</td>
+  <td>Sound. Of 84 pages near the 1200 cutoff, <span class="num">62</span> take the same path either way &mdash; the shape checks absorb the threshold.</td>
+</tr>
+<tr>
+  <td class="m">schematic_route</td>
+  <td>Vision model vs deterministic text</td>
+  <td class="m">25 lines <b>or</b> 400 chars</td>
+  <td>Sound. Two independent signals, either sufficient, so it degrades instead of flipping.</td>
+</tr>
+<tr>
+  <td class="m">sheet_classifier</td>
+  <td>Which sheets may emit atoms at all</td>
+  <td class="m">tab name, now gated on a data header</td>
+  <td class="win">Fixed. <code>suppress=True</code> can no longer be decided by what a tab is called.</td>
+</tr>
+<tr>
+  <td class="m">quote &harr; xlsx tie-break</td>
+  <td>Which spreadsheet parser wins</td>
+  <td class="m">header-row evidence, then the name</td>
+  <td class="win">Fixed. It computed the content answer and then returned on the filename two lines later.</td>
+</tr>
+<tr>
+  <td class="m">complaint_router</td>
+  <td>What <i>kind</i> of fix a PM complaint needs</td>
+  <td class="m">span ledger &mdash; GATE vs SEAM</td>
+  <td class="win">Sound by construction: it routes on recorded provenance, not on text.</td>
+</tr>
+<tr>
+  <td class="m">service_router</td>
+  <td>Deal scope &rarr; managed-service pack</td>
+  <td class="m">contrastive kNN + evidence-anchor gate</td>
+  <td><span class="tag t-cand">unmeasured here</span> Head artifacts are not on this machine; see below.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h3>What varying the incidental attribute found</h3>
+<p class="lede">Same content, different name. Same message, different container. Same sentence, different heading style. Everything that moved was something that should not have.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Held constant</th><th>Varied</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>2500 real artifacts</td><td class="m">the filename</td>
+    <td><span class="num bad">2146</span> changed parser &rarr; <span class="num win">0</span>. Routing distribution over the corpus byte-identical.</td></tr>
+<tr><td>An 11-atom SOW page</td><td class="m">one CSS class</td>
+    <td>A stock Bulma <code>message-body</code> notice took the page to <span class="num bad">0</span> atoms. Total silent loss.</td></tr>
+<tr><td>Valid JSON, parses in full</td><td class="m">nothing &mdash; the key <code>"segments"</code></td>
+    <td><span class="num bad">2062</span> of 2500 routed to <code>NONE</code>: JSON deferred to transcript, transcript could not read a truncated sample, both stood down.</td></tr>
+<tr><td>One document, three sections</td><td class="m">the Word heading style</td>
+    <td>3 sections under <code>Heading 1</code>; <span class="num bad">0</span> under <code>&Uuml;berschrift 1</code>. Every atom loses its section path.</td></tr>
+<tr><td>One PDF, identical text</td><td class="m">the filename</td>
+    <td>Atom typed <code>exclusion</code> under one name, <code>action_item</code> under the other. The name changed the <i>type</i>.</td></tr>
+<tr><td>One email</td><td class="m">.eml vs saved-as-.txt</td>
+    <td>6 atoms vs 9 &mdash; four header lines became customer-authored <code>scope_item</code>s.</td></tr>
+<tr><td>Six facts</td><td class="m">md / rtf / ics / mbox / odt / ods / zip</td>
+    <td>All <span class="num win">6/6</span> preserved everywhere. The damage was granularity and typing, not loss.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><b>The one that repeated.</b> &ldquo;A From/To/Subject line is not a unit of work&rdquo; was written into this codebase as a fixed bug, in a comment, on the <code>.eml</code> path. It was still live in <code>.txt</code> and still live in <code>.mbox</code> &mdash; one phantom customer-authored scope item per message, in two of three containers. A fix that lands in one container and stops there is the shape to watch for.</p>
+</div>
+</div>
+
+<h3>The service router, and what a base&rarr;head loop has to get right</h3>
+<p class="lede">This is the one router that is already a learned head, and it is the template for the rest &mdash; including the trap this project has already fallen into once.</p>
+
+<div class="plane b">
+<p class="hd">Base &rarr; head &middot; and the edge that must not exist</p>
+<figure>
+<svg viewBox="0 0 1120 372" role="img" aria-label="A powerful LLM routes in production and logs its inputs and labels; those labels train a head. PM corrections form a separate label stream. The evaluation gate must be fed only by PM-corrected labels; the edge from teacher labels to the gate is marked forbidden because it measures agreement with the teacher rather than correctness.">
+<defs>
+  <marker id="ra" markerWidth="9" markerHeight="7" refX="8.6" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="currentColor"/>
+  </marker>
+  <marker id="rb" markerWidth="9" markerHeight="7" refX="8.6" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#b4432f"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+
+  <text x="8" y="16" font-size="10" opacity=".55" letter-spacing="1.4">PRODUCTION</text>
+  <rect x="8" y="30" width="92" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="54" y="55" text-anchor="middle" font-size="12">deal</text>
+  <text x="54" y="71" text-anchor="middle" font-size="9.5" opacity=".6">atoms</text>
+
+  <line x1="100" y1="58" x2="146" y2="58" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+
+  <rect x="148" y="24" width="186" height="68" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="241" y="49" text-anchor="middle" font-size="12" fill="var(--accent)" font-weight="600">LLM base router</text>
+  <text x="241" y="66" text-anchor="middle" font-size="9.5" fill="var(--accent)">strong, slow, expensive</text>
+  <text x="241" y="80" text-anchor="middle" font-size="9.5" fill="var(--accent)">ships day one</text>
+
+  <line x1="334" y1="58" x2="382" y2="58" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <rect x="384" y="30" width="104" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="436" y="55" text-anchor="middle" font-size="12">route</text>
+  <text x="436" y="71" text-anchor="middle" font-size="9.5" opacity=".6">+ confidence</text>
+
+  <line x1="488" y1="58" x2="536" y2="58" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <rect x="538" y="30" width="128" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="602" y="55" text-anchor="middle" font-size="12">PM sees it</text>
+  <text x="602" y="71" text-anchor="middle" font-size="9.5" opacity=".6">in the brief</text>
+
+  <line x1="666" y1="58" x2="714" y2="58" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <rect x="716" y="24" width="190" height="68" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="811" y="49" text-anchor="middle" font-size="12" fill="var(--accent)" font-weight="600">PM correction</text>
+  <text x="811" y="66" text-anchor="middle" font-size="9.5" fill="var(--accent)">a label the teacher</text>
+  <text x="811" y="80" text-anchor="middle" font-size="9.5" fill="var(--accent)">did not produce</text>
+
+  <line x1="241" y1="92" x2="241" y2="196" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <text x="250" y="130" font-size="9.5" opacity=".6">logs full input</text>
+  <text x="250" y="144" font-size="9.5" opacity=".6">+ its own label</text>
+
+  <line x1="811" y1="92" x2="811" y2="196" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ra)"/>
+  <text x="820" y="140" font-size="9.5" fill="var(--accent)">the only honest</text>
+  <text x="820" y="154" font-size="9.5" fill="var(--accent)">hold-out</text>
+
+  <text x="8" y="188" font-size="10" opacity=".55" letter-spacing="1.4">TRAINING</text>
+  <rect x="148" y="198" width="186" height="64" rx="6" fill="var(--cand-bg)" stroke="var(--cand)" stroke-width="1.5"/>
+  <text x="241" y="222" text-anchor="middle" font-size="11.5" fill="var(--cand)" font-weight="600">teacher labels</text>
+  <text x="241" y="239" text-anchor="middle" font-size="9.5" fill="var(--cand)">training set only</text>
+  <text x="241" y="253" text-anchor="middle" font-size="9.5" fill="var(--cand)">never the eval</text>
+
+  <line x1="334" y1="230" x2="382" y2="230" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <rect x="384" y="198" width="140" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="454" y="222" text-anchor="middle" font-size="12">head</text>
+  <text x="454" y="239" text-anchor="middle" font-size="9.5" opacity=".6">fast, local, free</text>
+  <text x="454" y="253" text-anchor="middle" font-size="9.5" opacity=".6">abstains when unsure</text>
+
+  <line x1="524" y1="230" x2="572" y2="230" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <rect x="574" y="198" width="170" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <text x="659" y="222" text-anchor="middle" font-size="12">eval gate</text>
+  <text x="659" y="239" text-anchor="middle" font-size="9.5" opacity=".6">must be able</text>
+  <text x="659" y="253" text-anchor="middle" font-size="9.5" opacity=".6">to say no</text>
+
+  <path d="M 300 262 C 340 316, 560 316, 620 266" fill="none" stroke="#b4432f"
+        stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#rb)"/>
+  <text x="404" y="330" font-size="10.5" fill="#b4432f" font-weight="600">forbidden edge</text>
+  <text x="404" y="345" font-size="9.5" fill="#b4432f">scoring the head against the teacher measures agreement, not correctness</text>
+  <text x="336" y="300" font-size="15" fill="#b4432f" font-weight="600">&#10005;</text>
+
+  <line x1="744" y1="230" x2="792" y2="230" stroke="currentColor" stroke-width="1.1" marker-end="url(#ra)"/>
+  <rect x="794" y="198" width="112" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="850" y="222" text-anchor="middle" font-size="12">ship</text>
+  <text x="850" y="239" text-anchor="middle" font-size="9.5" opacity=".6">behind a flag,</text>
+  <text x="850" y="253" text-anchor="middle" font-size="9.5" opacity=".6">LLM as fallback</text>
+</g>
+</svg>
+<figcaption>The head is trained by the teacher and judged by the PM. Close the loop &mdash; judge it by the teacher too &mdash; and the score can only ever go up.</figcaption>
+</figure>
+
+<div class="callout bad-callout">
+<p><b>This has already happened here.</b> The service router reported <span class="num">91%</span>. That number was DeepSeek reproducing its own labels: the head was trained on teacher labels and scored against teacher labels, so it measured how well it had imitated the teacher, which is not the question anyone was asking. No trustworthy accuracy for that router exists yet.</p>
+<p>The fix is not a better head. It is a hold-out the teacher did not write &mdash; and the PM correction loop already produces exactly that, because a PM correcting a route is a label no teacher generated.</p>
+</div>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Step</th><th>What runs</th><th>What it is for</th></tr></thead>
+<tbody>
+<tr><td class="m">1</td><td>LLM base routes in production</td><td>Correct answers on day one, before any head exists. Cost is the price of the labels.</td></tr>
+<tr><td class="m">2</td><td>Log the <i>full input</i> and the label</td><td>The head must train on what production actually sees. Logging the label alone reproduces a decision nobody can re-derive.</td></tr>
+<tr><td class="m">3</td><td>PM corrections accumulate separately</td><td>The hold-out. Small and slow, and the only labels not written by the thing being tested.</td></tr>
+<tr><td class="m">4</td><td>Train the head on teacher labels</td><td>Cheap, local, fast. Distillation is the easy half.</td></tr>
+<tr><td class="m">5</td><td>Gate on the PM set <b>only</b></td><td>The step that makes the number mean something. It has to be able to fail.</td></tr>
+<tr><td class="m">6</td><td>Ship behind a flag, LLM on abstention</td><td>The head answers what it knows and stands aside otherwise &mdash; which this router already does correctly via <code>sim_floor</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Two things measured about the router's input, and fixed</h3>
+<p class="lede">The head itself could not be run &mdash; its artifacts are not on this machine and the flag is off by default &mdash; so no accuracy figure is offered. Its <i>input</i> is ordinary Python and was measured instead, which bounds the router's stability whatever the head turns out to score. Both defects below are now fixed, and the second one only after the first attempt at fixing it measured worse than the bug.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Property</th><th>Measured</th><th>Reading</th></tr></thead>
+<tbody>
+<tr>
+  <td>Filenames satisfied the <b>evidence-anchor gate</b></td>
+  <td class="m">battery deal, neutral names &rarr; <span class="win">blocked</span><br>same deal, files renamed<br>&ldquo;Wireless AP Survey.pdf&rdquo; &rarr; <span class="num bad">passed</span></td>
+  <td>The gate is the last thing between a confident vote and a bad route &mdash; it exists because a battery install once scored <code>wireless@0.92</code> with zero WLAN anchors. It read the filenames alongside the atom bodies, so the evidence it demanded could be supplied by renaming a file. Underscored names happened <i>not</i> to fire, because a regex word boundary does not break on <code>_</code>, so whether the hole opened depended on the customer's naming habit. <span class="win">Now atom bodies only.</span></td>
+</tr>
+<tr>
+  <td>One atom could replace the whole sample</td>
+  <td class="m">worst 1-atom overlap<br>stride <span class="num bad">0.053</span><br>proportional <span class="num bad">0.333</span><br>consistent <span class="num win">0.951</span></td>
+  <td><code>bodies[:: len // 40]</code> is a step function: the divisor holds across a band of deal sizes, then increments and swaps the sample wholesale. My first fix &mdash; evenly spaced positions &mdash; removed the cliffs by making <i>every</i> addition churn the sample, and measured worse on the mean (0.333 vs 0.974). Hashing each atom's own text decouples membership from the deal's size entirely: <span class="win">zero cliffs, mean 0.994</span>. The representation changed, so it is versioned &mdash; a head fitted on the old sample is out of distribution against the new one.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<h3>The eval nobody has to build</h3>
+<p class="lede">A PM will never sit down and label a training set, and asking them to is how this stalls. They do not have to: the capture is already wired, and the labels are a byproduct of work they are doing anyway.</p>
+
+<div class="plane a">
+<p class="hd">Already built &middot; app/core/pm_feedback.py</p>
+
+<p>Eight heads are registered for one-tap PM correction, and the router is one of them:</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Chip</th><th>Relation</th><th>Scope</th><th>What the PM sees</th></tr></thead>
+<tbody>
+<tr><td class="m">router</td><td class="m">service_routing</td><td class="m">deal</td><td><b>Workstream / domain</b> &mdash; the routing label, already a chip</td></tr>
+<tr><td class="m">type</td><td class="m">atom_type</td><td class="m">atom</td><td>Atom type</td></tr>
+<tr><td class="m">admission</td><td class="m">admission</td><td class="m">atom</td><td>Keep / drop</td></tr>
+<tr><td class="m">conflict</td><td class="m">edge_relation</td><td class="m">edge</td><td>Cross-doc conflict</td></tr>
+<tr><td class="m">site</td><td class="m">same_site</td><td class="m">entity</td><td>Site identity</td></tr>
+<tr><td class="m">norm</td><td class="m">value_norm</td><td class="m">atom</td><td>Value / amount</td></tr>
+<tr><td class="m">gap</td><td class="m">gap_valid</td><td class="m">gap</td><td>Gap</td></tr>
+<tr><td class="m">facet</td><td class="m">facet</td><td class="m">atom</td><td>Brief section</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The chip payload already carries everything a label needs &mdash; <code>head</code>, <code>old_value</code>, <code>new_value</code>, the atom <code>text</code>, <code>context</code>, and <code>pm</code> &mdash; and <code>confirm()</code> writes a gold training row on the spot. Nothing new has to be built to <i>collect</i>. What is missing is the discipline about where those rows are allowed to go.</p>
+
+<div class="callout ok">
+<p><b>The rule that makes it an eval.</b> Corrections currently feed the store, which fires them into the next compile. A row that trains the head cannot also score it. So the split has to be by <b>deal</b>, not by row: every correction from a held-out set of deals is eval-only and never reaches training.</p>
+<p>Splitting row-wise leaks, and quietly. Corrections inside one deal are correlated &mdash; same customer vocabulary, same documents, same PM in the same hour &mdash; so a row-level split puts near-duplicates on both sides and hands back a number that looks like the circular one it replaced.</p>
+</div>
+
+<h3>Never ask for a label. Record the decision they already make.</h3>
+<p class="lede">Every row below is something a PM does because it helps <i>them</i>, in the deal they are working, today. The label is a side effect. That is the only kind of labelling that survives contact with a deadline.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>What the PM already does</th><th>What it labels</th><th>Cost to them</th></tr></thead>
+<tbody>
+<tr>
+  <td>Edits the generated SOW before sending it</td>
+  <td>Everything upstream of that sentence &mdash; type, admission, and the route that chose the template</td>
+  <td class="win">zero &mdash; they were going to edit it</td>
+</tr>
+<tr>
+  <td>Taps the <b>Workstream / domain</b> chip because the brief opened on the wrong pack</td>
+  <td class="m">service_routing &mdash; a gold routing label</td>
+  <td class="win">one tap, and they wanted the right template anyway</td>
+</tr>
+<tr>
+  <td>Answers a PM question</td>
+  <td>The gap was real. (Answers already become evidence at <code>pm_confirmed</code>.)</td>
+  <td class="win">zero &mdash; the answer is the job</td>
+</tr>
+<tr>
+  <td><i>Skips</i> a whole block of questions</td>
+  <td>The gap was not real &mdash; and if routing drove those questions, the route was wrong</td>
+  <td class="win">zero &mdash; skipping is already an action</td>
+</tr>
+<tr>
+  <td>Deletes a section from the brief</td>
+  <td>That facet did not belong on this deal</td>
+  <td class="win">zero &mdash; they wanted it gone</td>
+</tr>
+<tr>
+  <td>Re-runs the compile after fixing the inputs</td>
+  <td>The first parse was wrong about something; the diff says what</td>
+  <td class="win">zero</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><b>The label is not what the PM says. It is what the PM changes.</b> Asking &ldquo;was this route correct?&rdquo; gets a shrug and a yes, because agreeing is faster than explaining. The diff between what was generated and what was sent does not have that problem &mdash; it is the PM's real opinion, expressed in the only currency they were already spending.</p>
+</div>
+
+<h3>What this does not give you, said plainly</h3>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Limit</th><th>Why it matters</th><th>What to do about it</th></tr></thead>
+<tbody>
+<tr>
+  <td>Biased toward errors a PM <i>noticed</i></td>
+  <td>A deal routed wrong that nobody caught never enters the set, so the score reads high for the same reason the circular one did &mdash; a different blind spot, not none.</td>
+  <td>Rotate a small deliberate sample: a handful of random deals a month reviewed cold. It is the only line here that costs real minutes, so keep it small and keep it honest.</td>
+</tr>
+<tr>
+  <td>Slow to accumulate</td>
+  <td>Corrections trickle. There is no month where this becomes a benchmark.</td>
+  <td>Expect a hold-out in the tens for a long while. A small honest number beats a large circular one, and it can go down, which is the whole point.</td>
+</tr>
+<tr>
+  <td>Only covers deals that shipped</td>
+  <td>Abandoned and stalled deals are exactly where routing may have failed hardest.</td>
+  <td>Log the route on every compile, not every ship, so the population is visible even when the label is not.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout inv">
+<p><b>What to do this quarter.</b> Run the LLM base and spend the effort on the prompt &mdash; that is the right call while the head is untrustworthy. Two conditions make it compound instead of evaporate: log the <i>full input</i> next to every route, not just the label, or the prompt work leaves nothing trainable behind; and surface the router chip where the PM already notices the deal opened on the wrong pack, so the hold-out starts filling from day one rather than from the day someone decides to build it.</p>
+</div>
+</div>
+
+<h3>The loop, as it actually stands</h3>
+<p class="lede">The plan above is not a proposal any more &mdash; most of it is built. What follows is what the blob and the stores actually contain, measured rather than assumed, because that is what says which half is missing.</p>
+
+<div class="plane b">
+<p class="hd">Measured &middot; blob registry and the local stores</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>What was checked</th><th>Found</th><th>Reading</th></tr></thead>
+<tbody>
+<tr>
+  <td>Nightly router heads, 4&ndash;14 Aug</td>
+  <td class="m"><span class="num bad">n_train=1</span> &middot; classes=1 &middot; holdout=0<br>gold_acc=1.0 &middot; trained=false<br>13 files, all 17,108 bytes<br>same <code>data_signature</code> every night</td>
+  <td>The retrain has run faithfully for ten days on <b>one training row of one class</b>. <code>gold_accuracy: 1.0</code> is 1&nbsp;of&nbsp;1.</td>
+</tr>
+<tr>
+  <td>Champions across all ten heads</td>
+  <td class="m"><span class="num bad">champion: None</span> &times; 10</td>
+  <td>Nothing has ever been promoted &mdash; and that is the gate <i>working</i>, not failing. Every candidate is stamped <code>ready:false</code>.</td>
+</tr>
+<tr>
+  <td><code>service_routing</code> training rows, all 12 local DBs</td>
+  <td class="m"><span class="num bad">0</span></td>
+  <td>The router has no training data in this repo at all.</td>
+</tr>
+<tr>
+  <td>Correction store</td>
+  <td class="m">136 rows &middot; <span class="num bad">0</span> router<br><span class="num bad">0</span> human-authored<br><span class="num bad">0</span> deal-scoped</td>
+  <td>Authors are <code>universal-audit</code>, <code>mined-audit</code>, <code>seed</code>. There is no human routing label anywhere in the system.</td>
+</tr>
+<tr>
+  <td>PM-authored training rows</td>
+  <td class="m">218 of 31,876 (0.7%)</td>
+  <td>All of them <code>atom_type</code>. None routing.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>Correcting myself on one point.</b> I first read <code>gold_accuracy: 1.0</code> as a false number the system was publishing as trusted. It is not. It sits on a candidate the same file stamps <code>ready:false</code>, <code>trained:false</code>, <code>status:candidate</code>, and the registry says <code>champion: None</code>. <b>The gate refused, correctly, every night for ten nights.</b> The figure is cosmetic noise on a rejected candidate, not a promotion.</p>
+<p>And the discipline is not new either: <code>nightly_retrain.py</code> already requires <span class="num">20</span> PM-gold hold-out labels before a calibrator may be promoted, with the reason written into the source &mdash; <i>&ldquo;silver labels are derived from the system's own review flags, so validating against them is circular.&rdquo;</i> The principle was already established here. The router simply has no data to apply it to.</p>
+</div>
+
+<h3>The head that replaces the blob</h3>
+<p class="lede">One embedding of forty concatenated sentences cannot say which atoms decided anything. Classifying atoms and aggregating can, and the difference is what makes a PM correction land somewhere specific.</p>
+
+<figure>
+<svg viewBox="0 0 1120 296" role="img" aria-label="Two routing architectures compared. Above: forty sampled sentences are concatenated into one vector, classified by a kNN, and produce a bare label with no indication of which atoms decided it. Below: every atom is classified separately, atoms that cannot be placed abstain, the remaining votes accumulate as evidence mass per class, and a decision rule requiring enough voting atoms and a clear margin produces either a route carrying its evidence or an abstention.">
+<defs>
+  <marker id="la" markerWidth="9" markerHeight="7" refX="8.6" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="currentColor"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+
+  <text x="8" y="18" font-size="10" fill="var(--cand)" letter-spacing="1.3">TODAY &mdash; ONE BLOB</text>
+  <rect x="8" y="30" width="150" height="56" rx="6" fill="none" stroke="var(--cand)" stroke-width="1.3"/>
+  <text x="83" y="52" text-anchor="middle" font-size="11" fill="var(--cand)">40 sampled</text>
+  <text x="83" y="68" text-anchor="middle" font-size="11" fill="var(--cand)">sentences</text>
+  <line x1="158" y1="58" x2="206" y2="58" stroke="var(--cand)" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="208" y="30" width="132" height="56" rx="6" fill="none" stroke="var(--cand)" stroke-width="1.3"/>
+  <text x="274" y="62" text-anchor="middle" font-size="11" fill="var(--cand)">one vector</text>
+  <line x1="340" y1="58" x2="388" y2="58" stroke="var(--cand)" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="390" y="30" width="110" height="56" rx="6" fill="none" stroke="var(--cand)" stroke-width="1.3"/>
+  <text x="445" y="62" text-anchor="middle" font-size="11" fill="var(--cand)">kNN</text>
+  <line x1="500" y1="58" x2="548" y2="58" stroke="var(--cand)" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="550" y="30" width="120" height="56" rx="6" fill="none" stroke="var(--cand)" stroke-width="1.3"/>
+  <text x="610" y="62" text-anchor="middle" font-size="11" fill="var(--cand)">a label</text>
+  <text x="690" y="49" font-size="10" fill="var(--cand)">no record of which atoms decided it, so</text>
+  <text x="690" y="65" font-size="10" fill="var(--cand)">a correction has nothing to attach to</text>
+
+  <line x1="8" y1="112" x2="1112" y2="112" stroke="currentColor" stroke-width="1" opacity=".18"/>
+
+  <text x="8" y="140" font-size="10" fill="var(--accent)" letter-spacing="1.3">PER-ATOM</text>
+  <rect x="8" y="152" width="150" height="80" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="83" y="176" text-anchor="middle" font-size="11" fill="var(--accent)">every atom</text>
+  <text x="83" y="194" text-anchor="middle" font-size="9.5" fill="var(--accent)">BOM rows filtered</text>
+  <text x="83" y="210" text-anchor="middle" font-size="9.5" fill="var(--accent)">no sampling step</text>
+
+  <line x1="158" y1="192" x2="206" y2="192" stroke="currentColor" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="208" y="152" width="132" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="274" y="180" text-anchor="middle" font-size="11">classify each</text>
+  <text x="274" y="198" text-anchor="middle" font-size="9.5" opacity=".65">unplaceable atoms</text>
+  <text x="274" y="213" text-anchor="middle" font-size="9.5" opacity=".65">abstain, add nothing</text>
+
+  <line x1="340" y1="192" x2="388" y2="192" stroke="currentColor" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="390" y="152" width="140" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="460" y="180" text-anchor="middle" font-size="11">evidence mass</text>
+  <text x="460" y="198" text-anchor="middle" font-size="9.5" opacity=".65">share per class,</text>
+  <text x="460" y="213" text-anchor="middle" font-size="9.5" opacity=".65">confidence capped</text>
+
+  <line x1="530" y1="192" x2="578" y2="192" stroke="currentColor" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="580" y="152" width="150" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <text x="655" y="180" text-anchor="middle" font-size="11">decision rule</text>
+  <text x="655" y="198" text-anchor="middle" font-size="9.5" opacity=".65">enough atoms voted?</text>
+  <text x="655" y="213" text-anchor="middle" font-size="9.5" opacity=".65">clear margin?</text>
+
+  <line x1="730" y1="176" x2="790" y2="176" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#la)"/>
+  <rect x="792" y="148" width="200" height="48" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="892" y="168" text-anchor="middle" font-size="11" fill="var(--accent)">route + the atoms</text>
+  <text x="892" y="184" text-anchor="middle" font-size="11" fill="var(--accent)">that caused it</text>
+
+  <line x1="730" y1="212" x2="790" y2="212" stroke="currentColor" stroke-width="1.1" marker-end="url(#la)"/>
+  <rect x="792" y="200" width="200" height="42" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="892" y="218" text-anchor="middle" font-size="11">abstain, saying why</text>
+  <text x="892" y="233" text-anchor="middle" font-size="9.5" opacity=".65">the LLM base stays in charge</text>
+
+  <text x="8" y="268" font-size="10" opacity=".62">70 labelled deals are 70 examples for the blob and thousands for this &mdash; the deal label is weak supervision over its atoms.</text>
+  <text x="8" y="284" font-size="10" opacity=".62">Measured: 40 BOM rows cannot outvote 6 scope atoms, and padding a deal with 200 unrelated lines does not move a clear route.</text>
+</g>
+</svg>
+<figcaption>The blob has to pick one label and lose everything else. The per-atom path keeps the evidence, so a correction lands on the six atoms that were wrong.</figcaption>
+</figure>
+</div>
+
+<h3>What a head has to clear before it decides anything</h3>
+<p class="lede">Eight conditions, all enforced in code rather than remembered. Most weeks this will refuse, and name which one failed.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Gate</th><th>Why it is there</th></tr></thead>
+<tbody>
+<tr><td class="m">enough held-out DEALS</td><td>Under twelve, the figure is noise. The report withholds it rather than printing something quotable.</td></tr>
+<tr><td class="m">two or more labels</td><td>A single-class hold-out discriminates nothing &mdash; which is literally the state of the nightly router head today.</td></tr>
+<tr><td class="m">no deal on both sides</td><td>Row-level splits leak. Corrections inside one deal share a vocabulary, documents and a PM.</td></tr>
+<tr><td class="m">gold is human-authored</td><td>Fails <b>closed</b>: an author it cannot recognise as a person counts as a machine. A deny-list would have let <code>mined-audit</code> through.</td></tr>
+<tr><td class="m">beats the majority class</td><td>A specialist that cannot is an expensive way to guess the mode.</td></tr>
+<tr><td class="m">beats the SHIPPING router</td><td>&ldquo;Better than guessing&rdquo; is not the question when an LLM base is already answering correctly.</td></tr>
+<tr><td class="m">coverage not bought by abstaining</td><td>A head that hands the hard deals back has not improved anything; it has taken credit for what was left.</td></tr>
+<tr><td class="m">wins the PAIRED test</td><td>Both routers answer the same deals, so only their disagreements carry information. See below.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><b>Why paired, and why it will feel slow.</b> At the hold-out sizes this will have for a long time &mdash; tens, not hundreds &mdash; the standard error on a raw accuracy is around ten points, so a candidate <i>identical</i> to the incumbent wins about half of any weekly comparison by chance. A promote-on-win rule run weekly would promote, roll back and promote again, and read as an unstable head rather than an unstable measurement.</p>
+</div>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Candidate wins / loses</th><th>p</th><th>Weekly verdict</th></tr></thead>
+<tbody>
+<tr><td class="m">3 / 0</td><td class="m">0.250</td><td>chance</td></tr>
+<tr><td class="m">5 / 0</td><td class="m">0.063</td><td>chance</td></tr>
+<tr><td class="m">6 / 0</td><td class="m">0.031</td><td class="win">promote</td></tr>
+<tr><td class="m">6 / 1</td><td class="m">0.125</td><td>chance</td></tr>
+<tr><td class="m">4 / 3</td><td class="m">1.000</td><td>chance</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout inv">
+<p><b>Those three are now built &mdash; see the next section.</b> Two of them turned out to be wiring rather than construction: the deal-based split and the safe compile-path logging entry already existed and had simply never been pointed at the router.</p>
+</div>
+
+<h3>The three gaps, wired &mdash; and where the loop actually splits</h3>
+<p class="lede">Two of the three were wiring rather than construction. The third turned out to be a boundary: half the loop cannot run in this process at all, and drawing it as though it could was the first version of this diagram being wrong.</p>
+
+<div class="plane a">
+<p class="hd">Two processes &middot; parser-os records, brief-gen compares</p>
+
+<figure>
+<svg viewBox="0 0 1120 330" role="img" aria-label="The loop spans two processes. In parser-os, a compile runs the head, records the observation with the input and its version, and writes it into the envelope keyed by project id. No training row is written there, because the only label available would be the head's own answer. In brief-gen, the keyword pack prior produces the base answer; that is the process that can see both answers, so that is where disagreement is detected and a PM is asked. The PM correction joins back on the same deal key.">
+<defs>
+  <marker id="w2" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
+  </marker>
+  <marker id="w2g" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="var(--accent)"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+
+  <rect x="8" y="40" width="520" height="200" rx="9" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".4"/>
+  <text x="24" y="62" font-size="10" fill="var(--mut)" letter-spacing="1.4">PARSER-OS &mdash; RECORDS</text>
+
+  <rect x="26" y="76" width="128" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="90" y="98" text-anchor="middle" font-size="11">a compile</text>
+  <text x="90" y="114" text-anchor="middle" font-size="9" opacity=".6">atoms + docs</text>
+  <line x1="154" y1="102" x2="188" y2="102" stroke="currentColor" stroke-width="1.1" marker-end="url(#w2)"/>
+
+  <rect x="190" y="70" width="150" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="265" y="92" text-anchor="middle" font-size="11">head answers</text>
+  <text x="265" y="108" text-anchor="middle" font-size="9" opacity=".6">if one is loaded</text>
+  <text x="265" y="122" text-anchor="middle" font-size="9" opacity=".6">&mdash; none is, anywhere</text>
+  <line x1="340" y1="102" x2="374" y2="102" stroke="currentColor" stroke-width="1.1" marker-end="url(#w2)"/>
+
+  <rect x="376" y="64" width="138" height="76" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="445" y="86" text-anchor="middle" font-size="11" fill="var(--accent)" font-weight="600">envelope</text>
+  <text x="445" y="102" text-anchor="middle" font-size="9" fill="var(--accent)">candidates</text>
+  <text x="445" y="115" text-anchor="middle" font-size="9" fill="var(--accent)">the input + version</text>
+  <text x="445" y="128" text-anchor="middle" font-size="9" fill="var(--accent)">keyed by project_id</text>
+
+  <rect x="26" y="156" width="488" height="68" rx="6" fill="none" stroke="var(--cand)" stroke-width="1.3"/>
+  <text x="42" y="177" font-size="10.5" fill="var(--cand)" font-weight="600">training log: nothing written here, deliberately</text>
+  <text x="42" y="194" font-size="9.5" fill="var(--cand)">The only label available here is the head's own answer, and a head's output</text>
+  <text x="42" y="208" font-size="9.5" fill="var(--cand)">becoming its training target is the circularity the whole effort exists to break.</text>
+
+  <path d="M514 102 C 552 102, 552 102, 588 102" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#w2)"/>
+  <text x="536" y="94" font-size="9" opacity=".6">blob</text>
+
+  <rect x="590" y="40" width="522" height="200" rx="9" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".4"/>
+  <text x="606" y="62" font-size="10" fill="var(--mut)" letter-spacing="1.4">BRIEF-GEN &mdash; COMPARES</text>
+
+  <rect x="608" y="70" width="150" height="64" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="683" y="92" text-anchor="middle" font-size="11" fill="var(--accent)" font-weight="600">base answers</text>
+  <text x="683" y="108" text-anchor="middle" font-size="9" fill="var(--accent)">keyword pack_prior</text>
+  <text x="683" y="122" text-anchor="middle" font-size="9" fill="var(--accent)">this is what ships</text>
+  <line x1="758" y1="102" x2="792" y2="102" stroke="currentColor" stroke-width="1.1" marker-end="url(#w2)"/>
+
+  <rect x="794" y="70" width="146" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <text x="867" y="92" text-anchor="middle" font-size="11">both answers</text>
+  <text x="867" y="108" text-anchor="middle" font-size="9" opacity=".65">visible together</text>
+  <text x="867" y="122" text-anchor="middle" font-size="9" opacity=".65">only here</text>
+  <line x1="940" y1="102" x2="974" y2="102" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#w2g)"/>
+
+  <rect x="976" y="64" width="126" height="76" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="1039" y="86" text-anchor="middle" font-size="11" fill="var(--accent)" font-weight="600">disagree?</text>
+  <text x="1039" y="104" text-anchor="middle" font-size="9" fill="var(--accent)">ask a PM</text>
+  <text x="1039" y="120" text-anchor="middle" font-size="9" fill="var(--accent)">one tap, on the</text>
+  <text x="1039" y="132" text-anchor="middle" font-size="9" fill="var(--accent)">same deal key</text>
+
+  <rect x="608" y="156" width="494" height="68" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="624" y="177" font-size="10.5" font-weight="600">the correction is the label, and it joins on project_id</text>
+  <text x="624" y="194" font-size="9.5" opacity=".72">A deal-scoped chip stores scope_key = project_id, which is the same key the</text>
+  <text x="624" y="208" font-size="9.5" opacity=".72">observation was recorded under. That is what makes the two halves one loop.</text>
+
+  <path d="M1039 240 C 1039 286, 300 286, 265 250" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#w2g)"/>
+  <text x="560" y="300" text-anchor="middle" font-size="10" fill="var(--accent)">the label comes back and trains the head that never got to label itself</text>
+
+  <text x="8" y="322" font-size="10" opacity=".6">Drawing both routers in one pass was wrong: parser-os has no service-pack base, so treating its silence as &ldquo;nothing placed this deal&rdquo; would flag every compile.</text>
+</g>
+</svg>
+<figcaption>The half that records and the half that compares run in different processes. They meet on one key: project_id.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Gap</th><th>What it needed</th><th>Shipped</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>1. Surface the chip</b></td>
+  <td>The endpoint and the <code>router</code> head were already registered. What was missing was <code>candidates</code> &mdash; and an envelope key gated on <code>enabled</code>, which requires a promoted head on disk. No environment has one, so the key was absent from every real compile.</td>
+  <td class="win">Emitted whenever there is anything to say. Safe to widen: the output signature hashes the CompileResult, not the envelope.</td>
+</tr>
+<tr>
+  <td><b>2. Shadow logging</b></td>
+  <td>Wiring, not building. <code>assign_split</code> already partitions by deal deterministically; <code>log_rows</code> was already the safe compile-path entry. Neither had been pointed at the router.</td>
+  <td class="win">The observation &mdash; head answer, input, <code>SCOPE_SUMMARY_VERSION</code> &mdash; rides in the envelope under <code>project_id</code>. A training row waits for a label this head did not write.</td>
+</tr>
+<tr>
+  <td><b>3. Disagreement queue</b></td>
+  <td>A rule for which deals are worth a tap &mdash; and, it turned out, a check on <i>who can even ask</i>.</td>
+  <td class="win"><code>base_observed</code> separates &ldquo;the base found nothing&rdquo; from &ldquo;no base runs here&rdquo;. The queue fires where both answers are visible.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><b>Two routers exist in parser-os, and they are not a pair.</b> <code>app/domain/pack_router.py</code> routes deals deterministically &mdash; project.yaml, then SOURCE_NOTES, then filename heuristics, then content scoring. But it emits DOMAIN packs (<code>copper_cabling</code>, <code>security_camera</code>) while the service router emits SERVICE packs (<code>wireless</code>, <code>audio_visual</code>, <code>low_voltage_cabling</code>). The vocabularies overlap and the label spaces do not, so pairing them would have produced a disagreement rate that measured nothing. They are not paired.</p>
+</div>
+
+<div class="callout ok">
+<p><b>The shadow harness already existed too.</b> <code>app/core/shadow_eval.py</code> does leave-one-deal-out scoring, separates coverage from accuracy, and reports gold accuracy on PM-taught rows apart from the rest &mdash; written for the extractor relations and never pointed at the router. What the new evaluation adds is the fail-closed human check, the refusals, and the paired comparison against the shipping router.</p>
+<p>Which is this whole session's finding one more time: the machinery was right, and something upstream of it had never been connected.</p>
+</div>
+</div>
+
+<h3>Five bets &mdash; four of them now built</h3>
+<p class="lede">Ranked by how few people have done them, and no longer a wishlist: 2, 1 and 4 are implemented and tested, 5's data half is assembled from the real training DBs, and 3 is designed for phase two. Each exists because the receipts exist &mdash; clean provenance is the precondition all five quietly share.</p>
+
+<div class="plane b">
+<p class="hd">Sequenced &middot; two need GPU time, three do not</p>
+
+<figure>
+<svg viewBox="0 0 1120 356" role="img" aria-label="Five capabilities stacked on the evidence substrate. The delta head learns to predict when the system is wrong from correction pairs. Conformal abstention replaces hand-tuned thresholds with coverage guarantees calibrated on the PM hold-out. The multi-task encoder trains one backbone with many cheap heads over shared atom representations. The deal graph runs learned belief propagation whose every update is auditable. The calibration registry re-derives its own constants from the growing eval corpus. All five rest on receipts and the correction loop.">
+<defs>
+  <marker id="b5" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+
+  <rect x="8" y="288" width="1104" height="56" rx="8" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="560" y="312" text-anchor="middle" font-size="11.5" fill="var(--accent)" font-weight="600">the substrate: receipts &middot; abstain census &middot; deal-keyed corrections &middot; the eval that refuses</text>
+  <text x="560" y="330" text-anchor="middle" font-size="9.5" fill="var(--accent)">every box above depends on this being clean &mdash; and it is the part already built</text>
+
+  <rect x="8" y="40" width="204" height="118" rx="7" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="22" y="62" font-size="11" fill="var(--accent)" font-weight="600">1 &middot; delta head</text>
+  <text x="22" y="80" font-size="9.5">a correction is a PAIR --</text>
+  <text x="22" y="94" font-size="9.5">(system said, human said)</text>
+  <text x="22" y="108" font-size="9.5">+ the receipted input.</text>
+  <text x="22" y="124" font-size="9.5">Train P(correction | input):</text>
+  <text x="22" y="138" font-size="9.5" font-weight="600">know WHEN you are wrong</text>
+  <text x="22" y="152" font-size="9" opacity=".6">fewest labels of any head</text>
+
+  <rect x="232" y="40" width="204" height="118" rx="7" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="246" y="62" font-size="11" fill="var(--accent)" font-weight="600">2 &middot; conformal abstention</text>
+  <text x="246" y="80" font-size="9.5">sim_floor=0.55, tau=0.30 are</text>
+  <text x="246" y="94" font-size="9.5">hand-tuned knobs. Replace with</text>
+  <text x="246" y="108" font-size="9.5">split conformal on the PM</text>
+  <text x="246" y="122" font-size="9.5">hold-out: answer only when the</text>
+  <text x="246" y="136" font-size="9.5" font-weight="600">prediction set is a singleton</text>
+  <text x="246" y="152" font-size="9" opacity=".6">a guarantee, not a knob &middot; ~40 lines</text>
+
+  <rect x="456" y="40" width="204" height="118" rx="7" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="470" y="62" font-size="11" font-weight="600">5 &middot; one backbone</text>
+  <text x="470" y="80" font-size="9.5">type / facet / route / admission</text>
+  <text x="470" y="94" font-size="9.5">as heads over ONE encoder --</text>
+  <text x="470" y="108" font-size="9.5">tiny labels, but correlated</text>
+  <text x="470" y="122" font-size="9.5">across tasks: an exclusion</text>
+  <text x="470" y="136" font-size="9.5">informs routing informs facets</text>
+  <text x="470" y="152" font-size="9" fill="var(--cand)">GPU &middot; ~3-5x effective data</text>
+
+  <rect x="680" y="40" width="204" height="118" rx="7" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="694" y="62" font-size="11" font-weight="600">3 &middot; deal graph fixpoint</text>
+  <text x="694" y="80" font-size="9.5">each document is a MESSAGE</text>
+  <text x="694" y="94" font-size="9.5">into a persistent graph;</text>
+  <text x="694" y="108" font-size="9.5">reconciliation = belief prop,</text>
+  <text x="694" y="122" font-size="9.5">authority ranks as priors,</text>
+  <text x="694" y="136" font-size="9.5">learned potentials -- auditable</text>
+  <text x="694" y="152" font-size="9" fill="var(--cand)">GPU for potentials &middot; phase 2</text>
+
+  <rect x="904" y="40" width="204" height="118" rx="7" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="918" y="62" font-size="11" font-weight="600">4 &middot; self-deriving registry</text>
+  <text x="918" y="80" font-size="9.5">each calibrated constant gains</text>
+  <text x="918" y="94" font-size="9.5">a re_derive() closure over the</text>
+  <text x="918" y="108" font-size="9.5">eval corpus; CI flags drift.</text>
+  <text x="918" y="122" font-size="9.5">A third category between</text>
+  <text x="918" y="136" font-size="9.5" font-weight="600">config and weights</text>
+  <text x="918" y="152" font-size="9" opacity=".6">slow parameters with provenance</text>
+
+  <line x1="110" y1="158" x2="110" y2="284" stroke="currentColor" stroke-width="1" opacity=".4" marker-end="url(#b5)"/>
+  <line x1="334" y1="158" x2="334" y2="284" stroke="currentColor" stroke-width="1" opacity=".4" marker-end="url(#b5)"/>
+  <line x1="558" y1="158" x2="558" y2="284" stroke="currentColor" stroke-width="1" opacity=".4" marker-end="url(#b5)"/>
+  <line x1="782" y1="158" x2="782" y2="284" stroke="currentColor" stroke-width="1" opacity=".4" marker-end="url(#b5)"/>
+  <line x1="1006" y1="158" x2="1006" y2="284" stroke="currentColor" stroke-width="1" opacity=".4" marker-end="url(#b5)"/>
+
+  <rect x="8" y="188" width="428" height="72" rx="7" fill="none" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="22" y="210" font-size="10" fill="var(--accent)" font-weight="600">the compound worth having: 1 + 2 together</text>
+  <text x="22" y="228" font-size="9.5" fill="var(--accent)">a system that knows when it is wrong, with a coverage</text>
+  <text x="22" y="242" font-size="9.5" fill="var(--accent)">guarantee, and spends human attention exactly there.</text>
+</g>
+</svg>
+<figcaption>2, 1 and 4 shipped in one afternoon on top of the substrate &mdash; which is the argument for the substrate. 5 waits on the A100; 3 on phase two. GO conditions live in _BETS_LEDGER.md.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+<thead><tr><th>#</th><th>Bet</th><th>Why it is rare</th><th>State</th></tr></thead>
+<tbody>
+<tr>
+  <td class="m">2</td>
+  <td><b>Conformal abstention</b></td>
+  <td>Distribution-free coverage guarantees are common in papers and almost absent from production loops &mdash; because they need a clean, non-circular calibration set, which is exactly what the PM hold-out is. Converts "we tuned a knob" into "we have a theorem". At hold-outs in the tens, conformal is also the <i>only</i> honest calibration available.</td>
+  <td class="win"><b>BUILT</b> &middot; guarantee verified empirically; refuses under n=5; a refused gate fails closed. Swaps in at ~10 held-out deals.</td>
+</tr>
+<tr>
+  <td class="m">1</td>
+  <td><b>Delta head</b></td>
+  <td>Everyone treats a correction as one more labelled row. It is a preference pair with provenance &mdash; DPO-style data produced accidentally. A head trained on P(correction&nbsp;|&nbsp;input) predicts <i>when the system is wrong</i>, routes PM attention, and needs fewer labels than any task head. Error-prediction heads exist in ML-sys papers; wired to a one-tap human loop in production, essentially never.</td>
+  <td class="win"><b>BUILT</b> &middot; censoring handled: negatives require review evidence, or it learns which deals get <i>opened</i>. Fits at &ge;8 corrections.</td>
+</tr>
+<tr>
+  <td class="m">5</td>
+  <td><b>One backbone, many heads</b></td>
+  <td>Per-task contrastive stores waste the correlation between tiny label sets. One task-conditioned encoder is a 3&ndash;5&times; effective-data multiplier at this scale, and gives every head the same embedding space &mdash; which is what lets a feedback-store correction apply <i>across</i> heads.</td>
+  <td><b>Table assembled</b>: 29,881 deduped rows (103k duplicates collapsed to the most-trusted teacher), 43 classes, 2,545 held out by deal, 218 pm-gold kept as their own tier. <span class="m">GPU for the fit &mdash; GO steps in _BETS_LEDGER.md</span></td>
+</tr>
+<tr>
+  <td class="m">3</td>
+  <td><b>Deal-graph fixpoint</b></td>
+  <td>GNNs are commodity; a learned inference procedure whose <i>every belief update replays</i> ("quantity became 56 because this rank-90 email arrived") is not. The receipts are what make it possible.</td>
+  <td class="m">designed &middot; phase-2 reconciliation; COPPER edges are the first fixture</td>
+</tr>
+<tr>
+  <td class="m">4</td>
+  <td><b>Self-deriving registry</b></td>
+  <td>Constants that recompute themselves from the eval corpus and flag their own drift &mdash; a third category between config and weights. Cheap and unnamed anywhere.</td>
+  <td class="win"><b>BUILT</b> &middot; two constants re-derive their bounds from the eval corpus in CI. Flagged a bug in its own author's derivation on its first run.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<h3>The atom run &mdash; measured, fixed, and gated</h3>
+<p class="lede">The last laughable layer: measured on 11,841 train / 1,370 holdout typed rows (deal-split, 22 unseen deals), then fixed where the measurement said to. Typing happens twice &mdash; coarse regexes at parse time, the LLM cascade at compile time &mdash; and the challenger auditioned for the cascade's deflect slot. It was wired in, and then it honestly turned itself down.</p>
+
+<div class="plane b">
+<p class="hd">Measured on the deal-split holdout &middot; bge-small, base encoder, CPU, no fine-tune</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Contender</th><th>Coverage</th><th>Accuracy when answering</th><th>Reading</th></tr></thead>
+<tbody>
+<tr>
+  <td>Majority class (<code>physical_site</code>)</td>
+  <td class="m">100%</td>
+  <td class="m num bad">20.7%</td>
+  <td>The floor.</td>
+</tr>
+<tr>
+  <td>Regex <code>_classify</code> (parse-time incumbent)</td>
+  <td class="m num bad">10.3%</td>
+  <td class="m num bad">33.9%</td>
+  <td>On the 59 holdout rows whose true class it can even express. Everything else defaults <code>scope_item</code>. Nearly vacuous on the fine taxonomy.</td>
+</tr>
+<tr>
+  <td><b>kNN, margin gate</b> (tau/sim_floor)</td>
+  <td class="m num win">49.4%</td>
+  <td class="m num win">81.8%</td>
+  <td>The loose operating point: half the LLM batch deflected at a known 18% disagreement rate.</td>
+</tr>
+<tr>
+  <td><b>kNN + conformal</b> (unanimous neighbourhood)</td>
+  <td class="m">21.3%</td>
+  <td class="m num win">99.2%</td>
+  <td>The strict point: a fifth of atoms typed at near-perfect teacher agreement, zero training, guarantee calibrated on 10 disjoint deals.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Per class (kNN gate, answered &ge; 5)</th><th>Right</th></tr></thead>
+<tbody>
+<tr><td class="m">bom_line</td><td class="m">101/108 (94%)</td></tr>
+<tr><td class="m">commercial_total</td><td class="m">34/36 (94%)</td></tr>
+<tr><td class="m">task</td><td class="m">21/24 (88%)</td></tr>
+<tr><td class="m">deal_metadata</td><td class="m">9/11 (82%)</td></tr>
+<tr><td class="m">service_line</td><td class="m">25/32 (78%)</td></tr>
+<tr><td class="m">physical_site</td><td class="m">10/14 (71%)</td></tr>
+<tr><td class="m">requirement</td><td class="m">6/11 (55%)</td></tr>
+<tr><td class="m">stakeholder</td><td class="m">6/6 (100%)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Four findings, in the order they change what happens next</h3>
+
+<div class="scroll">
+<table>
+<thead><tr><th>#</th><th>Finding</th><th>Consequence</th></tr></thead>
+<tbody>
+<tr>
+  <td class="m">A1</td>
+  <td><b>The container decides the type.</b> Three diverged regex copies (markdown / pptx / universal); <span class="num bad">4.0%</span> of real holdout sentences get a different type depending on which format they arrived in.</td>
+  <td class="win"><b>FIXED</b> &middot; <code>app/core/atom_typing.py</code>: the UNION of the three families, held as aliases to one object &mdash; copies drift, an alias cannot. Identity pinned by test; five sentences that previously typed differently by format now type the same everywhere.</td>
+</tr>
+<tr>
+  <td class="m">A2</td>
+  <td><b>Trained on bare, served decorated.</b> Only <span class="num bad">3.7%</span> of training rows carry the <code>[section:] [table:] [intro:]</code> decorations the cascade feeds its heads at inference.</td>
+  <td class="win"><b>FIXED</b> &middot; <code>DECIDE_TEXT_VERSION</code> stamped into every harvested row's provenance; the multitask table carries <code>repr_version</code> per row and reports the mix. The live tap already logged decide-text &mdash; the rows just couldn't say which representation they carried. Now they can.</td>
+</tr>
+<tr>
+  <td class="m">A3</td>
+  <td><b>These are teacher-agreement numbers</b> &mdash; the holdout labels are DeepSeek's. For the deflect slot that is the correct objective (reproduce the LLM without calling it). For correctness it is not: on the 23 PM-gold holdout rows the head answered 8 and got 4 &mdash; below any honest reporting threshold, but the misses are taxonomy-adjacent pairs (<code>contract_term</code>/<code>payment_term</code>) the teacher itself likely confuses.</td>
+  <td>82% agreement &ne; 82% correct. The PM set is the only cure and is 23 rows deep. Every tap matters.</td>
+</tr>
+<tr>
+  <td class="m">A4</td>
+  <td><b>Conformal saturated informatively.</b> qhat = 1.0: for &ge;10% of calibration rows the true label is entirely absent from the k=15 neighbourhood &mdash; the base encoder cannot reach the tail classes. And measured coverage (84.5%) dipped under the 90% guarantee, because deal-clustered rows are not exchangeable.</td>
+  <td>qhat is now the metric the GO #5 fine-tune has to move: pull the tail into reachable neighbourhoods. The exchangeability dip says: calibrate on more, smaller deal groups as the corpus grows.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout ok">
+<p><b>The outcome: a candidate that refused itself.</b> The cascade's contrastive slot learned a <code>"typed"</code> mode &mdash; value-light fine types assigned at the strict gate (tau=0.98, the measured 99% line), guess-free fallthrough, flag-off byte-identical, pinned by a test that booby-traps the loader. <code>build_atom_store.py</code> materialised the candidate from the real table and evaluated it during its own build: <span class="num">167</span> strict answers at <span class="num win">97.6%</span> overall &mdash; but only <span class="num bad">7 of 358</span> value-light-eligible rows answered, at 71%, because the head's confident classes (<code>bom_line</code> 94%, <code>commercial_total</code> 94%) are exactly the value-heavy ones the cascade reserves for the LLM, which synthesises their value payloads. So the artifact wrote <code>ready:&nbsp;false</code> into its own meta, with the numbers and the caveats inside it.</p>
+<p>That is the anti-<code>gold_acc=1.0</code> shape working on day one: a candidate that cannot describe itself cannot be promoted, and this one describes itself as not ready. It also converts GO #5 from a wish into a single-metric mission: <b>move <code>value_light_answered</code> off 7.</b> The trainer has its table, its target, and its incumbent. And the measurement audited itself twice on the way &mdash; the first conformal line read 100%/100% because the true label had leaked into the test-time scores; at inference nobody knows the truth. Fixed, re-run, and the honest lines are the ones above.</p>
+</div>
+</div>
+
+<h3>Phase 2 &mdash; reconciliation: verdicts with receipts</h3>
+<p class="lede">The graph builder finds cross-document conflicts; nothing resolved them. A conflict list a PM re-adjudicates by hand is a to-do list, not reconciliation. Bet #3's first slice &mdash; measured first, built second, and its learned half refused its own audition.</p>
+
+<div class="plane b">
+<p class="hd">app/core/reconcile.py &middot; the authority lattice as judge, every ruling on the record</p>
+
+<figure>
+<svg viewBox="0 0 1120 330" role="img" aria-label="Three documents disagree about a quantity: a customer email at authority rank 90 says 56, a vendor quote at rank 65 says 40, a machine-extracted roster row at rank 40 says 48. Contradiction edges bind them into one conflict set over the comparable scope. The authority lattice resolves it: 56 governs, and the belief update records the winner, every superseded claim with its rank, and the edge ids. A second path shows the refusal: two rank-90 customer emails disagreeing produce no verdict — both receipts surface as an open conflict for the PM.">
+<defs>
+  <marker id="p2" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
+  </marker>
+  <marker id="p2g" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="var(--accent)"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+
+  <text x="8" y="20" font-size="10" fill="var(--mut)" letter-spacing="1.4">THREE DOCUMENTS, ONE QUANTITY</text>
+
+  <rect x="8" y="34" width="196" height="52" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="22" y="55" font-size="10.5" fill="var(--accent)" font-weight="600">customer email &middot; rank 90</text>
+  <text x="22" y="72" font-size="10" fill="var(--accent)">&ldquo;plan for 56 drops&rdquo;</text>
+
+  <rect x="8" y="96" width="196" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="22" y="117" font-size="10.5">vendor quote &middot; rank 65</text>
+  <text x="22" y="134" font-size="10" opacity=".7">&ldquo;Cat6 drop, qty 40&rdquo;</text>
+
+  <rect x="8" y="158" width="196" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="22" y="179" font-size="10.5">roster row &middot; rank 40</text>
+  <text x="22" y="196" font-size="10" opacity=".7">&ldquo;ATL-01 | drops | 48&rdquo;</text>
+
+  <path d="M204 60 C 244 60, 244 118, 282 118" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#p2)"/>
+  <path d="M204 122 C 244 122, 250 122, 282 128" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#p2)"/>
+  <path d="M204 184 C 244 184, 244 138, 282 138" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#p2)"/>
+  <text x="216" y="102" font-size="9" opacity=".6">contradicts</text>
+  <text x="216" y="160" font-size="9" opacity=".6">edges</text>
+
+  <rect x="284" y="92" width="176" height="72" rx="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="372" y="116" text-anchor="middle" font-size="11" font-weight="600">conflict set</text>
+  <text x="372" y="133" text-anchor="middle" font-size="9.5" opacity=".7">one comparable scope:</text>
+  <text x="372" y="148" text-anchor="middle" font-size="9.5" opacity=".7">cat6 drops @ ATL-01</text>
+
+  <line x1="460" y1="128" x2="506" y2="128" stroke="currentColor" stroke-width="1.2" marker-end="url(#p2)"/>
+
+  <rect x="508" y="86" width="188" height="84" rx="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="602" y="110" text-anchor="middle" font-size="11" font-weight="600">authority lattice</text>
+  <text x="602" y="128" text-anchor="middle" font-size="9.5" opacity=".7">highest rank governs;</text>
+  <text x="602" y="143" text-anchor="middle" font-size="9.5" opacity=".7">gap &lt; 5 &rarr; refuse</text>
+  <text x="602" y="160" text-anchor="middle" font-size="9" opacity=".55">(potential injectable; lattice incumbent)</text>
+
+  <path d="M696 108 C 740 108, 740 78, 782 78" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#p2g)"/>
+  <rect x="784" y="42" width="328" height="86" rx="7" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="800" y="64" font-size="10.5" fill="var(--accent)" font-weight="600">BeliefUpdate &middot; resolved, with the receipt</text>
+  <text x="800" y="82" font-size="9.5" fill="var(--accent)">&ldquo;56 governs because customer_current_authored</text>
+  <text x="800" y="96" font-size="9.5" fill="var(--accent)">(rank 90) beats '40' at rank 65, '48' at rank 40&rdquo;</text>
+  <text x="800" y="114" font-size="9" fill="var(--accent)" opacity=".8">winner + every superseded claim + the binding edge ids</text>
+
+  <path d="M696 152 C 740 152, 740 188, 782 188" fill="none" stroke="var(--quiet)" stroke-width="1.5" marker-end="url(#p2)"/>
+  <rect x="784" y="152" width="328" height="82" rx="7" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.5"/>
+  <text x="800" y="174" font-size="10.5" fill="var(--quiet)" font-weight="600">or: refused, both receipts surfaced</text>
+  <text x="800" y="192" font-size="9.5" fill="var(--quiet)">two rank-90 customer emails disagree &rarr; no verdict.</text>
+  <text x="800" y="206" font-size="9.5" fill="var(--quiet)">Picking between equals is a PM's judgment,</text>
+  <text x="800" y="220" font-size="9.5" fill="var(--quiet)">not a lattice's. Open conflict, both claims attached.</text>
+
+  <rect x="8" y="248" width="1104" height="66" rx="7" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/>
+  <text x="24" y="270" font-size="10.5" font-weight="600">Invariants, pinned by test</text>
+  <text x="24" y="288" font-size="9.5" opacity=".75">No atom is mutated &mdash; reconciliation is a verdict layer over the evidence, not a rewrite, so receipts keep replaying byte-exact (this branch broke that invariant twice before learning it).</text>
+  <text x="24" y="303" font-size="9.5" opacity=".75">Deterministic: same atoms + edges &rarr; same updates in the same order. Envelope key is additive: the output signature hashes the CompileResult, not the envelope.</text>
+</g>
+</svg>
+<figcaption>The founding fixture is the COPPER shape, and the founding sentence is the one bet #3 was designed around &mdash; emitted, or honestly withheld.</figcaption>
+</figure>
+
+<h3>Measured first: what the edge rules actually score</h3>
+<p class="lede">The 447 labelled edge pairs in _training_edge.db turn out to be rule-proposal vs actual-label records &mdash; an incumbent measurement nobody had run.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Edge rule</th><th>Precision</th><th>Reading</th></tr></thead>
+<tbody>
+<tr>
+  <td class="m">supports</td>
+  <td class="m num win">90%</td>
+  <td>135/150. Healthy.</td>
+</tr>
+<tr>
+  <td class="m">contradicts</td>
+  <td class="m num bad">41%</td>
+  <td>81/196 &mdash; 51% of proposed contradictions are actually unrelated, 8% are actually <i>supports</i>. <b>The conflict family PMs see is wrong more often than right.</b> This number now travels inside the envelope surface, so the list reads as leads, not verdicts.</td>
+</tr>
+<tr>
+  <td class="m">excludes</td>
+  <td class="m">0/101 &mdash; unmeasurable</td>
+  <td>Every actual label is from {unrelated, supports, contradicts}: the label space never offered the labeller &ldquo;excludes&rdquo;, so 0/101 distinguishes a garbage rule from an inexpressible one. Recorded, not deleted &mdash; deleting on unmeasurable evidence would be the confident-wrong move this branch exists to prevent.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout inv">
+<p><b>The learned potential refused its own audition.</b> A pair-embedding probe over the 447 rows was auditioned under a deal-disjoint split, and the eval refused to print a number: 5 labelled deals total, one holding 250 of the 447 rows, leaves a 23-row single-class test side. A potential fit on that would be deal-memorisation wearing a physics costume. GO condition in _BETS_LEDGER.md: edge labels from &ge;12 deals with &ge;2 classes held out &mdash; the same bar router_eval enforces everywhere else. Until then the potential is injectable and the lattice is the incumbent.</p>
+</div>
+</div>
+
+<h2><span class="n">PLANE TWO &mdash; AFTER ATOMS</span>Heads and baseline</h2>
+<p class="lede">Everything here is a judgment a PM can be wrong about, which is what makes it learnable &mdash; and what makes it a different kind of thing from the plane above.</p>
+
+<div class="plane b">
+<p class="hd">Plane two &middot; atoms &rarr; envelope</p>
+<figure>
+<svg viewBox="0 0 1120 320" role="img" aria-label="Atoms pass through judgments, then a graph stage, then invariants that must never learn, and out to the envelope.">
+<defs><marker id="p" markerWidth="9" markerHeight="7" refX="8.6" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="currentColor"/></marker></defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+  <rect x="8" y="128" width="98" height="60" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="57" y="152" text-anchor="middle" font-size="12">atoms</text>
+  <text x="57" y="169" text-anchor="middle" font-size="9.5" opacity=".6">+ receipts</text>
+  <line x1="106" y1="158" x2="158" y2="158" stroke="currentColor" stroke-width="1.1" marker-end="url(#p)"/>
+
+  <rect x="160" y="16" width="230" height="52" rx="6" fill="#E3F1EE" stroke="#0E6E62" stroke-width="1.5"/>
+  <text x="275" y="37" text-anchor="middle" fill="#0E6E62" font-weight="600">table_kind</text>
+  <text x="275" y="54" text-anchor="middle" font-size="9.5" fill="#0E6E62">3 judgments &rarr; 1 front door · NEW</text>
+
+  <rect x="160" y="80" width="230" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="275" y="101" text-anchor="middle">typed_atom_classification</text>
+  <text x="275" y="118" text-anchor="middle" font-size="9.5" opacity=".62">deflector · LLM takes the rest</text>
+
+  <rect x="160" y="144" width="230" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="275" y="165" text-anchor="middle">span_admission</text>
+  <text x="275" y="182" text-anchor="middle" font-size="9.5" opacity=".62">is this a &lt;relation&gt; item</text>
+
+  <rect x="160" y="208" width="230" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="275" y="229" text-anchor="middle" opacity=".82">still rules, not readouts</text>
+  <text x="275" y="246" text-anchor="middle" font-size="9.5" opacity=".6">entity_resolution · site_geo</text>
+  <text x="275" y="262" text-anchor="middle" font-size="9.5" opacity=".6">open_question · boilerplate_drop</text>
+
+  <line x1="390" y1="42"  x2="470" y2="140" stroke="currentColor" stroke-width="1.1" marker-end="url(#p)"/>
+  <line x1="390" y1="106" x2="470" y2="152" stroke="currentColor" stroke-width="1.1" marker-end="url(#p)"/>
+  <line x1="390" y1="170" x2="470" y2="164" stroke="currentColor" stroke-width="1.1" marker-end="url(#p)"/>
+  <line x1="390" y1="240" x2="470" y2="176" stroke="currentColor" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#p)"/>
+
+  <rect x="472" y="128" width="140" height="60" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="542" y="152" text-anchor="middle">graph_build</text>
+  <text x="542" y="169" text-anchor="middle" font-size="9.5" opacity=".6">edges · conflicts</text>
+
+  <line x1="612" y1="158" x2="676" y2="158" stroke="currentColor" stroke-width="1.1" marker-end="url(#p)"/>
+
+  <rect x="678" y="94" width="212" height="128" rx="6" fill="#E5ECF5" stroke="#27507F" stroke-width="1.7"/>
+  <text x="784" y="118" text-anchor="middle" fill="#27507F" font-weight="600">must never learn</text>
+  <text x="784" y="139" text-anchor="middle" font-size="10" fill="#27507F">source_replay · receipts</text>
+  <text x="784" y="156" text-anchor="middle" font-size="10" fill="#27507F">packetize · certificates</text>
+  <text x="784" y="173" text-anchor="middle" font-size="10" fill="#27507F">coverage census</text>
+  <text x="784" y="190" text-anchor="middle" font-size="10" fill="#27507F">quality gates</text>
+  <text x="784" y="209" text-anchor="middle" font-size="9" fill="#27507F" opacity=".8">invariants, not predictions</text>
+
+  <line x1="890" y1="158" x2="948" y2="158" stroke="currentColor" stroke-width="1.1" marker-end="url(#p)"/>
+  <rect x="950" y="128" width="90" height="60" rx="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <text x="995" y="152" text-anchor="middle" font-size="11">envelope</text>
+  <text x="995" y="169" text-anchor="middle" font-size="9" opacity=".6">&rarr; Core</text>
+</g>
+</svg>
+<figcaption>Dashed = a judgment still implemented as a rule. Solid = has somewhere for a head to attach.</figcaption>
+</figure>
+</div>
+
+<h3>The baseline &mdash; what is actually trained today</h3>
+<div class="scroll">
+<table>
+<thead><tr><th>head</th><th>code</th><th>serving?</th><th>state</th></tr></thead>
+<tbody>
+<tr><td class="m">type_head</td><td class="num">279 lines</td><td><b>no</b> &mdash; <code>TYPE_HEAD_DEFLECT=0</code></td><td>LogisticRegression over frozen embeddings. Single global threshold across 43 classes; the code&rsquo;s own comment says per-class conformal is the proper fix.</td></tr>
+<tr><td class="m">admission_head</td><td class="num">354 lines</td><td><b>no</b></td><td>Per-relation logistic head; needs span gold that does not exist.</td></tr>
+<tr><td class="m">neural_head</td><td class="num">452 lines</td><td><b>no</b></td><td>Learned metric over frozen embeddings.</td></tr>
+<tr><td class="m">span_admission</td><td class="num">247 lines</td><td><b>no</b></td><td>&mdash;</td></tr>
+<tr><td class="m">table_kind</td><td class="num">NEW</td><td>front door only</td><td>Delegates to the three existing heuristics. One correction target, abstains explicitly.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout inv">
+<p><b>No head is a registry champion, and none can become one.</b> <code>HEAD_REGISTRY_DIR</code> is unset, and where it is set in dev it points at <code>/tmp</code>. A trained head that passes its eval gate has nowhere to live that survives a container restart.</p>
+<p>That is why &ldquo;nothing is trained&rdquo; &mdash; not because training failed, but because a winner has no durable home.</p>
+</div>
+
+<h3>What is not on the path at all</h3>
+<div class="scroll">
+<table>
+<thead><tr><th>absent</th><th>state</th></tr></thead>
+<tbody>
+<tr><td>Training during a compile</td><td>Never happens by design. A compile serves a champion; the nightly retrain trains one.</td></tr>
+<tr><td>Corpus writes in prod</td><td><code>TRAINING_LOG_DB</code> deliberately unset. Turning it on now refills the corpus with the LLM grading its own homework &mdash; which is what made the first <span class="num">222,000</span> rows worthless.</td></tr>
+<tr><td>Case retrieval</td><td>Does not exist. Every compile starts from nothing. <b>The largest gap between what runs and what is designed.</b></td></tr>
+<tr><td>The four free signals</td><td>Question dismissals, answer order, technology axis at close, rework flag. Two are cheap; two need a close-out field that does not exist.</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>

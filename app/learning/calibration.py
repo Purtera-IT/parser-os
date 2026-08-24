@@ -76,6 +76,88 @@ def load_calibrator(model_path: Path) -> dict[str, Any]:
     return payload
 
 
+def default_calibrator_path() -> Path | None:
+    """Serve-time calibrator artifact, from ``SOWSMITH_CALIBRATOR_PATH``.
+
+    Returns ``None`` when the env var is unset or the file is missing, so an
+    unconfigured worker (and tests/local) stay a byte-identical no-op —
+    ``compile_project``'s ``apply_calibration`` is fully guarded by
+    ``calibrator_path is not None``. Point the worker env at the blob-hydrated
+    artifact (e.g. ``/tmp/ml/_calibrator/calibrator.joblib``) to turn it on."""
+    import os
+
+    p = os.environ.get("SOWSMITH_CALIBRATOR_PATH", "").strip()
+    return Path(p) if p and Path(p).is_file() else None
+
+
+def _atom_verified(atom: Any) -> bool:
+    recs = getattr(atom, "receipts", None) or []
+    return bool(recs) and all(getattr(r, "replay_status", "") == "verified" for r in recs)
+
+
+def build_calibration_labels(
+    compile_results: list[CompileResult],
+    *,
+    pm_corrected_atom_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Assemble ``{"atom_labels": [...], "reviews": [...]}`` for
+    :func:`train_calibrator`. ``label/correct_packet`` = was the head's output
+    CORRECT (1) or not (0).
+
+    PM gold is the primary, trustworthy signal: an atom a PM corrected was wrong
+    (label 0). Silver labels bootstrap class balance so the fit has both classes
+    before much PM data exists — but they are derived from review_flags /
+    contradictions / verified-high-confidence, i.e. from the system's own prior
+    opinion, so they are CIRCULAR by construction.
+
+    An earlier version of this docstring claimed the eval gate protected against
+    that ("a circular/weak fit simply won't promote"). It does not, and cannot:
+    the holdout is labelled by the same rule, so circularity inflates the
+    candidate and the baseline alike and a degenerate fit promotes MOST easily.
+    Two things guard it instead:
+
+    * features that literally encoded a silver label were removed
+      (``review_flag_count``, ``contradicting_atom_count`` — see
+      :mod:`app.learning.features`); with them present the model scored a Brier
+      of 0.0001 by memorising the label it had been handed;
+    * promotion is decided only on a PM-gold holdout of at least
+      ``MIN_GOLD_HOLDOUT`` labels (see :mod:`app.learning.nightly_retrain`).
+      Until that exists the deterministic gate keeps serving.
+    """
+    pm = pm_corrected_atom_ids or set()
+    atom_labels: list[dict[str, Any]] = []
+    reviews: list[dict[str, Any]] = []
+    for result in compile_results:
+        for a in getattr(result, "atoms", []) or []:
+            rs = getattr(a, "review_status", None)
+            rs_val = rs.value if hasattr(rs, "value") else rs
+            flags = getattr(a, "review_flags", None) or []
+            conf = getattr(a, "calibrated_confidence", None)
+            if conf is None:
+                conf = getattr(a, "confidence", 0.0) or 0.0
+            if a.id in pm:
+                atom_labels.append({"atom_id": a.id, "label": 0})        # PM: wrong
+            elif rs_val in ("needs_review", "rejected") or flags:
+                atom_labels.append({"atom_id": a.id, "label": 0})        # silver neg
+            elif conf >= 0.85 and _atom_verified(a):
+                atom_labels.append({"atom_id": a.id, "label": 1})        # silver pos
+            # else: ambiguous mid-band -> omit
+        for p in getattr(result, "packets", []) or []:
+            if getattr(p, "contradicting_atom_ids", None):
+                reviews.append({"packet_id": p.id, "correct_packet": False})
+            elif (getattr(p, "confidence", 0.0) or 0.0) >= 0.80:
+                reviews.append({"packet_id": p.id, "correct_packet": True})
+    return {"atom_labels": atom_labels, "reviews": reviews}
+
+
+def brier_score(probs: list[float], labels: list[int]) -> float:
+    """Mean squared error of probabilities vs 0/1 labels (lower is better).
+    Used to eval-gate a fitted calibrator against the raw-heuristic baseline."""
+    if not probs:
+        return 1.0
+    return sum((pr - y) ** 2 for pr, y in zip(probs, labels)) / len(probs)
+
+
 def apply_calibration(
     result: CompileResult,
     model_path: Path,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.textio import read_text
+
 import json
 import re
 from pathlib import Path
@@ -12,6 +14,7 @@ from app.core.normalizers import (
     detect_speaker,
     detect_section,
     extract_meeting_entities,
+    fold_standalone_speaker_lines,
     normalize_text,
     normalize_transcript_text,
     parse_timestamp,
@@ -43,6 +46,10 @@ from app.parsers.structured_projection import (
 from app.domain.schemas import DomainPack
 
 STRUCTURED_SCHEMA_TRANSCRIPT = "orbitbrief.transcript.structured.v1"
+
+#: W3C voice span, e.g. ``<v.loud Cliff Creech>text</v>``. Only the
+#: dependency-free fallback needs this -- webvtt-py handles it natively.
+_VTT_VOICE_SPAN_RE = re.compile(r"<v(?:\.[^\s>]+)*\s+([^>]+)>(.*?)(?:</v>|$)", re.I | re.S)
 
 DECISION_RE = re.compile(
     r"\b(decision:|decided|agreed|confirmed|approved|we will|the plan is|final decision)\b",
@@ -136,11 +143,51 @@ class TranscriptParser(BaseParser):
                 # bare ``.+$`` end-of-string anchor inside detect_speaker
                 # fails when the full document has more than one line.
                 # Walk the first ~40 lines and accept on any single hit.
+                # A TIMESTAMP is unambiguous transcript evidence. A bare
+                # "Name:" line is not -- ``detect_speaker`` matches any
+                # "Label: value", which is what business documents are made
+                # of. Accepting one such line in the first forty and stopping
+                # meant "School District Contact:" on page one of a Request
+                # for Proposals claimed the whole document at 0.82.
+                #
+                # Measured across 19 real .txt files: eight RFPs, SOWs, specs
+                # and addenda were taken this way, while the two files that
+                # actually ARE meeting notes have a speaker-line density of
+                # 0.0% and qualify through ``meeting_sections_detected``
+                # above. The highest densities in the corpus -- 37% to 43% --
+                # are customer emails. The signal was never measuring
+                # transcript-ness.
+                #
+                # So: timestamps qualify on sight; speaker labels qualify only
+                # when they are how the document is BUILT, which is what a
+                # transcript is. The threshold sits above every business
+                # document measured (RFP 3.2-7.6%, SOW 1.7%, specs 1.3%,
+                # addendum 10.2%, Q&A 15.2%) and above email headers, which
+                # are short files where a few header lines dominate -- those
+                # are claimed by EmailParser on its own evidence anyway.
                 speaker_or_ts = False
-                for line in text.splitlines()[:40]:
-                    if parse_timestamp(line) is not None or detect_speaker(line) is not None:
+                scan = [ln for ln in text.splitlines()[:400] if ln.strip()]
+                if any(parse_timestamp(ln) is not None for ln in scan):
+                    speaker_or_ts = True
+                elif len(scan) >= 8:
+                    turns = sum(1 for ln in scan if detect_speaker(ln) is not None)
+                    if turns / len(scan) >= 0.50:
                         speaker_or_ts = True
-                        break
+                if not speaker_or_ts:
+                    # Otter, Rev and Zoom put the speaker on its OWN line, so
+                    # the colon density above reads 0% and a real transcript
+                    # landed on the prose floor -- read, but with every
+                    # utterance unattributed. Ask the folder, which is the
+                    # same function the parser uses to canonicalise the file,
+                    # so this decision and that rewrite can never disagree.
+                    _folded, fold_stats = fold_standalone_speaker_lines(text)
+                    if fold_stats["qualifies"]:
+                        speaker_or_ts = True
+                        reasons.append(
+                            "standalone_speaker_lines("
+                            f"{fold_stats['folds']} turns, "
+                            f"{fold_stats['distinct_speakers']} speakers)"
+                        )
                 if not speaker_or_ts:
                     # PDF/meeting exports often use ``Name [mm:ss]`` mid-paragraph.
                     if re.search(
@@ -152,10 +199,33 @@ class TranscriptParser(BaseParser):
                 if speaker_or_ts:
                     confidence = 0.82
                     reasons.append("speaker_or_timestamp_markers")
-        # Filename/title cue: any artifact whose name contains "transcript"
-        # is a strong transcript candidate even when the sample is sparse.
-        if "transcript" in path.name.lower().replace("_", " ").replace("-", " "):
-            confidence = max(confidence, 0.78)
+        # Filename/title cue. This was 0.78 -- above MATCH_THRESHOLD -- and
+        # applied to ANY suffix, so the name alone both created a claim and
+        # created it for file types this parser does not support.
+        #
+        # Swept across 2500 real artifacts, renaming each without touching a
+        # byte of content:
+        #
+        #   .json  NONE(0.00)        -> named "meeting_transcript" -> 0.78   2062
+        #   .xlsx  XlsxParser(0.58)  -> named "meeting_transcript" -> 0.78     82
+        #
+        # The second is the bad one: a spreadsheet handed to this parser, which
+        # reads it as text -- and .xlsx is not in supported_extensions at all.
+        # "Q3_transcript_summary.xlsx" is an ordinary filename, so this needs
+        # no adversary to happen.
+        #
+        # The same sweep answered whether the prior is load-bearing: of 2500
+        # real artifacts, ZERO change parser when their name is neutralised.
+        # Nothing relies on it. Timestamps, speaker density and the
+        # own-line-speaker fold claim real transcripts on their own evidence.
+        #
+        # So: restricted to the extensions this parser actually supports, and
+        # scored below MATCH_THRESHOLD, where a prior belongs. Kept in the
+        # reasons so routing stays explainable.
+        if suffix in {".txt", ".md", ".vtt", ".srt", ".json"} and (
+            "transcript" in path.name.lower().replace("_", " ").replace("-", " ")
+        ):
+            confidence = max(confidence, 0.45)
             reasons.append("filename_transcript")
         return ParserMatch(
             parser_name=self.parser_name,
@@ -299,7 +369,7 @@ class TranscriptParser(BaseParser):
 
     def _segments_from_path(self, path: Path) -> list[dict[str, Any]]:
         suffix = path.suffix.lower()
-        raw = path.read_text(encoding="utf-8", errors="ignore")
+        raw = read_text(path)
         if suffix == ".json":
             return self._segments_from_json(raw)
         if suffix == ".vtt":
@@ -346,14 +416,70 @@ class TranscriptParser(BaseParser):
         return split_transcript_segments(text)
 
     def _clean_vtt(self, raw_text: str) -> str:
+        """Reduce a WebVTT file to ``Speaker: text`` lines.
+
+        The previous version dropped the ``WEBVTT`` banner, the timing lines
+        and blank lines, and kept everything else verbatim. Three things went
+        wrong with that, all visible on a file Teams would produce:
+
+        * ``<v Cliff Creech>`` is the W3C voice span -- the standard way every
+          major platform names a speaker -- and it survived into the atom as
+          literal markup, with the speaker recorded as ``None``.
+        * a cue *identifier* is an optional line before the timing line, and
+          it is usually just ``1``, ``2``, ``3``. Those became atoms whose
+          entire text was a digit. (``_clean_srt`` directly below already
+          skipped these; VTT never got the same treatment.)
+        * ``NOTE`` comments, ``STYLE`` and ``REGION`` blocks and the other cue
+          payload tags (``<c>``, ``<i>``, inline timestamps) were all kept as
+          if they were speech.
+
+        ``webvtt-py`` implements the spec, so the parsing is delegated rather
+        than re-derived: it separates identifier, timing and payload, strips
+        cue tags, and exposes the voice span as ``caption.voice``. The old
+        line filter remains as the fallback for a file the library refuses, so
+        a malformed transcript degrades instead of raising.
+        """
+        try:
+            import webvtt
+        except Exception:  # pragma: no cover - dependency-free fallback
+            return self._clean_vtt_fallback(raw_text)
+        try:
+            captions = list(webvtt.from_string(raw_text))
+        except Exception:
+            # Malformed, or not actually VTT -- keep the old behaviour.
+            return self._clean_vtt_fallback(raw_text)
+        if not captions:
+            return self._clean_vtt_fallback(raw_text)
+
+        lines: list[str] = []
+        for caption in captions:
+            text = " ".join((caption.text or "").split())
+            if not text:
+                continue
+            speaker = " ".join((caption.voice or "").split())
+            lines.append(f"{speaker}: {text}" if speaker else text)
+        return "\n".join(lines)
+
+    def _clean_vtt_fallback(self, raw_text: str) -> str:
+        """The pre-library line filter, plus the cue-identifier skip it lacked."""
         lines = []
         for line in raw_text.splitlines():
-            if line.strip().upper() == "WEBVTT":
+            stripped = line.strip()
+            if stripped.upper() == "WEBVTT":
+                continue
+            if stripped.upper().startswith(("NOTE", "STYLE", "REGION")):
                 continue
             if "-->" in line:
                 continue
-            if not line.strip():
+            if not stripped:
                 continue
+            if stripped.isdigit():  # a cue identifier, not speech
+                continue
+            match = _VTT_VOICE_SPAN_RE.search(line)
+            if match:
+                speaker = " ".join(match.group(1).split())
+                said = " ".join(match.group(2).split())
+                line = f"{speaker}: {said}" if said else speaker
             lines.append(line)
         return "\n".join(lines)
 
@@ -533,11 +659,35 @@ class TranscriptParser(BaseParser):
             if atom_type not in deduped_types:
                 deduped_types.append(atom_type)
 
+        # Coverage floor. Every branch above is a *pattern* -- a keyword, an
+        # alias, a question mark. When none fires the loop below runs zero
+        # times and the utterance is gone: no atom, no receipt, nothing that
+        # records it was ever said. Measured on a ten-turn call written in
+        # ordinary language, five turns vanished, and they were the wrong
+        # five: the scope ("forty sites before end of Q3"), the access
+        # constraint ("dock is only open until two"), the exclusion ("not
+        # paying for the mid-turn jumpers") and the part number all went,
+        # while "Understood", "Noted" and "Good" survived on their keywords.
+        #
+        # So the utterance is kept untyped instead. Typing it is a judgement
+        # that belongs downstream where it can be learned and corrected;
+        # deciding it was never spoken is not a judgement this layer is
+        # entitled to make.
+        if not deduped_types:
+            deduped_types.append(AtomType.raw_utterance)
+
         for atom_type in deduped_types:
             value: dict[str, Any] = {"text": text}
             review_status = ReviewStatus.auto_accepted
             review_flags: list[str] = []
             confidence = 0.78
+
+            if atom_type == AtomType.raw_utterance:
+                # Deliberately the lowest confidence any transcript atom
+                # carries, so it never outranks a typed one covering the same
+                # words and never reads as an assertion about the deal.
+                confidence = 0.40
+                review_flags.append("unclassified_utterance")
 
             if atom_type == AtomType.quantity:
                 match = QUANTITY_RE.search(text)

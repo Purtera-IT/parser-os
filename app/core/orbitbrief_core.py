@@ -156,7 +156,16 @@ def build_pm_dashboard(
                 (isinstance(value, dict) and value.get("answered") is True)
                 or ("answered_in_corpus" in (atom.review_flags or []))
             )
-            if not _answered:
+            # Noise filter — keep the blocker count meaningful. OCR-pending image
+            # placeholders and low-signal chatter ("Hey Nick- thoughts?") were
+            # being counted as blockers, inflating the number a PM sees.
+            _lt = (text or "").strip().lower()
+            _noise = (
+                "[image extracted" in _lt
+                or "awaiting ocr" in _lt
+                or (len(_lt) < 25 and ("thought" in _lt or _lt.startswith(("hey ", "hi ", "thanks"))))
+            )
+            if not _answered and not _noise:
                 open_qs.append({
                     "atom_id": atom.id,
                     "artifact_id": atom.artifact_id,
@@ -534,6 +543,17 @@ def build_sow_readiness_scorecard(
     score_values = [d["score"] for d in dimensions.values()]
     overall = sum(score_values) / max(1, len(score_values))
 
+    # Hard blockers that gate readiness regardless of the atom-volume
+    # dimensions: an unanswered open_question or a cross-doc quantity
+    # contradiction means the deal is NOT ready for SOW even if every volume
+    # dimension is full. This mirrors the blocker stream the brief surfaces.
+    unanswered_questions = sum(
+        1 for a in atoms
+        if _atom_type_str(a) == "open_question"
+        and not (isinstance(a.value, dict) and a.value.get("answered") is True)
+    )
+    blocker_count = unanswered_questions + cross_doc_conflicts
+
     # Grade banding.
     if overall >= 0.85:
         grade = "ready_to_sow"
@@ -544,9 +564,21 @@ def build_sow_readiness_scorecard(
     else:
         grade = "discovery_only"
 
+    # Hard-cap: open blockers veto a "ready" grade. A scorecard that reports
+    # ready_to_sow / almost_ready while the brief's blocker list is non-empty is
+    # the exact contradiction a PM would act on — advancing a blocked deal to
+    # SOW. While blockers remain, the grade is capped at needs_work.
+    capped = False
+    if blocker_count > 0 and grade in ("ready_to_sow", "almost_ready"):
+        grade = "needs_work"
+        capped = True
+
     return {
         "readiness_score": round(overall, 3),
         "grade": grade,
+        "blocker_count": blocker_count,
+        "blocked": blocker_count > 0,
+        "grade_capped_by_blockers": capped,
         "dimensions": dimensions,
         "description_by_dimension": dict(_READINESS_DIMENSIONS),
     }
@@ -1993,6 +2025,38 @@ def build_deal_financials(*, atoms: list[EvidenceAtom]) -> dict[str, Any]:
         "margin": _round2(margin),
         "margin_pct": _round2(mpct),
     }
+
+    # NORM consumer fallback: non-xlsx deals carry no pl_metric atoms, so the
+    # structured P&L above is empty. Roll up the NORM-normalized money amounts
+    # (atom.value.amount, set by entity_extraction.normalize_atom_value on
+    # single-amount atoms) into a best-effort "Quoted amounts" line so the PM
+    # surface isn't dark. The deal total is most often the single LARGEST stated
+    # amount (grand total / not-to-exceed); summing double-counts line items, so
+    # we lead with the max and flag the result as derived (not a structured P&L).
+    if not lines:
+        amounts = [
+            atom.value["amount"]
+            for atom in atoms
+            if isinstance(atom.value, dict)
+            and isinstance(atom.value.get("amount"), (int, float))
+            and not isinstance(atom.value.get("amount"), bool)
+            and atom.value["amount"] > 0
+        ]
+        if amounts:
+            top = max(amounts)
+            return {
+                "lines": [{
+                    "category": "Quoted amounts (derived)",
+                    "category_key": "derived_quoted",
+                    "revenue": _round2(top), "cost": None, "margin": None, "margin_pct": None,
+                    "atom_id": None,
+                }],
+                "category_count": 1,
+                "totals": {"revenue": _round2(top), "cost": None, "margin": None, "margin_pct": None},
+                "present": True,
+                "derived": True,
+                "derived_amount_count": len(amounts),
+            }
 
     return {
         "lines": lines,

@@ -146,6 +146,8 @@ def _title_block_region(
     band_y = py0 + 0.85 * page_h
     band_x = page_bbox[0] + 0.90 * page_w
     keep: list[tuple[float, float, float, float]] = []
+    #: Rotated blocks qualify anywhere on the page, so they are never clamped.
+    rotated_keep: list[tuple[float, float, float, float]] = []
     for blk in blocks:
         in_bottom_band = blk.bbox[1] >= band_y
         in_right_band = blk.bbox[0] >= band_x
@@ -155,7 +157,14 @@ def _title_block_region(
         # outside the bottom-right band, treat it as title-block
         # furniture so symbol detection doesn't consume it.
         if rotated:
-            keep.append(blk.bbox)
+            # Kept apart from `keep` on purpose: the clamp below pins the
+            # region's top to band_y, which is right for blocks that got here
+            # by being IN a band, and fatal for these. A rotated border label
+            # at (20, 200, 35, 600) on an 792pt page clamps to y0=673.2 while
+            # its own y1 is 600, so y1 <= y0 and the entire title block
+            # returned None -- the one branch that says position does not
+            # matter, undone by the one that assumes it does.
+            rotated_keep.append(blk.bbox)
             continue
         if not (in_bottom_band or in_right_band):
             continue
@@ -177,7 +186,7 @@ def _title_block_region(
             # Inner intersection of bottom + right is the title block
             # corner by convention.
             keep.append(blk.bbox)
-    if not keep:
+    if not keep and not rotated_keep:
         return None
     # Clamp the title-block region's top to band_y. Any block above
     # band_y that landed in `keep` (e.g. a "Date" column header on a
@@ -188,12 +197,22 @@ def _title_block_region(
     # title-block furniture above band_y is rare, and when it
     # exists it's covered by separate right-strip handling in
     # detect_exclusion_zones (drawing_index / keyed_notes).
-    union = _union_bbox(keep)
-    if union is None:
+    union = _union_bbox(keep) if keep else None
+    if union is None and not rotated_keep:
         return None
-    x0, y0, x1, y1 = union
-    if y0 < band_y:
-        y0 = band_y
+    if union is None:
+        # Rotated furniture only: take it as-is, unclamped.
+        x0, y0, x1, y1 = _union_bbox(rotated_keep)  # type: ignore[misc]
+    else:
+        x0, y0, x1, y1 = union
+        if y0 < band_y:
+            y0 = band_y
+        if rotated_keep:
+            # Union the rotated regions in AFTER the clamp, so a rotated label
+            # above band_y still lands inside the zone.
+            rx0, ry0, rx1, ry1 = _union_bbox(rotated_keep)  # type: ignore[misc]
+            x0, y0 = min(x0, rx0), min(y0, ry0)
+            x1, y1 = max(x1, rx1), max(y1, ry1)
     if x0 < page_bbox[0]:
         x0 = page_bbox[0]
     if y1 > py1:

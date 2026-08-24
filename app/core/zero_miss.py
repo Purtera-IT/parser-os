@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from app.core.sentences import count_sentences
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -298,8 +299,9 @@ def compute_page_coverage(
             for k in (a.entity_keys or []):
                 keys.add(k)
         page_text = raw_text_by_page.get((pdf, page), "")
-        sentences = len(re.split(r"(?<=[.!?])\s+(?=[A-Z])|\n\n+",
-                                  page_text)) if page_text else 0
+        # Abbreviation-aware: the previous regex split "Part No. 77-K298"
+        # in two, inflating the denominator and depressing every ratio.
+        sentences = count_sentences(page_text) if page_text else 0
         ratio = len(keys) / max(sentences, 1) if sentences else 0.0
         out[(pdf, page)] = {
             "sentences": sentences,

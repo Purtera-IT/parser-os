@@ -438,6 +438,15 @@ class DocxParser(BaseParser):
             )
         )
         atoms.extend(
+            self._emit_header_footer_atoms(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                document=document,
+                already_emitted=already_emitted,
+            )
+        )
+        atoms.extend(
             self._emit_embedded_media_markers(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -684,12 +693,18 @@ class DocxParser(BaseParser):
             style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
             is_heading = style_name.startswith("heading")
             is_list = "list" in style_name or "bullet" in style_name
-            if is_heading and text:
+            # Only when the name declines: a localised or template heading
+            # style carries w:outlineLvl but not the substring "heading".
+            outline = None if (is_heading or is_list) else self._outline_level(paragraph)
+            if (is_heading or outline is not None) and text:
                 flush_section()
                 current_heading = text
-                # Heading 1 -> level 2, Heading 2 -> level 3, etc.
-                m = re.search(r"\d+", style_name)
-                level = (int(m.group()) + 1) if m else 2
+                if is_heading:
+                    # Heading 1 -> level 2, Heading 2 -> level 3, etc.
+                    m = re.search(r"\d+", style_name)
+                    level = (int(m.group()) + 1) if m else 2
+                else:
+                    level = outline + 2  # outlineLvl 0 == Heading 1 == level 2
                 current_level = max(2, min(level, 6))
                 continue
             if not text:
@@ -1167,6 +1182,73 @@ class DocxParser(BaseParser):
             return int(m.group(1)) if m else 1
         return None
 
+    @staticmethod
+    def _outline_level(paragraph: Any) -> int | None:
+        """Heading depth from ``w:outlineLvl`` -- structure, not a string.
+
+        ``_heading_level`` matches the English substring "heading", which makes
+        section detection depend on the LOCALE of the Word install that wrote
+        the file and on whether anyone used a corporate template. Both produce
+        ordinary heading-structured documents that contain no such string:
+
+            Uberschrift 1 (de)   Titre 1 (fr)   Encabezado 1 (es)
+            "PurTera Section Head" (based on Heading 1)
+
+        Measured on the identical document, three sections deep: with built-in
+        Heading 1 the parser finds 3 sections; under any of the above it finds
+        ZERO, and every atom loses its section_path.
+
+        This file already learned the lesson once -- ``_paragraph_is_list_item``
+        reads ``w:numPr`` off the XML precisely because "Word frequently leaves
+        list paragraphs on the Normal style while carrying real numbering".
+        Headings never got the same treatment. ``w:outlineLvl`` is the
+        equivalent structural fact: Word writes it into every heading style, it
+        survives localisation, and a custom style based on Heading N inherits
+        it through ``w:basedOn``.
+
+        Returns 0-based depth (outlineLvl 0 == Heading 1). Level 9 is Word's
+        "body text" marker and is not a heading.
+
+        Used ONLY as a fallback, after the style name has declined to answer,
+        so it can add a heading the name could not see and can never overrule
+        one the name already found. On all 13 real .docx available the two
+        signals agree exactly (byName == byXML, 0 missed), so this changes
+        nothing that currently works.
+        """
+        from docx.oxml.ns import qn
+
+        def _read(container: Any) -> int | None:
+            if container is None:
+                return None
+            ppr = container.find(qn("w:pPr"))
+            if ppr is None:
+                return None
+            node = ppr.find(qn("w:outlineLvl"))
+            if node is None:
+                return None
+            raw = node.get(qn("w:val"))
+            if raw is None or not str(raw).isdigit():
+                return None
+            value = int(raw)
+            return value if 0 <= value <= 8 else None
+
+        try:
+            direct = _read(getattr(paragraph, "_p", None))
+            if direct is not None:
+                return direct
+            style = getattr(paragraph, "style", None)
+            seen: set[Any] = set()
+            # Walk basedOn so a template style inherits its parent's level.
+            while style is not None and getattr(style, "style_id", None) not in seen:
+                seen.add(getattr(style, "style_id", None))
+                inherited = _read(getattr(style, "element", None))
+                if inherited is not None:
+                    return inherited
+                style = getattr(style, "base_style", None)
+        except Exception:  # noqa: BLE001 - a malformed style chain is not a heading
+            return None
+        return None
+
     def _build_section_index(
         self, document: Any
     ) -> tuple[dict[int, list[str]], dict[int, list[str]], dict[int, tuple[int, list[str]]]]:
@@ -1284,6 +1366,12 @@ class DocxParser(BaseParser):
                     para_lead_in[pidx] = []
                     continue
                 lvl = self._heading_level(style)
+                if lvl is None and text and not is_list:
+                    # The style name said nothing. Ask the XML, which is not
+                    # in English: see _outline_level.
+                    outline = self._outline_level(para)
+                    if outline is not None:
+                        lvl = outline + 1
                 if lvl is None and text and not is_list and self._is_bold_subheading(para):
                     # bold sub-heading Word left on Normal style — nest it below
                     # style headings so its following bullets inherit the section.
@@ -1638,6 +1726,121 @@ class DocxParser(BaseParser):
         return atoms
 
     # -- never-detected recovery: content python-docx's body view can't see --
+    def _emit_header_footer_atoms(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        document: Any,
+        already_emitted: set[str],
+    ) -> list[EvidenceAtom]:
+        """Recover the header and footer stories.
+
+        Word keeps headers and footers in separate story parts, so they are
+        invisible to ``document.paragraphs`` and to the body walk in
+        ``_recover_nested_region_atoms`` alike -- the same *never-detected*
+        loss class, one story further out. Measured on a document with the
+        customer name in the header and a confidentiality notice in the
+        footer, both were lost outright.
+
+        This is where templated SOWs put the things that are true of the whole
+        document and therefore said exactly once: the customer, the contract
+        or revision number, the effective date, the confidentiality basis.
+
+        Each section carries three variants (default / first page / even
+        page). All are read, because "first page only" is precisely how a
+        template carries the customer name. ``is_linked_to_previous`` sections
+        repeat the previous section's story, so dedup by normalized text stops
+        a five-section document emitting the same footer five times.
+        """
+        sections = getattr(document, "sections", None)
+        if not sections:
+            return []
+
+        seen = set(already_emitted)
+        atoms: list[EvidenceAtom] = []
+        variants = (
+            ("header", "default"), ("first_page_header", "first_page"),
+            ("even_page_header", "even_page"), ("footer", "default"),
+            ("first_page_footer", "first_page"), ("even_page_footer", "even_page"),
+        )
+
+        for sec_idx, section in enumerate(sections):
+            for attr, variant in variants:
+                story = getattr(section, attr, None)
+                if story is None:
+                    continue
+                story_kind = "header" if "header" in attr else "footer"
+                # Paragraphs, then tables -- a header table holding the
+                # customer/logo/contract-number block is a common template.
+                texts: list[str] = []
+                try:
+                    texts.extend((para.text or "").strip() for para in story.paragraphs)
+                except Exception:  # pragma: no cover - malformed story part
+                    pass
+                try:
+                    for table in getattr(story, "tables", []) or []:
+                        for row in table.rows:
+                            cells = [(c.text or "").strip() for c in row.cells]
+                            joined = " | ".join(c for c in cells if c)
+                            if joined:
+                                texts.append(joined)
+                except Exception:  # pragma: no cover - malformed story part
+                    pass
+
+                for text in texts:
+                    if not text:
+                        continue
+                    key = normalize_text(text)
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    # UNCONDITIONAL, mirroring the orphan-table-row path.
+                    # Routing this through _emit_atoms_for_text loses it: the
+                    # prose gate wants a scope verb, and "Xtra Lease -- Master
+                    # Lease Agreement" is a bare noun phrase. Measured, the
+                    # gate returned zero atoms for both the header and the
+                    # footer of a document that plainly carried the customer.
+                    atom_id = stable_id("atm", artifact_id, "hdrftr", story_kind, variant, sec_idx, key)
+                    src = SourceRef(
+                        id=stable_id("src", atom_id),
+                        artifact_id=artifact_id,
+                        artifact_type=ArtifactType.docx,
+                        filename=filename,
+                        locator={
+                            "story": story_kind,
+                            "story_variant": variant,
+                            "section_index": sec_idx,
+                            "extraction": "docx_header_footer",
+                        },
+                        extraction_method="docx_header_footer",
+                        parser_version=self.parser_version,
+                    )
+                    atoms.append(EvidenceAtom(
+                        id=atom_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item,
+                        raw_text=text[:4000],
+                        normalized_text=key[:4000],
+                        value={"kind": "page_furniture", "story": story_kind},
+                        entity_keys=self._extract_entity_keys(text),
+                        source_refs=[src],
+                        receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        # Below the body-prose default: this is chrome until
+                        # something downstream decides otherwise, and the
+                        # locator carries the story so it can.
+                        confidence=0.6,
+                        confidence_raw=0.6,
+                        calibrated_confidence=0.6,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=["docx_header_footer"],
+                        parser_version=self.parser_version,
+                    ))
+        return atoms
+
     def _recover_nested_region_atoms(
         self,
         *,

@@ -25,9 +25,58 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Iterable, Sequence
 
 _PROTO_CACHE: dict[str, object] = {}  # rule-name -> (pos_matrix, neg_matrix)
+
+# Longest candidate worth pre-embedding. Rules judge LINES (headings, lead-ins,
+# labels); a multi-KB prose blob is never a rule candidate and would only bloat
+# the prewarm request.
+_PREWARM_MAX_CHARS = 400
+# Ceiling on one prewarm request so a 500-page dump can't build a giant payload.
+_PREWARM_MAX_TEXTS = int(os.environ.get("SOWSMITH_SEMANTIC_PREWARM_MAX", "4000"))
+
+
+def prewarm(texts: Iterable[str]) -> int:
+    """Embed a document's candidate lines in ONE round trip. Returns the count.
+
+    ``SemanticRule.fires`` embeds ONE text per call, so each candidate line
+    costs a full HTTP round trip — ~2.5 s against the remote qwen3 embedder.
+    A single RFP PDF asks about ~900 distinct lines, which is ~38 minutes of
+    purely serial network wait for a parse that should take seconds; that is
+    what made a full-pack compile look like a hang.
+
+    ``embed_texts`` already collapses its cache misses into a single
+    ``/api/embed`` request and persists them, so handing it the whole
+    candidate set up front turns N round trips into 1 — every subsequent
+    ``fires()`` call is then a local cache hit.
+
+    Purely a cache-filling optimisation: it changes no decision, and it is
+    best-effort — offline, disabled, or failing, it returns 0 and every rule
+    behaves exactly as before.
+    """
+    if SemanticRule._disabled():
+        return 0
+    seen: set[str] = set()
+    batch: list[str] = []
+    for raw in texts:
+        t = (raw or "").strip()
+        if not t or len(t) > _PREWARM_MAX_CHARS or t in seen:
+            continue
+        seen.add(t)
+        batch.append(t)
+        if len(batch) >= _PREWARM_MAX_TEXTS:
+            break
+    if not batch:
+        return 0
+    try:
+        from app.core.embedding_retrieval import embed_texts, embedding_endpoint_reachable
+        if not embedding_endpoint_reachable():
+            return 0
+        embed_texts(batch)
+    except Exception:
+        return 0
+    return len(batch)
 
 # ── trained-threshold registry ──────────────────────────────────────────
 # A rule's threshold is hand-set at construction, but the trainer
