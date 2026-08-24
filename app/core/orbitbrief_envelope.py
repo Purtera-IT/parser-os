@@ -259,8 +259,27 @@ def build_orbitbrief_envelope(
     # null. Added ONLY when enabled + head present, so OFF -> key absent.
     from app.core.service_router import build_service_routing as _build_service_routing
 
-    _routing = _build_service_routing(atoms, documents)
-    if _routing.get("enabled"):
+    # ``project_id`` IS the deal key: a deal-scoped PM correction stores
+    # ``scope_key = project_id`` (routes_feedback._scope_from_chip), so passing
+    # it here is what lets a shadow observation and a later correction be
+    # joined on the same deal.
+    _routing = _build_service_routing(
+        atoms,
+        documents,
+        deal_id=compile_result.project_id,
+        project_id=compile_result.project_id,
+        base=None,
+        base_observed=False,
+    )
+    # Emitted whenever there is anything to say, not only when a head is
+    # loaded. With the head off -- every environment today -- the key still
+    # carries the ``candidates`` a correction chip needs to offer a choice, and
+    # the recorded input, so the observation travels with the deal instead of
+    # being thrown away on the one path that is always taken.
+    #
+    # Safe to widen: compute_output_signature hashes the CompileResult (atoms,
+    # entities, edges, packets), not the envelope, so no signature moves.
+    if _routing.get("enabled") or _routing.get("candidates"):
         envelope["service_routing"] = _routing
     # S+++++ cockpit surfaces — authority-weighted scope truth,
     # chronological change-order audit, per-site readiness rollup,

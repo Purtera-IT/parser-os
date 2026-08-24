@@ -467,3 +467,74 @@ def test_the_router_offers_candidates_before_a_head_exists() -> None:
     packs = known_packs()
     assert "wireless" in packs and "audio_visual" in packs
     assert "ambiguous" not in [p.lower() for p in packs]
+
+
+# ── the compile path ────────────────────────────────────────────────────
+
+
+def test_routing_reaches_the_envelope_even_with_no_head() -> None:
+    """The disabled path is the ONLY path taken today, so it has to carry.
+
+    ``service_routing`` used to be added to the envelope only when a head was
+    loaded. No promoted store exists in any environment, so the key was absent
+    on every compile -- and with it the ``candidates`` a correction chip needs
+    to offer a choice, and the record of what the router saw.
+
+    Widening it is safe: ``compute_output_signature`` hashes the
+    CompileResult -- atoms, entities, edges, packets -- not the envelope, so
+    no signature moves.
+    """
+    from app.core.service_router import build_service_routing
+
+    out = build_service_routing(
+        [], [], deal_id="deal_1", project_id="deal_1", base=None, base_observed=False
+    )
+    assert out["enabled"] is False
+    assert out["candidates"], "the chip needs something to offer"
+    assert "shadow" in out, "the observation must travel with the deal"
+
+
+def test_no_base_in_this_process_is_not_a_missing_route() -> None:
+    """parser-os has no service-pack base; the keyword pack_prior is in brief-gen.
+
+    Treating its silence as "nothing placed this deal" would raise a hand on
+    every single compile, and a queue that flags everything is a queue nobody
+    reads. Whoever can see BOTH answers is who raises the hand.
+    """
+    from app.core.router_shadow import decide_ask
+
+    assert decide_ask(None, None, base_observed=False) == (False, "")
+    assert decide_ask(None, None, base_observed=True)[0] is True
+
+
+def test_the_head_s_own_answer_never_becomes_a_training_label(tmp_path, monkeypatch) -> None:
+    """The circularity this whole effort exists to break.
+
+    With no base observed there is no trustworthy label, so nothing is written
+    to the training log -- however confident the head was. The observation
+    still returns to the caller and rides in the envelope, so the input is
+    preserved for the day a PM does supply a label.
+    """
+    import sqlite3
+
+    db = tmp_path / "training.db"
+    monkeypatch.setenv("SOWSMITH_TRAINING_LOG_DB", str(db))
+    import app.core.training_log as tl
+
+    tl._LOG = None
+    from app.core import router_shadow
+
+    record = router_shadow.record(
+        deal_id="deal_9",
+        base_label=None,
+        base_observed=False,
+        head_label="wireless",
+        head_confidence=0.97,
+        scope_summary="install access points",
+    )
+    assert record.head_label == "wireless"
+    assert not record.logged, "a head's own output is not a label"
+    if db.exists():
+        n = sqlite3.connect(db).execute("select count(*) from training_rows").fetchone()[0]
+        assert n == 0
+    tl._LOG = None

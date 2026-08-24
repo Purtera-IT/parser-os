@@ -271,6 +271,7 @@ def _shadow(
     deal_id: str,
     project_id: str,
     head_result: tuple[str, float] | None,
+    base_observed: bool = True,
     summary: str | None = None,
 ) -> dict[str, Any]:
     """Record both routers' answers and return the queue signal.
@@ -294,6 +295,7 @@ def _shadow(
             base_confidence=(base[1] if base else 0.0),
             head_label=(head_result[0] if head_result else None),
             head_confidence=(head_result[1] if head_result else 0.0),
+            base_observed=base_observed,
             provenance={"scope_summary_version": SCOPE_SUMMARY_VERSION},
             scope_summary=summary or "",
         )
@@ -331,6 +333,7 @@ def build_service_routing(
     documents: list[dict],
     *,
     base: tuple[str, float] | None = None,
+    base_observed: bool = True,
     deal_id: str = "",
     project_id: str = "",
 ) -> dict[str, Any]:
@@ -348,7 +351,8 @@ def build_service_routing(
     head = _load_head() if _enabled() else None
     if head is None:
         shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
-                         project_id=project_id, head_result=None)
+                         project_id=project_id, head_result=None,
+                         base_observed=base_observed)
         return {"enabled": False, "candidates": known_packs(), **shadow}
     # Record the EXACT string the head embeds. Every router eval so far has
     # rebuilt this from envelope.json and measured a different function: replaying
@@ -373,7 +377,8 @@ def build_service_routing(
         return {"enabled": False}
     if not res:
         shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
-                         project_id=project_id, head_result=None, summary=summary)
+                         project_id=project_id, head_result=None,
+                         base_observed=base_observed, summary=summary)
         return {"enabled": True, "primary": None, "confidence": 0.0,
                 "abstained": True, "candidates": known_packs(), **shadow, **prov}
     label, conf = res
@@ -389,7 +394,8 @@ def build_service_routing(
     # target — as "no opinion" so brief-gen's keyword router stays in charge.
     if str(label).lower() in ("other", "ambiguous"):
         shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
-                         project_id=project_id, head_result=None, summary=summary)
+                         project_id=project_id, head_result=None,
+                         base_observed=base_observed, summary=summary)
         return {"enabled": True, "primary": None, "confidence": conf,
                 "raw_confidence": raw_conf, "abstained": True,
                 "candidates": known_packs(), **shadow, **prov}
@@ -410,7 +416,8 @@ def build_service_routing(
             "source": "service_router_head",
             "candidates": known_packs(),
             **_shadow(atoms, documents, base=base, deal_id=deal_id,
-                      project_id=project_id, head_result=None, summary=summary),
+                      project_id=project_id, head_result=None,
+                         base_observed=base_observed, summary=summary),
             **prov,
         }
     return {
@@ -423,6 +430,6 @@ def build_service_routing(
         "candidates": known_packs(),
         **_shadow(atoms, documents, base=base, deal_id=deal_id,
                   project_id=project_id, head_result=(str(label), conf),
-                  summary=summary),
+                  base_observed=base_observed, summary=summary),
         **prov,
     }

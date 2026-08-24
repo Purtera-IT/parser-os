@@ -80,6 +80,7 @@ def decide_ask(
     head_label: str | None,
     *,
     base_confidence: float = 0.0,
+    base_observed: bool = True,
 ) -> tuple[bool, str]:
     """Should this deal be put in front of a PM for one tap?
 
@@ -96,6 +97,13 @@ def decide_ask(
     alone. Those cost a PM the same tap and teach nearly nothing, and a queue
     that cries wolf is a queue nobody clears.
     """
+    if not base_observed:
+        # No base ran in THIS process, which is not the same as a base that
+        # failed. parser-os has no service-pack base -- the keyword pack_prior
+        # lives in brief-gen -- so treating its silence as "nothing placed this
+        # deal" would flag every compile, and a queue that flags everything is
+        # a queue nobody reads. Whoever can see both answers raises the hand.
+        return False, ""
     if base_label and head_label and base_label != head_label:
         return True, f"routers disagree: base={base_label} head={head_label}"
     if not base_label and not head_label:
@@ -113,6 +121,7 @@ def record(
     base_confidence: float = 0.0,
     head_label: str | None = None,
     head_confidence: float = 0.0,
+    base_observed: bool = True,
     provenance: dict[str, Any] | None = None,
     scope_summary: str = "",
 ) -> ShadowRecord:
@@ -139,7 +148,11 @@ def record(
         }
     )
 
-    ask, reason = decide_ask(base_label, head_label, base_confidence=base_confidence)
+    prov["base_observed"] = bool(base_observed)
+    ask, reason = decide_ask(
+        base_label, head_label,
+        base_confidence=base_confidence, base_observed=base_observed,
+    )
     rec = ShadowRecord(
         deal_id=deal_id,
         base_label=base_label,
@@ -153,11 +166,18 @@ def record(
     if ask:
         prov["ask_reason"] = reason
 
-    # Only a routed deal is a training example. A row whose label is None
-    # teaches nothing and would inflate n_train with silence -- which is
-    # arguably how the registry ended up reporting one row and calling it
-    # trained.
-    if not base_label:
+    # A row becomes training data only when its label came from somewhere
+    # this head did not. Two ways that fails:
+    #
+    #   no label at all -- teaches nothing, and logging silence is plausibly
+    #     how the registry came to report one training row and call it trained;
+    #   the HEAD's own answer -- that is the circularity the whole effort
+    #     exists to break, so it is never promoted to a label here.
+    #
+    # The observation is still returned to the caller either way, and travels
+    # with the deal in the envelope, so the input is preserved for the day a
+    # PM does supply a label.
+    if not base_label or not base_observed:
         return rec
 
     try:
