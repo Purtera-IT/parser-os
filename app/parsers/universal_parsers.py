@@ -420,13 +420,24 @@ _RTF_HEX_RE = re.compile(r"\\'([0-9a-fA-F]{2})")
 
 
 def _strip_rtf(rtf_text: str) -> str:
-    """Strip RTF control words / groups to plain text.
+    """RTF to plain text: ``striprtf`` first, the regex stripper as fallback.
 
-    Tolerant lossy stripper. Sufficient for most SOW / contract
-    templates which are 95% prose + minimal formatting. For RTF
-    with complex tables / images, a dedicated library would
-    recover more.
+    The regex version below is a tolerant lossy stripper written for prose
+    documents. It cannot handle nested groups, unicode escapes (``\\u8217?``),
+    or the destination groups Word emits (``{\\*\\generator ...}``) -- those
+    leak control words into the text or drop characters silently. ``striprtf``
+    is the maintained implementation of the actual spec; same soft-import
+    pattern as ``rapidfuzz`` in entity_resolution, so an environment without
+    the wheel degrades to the old behaviour instead of failing.
     """
+    try:
+        from striprtf.striprtf import rtf_to_text
+
+        return rtf_to_text(rtf_text, errors="ignore")
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - malformed RTF: fall through, degrade
+        pass
     # Hex escapes (\'AE → ®). Decode best-effort to ASCII.
     def _hex_sub(m: re.Match[str]) -> str:
         try:
@@ -501,6 +512,55 @@ _ICS_VEVENT_BLOCK_RE = re.compile(r"BEGIN:VEVENT(.+?)END:VEVENT", re.DOTALL | re
 _ICS_FIELD_RE = re.compile(r"^([A-Z\-]+)(?:;[^:]*)?:(.+)$", re.MULTILINE)
 
 
+def _ics_events(raw: str) -> list[dict[str, str]]:
+    """Field dicts for each VEVENT: ``icalendar`` first, regex as fallback.
+
+    The hand parser below unfolds continuation lines and regex-splits
+    ``NAME;params:value`` -- workable for simple invites, but RFC 5545 has
+    teeth the regex does not: quoted parameter values containing colons
+    (``CN="Smith: PM"``), RFC 6868 caret escaping, VALARM sub-components whose
+    DESCRIPTION shadows the event's own, and timezone-parameterised dates.
+    ``icalendar`` is the maintained implementation of the actual grammar.
+
+    Values are rendered with ``to_ical()`` -- the property's own wire form --
+    so both paths return byte-identical strings for the same file. This
+    matters more than it looks: if the library's PRESENCE changed the atom
+    text, the environment would be deciding the evidence, which is the exact
+    class of defect this parser suite exists to prevent.
+
+    Soft-import, same pattern as ``rapidfuzz``: no wheel, old behaviour.
+    """
+    fields_wanted = ("SUMMARY", "DTSTART", "DTEND", "LOCATION", "ORGANIZER", "DESCRIPTION")
+    try:
+        import icalendar
+
+        cal = icalendar.Calendar.from_ical(raw)
+        events: list[dict[str, str]] = []
+        for component in cal.walk("VEVENT"):
+            fields: dict[str, str] = {}
+            for name in fields_wanted:
+                prop = component.get(name)
+                if prop is None:
+                    continue
+                try:
+                    value = prop.to_ical()
+                    fields[name] = (value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)).strip()
+                except Exception:  # noqa: BLE001 - one bad property, keep the rest
+                    fields[name] = str(prop).strip()
+            events.append(fields)
+        return events
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - malformed calendar: degrade to regex
+        pass
+
+    unfolded = re.sub(r"\r?\n[ \t]", "", raw)
+    return [
+        {fm.group(1).upper(): fm.group(2).strip() for fm in _ICS_FIELD_RE.finditer(m.group(1))}
+        for m in _ICS_VEVENT_BLOCK_RE.finditer(unfolded)
+    ]
+
+
 class IcsParser(BaseParser):
     """Parse iCalendar (.ics) invites.
 
@@ -542,12 +602,8 @@ class IcsParser(BaseParser):
     def parse_artifact_full(self, *, project_id: str, artifact_id: str, path: Path, domain_pack: DomainPack | None = None) -> ParserOutput:
         del domain_pack
         raw = read_text(path)
-        # ICS line-folding: lines starting with a space are continuations.
-        raw = re.sub(r"\r?\n[ \t]", "", raw)
         atoms: list[EvidenceAtom] = []
-        for ev_idx, m in enumerate(_ICS_VEVENT_BLOCK_RE.finditer(raw)):
-            block = m.group(1)
-            fields = {fm.group(1).upper(): fm.group(2).strip() for fm in _ICS_FIELD_RE.finditer(block)}
+        for ev_idx, fields in enumerate(_ics_events(raw)):
             summary = fields.get("SUMMARY") or "(no subject)"
             start = fields.get("DTSTART") or ""
             end = fields.get("DTEND") or ""

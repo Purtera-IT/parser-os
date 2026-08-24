@@ -37,6 +37,8 @@ dependencies = [
   # placeholder atom and the email body/attachments are lost. The parser already
   # uses it when present; declare it so the prod image installs it.
   "extract-msg>=0.48",
+  "striprtf>=0.0.26",
+  "icalendar>=6.0",
   # Decode-layer libraries. Each is soft-imported with a working fallback, so a
   # missing one degrades quality rather than raising -- which is exactly why they
   # must be declared: the failure mode is silent. Measured against the fallbacks:

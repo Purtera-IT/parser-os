@@ -716,3 +716,64 @@ def test_no_format_fuses_the_whole_document_into_one_atom(
     atoms = output.atoms if hasattr(output, "atoms") else output
     longest = max((len(a.raw_text or "") for a in atoms), default=0)
     assert longest < 200, f"{fmt}: longest atom is {longest} chars -- facts are fused"
+
+
+# ── msg: the fourth mail container joins the invariance contract ────────
+
+
+def test_a_msg_yields_the_same_evidence_shape_as_the_eml(monkeypatch, tmp_path: Path) -> None:
+    """The fourth container found carrying the header defect.
+
+    .eml fixed it first, then .txt, then .mbox -- and .msg was still letting
+    the classifier type its "From: | Subject: |" line, minting one phantom
+    customer-authored scope item per message.
+
+    No OLE2 writer exists to synthesise a real .msg, so ``extract_msg.openMsg``
+    is monkeypatched -- which is the honest scope anyway: this pins OUR
+    transformation (header typing, sentence granularity), not the library's
+    decoding, which is extract-msg's own test suite's job.
+    """
+    import sys
+    import types
+
+    class _FakeMsg:
+        subject = "Scope update"
+        sender = "jane.customer@acme.example"
+        date = "Wed, 15 Jan 2026 09:00:00 -0500"
+        body = (
+            "Please remove the West Wing from scope. "
+            "Escort access is required at the Atlanta dock before 2pm. "
+            "Mid-turn jumpers are excluded from this order."
+        )
+        attachments: list = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    fake_module = types.SimpleNamespace(openMsg=lambda _p: _FakeMsg())
+    monkeypatch.setitem(sys.modules, "extract_msg", fake_module)
+
+    from app.parsers._universal_extras import MsgParser
+
+    target = tmp_path / "message.msg"
+    target.write_bytes(b"\xd0\xcf\x11\xe0stub")  # routed by extension; body is faked
+    output = MsgParser().parse_artifact_full(
+        project_id="p", artifact_id="a", path=target
+    )
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    rows = [(str(a.atom_type).split(".")[-1], a.raw_text.strip()) for a in atoms]
+
+    header_rows = [r for r in rows if r[1].startswith("From:")]
+    assert header_rows == [
+        ("deal_metadata",
+         "From: jane.customer@acme.example | Subject: Scope update | "
+         "Date: Wed, 15 Jan 2026 09:00:00 -0500"),
+    ], "the header must be ONE deal_metadata atom, never scope"
+
+    body_rows = [r for r in rows if not r[1].startswith("From:")]
+    assert len(body_rows) == 3, "three sentences -> three atoms, not one paragraph blob"
+    kinds = {k for k, _ in body_rows}
+    assert "exclusion" in kinds, "'Mid-turn jumpers are excluded' must be typeable as one"
