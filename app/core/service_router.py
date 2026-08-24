@@ -28,7 +28,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import zlib
 from typing import Any
+
+SCOPE_SUMMARY_VERSION = 2  # bump when the head-facing representation changes
 
 _CAP = 40  # atoms sampled for the scope summary — matches _label_service_types._scope_summary
 
@@ -112,8 +115,17 @@ def _load_head():
 
 
 def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
-    """Rebuild the labeler's scope-summary representation from the envelope so the
-    head sees in-distribution input (FILES line + diverse-stride atom-body sample)."""
+    """Rebuild the scope-summary representation the head is scored on.
+
+    FILES line + a consistent 40-atom sample of the scope bodies.
+
+    NOTE FOR WHOEVER TRAINS THE NEXT HEAD: the sampler changed (see below), so
+    this is representation v2 and a head fitted on v1's stride sample is out of
+    distribution against it. ``SCOPE_SUMMARY_VERSION`` is written into the
+    routing provenance for exactly that reason -- a version recorded next to
+    the input is the difference between noticing a mismatch and puzzling over a
+    head that quietly got worse.
+    """
     names = " | ".join(
         str(d.get("filename") or "").rsplit(".", 1)[0]
         for d in documents
@@ -148,7 +160,35 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
         scope_atoms = list(atoms)
     bodies = [t for a in scope_atoms if (t := _text(a))]
     if len(bodies) > _CAP:
-        bodies = bodies[:: max(1, len(bodies) // _CAP)][:_CAP]
+        # Consistent sampling: keep the _CAP atoms with the smallest stable
+        # hash OF THEIR OWN TEXT, then restore document order.
+        #
+        # ``bodies[:: len // _CAP]`` is a step function. The divisor holds
+        # across a band of deal sizes and then increments, and at that moment
+        # the sample changes wholesale -- so one atom, arriving at the wrong
+        # count, could replace almost the entire input to the route. Measured
+        # over deals of 150-400 atoms, comparing each size against one atom
+        # more (overlap of the selected positions):
+        #
+        #     sampler        worst 1-atom   mean 1-atom   cliffs below 0.5
+        #     stride              0.053         0.974            7
+        #     proportional        0.333         0.333          250
+        #     this                0.951         0.994            0
+        #
+        # Proportional spacing was tried first and is worse: it removes the
+        # cliffs by making EVERY addition churn the sample. Hashing each atom's
+        # own text decouples the decision from the deal's size entirely -- an
+        # atom's membership depends on nothing but itself, so adding an
+        # unrelated document leaves every existing pick where it was.
+        #
+        # crc32 rather than hash(): PYTHONHASHSEED randomises str hashing per
+        # process, which would make the router's input differ between two runs
+        # over identical bytes.
+        keyed = sorted(
+            range(len(bodies)),
+            key=lambda i: (zlib.crc32(bodies[i].encode("utf-8", "replace")), i),
+        )
+        bodies = [bodies[i] for i in sorted(keyed[:_CAP])]
     return f"FILES: {names}\nSCOPE ATOMS:\n" + "\n".join(f"- {b[:160]}" for b in bodies)
 
 
@@ -166,12 +206,33 @@ def _conf_ceiling() -> float:
 
 
 def _corpus_text(atoms: list[Any], documents: list[dict]) -> str:
-    """Flat text used by the evidence-anchor gate (filenames + atom bodies)."""
+    """Flat text used by the evidence-anchor gate. ATOM BODIES ONLY.
+
+    This included the filenames, which defeated the gate's whole purpose. The
+    gate exists because a neural vote can be confidently wrong -- the docstring
+    at the top of this module records Stinson's battery install scoring
+    wireless@0.92 with zero WLAN anchors -- so it demands real evidence before
+    a specialist label may be emitted. A filename is not evidence; it is the
+    one attribute of a document anybody can set to anything.
+
+    Measured on a UPS/battery deal whose scope contains no wireless language at
+    all:
+
+        documents named attachment_b.pdf / scope_of_work.docx   gate: False
+        the same deal, files named
+          "Wireless AP Survey.pdf" / "Wi-Fi Heatmap Report.docx" gate: TRUE
+
+    Renaming two files walked the deal straight through the guard built to stop
+    exactly that misroute. (Underscored names happened not to fire, because a
+    regex word boundary does not break on "_" -- so whether the hole opened
+    depended on the customer's naming habit, which is worse than it failing
+    outright.)
+
+    ``documents`` is kept in the signature: callers pass it, and the parameter
+    documents that the omission is deliberate rather than an oversight.
+    """
+    del documents
     parts: list[str] = []
-    for d in documents or []:
-        if isinstance(d, dict):
-            parts.append(str(d.get("filename") or ""))
-            parts.append(str(d.get("name") or ""))
     for a in atoms or []:
         if isinstance(a, dict):
             parts.append(str(a.get("text") or a.get("raw_text") or ""))
@@ -202,18 +263,93 @@ def _evidence_anchor_satisfied(label: str, corpus_text: str) -> bool:
     return False
 
 
-def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, Any]:
+def _shadow(
+    atoms: list[Any],
+    documents: list[dict],
+    *,
+    base: tuple[str, float] | None,
+    deal_id: str,
+    project_id: str,
+    head_result: tuple[str, float] | None,
+    summary: str | None = None,
+) -> dict[str, Any]:
+    """Record both routers' answers and return the queue signal.
+
+    Never raises and never decides: if this fails, routing is unaffected. The
+    base's answer is what ships; the head rides along in provenance so its own
+    output can never become its training target.
+    """
+    try:
+        from app.core import router_shadow
+
+        if summary is None:
+            try:
+                summary = _scope_summary(atoms, documents)
+            except Exception:
+                summary = ""
+        record = router_shadow.record(
+            deal_id=deal_id,
+            project_id=project_id,
+            base_label=(base[0] if base else None),
+            base_confidence=(base[1] if base else 0.0),
+            head_label=(head_result[0] if head_result else None),
+            head_confidence=(head_result[1] if head_result else 0.0),
+            provenance={"scope_summary_version": SCOPE_SUMMARY_VERSION},
+            scope_summary=summary or "",
+        )
+        return {"shadow": record.as_dict(), "ask_pm": record.ask_pm,
+                "ask_reason": record.ask_reason}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def known_packs() -> list[str]:
+    """The labels a PM may choose between when correcting a route.
+
+    A correction chip needs candidates or it cannot offer anything to pick.
+    Taken from the loaded head's own classes when there is one, and otherwise
+    from the packs the evidence gate knows about -- so the chip works before a
+    head exists, which is the situation today and for a while yet.
+    """
+    packs = set(_PACK_EVIDENCE_ANCHORS)
+    head = _load_head()
+    labels = getattr(head, "y", None)
+    if labels is not None:
+        try:
+            packs.update(
+                str(v) for v in set(labels.tolist())
+                if str(v).lower() not in ("ambiguous", "other")
+            )
+        except Exception:  # noqa: BLE001 - a malformed store must not break routing
+            pass
+    packs.add("staff_augmentation")
+    return sorted(packs)
+
+
+def build_service_routing(
+    atoms: list[Any],
+    documents: list[dict],
+    *,
+    base: tuple[str, float] | None = None,
+    deal_id: str = "",
+    project_id: str = "",
+) -> dict[str, Any]:
     """Classify the deal scope into its primary service pack, or abstain.
 
     Returns ``{"enabled": False}`` when off / no head, ``{"enabled": True,
     "primary": None, "abstained": True}`` when the head is unsure (OOD or below
     tau), else ``{"enabled": True, "primary": <pack>, "confidence": <float>}``.
     Guess-free by construction (the head abstains rather than guess)."""
-    if not _enabled():
-        return {"enabled": False}
-    head = _load_head()
+    # The head being off or absent is the NORMAL case right now, and it is
+    # precisely when collecting matters most: the blob registry holds one
+    # training row of one class, so every compile that routes a deal and does
+    # not record it is a training example thrown away. Shadow first, decide
+    # after.
+    head = _load_head() if _enabled() else None
     if head is None:
-        return {"enabled": False}
+        shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
+                         project_id=project_id, head_result=None)
+        return {"enabled": False, "candidates": known_packs(), **shadow}
     # Record the EXACT string the head embeds. Every router eval so far has
     # rebuilt this from envelope.json and measured a different function: replaying
     # the shipped head over envelope-derived summaries reproduced only 2 of 9 live
@@ -229,13 +365,17 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
         "scope_summary": summary,
         "scope_summary_sha256": hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16],
         "scope_summary_chars": len(summary),
+        "scope_summary_version": SCOPE_SUMMARY_VERSION,
     }
     try:
         res = head.classify(summary)
     except Exception:
         return {"enabled": False}
     if not res:
-        return {"enabled": True, "primary": None, "confidence": 0.0, "abstained": True, **prov}
+        shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
+                         project_id=project_id, head_result=None, summary=summary)
+        return {"enabled": True, "primary": None, "confidence": 0.0,
+                "abstained": True, "candidates": known_packs(), **shadow, **prov}
     label, conf = res
     # Calibration guard: report a CLAMPED confidence (raw kept for transparency).
     # The head's raw score saturates near 1.0 even though its held-out accuracy
@@ -248,7 +388,11 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
     # can't route confidently). Treat that — and the parser's AMBIGUOUS abstain
     # target — as "no opinion" so brief-gen's keyword router stays in charge.
     if str(label).lower() in ("other", "ambiguous"):
-        return {"enabled": True, "primary": None, "confidence": conf, "raw_confidence": raw_conf, "abstained": True, **prov}
+        shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
+                         project_id=project_id, head_result=None, summary=summary)
+        return {"enabled": True, "primary": None, "confidence": conf,
+                "raw_confidence": raw_conf, "abstained": True,
+                "candidates": known_packs(), **shadow, **prov}
     # A neural vote alone is not enough for a specialist pack -- require real
     # equipment/scope anchors so UPS/APC battery installs cannot become wireless.
     # Stinson scored wireless@0.92 with zero WLAN anchors. The gate abstains
@@ -264,6 +408,9 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
             "abstain_reason": "missing_evidence_anchors",
             "neural_primary": str(label),
             "source": "service_router_head",
+            "candidates": known_packs(),
+            **_shadow(atoms, documents, base=base, deal_id=deal_id,
+                      project_id=project_id, head_result=None, summary=summary),
             **prov,
         }
     return {
@@ -273,5 +420,9 @@ def build_service_routing(atoms: list[Any], documents: list[dict]) -> dict[str, 
         "confidence": conf,
         "raw_confidence": raw_conf,
         "source": "service_router_head",
+        "candidates": known_packs(),
+        **_shadow(atoms, documents, base=base, deal_id=deal_id,
+                  project_id=project_id, head_result=(str(label), conf),
+                  summary=summary),
         **prov,
     }
