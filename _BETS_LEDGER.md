@@ -43,3 +43,25 @@ arrived"). The COPPER contradiction-edge tests are the first fixture.
 guarantee, and spends PM attention exactly there. Both halves are built; both
 wait only on labels — and the chip that produces labels shipped in
 purpulse-frontend#117.
+
+## Phase-2 reconciliation (bet #3, first slice) — 2026-08-24
+
+**Built:** `app/core/reconcile.py` — every contradicts-cluster becomes a
+conflict set; the authority lattice resolves it with full receipts (winner,
+rank, every superseded claim, the binding edge ids), or REFUSES on a
+top-tier tie (margin = 5, the lattice's narrowest real gap) and surfaces
+both receipts as a PM judgment. No atom is mutated — a verdict layer, so
+replay keeps verifying. Wired into the envelope as `reconciliation`
+(additive key). 8 tests, COPPER shape as the founding fixture.
+
+**Measured first:** the 447 labelled edge pairs are rule-proposal vs actual:
+supports 90% precise, **contradicts 41%**, excludes 0/101 confirmed but
+UNMEASURABLE (the label space never offered the labeller 'excludes'). The
+envelope surface carries these numbers so the conflict list reads as leads,
+not verdicts.
+
+**The learned potential refused its own audition:** a deal-disjoint split of
+5 deals leaves a 23-row single-class test side. GO condition: edge labels
+from ≥12 deals with ≥2 classes on the held-out side — the same bar
+router_eval enforces. Until then the potential is injectable and the
+lattice is the incumbent.

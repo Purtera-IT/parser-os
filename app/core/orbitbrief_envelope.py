@@ -286,6 +286,14 @@ def build_orbitbrief_envelope(
     # per-stakeholder workload matrix, and a single 0-100 project
     # vitals number that blends every signal above into one
     # auditable cockpit-header score.
+    # Phase-2 reconciliation: every contradicts-cluster resolved by the
+    # authority lattice with full receipts, or surfaced unresolved when the
+    # top tier ties. A verdict layer over the evidence -- no atom is mutated,
+    # so replay keeps verifying. Additive key; the output signature hashes
+    # the CompileResult, not the envelope.
+    from app.core.reconcile import build_reconciliation as _build_reconciliation
+
+    envelope["reconciliation"] = _build_reconciliation(atoms, edges)
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
     envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
