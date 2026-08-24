@@ -42,37 +42,19 @@ from app.parsers.binary_markers import attachment_marker, region_marker
 
 # Shared atom-type heuristic — same families the docx/pptx parsers use
 # so packetization sees these atoms in the same buckets.
-_EXCLUSION_RE = re.compile(
-    r"\b(out\s+of\s+scope|excluded?|not\s+included|"
-    r"explicitly\s+excludes?|exclusion[s]?:)",
-    re.IGNORECASE,
-)
-_CONSTRAINT_RE = re.compile(
-    r"\b(must|shall|required?|requirement|after-?hours|escort|"
-    r"badge|lift|compliance|regulatory)\b",
-    re.IGNORECASE,
-)
-_ASSUMPTION_RE = re.compile(
-    r"\b(assume[ds]?|assumption[s]?|we\s+assume|"
-    r"customer\s+provides?|customer\s+supplies)\b",
-    re.IGNORECASE,
-)
-_QUESTION_RE = re.compile(
-    r"\?$|^(?:question|tbd|open\s+question|to\s+confirm)\b",
-    re.IGNORECASE,
-)
 
 
-def _classify(text: str) -> AtomType:
-    if _EXCLUSION_RE.search(text):
-        return AtomType.exclusion
-    if _ASSUMPTION_RE.search(text):
-        return AtomType.assumption
-    if _QUESTION_RE.search(text):
-        return AtomType.open_question
-    if _CONSTRAINT_RE.search(text):
-        return AtomType.constraint
-    return AtomType.scope_item
+# One typing vocabulary for every format -- see app/core/atom_typing.py.
+# Three diverged copies of these regexes gave 4.0% of real held-out sentences
+# a different TYPE depending on which format they arrived in. The local names
+# survive as aliases so call sites and tests keep working.
+from app.core.atom_typing import (  # noqa: E402
+    ASSUMPTION_RE as _ASSUMPTION_RE,
+    CONSTRAINT_RE as _CONSTRAINT_RE,
+    EXCLUSION_RE as _EXCLUSION_RE,
+    QUESTION_RE as _QUESTION_RE,
+    classify_prose as _classify,
+)
 
 
 def _make_atom(

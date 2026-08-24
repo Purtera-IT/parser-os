@@ -53,14 +53,14 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(?P<title>.+?)\s*$")
 _BULLET_RE = re.compile(r"^\s*[-*+]\s+(?P<text>.+?)\s*$")
 _NUMBERED_RE = re.compile(r"^\s*\d+[.)]\s+(?P<text>.+?)\s*$")
 
-_EXCLUSION_RE = re.compile(
-    r"\b(exclud(?:e|ed|es|ing)|out of scope|not included|not in scope|by others|nic|"
-    r"remove from scope|please remove|removed?\s+from\s+the\s+scope|"
-    r"cancel(?:led|ling|s)?(?:\s+the)?|cancellation|"
-    r"do not include|drop\s+(?:the|from)|deletion?|"
-    r"hold off|on hold|defer(?:red)?\s+from|postpone(?:d)?)\b",
-    re.I,
+# Shared typing vocabulary -- see app/core/atom_typing.py (this file's copy
+# knew "cancel / hold off / defer"; the others did not. Union'd there.)
+from app.core.atom_typing import (  # noqa: E402
+    ASSUMPTION_RE as _ASSUMPTION_RE,
+    CONSTRAINT_RE as _CONSTRAINT_RE,
+    EXCLUSION_RE as _EXCLUSION_RE,
 )
+
 _CHANGE_ORDER_RE = re.compile(
     r"\b(change\s+order|reduce\s+(?:scope|count|the\s+\w+)\s+(?:from|to)?|"
     r"revised\s+scope|approve(?:d)?\s+the\s+revised|"
@@ -74,21 +74,12 @@ _CHANGE_DELTA_RE = re.compile(
     r"\b(?:from|reduce(?:d)?\s+(?:from)?)\s+(\d{1,5})\s+to\s+(\d{1,5})\b",
     re.I,
 )
-_ASSUMPTION_RE = re.compile(
-    r"\b(assum(?:e|ed|ption|ptions)|subject to|provided by owner)\b",
-    re.I,
-)
 _OPEN_Q_RE = re.compile(
     r"\?"
     r"|\b(tbd|to\s+be\s+confirmed|to\s+be\s+determined|unknown|"
     r"open\s+question|please\s+confirm|need(?:s)?\s+confirmation|"
     r"awaiting\s+confirmation|still\s+(?:tbd|pending|outstanding)|"
     r"to\s+clarify|need(?:s)?\s+clarification|pending\s+(?:answer|response))\b",
-    re.I,
-)
-_CONSTRAINT_RE = re.compile(
-    r"\b(access window|escort|required|must|shall|badge|after[-\s]?hours|"
-    r"acceptance|completion|closeout)\b",
     re.I,
 )
 _QTY_RE = re.compile(

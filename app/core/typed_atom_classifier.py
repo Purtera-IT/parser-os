@@ -423,6 +423,19 @@ def _atom_lead_in(atom: Any) -> str:
     return ""
 
 
+#: Version of the representation _atom_decide_text produces. v1 was the bare
+#: atom text; v2 binds [table:], [section:] and [intro:] context. Stamped into
+#: every training row's provenance so a trainer can tell which representation
+#: a row carries -- measured on the assembled multitask table, only 3.7% of
+#: existing rows are decorated, so a head fit on the table and served
+#: decide-text is out of distribution and NOBODY COULD TELL, because the rows
+#: were unversioned. Same lesson as SCOPE_SUMMARY_VERSION on the router: a
+#: version recorded next to the input is the difference between noticing a
+#: mismatch and puzzling over a head that quietly underperforms. Bump this
+#: when the representation changes.
+DECIDE_TEXT_VERSION = 2
+
+
 def _atom_decide_text(atom: Any) -> str:
     bound = None
     if os.environ.get("SOWSMITH_ATOM_BIND_HEADERS", "1") != "0":
@@ -675,6 +688,40 @@ def classify_atoms(atoms: list[Any]) -> int:
                         continue
                     survivors.append(a)
                 promotable = survivors
+            elif ck is not None and ck.mode == "typed":
+                # Atom-run candidate (app/learning/build_atom_store.py): a
+                # fine-type kNN served through the SAME loader, at the STRICT
+                # operating point -- the meta ships tau=0.98, the measured
+                # near-unanimous-neighbourhood line (99.2% teacher agreement
+                # on the deal-split holdout; 49%@82% was the loose point and
+                # an 18% disagreement rate is a queue, not an assignment).
+                #
+                # Value-light contract preserved: value-heavy types still go
+                # to the LLM, which synthesises their value payloads -- the
+                # head's two best classes (bom_line 94%, commercial_total 94%)
+                # are deliberately NOT in this set. Guess-free: an abstain or
+                # a value-heavy answer falls through byte-identically.
+                from app.core.schemas import AtomType as _AT
+
+                _VALUE_LIGHT = {
+                    "requirement", "exclusion", "contract_term", "deal_metadata",
+                    "acceptance_criterion", "task", "change_order_rule", "constraint",
+                    "dependency", "mitigation", "compliance_rule", "submission_req",
+                    "addendum_qa",
+                }
+                verdicts = ck.classify_batch([_atom_decide_text(a) for a in promotable])
+                survivors = []
+                for a, res in zip(promotable, verdicts):
+                    if res is not None and res[0] in _VALUE_LIGHT:
+                        try:
+                            a.atom_type = _AT(res[0])
+                            head_deflected += 1
+                            _dfl["contrastive"] += 1
+                            continue
+                        except (ValueError, ImportError):
+                            pass
+                    survivors.append(a)
+                promotable = survivors
         except Exception:
             pass
         _dfl_ms["contrastive"] += _lap() - _t
@@ -808,7 +855,9 @@ def classify_atoms(atoms: list[Any]) -> int:
                     confidence=0.9,
                     deal_id=str(getattr(_a, "project_id", "") or ""),
                     project_id=str(getattr(_a, "project_id", "") or ""),
-                    provenance={"stage": "typed_atom_classification", "source": "llm_batch"},
+                    provenance={"stage": "typed_atom_classification",
+                                "source": "llm_batch",
+                                "decide_text_version": DECIDE_TEXT_VERSION},
                 )
             )
         log_rows(_rows)

@@ -58,6 +58,11 @@ class TaskRow:
     split: str          # "train" | "holdout"
     teacher: str
     source_db: str
+    #: Representation version from the row's provenance (decide_text_version).
+    #: 0 == unversioned legacy row: BARE text, predating the context bindings.
+    #: A trainer must not mix versions blindly -- a head fit on v0 rows and
+    #: served v2 decide-text is silently out of distribution.
+    repr_version: int = 0
 
 
 @dataclass
@@ -88,6 +93,11 @@ class MultitaskTable:
                 f"  {task:<20} {s['train']:>7} {s['holdout']:>8} "
                 f"{s['classes']:>8} {s['pm']:>8}"
             )
+        versions = Counter(r.repr_version for r in self.rows)
+        if versions:
+            lines += ["", "  representation versions (v0 = bare legacy text):"]
+            for v, n in sorted(versions.items()):
+                lines.append(f"    v{v}: {n}")
         if self.skipped:
             lines += ["", "  skipped (named, not silent):"]
             for reason, n in self.skipped.most_common():
@@ -102,11 +112,12 @@ class MultitaskTable:
             conn.execute(
                 "CREATE TABLE multitask_rows ("
                 "task TEXT, text TEXT, label TEXT, deal_id TEXT, "
-                "split TEXT, teacher TEXT, source_db TEXT)"
+                "split TEXT, teacher TEXT, source_db TEXT, repr_version INT)"
             )
             conn.executemany(
-                "INSERT INTO multitask_rows VALUES (?,?,?,?,?,?,?)",
-                [(r.task, r.text, r.label, r.deal_id, r.split, r.teacher, r.source_db)
+                "INSERT INTO multitask_rows VALUES (?,?,?,?,?,?,?,?)",
+                [(r.task, r.text, r.label, r.deal_id, r.split, r.teacher,
+                  r.source_db, r.repr_version)
                  for r in self.rows],
             )
             conn.commit()
@@ -140,10 +151,10 @@ def assemble(
                 conn.close()
                 continue
             cols = {r[1] for r in conn.execute("PRAGMA table_info(training_rows)")}
-            wanted = ["relation", "label", "raw_text", "deal_id", "split", "teacher"]
+            wanted = ["relation", "label", "raw_text", "deal_id", "split", "teacher", "provenance"]
             select = ", ".join(c if c in cols else "''" for c in wanted)
             cursor = conn.execute(f"SELECT {select} FROM training_rows")
-            for relation, label, raw_text, deal_id, split, teacher in cursor:
+            for relation, label, raw_text, deal_id, split, teacher, provenance in cursor:
                 relation = str(relation or "")
                 if relation not in tasks:
                     table.skipped[f"relation {relation} not a backbone task"] += 1
@@ -157,10 +168,20 @@ def assemble(
                     table.skipped["empty label"] += 1
                     continue
                 split = str(split or "").strip() or _fallback_split(str(deal_id or ""))
+                version = 0
+                if provenance:
+                    try:
+                        import json as _json
+
+                        version = int((_json.loads(provenance) or {}).get(
+                            "decide_text_version", 0))
+                    except Exception:  # noqa: BLE001 - malformed provenance == legacy
+                        version = 0
                 row = TaskRow(
                     task=relation, text=text, label=label,
                     deal_id=str(deal_id or ""), split=split,
                     teacher=str(teacher or ""), source_db=db_path.name,
+                    repr_version=version,
                 )
                 key = (relation, text)
                 held = best.get(key)

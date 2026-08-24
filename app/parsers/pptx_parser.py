@@ -49,25 +49,15 @@ _HEADING_TOKENS = re.compile(
 # Same atom-type heuristics as docx_parser uses — keep families
 # consistent so packetization treats PPTX text the same way it
 # treats DOCX text.
-_EXCLUSION_RE = re.compile(
-    r"\b(out\s+of\s+scope|excluded?|not\s+included|"
-    r"explicitly\s+excludes?|exclusion[s]?:)",
-    re.IGNORECASE,
-)
-_CONSTRAINT_RE = re.compile(
-    r"\b(must|shall|required?|requirement|"
-    r"after-?hours|escort|badge|lift|"
-    r"compliance|regulatory)\b",
-    re.IGNORECASE,
-)
-_ASSUMPTION_RE = re.compile(
-    r"\b(assume[ds]?|assumption[s]?|"
-    r"we\s+assume|customer\s+provides?|customer\s+supplies)\b",
-    re.IGNORECASE,
-)
-_QUESTION_RE = re.compile(
-    r"\?$|^(?:question|tbd|open\s+question|to\s+confirm)\b",
-    re.IGNORECASE,
+
+
+# Shared typing vocabulary -- see app/core/atom_typing.py (was a third
+# diverged copy; 4.0% of held-out sentences typed differently by format).
+from app.core.atom_typing import (  # noqa: E402
+    ASSUMPTION_RE as _ASSUMPTION_RE,
+    CONSTRAINT_RE as _CONSTRAINT_RE,
+    EXCLUSION_RE as _EXCLUSION_RE,
+    QUESTION_RE as _QUESTION_RE,
 )
 
 
