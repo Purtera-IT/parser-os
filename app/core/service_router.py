@@ -350,10 +350,29 @@ def build_service_routing(
     # after.
     head = _load_head() if _enabled() else None
     if head is None:
+        # Record the input even with no head. This is the ONLY path taken in
+        # every environment today, and the summary is what a PM correction has
+        # to be paired with to be worth anything: replaying a head over
+        # envelope-derived summaries once reproduced 2 of 9 live routes,
+        # because a reconstruction is not the string the router actually saw.
+        # Omitting it here would mean every correction a PM ever taps arrives
+        # with no input attached.
+        try:
+            summary = _scope_summary(atoms, documents)
+        except Exception:  # noqa: BLE001
+            summary = ""
         shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
                          project_id=project_id, head_result=None,
-                         base_observed=base_observed)
-        return {"enabled": False, "candidates": known_packs(), **shadow}
+                         base_observed=base_observed, summary=summary)
+        return {
+            "enabled": False,
+            "candidates": known_packs(),
+            "scope_summary": summary,
+            "scope_summary_sha256": hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16],
+            "scope_summary_chars": len(summary),
+            "scope_summary_version": SCOPE_SUMMARY_VERSION,
+            **shadow,
+        }
     # Record the EXACT string the head embeds. Every router eval so far has
     # rebuilt this from envelope.json and measured a different function: replaying
     # the shipped head over envelope-derived summaries reproduced only 2 of 9 live

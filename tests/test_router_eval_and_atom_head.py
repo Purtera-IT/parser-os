@@ -538,3 +538,34 @@ def test_the_head_s_own_answer_never_becomes_a_training_label(tmp_path, monkeypa
         n = sqlite3.connect(db).execute("select count(*) from training_rows").fetchone()[0]
         assert n == 0
     tl._LOG = None
+
+
+def test_the_input_is_recorded_even_with_no_head() -> None:
+    """The disabled path is the only path taken, so it has to carry the input.
+
+    A PM correction is worth training on only if it is paired with the string
+    the router actually saw. Replaying the shipped head over envelope-derived
+    summaries once reproduced 2 of 9 live routes, because a reconstruction is
+    not the input. Without this the chip would send a correction with nothing
+    attached to it.
+    """
+    from app.core.service_router import build_service_routing
+
+    class _Atom:
+        def __init__(self, text: str) -> None:
+            self.raw_text = text
+            self.atom_type = "scope_item"
+
+    out = build_service_routing(
+        [_Atom("Install twenty Meraki MR46 access points across five floors.")],
+        [{"filename": "attachment_b.pdf"}],
+        deal_id="deal_1",
+        project_id="deal_1",
+        base=None,
+        base_observed=False,
+    )
+    assert out["enabled"] is False
+    assert out["scope_summary"], "the exemplar the chip sends must exist"
+    assert "Meraki" in out["scope_summary"]
+    assert out["scope_summary_version"] >= 2
+    assert out["scope_summary_sha256"]
