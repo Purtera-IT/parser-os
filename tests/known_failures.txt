@@ -1,0 +1,70 @@
+# Tests known to fail on main as of 2026-08-20.
+#
+# This file is a ratchet, not an amnesty. CI deselects everything listed here
+# so that a NEW failure turns the build red immediately, and separately re-runs
+# this list and reports any entry that now passes. When CI tells you an entry
+# passes, delete the line -- the list is only allowed to shrink.
+#
+# 41 entries. Identical on Python 3.11 and 3.12.
+
+# ---------------------------------------------------------------------------
+# Cannot pass on a runner: depend on data that is not in this repository (3)
+#
+# test_deals/ is not tracked here -- it exists as a sibling directory on the
+# machines that run these. Until the corpus is vendored or fetched, a runner
+# has nothing to compile.
+# ---------------------------------------------------------------------------
+tests/test_pack_regressions_optbot_aps.py::test_aps_attachment_b_numeric_roster_regression
+tests/test_pack_regressions_optbot_aps.py::test_optbot_pack_regression_counts_and_site_hygiene
+tests/test_schematic_real_gold.py::test_every_schematic_case_dir_has_artifacts_and_labels
+
+# ---------------------------------------------------------------------------
+# Test a module that was never written (3)
+#
+# app/learning/fetch_ml.py has no commit in any branch: `git log --all` on that
+# path returns nothing. These have been red since the day they landed.
+# ---------------------------------------------------------------------------
+tests/test_ml_capabilities.py::test_artifact_self_check_empty
+tests/test_ml_capabilities.py::test_artifact_self_check_training_log
+tests/test_ml_capabilities.py::test_fetch_skip
+
+# ---------------------------------------------------------------------------
+# Real behavioural failures (35)
+#
+# These are the debt. Each one is a claim the code no longer satisfies.
+# ---------------------------------------------------------------------------
+tests/test_anchor_signatures.py::test_ip_camera_quantity_conflict_packets
+tests/test_anchor_signatures.py::test_ip_camera_vendor_mismatch_single_packet
+tests/test_api_smoke.py::test_api_smoke_end_to_end
+tests/test_compiler_e2e.py::test_compiler_e2e_golden_regression
+tests/test_device_quantity_cross_doc.py::test_no_conflict_when_atom_has_multiple_devices
+tests/test_device_quantity_cross_doc.py::test_no_conflict_when_atom_has_multiple_quantities
+tests/test_domain_certification.py::test_valid_security_camera_pack_passes
+tests/test_entity_extraction.py::TestSiteExtraction::test_andrews_information_systems_bldg
+tests/test_extraction_tap.py::test_every_extractor_shape_is_logged
+tests/test_gate_bootstrap.py::test_bootstrap_default_store_skips_unreproducible_gates
+tests/test_graph_neural_classifier.py::test_edge_gate_drops_spurious_ambiguous_keeps_high_precision
+tests/test_incremental_compile.py::test_packetizer_output_updates_after_modified_artifact
+tests/test_orbitbrief_envelope.py::test_domain_pack_aliases_collapse_devices_across_artifacts
+tests/test_orbitbrief_envelope.py::test_mixed_package_envelope_renders_every_artifact
+tests/test_orbitbrief_envelope.py::test_mixed_package_writes_structured_files_for_every_parser
+tests/test_packet_certificates.py::test_quantity_conflict_certificate_minimal_set_and_reason
+tests/test_packet_certificates.py::test_scope_exclusion_rationale_mentions_customer_authored_when_governed
+tests/test_packet_invalidation.py::test_blast_radius_summary_includes_downstream_consumers
+tests/test_packet_invalidation.py::test_changing_customer_exclusion_invalidates_scope_exclusion
+tests/test_packet_invalidation.py::test_changing_vendor_quote_resolves_vendor_mismatch
+tests/test_quote_parser.py::test_quote_parser_false_positive_no_line_items
+tests/test_review_console.py::test_existing_labels_preserved_and_updated
+tests/test_review_console.py::test_filtering_by_family_works
+tests/test_risk_scoring.py::test_vendor_mismatch_ip_camera_cost_exposure
+tests/test_risk_scoring.py::test_vendor_mismatch_risk_reason_flag_present
+tests/test_schematic_round3_fixes.py::test_rotated_text_is_classified_as_title_block_furniture
+tests/test_site_geo_fallback.py::test_dedup_same_address
+tests/test_site_geo_fallback.py::test_fallback_still_runs_with_one_weak_site
+tests/test_site_geo_fallback.py::test_multiword_city
+tests/test_site_geo_fallback.py::test_santa_fe_anchor_emits_physical_site
+tests/test_source_replay.py::test_spreadsheet_atom_receipt_verifies_row
+tests/test_training_log.py::test_list_item_with_category_logs_that_category_as_label
+tests/test_training_log.py::test_list_item_without_subtype_is_skipped_not_relabelled_to_relation
+tests/test_training_log.py::test_mixed_batch_keeps_only_categorised_items
+tests/test_week5_dx.py::TestTwoWordOrgSites::test_virginia_tech

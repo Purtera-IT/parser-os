@@ -1,0 +1,110 @@
+# The parser test suite, on every pull request.
+#
+# Until this existed, nothing ran the 230 test files on a PR: the repository's
+# only workflows were a tag-triggered downstream rebuild and Dependabot's
+# dependency graph.  parser-os is bundled into parser-os-worker at image build
+# time, so a regression here reaches production parsing without any gate.
+name: Tests
+
+on:
+  pull_request:
+    # feat/clean-rubric-heads as well as main: parser-os-worker's deploy-dev.yml
+    # bundles that branch, not main (its parser_os_ref defaults to it). Gating
+    # only main would leave the code that actually ships ungated -- which is the
+    # shape of the incident where prod ran a month-old image for weeks.
+    branches: [main, feat/clean-rubric-heads]
+  push:
+    branches: [main, feat/clean-rubric-heads]
+  workflow_dispatch:
+
+# A newer push to the same PR supersedes the run in flight.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    # A suite that hangs should fail loudly, not sit on a runner for six hours.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is what parser-os-worker actually ships (python:3.11-slim).
+        # 3.12 is what local development runs on.  Both have to stay green
+        # or one of the two environments is untested.
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Import check
+        # Fails in seconds on a broken import rather than after the full
+        # collection of 230 files.
+        run: python -c "import app.core.compiler, app.parsers.registry, app.core.source_replay"
+
+      - name: Collect
+        run: pytest tests -q --collect-only >/dev/null
+
+      - name: Run the suite
+        env:
+          # Ten modules in app/core default to _DEFAULT_HOST =
+          # http://100.114.102.122:11434 -- a Tailscale CGNAT address -- with
+          # _DEFAULT_TIMEOUT = 180.  A GitHub runner has no route into that
+          # range, so packets are dropped rather than refused and every call
+          # sits for the full three minutes.  The first run of this workflow
+          # spent over 1h40m that way.
+          #
+          # 127.0.0.1:1 is refused instantly, so the same calls fail in
+          # microseconds and take their existing offline branches.  This makes
+          # the suite fast; it does not hide anything, because a test that
+          # genuinely needs a model was never going to reach one here.
+          OLLAMA_HOST: http://127.0.0.1:1
+          SOWSMITH_OLLAMA_URL: http://127.0.0.1:1
+          SOWSMITH_EMBED_TIMEOUT: '1'
+          # Read by the feature branches' conftest fixture. main has no such
+          # fixture, which is the other half of why this was slow -- but set it
+          # so the same workflow behaves on a branch that does.
+          SOWSMITH_DISABLE_LLM: '1'
+        run: |
+          # Deselect the known-failing baseline so a NEW failure turns this red
+          # immediately. tests/known_failures.txt carries the list and the rule.
+          mapfile -t known < <(grep -vE '^\s*(#|$)' tests/known_failures.txt)
+          args=(); for t in "${known[@]}"; do args+=(--deselect "$t"); done
+          echo "deselecting ${#known[@]} known failures"
+          pytest tests -q --durations=15 "${args[@]}"
+
+      - name: Known failures — has anything started passing?
+        # Non-blocking. A deselect list that only ever grows is an amnesty; this
+        # step is what makes it a ratchet, by naming the entries that are now
+        # green so they can be deleted from the file.
+        if: always()
+        env:
+          OLLAMA_HOST: http://127.0.0.1:1
+          SOWSMITH_OLLAMA_URL: http://127.0.0.1:1
+          SOWSMITH_EMBED_TIMEOUT: '1'
+          SOWSMITH_DISABLE_LLM: '1'
+        run: |
+          mapfile -t known < <(grep -vE '^\s*(#|$)' tests/known_failures.txt)
+          pytest -q --no-header -rA --continue-on-collection-errors "${known[@]}" 2>/dev/null | grep '^PASSED' > now_passing.txt || true
+          n=$(wc -l < now_passing.txt)
+          if [ "$n" -gt 0 ]; then
+            echo "::warning::$n known-failing test(s) now pass — delete them from tests/known_failures.txt"
+            cat now_passing.txt
+          else
+            echo "all ${#known[@]} known failures still fail; nothing to remove"
+          fi

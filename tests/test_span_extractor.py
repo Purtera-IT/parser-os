@@ -1,5 +1,7 @@
 """#71 span-extractor: per-relation recall head trains, is recall-tuned, the
 eval-gate is recall-monotonic, and SpanExtractorSet identifies items."""
+import zlib
+
 import numpy as np
 import zlib
 from app.core import span_extractor as SE

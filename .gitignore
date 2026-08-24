@@ -55,3 +55,14 @@ gold_eval_v1_manifest.json
 _atoms_*.json
 _cid*.txt
 _lastcid*.txt
+
+# Local run artifacts that keep turning up as untracked and unignored.
+#
+# _extracted_images/ is what the PDF image-extraction pass writes -- 7.4 MB of
+# PNGs per deal on the machine that ran it. A `git add -A` would commit them.
+#
+# `nul` is a Git Bash artifact: a script written for cmd redirects to NUL, Git
+# Bash has no such device, so it creates a 48-byte file in the repo root. The
+# copy that prompted this contains a captured shell error.
+_extracted_images/
+nul
