@@ -326,7 +326,15 @@ class MboxParser(BaseParser):
                         locator={"message": msg_idx, "kind": "header"},
                         extraction_method="mbox_stdlib",
                         parser_version=self.parser_version,
-                        atom_type=AtomType.scope_item,
+                        # The third container carrying this defect, and the
+                        # same one EmailParser._header_atom describes fixing:
+                        # "A From/To/Subject line is not a unit of work. Typed
+                        # as scope_item it entered the SOW pipeline as
+                        # customer-authored scope, auto-accepted." .eml emits
+                        # deal_metadata, the .txt export does now, and mbox was
+                        # still minting one phantom scope_item per message.
+                        atom_type=AtomType.deal_metadata,
+                        authority_class=AuthorityClass.machine_extractor,
                         value_extra={"kind": "email_header", "subject": subject, "from": sender, "date": date},
                     ))
                 # Body
@@ -334,17 +342,34 @@ class MboxParser(BaseParser):
                 if body_text.strip():
                     # Split body by paragraphs / blank lines so each
                     # paragraph becomes its own atom.
+                    from app.core.sentences import split_sentences
+
                     for para_idx, para in enumerate(re.split(r"\n\s*\n", body_text)):
                         para = para.strip()
                         if not para or len(para) < 4:
                             continue
-                        atoms.append(_make_atom(
-                            project_id=project_id, artifact_id=artifact_id, filename=path.name,
-                            artifact_type=ArtifactType.mbox, text=para[:600],
-                            locator={"message": msg_idx, "kind": "body", "paragraph": para_idx},
-                            extraction_method="mbox_stdlib",
-                            parser_version=self.parser_version,
-                        ))
+                        # Blank lines alone left a whole message as a single
+                        # 336-character atom, while EmailParser gave the same
+                        # content five typed atoms. mbox IS email, so the two
+                        # must not disagree about what a unit of evidence is.
+                        #
+                        # An atom is the unit of TYPING: fuse an exclusion into
+                        # a paragraph of scope and it can never be typed as an
+                        # exclusion, which is exactly how a customer exclusion
+                        # loses to a PM note further down the pipeline.
+                        for piece in (split_sentences(para) or [para]):
+                            piece = piece.strip()
+                            if len(piece) < 4:
+                                continue
+                            atoms.append(_make_atom(
+                                project_id=project_id, artifact_id=artifact_id,
+                                filename=path.name,
+                                artifact_type=ArtifactType.mbox, text=piece[:600],
+                                locator={"message": msg_idx, "kind": "body",
+                                         "paragraph": para_idx},
+                                extraction_method="mbox_stdlib",
+                                parser_version=self.parser_version,
+                            ))
                 # Attachments — emit a located marker so a per-message
                 # attachment can't silently vanish (census reconciles MARKED).
                 try:
@@ -547,12 +572,21 @@ class IcsParser(BaseParser):
                     .replace("\\\\", "\\")
                 )
                 description = " ".join(description.split())
+            # The event atom is the calendar COMMITMENT -- who, where, when.
+            # The description is working detail, and fusing the two produced a
+            # single 394-character meeting_commitment: "escort access is
+            # required before 2pm" and "mid-turn jumpers are excluded" were
+            # inside an atom typed as a meeting commitment, so neither could
+            # ever be read as a constraint or an exclusion.
+            #
+            # The description is emitted below as its own classified atoms, so
+            # it is carried once, not twice: this line keeps the event record
+            # intact and stops appending the detail to it.
             text = (
                 f"Meeting: {summary} | "
                 f"{start} → {end}"
                 + (f" | at: {location}" if location else "")
                 + (f" | organizer: {organizer}" if organizer else "")
-                + (f" | details: {description}" if description else "")
             )
             atoms.append(_make_atom(
                 project_id=project_id, artifact_id=artifact_id, filename=path.name,
@@ -568,6 +602,29 @@ class IcsParser(BaseParser):
                     "description": description,
                 },
             ))
+            # The working detail, one classified atom per sentence. On a real
+            # invite this is where "escort required at the dock, gate code
+            # 4512" and the site contact live; SUMMARY is usually just
+            # "Cutover window". Classified rather than forced, so an exclusion
+            # in an invite is an exclusion.
+            if description:
+                from app.core.sentences import split_sentences
+
+                for sent_idx, sentence in enumerate(split_sentences(description) or [description]):
+                    sentence = sentence.strip()
+                    if len(sentence) < 8:
+                        continue
+                    atoms.append(_make_atom(
+                        project_id=project_id, artifact_id=artifact_id,
+                        filename=path.name,
+                        artifact_type=ArtifactType.ics, text=sentence[:600],
+                        locator={"event": ev_idx, "kind": "vevent_description",
+                                 "sentence": sent_idx},
+                        extraction_method="ics_text_parse",
+                        parser_version=self.parser_version,
+                        value_extra={"kind": "calendar_event_detail",
+                                     "summary": summary},
+                    ))
         return ParserOutput(atoms=atoms, derived_files=[])
 
 

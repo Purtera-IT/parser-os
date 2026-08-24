@@ -31,6 +31,7 @@ from app.core.schemas import (
 from app.domain.schemas import DomainPack
 from app.parsers.base import BaseParser
 from app.parsers.binary_markers import emit_zip_binary_markers
+from app.parsers.universal_parsers import _classify
 
 
 def _make_atom(
@@ -43,7 +44,21 @@ def _make_atom(
     locator: dict[str, Any],
     extraction_method: str,
     parser_version: str,
-    atom_type: AtomType = AtomType.scope_item,
+    # ``None`` means "ask _classify", which is what the universal_parsers
+    # helper of the same name has always done. Here the default was the
+    # CONCLUSION scope_item, so no caller in this module ever classified
+    # anything: an .odt or .ods containing "Mid-turn jumpers are excluded from
+    # this bill of materials" and "Escort access is required before 2pm"
+    # produced six atoms, all typed scope_item.
+    #
+    # Measured against the identical six sentences in Markdown, which shares
+    # _classify: {scope_item: 2, constraint: 3, exclusion: 1}. An exclusion
+    # that never becomes an exclusion atom cannot govern scope, and a
+    # constraint that never becomes a constraint never reaches the PM as one.
+    #
+    # Callers that genuinely know their type (the open_question emitters
+    # below) still pass it explicitly and are unaffected.
+    atom_type: AtomType | None = None,
     authority_class: AuthorityClass = AuthorityClass.customer_current_authored,
     confidence: float = 0.85,
     value_extra: dict[str, Any] | None = None,
@@ -62,7 +77,7 @@ def _make_atom(
         id=stable_id("atm", project_id, artifact_id, text[:120], str(locator)),
         project_id=project_id,
         artifact_id=artifact_id,
-        atom_type=atom_type,
+        atom_type=atom_type or _classify(text),
         raw_text=text,
         normalized_text=text.lower(),
         value=value_extra or {},

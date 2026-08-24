@@ -421,3 +421,298 @@ def test_a_real_transcript_json_still_reaches_the_transcript_parser(
     target.write_text(payload, encoding="utf-8")
     parser, _match, _all = choose_parser(target)
     assert type(parser).__name__ == "TranscriptParser"
+
+
+# ── email: the container must not change the evidence ───────────────────
+
+
+_MAIL_HEADERS = [
+    ("From", "jane.customer@acme.example"),
+    ("To", "pm@purtera.example"),
+    ("Subject", "Scope update"),
+]
+_MAIL_BODY = (
+    "Please remove the West Wing from scope.\n"
+    "Escort access is required at the Atlanta dock before 2pm.\n"
+    "Mid-turn jumpers are excluded from this order.\n"
+)
+
+
+def _email_fingerprint(path: Path) -> tuple[int, tuple[tuple[str, str], ...]]:
+    from app.parsers.email_parser import EmailParser
+
+    output = EmailParser().parse_artifact_full(
+        project_id="p", artifact_id="a", path=path
+    )
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    rows = tuple(
+        (str(atom.atom_type).split(".")[-1], atom.raw_text.strip()[:60])
+        for atom in atoms
+    )
+    return len(atoms), rows
+
+
+def test_an_email_saved_as_text_yields_the_same_evidence_as_the_eml(
+    tmp_path: Path,
+) -> None:
+    """One message, two containers, and they used to disagree.
+
+    An Outlook "save as text" .txt carries the same From/Sent/To/Subject block
+    a .eml does -- as body text rather than MIME headers -- so it reached the
+    atom extractor and each header line became its own ``scope_item`` at
+    ``customer_current_authored``:
+
+        .eml   6 atoms   headers -> one deal_metadata atom
+        .txt   9 atoms   headers -> four scope_item atoms at rank 90
+
+    which is precisely the defect ``_header_atom``'s own comment describes
+    having fixed -- "A From/To/Subject line is not a unit of work" -- surviving
+    in the other container. Four phantom units of work in the customer-authored
+    tier, per email.
+    """
+    eml = tmp_path / "message.eml"
+    eml.write_bytes(
+        ("".join(f"{k}: {v}\r\n" for k, v in _MAIL_HEADERS)
+         + "\r\n" + _MAIL_BODY.replace("\n", "\r\n")).encode("utf-8")
+    )
+    txt = tmp_path / "message.txt"
+    txt.write_text(
+        "".join(f"{k}: {v}\n" for k, v in _MAIL_HEADERS) + "\n" + _MAIL_BODY,
+        encoding="utf-8",
+    )
+
+    eml_count, eml_rows = _email_fingerprint(eml)
+    txt_count, txt_rows = _email_fingerprint(txt)
+    assert eml_rows == txt_rows, (
+        f"container changed the evidence: .eml={eml_count} .txt={txt_count}"
+    )
+    assert not any(
+        kind == "scope_item" and text.lower().startswith(("from:", "to:", "subject:", "sent:"))
+        for kind, text in txt_rows
+    ), "a header line was typed as a unit of work"
+    assert any(kind == "deal_metadata" for kind, _ in txt_rows)
+
+
+def test_a_body_that_merely_starts_with_a_colon_line_is_not_eaten(
+    tmp_path: Path,
+) -> None:
+    """The splitter has to be conservative: the downside is eating content.
+
+    It requires at least two header lines AND one of them to be ``from`` or
+    ``subject``, so a note opening "Note: ..." over "Owner: ..." keeps every
+    line.
+    """
+    note = tmp_path / "note.txt"
+    note.write_text(
+        "Note: the customer confirmed the West Wing is out.\n"
+        "Owner: Cliff Creech\n"
+        "Escort access is required at the Atlanta dock before 2pm.\n",
+        encoding="utf-8",
+    )
+    _count, rows = _email_fingerprint(note)
+    body = " ".join(text for _kind, text in rows)
+    assert "West Wing" in body
+    assert "Cliff Creech" in body
+
+
+@pytest.mark.parametrize(
+    "container",
+    ["vtt", "srt", "txt_colon", "txt_ownline"],
+)
+def test_one_conversation_four_containers_same_speakers(
+    tmp_path: Path, container: str
+) -> None:
+    """The transcript half of the same question -- and it already passes.
+
+    Recorded rather than left implicit: .vtt voice spans, .srt cues,
+    "Speaker:" lines and the Otter own-line dialect all resolve to the same
+    two speakers, so the container does not decide who said what.
+    """
+    from app.parsers.registry import choose_parser
+
+    turns = [
+        ("Cliff Creech", "we need forty sites by Q3."),
+        ("Dana Whitfield", "escort is required at the Atlanta dock."),
+    ] * 8
+    if container == "vtt":
+        lines = ["WEBVTT", ""]
+        for i, (who, what) in enumerate(turns):
+            lines += [str(i + 1),
+                      f"00:00:{i * 3:02d}.000 --> 00:00:{i * 3 + 2:02d}.000",
+                      f"<v {who}>{what}</v>", ""]
+        target = tmp_path / "a.vtt"
+    elif container == "srt":
+        lines = []
+        for i, (who, what) in enumerate(turns):
+            lines += [str(i + 1),
+                      f"00:00:{i * 3:02d},000 --> 00:00:{i * 3 + 2:02d},000",
+                      f"{who}: {what}", ""]
+        target = tmp_path / "a.srt"
+    elif container == "txt_colon":
+        lines = [f"{who}: {what}" for who, what in turns]
+        target = tmp_path / "a.txt"
+    else:
+        lines = []
+        for who, what in turns:
+            lines += [who, what]
+        target = tmp_path / "b.txt"
+    target.write_text("\n".join(lines), encoding="utf-8")
+
+    parser, _match, _all = choose_parser(target)
+    assert type(parser).__name__ == "TranscriptParser"
+    output = parser.parse_artifact(project_id="p", artifact_id="a", path=target)
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    speakers = set()
+    for atom in atoms:
+        locator = (atom.source_refs[0].locator if atom.source_refs else {}) or {}
+        if locator.get("speaker"):
+            speakers.add(locator["speaker"])
+    assert speakers == {"Cliff Creech", "Dana Whitfield"}
+
+
+# ── every format must agree on what a unit of evidence is ───────────────
+#
+# The uniform test for the parsers not covered above: write the same six facts
+# into each format, parse, and compare. Content survived everywhere (6/6), so
+# the defects were not loss -- they were GRANULARITY and TYPING, which are
+# silent in a different way. An atom is the unit of typing: fuse an exclusion
+# into a paragraph of scope and it can never be typed as an exclusion.
+
+_FACTS = [
+    "Contractor shall install forty IP cameras at the Atlanta facility.",
+    "All drops terminate in IDF 3 and are certified to TIA-568.",
+    "Escort access is required at the Atlanta dock before 2pm.",
+    "Mid-turn jumpers are excluded from this bill of materials.",
+    "The customer will provide badge access on weekdays only.",
+    "Conduit above ten feet is by others.",
+]
+_NEEDLES = ["forty IP cameras", "TIA-568", "Escort access", "Mid-turn jumpers",
+            "badge access", "Conduit above ten feet"]
+
+_ODF_SHELL = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<office:document-content '
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+    'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
+    'office:version="1.2"><office:body>{body}</office:body>'
+    "</office:document-content>"
+)
+
+
+def _write_format(root: Path, fmt: str) -> Path:
+    import zipfile
+
+    if fmt == "md":
+        target = root / "sow.md"
+        target.write_text("# Statement of Work\n\n" + "\n\n".join(_FACTS) + "\n",
+                          encoding="utf-8")
+    elif fmt == "rtf":
+        target = root / "sow.rtf"
+        body = "".join(r"\par " + f + "\n" for f in _FACTS)
+        target.write_text(r"{\rtf1\ansi\deff0 {\fonttbl{\f0 Calibri;}}" + "\n" + body + "}",
+                          encoding="ascii", errors="replace")
+    elif fmt == "ics":
+        target = root / "kickoff.ics"
+        # RFC 5545 escapes a line break inside a text value as a literal
+        # backslash-n, not an actual newline -- a real newline would end the
+        # DESCRIPTION property and orphan every fact after the first.
+        desc = "\\n".join(_FACTS)
+        target.write_bytes((
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\n"
+            "UID:1@t\r\nDTSTAMP:20260115T090000Z\r\nDTSTART:20260115T090000Z\r\n"
+            f"SUMMARY:Cabling kickoff\r\nDESCRIPTION:{desc}\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        ).encode("utf-8"))
+    elif fmt == "mbox":
+        target = root / "thread.mbox"
+        target.write_text(
+            "From jane@acme.example Wed Jan 15 09:00:00 2026\n"
+            "From: jane@acme.example\nTo: pm@purtera.example\n"
+            "Subject: Scope update\n\n" + "\n".join(_FACTS) + "\n\n",
+            encoding="utf-8",
+        )
+    elif fmt in {"odt", "ods"}:
+        target = root / f"sow.{fmt}"
+        if fmt == "odt":
+            inner = "<office:text>" + "".join(f"<text:p>{f}</text:p>" for f in _FACTS) + "</office:text>"
+            mime = "application/vnd.oasis.opendocument.text"
+        else:
+            rows = "".join(
+                '<table:table-row><table:table-cell office:value-type="string">'
+                f"<text:p>{f}</text:p></table:table-cell></table:table-row>"
+                for f in _FACTS
+            )
+            inner = ('<office:spreadsheet><table:table table:name="Scope">'
+                     + rows + "</table:table></office:spreadsheet>")
+            mime = "application/vnd.oasis.opendocument.spreadsheet"
+        with zipfile.ZipFile(target, "w") as z:
+            z.writestr("mimetype", mime)
+            z.writestr("content.xml", _ODF_SHELL.format(body=inner))
+    else:  # zip
+        target = root / "pack.zip"
+        with zipfile.ZipFile(target, "w") as z:
+            z.writestr("scope_notes.txt", "Statement of Work\n\n" + "\n".join(_FACTS) + "\n")
+    return target
+
+
+@pytest.mark.parametrize("fmt", ["md", "rtf", "ics", "mbox", "odt", "ods", "zip"])
+def test_every_format_keeps_every_fact(tmp_path: Path, fmt: str) -> None:
+    """Content preservation. All seven already passed; kept so they stay passing."""
+    from app.parsers.registry import choose_parser
+
+    target = _write_format(tmp_path, fmt)
+    parser, _match, _all = choose_parser(target)
+    assert parser is not None, f"{fmt} routed to NONE"
+    output = parser.parse_artifact(project_id="p", artifact_id="a", path=target)
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    blob = " || ".join((a.raw_text or "") for a in atoms).lower()
+    missing = [n for n in _NEEDLES if n.lower() not in blob]
+    assert not missing, f"{fmt} lost {missing}"
+
+
+@pytest.mark.parametrize("fmt", ["md", "rtf", "ics", "mbox", "odt", "ods", "zip"])
+def test_every_format_types_the_exclusion_as_an_exclusion(
+    tmp_path: Path, fmt: str
+) -> None:
+    """The part that was actually broken, in three of the seven.
+
+      * .odt / .ods -- _universal_extras._make_atom defaulted atom_type to the
+        CONCLUSION scope_item, so no caller in that module ever classified:
+        six atoms, all scope_item, exclusion and constraint included.
+      * .mbox -- split on blank lines only, so a message arrived as one
+        336-character atom while EmailParser gave the same content five typed
+        atoms. mbox IS email; they must not disagree.
+      * .ics -- SUMMARY, times and the whole DESCRIPTION fused into one
+        394-character meeting_commitment, so working detail in an invite could
+        never be read as a constraint or an exclusion.
+    """
+    from app.parsers.registry import choose_parser
+
+    target = _write_format(tmp_path, fmt)
+    parser, _match, _all = choose_parser(target)
+    output = parser.parse_artifact(project_id="p", artifact_id="a", path=target)
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    exclusions = [
+        a for a in atoms
+        if str(a.atom_type).endswith("exclusion") and "mid-turn" in (a.raw_text or "").lower()
+    ]
+    assert exclusions, (
+        f"{fmt}: 'Mid-turn jumpers are excluded' is not an exclusion atom; "
+        f"types were {sorted({str(a.atom_type).split('.')[-1] for a in atoms})}"
+    )
+
+
+@pytest.mark.parametrize("fmt", ["md", "rtf", "ics", "mbox", "odt", "ods"])
+def test_no_format_fuses_the_whole_document_into_one_atom(
+    tmp_path: Path, fmt: str
+) -> None:
+    """Granularity guard: six distinct facts must not arrive as one blob."""
+    from app.parsers.registry import choose_parser
+
+    target = _write_format(tmp_path, fmt)
+    parser, _match, _all = choose_parser(target)
+    output = parser.parse_artifact(project_id="p", artifact_id="a", path=target)
+    atoms = output.atoms if hasattr(output, "atoms") else output
+    longest = max((len(a.raw_text or "") for a in atoms), default=0)
+    assert longest < 200, f"{fmt}: longest atom is {longest} chars -- facts are fused"

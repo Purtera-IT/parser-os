@@ -1305,6 +1305,56 @@ def _expand_lines_to_sentences(
     return out
 
 
+_PSEUDO_HEADER_RE = re.compile(
+    r"^(from|sent|date|to|cc|bcc|subject|reply-to|importance|attachments)"
+    r"\s*:\s*(.*)$",
+    re.IGNORECASE,
+)
+
+
+def _split_leading_pseudo_headers(text: str) -> tuple[dict[str, str], str]:
+    """Peel an Outlook "save as text" header block off the top of a body.
+
+    Returns ``(values, remaining_text)``. Only the LEADING run is taken, so a
+    quoted reply further down keeps its own headers inside its quoted block --
+    those already carry ``quoted_old_email`` authority and are the quoted
+    message, not this one.
+
+    Conservative on purpose, because the alternative is eating real content:
+    at least two header lines, and one of them must be ``from`` or ``subject``,
+    so an ordinary body opening "Note: ..." over "Owner: ..." is left alone.
+    """
+    lines = text.splitlines()
+    values: dict[str, str] = {}
+    consumed = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            # A blank line ends the block, but only once something matched;
+            # leading blank lines are just leading blank lines.
+            if values:
+                consumed = index + 1
+                break
+            consumed = index + 1
+            continue
+        match = _PSEUDO_HEADER_RE.match(stripped)
+        if not match:
+            break
+        key = match.group(1).lower()
+        if key not in values:
+            values[key] = match.group(2).strip()
+        consumed = index + 1
+    if len(values) < 2 or not ({"from", "subject"} & set(values)):
+        return {}, text
+    # Blank the header lines rather than dropping them: every locator
+    # downstream records a line number against the ORIGINAL file, and deleting
+    # the block shifts the whole body up by ``consumed``. Receipt replay then
+    # verifies each atom against the wrong line. Exactly the failure the
+    # transcript speaker-fold hit, so it is worth stating twice: a rewrite that
+    # changes line COUNT is a rewrite that breaks provenance.
+    return values, "\n".join([""] * consumed + lines[consumed:])
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -1402,6 +1452,28 @@ class EmailParser(BaseParser):
     ) -> ParserOutput:
         del domain_pack
         text = _extract_email_text(path)
+        # An Outlook "save as text" .txt carries the SAME From/Sent/To/Subject
+        # block a .eml does, just as body text rather than as MIME headers. It
+        # therefore reached _extract_atoms_from_block and each header line
+        # became its own scope_item at customer_current_authored -- which is
+        # exactly the defect _header_atom's comment below describes having
+        # fixed, surviving in the other container.
+        #
+        # Measured on one message written both ways:
+        #
+        #   .eml   6 atoms   headers -> one deal_metadata atom
+        #   .txt   9 atoms   headers -> four scope_item atoms at rank 90
+        #                               "From: jane.customer@acme.example"
+        #                               "Sent: Wednesday, January 15, 2026..."
+        #                               "To: pm@purtera.example"
+        #                               "Subject: Scope update"
+        #
+        # Same content, different container, four phantom units of work in the
+        # customer-authored tier. Split the leading header run off the body so
+        # both containers agree.
+        pseudo_headers: dict[str, str] = {}
+        if path.suffix.lower() != ".eml":
+            pseudo_headers, text = _split_leading_pseudo_headers(text)
         blocks = self._split_blocks(text)
         atoms: list[EvidenceAtom] = []
         for block in blocks:
@@ -1423,6 +1495,12 @@ class EmailParser(BaseParser):
         header_atom = self._header_atom(
             project_id=project_id, artifact_id=artifact_id, path=path
         )
+        if header_atom is None and pseudo_headers:
+            # Same treatment for the .txt shape: surfaced, never scope.
+            header_atom = self._pseudo_header_atom(
+                project_id=project_id, artifact_id=artifact_id, path=path,
+                values=pseudo_headers,
+            )
         if header_atom is not None:
             atoms.append(header_atom)
         # Attachments are the real deal docs more often than the body — mark
@@ -1451,6 +1529,49 @@ class EmailParser(BaseParser):
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _pseudo_header_atom(
+        self, *, project_id: str, artifact_id: str, path: Path, values: dict[str, str]
+    ) -> EvidenceAtom | None:
+        """The .eml header atom, for a message saved as plain text.
+
+        Deliberately mirrors ``_header_atom``: same ``deal_metadata`` type,
+        same ``email_header`` locator kind, so a message carries the same
+        evidence whichever way the PM exported it. ``artifact_type`` follows
+        the real file so source replay still verifies against a .txt.
+        """
+        parts = [
+            f"{field.capitalize()}: {values[field]}"
+            for field in ("from", "sent", "date", "to", "cc", "subject")
+            if values.get(field)
+        ]
+        if not parts:
+            return None
+        text = " | ".join(parts)
+        artifact_type = ArtifactType.txt
+        src = SourceRef(
+            id=stable_id("src", artifact_id, "email_header"),
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=path.name,
+            locator={"kind": "email_header"},
+            extraction_method="email_headers_plaintext",
+            parser_version=self.parser_version,
+        )
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, "email_header", text),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=text,
+            normalized_text=normalize_text(text),
+            value={"kind": "email_header", **values},
+            authority_class=AuthorityClass.machine_extractor,
+            confidence=0.86,
+            review_status=ReviewStatus.auto_accepted,
+            parser_version=self.parser_version,
+            source_refs=[src],
         )
 
     def _header_atom(
