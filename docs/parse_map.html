@@ -1760,6 +1760,97 @@
 </div>
 
 
+<h3>The pipe repair, and the seam audits</h3>
+<p class="lede">Two days of work the map did not yet show: the discovery that the deployed service was silently eating every correction, and the audit campaign that followed the parsers&rsquo; own discipline through every remaining layer of this repo.</p>
+
+<div class="plane b">
+<p class="hd">2026-08-24/25 &middot; grade the data &rarr; find the leak &rarr; fix the pipe &rarr; audit every seam</p>
+
+<div class="callout inv">
+<p><b>The training data was graded and failed, and the grading found a live leak.</b> The &ldquo;218 PM-gold rows&rdquo; turned out to be rank-laundered pipeline rows with empty provenance &mdash; verified human labels across every asset: <b>zero</b>. The table is 100% v0 text with 31% admission-verdict pollution and fixture leakage. And chasing the empty blob revealed why no gold could ever accumulate: <b>the deployed service was running August-4 code</b> &mdash; the old shadowed handler answered the correction route, the store sat in ephemeral /tmp, and the blob mirror had never written one object. A PM tap produced a success toast and then evaporated. Rebuilt from main, rolled by digest, and proven with four receipts: <span class="m">/v1/version</span> sha match &middot; canonical <span class="m">pm_router_*</span> id &middot; both blob objects (correction + gold row, <span class="m">teacher=pm</span>) &middot; in-container worker sync returning the row. Since revision <span class="m">--0000086</span>, every tap banks.</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 1120 300" role="img" aria-label="The seam audit campaign: five stops along the pipeline — parsers, routers, post-parse heads, graph builder and packetizer, and the envelope. Each stop shows its bleed count: parsers and routers were audited earlier; the heads bled ten times, the graph and packetizer seven, the envelope five. Every single bleed sat on a representation boundary — slug versus text, tile versus tile, PDF layout versus content, number formatting versus value, word-boundary versus underscore — and none were inside the rules themselves. All fixes are pinned by 89 invariance tests and deployed.">
+<defs>
+  <marker id="sm" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+  <text x="8" y="20" font-size="10" fill="var(--mut)" letter-spacing="1.4">FIVE STOPS, ONE LAW: BUGS LIVE AT REPRESENTATION SEAMS</text>
+
+  <rect x="8" y="40" width="188" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="22" y="62" font-size="10.5" font-weight="600">parsers</text>
+  <text x="22" y="78" font-size="9" opacity=".7">2,500-file hijack sweep</text>
+  <text x="22" y="92" font-size="9" opacity=".7">audited earlier &middot; holds</text>
+
+  <line x1="196" y1="73" x2="232" y2="73" stroke="currentColor" stroke-width="1.1" marker-end="url(#sm)"/>
+
+  <rect x="234" y="40" width="188" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="248" y="62" font-size="10.5" font-weight="600">routers</text>
+  <text x="248" y="78" font-size="9" opacity=".7">filename-gate leak fixed</text>
+  <text x="248" y="92" font-size="9" opacity=".7">audited earlier &middot; holds</text>
+
+  <line x1="422" y1="73" x2="458" y2="73" stroke="currentColor" stroke-width="1.1" marker-end="url(#sm)"/>
+
+  <rect x="460" y="40" width="188" height="66" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="474" y="62" font-size="10.5" fill="var(--accent)" font-weight="600">heads &middot; 10 bleeds</text>
+  <text x="474" y="78" font-size="9" fill="var(--accent)">site periods &middot; sweep root &middot; PDF</text>
+  <text x="474" y="92" font-size="9" fill="var(--accent)">hyphens &middot; qty gates &middot; tile dedup</text>
+
+  <line x1="648" y1="73" x2="684" y2="73" stroke="currentColor" stroke-width="1.1" marker-end="url(#sm)"/>
+
+  <rect x="686" y="40" width="196" height="66" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="700" y="62" font-size="10.5" fill="var(--accent)" font-weight="600">graph + packetizer &middot; 7</text>
+  <text x="700" y="78" font-size="9" fill="var(--accent)">&ldquo;1,000&rdquo; bound nothing &middot; a line</text>
+  <text x="700" y="92" font-size="9" fill="var(--accent)">wrap hid &ldquo;not included&rdquo;</text>
+
+  <line x1="882" y1="73" x2="918" y2="73" stroke="currentColor" stroke-width="1.1" marker-end="url(#sm)"/>
+
+  <rect x="920" y="40" width="192" height="66" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="934" y="62" font-size="10.5" fill="var(--accent)" font-weight="600">envelope &middot; 5 bleeds</text>
+  <text x="934" y="78" font-size="9" fill="var(--accent)">CDW_Quote invisible &middot; a task-</text>
+  <text x="934" y="92" font-size="9" fill="var(--accent)">index continue ate atoms</text>
+
+  <rect x="8" y="132" width="1104" height="60" rx="7" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+  <text x="24" y="154" font-size="10.5" font-weight="600">What every bleed had in common &mdash; and what none did</text>
+  <text x="24" y="172" font-size="9.5" opacity=".78">All 22 sat on a boundary between two representations of the same content: slug&harr;text, tile&harr;tile, PDF-layout&harr;phrase, display-format&harr;number, word-boundary&harr;separator, import-success&harr;control-flow.</text>
+  <text x="24" y="186" font-size="9.5" opacity=".78">Zero were inside the rules. atom_type_sanity survived all 30 of its probes untouched; build_edges emits an identical edge set under any atom input order; every index sorts at emission.</text>
+
+  <rect x="8" y="212" width="546" height="72" rx="7" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.4"/>
+  <text x="24" y="234" font-size="10.5" fill="var(--accent)" font-weight="600">Pinned: 89 invariance tests, three files</text>
+  <text x="24" y="252" font-size="9.5" fill="var(--accent)">test_head_invariance (43) &middot; test_graph_packet_invariance (35, order-</text>
+  <text x="24" y="266" font-size="9.5" fill="var(--accent)">invariance asserts its own fixture is non-vacuous) &middot; test_envelope_invariance (11)</text>
+
+  <rect x="566" y="212" width="546" height="72" rx="7" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <text x="582" y="234" font-size="10.5" font-weight="600">Deployed, verified in the running containers</text>
+  <text x="582" y="252" font-size="9.5" opacity=".78">service + worker + job rolled by immutable digest after every merge; each roll proven by</text>
+  <text x="582" y="266" font-size="9.5" opacity=".78">/v1/version sha + in-container source grep &mdash; never by CI faith. Stamps come from rev-parse.</text>
+</g>
+</svg>
+<figcaption>Twenty-two bleeds across three audits in two days, every one at a seam, every fix pinned and live. The rules have yet to be wrong once.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Bleed worth remembering</th><th>Why it mattered</th></tr></thead>
+<tbody>
+<tr><td class="m">covered-check could never match</td><td>every covered multi-word PM-critical term re-escalated to the LLM on every deal &mdash; pure duplicate cost, invisible because the output looked right.</td></tr>
+<tr><td class="m">&ldquo;not\nincluded&rdquo; was invisible</td><td>a PDF line wrap hid an <i>explicit exclusion</i> from the packetizer&rsquo;s governor logic &mdash; the highest-stakes phrase family in the product, defeated by layout.</td></tr>
+<tr><td class="m">&ldquo;1,000&rdquo; reconciled as nothing</td><td>a spreadsheet&rsquo;s display format silently removed a quantity from cross-doc conflict detection &mdash; the COPPER family&rsquo;s exact shape.</td></tr>
+<tr><td class="m">the task-index continue</td><td>non-quote-line task atoms vanished from every entity index &mdash; and only when a classifier import succeeded, so environments could disagree about what the envelope contained.</td></tr>
+<tr><td class="m">St. Louis ≠ st_louis</td><td>a period kept the same site name from matching its own entity-key slug, in both directions of every catalog lookup.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><b>Where the audit goes next: across the border.</b> Everything above is parser-os &mdash; the campaign has now covered this repo end to end, envelope included. The largest remaining seam in the product is the one between systems: parser-os&rsquo;s output schema is orbitbrief-core&rsquo;s input assumptions, versioned and deployed separately. Five audits of evidence say that is exactly where the next bleeds live.</p>
+</div>
+</div>
+
+
 <h2><span class="n">PLANE TWO &mdash; AFTER ATOMS</span>Heads and baseline</h2>
 <p class="lede">Everything here is a judgment a PM can be wrong about, which is what makes it learnable &mdash; and what makes it a different kind of thing from the plane above.</p>
 

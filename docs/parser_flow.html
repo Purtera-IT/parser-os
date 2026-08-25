@@ -52,7 +52,7 @@
 </div>
 
 <figure class="board">
-<svg viewBox="0 0 1400 1180" role="img" aria-label="A complete map of the parser. Bytes arrive and are routed by evidence in order of strength: container magic bytes, then content structure, then extension, then filename as a prior that cannot decide alone. Routing fans out to twenty-one parsers in five families: PDF, Office OOXML, mail, text and markup, and containers and media. Each family has its own internal routing, shown beside it. All families converge on segments, then on typed atoms, with three coverage floors catching content that no typed rule claimed, and an abstain path that records that nothing read the file.">
+<svg viewBox="0 0 1400 1620" role="img" aria-label="A complete map of the parser. Bytes arrive and are routed by evidence in order of strength: container magic bytes, then content structure, then extension, then filename as a prior that cannot decide alone. Routing fans out to twenty-one parsers in five families: PDF, Office OOXML, mail, text and markup, and containers and media. Each family has its own internal routing, shown beside it. All families converge on segments, then on typed atoms, with three coverage floors catching content that no typed rule claimed, and an abstain path that records that nothing read the file.">
 <defs>
   <marker id="a" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
     <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
@@ -276,6 +276,54 @@
   <text x="34" y="1134" font-size="10" opacity=".78">Evidence decides in order of strength, and a weaker signal may raise a claim it cannot create. Every red line above is one place that rule was broken &mdash; a filename, a style name, a tab name, a CSS class</text>
   <text x="34" y="1150" font-size="10" opacity=".78">deciding something the content should have. None of them raised an error. They lost documents quietly, which is the only way this system can be wrong without anyone finding out.</text>
   <text x="34" y="1168" font-size="10" opacity=".78">And every threshold on this board now carries a receipt &mdash; corpus, date, derivation, expiry &mdash; pinned to the live code by CI (app/core/calibration.py). A magic number here cannot silently expire.</text>
+
+  <line x1="34" y1="1196" x2="1366" y2="1196" stroke="var(--rule)" stroke-width="1"/>
+  <text x="34" y="1226" font-size="11" fill="var(--mut)" letter-spacing="2">AFTER THE ATOMS — WHAT THE SEAM AUDITS AND THE PIPE REPAIR PROVED (2026-08-24/25)</text>
+
+  <rect x="34" y="1244" width="432" height="240" rx="8" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.5"/>
+  <text x="52" y="1270" font-size="11.5" fill="var(--hard)" font-weight="600">THE SEAM LAW — five audits, one result</text>
+  <text x="52" y="1292" font-size="10" fill="var(--hard)">heads 10 bleeds · graph+packetizer 7 · envelope 5</text>
+  <text x="52" y="1308" font-size="10" fill="var(--hard)">parsers + routers audited earlier — both still hold</text>
+  <text x="52" y="1332" font-size="10" fill="var(--hard)" font-weight="600">all 22 sat on representation boundaries:</text>
+  <text x="52" y="1348" font-size="9.5" fill="var(--hard)">“not↵included” hid an explicit exclusion · “1,000”</text>
+  <text x="52" y="1362" font-size="9.5" fill="var(--hard)">reconciled as nothing · CDW_Quote invisible to \bCDW\b ·</text>
+  <text x="52" y="1376" font-size="9.5" fill="var(--hard)">St. Louis ≠ st_louis · a task-index continue ate atoms</text>
+  <text x="52" y="1390" font-size="9.5" fill="var(--hard)">only when an import succeeded</text>
+  <text x="52" y="1414" font-size="10" fill="var(--hard)" font-weight="600">zero were inside the rules.</text>
+  <text x="52" y="1430" font-size="9.5" fill="var(--hard)">atom_type_sanity: 30/30 probes clean · build_edges: same</text>
+  <text x="52" y="1444" font-size="9.5" fill="var(--hard)">edge set under any atom order · every index sorts at emission</text>
+  <text x="52" y="1468" font-size="10" fill="var(--hard)">pinned by 89 invariance tests across three files</text>
+
+  <rect x="484" y="1244" width="432" height="240" rx="8" fill="var(--loss-bg)" stroke="var(--loss)" stroke-width="1.5"/>
+  <text x="502" y="1270" font-size="11.5" fill="var(--loss)" font-weight="600">THE TAP PIPE — was eating every correction</text>
+  <text x="502" y="1292" font-size="10" fill="var(--loss)">the deployed service ran AUG-4 code: the old handler</text>
+  <text x="502" y="1306" font-size="10" fill="var(--loss)">answered /feedback/correction, the store lived in /tmp,</text>
+  <text x="502" y="1320" font-size="10" fill="var(--loss)">and the blob mirror had never written one object.</text>
+  <text x="502" y="1334" font-size="10" fill="var(--loss)">A PM tap made a success toast, then evaporated.</text>
+  <text x="502" y="1358" font-size="10" fill="var(--loss)" font-weight="600">rebuilt from main · proven with four receipts:</text>
+  <text x="502" y="1374" font-size="9.5" fill="var(--loss)">/v1/version sha · canonical pm_router_* id · correction +</text>
+  <text x="502" y="1388" font-size="9.5" fill="var(--loss)">gold row (teacher=pm) in blob · worker sync returns the row</text>
+  <text x="502" y="1412" font-size="10" fill="var(--loss)" font-weight="600">graded while chasing it: verified human gold = 0.</text>
+  <text x="502" y="1428" font-size="9.5" fill="var(--loss)">the “218 pm rows” are rank-laundered pipeline rows; the</text>
+  <text x="502" y="1442" font-size="9.5" fill="var(--loss)">table is 100% v0 text. GPU rents at ≈100 real taps —</text>
+  <text x="502" y="1456" font-size="9.5" fill="var(--loss)">every tap since rev --0000086 now BANKS. Watcher armed,</text>
+  <text x="502" y="1470" font-size="9.5" fill="var(--loss)">polling the live store every 2 minutes.</text>
+
+  <rect x="934" y="1244" width="432" height="240" rx="8" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.5"/>
+  <text x="952" y="1270" font-size="11.5" fill="var(--quiet)" font-weight="600">DEPLOY TRUTH — the stack IS main</text>
+  <text x="952" y="1292" font-size="10" fill="var(--quiet)">service + worker app + worker job rolled by immutable</text>
+  <text x="952" y="1306" font-size="10" fill="var(--quiet)">digest after every merge — never a mutable tag.</text>
+  <text x="952" y="1330" font-size="10" fill="var(--quiet)" font-weight="600">verified in the running container, never by CI faith:</text>
+  <text x="952" y="1346" font-size="9.5" fill="var(--quiet)">/v1/version reports the bundled parser-os sha · an exec</text>
+  <text x="952" y="1360" font-size="9.5" fill="var(--quiet)">greps the fix out of the live source · stamps come from</text>
+  <text x="952" y="1374" font-size="9.5" fill="var(--quiet)">rev-parse (a retyped sha shipped once and was caught)</text>
+  <text x="952" y="1398" font-size="10" fill="var(--quiet)" font-weight="600">the chip is live in the prod frontend bundle —</text>
+  <text x="952" y="1414" font-size="9.5" fill="var(--quiet)">grep’d from the CDN’s served JavaScript, not assumed.</text>
+  <text x="952" y="1438" font-size="10" fill="var(--quiet)" font-weight="600">next audit crosses the border:</text>
+  <text x="952" y="1454" font-size="9.5" fill="var(--quiet)">this board’s output schema is orbitbrief-core’s input</text>
+  <text x="952" y="1468" font-size="9.5" fill="var(--quiet)">assumptions — the largest seam in the product.</text>
+
+  <text x="34" y="1516" font-size="10" opacity=".78">Every fix above is merged, deployed, and pinned. The rules on this board have not been wrong once across five audits — every failure was one representation of the truth disagreeing with another dressing of the same truth.</text>
 </g>
 </svg>
 <figcaption>21 registered parsers, drawn from the live capability table. Red marks where documents were being lost, all of them silently.</figcaption>
