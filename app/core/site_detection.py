@@ -169,11 +169,14 @@ def _normalize(phrase: str) -> str:
     matched site_keys to catalog entries.
     """
     s = phrase.lower().strip()
-    # First, replace hyphens AND underscores AND slashes with spaces
-    # so site IDs and slug forms collapse to the same shape.
-    s = re.sub(r"[\-_/]", " ", s)
+    # First, replace hyphens AND underscores AND slashes AND periods with
+    # spaces so site IDs, slug forms, and abbreviation dressings collapse to
+    # the same shape ("St. Louis Office" == "st_louis_office"; a decimal like
+    # "4.5" becomes "4 5" on BOTH sides of any comparison, so it stays equal
+    # to itself in every dress).
+    s = re.sub(r"[\-_/.]", " ", s)
     # Then strip all other punctuation
-    s = re.sub(r"[^a-z0-9\s.]", " ", s)
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
