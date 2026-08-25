@@ -16,7 +16,9 @@ from app.core.packet_certificates import build_packet_certificate
 
 # PR9 — packet certification gates. See docstrings on each helper.
 _EXPLICIT_EXCLUSION_RE = re.compile(
-    r"\b(excluded|exclude|not included|not in scope|out of scope|by others|nic)\b",
+    # \s+ between words: a double space or a PDF line wrap ("not\nincluded")
+    # is dress, not content -- literal single spaces missed both.
+    r"\b(excluded|exclude|not\s+included|not\s+in\s+scope|out\s+of\s+scope|by\s+others|nic)\b",
     re.I,
 )
 
