@@ -258,7 +258,9 @@ def _dedup_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for r in rows:
-        k = (r.get("text") or "").strip().lower()[:120]
+        # Internal whitespace differs between overlapping tile crops of the
+        # SAME row; collapse it or the dedup key treats dress as content.
+        k = re.sub(r"\s+", " ", (r.get("text") or "").strip().lower())[:120]
         if not k or k in seen:
             continue
         seen.add(k)

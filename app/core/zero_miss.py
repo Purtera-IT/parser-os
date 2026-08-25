@@ -224,7 +224,11 @@ def pm_vocab_sweep(
                     if isinstance(v, str) and v:
                         covered_texts.add(v.lower()[:80])
 
-    raw_lower = raw_text.lower()
+    # PDF line-break hyphenation (perfor- / mance split across a line
+    # break) is layout, not content: rejoin split words before counting
+    # or a term's mentions silently undercount and the sweep never
+    # escalates.
+    raw_lower = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", raw_text.lower())
     missed: list[dict[str, Any]] = []
 
     for term_def in PM_CRITICAL_TERMS:
@@ -238,7 +242,10 @@ def pm_vocab_sweep(
         # existing covered text.
         # Extract a simple root from the regex pattern for lookup
         root = re.sub(r"[^a-z]", "", matches[0])[:20] if matches else ""
-        if root and any(root in ct for ct in covered_texts):
+        # Compare letters-only on BOTH sides: the root is de-spaced, so a
+        # spaced covered text ("performance bond as ...") could never contain
+        # it and every covered multi-word term re-escalated.
+        if root and any(root in re.sub(r"[^a-z]", "", ct) for ct in covered_texts):
             continue
         # Not covered — escalate
         if canonicalize_fn is not None:

@@ -2567,9 +2567,17 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
     """
     keys: set[str] = set()
 
+    # One plausibility gate for EVERY path. The noun-anchored path always
+    # dropped 0 / >100k as "almost always not real quantities"; the structured
+    # and "Qty:" paths did not, so "Qty: 0" or a spreadsheet artifact of
+    # 2,000,000 emitted keys that polluted rollups and conflict detection.
+    def _plausible(n: float) -> bool:
+        return 0 < n <= 100_000
+
     if isinstance(value, dict):
         qty = value.get("quantity")
-        if isinstance(qty, (int, float)) and not isinstance(qty, bool):
+        if (isinstance(qty, (int, float)) and not isinstance(qty, bool)
+                and _plausible(qty)):
             keys.add(f"quantity:{int(qty) if float(qty).is_integer() else qty}")
 
     for match in _QUANTITY_REGEX.finditer(text):
@@ -2577,6 +2585,8 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
         try:
             n = int(raw)
         except ValueError:
+            continue
+        if not _plausible(n):
             continue
         keys.add(f"quantity:{n}")
 
@@ -2588,10 +2598,7 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
             n = int(raw)
         except ValueError:
             continue
-        # Skip implausibly small ("0 cables") or implausibly large
-        # ("1000000 each") values that are almost always not real
-        # quantities.
-        if n <= 0 or n > 100_000:
+        if not _plausible(n):
             continue
         keys.add(f"quantity:{n}")
 
