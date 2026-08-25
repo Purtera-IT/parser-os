@@ -1661,6 +1661,105 @@
 </div>
 </div>
 
+<h3>The loop, closed at both ends &mdash; the trainer and the first thumb</h3>
+<p class="lede">Two ends of the learning loop existed as plans: the GPU trainer (GO #5) and proof that a tap actually lands. Both are now real &mdash; the trainer smoke-proven on CPU, and one synthetic thumb driven through the full production pipe.</p>
+
+<div class="plane b">
+<p class="hd">runpod_detector/train_multitask_backbone.py &middot; one command, six pinned decisions</p>
+
+<figure>
+<svg viewBox="0 0 1120 310" role="img" aria-label="The closed loop: a PM taps the correction chip in purpulse, which POSTs through the purpulse API to the parser-os feedback endpoint. The correction lands twice: as an instant-learning exemplar in the FeedbackStore, and as a gold row for the weekend GPU run. The backbone trainer fits one encoder over every task, evaluates each epoch against the frozen epoch-0 baseline with a paired McNemar gate, and either writes promotable candidates or refuses to write anything. A synthetic thumb, corr_d611b7be7820, has already transited the whole pipe.">
+<defs>
+  <marker id="g5" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
+  </marker>
+  <marker id="g5a" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="var(--accent)"/>
+  </marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+
+  <text x="8" y="20" font-size="10" fill="var(--mut)" letter-spacing="1.4">THE TAP&rsquo;S FULL TRANSIT &mdash; PROVEN WITH A LIVE SYNTHETIC ROW</text>
+
+  <rect x="8" y="36" width="180" height="58" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="20" y="58" font-size="10.5" fill="var(--accent)" font-weight="600">PM taps the chip</text>
+  <text x="20" y="74" font-size="9.5" fill="var(--accent)">purpulse &middot; prod bundle</text>
+
+  <line x1="188" y1="65" x2="242" y2="65" stroke="currentColor" stroke-width="1.2" marker-end="url(#g5)"/>
+  <text x="192" y="56" font-size="8.5" opacity=".6">POST</text>
+
+  <rect x="244" y="36" width="204" height="58" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="256" y="58" font-size="10.5">parser-os service</text>
+  <text x="256" y="74" font-size="9" opacity=".7">/feedback/correction</text>
+
+  <path d="M448 52 C 492 52, 492 40, 534 40" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#g5)"/>
+  <path d="M448 80 C 492 80, 492 108, 534 108" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#g5)"/>
+
+  <rect x="536" y="18" width="264" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="548" y="38" font-size="10.5">FeedbackStore Correction</text>
+  <text x="548" y="54" font-size="9" opacity=".7">fires on similar text INSTANTLY &mdash; no GPU</text>
+
+  <rect x="536" y="86" width="264" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="548" y="106" font-size="10.5">gold row &middot; teacher=pm</text>
+  <text x="548" y="122" font-size="9" opacity=".7">v2 decide-text &middot; correctness-grade &middot; banked</text>
+
+  <path d="M800 112 C 844 112, 844 128, 886 128" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#g5)"/>
+  <text x="806" y="106" font-size="8.5" opacity=".6">weekend</text>
+
+  <rect x="888" y="100" width="224" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="900" y="122" font-size="10.5" font-weight="600">GPU run &middot; GO #5</text>
+  <text x="900" y="138" font-size="9" opacity=".7">train_multitask_backbone.py</text>
+
+  <path d="M1000 156 C 1000 180, 900 180, 760 190" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#g5)"/>
+
+  <rect x="500" y="176" width="258" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="512" y="198" font-size="10.5" font-weight="600">paired McNemar gate</text>
+  <text x="512" y="214" font-size="9" opacity=".7">every epoch vs the FROZEN epoch-0 baseline</text>
+
+  <path d="M500 192 C 452 188, 452 186, 408 186" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#g5a)"/>
+  <rect x="180" y="164" width="226" height="48" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="192" y="184" font-size="10" fill="var(--accent)" font-weight="600">beats baseline &rarr; candidates</text>
+  <text x="192" y="200" font-size="9" fill="var(--accent)">_backbone_candidate/&lt;task&gt;/ &middot; load_promoted layout</text>
+
+  <path d="M500 222 C 452 226, 452 232, 408 234" fill="none" stroke="var(--quiet)" stroke-width="1.5" marker-end="url(#g5)"/>
+  <rect x="180" y="222" width="226" height="48" rx="6" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.4"/>
+  <text x="192" y="242" font-size="10" fill="var(--quiet)" font-weight="600">worse &rarr; NOTHING WRITTEN</text>
+  <text x="192" y="258" font-size="9" fill="var(--quiet)">the smoke run ended exactly here &mdash; honestly</text>
+
+  <rect x="8" y="284" width="1104" height="1" fill="currentColor" opacity=".15"/>
+  <text x="8" y="303" font-size="9.5" opacity=".75">Receipt: corr_d611b7be7820 &middot; relation service_routing &middot; deal 005a4c6b &middot; created_by &ldquo;router-shadow-smoke&rdquo; &mdash; no &ldquo;@&rdquo;, so the fail-closed authorship gate keeps this synthetic row out of PM-gold forever. It proves the pipe, and can never pollute the metric.</text>
+</g>
+</svg>
+<figcaption>Every hop a real thumb will take has now carried a row. The only untraveled step is the one no machine can take: a human finger.</figcaption>
+</figure>
+
+<h3>Six decisions the GPU run will not re-litigate</h3>
+<p class="lede">Written into the trainer, not into a doc it might drift from.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Decision</th><th>Why it is pinned</th></tr></thead>
+<tbody>
+<tr><td class="m">the split column governs</td><td>re-splitting on the box would leak deals across the boundary; the printed number would be memorisation.</td></tr>
+<tr><td class="m">PM rows never train</td><td>they are the only correctness signal; a model trained on them can only report agreement with itself. Diverted to eval whatever their stored split says &mdash; pinned by test.</td></tr>
+<tr><td class="m">no task prefix in the text</td><td>serving embeds bare decide-text; a prefix trained in but never served is silent train/serve skew. Tasks separate in the LOSS (labels namespaced <span class="m">task::label</span>), text stays byte-identical to production.</td></tr>
+<tr><td class="m">epoch 0 is the baseline</td><td>the frozen encoder is measured before any step; every epoch reports a paired McNemar delta against it, and the checkpoint that persists is the best epoch, never the last.</td></tr>
+<tr><td class="m">the promotion metric is GO #5&rsquo;s</td><td>value_light_answered at &ge;0.95 accuracy on the deal-split holdout. The base encoder answers 7. Moving that number is the point; overall accuracy is context.</td></tr>
+<tr><td class="m">ready is not promotion</td><td>candidates land in their own directory in the exact load_promoted layout; pointing the env flag stays a human act, and the meta carries eval + baseline + repr-version mix + caveats.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout inv">
+<p><b>The smoke run passed by refusing.</b> A 400-row, 1-epoch CPU fit made the encoder worse (1@0.000 vs the frozen baseline&rsquo;s 15@0.133) and the trainer&rsquo;s last line was &ldquo;no epoch beat the frozen baseline &mdash; NOTHING WRITTEN.&rdquo; That is the machinery working: the same gate that will stop a bad A100 run from shipping stopped a deliberately-starved CPU run from shipping. The loop is proven; only the checkpoint quality awaits real data and real silicon.</p>
+</div>
+
+<div class="callout">
+<p><b>When the GPU is actually worth renting.</b> Everything live today &mdash; parsing, routing, reconciliation, instant-learning corrections, the conformal gate &mdash; is CPU work. The one thing that needs a GPU is moving the encoder&rsquo;s weights: ~6,200 SupCon steps over 16.5k rows is roughly 3.5 days on this CPU and ~30 minutes on an A100. But a run today would optimise agreement with a machine teacher on v0 text while serving is v2 &mdash; a sharper wrong answer. Each PM thumb fixes both defects at once: correctness-grade label, v2 representation. The box gets rented when pm-gold is big enough to arbitrate (&asymp;100 taps), and the weekend cadence &mdash; train Saturday, McNemar Sunday, promote or discard &mdash; is what the trainer&rsquo;s gate already implements.</p>
+</div>
+</div>
+
+
 <h2><span class="n">PLANE TWO &mdash; AFTER ATOMS</span>Heads and baseline</h2>
 <p class="lede">Everything here is a judgment a PM can be wrong about, which is what makes it learnable &mdash; and what makes it a different kind of thing from the plane above.</p>
 
