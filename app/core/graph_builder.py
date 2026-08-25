@@ -138,8 +138,12 @@ def _noun_anchored_quantity(text: str, device_canonical: str) -> int | None:
         for pat in patterns:
             for noun_match in pat.finditer(clause):
                 n_start = noun_match.start()
-                for num_match in re.finditer(r"\b(\d{1,5})\b", clause):
-                    raw = num_match.group(1)
+                # accept "1,000" as well as "1000": a thousands separator is
+                # formatting, and \b\d{1,5}\b split "1,000" into 1 and 000,
+                # binding nothing.
+                for num_match in re.finditer(
+                        r"\b(\d{1,3}(?:,\d{3})+|\d{1,5})\b", clause):
+                    raw = num_match.group(1).replace(",", "")
                     try:
                         val = int(raw)
                     except ValueError:
@@ -235,6 +239,10 @@ def _quantity_value(atom: EvidenceAtom) -> float | None:
     value = atom.value.get("quantity") if isinstance(atom.value, dict) else None
     if value is None:
         return None
+    if isinstance(value, str):
+        # "1,000" is the same number as 1000; a spreadsheet's display
+        # format must not decide whether a quantity reconciles.
+        value = value.replace(",", "").strip()
     try:
         return float(value)
     except (TypeError, ValueError):
