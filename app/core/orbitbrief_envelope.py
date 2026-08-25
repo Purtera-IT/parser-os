@@ -489,7 +489,7 @@ def _foreign_artifacts(
     for doc in documents or []:
         if not isinstance(doc, Mapping):
             continue
-        name = str(doc.get("filename") or "")
+        name = str(doc.get("filename") or "").strip()
         m = _ARTIFACT_DEAL_NUM_RE.match(name)
         if not m or m.group(1) == own:
             continue
@@ -572,7 +572,9 @@ def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
     """
     if not isinstance(crm, Mapping):
         return "unknown"
-    hay = filename.lower()
+    # Underscores and hyphens are filename dress: "_" is a word character, so
+    # the word-boundary search below could never see CDW inside "CDW_Quote".
+    hay = re.sub(r"[_\-]+", " ", filename.lower())
     for name in _names_from_crm(crm):
         # Word-boundary, not substring: a three-letter account like CDW would
         # otherwise match inside an unrelated word.
@@ -1477,15 +1479,22 @@ def _build_indexes(
             if isinstance(key, str) and key.startswith("site:")
         ]
         if atom.atom_type.value == "task":
+            # The tier gate decides ONLY whether the task lands in
+            # tasks_by_site. It must not decide whether the atom is indexed
+            # at all -- a `continue` here silently dropped every
+            # non-quote-line task from atoms_by_entity_key and the
+            # per-prefix indexes, and did so only when the classifier
+            # import succeeded.
+            in_task_index = True
             try:
                 from app.core.task_tier_classifier import is_quote_line_task_atom
 
-                if not is_quote_line_task_atom(atom):
-                    continue
+                in_task_index = is_quote_line_task_atom(atom)
             except Exception:
                 pass
-            for slug in site_slugs_for_atom:
-                tasks_by_site[slug].append(atom.id)
+            if in_task_index:
+                for slug in site_slugs_for_atom:
+                    tasks_by_site[slug].append(atom.id)
         for key in atom.entity_keys:
             by_entity_key[key].append(atom.id)
             # Per-entity-prefix specialized indexes: O(1) lookup of
