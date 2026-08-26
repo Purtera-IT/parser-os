@@ -41,7 +41,7 @@
 <div class="wrap">
 <header>
   <h1>Every path a file takes &mdash; with the heads pinned</h1>
-  <p class="sub">The canonical flow board, overlaid with every learnable head pinned where it actually runs. Board content is the original; the numbered pins and the WHERE THE HEADS LIVE band are the overlay, statuses re-derived 2026-08-26 from import graphs, env flags, and blob artifacts. All trained models live in parser-os; core&rsquo;s heads are prompted, not trained.</p>
+  <p class="sub">The canonical flow board with every learnable head pinned in place, and the pipeline continued past the atoms so the downstream heads have their real homes too. Board content is the original; pins, the typing stack, and the PAST THE ATOMS row are the overlay &mdash; statuses re-derived 2026-08-26 from import graphs, env flags, and blob artifacts.</p>
 </header>
 
 <div class="legend">
@@ -59,7 +59,7 @@
 </div>
 
 <figure class="board">
-<svg viewBox="0 0 1400 1975" role="img" aria-label="A complete map of the parser. Bytes arrive and are routed by evidence in order of strength: container magic bytes, then content structure, then extension, then filename as a prior that cannot decide alone. Routing fans out to twenty-one parsers in five families: PDF, Office OOXML, mail, text and markup, and containers and media. Each family has its own internal routing, shown beside it. All families converge on segments, then on typed atoms, with three coverage floors catching content that no typed rule claimed, and an abstain path that records that nothing read the file.">
+<svg viewBox="0 0 1400 1920" role="img" aria-label="A complete map of the parser. Bytes arrive and are routed by evidence in order of strength: container magic bytes, then content structure, then extension, then filename as a prior that cannot decide alone. Routing fans out to twenty-one parsers in five families: PDF, Office OOXML, mail, text and markup, and containers and media. Each family has its own internal routing, shown beside it. All families converge on segments, then on typed atoms, with three coverage floors catching content that no typed rule claimed, and an abstain path that records that nothing read the file.">
 <defs>
   <marker id="a" markerWidth="8" markerHeight="6" refX="7.6" refY="3" orient="auto">
     <polygon points="0 0, 8 3, 0 6" fill="currentColor"/>
@@ -278,145 +278,211 @@
   <text x="1313" y="590" text-anchor="middle" font-size="9" fill="var(--quiet)">counted, surfaced</text>
 
   <!-- ── the rule, stated once ─────────────────────────────────────── -->
-  <rect x="16" y="1090" width="1368" height="104" rx="8" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/>
-  <text x="34" y="1114" font-size="11" font-weight="600">One rule holds the whole board together</text>
-  <text x="34" y="1134" font-size="10" opacity=".78">Evidence decides in order of strength, and a weaker signal may raise a claim it cannot create. Every red line above is one place that rule was broken &mdash; a filename, a style name, a tab name, a CSS class</text>
-  <text x="34" y="1150" font-size="10" opacity=".78">deciding something the content should have. None of them raised an error. They lost documents quietly, which is the only way this system can be wrong without anyone finding out.</text>
-  <text x="34" y="1168" font-size="10" opacity=".78">And every threshold on this board now carries a receipt &mdash; corpus, date, derivation, expiry &mdash; pinned to the live code by CI (app/core/calibration.py). A magic number here cannot silently expire.</text>
-  <text x="34" y="1186" font-size="10" opacity=".78">Board receipts: code figures re-derived 2026-08-25 against main@f898f2e; corpus findings (84-page probe, 2,062-file census, lost-sections, 11-atom page) are dated 2026-08 measurements, pinned by their audit tests.</text>
+  <rect x="16" y="1390" width="1368" height="104" rx="8" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/>
+  <text x="34" y="1414" font-size="11" font-weight="600">One rule holds the whole board together</text>
+  <text x="34" y="1434" font-size="10" opacity=".78">Evidence decides in order of strength, and a weaker signal may raise a claim it cannot create. Every red line above is one place that rule was broken &mdash; a filename, a style name, a tab name, a CSS class</text>
+  <text x="34" y="1450" font-size="10" opacity=".78">deciding something the content should have. None of them raised an error. They lost documents quietly, which is the only way this system can be wrong without anyone finding out.</text>
+  <text x="34" y="1468" font-size="10" opacity=".78">And every threshold on this board now carries a receipt &mdash; corpus, date, derivation, expiry &mdash; pinned to the live code by CI (app/core/calibration.py). A magic number here cannot silently expire.</text>
+  <text x="34" y="1486" font-size="10" opacity=".78">Board receipts: code figures re-derived 2026-08-25 against main@f898f2e; corpus findings (84-page probe, 2,062-file census, lost-sections, 11-atom page) are dated 2026-08 measurements, pinned by their audit tests.</text>
 
-  <line x1="34" y1="1204" x2="1366" y2="1204" stroke="var(--rule)" stroke-width="1"/>
-  <text x="34" y="1226" font-size="11" fill="var(--mut)" letter-spacing="2">AFTER THE ATOMS — WHAT THE SEAM AUDITS AND THE PIPE REPAIR PROVED (2026-08-24/25)</text>
+  <line x1="34" y1="1504" x2="1366" y2="1504" stroke="var(--rule)" stroke-width="1"/>
+  <text x="34" y="1526" font-size="11" fill="var(--mut)" letter-spacing="2">AFTER THE ATOMS — WHAT THE SEAM AUDITS AND THE PIPE REPAIR PROVED (2026-08-24/25)</text>
 
-  <rect x="34" y="1244" width="432" height="240" rx="8" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.5"/>
-  <text x="52" y="1270" font-size="11.5" fill="var(--hard)" font-weight="600">THE SEAM LAW — five audits, one result</text>
-  <text x="52" y="1292" font-size="10" fill="var(--hard)">heads 10 bleeds · graph+packetizer 7 · envelope 5</text>
-  <text x="52" y="1308" font-size="10" fill="var(--hard)">parsers + routers audited earlier — both still hold</text>
-  <text x="52" y="1332" font-size="10" fill="var(--hard)" font-weight="600">all 22 sat on representation boundaries:</text>
-  <text x="52" y="1348" font-size="9.5" fill="var(--hard)">“not↵included” hid an explicit exclusion · “1,000”</text>
-  <text x="52" y="1362" font-size="9.5" fill="var(--hard)">reconciled as nothing · CDW_Quote invisible to \bCDW\b ·</text>
-  <text x="52" y="1376" font-size="9.5" fill="var(--hard)">St. Louis ≠ st_louis · a task-index continue ate atoms</text>
-  <text x="52" y="1390" font-size="9.5" fill="var(--hard)">only when an import succeeded</text>
-  <text x="52" y="1414" font-size="10" fill="var(--hard)" font-weight="600">zero were inside the rules.</text>
-  <text x="52" y="1430" font-size="9.5" fill="var(--hard)">atom_type_sanity: 30/30 probes clean · build_edges: same</text>
-  <text x="52" y="1444" font-size="9.5" fill="var(--hard)">edge set under any atom order · every index sorts at emission</text>
-  <text x="52" y="1468" font-size="10" fill="var(--hard)">pinned by 89 invariance tests across three files</text>
+  <rect x="34" y="1544" width="432" height="240" rx="8" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.5"/>
+  <text x="52" y="1570" font-size="11.5" fill="var(--hard)" font-weight="600">THE SEAM LAW — five audits, one result</text>
+  <text x="52" y="1592" font-size="10" fill="var(--hard)">heads 10 bleeds · graph+packetizer 7 · envelope 5</text>
+  <text x="52" y="1608" font-size="10" fill="var(--hard)">parsers + routers audited earlier — both still hold</text>
+  <text x="52" y="1632" font-size="10" fill="var(--hard)" font-weight="600">all 22 sat on representation boundaries:</text>
+  <text x="52" y="1648" font-size="9.5" fill="var(--hard)">“not↵included” hid an explicit exclusion · “1,000”</text>
+  <text x="52" y="1662" font-size="9.5" fill="var(--hard)">reconciled as nothing · CDW_Quote invisible to \bCDW\b ·</text>
+  <text x="52" y="1676" font-size="9.5" fill="var(--hard)">St. Louis ≠ st_louis · a task-index continue ate atoms</text>
+  <text x="52" y="1690" font-size="9.5" fill="var(--hard)">only when an import succeeded</text>
+  <text x="52" y="1714" font-size="10" fill="var(--hard)" font-weight="600">zero were inside the rules.</text>
+  <text x="52" y="1730" font-size="9.5" fill="var(--hard)">atom_type_sanity: 30/30 probes clean · build_edges: same</text>
+  <text x="52" y="1744" font-size="9.5" fill="var(--hard)">edge set under any atom order · every index sorts at emission</text>
+  <text x="52" y="1768" font-size="10" fill="var(--hard)">pinned by 89 invariance tests across three files</text>
 
-  <rect x="484" y="1244" width="432" height="240" rx="8" fill="var(--loss-bg)" stroke="var(--loss)" stroke-width="1.5"/>
-  <text x="502" y="1270" font-size="11.5" fill="var(--loss)" font-weight="600">THE TAP PIPE — was eating every correction</text>
-  <text x="502" y="1292" font-size="10" fill="var(--loss)">the deployed service ran AUG-4 code: the old handler</text>
-  <text x="502" y="1306" font-size="10" fill="var(--loss)">answered /feedback/correction, the store lived in /tmp,</text>
-  <text x="502" y="1320" font-size="10" fill="var(--loss)">and the blob mirror had never written one object.</text>
-  <text x="502" y="1334" font-size="10" fill="var(--loss)">A PM tap made a success toast, then evaporated.</text>
-  <text x="502" y="1358" font-size="10" fill="var(--loss)" font-weight="600">rebuilt from main · proven with four receipts:</text>
-  <text x="502" y="1374" font-size="9.5" fill="var(--loss)">/v1/version sha · canonical pm_router_* id · correction +</text>
-  <text x="502" y="1388" font-size="9.5" fill="var(--loss)">gold row (teacher=pm) in blob · worker sync returns the row</text>
-  <text x="502" y="1412" font-size="10" fill="var(--loss)" font-weight="600">graded while chasing it: verified human gold = 0.</text>
-  <text x="502" y="1428" font-size="9.5" fill="var(--loss)">the “218 pm rows” are rank-laundered pipeline rows; the</text>
-  <text x="502" y="1442" font-size="9.5" fill="var(--loss)">table is 100% v0 text. GPU rents at ≈100 real taps —</text>
-  <text x="502" y="1456" font-size="9.5" fill="var(--loss)">every tap since rev --0000086 now BANKS. Watcher armed,</text>
-  <text x="502" y="1470" font-size="9.5" fill="var(--loss)">polling the live store every 2 minutes.</text>
+  <rect x="484" y="1544" width="432" height="240" rx="8" fill="var(--loss-bg)" stroke="var(--loss)" stroke-width="1.5"/>
+  <text x="502" y="1570" font-size="11.5" fill="var(--loss)" font-weight="600">THE TAP PIPE — was eating every correction</text>
+  <text x="502" y="1592" font-size="10" fill="var(--loss)">the deployed service ran AUG-4 code: the old handler</text>
+  <text x="502" y="1606" font-size="10" fill="var(--loss)">answered /feedback/correction, the store lived in /tmp,</text>
+  <text x="502" y="1620" font-size="10" fill="var(--loss)">and the blob mirror had never written one object.</text>
+  <text x="502" y="1634" font-size="10" fill="var(--loss)">A PM tap made a success toast, then evaporated.</text>
+  <text x="502" y="1658" font-size="10" fill="var(--loss)" font-weight="600">rebuilt from main · proven with four receipts:</text>
+  <text x="502" y="1674" font-size="9.5" fill="var(--loss)">/v1/version sha · canonical pm_router_* id · correction +</text>
+  <text x="502" y="1688" font-size="9.5" fill="var(--loss)">gold row (teacher=pm) in blob · worker sync returns the row</text>
+  <text x="502" y="1712" font-size="10" fill="var(--loss)" font-weight="600">graded while chasing it: verified human gold = 0.</text>
+  <text x="502" y="1728" font-size="9.5" fill="var(--loss)">the “218 pm rows” are rank-laundered pipeline rows; the</text>
+  <text x="502" y="1742" font-size="9.5" fill="var(--loss)">table is 100% v0 text. GPU rents at ≈100 real taps —</text>
+  <text x="502" y="1756" font-size="9.5" fill="var(--loss)">every tap since rev --0000086 now BANKS. Watcher armed,</text>
+  <text x="502" y="1770" font-size="9.5" fill="var(--loss)">polling the live store every 2 minutes.</text>
 
-  <rect x="934" y="1244" width="432" height="240" rx="8" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.5"/>
-  <text x="952" y="1270" font-size="11.5" fill="var(--quiet)" font-weight="600">DEPLOY TRUTH — the stack IS main</text>
-  <text x="952" y="1292" font-size="10" fill="var(--quiet)">service + worker app + worker job rolled by immutable</text>
-  <text x="952" y="1306" font-size="10" fill="var(--quiet)">digest after every merge — never a mutable tag.</text>
-  <text x="952" y="1330" font-size="10" fill="var(--quiet)" font-weight="600">verified in the running container, never by CI faith:</text>
-  <text x="952" y="1346" font-size="9.5" fill="var(--quiet)">/v1/version reports the bundled parser-os sha · an exec</text>
-  <text x="952" y="1360" font-size="9.5" fill="var(--quiet)">greps the fix out of the live source · stamps come from</text>
-  <text x="952" y="1374" font-size="9.5" fill="var(--quiet)">rev-parse (a retyped sha shipped once and was caught)</text>
-  <text x="952" y="1398" font-size="10" fill="var(--quiet)" font-weight="600">the chip is live in the prod frontend bundle —</text>
-  <text x="952" y="1414" font-size="9.5" fill="var(--quiet)">grep’d from the CDN’s served JavaScript, not assumed.</text>
-  <text x="952" y="1438" font-size="10" fill="var(--quiet)" font-weight="600">next audit crosses the border:</text>
-  <text x="952" y="1454" font-size="9.5" fill="var(--quiet)">this board’s output schema is orbitbrief-core’s input</text>
-  <text x="952" y="1468" font-size="9.5" fill="var(--quiet)">assumptions — the largest seam in the product.</text>
+  <rect x="934" y="1544" width="432" height="240" rx="8" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.5"/>
+  <text x="952" y="1570" font-size="11.5" fill="var(--quiet)" font-weight="600">DEPLOY TRUTH — the stack IS main</text>
+  <text x="952" y="1592" font-size="10" fill="var(--quiet)">service + worker app + worker job rolled by immutable</text>
+  <text x="952" y="1606" font-size="10" fill="var(--quiet)">digest after every merge — never a mutable tag.</text>
+  <text x="952" y="1630" font-size="10" fill="var(--quiet)" font-weight="600">verified in the running container, never by CI faith:</text>
+  <text x="952" y="1646" font-size="9.5" fill="var(--quiet)">/v1/version reports the bundled parser-os sha · an exec</text>
+  <text x="952" y="1660" font-size="9.5" fill="var(--quiet)">greps the fix out of the live source · stamps come from</text>
+  <text x="952" y="1674" font-size="9.5" fill="var(--quiet)">rev-parse (a retyped sha shipped once and was caught)</text>
+  <text x="952" y="1698" font-size="10" fill="var(--quiet)" font-weight="600">the chip is live in the prod frontend bundle —</text>
+  <text x="952" y="1714" font-size="9.5" fill="var(--quiet)">grep’d from the CDN’s served JavaScript, not assumed.</text>
+  <text x="952" y="1738" font-size="10" fill="var(--quiet)" font-weight="600">next audit crosses the border:</text>
+  <text x="952" y="1754" font-size="9.5" fill="var(--quiet)">this board’s output schema is orbitbrief-core’s input</text>
+  <text x="952" y="1768" font-size="9.5" fill="var(--quiet)">assumptions — the largest seam in the product.</text>
 
-  <text x="34" y="1516" font-size="10" opacity=".78">Every fix above is merged, deployed, and pinned. The rules on this board have not been wrong once across five audits — every failure was one representation of the truth disagreeing with another dressing of the same truth.</text>
+  <text x="34" y="1816" font-size="10" opacity=".78">Every fix above is merged, deployed, and pinned. The rules on this board have not been wrong once across five audits — every failure was one representation of the truth disagreeing with another dressing of the same truth.</text>
 </g>
 
-  <!-- ═══ OVERLAY: head pins on the board ═══ -->
+  <!-- ═══ OVERLAY · pins in place ═══ -->
+  <!-- pin 1: pdf_image_gate at the PDF page router -->
   <g>
     <rect x="1040" y="60" width="184" height="70" rx="7" fill="none" stroke="var(--mut)" stroke-width="1.2" stroke-dasharray="5 3"/>
-    <text x="1054" y="80" font-size="10.5" font-weight="600">&#9312; pdf_image_gate</text>
+    <text x="1054" y="80" font-size="10.5" font-weight="600">pdf_image_gate</text>
     <text x="1054" y="96" font-size="8.8" fill="var(--ink-2)">VLM-triage distill &mdash; dormant:</text>
-    <text x="1054" y="108" font-size="8.8" fill="var(--ink-2)">no model, 2 silver rows; fill</text>
-    <text x="1054" y="120" font-size="8.8" fill="var(--ink-2)">underway &middot; detail below &darr;</text>
+    <text x="1054" y="108" font-size="8.8" fill="var(--ink-2)">no model on blob, 2 silver rows;</text>
+    <text x="1054" y="120" font-size="8.8" fill="var(--ink-2)">hand-graded fill underway</text>
     <path d="M1040 95 C 1032 95, 1032 100, 1028 100" fill="none" stroke="var(--mut)" stroke-width="1" stroke-dasharray="2 3" marker-end="url(#a)"/>
   </g>
+
+  <!-- the typing + calibration stack, at the segments -> typed atoms junction -->
+  <text x="1242" y="628" font-size="9" fill="var(--mut)">the typing + calibration heads &mdash;</text>
+  <text x="1242" y="640" font-size="9" fill="var(--mut)">act on every atom here:</text>
   <g>
-    <rect x="1242" y="618" width="142" height="86" rx="7" fill="none" stroke="var(--soft)" stroke-width="1.3" stroke-dasharray="5 3"/>
-    <text x="1256" y="638" font-size="10.5" font-weight="600" fill="var(--soft)">&#9313;&ndash;&#9318; the typing</text>
-    <text x="1256" y="652" font-size="10.5" font-weight="600" fill="var(--soft)">+ calibration heads</text>
-    <text x="1256" y="668" font-size="8.8" fill="var(--ink-2)">act on every atom, between</text>
-    <text x="1256" y="680" font-size="8.8" fill="var(--ink-2)">segments &rarr; typed atoms</text>
-    <text x="1256" y="696" font-size="8.8" fill="var(--ink-2)">detail below &darr;</text>
+    <rect x="1242" y="648" width="142" height="46" rx="6" fill="var(--soft-bg)" stroke="var(--soft)" stroke-width="1.3"/>
+    <text x="1252" y="665" font-size="9.5" font-weight="600">type head</text>
+    <text x="1252" y="679" font-size="8.2" fill="var(--ink-2)">42-class kNN &middot; cap ~0.65 &middot; flag</text>
+  </g>
+  <g>
+    <rect x="1242" y="702" width="142" height="46" rx="6" fill="var(--soft-bg)" stroke="var(--soft)" stroke-width="1.3"/>
+    <text x="1252" y="719" font-size="9.5" font-weight="600">type deflector #70</text>
+    <text x="1252" y="733" font-size="8.2" fill="var(--ink-2)">skips ~9% @ 92% prec &middot; flag</text>
+  </g>
+  <g>
+    <rect x="1242" y="756" width="142" height="46" rx="6" fill="var(--soft-bg)" stroke="var(--soft)" stroke-width="1.3"/>
+    <text x="1252" y="773" font-size="9.5" font-weight="600">span extractor #71</text>
+    <text x="1252" y="787" font-size="8.2" fill="var(--ink-2)">SKIP self-gates &ge;0.93 &middot; flag</text>
+  </g>
+  <g>
+    <rect x="1242" y="810" width="142" height="46" rx="6" fill="var(--soft-bg)" stroke="var(--soft)" stroke-width="1.3"/>
+    <text x="1252" y="827" font-size="9.5" font-weight="600">admission head</text>
+    <text x="1252" y="841" font-size="8.2" fill="var(--ink-2)">keep / drop per atom &middot; flag</text>
+  </g>
+  <g>
+    <rect x="1242" y="864" width="142" height="46" rx="6" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.3"/>
+    <text x="1252" y="881" font-size="9.5" font-weight="600" fill="var(--hard)">facet head</text>
+    <text x="1252" y="895" font-size="8.2" fill="var(--hard)">brief section (7) &middot; promoted</text>
+  </g>
+  <g>
+    <rect x="1242" y="918" width="142" height="46" rx="6" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.3"/>
+    <text x="1252" y="935" font-size="9.5" font-weight="600" fill="var(--hard)">calibration head</text>
+    <text x="1252" y="949" font-size="8.2" fill="var(--hard)">10-signal &rarr; calib conf &middot; shipped</text>
   </g>
 
-  <!-- ═══ OVERLAY BAND: where the heads live ═══ -->
-  <line x1="34" y1="1506" x2="1366" y2="1506" stroke="var(--rule)" stroke-width="1"/>
-  <text x="34" y="1530" font-size="11" fill="var(--mut)" letter-spacing="2">WHERE THE HEADS LIVE &mdash; EVERY LEARNABLE MODEL, PINNED (RE-DERIVED 2026-08-26)</text>
+  <!-- ═══ PAST THE ATOMS — the pipeline continues, heads on their stages ═══ -->
+  <line x1="16" y1="1085" x2="1384" y2="1085" stroke="currentColor" stroke-width="1" opacity=".16"/>
+  <text x="16" y="1108" font-size="10" fill="var(--mut)" letter-spacing="1.5">PAST THE ATOMS &mdash; THE PIPELINE CONTINUES, EACH HEAD ON ITS STAGE (OVERLAY &middot; RE-DERIVED 2026-08-26)</text>
+  <text x="34" y="1131" font-size="9" fill="var(--mut)">&#8659; continues from typed atoms</text>
 
-  <rect x="34" y="1548" width="320" height="270" rx="8" fill="var(--soft-bg)" stroke="var(--soft)" stroke-width="1.4"/>
-  <text x="52" y="1572" font-size="11" fill="var(--soft)" font-weight="600">&#9313;&ndash;&#9318; TYPING + CALIBRATION</text>
-  <text x="52" y="1596" font-size="9.5">&#9313; type head &mdash; 42-class kNN over frozen</text>
-  <text x="52" y="1610" font-size="9.5">&nbsp;&nbsp;&nbsp;embeds, capped ~0.65 &middot; flag ON in dev</text>
-  <text x="52" y="1630" font-size="9.5">&#9314; type deflector #70 &mdash; skips ~9% of</text>
-  <text x="52" y="1644" font-size="9.5">&nbsp;&nbsp;&nbsp;type calls @ 92% precision &middot; flag</text>
-  <text x="52" y="1664" font-size="9.5">&#9315; span extractor #71 &mdash; per-atom spans,</text>
-  <text x="52" y="1678" font-size="9.5">&nbsp;&nbsp;&nbsp;SKIP self-gates at recall &ge;0.93 &middot; flag</text>
-  <text x="52" y="1698" font-size="9.5">&#9316; admission &mdash; keep/drop per atom &middot; flag</text>
-  <text x="52" y="1718" font-size="9.5" fill="var(--hard)">&#9317; facet &mdash; brief section per atom (7)</text>
-  <text x="52" y="1732" font-size="9.5" fill="var(--hard)">&nbsp;&nbsp;&nbsp;promoted kNN &middot; serving</text>
-  <text x="52" y="1752" font-size="9.5" fill="var(--hard)">&#9318; calibration &mdash; 10-signal logistic &rarr;</text>
-  <text x="52" y="1766" font-size="9.5" fill="var(--hard)">&nbsp;&nbsp;&nbsp;calibrated_confidence &middot; trained + shipped</text>
-  <text x="52" y="1790" font-size="8.5" fill="var(--mut)" font-family="IBM Plex Mono,monospace">typed_atom_classifier &middot; facets &middot; calibration</text>
+  <g fill="none" stroke="currentColor" stroke-width="1.3">
+    <rect x="34"  y="1140" width="158" height="52" rx="7"/>
+    <rect x="222" y="1140" width="158" height="52" rx="7"/>
+    <rect x="410" y="1140" width="158" height="52" rx="7"/>
+    <rect x="598" y="1140" width="158" height="52" rx="7"/>
+    <rect x="810" y="1140" width="170" height="52" rx="7" stroke-dasharray="6 4"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none">
+    <line x1="192" y1="1166" x2="218" y2="1166" marker-end="url(#a)"/>
+    <line x1="380" y1="1166" x2="406" y2="1166" marker-end="url(#a)"/>
+    <line x1="568" y1="1166" x2="594" y2="1166" marker-end="url(#a)"/>
+    <line x1="756" y1="1166" x2="806" y2="1166" marker-end="url(#a)"/>
+  </g>
+  <text x="781" y="1136" font-size="9" fill="var(--mut)" text-anchor="middle">border</text>
+  <line x1="781" y1="1142" x2="781" y2="1192" stroke="var(--mut)" stroke-width="1" stroke-dasharray="3 4"/>
+  <g font-size="11" font-weight="600">
+    <text x="48"  y="1161">evidence graph</text>
+    <text x="236" y="1161">packetizer</text>
+    <text x="424" y="1161">reconcile</text>
+    <text x="612" y="1161">envelope.json</text>
+    <text x="824" y="1161">core &middot; PM handoff</text>
+  </g>
+  <g font-size="8.6" opacity=".62">
+    <text x="48"  y="1178">build_edges &mdash; symbolic</text>
+    <text x="236" y="1178">certified issue packets</text>
+    <text x="424" y="1178">lattice + receipts</text>
+    <text x="612" y="1178">sole border crossing</text>
+    <text x="824" y="1178">other repo &mdash; no weights</text>
+  </g>
 
-  <rect x="370" y="1548" width="320" height="270" rx="8" fill="none" stroke="var(--mut)" stroke-width="1.3" stroke-dasharray="6 4"/>
-  <text x="388" y="1572" font-size="11" font-weight="600">&#9312; READERS &middot; and the empty rungs</text>
-  <text x="388" y="1596" font-size="9.5">&#9312; pdf_image_gate &mdash; CPU distill of the</text>
-  <text x="388" y="1610" font-size="9.5">&nbsp;&nbsp;&nbsp;VLM image triage (skip/photo/chart/&hellip;)</text>
-  <text x="388" y="1624" font-size="9.5">&nbsp;&nbsp;&nbsp;text-only features: caption + OCR</text>
-  <text x="388" y="1644" font-size="9.5" fill="var(--loss)">&nbsp;&nbsp;&nbsp;dormant: no model artifact on blob,</text>
-  <text x="388" y="1658" font-size="9.5" fill="var(--loss)">&nbsp;&nbsp;&nbsp;2 silver rows (both suspect skips) &mdash;</text>
-  <text x="388" y="1672" font-size="9.5" fill="var(--loss)">&nbsp;&nbsp;&nbsp;hand-graded silver fill underway</text>
-  <text x="388" y="1700" font-size="9.5" fill="var(--ink-2)">route &mdash; no heads, by doctrine: all 22</text>
-  <text x="388" y="1714" font-size="9.5" fill="var(--ink-2)">audited defects sat on representation</text>
-  <text x="388" y="1728" font-size="9.5" fill="var(--ink-2)">boundaries, zero inside rule logic</text>
-  <text x="388" y="1752" font-size="9.5" fill="var(--ink-2)">schematic heads &mdash; retired, PR #44</text>
-  <text x="388" y="1790" font-size="8.5" fill="var(--mut)" font-family="IBM Plex Mono,monospace">pdf_image_gate.py &rarr; pdf_image_vision.py</text>
+  <!-- heads pinned to their stages -->
+  <g stroke="var(--mut)" stroke-width="1" stroke-dasharray="2 4" fill="none">
+    <line x1="113" y1="1192" x2="113" y2="1208"/>
+    <line x1="489" y1="1192" x2="489" y2="1208"/>
+    <line x1="677" y1="1192" x2="677" y2="1208"/>
+    <line x1="895" y1="1192" x2="895" y2="1208"/>
+  </g>
 
-  <rect x="706" y="1548" width="320" height="270" rx="8" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.4"/>
-  <text x="724" y="1572" font-size="11" fill="var(--hard)" font-weight="600">PAST THE BOARD&rsquo;S EDGE</text>
-  <text x="724" y="1596" font-size="9.5" fill="var(--hard)">service router &mdash; deal &rarr; workstream kNN,</text>
-  <text x="724" y="1610" font-size="9.5" fill="var(--hard)">abstains below bar &middot; serving, ~4/29 packs</text>
-  <text x="724" y="1624" font-size="9.5" fill="var(--hard)">&middot; its contrastive fine-tune is THE GPU job</text>
-  <text x="724" y="1648" font-size="9.5" fill="var(--ink-2)">graph/packets &mdash; deliberately symbolic;</text>
-  <text x="724" y="1662" font-size="9.5" fill="var(--ink-2)">GNN v2 exists, zero importers (candidate)</text>
-  <text x="724" y="1686" font-size="9.5" fill="var(--ink-2)">reconcile &mdash; the injectable Potential seat:</text>
-  <text x="724" y="1700" font-size="9.5" fill="var(--ink-2)">lattice judges until a non-circular corpus</text>
-  <text x="724" y="1714" font-size="9.5" fill="var(--ink-2)">earns a learned swap (empty today)</text>
-  <text x="724" y="1738" font-size="9.5" fill="var(--ink-2)">candidates, zero importers: atom_route_head</text>
-  <text x="724" y="1752" font-size="9.5" fill="var(--ink-2)">(router v2) &middot; delta head (learns WHEN we</text>
-  <text x="724" y="1766" font-size="9.5" fill="var(--ink-2)">are wrong &mdash; the review-queue&rsquo;s natural fit)</text>
-  <text x="724" y="1790" font-size="8.5" fill="var(--mut)" font-family="IBM Plex Mono,monospace">service_router.py &middot; reconcile.py &middot; delta_head.py</text>
+  <g>
+    <rect x="34" y="1208" width="158" height="62" rx="6" fill="none" stroke="var(--mut)" stroke-width="1.2" stroke-dasharray="5 3"/>
+    <text x="46" y="1226" font-size="9.5" font-weight="600">GNN v2 (edges)</text>
+    <text x="46" y="1240" font-size="8.4" fill="var(--ink-2)">edge classifier &mdash; zero importers;</text>
+    <text x="46" y="1252" font-size="8.4" fill="var(--ink-2)">graph stays symbolic so packets</text>
+    <text x="46" y="1264" font-size="8.4" fill="var(--ink-2)">stay defensible line-by-line</text>
+  </g>
+  <text x="236" y="1226" font-size="8.6" fill="var(--mut)">no heads &mdash; certification is</text>
+  <text x="236" y="1238" font-size="8.6" fill="var(--mut)">conservative by construction</text>
+  <g>
+    <rect x="410" y="1208" width="158" height="62" rx="6" fill="none" stroke="var(--mut)" stroke-width="1.2" stroke-dasharray="5 3"/>
+    <text x="422" y="1226" font-size="9.5" font-weight="600">learned Potential</text>
+    <text x="422" y="1240" font-size="8.4" fill="var(--ink-2)">the injectable judge seat &mdash; empty;</text>
+    <text x="422" y="1252" font-size="8.4" fill="var(--ink-2)">lattice judges until a non-circular</text>
+    <text x="422" y="1264" font-size="8.4" fill="var(--ink-2)">labelled corpus earns the swap</text>
+  </g>
+  <g>
+    <rect x="598" y="1208" width="158" height="62" rx="6" fill="var(--hard-bg)" stroke="var(--hard)" stroke-width="1.3"/>
+    <text x="610" y="1226" font-size="9.5" font-weight="600" fill="var(--hard)">service router</text>
+    <text x="610" y="1240" font-size="8.4" fill="var(--hard)">deal &rarr; workstream kNN, abstains;</text>
+    <text x="610" y="1252" font-size="8.4" fill="var(--hard)">serving ~4/29 packs &mdash; its fine-</text>
+    <text x="610" y="1264" font-size="8.4" fill="var(--hard)">tune is THE GPU job &middot; + shadow</text>
+  </g>
+  <g>
+    <rect x="598" y="1278" width="158" height="46" rx="6" fill="none" stroke="var(--mut)" stroke-width="1.2" stroke-dasharray="5 3"/>
+    <text x="610" y="1295" font-size="9.5" font-weight="600">atom_route_head</text>
+    <text x="610" y="1309" font-size="8.4" fill="var(--ink-2)">router v2 by atom votes &middot; zero importers</text>
+  </g>
+  <g>
+    <rect x="598" y="1332" width="158" height="46" rx="6" fill="none" stroke="var(--mut)" stroke-width="1.2" stroke-dasharray="5 3"/>
+    <text x="610" y="1349" font-size="9.5" font-weight="600">delta head</text>
+    <text x="610" y="1363" font-size="8.4" fill="var(--ink-2)">learns WHEN we&rsquo;re wrong &middot; zero importers</text>
+  </g>
+  <g>
+    <rect x="810" y="1208" width="170" height="74" rx="6" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.3"/>
+    <text x="822" y="1226" font-size="9.5" font-weight="600" fill="var(--quiet)">brief heads &mdash; prompted</text>
+    <text x="822" y="1240" font-size="8.4" fill="var(--quiet)">commercial &middot; exec &middot; gap &middot; risk</text>
+    <text x="822" y="1252" font-size="8.4" fill="var(--quiet)">+ 21 brains + Qwen3 narration &mdash;</text>
+    <text x="822" y="1264" font-size="8.4" fill="var(--quiet)">not trained; no weights live in</text>
+    <text x="822" y="1276" font-size="8.4" fill="var(--quiet)">core or cross the border</text>
+  </g>
 
-  <rect x="1042" y="1548" width="342" height="270" rx="8" fill="var(--quiet-bg)" stroke="var(--quiet)" stroke-width="1.4"/>
-  <text x="1060" y="1572" font-size="11" fill="var(--quiet)" font-weight="600">ACROSS THE BORDER &mdash; CORE</text>
-  <text x="1060" y="1596" font-size="9.5" fill="var(--quiet)">the &ldquo;neural heads&rdquo; directory holds</text>
-  <text x="1060" y="1610" font-size="9.5" fill="var(--quiet)">commercial &middot; exec_summary &middot; gap &middot; risk &mdash;</text>
-  <text x="1060" y="1624" font-size="9.5" fill="var(--quiet)">DeepSeek-prompted &mdash; plus 21 brains and</text>
-  <text x="1060" y="1638" font-size="9.5" fill="var(--quiet)">Qwen3-14B narration</text>
-  <text x="1060" y="1662" font-size="9.5" fill="var(--quiet)" font-weight="600">no trained weights live in core.</text>
-  <text x="1060" y="1686" font-size="9.5" fill="var(--quiet)">every gradient-trained model is stage-1:</text>
-  <text x="1060" y="1700" font-size="9.5" fill="var(--quiet)">the envelope carries evidence across the</text>
-  <text x="1060" y="1714" font-size="9.5" fill="var(--quiet)">border &mdash; never model weights</text>
-  <text x="1060" y="1790" font-size="8.5" fill="var(--mut)" font-family="IBM Plex Mono,monospace">Orbitbrief-Core src/orbitbrief_core/neural_heads/</text>
-
-  <rect x="34" y="1838" width="1350" height="92" rx="8" fill="none" stroke="var(--hard)" stroke-width="1.4"/>
-  <text x="52" y="1862" font-size="10.5" fill="var(--hard)" font-weight="600" font-family="IBM Plex Mono,monospace">GO#5 &mdash; ONE BACKBONE (A100 &middot; waits at &asymp;100 real PM taps &middot; verified human gold today: 0)</text>
-  <text x="52" y="1882" font-size="9.5" fill="var(--ink-2)">one encoder fine-tuned over five tasks &mdash; atom_type &middot; atom_type_coarse &middot; facet &middot; service_routing &middot; admission &mdash; so a single PM correction moves the geometry under every head at once.</text>
-  <text x="52" y="1898" font-size="9.5" fill="var(--ink-2)">teacher=pm rows are eval-only: the exam, never the curriculum. Frozen embeddings cap atom_type at ~0.65 and adding gold regressed it &mdash; the representation is the lever, which is why the GPU exists.</text>
-  <text x="52" y="1914" font-size="9.5" fill="var(--ink-2)">Candidates land in _backbone_candidate/&lt;task&gt;/ in load_promoted layout; promotion stays a human act, gated on beats-baseline. Serving loop: TrainingLog &rarr; nightly eval-gated retrain &rarr; blob ml-artifacts.</text>
+  <!-- GO#5 backbone, beside the stages it trains -->
+  <g>
+    <rect x="1010" y="1140" width="374" height="238" rx="8" fill="none" stroke="var(--hard)" stroke-width="1.4"/>
+    <text x="1026" y="1164" font-size="10" fill="var(--hard)" font-weight="600">GO#5 &mdash; ONE BACKBONE (A100, idle)</text>
+    <text x="1026" y="1184" font-size="8.8" fill="var(--ink-2)">one encoder fine-tuned over five tasks &mdash;</text>
+    <text x="1026" y="1198" font-size="8.8" fill="var(--hard)">atom_type &middot; atom_type_coarse &middot; facet &middot;</text>
+    <text x="1026" y="1212" font-size="8.8" fill="var(--hard)">service_routing &middot; admission</text>
+    <text x="1026" y="1230" font-size="8.8" fill="var(--ink-2)">&mdash; so one PM correction moves the geometry</text>
+    <text x="1026" y="1244" font-size="8.8" fill="var(--ink-2)">under every head at once.</text>
+    <text x="1026" y="1264" font-size="8.8" fill="var(--ink-2)">frozen embeds cap atom_type ~0.65; adding</text>
+    <text x="1026" y="1278" font-size="8.8" fill="var(--ink-2)">gold regressed it &mdash; the representation is</text>
+    <text x="1026" y="1292" font-size="8.8" fill="var(--ink-2)">the lever. teacher=pm rows are eval-only.</text>
+    <text x="1026" y="1312" font-size="8.8" fill="var(--ink-2)">rents at &asymp;100 real PM taps &middot; verified</text>
+    <text x="1026" y="1326" font-size="8.8" fill="var(--ink-2)">human gold today: 0</text>
+    <text x="1026" y="1346" font-size="8.8" fill="var(--ink-2)">candidates &rarr; _backbone_candidate/&lt;task&gt;/;</text>
+    <text x="1026" y="1360" font-size="8.8" fill="var(--ink-2)">promotion is human, gated on beats-baseline</text>
+  </g>
+  <path d="M1010 1240 C 990 1240, 990 1239, 760 1239" fill="none" stroke="var(--hard)" stroke-width="1" stroke-dasharray="2 4" marker-end="url(#ag)"/>
+  <path d="M1313 968 C 1313 1050, 1200 1090, 1197 1136" fill="none" stroke="var(--hard)" stroke-width="1" stroke-dasharray="2 4" marker-end="url(#ag)"/>
 
 </svg>
 <figcaption>21 registered parsers, drawn from the live capability table. Red marks where documents were being lost, all of them silently.</figcaption>
