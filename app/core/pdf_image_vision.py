@@ -615,11 +615,14 @@ def _classify_image(
 
 def _stamp_skip_verdict(
     marker: Any, kind: str, *, via: str, confidence: float | None,
+    ocr_preview: str = "",
 ) -> None:
     """Receipt a skip decision on its image_marker atom so it is traceable.
 
     Adds RECORDED fields only (``value['gate_verdict']``) — never changes
-    which atoms are emitted or how anything routes. Never raises.
+    which atoms are emitted or how anything routes. ``ocr_preview`` (when
+    present) lets the PM culprit surface quote what the crop said without
+    re-opening the image. Never raises.
     """
     try:
         val = getattr(marker, "value", None)
@@ -628,6 +631,9 @@ def _stamp_skip_verdict(
         verdict: dict[str, Any] = {"kind": kind, "via": via}
         if confidence is not None:
             verdict["confidence"] = confidence
+        preview = (ocr_preview or "").strip()
+        if preview:
+            verdict["ocr_preview"] = preview[:240]
         val["gate_verdict"] = verdict
     except Exception:
         pass
@@ -695,6 +701,7 @@ def _log_veto_row(
 def _maybe_veto_skip(
     marker: Any, *, caption: str, saved_path: str, crop: bytes,
     kind: str, via: str, attribution: dict[str, Any] | None,
+    ocr: str | None = None,
 ) -> None:
     """Second opinion on a skip verdict — RECORDED ONLY, routing untouched.
 
@@ -715,8 +722,9 @@ def _maybe_veto_skip(
         from app.core import pdf_image_veto
         if not pdf_image_veto.enabled():
             return
-        ocr = _ocr_crop(saved_path, crop)  # cheap chain only, same as the gate
-        prob = pdf_image_veto.veto(caption, ocr)
+        if ocr is None:
+            ocr = _ocr_crop(saved_path, crop)  # cheap chain only, same as the gate
+        prob = pdf_image_veto.veto(caption, ocr or "")
         if prob is None:
             return
         val = getattr(marker, "value", None)
@@ -725,7 +733,7 @@ def _maybe_veto_skip(
                 "meaningful_prob": prob, "model": "pdf_image_veto",
             }
         _log_veto_row(
-            caption, ocr, kind, via=via, prob=prob, attribution=attribution,
+            caption, ocr or "", kind, via=via, prob=prob, attribution=attribution,
         )
     except Exception:
         pass
@@ -925,12 +933,16 @@ def _process_one(
         attribution=attribution,
     )
     if not meaningful or image_kind in _SKIP_KINDS or not image_kind:
+        # One OCR pass for the receipt + veto (both recorded-only).
+        ocr_preview = _ocr_crop(saved_path, crop)
         _stamp_skip_verdict(
             marker, image_kind or "skip", via=via, confidence=gate_conf,
+            ocr_preview=ocr_preview,
         )
         _maybe_veto_skip(
             marker, caption=caption, saved_path=saved_path, crop=crop,
             kind=image_kind or "skip", via=via, attribution=attribution,
+            ocr=ocr_preview,
         )
         return []
 

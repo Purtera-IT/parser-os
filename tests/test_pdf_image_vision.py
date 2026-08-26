@@ -508,7 +508,8 @@ def test_cpu_gate_skip_never_veto_checked(monkeypatch, tmp_path):
         m = _marker(tmp_path)
         assert piv.process_image_markers([m]) == []
         assert called["n"] == 0
-        assert m.value["gate_verdict"] == {"kind": "skip", "via": "cpu_gate"}
+        assert m.value["gate_verdict"]["kind"] == "skip"
+        assert m.value["gate_verdict"]["via"] == "cpu_gate"
         assert "veto" not in m.value["gate_verdict"]
         assert log.count(relation="pdf_image_veto") == 0
     finally:
@@ -527,7 +528,8 @@ def test_veto_off_leaves_routing_identical(monkeypatch, tmp_path):
     try:
         m = _marker(tmp_path)
         assert piv.process_image_markers([m]) == []
-        assert m.value["gate_verdict"] == {"kind": "logo", "via": "vlm_gate"}
+        assert m.value["gate_verdict"]["kind"] == "logo"
+        assert m.value["gate_verdict"]["via"] == "vlm_gate"
         assert "veto" not in m.value["gate_verdict"]
         assert log.count(relation="pdf_image_veto") == 0
     finally:
@@ -548,8 +550,24 @@ def test_veto_abstain_does_not_extend_verdict(monkeypatch, tmp_path):
     try:
         m = _marker(tmp_path)
         assert piv.process_image_markers([m]) == []
-        assert m.value["gate_verdict"] == {"kind": "logo", "via": "vlm_gate"}
+        assert m.value["gate_verdict"]["kind"] == "logo"
+        assert m.value["gate_verdict"]["via"] == "vlm_gate"
         assert "veto" not in m.value["gate_verdict"]
         assert log.count(relation="pdf_image_veto") == 0
     finally:
         _clear_log()
+
+
+def test_skip_stamp_includes_ocr_preview(monkeypatch, tmp_path):
+    """Skip receipts carry a short OCR preview for the PM culprit surface."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets Comm Cabinet")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
+    m = _marker(tmp_path)
+    assert piv.process_image_markers([m]) == []
+    gv = m.value["gate_verdict"]
+    assert gv["kind"] == "decorative"
+    assert gv["via"] == "vlm_gate"
+    assert "18 Total Data Outlets" in gv["ocr_preview"]
