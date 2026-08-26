@@ -71,6 +71,7 @@ MAX_TRAIN_ROWS = int(os.getenv("RETRAIN_MAX_TRAIN_ROWS", "8000"))
 # transformers (pdf_image_kind CPU gate / binary veto) have their own trainers.
 NON_TRAINING_RELATIONS = frozenset({
     "pdf_image_veto",
+    "pdf_image_gate_shadow",
 })
 
 
