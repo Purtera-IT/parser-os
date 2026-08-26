@@ -527,6 +527,69 @@ def _log_gate_silver(
         pass
 
 
+def _log_gate_shadow(
+    caption: str,
+    ocr: str,
+    cpu_shadow: tuple[bool, str, float],
+    teacher_kind: str,
+    *,
+    via: str,
+    attribution: dict[str, Any] | None = None,
+) -> None:
+    """Record a CPU↔teacher (VLM/store) pair without changing routing.
+
+    Relation ``pdf_image_gate_shadow`` is eval/diagnostics only — listed in
+    ``NON_TRAINING_RELATIONS`` so nightly retrain never consumes it. Fires only
+    when ``SOWSMITH_PDF_IMAGE_GATE_SHADOW=1`` and ``probe()`` answered.
+    """
+    try:
+        from app.core.pdf_image_gate import gate_feature_text
+        from app.core.training_log import TrainingRow, log_rows
+
+        _cpu_meaningful, cpu_kind, cpu_conf = cpu_shadow
+        teacher_label = "skip" if teacher_kind in _SKIP_KINDS else (teacher_kind or "skip")
+        cpu_label = "skip" if cpu_kind in _SKIP_KINDS or not _cpu_meaningful else cpu_kind
+        feat = gate_feature_text(caption, ocr)
+        if not feat.strip() or feat == "no context":
+            return
+        att = attribution or {}
+        deal_id = str(att.get("deal_id") or "")
+        pdf_name = str(att.get("pdf") or "")
+        region_ref = str(att.get("region_ref") or "")
+        image_sha16 = str(att.get("image_sha16") or "")
+        agree = cpu_label == teacher_label
+        row_id = "trn_shadow_" + hashlib.sha256(
+            f"pdf_image_gate_shadow|{cpu_label}|{teacher_label}|{feat}|{pdf_name}|{region_ref}|{image_sha16}"
+            .encode("utf-8")
+        ).hexdigest()[:16]
+        log_rows([TrainingRow(
+            id=row_id,
+            relation="pdf_image_gate_shadow",
+            label=teacher_label,
+            raw_text=feat,
+            masked_text=feat,
+            label_kind="judgment",
+            teacher="shadow",
+            confidence=float(cpu_conf),
+            deal_id=deal_id,
+            project_id=str(att.get("project_id") or deal_id),
+            provenance={
+                "stage": "pdf_image_gate_shadow",
+                "via": via,
+                "cpu_kind": cpu_label,
+                "cpu_conf": float(cpu_conf),
+                "teacher_kind": teacher_label,
+                "agree": agree,
+                "pdf": pdf_name,
+                "page": att.get("page", ""),
+                "region_ref": region_ref,
+                "image_sha16": image_sha16,
+            },
+        )])
+    except Exception:
+        pass
+
+
 def _store_classify_image(
     caption: str, ocr: str, attribution: dict[str, Any] | None = None,
 ) -> tuple[bool, str, str, float | None] | None:
@@ -584,18 +647,30 @@ def _classify_image(
     cpu_gate verdicts are NOT logged as silver — see :func:`_log_gate_silver`.
     """
     ocr = _ocr_crop(saved_path, crop)  # cheap chain only (no VLM cost on the gate)
+    cpu_shadow: tuple[bool, str, float] | None = None
     try:
         from app.core import pdf_image_gate
+        # Routing path: GATE_CPU on → may short-circuit to cpu_gate.
         cpu = pdf_image_gate.classify(caption, ocr)
         if cpu is not None:
             meaningful, kind = cpu
             kind = kind if meaningful else "skip"
             return meaningful, kind, "cpu_gate", None
+        # Shadow path: score CPU without routing (Phase 3). Never changes
+        # the VLM/store decision below — only records the pair.
+        if pdf_image_gate.shadow_enabled():
+            # Always record argmax (min_conf=0) — shadow is diagnostics, not routing.
+            cpu_shadow = pdf_image_gate.probe(caption, ocr, min_conf=0.0)
     except Exception:
         pass
     try:
         store_hit = _store_classify_image(caption, ocr, attribution)
         if store_hit is not None:
+            if cpu_shadow is not None:
+                _log_gate_shadow(
+                    caption, ocr, cpu_shadow, store_hit[1], via="store_gate",
+                    attribution=attribution,
+                )
             return store_hit
     except Exception:
         pass
@@ -610,6 +685,11 @@ def _classify_image(
         meaningful = False
     _log_gate_silver(caption, ocr, image_kind or "skip", via="vlm_gate",
                      attribution=attribution)
+    if cpu_shadow is not None:
+        _log_gate_shadow(
+            caption, ocr, cpu_shadow, image_kind or "skip", via="vlm_gate",
+            attribution=attribution,
+        )
     return meaningful, image_kind, "vlm_gate", None
 
 

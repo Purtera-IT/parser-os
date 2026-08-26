@@ -27,6 +27,13 @@ def enabled() -> bool:
     )
 
 
+def shadow_enabled() -> bool:
+    """Log CPU↔VLM pairs without changing routing (Phase 3 shadow)."""
+    return os.environ.get("SOWSMITH_PDF_IMAGE_GATE_SHADOW", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _gate_dir() -> str:
     return os.environ.get(
         "SOWSMITH_PDF_IMAGE_GATE_DIR", "/tmp/ml/_pdf_image_gate/best",
@@ -74,16 +81,26 @@ def _load():
         return result
 
 
-def classify(caption: str, ocr: str) -> tuple[bool, str] | None:
-    """Return (meaningful, image_kind) or None to abstain (fall through to VLM)."""
-    if not enabled():
-        return None
+def probe(
+    caption: str,
+    ocr: str,
+    *,
+    min_conf: float | None = None,
+) -> tuple[bool, str, float] | None:
+    """Score one feature text. Ignores GATE_CPU flag (used by shadow).
+
+    Returns (meaningful, image_kind, conf) or None when model missing /
+    low-conf / failure (guess-free abstain). ``min_conf=None`` uses the
+    routing bar; pass ``0.0`` from shadow to always record the argmax pair.
+    """
     text = gate_feature_text(caption, ocr)
+    if not text.strip() or text == "no context":
+        return None
     loaded = _load()
     if loaded is None:
         return None
     model, tok, torch, id2label = loaded
-    bar = _conf_bar()
+    bar = _conf_bar() if min_conf is None else float(min_conf)
     try:
         with torch.no_grad():
             enc = tok([text], truncation=True, max_length=256,
@@ -97,10 +114,21 @@ def classify(caption: str, ocr: str) -> tuple[bool, str] | None:
         if not label:
             return None
         if label in _SKIP_LABELS or label == "skip":
-            return False, label
-        return True, label
+            return False, label, conf
+        return True, label, conf
     except Exception:
         return None
+
+
+def classify(caption: str, ocr: str) -> tuple[bool, str] | None:
+    """Return (meaningful, image_kind) or None to abstain (fall through to VLM)."""
+    if not enabled():
+        return None
+    hit = probe(caption, ocr)
+    if hit is None:
+        return None
+    meaningful, kind, _conf = hit
+    return meaningful, kind
 
 
 def is_ready() -> bool:
