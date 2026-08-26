@@ -303,7 +303,7 @@ def test_store_correction_overrides_classify_without_vlm(monkeypatch, tmp_path):
         piv, "_vlm",
         lambda *a, **k: vlm_called.__setitem__("n", vlm_called["n"] + 1) or "{}",
     )
-    meaningful, kind, via = piv._classify_image(
+    meaningful, kind, via, conf = piv._classify_image(
         crop=b"x", caption="MDF rack elevation below", saved_path=str(tmp_path / "x.png"),
     )
     set_store(None)
@@ -311,3 +311,142 @@ def test_store_correction_overrides_classify_without_vlm(monkeypatch, tmp_path):
     assert kind == "diagram"
     assert meaningful is True
     assert vlm_called["n"] == 0
+
+
+# ── gate silver logging: dedup, attribution, honest teachers ────────
+
+
+def _fresh_log():
+    from app.core.training_log import TrainingLog, set_training_log
+    log = TrainingLog(":memory:")
+    set_training_log(log)
+    return log
+
+
+def _clear_log():
+    from app.core.training_log import set_training_log
+    set_training_log(None)
+
+
+def test_gate_silver_content_hash_id_no_dup_on_recompile(monkeypatch, tmp_path):
+    """Recompiling the same deal must upsert the same row, not append a copy."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+    log = _fresh_log()
+    try:
+        assert piv.process_image_markers([_marker(tmp_path)]) == []
+        assert piv.process_image_markers([_marker(tmp_path)]) == []  # recompile
+        rows = log.rows(relation="pdf_image_kind")
+        assert len(rows) == 1
+        assert rows[0].id.startswith("trn_vlm_")
+        assert rows[0].label == "skip"
+    finally:
+        _clear_log()
+
+
+def test_gate_silver_attribution_and_split(monkeypatch, tmp_path):
+    """deal_id column + pdf/page/region provenance ride on every silver row."""
+    from app.core.training_log import assign_split
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+    log = _fresh_log()
+    try:
+        piv.process_image_markers([_marker(tmp_path)])
+        (row,) = log.rows(relation="pdf_image_kind")
+        assert row.deal_id == "proj1"
+        assert row.project_id == "proj1"
+        assert row.split == assign_split("proj1")
+        assert row.teacher == "llm"
+        assert row.provenance["via"] == "vlm_gate"
+        assert row.provenance["pdf"] == "install_guide.pdf"
+        assert row.provenance["page"] == 2
+        assert row.provenance["region_ref"] == "page2/image7"
+        assert row.provenance["image_sha16"]
+    finally:
+        _clear_log()
+
+
+def test_cpu_gate_never_logged_and_skip_receipted(monkeypatch, tmp_path):
+    """The distilled student's own verdicts are not training silver; the skip
+    is still receipted on the marker (kind + via)."""
+    from app.core import pdf_image_gate
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "")
+    monkeypatch.setattr(pdf_image_gate, "classify", lambda *a, **k: (False, "logo"))
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k: "{}")  # must never be reached
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        assert log.count(relation="pdf_image_kind") == 0
+        assert m.value["gate_verdict"] == {"kind": "skip", "via": "cpu_gate"}
+    finally:
+        _clear_log()
+
+
+def test_degenerate_feature_never_logged(monkeypatch, tmp_path):
+    """No caption + no OCR -> 'no context' -> the verdict applies at runtime
+    but teaches nothing, so no silver row is written."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path, caption="")
+        assert piv.process_image_markers([m]) == []
+        assert log.count(relation="pdf_image_kind") == 0
+        # The skip is still a receipted, traceable decision.
+        assert m.value["gate_verdict"] == {"kind": "logo", "via": "vlm_gate"}
+    finally:
+        _clear_log()
+
+
+def test_store_gate_logs_teacher_store(monkeypatch):
+    """A store-decided verdict is logged as teacher='store', never 'llm'."""
+    import types as _types
+    monkeypatch.setattr(
+        "app.core.decide.decide",
+        lambda *a, **k: _types.SimpleNamespace(
+            source="store", verdict="diagram", confidence=0.91),
+    )
+    log = _fresh_log()
+    try:
+        hit = piv._store_classify_image(
+            "MDF rack elevation below", "",
+            {"deal_id": "dealX", "project_id": "dealX",
+             "pdf": "a.pdf", "page": 1, "region_ref": "page1/image1",
+             "image_sha16": "abc123"},
+        )
+        assert hit == (True, "diagram", "store_gate", 0.91)
+        (row,) = log.rows(relation="pdf_image_kind")
+        assert row.teacher == "store"
+        assert row.confidence == 0.91
+        assert row.deal_id == "dealX"
+        assert row.id.startswith("trn_vlm_")
+    finally:
+        _clear_log()
+
+
+def test_skip_stamp_added_fields_only(monkeypatch, tmp_path):
+    """A meaningful image's marker is NOT stamped; emitted atoms are unchanged
+    apart from already-recorded fields."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    monkeypatch.setattr(piv, "_vlm", _route_vlm(
+        "photo",
+        describe='{"description": "Battery charger mounted on the north wall", "facts": []}',
+    ))
+    m = _marker(tmp_path)
+    out = piv.process_image_markers([m])
+    assert out
+    assert "gate_verdict" not in m.value
