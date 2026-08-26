@@ -30,21 +30,23 @@ back). The lever is **fine-tuning the representation = GPU**.
 
 ## GPU training — run on an A100 (RunPod)
 Scripts in `runpod_detector/` (in git). Data is NOT in git — fetch from blob
-`ml-artifacts`: `_training_deepseek.db` (the log) and the YOLO `dataset/`.
+`ml-artifacts`: `_training_deepseek.db` (the log).
+
+> The schematic symbol detector (YOLO, blob `dataset/*`) was RETIRED
+> 2026-08-26: pure construction schematics are no longer accepted into
+> Purpulse. The blob dataset stays put but is no longer downloaded or trained.
 
 ```bash
 # from any machine with the repo + az login:
 git clone https://github.com/Purtera-IT/parser-os && cd parser-os
 KEY=$(az storage account keys list --account-name purpulsedevstg01 -g purtera-dev-rg --query "[0].value" -o tsv)
 az storage blob download --account-name purpulsedevstg01 --account-key "$KEY" -c ml-artifacts -n _training_deepseek.db -f _training_deepseek.db
-mkdir -p runpod_detector/dataset   # download-batch errors if the dest dir does not exist
-az storage blob download-batch --account-name purpulsedevstg01 --account-key "$KEY" -s ml-artifacts -d runpod_detector --pattern "dataset/*"
 # then on the A100:
-bash runpod_detector/run_all_gpu.sh        # trains all 3, prints per-epoch held-out + final verdicts
+bash runpod_detector/run_all_gpu.sh        # trains both heads, prints per-epoch held-out + final verdicts
 ```
 Each trainer prints **tqdm progress + per-epoch HELD-OUT-by-deal metrics vs the
 frozen baseline** (rising held-out = truly learning; held-out flat while train
-climbs = overfit). Final verdicts: detector mAP@50, atom_type acc (beat 0.65?),
+climbs = overfit). Final verdicts: atom_type acc (beat 0.65?),
 span recall (cross 0.93 → SKIP unlocks).
 
 ## Standing constraints (NEVER violate)
@@ -65,7 +67,7 @@ A100. This all works from the Mac — everything is cross-platform:
 - **Tools to install on the Mac**: `git`, Azure CLI (`brew install azure-cli`,
   then `az login`), and `runpodctl` (https://github.com/runpod/runpodctl). That's it.
 - **GPU training needs NO Ollama / NO Tailscale.** The fine-tuners embed on the
-  RunPod GPU via `transformers`; the detector uses `ultralytics`. They only need
+  RunPod GPU via `transformers`. They only need
   the data (pulled from Azure blob) + the scripts (in the repo). The Mac Studio
   Ollama (`100.114.102.122`, Tailscale) is only for *local deal compiles* — not
   for GPU training.
@@ -111,7 +113,7 @@ is MORE DEALS (diversity), not bigger models — proven this session.
   (`PDF_IMAGE_PHASE=2|3|4`). Phase 3 = 7b gate + 32b describe (recommended live).
 
 ## Open next steps
-1. Run the A100 session (above) → get the 3 verdicts; promoted heads slot into
-   the eval-gated registry + the worker fetches them.
+1. Run the A100 session (above) → get the atom_type + span verdicts; promoted
+   heads slot into the eval-gated registry + the worker fetches them.
 2. #71 SKIP auto-unlocks per relation when its fine-tuned recall ≥0.93.
 3. PM-correction UI (close the human loop).
