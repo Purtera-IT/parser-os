@@ -126,28 +126,11 @@ REGISTRY: dict[str, Calibrated] = {
             "on their assigned side"
         ),
     ),
-    "schematic.min_text_lines": Calibrated(
-        value=25,
-        used_at="app.core.schematic_route._MIN_TEXT_LINES",
-        derivation=(
-            "A VLM single-pass on a dense vector schedule scored 31% while "
-            "the same sheet's text layer held 100% of 1,000+ rows exactly. "
-            "Either signal alone (lines OR chars) routes to text, so the "
-            "pair degrades instead of flipping."
-        ),
-        corpus_n=1,
-        derived="2026-07",
-        stale_when="a vector sheet with a real text layer routes to vision",
-        notes="corpus_n=1 stated plainly: derived from one measured deal pack",
-    ),
-    "schematic.min_text_chars": Calibrated(
-        value=400,
-        used_at="app.core.schematic_route._MIN_TEXT_CHARS",
-        derivation="See schematic.min_text_lines -- the paired signal.",
-        corpus_n=1,
-        derived="2026-07",
-        stale_when="see schematic.min_text_lines",
-    ),
+    # schematic.min_text_lines (25) / schematic.min_text_chars (400) were
+    # retired 2026-08-26 with app.core.schematic_route: pure construction
+    # schematics are no longer accepted into Purpulse, and the gate had no
+    # production caller (PDF page routing uses pdf.low_text_page /
+    # pdf.text_rich_page, which remain deployed and receipted above).
     "router.match_threshold": Calibrated(
         value=0.50,
         used_at="app.parsers.registry.MATCH_THRESHOLD",

@@ -1,27 +1,25 @@
-# Universal Symbol Detector (RunPod)
+# GPU training assets (RunPod)
 
-**Goal:** a class-agnostic symbol detector that finds *where* every symbol is on
-any schematic (firm-independent). Meaning is assigned per-document by LegendIndex,
-so it's **universal** — new firms / new symbols need zero retraining.
+Training + labeling scripts for the eval-gated heads that run on a rented A100:
 
-## Why a detector (vs VLM / pixels)
-- Object detection IS the task (localize + box every symbol). A YOLO detector is
-  purpose-built, runs **local + fast**, and beats a general VLM and pixel-match
-  at detection. It replaces `region_proposals` + the pixel objectness head.
-- Class-agnostic ("symbol") = universal. Per-doc legend = the vocabulary.
+- **atom_type head** (`train_type_head_gpu.py`, `train_type_head_v2.py`) and the
+  rubric labeling stack (`RUBRIC.md`, `rubric_*.py`, `taxonomy.py`, guides in
+  `PM_GOLD_GUIDE.md` / `SETUP_LABELING.md`).
+- **Span taggers** (`train_span_tagger_gpu.py`, `train_span_tagger_v2.py`).
+- **Contrastive encoder + kNN** (`train_contrastive_encoder_gpu.py`,
+  opt-in `train_contrastive_qwen3_lora.py`, see `VLLM_EMBEDDING_LORA.md`).
+- **PDF embedded-image gate** (`train_pdf_image_gate.py`, `pack_gate_pdf_image.sh`).
 
-## Steps
-1. **Local (uses cached VLM labels, ~free):**
-   `python -X utf8 runpod_detector/prepare_yolo_data.py`
-   -> builds `runpod_detector/dataset/` (images + YOLO labels + data.yaml).
-2. **Upload** `runpod_detector/` to the RunPod pod.
-3. **On RunPod GPU:** `pip install ultralytics && python train_detector.py`
-4. **Download** `runs/symbol_detector/weights/best.pt`.
-5. **Local:** set `SOWSMITH_SYMBOL_DETECTOR=/path/best.pt` -> the pipeline loads it
-   as the universal detector (see `app/core/schematic_detector.py`).
+One-session driver: `bash runpod_detector/run_all_gpu.sh` (see `GPU_HANDOFF.md`
+at the repo root for the full flow: data from Azure blob, weights back via
+`runpodctl`).
 
-## Honest notes
-- This is the GPU spend that pays off (vs VLM LoRA, which has small blast radius).
-- More gold boxes = better. The prep script accumulates labels (cached) every run.
-- After training, the local stack is: detector (where) -> LegendIndex (what) ->
-  verify+abstain+human+self-heal (100%). No full-time VLM.
+## Retired: universal symbol detector (2026-08-26)
+
+This directory used to also hold the YOLO symbol-detector training assets
+(`prepare_yolo_data.py`, `train_detector.py`, `verify_gold.py`,
+`LABELING_GUIDE.md`). Pure construction schematics are no longer accepted into
+Purpulse, so that effort was retired along with the schematic ML modules in
+`app/core/`. The labeled `dataset/` remains on Azure blob
+(`purpulsedevstg01/ml-artifacts`, `dataset/*`) if it is ever needed again; it
+was never in git (`.gitignore` still excludes local copies).

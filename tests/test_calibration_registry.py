@@ -51,13 +51,6 @@ def test_prose_floor_pins() -> None:
     assert markdown_parser._MIN_TEXT_CHARS == REGISTRY["prose_floor.min_chars"].value
 
 
-def test_schematic_route_pins() -> None:
-    from app.core import schematic_route
-
-    assert schematic_route._MIN_TEXT_LINES == REGISTRY["schematic.min_text_lines"].value
-    assert schematic_route._MIN_TEXT_CHARS == REGISTRY["schematic.min_text_chars"].value
-
-
 def test_match_threshold_pin() -> None:
     from app.parsers import registry as parser_registry
 

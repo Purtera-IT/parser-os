@@ -128,16 +128,10 @@ class LegendIndex:
     """The reference set parsed from ONE document's legend page(s)."""
 
     def __init__(self, embed=None):
-        if embed is None:
-            # Prefer the shipped universal symbol net (SupCon, set via
-            # SOWSMITH_SYMBOL_EMBEDDER); fall back to the deterministic feature.
-            try:
-                from app.core.schematic_embedder import default_embedder
-                de = default_embedder()
-                embed = de.embed if de is not None else crop_feature
-            except Exception:
-                embed = crop_feature
-        self._embed = embed
+        # The learned ViT embedder (SOWSMITH_SYMBOL_EMBEDDER) was retired with
+        # the schematic ML paths (2026-08-26); the deterministic feature is the
+        # only default. A caller may still pass its own ``embed``.
+        self._embed = embed if embed is not None else crop_feature
         self.refs: list[LegendRef] = []
 
     def add_symbol(self, meaning: str, png_bytes: bytes,
