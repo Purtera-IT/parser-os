@@ -450,3 +450,106 @@ def test_skip_stamp_added_fields_only(monkeypatch, tmp_path):
     out = piv.process_image_markers([m])
     assert out
     assert "gate_verdict" not in m.value
+
+
+# ── skip veto: recorded second opinion, routing untouched ───────────
+
+
+def test_vlm_skip_veto_extends_verdict_and_logs(monkeypatch, tmp_path):
+    """vlm_gate skip + confident veto -> gate_verdict.veto + trn_veto_ row."""
+    from app.core import pdf_image_veto
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
+    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: 0.93)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["kind"] == "decorative"
+        assert gv["via"] == "vlm_gate"
+        assert gv["veto"] == {"meaningful_prob": 0.93, "model": "pdf_image_veto"}
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert row.id.startswith("trn_veto_")
+        assert row.teacher == "veto"
+        assert row.label == "meaningful"
+        assert row.deal_id == "proj1"
+        assert row.provenance["via"] == "vlm_gate"
+        assert row.provenance["pdf"] == "install_guide.pdf"
+        assert row.provenance["region_ref"] == "page2/image7"
+        assert row.provenance["model"] == "pdf_image_veto"
+        # Silver kind channel still logged separately for the skip itself.
+        assert log.count(relation="pdf_image_kind") == 1
+    finally:
+        _clear_log()
+
+
+def test_cpu_gate_skip_never_veto_checked(monkeypatch, tmp_path):
+    """cpu_gate skips must not call the veto (sibling student, not independent)."""
+    from app.core import pdf_image_gate, pdf_image_veto
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "ocr text")
+    monkeypatch.setattr(pdf_image_gate, "classify", lambda *a, **k: (False, "logo"))
+    called = {"n": 0}
+
+    def _boom(*a, **k):
+        called["n"] += 1
+        return 0.99
+
+    monkeypatch.setattr(pdf_image_veto, "veto", _boom)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        assert called["n"] == 0
+        assert m.value["gate_verdict"] == {"kind": "skip", "via": "cpu_gate"}
+        assert "veto" not in m.value["gate_verdict"]
+        assert log.count(relation="pdf_image_veto") == 0
+    finally:
+        _clear_log()
+
+
+def test_veto_off_leaves_routing_identical(monkeypatch, tmp_path):
+    """With veto disabled, skip path is unchanged (no veto key, no veto rows)."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.delenv("SOWSMITH_PDF_IMAGE_VETO", raising=False)
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "ocr")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        assert m.value["gate_verdict"] == {"kind": "logo", "via": "vlm_gate"}
+        assert "veto" not in m.value["gate_verdict"]
+        assert log.count(relation="pdf_image_veto") == 0
+    finally:
+        _clear_log()
+
+
+def test_veto_abstain_does_not_extend_verdict(monkeypatch, tmp_path):
+    """Veto enabled but abstaining -> skip receipt only, no veto stamp/row."""
+    from app.core import pdf_image_veto
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "ocr")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: None)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        assert m.value["gate_verdict"] == {"kind": "logo", "via": "vlm_gate"}
+        assert "veto" not in m.value["gate_verdict"]
+        assert log.count(relation="pdf_image_veto") == 0
+    finally:
+        _clear_log()
