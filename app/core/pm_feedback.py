@@ -8,7 +8,9 @@ Every head (current and future) maps to a single ``Correction`` row in the
 
 A new head needs ONE line in ``HEAD_REGISTRY`` — nothing else. The frontend
 mirrors this registry (see purpulse.app ``src/lib/orbitbrief/headCorrections.ts``);
-the two MUST stay in sync (test: ``_test_pm_feedback.py``).
+the two MUST stay in sync (test: ``tests/test_routes_feedback.py``). The API
+layer (``app.api.routes_feedback``) derives its head→relation mapping from this
+registry — never duplicate it.
 """
 from __future__ import annotations
 import hashlib
@@ -41,6 +43,7 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     "norm":      HeadSpec("value_norm",      "atom",   "Value / amount", mode="extract"),
     "router":    HeadSpec("service_routing", "deal",   "Workstream / domain"),
     "facet":     HeadSpec("facet",           "atom",   "Brief section"),
+    "image":     HeadSpec("pdf_image_kind",  "atom",   "Image kind"),
 }
 
 # Deal-scoped PM corrections fire readily WITHIN that deal (the PM explicitly fixed

@@ -328,6 +328,78 @@ def test_unknown_head_is_refused_not_silently_dropped():
     assert r.status_code == 422
 
 
+# ── ONE registry: API layer ⇄ pm_feedback ⇄ frontend (cross-repo contract) ────
+# pm_feedback.HEAD_REGISTRY is the single source of truth for every trainable
+# head. The API layer must DERIVE from it (never copy it), and the frontend
+# mirror (purpulse-frontend src/lib/orbitbrief/headCorrections.ts
+# HEAD_CORRECTIONS) must stay in lockstep — _FE_HEAD_CORRECTIONS below is that
+# mirror, hardcoded, so a drift on either side fails loudly here.
+
+# head → decide() relation, exactly as headCorrections.ts declares it.
+_FE_HEAD_CORRECTIONS: dict[str, str] = {
+    "type": "atom_type",
+    "admission": "admission",
+    "gap": "gap_valid",
+    "conflict": "edge_relation",
+    "site": "same_site",
+    "norm": "value_norm",
+    "router": "service_routing",
+    "facet": "facet",
+    "image": "pdf_image_kind",
+}
+
+
+def test_api_registry_is_derived_from_pm_feedback_registry():
+    """Both correction endpoints validate against the SAME head set, by
+    construction: routes_feedback.HEAD_REGISTRY is a projection of
+    pm_feedback.HEAD_REGISTRY, never an independent dict. (Regression: the API
+    layer once hand-maintained its own 9-head copy while pm_feedback had 8, so
+    an 'image' correction 400'd on /correction but worked on /correction/chip.)
+    """
+    from app.core.pm_feedback import HEAD_REGISTRY as pm_registry
+
+    assert rf.HEAD_REGISTRY == {h: s.relation for h, s in pm_registry.items()}
+    # The derivation must be the live object relationship, not a stale copy.
+    assert set(rf.HEAD_REGISTRY) == set(pm_registry)
+
+
+def test_registry_matches_frontend_head_corrections():
+    """pm_feedback.HEAD_REGISTRY ⇄ headCorrections.ts stay in sync — including
+    the image head (relation pdf_image_kind, kind atom, mode classify)."""
+    from app.core.pm_feedback import HEAD_REGISTRY as pm_registry
+
+    assert {h: s.relation for h, s in pm_registry.items()} == _FE_HEAD_CORRECTIONS
+    spec = pm_registry["image"]
+    assert spec.relation == "pdf_image_kind"
+    assert spec.kind == "atom"
+    assert spec.mode == "classify"
+
+
+def test_image_head_is_valid_on_both_correction_endpoints():
+    """The exact divergence this suite exists to prevent: an image-kind fix must
+    be accepted by /correction (per-head loop) AND /correction/chip."""
+    set_store(_store())
+    client = _client()
+    payload = {
+        "head": "image",
+        "deal_id": "p1",
+        "target_id": "img_7",
+        "text": "MDF rack elevation diagram",
+        "old_value": "table_image",
+        "new_value": "diagram",
+        "candidates": ["table_image", "diagram", "photo", "chart"],
+    }
+    r1 = client.post("/projects/p1/feedback/correction", json=payload)
+    assert r1.status_code == 200, r1.text
+    body = r1.json()
+    assert body["relation"] == "pdf_image_kind"
+    assert body["correction_id"].startswith("pm_image_")
+
+    r2 = client.post("/projects/p1/feedback/correction/chip", json=payload)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["relation"] == "pdf_image_kind"
+
+
 def test_correction_without_exemplar_is_refused():
     """The store cannot learn from an empty exemplar; reviewCorrections.ts
     returns null rather than posting one, and this is the backstop."""

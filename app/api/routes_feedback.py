@@ -43,21 +43,19 @@ from app.core.correction_eval import Probe, gated_confirm
 from app.core.decide import DecisionScope, get_store
 from app.core.feedback_store import SCOPE_DEAL, SCOPE_GLOBAL, SCOPE_PACK
 from app.core.plain_rule_compiler import compile_rule
+from app.core.pm_feedback import HEAD_REGISTRY as PM_HEAD_REGISTRY
+from app.core.pm_feedback import apply_pm_correction
 from app.storage.repositories import _load_compile_result
 
 router = APIRouter(prefix="/projects", tags=["feedback"])
 
-# Mirrors purpulse-frontend src/lib/orbitbrief/headCorrections.ts HEAD_CORRECTIONS.
+# head → decide() relation, DERIVED from the single source of truth
+# (app.core.pm_feedback.HEAD_REGISTRY, mirrored by purpulse-frontend
+# src/lib/orbitbrief/headCorrections.ts HEAD_CORRECTIONS). Never hand-maintain a
+# second copy here: both correction endpoints validate against the same set by
+# construction.
 HEAD_REGISTRY: dict[str, str] = {
-    "type": "atom_type",
-    "admission": "admission",
-    "gap": "gap_valid",
-    "conflict": "edge_relation",
-    "site": "same_site",
-    "norm": "value_norm",
-    "router": "service_routing",
-    "facet": "facet",
-    "image": "pdf_image_kind",
+    head: spec.relation for head, spec in PM_HEAD_REGISTRY.items()
 }
 
 
@@ -425,8 +423,7 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
     the store (instant-learning) + a gold row for the nightly retrain. A new head
     needs no new endpoint — just a row in pm_feedback.HEAD_REGISTRY."""
     store = _require_store()
-    from app.core.pm_feedback import apply_pm_correction, HEAD_REGISTRY
-    spec = HEAD_REGISTRY.get(req.head)
+    spec = PM_HEAD_REGISTRY.get(req.head)
     if spec is None:
         raise HTTPException(status_code=422, detail=f"unknown head {req.head!r}")
     payload = {
