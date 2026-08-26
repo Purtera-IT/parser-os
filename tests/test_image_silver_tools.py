@@ -176,6 +176,15 @@ def test_culprit_score_logged_skip_bonus():
     assert logged == pytest.approx(base + 2.5)
 
 
+def test_culprit_score_veto_bonus_outranks_logged_skip():
+    logged = culprit_score(pm_hit_count=1, quantity_count=1, tokens=30, logged_skip=True)
+    vetoed = culprit_score(
+        pm_hit_count=1, quantity_count=1, tokens=30,
+        logged_skip=True, veto_fired=True,
+    )
+    assert vetoed == pytest.approx(logged + 4.0)
+
+
 def test_rank_queue_sorts_desc_and_numbers_ranks():
     rows = [
         {"feature_text": "no context", "ocr_snippet": ""},
@@ -195,6 +204,51 @@ def test_rank_queue_logged_skip_outranks_equal_harvest_row():
     ranked = rank_queue([harvest, logged])
     assert ranked[0]["logged_label"] == "skip"
 
+
+def test_rank_queue_veto_outranks_logged_skip():
+    feat = "ocr: 18 Total Data Outlets Comm Cabinet"
+    logged = {"feature_text": feat, "ocr_snippet": feat, "logged_label": "skip"}
+    veto = {
+        "feature_text": feat, "ocr_snippet": feat, "logged_label": "skip",
+        "source": "veto", "veto_fired": True,
+    }
+    ranked = rank_queue([logged, veto])
+    assert ranked[0]["source"] == "veto"
+    assert ranked[0]["veto_fired"] is True
+    assert ranked[0]["culprit_score"] > ranked[1]["culprit_score"]
+
+
+def test_load_training_log_includes_veto_rows(tmp_path):
+    import sqlite3
+    from tools.build_image_review_queue import load_training_log_rows
+    db = tmp_path / "t.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE training_rows ("
+        "id TEXT, relation TEXT, label TEXT, teacher TEXT, confidence REAL, "
+        "raw_text TEXT, provenance TEXT, deal_id TEXT, created_at REAL)"
+    )
+    con.executemany(
+        "INSERT INTO training_rows VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            ("trn_vlm_1", "pdf_image_kind", "skip", "llm", 0.7,
+             "ocr: logo only", "{}", "d1", 1.0),
+            ("trn_veto_1", "pdf_image_veto", "meaningful", "veto", 0.93,
+             "ocr: 18 Total Data Outlets",
+             '{"pdf":"a.pdf","page":7,"region_ref":"page7/image1"}',
+             "d2", 2.0),
+        ],
+    )
+    con.commit()
+    con.close()
+    rows = load_training_log_rows(db)
+    assert len(rows) == 2
+    veto = next(r for r in rows if r["source"] == "veto")
+    assert veto["veto_fired"] is True
+    assert veto["logged_label"] == "skip"  # gate skipped; veto disagreed
+    assert veto["pdf"] == "a.pdf"
+    assert veto["page"] == "7"
+    assert veto["deal_id"] == "d2"
 
 # ── importer: validation + idempotency ──────────────────────────────
 
