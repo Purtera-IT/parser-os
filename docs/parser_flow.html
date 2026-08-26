@@ -124,7 +124,7 @@
   <rect x="472" y="66" width="220" height="84" rx="7" fill="none" stroke="currentColor" stroke-width="1.3"/>
   <text x="486" y="88" font-size="11.5" font-weight="600">portable documents</text>
   <text x="486" y="106" font-size="10" opacity=".8">OrbitBriefPdfParser</text>
-  <text x="486" y="122" font-size="9" opacity=".55">.pdf &mdash; 8,400 lines across 6 modules</text>
+  <text x="486" y="122" font-size="9" opacity=".55">.pdf &mdash; 8,600 lines across 6 modules</text>
   <text x="486" y="138" font-size="9" opacity=".55">text layer, or pixels, or both</text>
   <line x1="692" y1="108" x2="716" y2="108" stroke="currentColor" stroke-width="1.2" marker-end="url(#a)"/>
 
@@ -133,8 +133,8 @@
   <text x="732" y="90" font-size="9.5">&lt; 80 chars &nbsp;&rarr; OCR chain, then vision markers</text>
   <text x="732" y="106" font-size="9.5">80&ndash;1199 &nbsp;&rarr; images? prose? list? form? &mdash; shape wins</text>
   <text x="732" y="122" font-size="9.5">&ge; 1200 &nbsp;&nbsp;&rarr; prose splitter + ruled/column tables</text>
-  <text x="732" y="140" font-size="9" fill="var(--hard)">schematic: 25 lines OR 400 chars &rarr; text, else vision</text>
-  <text x="732" y="155" font-size="9" opacity=".5">62 of 84 pages near the cut go the same way regardless</text>
+  <text x="732" y="140" font-size="9" fill="var(--mut)">schematic gate retired 2026-08-26 (PR #44) &mdash; drawings</text>
+  <text x="732" y="155" font-size="9" fill="var(--mut)">no longer enter Purpulse; embedded images: skip-veto live</text>
 
   <!-- ── family B · OOXML ──────────────────────────────────────────── -->
   <rect x="472" y="196" width="220" height="104" rx="7" fill="none" stroke="currentColor" stroke-width="1.3"/>
@@ -276,7 +276,7 @@
   <text x="34" y="1134" font-size="10" opacity=".78">Evidence decides in order of strength, and a weaker signal may raise a claim it cannot create. Every red line above is one place that rule was broken &mdash; a filename, a style name, a tab name, a CSS class</text>
   <text x="34" y="1150" font-size="10" opacity=".78">deciding something the content should have. None of them raised an error. They lost documents quietly, which is the only way this system can be wrong without anyone finding out.</text>
   <text x="34" y="1168" font-size="10" opacity=".78">And every threshold on this board now carries a receipt &mdash; corpus, date, derivation, expiry &mdash; pinned to the live code by CI (app/core/calibration.py). A magic number here cannot silently expire.</text>
-  <text x="34" y="1186" font-size="10" opacity=".78">Board receipts: code figures re-derived 2026-08-25 against main@f898f2e; corpus findings (84-page probe, 2,062-file census, lost-sections, 11-atom page) are dated 2026-08 measurements, pinned by their audit tests.</text>
+  <text x="34" y="1186" font-size="10" opacity=".78">Board receipts: code figures re-derived 2026-08-26 against main@6cfa0b2; corpus findings (84-page probe, 2,062-file census, lost-sections, 11-atom page) are dated 2026-08 measurements, pinned by their audit tests.</text>
 
   <line x1="34" y1="1204" x2="1366" y2="1204" stroke="var(--rule)" stroke-width="1"/>
   <text x="34" y="1226" font-size="11" fill="var(--mut)" letter-spacing="2">AFTER THE ATOMS — WHAT THE SEAM AUDITS AND THE PIPE REPAIR PROVED (2026-08-24/25)</text>
@@ -293,7 +293,7 @@
   <text x="52" y="1414" font-size="10" fill="var(--hard)" font-weight="600">zero were inside the rules.</text>
   <text x="52" y="1430" font-size="9.5" fill="var(--hard)">atom_type_sanity: 30/30 probes clean · build_edges: same</text>
   <text x="52" y="1444" font-size="9.5" fill="var(--hard)">edge set under any atom order · every index sorts at emission</text>
-  <text x="52" y="1468" font-size="10" fill="var(--hard)">pinned by 89 invariance tests across three files</text>
+  <text x="52" y="1468" font-size="10" fill="var(--hard)">pinned by 91 invariance tests across three files</text>
 
   <rect x="484" y="1244" width="432" height="240" rx="8" fill="var(--loss-bg)" stroke="var(--loss)" stroke-width="1.5"/>
   <text x="502" y="1270" font-size="11.5" fill="var(--loss)" font-weight="600">THE TAP PIPE — was eating every correction</text>
