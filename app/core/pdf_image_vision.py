@@ -25,7 +25,9 @@ Design invariants (match the rest of the system):
     OCR fusion and prompting. PM corrections on the emitted atoms feed the
     existing TrainingLog loop; only a cheap CPU *gate* is ever distilled later.
   * OFF by default (``SOWSMITH_PDF_IMAGE_VISION``). Additive: returns NEW atoms
-    that upgrade the ``needs_extractor`` markers; never mutates existing atoms.
+    that upgrade the ``needs_extractor`` markers; never removes or rewrites
+    existing atoms (the only touch is RECORDING the triage verdict on skipped
+    image markers — ``value['gate_verdict']`` — so a skip stays traceable).
 """
 from __future__ import annotations
 
@@ -457,33 +459,83 @@ def _verbatim_ok(text: str, ocr_norm: str) -> bool:
     return hits / len(toks) >= 0.5
 
 
-def _log_gate_silver(caption: str, ocr: str, image_kind: str, *, via: str) -> None:
-    """Silver training row for the CPU gate distillation loop. Never raises."""
+def _log_gate_silver(
+    caption: str, ocr: str, image_kind: str, *, via: str,
+    attribution: dict[str, Any] | None = None,
+    confidence: float | None = None,
+) -> None:
+    """Silver training row for the CPU gate distillation loop. Never raises.
+
+    Honesty rules (each one closes an observed data-rot pathology):
+      * cpu_gate verdicts are NEVER logged — the distilled student teaching
+        itself is self-distillation, not new signal (and the gate trainer
+        consumes every ``pdf_image_kind`` row, so the exclusion must happen
+        here, at the source);
+      * a degenerate feature ("no context") is never logged — the verdict
+        still applies at runtime, it just teaches nothing;
+      * ``teacher`` names who actually decided (store hit vs VLM call);
+      * the row id is a content hash (``trn_vlm_<sha16>``, mirroring the
+        ``trn_sa_`` audit-import convention) so recompiles of the same deal
+        upsert instead of appending duplicates;
+      * deal/pdf/page/region attribution rides along — ``deal_id`` as a column
+        so the holdout split works, the rest in ``provenance`` for audit.
+    """
+    if via == "cpu_gate":
+        return
     try:
         from app.core.pdf_image_gate import gate_feature_text
-        from app.core.training_log import TEACHER_LLM, TrainingRow, log_rows
+        from app.core.training_log import (
+            TEACHER_LLM,
+            TEACHER_STORE,
+            TrainingRow,
+            log_rows,
+        )
         label = "skip" if image_kind in _SKIP_KINDS else image_kind
         feat = gate_feature_text(caption, ocr)
+        if not feat.strip() or feat == "no context":
+            return
+        att = attribution or {}
+        deal_id = str(att.get("deal_id") or "")
+        pdf_name = str(att.get("pdf") or "")
+        region_ref = str(att.get("region_ref") or "")
+        image_sha16 = str(att.get("image_sha16") or "")
+        row_id = "trn_vlm_" + hashlib.sha256(
+            f"pdf_image_kind|{label}|{feat}|{pdf_name}|{region_ref}|{image_sha16}"
+            .encode("utf-8")
+        ).hexdigest()[:16]
         log_rows([TrainingRow(
+            id=row_id,
             relation="pdf_image_kind",
             label=label,
             raw_text=feat,
             masked_text=feat,
             label_kind="judgment",
-            teacher=TEACHER_LLM,
-            confidence=0.7,
-            provenance={"stage": "pdf_image_vision_gate", "via": via},
+            teacher=TEACHER_STORE if via == "store_gate" else TEACHER_LLM,
+            confidence=confidence if confidence is not None else 0.7,
+            deal_id=deal_id,
+            project_id=str(att.get("project_id") or deal_id),
+            provenance={
+                "stage": "pdf_image_vision_gate",
+                "via": via,
+                "pdf": pdf_name,
+                "page": att.get("page", ""),
+                "region_ref": region_ref,
+                "image_sha16": image_sha16,
+            },
         )])
     except Exception:
         pass
 
 
-def _store_classify_image(caption: str, ocr: str) -> tuple[bool, str, str] | None:
+def _store_classify_image(
+    caption: str, ocr: str, attribution: dict[str, Any] | None = None,
+) -> tuple[bool, str, str, float | None] | None:
     """PM correction store-front for image-kind triage (no VLM cost).
 
     Tries gate feature text, caption, and OCR snippet so corrections committed
     via the image chip can override the classify gate on the next compile.
-    Returns None when the store abstains (fall through to VLM gate).
+    Returns (meaningful, kind, via, confidence), or None when the store
+    abstains (fall through to VLM gate).
     """
     from app.core.decide import decide
     from app.core.pdf_image_gate import gate_feature_text
@@ -510,19 +562,27 @@ def _store_classify_image(caption: str, ocr: str) -> tuple[bool, str, str] | Non
         if d.source != "store" or not d.verdict:
             continue
         kind = str(d.verdict).strip().lower()
+        conf = float(getattr(d, "confidence", 0.0) or 0.0) or None
         if kind == "skip" or kind in _SKIP_KINDS:
-            _log_gate_silver(caption, ocr, kind or "skip", via="store_gate")
-            return False, kind or "skip", "store_gate"
+            _log_gate_silver(caption, ocr, kind or "skip", via="store_gate",
+                             attribution=attribution, confidence=conf)
+            return False, kind or "skip", "store_gate", conf
         if kind in _IMAGE_KIND_CANDIDATES:
-            _log_gate_silver(caption, ocr, kind, via="store_gate")
-            return True, kind, "store_gate"
+            _log_gate_silver(caption, ocr, kind, via="store_gate",
+                             attribution=attribution, confidence=conf)
+            return True, kind, "store_gate", conf
     return None
 
 
 def _classify_image(
     *, crop: bytes, caption: str, saved_path: str,
-) -> tuple[bool, str, str]:
-    """Classify one crop. Returns (meaningful, image_kind, via_tag)."""
+    attribution: dict[str, Any] | None = None,
+) -> tuple[bool, str, str, float | None]:
+    """Classify one crop. Returns (meaningful, image_kind, via_tag, confidence).
+
+    ``confidence`` is None when the deciding tier exposes none (cpu/vlm gate).
+    cpu_gate verdicts are NOT logged as silver — see :func:`_log_gate_silver`.
+    """
     ocr = _ocr_crop(saved_path, crop)  # cheap chain only (no VLM cost on the gate)
     try:
         from app.core import pdf_image_gate
@@ -530,12 +590,11 @@ def _classify_image(
         if cpu is not None:
             meaningful, kind = cpu
             kind = kind if meaningful else "skip"
-            _log_gate_silver(caption, ocr, kind, via="cpu_gate")
-            return meaningful, kind, "cpu_gate"
+            return meaningful, kind, "cpu_gate", None
     except Exception:
         pass
     try:
-        store_hit = _store_classify_image(caption, ocr)
+        store_hit = _store_classify_image(caption, ocr, attribution)
         if store_hit is not None:
             return store_hit
     except Exception:
@@ -549,8 +608,29 @@ def _classify_image(
     meaningful = bool(gate.get("meaningful"))
     if image_kind in _SKIP_KINDS:
         meaningful = False
-    _log_gate_silver(caption, ocr, image_kind or "skip", via="vlm_gate")
-    return meaningful, image_kind, "vlm_gate"
+    _log_gate_silver(caption, ocr, image_kind or "skip", via="vlm_gate",
+                     attribution=attribution)
+    return meaningful, image_kind, "vlm_gate", None
+
+
+def _stamp_skip_verdict(
+    marker: Any, kind: str, *, via: str, confidence: float | None,
+) -> None:
+    """Receipt a skip decision on its image_marker atom so it is traceable.
+
+    Adds RECORDED fields only (``value['gate_verdict']``) — never changes
+    which atoms are emitted or how anything routes. Never raises.
+    """
+    try:
+        val = getattr(marker, "value", None)
+        if not isinstance(val, dict):
+            return
+        verdict: dict[str, Any] = {"kind": kind, "via": via}
+        if confidence is not None:
+            verdict["confidence"] = confidence
+        val["gate_verdict"] = verdict
+    except Exception:
+        pass
 
 
 def _caption_overlap(caption: str, description: str) -> float:
@@ -675,7 +755,9 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     """Describe / transcribe embedded PDF images into NEW atoms.
 
     Returns [] when disabled, no vision endpoint, or nothing qualifies. Never
-    raises and never mutates the input atoms — purely additive."""
+    raises and never removes or rewrites input atoms — the only mutation is
+    recording the gate verdict on skipped image markers (a receipt, not a
+    routing change)."""
     if not enabled() or not atoms:
         return []
     try:
@@ -710,7 +792,7 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
             new_atoms = _process_one(
                 marker=marker, pdf_name=pdf_name, page_index=page_index,
                 region_ref=region_ref, saved_path=saved_path, caption=caption,
-                crop=crop, neighbor_chars=neighbor_chars,
+                crop=crop, crop_hash=crop_hash, neighbor_chars=neighbor_chars,
                 max_page_chars=max_page_chars, guard_min=guard_min,
                 caption_min=caption_min,
             )
@@ -729,12 +811,25 @@ def _process_one(
     *, marker: Any, pdf_name: str, page_index: int, region_ref: str,
     saved_path: str, caption: str, crop: bytes,
     neighbor_chars: int, max_page_chars: int, guard_min: float,
-    caption_min: float,
+    caption_min: float, crop_hash: str = "",
 ) -> list[EvidenceAtom]:
-    meaningful, image_kind, via = _classify_image(
+    project_id = str(getattr(marker, "project_id", "") or "")
+    attribution = {
+        "deal_id": project_id,  # the compiler uses project_id as deal_id
+        "project_id": project_id,
+        "pdf": pdf_name,
+        "page": page_index,
+        "region_ref": region_ref,
+        "image_sha16": crop_hash,
+    }
+    meaningful, image_kind, via, gate_conf = _classify_image(
         crop=crop, caption=caption, saved_path=saved_path,
+        attribution=attribution,
     )
     if not meaningful or image_kind in _SKIP_KINDS or not image_kind:
+        _stamp_skip_verdict(
+            marker, image_kind or "skip", via=via, confidence=gate_conf,
+        )
         return []
 
     this_text, prev_tail, next_head, page_count = _page_context(
