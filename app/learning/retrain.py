@@ -65,6 +65,14 @@ from app.learning.head_registry import HeadMeta, HeadRegistry
 # a few thousand well-spread rows more silver adds very little to a kNN head.
 MAX_TRAIN_ROWS = int(os.getenv("RETRAIN_MAX_TRAIN_ROWS", "8000"))
 
+# Relations that must never enter the eval-gated neural retrain loop.
+# ``pdf_image_veto`` rows are review-queue flags (always label='meaningful' by
+# construction) — training on them would invent a nonsense head. Distilled
+# transformers (pdf_image_kind CPU gate / binary veto) have their own trainers.
+NON_TRAINING_RELATIONS = frozenset({
+    "pdf_image_veto",
+})
+
 
 def _cap_train_rows(rows: list, limit: int = MAX_TRAIN_ROWS) -> list:
     """Bound a relation's train set, keeping EVERY PM-gold row.
@@ -316,7 +324,11 @@ def retrain_all(
     except Exception:
         pass
     if relations is None:
-        relations = sorted({r.relation for r in log.rows()})
+        relations = sorted(
+            {r.relation for r in log.rows()} - NON_TRAINING_RELATIONS
+        )
+    else:
+        relations = [r for r in relations if r not in NON_TRAINING_RELATIONS]
     results: list[RetrainResult] = []
     serving_reports: dict[str, RelationReport] = {}
     for rel in relations:

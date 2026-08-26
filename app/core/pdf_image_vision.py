@@ -633,6 +633,104 @@ def _stamp_skip_verdict(
         pass
 
 
+def _log_veto_row(
+    caption: str, ocr: str, kind: str, *, via: str, prob: float,
+    attribution: dict[str, Any] | None,
+) -> None:
+    """Review-queue feed row for a fired skip veto. Never raises.
+
+    This is NOT training silver: ``relation='pdf_image_veto'`` exists so the
+    parser review queue can surface skips the veto head disagreed with (wrong
+    skips are evidence loss). No trainer consumes this relation — the type /
+    span / multitask trainers select their relations by whitelist, and the
+    eval-gated registry retrain excludes it explicitly
+    (``app.learning.retrain.NON_TRAINING_RELATIONS``) because every row here
+    carries the same label ('meaningful') by construction.
+
+    Same honesty rules as :func:`_log_gate_silver`: content-hash id
+    (``trn_veto_<sha16>``) so recompiles upsert instead of duplicating, and
+    full deal/pdf/page/region attribution for the queue.
+    """
+    try:
+        from app.core.pdf_image_gate import gate_feature_text
+        from app.core.training_log import TrainingRow, log_rows
+        feat = gate_feature_text(caption, ocr)
+        if not feat.strip() or feat == "no context":
+            return
+        att = attribution or {}
+        deal_id = str(att.get("deal_id") or "")
+        pdf_name = str(att.get("pdf") or "")
+        region_ref = str(att.get("region_ref") or "")
+        image_sha16 = str(att.get("image_sha16") or "")
+        row_id = "trn_veto_" + hashlib.sha256(
+            f"pdf_image_veto|meaningful|{feat}|{pdf_name}|{region_ref}|{image_sha16}"
+            .encode("utf-8")
+        ).hexdigest()[:16]
+        log_rows([TrainingRow(
+            id=row_id,
+            relation="pdf_image_veto",
+            label="meaningful",
+            raw_text=feat,
+            masked_text=feat,
+            label_kind="judgment",
+            teacher="veto",
+            confidence=prob,
+            deal_id=deal_id,
+            project_id=str(att.get("project_id") or deal_id),
+            provenance={
+                "stage": "pdf_image_veto",
+                "via": via,
+                "gate_kind": kind,
+                "pdf": pdf_name,
+                "page": att.get("page", ""),
+                "region_ref": region_ref,
+                "image_sha16": image_sha16,
+                "model": "pdf_image_veto",
+            },
+        )])
+    except Exception:
+        pass
+
+
+def _maybe_veto_skip(
+    marker: Any, *, caption: str, saved_path: str, crop: bytes,
+    kind: str, via: str, attribution: dict[str, Any] | None,
+) -> None:
+    """Second opinion on a skip verdict — RECORDED ONLY, routing untouched.
+
+    When the vlm/store gate rules skip and the trained veto head confidently
+    says meaningful, the disagreement is (a) stamped into the marker's
+    ``value['gate_verdict']['veto']`` and (b) logged as a
+    ``relation='pdf_image_veto'`` row (see :func:`_log_veto_row`). The image
+    still skips either way — the veto is a flag for the review queue, never a
+    re-route.
+
+    cpu_gate verdicts are NEVER veto-checked: once the distilled gate serves,
+    the veto second-guessing its sibling student (trained on the same feature
+    text) is self-review, not independent signal. Never raises.
+    """
+    if via == "cpu_gate":
+        return
+    try:
+        from app.core import pdf_image_veto
+        if not pdf_image_veto.enabled():
+            return
+        ocr = _ocr_crop(saved_path, crop)  # cheap chain only, same as the gate
+        prob = pdf_image_veto.veto(caption, ocr)
+        if prob is None:
+            return
+        val = getattr(marker, "value", None)
+        if isinstance(val, dict) and isinstance(val.get("gate_verdict"), dict):
+            val["gate_verdict"]["veto"] = {
+                "meaningful_prob": prob, "model": "pdf_image_veto",
+            }
+        _log_veto_row(
+            caption, ocr, kind, via=via, prob=prob, attribution=attribution,
+        )
+    except Exception:
+        pass
+
+
 def _caption_overlap(caption: str, description: str) -> float:
     ct = _tokens(caption)
     if not ct:
@@ -829,6 +927,10 @@ def _process_one(
     if not meaningful or image_kind in _SKIP_KINDS or not image_kind:
         _stamp_skip_verdict(
             marker, image_kind or "skip", via=via, confidence=gate_conf,
+        )
+        _maybe_veto_skip(
+            marker, caption=caption, saved_path=saved_path, crop=crop,
+            kind=image_kind or "skip", via=via, attribution=attribution,
         )
         return []
 
