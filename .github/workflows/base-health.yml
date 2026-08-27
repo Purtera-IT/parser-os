@@ -1,0 +1,124 @@
+# Daily corpus base-health gates.
+#
+# DELIBERATELY NOT ON PULL REQUEST. This job reads real envelopes out of blob
+# storage, so on a PR it would be (a) slow -- it streams tens of envelopes
+# totalling hundreds of MB, (b) flaky -- every fork PR and every Azure blip
+# turns it red for reasons the author cannot fix, and (c) meaningless -- it
+# measures the CORPUS, which a PR has not changed yet. The corpus only moves
+# when compiles run in production. So it runs on a clock, against what
+# production actually produced. tests.yml is what gates a PR; the hermetic
+# half of this tool (tests/test_base_health.py) runs there.
+#
+# What it is for: on 2026-08-27 a fix silently dropped ~50 real sites from a
+# deal (438 -> 388) and was caught only because a person happened to
+# re-measure by hand. This job is the number that fails instead.
+#
+# Required secrets (Azure OIDC federated credentials -- no stored passwords;
+# the identity needs Storage Blob Data Reader on purpulsedevstg01):
+#   AZURE_CLIENT_ID        app registration with a federated credential for
+#                          repo:Purtera-IT/parser-os:ref:refs/heads/main
+#   AZURE_TENANT_ID
+#   AZURE_SUBSCRIPTION_ID
+#
+# If those are absent the job fails with an explicit "cannot measure"
+# message. It must never report a clean base it did not actually measure.
+name: Base health
+
+on:
+  schedule:
+    # 07:15 UTC daily -- after the overnight compiles have settled, early
+    # enough that a breach is on someone's screen at the start of the day.
+    - cron: '15 7 * * *'
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: 'Deals to measure (0 = the whole corpus)'
+        required: false
+        default: '40'
+
+# Never let two corpus reads overlap.
+concurrency:
+  group: base-health
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # required for azure/login OIDC
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    # Streaming the sample takes a few minutes; a job that hangs should fail
+    # loudly rather than sit on a runner.
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.11 is what parser-os-worker ships (python:3.11-slim), so the
+          # audit runs on the same interpreter as the code it audits.
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Measure base health
+        id: measure
+        # base_health.py exits 1 on a threshold breach and 2 when it could not
+        # measure at all. Both are failures; they are reported differently so
+        # "the base rotted" is never confused with "the audit is broken".
+        # ONE pass over the corpus produces both the table and the JSON:
+        # --json-out writes the parseable report as a side effect, so a
+        # breach still leaves an artifact without downloading everything
+        # a second time.
+        run: |
+          python tools/base_health.py \
+            --sample "${{ github.event.inputs.sample || '40' }}" \
+            --quiet --json-out base_health.json | tee base_health.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-health-report
+          # Metric counts and deal UUIDs only -- never envelopes or deal data.
+          path: |
+            base_health.txt
+            base_health.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo '## Base health'
+            echo
+            if [ "${{ steps.measure.outputs.status }}" = "0" ]; then
+              echo 'All metrics within threshold.'
+            elif [ "${{ steps.measure.outputs.status }}" = "2" ]; then
+              echo '**COULD NOT MEASURE** — the audit failed, the base is unverified.'
+            else
+              echo '**THRESHOLD BREACHED** — offending deals below.'
+            fi
+            echo
+            echo '```'
+            cat base_health.txt 2>/dev/null || echo '(no output — the run did not get far enough)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
