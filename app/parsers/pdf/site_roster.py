@@ -237,6 +237,8 @@ def _fitz_site_roster_fallback(
                                 "phone": site_row.phone,
                                 "email": site_row.email,
                                 "city_state": site_row.city_state,
+                                # Organisational territory, NOT geography.
+                                "region": getattr(site_row, "region", None),
                                 "sqft": site_row.sqft,
                                 "occupancy": site_row.occupancy,
                                 "notes": site_row.notes,

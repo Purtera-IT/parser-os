@@ -36,14 +36,23 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 
-# Header keywords. The header column is matched case-insensitively;
-# the FIRST matching field wins so order matters (more specific
-# patterns first). Each value is a tuple of regex patterns that
-# the column header must MATCH (substring search).
-# Field-header patterns — order matters. The first matching field
-# wins, so more specific patterns go first to prevent generic
-# keywords like "location" from claiming the wrong column when a
-# more authoritative match exists later in the row.
+# Header keywords, matched case-insensitively against the column header.
+#
+# MATCHING RULE — most-specific-wins, NOT first-in-list-wins.
+# For each column header we score EVERY (field, synonym) pair that matches and
+# keep the LONGEST matching synonym; list order is only the tie-break for two
+# synonyms of identical length. That is why "City/State" maps to ``city_state``
+# (synonym "city/state", 10 chars) and not to ``city`` (synonym "city", 4), and
+# why "Site Address" maps to ``street_address`` ("site address", 12) and not to
+# ``facility_name``. Under the old first-match rule the answer depended on which
+# field happened to sit higher in this tuple, so reordering any pair merely
+# moved the collision to a different pair instead of removing it.
+#
+# Two further rules keep the substring search honest:
+#   * a synonym of 3 characters or fewer must match on WORD BOUNDARIES ("ST"
+#     is the state column; "Estimated Cost" is not), and
+#   * a field is claimed at most once per table — the leftmost column that
+#     matches it wins, and later columns fall through to their next-best field.
 _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Site identifier (most authoritative)
     ("site_id", ("site id", "site #", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
@@ -56,7 +65,14 @@ _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # City / state — separate columns BEFORE combined city_state so both can map.
     ("city", ("city", "town", "municipality")),
     ("state", ("state", "st", "province")),
-    ("city_state", ("city/state", "city, state", "city / state", "region")),
+    ("city_state", ("city/state", "city, state", "city / state", "city-state")),
+    # Region / zone is an ORGANISATIONAL grouping, not geography. Clayton's
+    # Region column reads "TEN" / "SCA" — internal territory codes that are not
+    # a city, not a state and not parseable as either. It used to be a
+    # ``city_state`` synonym, which stamped those codes onto 419/438 site atoms
+    # as if they were places. A roster that carries only a region and no
+    # city/state knows no city/state: that is an abstain, not a guess.
+    ("region", ("region",)),
     # MDF/IDF closet
     ("mdf_idf", ("mdf/idf", "mdf / idf", "mdf", "idf", "closet", "tr ", "main distribution", "telecom room")),
     # Access window / hours
@@ -74,6 +90,37 @@ _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("occupancy", ("occupancy", "occupants", "headcount", "users", "seats")),
     # Notes
     ("notes", ("notes", "remarks", "comments")),
+)
+
+
+#: A synonym this short or shorter is matched on word boundaries rather than as
+#: a bare substring. "st" is the state column when the header IS "ST"; inside
+#: "Estimated Cost" it is three letters of a different word entirely.
+_SHORT_SYNONYM_MAX = 3
+
+#: (field, synonym, length, list_position, matcher) for every synonym, ordered
+#: most-specific-first so the first match found for a header is the best one.
+#: ``matcher`` is a callable ``header -> bool``. Built once at import; the
+#: ordering is total and deterministic (longer synonym first, then original list
+#: position, then the synonym text) so the mapping never depends on set or dict
+#: iteration order.
+def _synonym_matcher(synonym: str):
+    token = synonym.strip()
+    if len(token) <= _SHORT_SYNONYM_MAX:
+        pattern = re.compile(r"\b" + re.escape(token) + r"\b")
+        return pattern.search
+    return lambda header, _s=synonym: _s in header
+
+
+_SYNONYM_RULES: tuple[tuple[str, str, object], ...] = tuple(
+    (field_name, synonym, _synonym_matcher(synonym))
+    for _len, _pos, _syn, field_name, synonym in sorted(
+        (
+            (-len(synonym.strip()), pos, synonym, field_name, synonym)
+            for pos, (field_name, synonyms) in enumerate(_FIELD_HEADER_PATTERNS)
+            for synonym in synonyms
+        )
+    )
 )
 
 
@@ -293,6 +340,9 @@ class SiteRosterRow:
     city_state: str | None = None
     city: str | None = None
     state: str | None = None
+    #: Organisational territory ("TEN", "SCA", "Midwest"). NOT geography — it
+    #: is carried so the column is never lost, but it never feeds city/state.
+    region: str | None = None
     zip: str | None = None
     sqft: str | None = None
     occupancy: str | None = None
@@ -316,6 +366,7 @@ class SiteRosterRow:
             "city_state": self.city_state,
             "city": self.city,
             "state": self.state,
+            "region": self.region,
             "zip": self.zip,
             "sqft": self.sqft,
             "occupancy": self.occupancy,
@@ -389,7 +440,10 @@ def map_columns_to_fields(
         header = _norm_header(str(col))
         if not header:
             continue
-        for field_name, keywords in _FIELD_HEADER_PATTERNS:
+        # _SYNONYM_RULES is pre-sorted longest-synonym-first, so the FIRST rule
+        # that matches an available field is by construction the most specific
+        # reading of this header.
+        for field_name, _synonym, matches in _SYNONYM_RULES:
             if field_name in used_fields:
                 continue
             # The street_address patterns match the bare "address"
@@ -401,12 +455,9 @@ def map_columns_to_fields(
                 d in header for d in _NON_STREET_ADDRESS_HEADERS
             ):
                 continue
-            for kw in keywords:
-                if kw in header:
-                    out[i] = field_name
-                    used_fields.add(field_name)
-                    break
-            if i in out:
+            if matches(header):
+                out[i] = field_name
+                used_fields.add(field_name)
                 break
 
     if explicit_declaration:
@@ -756,14 +807,26 @@ def extract_site_roster(
         else:
             confidence = 0.5  # address-anchored only
 
-        from app.core.address_parse import enrich_location_fields
+        from app.core.address_parse import (
+            enrich_location_fields,
+            split_city_state_strict,
+        )
+
+        # A combined "City/State" cell is split here, GUESS-FREE, before
+        # enrichment: only "<name>, <2-letter state>" and "<name>, <full state
+        # name>" resolve. "Nashville" on its own and "Springfield, Springfield"
+        # resolve to nothing and leave city/state empty rather than inventing a
+        # pair. The raw combined value stays on the row as ``city_state``.
+        # (Passing the split parts instead of the raw cell also keeps
+        # ``enrich_location_fields``' lenient fallback out of this path —
+        # roster columns abstain where prose may guess.)
+        cs_city, cs_state = split_city_state_strict(cells.get("city_state"))
 
         loc = enrich_location_fields(
             street_address=cells.get("street_address"),
-            city=cells.get("city"),
-            state=cells.get("state"),
+            city=cells.get("city") or cs_city,
+            state=cells.get("state") or cs_state,
             zip_code=cells.get("zip"),
-            city_state=cells.get("city_state"),
             facility_name=cells.get("facility_name"),
         )
         if loc["street_address"]:
@@ -790,6 +853,7 @@ def extract_site_roster(
                 city_state=cells.get("city_state"),
                 city=cells.get("city"),
                 state=cells.get("state"),
+                region=cells.get("region"),
                 zip=cells.get("zip"),
                 sqft=cells.get("sqft"),
                 occupancy=cells.get("occupancy"),
@@ -803,6 +867,156 @@ def extract_site_roster(
     return out
 
 
+# ── Roster preference (a RANKING, never a filter) ────────────────
+#
+# Clayton ships two workbooks that both pass the roster gate: "Exhibit A -
+# Retail Locations.xlsx" (the actual store list) and "Clayton Homes CALC.xlsx"
+# (a travel-cost model that happens to carry an address column). Nothing told
+# the parser which one is the authoritative roster, so the cost model — with
+# more rows — dominated the site base.
+#
+# The fix is a SIGNAL, not a gate. Every roster candidate is scored on how
+# site-roster-like its filename and sheet name read, and the score / rank /
+# winner are stamped on the emitted atoms' provenance. Downstream consumers can
+# then prefer the best roster. NOTHING IS EVER DROPPED: a low-ranked sheet still
+# emits every one of its atoms, still carries its evidence, and is still
+# reachable — it simply sorts below a better roster. A hard filter here would
+# destroy evidence on a heuristic, which is exactly what this module must not do.
+#
+# Markers are generic roster vocabulary ("retail locations", "site list") and
+# generic non-roster vocabulary ("calc", "travel", "pricing") — never a customer
+# name. Every marker that matches contributes, so a name that reads as a roster
+# in several ways scores above one that reads that way once.
+
+#: Names that say "this table IS the list of sites".
+_ROSTER_POSITIVE_MARKERS: tuple[tuple[str, float], ...] = (
+    ("retail locations", 3.0),
+    ("location roster", 3.0),
+    ("site roster", 3.0),
+    ("store roster", 3.0),
+    ("site list", 3.0),
+    ("store list", 3.0),
+    ("location list", 3.0),
+    ("branch list", 3.0),
+    ("site master", 3.0),
+    ("site table", 3.0),
+    ("exhibit a", 2.0),
+    ("locations", 2.0),
+    ("roster", 2.0),
+    ("sites", 1.0),
+    ("stores", 1.0),
+    ("branches", 1.0),
+    ("facilities", 1.0),
+    ("addresses", 1.0),
+)
+
+#: Names that say "this table is a model / schedule / price book that merely
+#: mentions sites".
+_ROSTER_NEGATIVE_MARKERS: tuple[tuple[str, float], ...] = (
+    ("calc", -2.0),
+    ("travel", -2.0),
+    ("cost", -2.0),
+    ("pricing", -2.0),
+    ("price", -2.0),
+    ("rates", -2.0),
+    ("rate card", -2.0),
+    ("gantt", -2.0),
+    ("financial", -2.0),
+    ("budget", -2.0),
+    ("margin", -2.0),
+    ("invoice", -2.0),
+    ("quote", -2.0),
+    ("estimate", -1.0),
+    ("forecast", -1.0),
+)
+
+#: Secondary, structural term: a candidate whose header genuinely maps roster
+#: fields is more roster-like than one that does not. Deliberately small so a
+#: name marker always outweighs it — a "Travel Cost" sheet with an address
+#: column must not out-rank a "Retail Locations" sheet.
+_ROSTER_FIELD_BONUS = 0.5
+_ROSTER_FIELD_BONUS_CAP = 2.0
+
+
+def roster_preference_score(
+    *,
+    filename: str = "",
+    sheet_name: str = "",
+    columns: Sequence[str] = (),
+) -> float:
+    """How site-roster-like is this candidate? Higher is better; may be negative.
+
+    Deterministic and purely local — it reads only the candidate's own name and
+    header, so two parsers scoring the same sheet always agree without needing
+    to see each other's work. This is a preference signal for ranking; it never
+    decides whether a table is a roster (``looks_like_site_roster`` does that)
+    and it never suppresses anything.
+    """
+    blob = f"{filename} {sheet_name}".lower()
+    score = 0.0
+    for marker, weight in _ROSTER_POSITIVE_MARKERS:
+        if marker in blob:
+            score += weight
+    for marker, weight in _ROSTER_NEGATIVE_MARKERS:
+        if marker in blob:
+            score += weight
+    if columns:
+        mapped = set(map_columns_to_fields(columns).values()) & ROSTER_SPECIFIC_FIELDS
+        score += min(len(mapped) * _ROSTER_FIELD_BONUS, _ROSTER_FIELD_BONUS_CAP)
+    return score
+
+
+def rank_roster_candidates(
+    candidates: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Rank roster candidates best-first. Returns EVERY candidate, never fewer.
+
+    Each candidate is a mapping that may carry ``filename``, ``sheet_name`` and
+    ``columns``; any other keys are passed through untouched so a caller can
+    carry its own payload. Each returned dict gains:
+
+    ``roster_score``     the raw preference score. This is the comparable
+                         quantity ACROSS calls — two workbooks ranked separately
+                         can still be compared on it.
+    ``roster_rank``      1 = best WITHIN this call. Dense ranking — tied scores
+                         share a rank and the next distinct score takes the next
+                         integer.
+    ``roster_preferred`` True for a rank-1 candidate whose score is not negative.
+                         A negative score means the candidate's own name argues
+                         against it being a roster ("Travel Cost", "Rate Card"),
+                         and winning a field of one such candidate does not make
+                         it a good roster — only the best of a bad set. It still
+                         ranks, and it still keeps every atom; it is simply not
+                         held out as the roster to prefer.
+
+    Results come back in the CALLER'S original order, so ranking a list twice —
+    or ranking a re-ordered list — produces the same per-candidate answer
+    (order-invariant and idempotent). Ties are resolved by score alone, never by
+    position, so no candidate is privileged for arriving first.
+    """
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for cand in candidates:
+        score = roster_preference_score(
+            filename=str(cand.get("filename") or ""),
+            sheet_name=str(cand.get("sheet_name") or ""),
+            columns=cand.get("columns") or (),
+        )
+        scored.append((score, cand))
+
+    distinct = sorted({s for s, _ in scored}, reverse=True)
+    rank_of = {s: i + 1 for i, s in enumerate(distinct)}
+
+    out: list[dict[str, Any]] = []
+    for score, cand in scored:
+        rank = rank_of[score]
+        merged = dict(cand)
+        merged["roster_score"] = score
+        merged["roster_rank"] = rank
+        merged["roster_preferred"] = rank == 1 and score >= 0
+        out.append(merged)
+    return out
+
+
 __all__ = [
     "ROSTER_SPECIFIC_FIELDS",
     "SiteRosterRow",
@@ -811,4 +1025,6 @@ __all__ = [
     "find_header_row",
     "looks_like_site_roster",
     "map_columns_to_fields",
+    "rank_roster_candidates",
+    "roster_preference_score",
 ]

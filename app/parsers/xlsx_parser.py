@@ -1950,6 +1950,10 @@ class XlsxParser(BaseParser):
             sheet_atoms = self._flag_hidden_source_atoms(sheet_atoms, rows, hr)
             atoms.extend(sheet_atoms)
             sheets.append({"name": sheet.title, "rows": rows})
+        # Roster preference: several sheets in one workbook can all pass the
+        # roster gate. Rank them so consumers can prefer the best one. Additive
+        # provenance only — no atom is dropped or reordered.
+        atoms = self._rank_roster_atoms(atoms)
         # Dedup identical UNANSWERED questionnaire questions (e.g. a blank
         # "Phone Number" field repeated in Origin + Destination sections) —
         # they carry the same training signal; keep the first.
@@ -1982,6 +1986,7 @@ class XlsxParser(BaseParser):
             sheet_name="csv",
             rows=rows,
         )
+        sheet_atoms = self._rank_roster_atoms(sheet_atoms)
         return sheet_atoms, [{"name": "csv", "rows": rows}], None
 
     def _build_structured_doc(
@@ -2112,6 +2117,7 @@ class XlsxParser(BaseParser):
                 extract_site_roster,
                 find_header_row,
                 looks_like_site_roster,
+                roster_preference_score,
             )
         except Exception:  # pragma: no cover
             return []
@@ -2162,6 +2168,14 @@ class XlsxParser(BaseParser):
             return []
         if not roster_rows:
             return []
+        # Preference SIGNAL, not a filter. Every roster sheet keeps every one of
+        # its atoms; this only records how site-roster-like the sheet is so a
+        # downstream consumer can prefer "Exhibit A - Retail Locations" over a
+        # travel-cost model that happens to carry an address column. The
+        # workbook-wide rank is stamped later by ``_rank_roster_atoms``.
+        roster_score = roster_preference_score(
+            filename=filename, sheet_name=sheet_name, columns=header_raw
+        )
         out: list[EvidenceAtom] = []
         for site_row in roster_rows:
             sid = (site_row.site_id or "").strip()
@@ -2199,6 +2213,7 @@ class XlsxParser(BaseParser):
                     "row": row_index,
                     "section_path": [sheet_name] if sheet_name else [],
                     "extraction": "xlsx_site_roster_v1",
+                    "roster_score": roster_score,
                 },
                 extraction_method="xlsx_site_roster_v1",
                 parser_version=self.parser_version,
@@ -2235,6 +2250,9 @@ class XlsxParser(BaseParser):
                         "city": site_row.city,
                         "state": site_row.state,
                         "city_state": site_row.city_state,
+                        # Organisational territory, NOT geography — carried so
+                        # the column survives, never folded into city/state.
+                        "region": site_row.region,
                         "zip": site_row.zip,
                         "sqft": site_row.sqft,
                         "occupancy": site_row.occupancy,
@@ -2263,6 +2281,48 @@ class XlsxParser(BaseParser):
                 )
             )
         return out
+
+    @staticmethod
+    def _rank_roster_atoms(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+        """Stamp the workbook-wide roster ranking onto site-roster atoms.
+
+        A workbook routinely carries several sheets that all pass the roster
+        gate (Clayton's CALC has TRAVEL plus three rate sheets). Each already
+        carries its own ``roster_score``; this turns those scores into a dense
+        rank and marks the winner, so a consumer can prefer the best roster.
+
+        THIS IS A RANKING, NOT A FILTER. Every atom is returned, in its original
+        order, with its value untouched — only ``locator["roster_rank"]`` and
+        ``locator["roster_preferred"]`` are added. Nothing is dropped, demoted,
+        or hidden; a rank-3 sheet is as present in the envelope as rank 1.
+        """
+        scores: dict[tuple[str, str], float] = {}
+        for atom in atoms:
+            for ref in atom.source_refs:
+                score = (ref.locator or {}).get("roster_score")
+                if score is None:
+                    continue
+                scores[(ref.filename, str((ref.locator or {}).get("sheet") or ""))] = (
+                    float(score)
+                )
+        if not scores:
+            return atoms
+        distinct = sorted(set(scores.values()), reverse=True)
+        rank_of = {s: i + 1 for i, s in enumerate(distinct)}
+        for atom in atoms:
+            for ref in atom.source_refs:
+                loc = ref.locator or {}
+                if loc.get("roster_score") is None:
+                    continue
+                score = float(loc["roster_score"])
+                rank = rank_of[score]
+                loc["roster_rank"] = rank
+                # Rank is within THIS workbook; ``roster_score`` is what a
+                # consumer compares across workbooks. A negative score means the
+                # sheet's own name argues it is a cost model rather than a
+                # roster, so winning a field of one does not make it preferred.
+                loc["roster_preferred"] = rank == 1 and score >= 0
+        return atoms
 
     # Sheets the classifier routes to COMMERCIAL (rate cards, master
     # catalogs, deal-financials) can be large pricebooks; cap the number
