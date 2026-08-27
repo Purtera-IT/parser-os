@@ -8,9 +8,10 @@ Standalone tool (NOT wired into the pipeline or FE). Ranks image candidates by
     with quantities is lost scope,
   * OCR density — the more real text an image carries, the less likely "skip"
     is the right verdict.
-  * Fired skip-vetoes (``relation='pdf_image_veto'``) — the binary head
-    disagreed with a vlm/store skip at ≥0.88; these float to the top because
-    the disagreement is already evidence of a possible wrong-skip.
+  * Fired skip-vetoes (``relation='pdf_image_veto'``), band-aware — the
+    binary head disagreed with a vlm/store skip at >=0.88 (band=hard) or sat
+    in its uncertain zone 0.70-0.88 (band=soft, active-learning harvest).
+    Hard floats above soft; both float above ordinary candidates.
 
 Inputs:
   * a harvest JSONL from tools/harvest_image_silver.py (--candidates), and/or
@@ -77,7 +78,7 @@ def ocr_token_count(text: str) -> int:
 
 def culprit_score(
     *, pm_hit_count: int, quantity_count: int, tokens: int,
-    logged_skip: bool = False, veto_fired: bool = False,
+    logged_skip: bool = False, veto_fired: bool = False, veto_band: str = "",
 ) -> float:
     """Rank key: higher = review sooner.
 
@@ -85,7 +86,10 @@ def culprit_score(
     OCR density fills in (up to 2.0 at ~100 tokens). A row the pipeline
     actually LOGGED as "skip" gets a flat bonus: it is not hypothetical — that
     verdict already fired on a real compile. A fired skip-veto gets a larger
-    bonus on top (the head already flagged a likely wrong-skip).
+    bonus on top, BAND-AWARE: a HARD veto (confident disagreement, +4.0)
+    outranks a SOFT veto (the head's uncertain zone — active-learning harvest,
+    +2.0), and both outrank plain logged skips and harvest candidates. Rows
+    without a band (pre-band vetoes) count as hard.
     """
     score = 3.0 * pm_hit_count
     score += 1.5 * min(quantity_count, 4)
@@ -93,7 +97,7 @@ def culprit_score(
     if logged_skip:
         score += 2.5
     if veto_fired:
-        score += 4.0
+        score += 2.0 if veto_band == "soft" else 4.0
     return round(score, 3)
 
 
@@ -106,6 +110,7 @@ def score_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     qts = quantity_signals(feat)
     toks = ocr_token_count(str(cand.get("ocr_snippet") or feat))
     veto_fired = bool(cand.get("veto_fired")) or str(cand.get("source") or "") == "veto"
+    veto_band = str(cand.get("veto_band") or "") if veto_fired else ""
     # Veto rows always imply the gate skipped (that's what was vetoed).
     logged_skip = str(cand.get("logged_label") or "") == "skip" or veto_fired
     return {
@@ -116,9 +121,10 @@ def score_candidate(cand: dict[str, Any]) -> dict[str, Any]:
         "quantity_count": len(qts),
         "ocr_tokens": toks,
         "veto_fired": veto_fired,
+        "veto_band": veto_band,
         "culprit_score": culprit_score(
             pm_hit_count=len(hits), quantity_count=len(qts), tokens=toks,
-            logged_skip=logged_skip, veto_fired=veto_fired,
+            logged_skip=logged_skip, veto_fired=veto_fired, veto_band=veto_band,
         ),
     }
 
@@ -156,7 +162,7 @@ def _row_from_training(
     *, rid: str, label: str, teacher: str, conf: Any, raw: str,
     prov: str, ts: str, deal_id: str, source: str, veto_fired: bool,
 ) -> dict[str, Any]:
-    pdf = page = region = ""
+    pdf = page = region = veto_band = crop_ref = ""
     if prov:
         try:
             p = json.loads(prov) if isinstance(prov, str) and prov.startswith("{") else {}
@@ -164,8 +170,12 @@ def _row_from_training(
                 pdf = str(p.get("pdf") or "")
                 page = str(p.get("page") if p.get("page") is not None else "")
                 region = str(p.get("region_ref") or p.get("image_ref") or "")
+                veto_band = str(p.get("band") or "")
+                crop_ref = str(p.get("crop_ref") or "")
         except Exception:
             pass
+    if veto_fired and not veto_band:
+        veto_band = "hard"  # pre-band veto rows were all hard by construction
     return {
         "source": source,
         "deal_id": deal_id or "",
@@ -181,6 +191,8 @@ def _row_from_training(
         "logged_at": ts,
         "logged_provenance": prov or "",
         "veto_fired": veto_fired,
+        "veto_band": veto_band if veto_fired else "",
+        "crop_ref": crop_ref,
     }
 
 
@@ -188,7 +200,10 @@ def load_training_log_rows(db_path: Path) -> list[dict[str, Any]]:
     """pdf_image_kind + pdf_image_veto rows from the TrainingLog.
 
     Kind rows: all labels; 'skip' gets the logged-skip score bonus.
-    Veto rows: always top-tier — the head already flagged a wrong-skip suspect.
+    Veto rows: top-tier, band-aware — hard vetoes (confident disagreement)
+    above soft vetoes (uncertain-zone harvest), both above plain skips.
+    ``crop_ref`` (blob path of the persisted disputed crop) is carried into
+    the CSV when the pipeline stamped one.
     """
     rows: list[dict[str, Any]] = []
     conn = sqlite3.connect(db_path)
@@ -216,7 +231,8 @@ def load_training_log_rows(db_path: Path) -> list[dict[str, Any]]:
 # ── output ──────────────────────────────────────────────────────────
 
 _QUEUE_FIELDS = [
-    "rank", "culprit_score", "source", "logged_label", "veto_fired", "deal_id",
+    "rank", "culprit_score", "source", "logged_label", "veto_fired",
+    "veto_band", "crop_ref", "deal_id",
     "pdf", "page", "image_ref", "caption", "ocr_snippet", "feature_text",
     "pm_term_kinds", "pm_hit_count", "quantity_signals", "quantity_count",
     "ocr_tokens", "verdict",
@@ -234,7 +250,12 @@ _HEADER_DOC = (
     "#   screenshot  = software/UI capture (configs, consoles, tickets)\n"
     "# Leave verdict empty if undecidable from the text alone (open the image).\n"
     "# rows with logged_label=skip were ACTUALLY skipped by the pipeline gate.\n"
-    "# source=veto / veto_fired=True: skip-veto head disagreed — review first.\n"
+    "# source=veto / veto_fired=1: skip-veto head flagged the skip — review first.\n"
+    "#   veto_band=hard: head confidently disagreed (possible lost evidence).\n"
+    "#   veto_band=soft: head was UNCERTAIN (0.70-0.88) — active-learning\n"
+    "#   harvest; your grade here teaches the most per label.\n"
+    "# crop_ref (when set) = blob path of the persisted crop pixels:\n"
+    "#   container orbitbrief-artifacts, deals/<deal>/orbitbrief/disputed_crops/.\n"
 )
 
 

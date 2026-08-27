@@ -546,6 +546,7 @@ def test_veto_abstain_does_not_extend_verdict(monkeypatch, tmp_path):
     monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
                         '{"image_kind": "logo", "has_text": false, "meaningful": false}')
     monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: None)
+    monkeypatch.setattr(pdf_image_veto, "soft_veto", lambda *a, **k: None)
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
@@ -553,9 +554,225 @@ def test_veto_abstain_does_not_extend_verdict(monkeypatch, tmp_path):
         assert m.value["gate_verdict"]["kind"] == "logo"
         assert m.value["gate_verdict"]["via"] == "vlm_gate"
         assert "veto" not in m.value["gate_verdict"]
+        assert "veto_soft" not in m.value["gate_verdict"]
         assert log.count(relation="pdf_image_veto") == 0
     finally:
         _clear_log()
+
+
+def test_hard_veto_row_carries_band_hard(monkeypatch, tmp_path):
+    """Hard vetoes get provenance band='hard' (soft rows must be filterable)."""
+    from app.core import pdf_image_veto
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
+    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: 0.93)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert row.provenance["band"] == "hard"
+        assert "crop_ref" not in row.provenance  # blob gate off -> no upload
+    finally:
+        _clear_log()
+
+
+# ── soft veto band: harvest signal only, never a PM card ────────────
+
+
+def _soft_setup(monkeypatch, *, soft=0.75, hard=None):
+    from app.core import pdf_image_veto
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets")
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
+    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: hard)
+    monkeypatch.setattr(pdf_image_veto, "soft_veto", lambda *a, **k: soft)
+
+
+def test_soft_veto_stamps_veto_soft_never_veto(monkeypatch, tmp_path):
+    """Soft band -> gate_verdict.veto_soft + band='soft' row; the 'veto' key
+    (core's ONLY culprit-card trigger) is never set."""
+    _soft_setup(monkeypatch, soft=0.75)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["veto_soft"] == {"meaningful_prob": 0.75}
+        assert "veto" not in gv  # soft must NEVER become a PM card
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert row.id.startswith("trn_veto_")
+        assert row.teacher == "veto"
+        assert row.confidence == 0.75
+        assert row.provenance["band"] == "soft"
+        assert row.provenance["via"] == "vlm_gate"
+    finally:
+        _clear_log()
+
+
+def test_soft_not_checked_when_hard_fires(monkeypatch, tmp_path):
+    """Hard band wins; soft_veto is only consulted when the hard veto abstains."""
+    from app.core import pdf_image_veto
+    _soft_setup(monkeypatch, hard=0.93)
+
+    def _boom(*a, **k):
+        raise AssertionError("soft_veto must not be called when hard fired")
+
+    monkeypatch.setattr(pdf_image_veto, "soft_veto", _boom)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["veto"] == {"meaningful_prob": 0.93, "model": "pdf_image_veto"}
+        assert "veto_soft" not in gv
+    finally:
+        _clear_log()
+
+
+def test_soft_veto_failure_means_no_soft_veto(monkeypatch, tmp_path):
+    """Guess-free: soft_veto raising -> plain skip receipt, nothing else."""
+    from app.core import pdf_image_veto
+    _soft_setup(monkeypatch, soft=None)
+
+    def _boom(*a, **k):
+        raise RuntimeError("soft head died")
+
+    monkeypatch.setattr(pdf_image_veto, "soft_veto", _boom)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert "veto" not in gv and "veto_soft" not in gv
+        assert log.count(relation="pdf_image_veto") == 0
+    finally:
+        _clear_log()
+
+
+# ── disputed-crop persistence: gated best-effort + liveness receipt ─
+
+
+class _FakeContainer:
+    def __init__(self, fail=None):
+        self.calls = []
+        self.fail = fail
+
+    def upload_blob(self, *, name, data, overwrite):
+        if self.fail is not None:
+            raise self.fail
+        self.calls.append((name, bytes(data), overwrite))
+
+
+def _blob_on(monkeypatch, fake):
+    monkeypatch.setenv("SOWSMITH_FEEDBACK_BLOB", "1")
+    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+    monkeypatch.setattr(piv, "_crop_container_client", lambda: fake)
+
+
+def _sha16(m):
+    import hashlib
+    return hashlib.sha256(open(m.value["saved_path"], "rb").read()).hexdigest()[:16]
+
+
+def test_hard_veto_uploads_crop_and_stamps_ref(monkeypatch, tmp_path):
+    from app.core import pdf_image_veto
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    monkeypatch.setattr(pdf_image_veto, "soft_veto", lambda *a, **k: None)
+    fake = _FakeContainer()
+    _blob_on(monkeypatch, fake)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        expected = f"deals/proj1/orbitbrief/disputed_crops/{_sha16(m)}.png"
+        gv = m.value["gate_verdict"]
+        assert gv["crop_ref"] == expected
+        assert "crop_ref_error" not in gv
+        [(name, data, overwrite)] = fake.calls
+        assert name == expected
+        assert data == open(m.value["saved_path"], "rb").read()  # the pixels
+        assert overwrite is True
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert row.provenance["crop_ref"] == expected
+    finally:
+        _clear_log()
+
+
+def test_soft_veto_uploads_crop_too(monkeypatch, tmp_path):
+    """Soft disputes persist pixels as well — the review queue needs to see them."""
+    _soft_setup(monkeypatch, soft=0.75)
+    fake = _FakeContainer()
+    _blob_on(monkeypatch, fake)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        expected = f"deals/proj1/orbitbrief/disputed_crops/{_sha16(m)}.png"
+        assert m.value["gate_verdict"]["crop_ref"] == expected
+        assert len(fake.calls) == 1
+    finally:
+        _clear_log()
+
+
+def test_crop_upload_failure_emits_liveness_receipt(monkeypatch, tmp_path):
+    """Doctrine: a dead uploader must be OBSERVABLE — failure stamps the
+    exception class as crop_ref_error, never silence."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    fake = _FakeContainer(fail=ConnectionError("blob down"))
+    _blob_on(monkeypatch, fake)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["crop_ref_error"] == "ConnectionError"
+        assert "crop_ref" not in gv
+        assert gv["veto"]["meaningful_prob"] == 0.93  # veto still recorded
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert "crop_ref" not in row.provenance
+    finally:
+        _clear_log()
+
+
+def test_crop_upload_gate_off_is_deliberate_silence(monkeypatch, tmp_path):
+    """SOWSMITH_FEEDBACK_BLOB unset = configured OFF: no upload attempt, no
+    receipt (a config choice is not a dead uploader)."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    monkeypatch.delenv("SOWSMITH_FEEDBACK_BLOB", raising=False)
+
+    def _boom():
+        raise AssertionError("client must not be constructed when gated off")
+
+    monkeypatch.setattr(piv, "_crop_container_client", _boom)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert "crop_ref" not in gv and "crop_ref_error" not in gv
+        assert gv["veto"]["meaningful_prob"] == 0.93
+    finally:
+        _clear_log()
+
+
+def test_undisputed_skip_never_uploads(monkeypatch, tmp_path):
+    """Only DISPUTED images (a fired veto) persist crops — never every image."""
+    _soft_setup(monkeypatch, hard=None, soft=None)
+    fake = _FakeContainer()
+    _blob_on(monkeypatch, fake)
+    m = _marker(tmp_path)
+    assert piv.process_image_markers([m]) == []
+    assert fake.calls == []
+    gv = m.value["gate_verdict"]
+    assert "crop_ref" not in gv and "crop_ref_error" not in gv
 
 
 def test_skip_stamp_includes_ocr_preview(monkeypatch, tmp_path):
