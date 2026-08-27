@@ -143,12 +143,57 @@ def decide_site_facility_label(atom: Any) -> SiteFacilityDecision:
 
 
 def annotate_site_facility_labels(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
-    """Stamp ``facility_name`` on physical_site atoms from the trainable head seam."""
+    """Stamp ``facility_name`` on physical_site atoms from the trainable head seam.
+
+    The label head decides *which* string names the site; it does not
+    decide whether that string reads. ``BUILDING-EIGHT-HUNDRED-800``
+    round-trips into "building eight hundred 800" and the head approves it
+    as ``keep_facility`` — correctly, because it is the facility's name;
+    it is just unreadable. :mod:`app.core.site_naming` does the reading
+    pass afterwards, over the whole deal at once so that names colliding
+    across two rows are visible, and stamps only names its evidence
+    supports.
+    """
+    from app.core.site_naming import (
+        SITE_NAME_BARE_IDENTIFIER,
+        SITE_NAME_DUPLICATE,
+        resolve_site_names,
+    )
+
+    site_atoms = [a for a in atoms if _atom_type_str(a) == "physical_site"]
+    decisions = {id(a): decide_site_facility_label(a) for a in site_atoms}
+
+    # Deal-wide naming pass. Keyed on the atom's identity rather than its
+    # site id, because two atoms can carry the same id and each still
+    # needs its own stamp.
+    named: dict[int, Any] = {}
+    entries = []
+    for atom in site_atoms:
+        val = _atom_value(atom)
+        entries.append({
+            "site_id": str(val.get("id") or val.get("site_id") or id(atom)),
+            "name": decisions[id(atom)].facility_name,
+            "source_text": str(getattr(atom, "raw_text", "") or ""),
+            "city": str(val.get("city") or ""),
+        })
+    try:
+        resolved = resolve_site_names(entries)
+        for atom, entry in zip(site_atoms, entries):
+            got = resolved.get(entry["site_id"])
+            if got is not None and got.name:
+                named[id(atom)] = got
+    except Exception:
+        named = {}
+
     n = 0
-    for atom in atoms:
-        if _atom_type_str(atom) != "physical_site":
-            continue
-        decision = decide_site_facility_label(atom)
+    for atom in site_atoms:
+        decision = decisions[id(atom)]
+        readable = named.get(id(atom))
+        if readable is not None:
+            decision = SiteFacilityDecision(
+                decision.label, readable.name, decision.source,
+                decision.confidence, decision.relation, decision.route_trainable,
+            )
         val = dict(_atom_value(atom))
         corpus = _facility_corpus(atom)
         if decision.route_trainable and corpus:
@@ -183,6 +228,13 @@ def annotate_site_facility_labels(atoms: list[Any], *, project_id: str = "") -> 
             flags.append("facility_label_neural_head")
         elif decision.route_trainable and "facility_label_training_row" not in flags:
             flags.append("facility_label_training_row")
+        # A site the evidence could not name, and a name two rows share,
+        # both stay visible to review instead of shipping as a number or
+        # as a silent collision.
+        for naming_flag in (readable.flags if readable is not None else ()):
+            if naming_flag in (SITE_NAME_BARE_IDENTIFIER, SITE_NAME_DUPLICATE):
+                if naming_flag not in flags:
+                    flags.append(naming_flag)
         atom.review_flags = flags
         n += 1
     return atoms, n
