@@ -103,12 +103,15 @@ ASSUMPTION_PATTERNS = [r"\bassum(?:e|ption|ing)\b"]
 def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, Any]:
     from app.core.address_parse import enrich_location_fields
 
+    # ``site_row.city`` / ``.state`` already carry the GUESS-FREE split of any
+    # combined City/State cell (see site_roster_extractor). Re-feeding the raw
+    # ``city_state`` here would re-open the lenient prose parse this path
+    # deliberately abstains from, so it is not passed.
     loc = enrich_location_fields(
         street_address=site_row.street_address,
         city=site_row.city,
         state=site_row.state,
         zip_code=site_row.zip,
-        city_state=site_row.city_state,
         facility_name=site_row.facility_name,
     )
     return {
@@ -130,6 +133,8 @@ def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, A
         "city": loc["city"] or site_row.city,
         "state": loc["state"] or site_row.state,
         "city_state": site_row.city_state,
+        # Organisational territory, NOT geography.
+        "region": getattr(site_row, "region", None),
         "zip": loc["zip"] or site_row.zip,
         "notes": site_row.notes,
         "extras": dict(site_row.extra_fields),
@@ -592,6 +597,9 @@ class DocxParser(BaseParser):
                 ("phone", site_row.phone),
                 ("email", site_row.email),
                 ("city_state", site_row.city_state),
+                # Region maps to its own field now, so it no longer reaches the
+                # extras loop below — render it here or the column goes unseen.
+                ("region", getattr(site_row, "region", None)),
                 ("zip", site_row.zip),
                 ("sqft", site_row.sqft),
                 ("users", site_row.occupancy),

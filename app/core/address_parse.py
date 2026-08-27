@@ -20,6 +20,28 @@ US_STATES: frozenset[str] = frozenset({
     "DC",
 })
 
+#: Full state names -> USPS abbreviation. The abbreviation vocabulary above is
+#: the authority; this only lets a spelled-out state ("Nashville, Tennessee")
+#: be recognised as unambiguously a state. Keys are lower-cased.
+US_STATE_NAMES: dict[str, str] = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT",
+    "delaware": "DE", "florida": "FL", "georgia": "GA", "hawaii": "HI",
+    "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME",
+    "maryland": "MD", "massachusetts": "MA", "michigan": "MI",
+    "minnesota": "MN", "mississippi": "MS", "missouri": "MO",
+    "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC", "north dakota": "ND",
+    "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA",
+    "rhode island": "RI", "south carolina": "SC", "south dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT",
+    "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
+    "district of columbia": "DC", "washington dc": "DC",
+}
+
 _STREET_SUFFIXES = frozenset({
     "st", "street", "ave", "avenue", "blvd", "boulevard", "rd", "road",
     "dr", "drive", "ln", "lane", "ct", "court", "pl", "place", "way",
@@ -302,6 +324,60 @@ def parse_city_state_field(city_state: str | None) -> tuple[str | None, str | No
     return None, None
 
 
+def state_code(token: str | None) -> str | None:
+    """``TN`` / ``tn`` / ``Tennessee`` -> ``"TN"``. Anything else -> None."""
+    s = _clean(token)
+    if not s:
+        return None
+    if len(s) == 2 and s.upper() in US_STATES:
+        return s.upper()
+    return US_STATE_NAMES.get(s.lower().rstrip("."))
+
+
+def split_city_state_strict(city_state: str | None) -> tuple[str | None, str | None]:
+    """Split a combined ``City/State`` cell — ONLY when the shape is unambiguous.
+
+    Guess-free counterpart to :func:`parse_city_state_field`. That function is
+    lenient by design (a bare ``"Nashville"`` comes back as a city), which is
+    right for prose but wrong for a roster column: a roster that says only
+    ``"Nashville"`` has told us a city *label*, not a verified city/state pair,
+    and a roster that says ``"Springfield, Springfield"`` has told us nothing at
+    all. Both abstain here rather than guess.
+
+    Splits exactly two shapes::
+
+        "<name>, <2-letter state>"   -> ("<name>", "ST")
+        "<name>, <full state name>"  -> ("<name>", "ST")
+
+    ``/`` is accepted in place of the comma (``"Seattle / WA"``). A bare state
+    ("TN", "Tennessee") yields ``(None, "TN")`` — that IS unambiguous, it simply
+    names no city. Everything else — no separator, more than one separator, a
+    right-hand side that is not a state, a left-hand side that reads as a street
+    fragment — returns ``(None, None)``.
+    """
+    s = _clean(city_state)
+    if not s:
+        return None, None
+
+    # A cell that is nothing but a state names the state and no city.
+    bare = state_code(s)
+    if bare:
+        return None, bare
+
+    parts = [p.strip() for p in re.split(r"\s*[,/]\s*", s)]
+    if len(parts) != 2:
+        return None, None  # "Nashville" / "Nashville, TN, USA" -> abstain
+    city_raw, state_raw = parts
+    if not city_raw or not state_raw:
+        return None, None
+    state = state_code(state_raw)
+    if not state:
+        return None, None  # "Springfield, Springfield" -> abstain
+    if not _city_looks_valid(city_raw):
+        return None, None
+    return _clean(city_raw), state
+
+
 def enrich_location_fields(
     *,
     street_address: str | None = None,
@@ -436,10 +512,13 @@ def find_us_addresses_in_text(text: str) -> list[ParsedAddress]:
 __all__ = [
     "ParsedAddress",
     "US_STATES",
+    "US_STATE_NAMES",
     "enrich_location_fields",
     "find_us_addresses_in_text",
     "normalized_address_key",
     "parse_city_state_field",
     "parse_us_address_line",
+    "split_city_state_strict",
+    "state_code",
 ]
 
