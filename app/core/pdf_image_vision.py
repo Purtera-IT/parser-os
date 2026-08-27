@@ -719,9 +719,70 @@ def _stamp_skip_verdict(
         pass
 
 
+# ── disputed-crop persistence (best-effort, liveness-receipted) ─────
+# Only DISPUTED images (a fired hard or soft veto) ever upload — never the
+# whole image stream. Same gate as the feedback blob mirror
+# (SOWSMITH_FEEDBACK_BLOB + AZURE_STORAGE_CONNECTION_STRING) so one switch
+# governs all best-effort blob traffic; the client pattern is replicated
+# locally on purpose (this module must not import the feedback/training
+# mirrors). Unlike those mirrors, a failure here is NOT silent: the doctrine
+# is that best-effort infra must emit a liveness receipt, so an upload that
+# dies stamps ``gate_verdict['crop_ref_error']`` instead of nothing.
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _crop_blob_enabled() -> bool:
+    """Deliberately OFF (unconfigured) -> no upload and no receipt; that is a
+    config choice, not a dead uploader."""
+    if os.environ.get("SOWSMITH_FEEDBACK_BLOB", "").strip().lower() not in _TRUTHY:
+        return False
+    return bool(os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip())
+
+
+def _crop_container_client():
+    """Blob ContainerClient for disputed crops. Raises on failure — the caller
+    turns the exception class into the liveness receipt."""
+    from azure.storage.blob import BlobServiceClient
+    conn = os.environ["AZURE_STORAGE_CONNECTION_STRING"].strip()
+    container = os.environ.get(
+        "SOWSMITH_FEEDBACK_BLOB_CONTAINER", "orbitbrief-artifacts"
+    ).strip() or "orbitbrief-artifacts"
+    return BlobServiceClient.from_connection_string(conn).get_container_client(container)
+
+
+def _upload_disputed_crop(
+    crop: bytes, attribution: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    """Persist one disputed crop's pixels to blob so a human can SEE what the
+    gate skipped. Returns ``(crop_ref, error_class)``:
+
+      * ``(path, None)``  — uploaded; stamp ``crop_ref``.
+      * ``(None, name)``  — the uploader is alive-but-failing; stamp
+        ``crop_ref_error`` so a dead path shows up in envelopes (never a
+        silent zero).
+      * ``(None, None)``  — gate off, or nothing attributable to upload.
+    """
+    if not _crop_blob_enabled():
+        return None, None
+    att = attribution or {}
+    deal_id = str(att.get("deal_id") or "")
+    image_sha16 = str(att.get("image_sha16") or "")
+    if not crop or not deal_id or not image_sha16:
+        return None, None  # unattributable — guess-free, do not invent a path
+    path = f"deals/{deal_id}/orbitbrief/disputed_crops/{image_sha16}.png"
+    try:
+        cc = _crop_container_client()
+        cc.upload_blob(name=path, data=crop, overwrite=True)
+        return path, None
+    except Exception as exc:
+        return None, type(exc).__name__
+
+
 def _log_veto_row(
     caption: str, ocr: str, kind: str, *, via: str, prob: float,
     attribution: dict[str, Any] | None,
+    band: str = "hard", crop_ref: str | None = None,
 ) -> None:
     """Review-queue feed row for a fired skip veto. Never raises.
 
@@ -736,6 +797,14 @@ def _log_veto_row(
     Same honesty rules as :func:`_log_gate_silver`: content-hash id
     (``trn_veto_<sha16>``) so recompiles upsert instead of duplicating, and
     full deal/pdf/page/region attribution for the queue.
+
+    ``band`` records which zone fired: ``'hard'`` (confident disagreement,
+    also stamped as ``gate_verdict.veto``) or ``'soft'`` (uncertain zone —
+    active-learning harvest only, never a PM card). The id hash deliberately
+    excludes the band: one disputed image is ONE queue row, and a recompile
+    whose prob drifts across the bar updates that row in place. ``crop_ref``
+    (when the disputed crop uploaded) rides in provenance so the queue can
+    link the pixels.
     """
     try:
         from app.core.pdf_image_gate import gate_feature_text
@@ -752,6 +821,19 @@ def _log_veto_row(
             f"pdf_image_veto|meaningful|{feat}|{pdf_name}|{region_ref}|{image_sha16}"
             .encode("utf-8")
         ).hexdigest()[:16]
+        provenance: dict[str, Any] = {
+            "stage": "pdf_image_veto",
+            "via": via,
+            "band": band,
+            "gate_kind": kind,
+            "pdf": pdf_name,
+            "page": att.get("page", ""),
+            "region_ref": region_ref,
+            "image_sha16": image_sha16,
+            "model": "pdf_image_veto",
+        }
+        if crop_ref:
+            provenance["crop_ref"] = crop_ref
         log_rows([TrainingRow(
             id=row_id,
             relation="pdf_image_veto",
@@ -763,16 +845,7 @@ def _log_veto_row(
             confidence=prob,
             deal_id=deal_id,
             project_id=str(att.get("project_id") or deal_id),
-            provenance={
-                "stage": "pdf_image_veto",
-                "via": via,
-                "gate_kind": kind,
-                "pdf": pdf_name,
-                "page": att.get("page", ""),
-                "region_ref": region_ref,
-                "image_sha16": image_sha16,
-                "model": "pdf_image_veto",
-            },
+            provenance=provenance,
         )])
     except Exception:
         pass
@@ -786,11 +859,24 @@ def _maybe_veto_skip(
     """Second opinion on a skip verdict — RECORDED ONLY, routing untouched.
 
     When the vlm/store gate rules skip and the trained veto head confidently
-    says meaningful, the disagreement is (a) stamped into the marker's
-    ``value['gate_verdict']['veto']`` and (b) logged as a
-    ``relation='pdf_image_veto'`` row (see :func:`_log_veto_row`). The image
-    still skips either way — the veto is a flag for the review queue, never a
-    re-route.
+    says meaningful (HARD band, prob >= hard bar), the disagreement is
+    (a) stamped into the marker's ``value['gate_verdict']['veto']`` and
+    (b) logged as a ``relation='pdf_image_veto'`` row with provenance
+    ``band='hard'`` (see :func:`_log_veto_row`). The image still skips either
+    way — the veto is a flag for the review queue, never a re-route.
+
+    SOFT band (soft bar <= prob < hard bar): the head is UNCERTAIN — an
+    active-learning harvest signal, not a disagreement. Stamped as
+    ``gate_verdict['veto_soft']`` and logged with ``band='soft'``; the
+    ``'veto'`` key is NEVER set for a soft veto, so Orbitbrief-Core (which
+    builds PM culprit cards only from ``gate_verdict.veto``) never bothers a
+    PM with the model's own uncertainty — it feeds only the review queue.
+
+    Either band makes the image DISPUTED: its crop pixels are persisted to
+    blob (best-effort, gated — see :func:`_upload_disputed_crop`) so a human
+    grading the queue can see the image, not just its OCR. Success stamps
+    ``gate_verdict['crop_ref']``; an upload failure stamps
+    ``gate_verdict['crop_ref_error']`` (liveness receipt, never silence).
 
     cpu_gate verdicts are NEVER veto-checked: once the distilled gate serves,
     the veto second-guessing its sibling student (trained on the same feature
@@ -805,15 +891,27 @@ def _maybe_veto_skip(
         if ocr is None:
             ocr = _ocr_crop(saved_path, crop)  # cheap chain only, same as the gate
         prob = pdf_image_veto.veto(caption, ocr or "")
+        band = "hard"
+        if prob is None:
+            prob = pdf_image_veto.soft_veto(caption, ocr or "")
+            band = "soft"
         if prob is None:
             return
+        crop_ref, crop_err = _upload_disputed_crop(crop, attribution)
         val = getattr(marker, "value", None)
         if isinstance(val, dict) and isinstance(val.get("gate_verdict"), dict):
-            val["gate_verdict"]["veto"] = {
-                "meaningful_prob": prob, "model": "pdf_image_veto",
-            }
+            gv = val["gate_verdict"]
+            if band == "hard":
+                gv["veto"] = {"meaningful_prob": prob, "model": "pdf_image_veto"}
+            else:
+                gv["veto_soft"] = {"meaningful_prob": prob}
+            if crop_ref:
+                gv["crop_ref"] = crop_ref
+            elif crop_err:
+                gv["crop_ref_error"] = crop_err
         _log_veto_row(
-            caption, ocr or "", kind, via=via, prob=prob, attribution=attribution,
+            caption, ocr or "", kind, via=via, prob=prob,
+            attribution=attribution, band=band, crop_ref=crop_ref,
         )
     except Exception:
         pass

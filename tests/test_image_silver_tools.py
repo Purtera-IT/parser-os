@@ -218,6 +218,30 @@ def test_rank_queue_veto_outranks_logged_skip():
     assert ranked[0]["culprit_score"] > ranked[1]["culprit_score"]
 
 
+def test_culprit_score_soft_band_between_hard_and_plain_skip():
+    plain = culprit_score(pm_hit_count=1, quantity_count=1, tokens=30, logged_skip=True)
+    soft = culprit_score(pm_hit_count=1, quantity_count=1, tokens=30,
+                         logged_skip=True, veto_fired=True, veto_band="soft")
+    hard = culprit_score(pm_hit_count=1, quantity_count=1, tokens=30,
+                         logged_skip=True, veto_fired=True, veto_band="hard")
+    bandless = culprit_score(pm_hit_count=1, quantity_count=1, tokens=30,
+                             logged_skip=True, veto_fired=True)
+    assert hard > soft > plain
+    assert bandless == hard  # pre-band veto rows count as hard
+
+
+def test_rank_queue_hard_above_soft_above_harvest():
+    feat = "ocr: 18 Total Data Outlets Comm Cabinet"
+    harvest = {"feature_text": feat, "ocr_snippet": feat, "logged_label": ""}
+    soft = {"feature_text": feat, "ocr_snippet": feat, "logged_label": "skip",
+            "source": "veto", "veto_fired": True, "veto_band": "soft"}
+    hard = {"feature_text": feat, "ocr_snippet": feat, "logged_label": "skip",
+            "source": "veto", "veto_fired": True, "veto_band": "hard"}
+    ranked = rank_queue([harvest, soft, hard])
+    assert [r.get("veto_band", "") for r in ranked] == ["hard", "soft", ""]
+    assert ranked[0]["culprit_score"] > ranked[1]["culprit_score"] > ranked[2]["culprit_score"]
+
+
 def test_load_training_log_includes_veto_rows(tmp_path):
     import sqlite3
     from tools.build_image_review_queue import load_training_log_rows
@@ -249,6 +273,60 @@ def test_load_training_log_includes_veto_rows(tmp_path):
     assert veto["pdf"] == "a.pdf"
     assert veto["page"] == "7"
     assert veto["deal_id"] == "d2"
+
+def test_load_training_log_band_and_crop_ref(tmp_path):
+    """band + crop_ref ride from provenance into the queue row; legacy veto
+    rows without a band default to hard; crop_ref lands in the CSV."""
+    import csv
+    import sqlite3
+    from tools.build_image_review_queue import (
+        load_training_log_rows,
+        rank_queue,
+        write_queue,
+    )
+    db = tmp_path / "t.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE training_rows ("
+        "id TEXT, relation TEXT, label TEXT, teacher TEXT, confidence REAL, "
+        "raw_text TEXT, provenance TEXT, deal_id TEXT, created_at REAL)"
+    )
+    con.executemany(
+        "INSERT INTO training_rows VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            ("trn_veto_h", "pdf_image_veto", "meaningful", "veto", 0.93,
+             "ocr: 18 Total Data Outlets",
+             '{"band":"hard","crop_ref":"deals/d1/orbitbrief/disputed_crops/aa.png"}',
+             "d1", 1.0),
+            ("trn_veto_s", "pdf_image_veto", "meaningful", "veto", 0.75,
+             "ocr: 18 Total Data Outlets",
+             '{"band":"soft"}', "d1", 2.0),
+            ("trn_veto_legacy", "pdf_image_veto", "meaningful", "veto", 0.91,
+             "ocr: 18 Total Data Outlets", "{}", "d1", 3.0),
+        ],
+    )
+    con.commit()
+    con.close()
+    rows = load_training_log_rows(db)
+    by_id = {r["image_ref"]: r for r in rows}
+    assert by_id["trn_veto_h"]["veto_band"] == "hard"
+    assert by_id["trn_veto_h"]["crop_ref"] == "deals/d1/orbitbrief/disputed_crops/aa.png"
+    assert by_id["trn_veto_s"]["veto_band"] == "soft"
+    assert by_id["trn_veto_s"]["crop_ref"] == ""
+    assert by_id["trn_veto_legacy"]["veto_band"] == "hard"  # pre-band = hard
+
+    ranked = rank_queue(rows)
+    assert ranked[0]["veto_band"] == "hard"          # hard rows first
+    assert ranked[-1]["veto_band"] == "soft"         # soft last of the vetoes
+
+    out = tmp_path / "q.csv"
+    write_queue(ranked, out)
+    with out.open(encoding="utf-8") as f:
+        data = [ln for ln in f if not ln.startswith("#")]
+    parsed = list(csv.DictReader(data))
+    assert parsed[0]["crop_ref"] == "deals/d1/orbitbrief/disputed_crops/aa.png"
+    assert {r["veto_band"] for r in parsed} == {"hard", "soft"}
+
 
 # ── importer: validation + idempotency ──────────────────────────────
 

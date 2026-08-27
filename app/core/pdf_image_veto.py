@@ -22,6 +22,7 @@ from typing import Any
 from app.core.pdf_image_gate import gate_feature_text
 
 _DEFAULT_CONF = 0.88
+_DEFAULT_SOFT_CONF = 0.70
 _lock = threading.Lock()
 _holder: dict[str, Any] = {}
 
@@ -43,6 +44,15 @@ def _conf_bar() -> float:
         return float(os.environ.get("SOWSMITH_PDF_IMAGE_VETO_CONF", str(_DEFAULT_CONF)))
     except ValueError:
         return _DEFAULT_CONF
+
+
+def _soft_conf_bar() -> float:
+    try:
+        return float(os.environ.get(
+            "SOWSMITH_PDF_IMAGE_VETO_SOFT_CONF", str(_DEFAULT_SOFT_CONF),
+        ))
+    except ValueError:
+        return _DEFAULT_SOFT_CONF
 
 
 def _load():
@@ -88,14 +98,9 @@ def _meaningful_prob(loaded, text: str) -> float | None:
     return float(probs[idx])
 
 
-def veto(caption: str, ocr: str) -> float | None:
-    """Return P(meaningful) when the head confidently disagrees with a skip,
-    else None (abstain — no veto).
-
-    Fires only when the model is present AND the probability clears the
-    confidence bar. A degenerate feature ("no context") never vetoes — there
-    is no evidence to disagree on. Any failure -> None (guess-free).
-    """
+def _prob_for(caption: str, ocr: str) -> float | None:
+    """P(meaningful) for one skip verdict, or None on any abstain condition:
+    disabled / degenerate feature / model missing / any failure (guess-free)."""
     if not enabled():
         return None
     text = gate_feature_text(caption, ocr)
@@ -105,10 +110,38 @@ def veto(caption: str, ocr: str) -> float | None:
     if loaded is None:
         return None
     try:
-        prob = _meaningful_prob(loaded, text)
+        return _meaningful_prob(loaded, text)
     except Exception:
         return None
+
+
+def veto(caption: str, ocr: str) -> float | None:
+    """Return P(meaningful) when the head confidently disagrees with a skip,
+    else None (abstain — no veto).
+
+    Fires only when the model is present AND the probability clears the
+    confidence bar. A degenerate feature ("no context") never vetoes — there
+    is no evidence to disagree on. Any failure -> None (guess-free).
+    """
+    prob = _prob_for(caption, ocr)
     if prob is None or prob < _conf_bar():
+        return None
+    return prob
+
+
+def soft_veto(caption: str, ocr: str) -> float | None:
+    """Return P(meaningful) when it lands in the UNCERTAIN band
+    [soft_bar, hard_bar) — an active-learning harvest signal, never a PM flag.
+
+    A soft veto marks the model's uncertain zone so humans grade exactly the
+    examples the head cannot call — it must NEVER become a hard veto downstream
+    (no ``gate_verdict['veto']`` key, no PM culprit card). Same guess-free
+    contract as :func:`veto`: any failure -> None (no soft veto).
+    """
+    prob = _prob_for(caption, ocr)
+    if prob is None:
+        return None
+    if not (_soft_conf_bar() <= prob < _conf_bar()):
         return None
     return prob
 
