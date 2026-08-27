@@ -4248,6 +4248,32 @@ def _entities_to_atoms(
         r"^(?:site|location|facility|building)\s+",
         _re_sid_norm.IGNORECASE,
     )
+    # Equipment is not a place. A scope line describing hardware to install
+    # ("install 1 vendor supplied 16u wall mounted hinged data rack") was
+    # minting a physical_site named "1 16u wall mounted" — a rack spec sold
+    # to a PM as a job site, which is the most trust-destroying error this
+    # pipeline can make. Two independent shapes, either is disqualifying:
+    # a rack-unit measurement, or a hardware noun with no place noun.
+    _RACK_UNIT_SHAPE = _re_sid_norm.compile(r"\b\d+\s*u\b", _re_sid_norm.IGNORECASE)
+    _EQUIPMENT_NOUNS = _re_sid_norm.compile(
+        r"\b(rack|switch|router|firewall|patch\s*panel|cable|conduit|raceway|"
+        r"ups|pdu|access\s*point|camera|display|monitor|kiosk|printer|"
+        r"workstation|laptop|tablet|server|appliance|enclosure|cabinet)s?\b",
+        _re_sid_norm.IGNORECASE,
+    )
+    # Place nouns that redeem an otherwise equipment-shaped phrase: a real
+    # site may legitimately be named "Data Center 3" or "Cabinet Room".
+    _PLACE_NOUNS = _re_sid_norm.compile(
+        r"\b(office|store|center|centre|campus|plant|warehouse|branch|"
+        r"school|hospital|clinic|hotel|room|floor|suite|hq|headquarters|"
+        r"terminal|depot|yard|lab|studio|dealership|showroom)s?\b",
+        _re_sid_norm.IGNORECASE,
+    )
+    # The pipeline's own prior output, carried in the manifest ``context``
+    # payload, must never become a site. Authority capping (see
+    # app.core.atom_type_sanity.cap_authority_to_source) demotes these to
+    # rank 40 but does not stop the atom being minted as a place.
+    _SERIALIZED_SOURCE = _re_sid_norm.compile(r"^context\.[A-Za-z_]")
     # v53.5: garbage canonical values from LLM site extraction that
     # should never become physical_site atoms — generic placeholders,
     # company names, addresses, pure numbers.
@@ -4309,7 +4335,23 @@ def _entities_to_atoms(
         # but id resolves to 'ALL' via _pick_site_id).
         if s.upper() == "ALL":
             return True
+        # Equipment is not a place. A place noun in the same phrase
+        # redeems it ("Data Center 3" survives; "1 16u wall mounted"
+        # does not), so a genuinely named facility is never rejected.
+        if not _PLACE_NOUNS.search(s) and (
+            _RACK_UNIT_SHAPE.search(s) or _EQUIPMENT_NOUNS.search(s)
+        ):
+            return True
         return False
+
+    def _is_serialized_source(text: Any) -> bool:
+        """The pipeline's own prior output is not evidence of a place.
+
+        Sites minted from the manifest ``context`` payload are recycled
+        machine output wearing a place's clothes. Authority capping
+        demotes them; this stops them existing as sites at all.
+        """
+        return bool(_SERIALIZED_SOURCE.match(str(text or "").lstrip()))
 
     def _normalize_entity_value(category: str, entity: dict) -> dict:
         """v53.2: per-category value normalization so the bridged
@@ -4440,6 +4482,11 @@ def _entities_to_atoms(
             # into "site | ALL" which bypasses the canonical_name filter.
             if category == "site_clusters":
                 if _is_garbage_site(raw_text):
+                    continue
+                # Recycled pipeline output is not evidence of a place.
+                if _is_serialized_source(entity.get("_source_text")) or _is_serialized_source(
+                    raw_text
+                ):
                     continue
                 # v55: MERGE step — if any of this cluster's forms matches
                 # a structural physical_site atom, enrich that atom's
@@ -5914,3 +5961,42 @@ def _inject_multi_entity_keys(
 
 
 __all__ = ["extract_keys", "enrich_atoms"]
+
+import re as _re_predicates
+
+
+class _site_cluster_predicates_for_test:
+    """Test seam for the site-cluster rejection rules.
+
+    The rules live inside the enrichment closure where they are used; this
+    exposes them for pinning without widening the module's public surface.
+    """
+
+    _RACK_UNIT = _re_predicates.compile(r"\b\d+\s*u\b", _re_predicates.IGNORECASE)
+    _EQUIP = _re_predicates.compile(
+        r"\b(rack|switch|router|firewall|patch\s*panel|cable|conduit|raceway|"
+        r"ups|pdu|access\s*point|camera|display|monitor|kiosk|printer|"
+        r"workstation|laptop|tablet|server|appliance|enclosure|cabinet)s?\b",
+        _re_predicates.IGNORECASE,
+    )
+    _PLACE = _re_predicates.compile(
+        r"\b(office|store|center|centre|campus|plant|warehouse|branch|"
+        r"school|hospital|clinic|hotel|room|floor|suite|hq|headquarters|"
+        r"terminal|depot|yard|lab|studio|dealership|showroom)s?\b",
+        _re_predicates.IGNORECASE,
+    )
+    _CTX = _re_predicates.compile(r"^context\.[A-Za-z_]")
+
+    @classmethod
+    def has_equipment_token(cls, s: str) -> bool:
+        s = str(s or "").replace("\u00a0", " ")
+        return bool(cls._RACK_UNIT.search(s) or cls._EQUIP.search(s))
+
+    @classmethod
+    def is_equipment_shaped(cls, s: str) -> bool:
+        s = str(s or "").replace("\u00a0", " ")
+        return (not cls._PLACE.search(s)) and cls.has_equipment_token(s)
+
+    @classmethod
+    def is_serialized_source(cls, text: object) -> bool:
+        return bool(cls._CTX.match(str(text or "").lstrip()))
