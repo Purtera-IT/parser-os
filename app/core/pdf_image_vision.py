@@ -40,6 +40,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from app.core import crop_thumbnail
 from app.core.ids import stable_id
 from app.core.normalizers import normalize_text
 from app.core.schemas import (
@@ -779,6 +780,56 @@ def _upload_disputed_crop(
         return None, type(exc).__name__
 
 
+# ── PM thumbnail budget (envelope size discipline) ──────────────────
+# ``crop_ref`` is a blob path and no frontend route serves blob images by
+# path, so a disputed-skip card today shows the PM nothing. A small JPEG
+# data URI stamped as ``gate_verdict['crop_thumb']`` rides the channel the
+# verdict already travels (envelope -> core card -> UI) with no new infra.
+#
+# BUDGET: Orbitbrief-Core caps culprit cards at 20 per envelope, so the worst
+# case an envelope can carry is
+#     _DEFAULT_THUMB_MAX (20) x SOWSMITH_PDF_IMAGE_THUMB_KB (24KB) ~= 480KB
+# of base64. The count cap is global per compile — NOT per card — so a
+# pathological deal (hundreds of disputed skips, only 20 of which become
+# cards) cannot balloon the envelope with thumbnails nobody will ever see.
+# HARD vetoes only: soft vetoes never reach a PM (they feed the review queue),
+# so they stay lean and spend none of this budget.
+_THUMB_BUDGET_KB = 480  # documented worst case; see arithmetic above
+_DEFAULT_THUMB_MAX = 20
+
+_thumb_budget: dict[str, int] = {"used": 0}
+
+
+def _thumb_max() -> int:
+    """Thumbnails embeddable in ONE compile (``SOWSMITH_PDF_IMAGE_THUMB_MAX``).
+    0 or negative disables embedding outright."""
+    return _int_env("SOWSMITH_PDF_IMAGE_THUMB_MAX", _DEFAULT_THUMB_MAX)
+
+
+def _reset_thumb_budget() -> None:
+    """Called once per compile at the top of :func:`process_image_markers`."""
+    _thumb_budget["used"] = 0
+
+
+def _maybe_thumb(crop: bytes) -> tuple[str | None, str | None]:
+    """``(data_uri, error)`` for one card-worthy crop, budget-checked.
+
+    Spends one unit of the per-compile budget on success. Every non-result
+    carries a receipt (doctrine: never a silent zero) — the exception class,
+    ``'too_large'``, or ``'budget_exhausted'`` when this compile has already
+    embedded its allowance. Never raises.
+    """
+    try:
+        if _thumb_budget["used"] >= _thumb_max():
+            return None, "budget_exhausted"
+        uri, err = crop_thumbnail.make_thumb_data_uri_receipted(crop)
+        if uri:
+            _thumb_budget["used"] += 1
+        return uri, err
+    except Exception as exc:
+        return None, type(exc).__name__
+
+
 def _log_veto_row(
     caption: str, ocr: str, kind: str, *, via: str, prob: float,
     attribution: dict[str, Any] | None,
@@ -878,6 +929,12 @@ def _maybe_veto_skip(
     ``gate_verdict['crop_ref']``; an upload failure stamps
     ``gate_verdict['crop_ref_error']`` (liveness receipt, never silence).
 
+    HARD vetoes additionally carry a small inline JPEG data URI in
+    ``gate_verdict['crop_thumb']`` so the PM culprit card can RENDER the image
+    (``crop_ref`` is a blob path nothing serves). Failure or an exhausted
+    per-compile budget stamps ``gate_verdict['crop_thumb_error']`` — same
+    never-silent doctrine. Soft vetoes get no thumbnail: they never reach a PM.
+
     cpu_gate verdicts are NEVER veto-checked: once the distilled gate serves,
     the veto second-guessing its sibling student (trained on the same feature
     text) is self-review, not independent signal. Never raises.
@@ -903,6 +960,13 @@ def _maybe_veto_skip(
             gv = val["gate_verdict"]
             if band == "hard":
                 gv["veto"] = {"meaningful_prob": prob, "model": "pdf_image_veto"}
+                # Card-worthy: carry the pixels inline so the PM sees the image
+                # without going looking. Hard band only — see the budget block.
+                thumb, thumb_err = _maybe_thumb(crop)
+                if thumb:
+                    gv["crop_thumb"] = thumb
+                elif thumb_err:
+                    gv["crop_thumb_error"] = thumb_err
             else:
                 gv["veto_soft"] = {"meaningful_prob": prob}
             if crop_ref:
@@ -1044,6 +1108,7 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     routing change)."""
     if not enabled() or not atoms:
         return []
+    _reset_thumb_budget()  # the thumbnail allowance is PER COMPILE
     try:
         if not _vision_reachable():
             logger.info("pdf_image_vision: no vision endpoint; abstaining")

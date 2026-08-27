@@ -788,3 +788,195 @@ def test_skip_stamp_includes_ocr_preview(monkeypatch, tmp_path):
     assert gv["kind"] == "decorative"
     assert gv["via"] == "vlm_gate"
     assert "18 Total Data Outlets" in gv["ocr_preview"]
+
+
+# ── inline crop thumbnail: the PM must SEE the disputed image ───────
+
+
+def _real_marker(tmp_path, *, size=(600, 400), name="page3_image1.png"):
+    """A marker whose saved crop is a REAL image (the shared ``_marker`` writes
+    fake PNG bytes, which is exactly the corrupt-input case below)."""
+    import io as _io
+    import random as _random
+    from PIL import Image
+    m = _marker(tmp_path, saved_name=name, region="page3/image1")
+    rnd = _random.Random(5)  # deterministic photo-ish texture, well over min_bytes
+    img = Image.new("RGB", size)
+    img.putdata([((x * 7 + y * 3) % 256, (x * 3) % 256, rnd.randrange(256))
+                 for y in range(size[1]) for x in range(size[0])])
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    # Overwrite the shared helper's placeholder bytes with a real image.
+    (tmp_path / name).write_bytes(buf.getvalue())
+    return m
+
+
+def _thumb_img(uri):
+    import base64 as _b64
+    import io as _io
+    from PIL import Image
+    assert uri.startswith("data:image/jpeg;base64,")
+    return Image.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1])))
+
+
+def test_hard_veto_embeds_crop_thumb(monkeypatch, tmp_path):
+    """A hard veto (the only band that becomes a PM card) carries the pixels
+    inline so the card renders without a blob route."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    log = _fresh_log()
+    try:
+        m = _real_marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert "crop_thumb_error" not in gv
+        uri = gv["crop_thumb"]
+        img = _thumb_img(uri)
+        assert img.format == "JPEG" and img.mode == "RGB"
+        assert img.width == 200 and img.height == 133  # 3:2 preserved
+        assert len(uri) <= 24 * 1024
+    finally:
+        _clear_log()
+
+
+def test_soft_veto_gets_no_thumb(monkeypatch, tmp_path):
+    """Soft vetoes never reach a PM — they stay lean and spend no budget."""
+    _soft_setup(monkeypatch, soft=0.75)
+    log = _fresh_log()
+    try:
+        m = _real_marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["veto_soft"] == {"meaningful_prob": 0.75}
+        assert "crop_thumb" not in gv and "crop_thumb_error" not in gv
+        assert piv._thumb_budget["used"] == 0
+    finally:
+        _clear_log()
+
+
+def test_undisputed_skip_gets_no_thumb(monkeypatch, tmp_path):
+    """Only DISPUTED images ever carry pixels — never every skipped image."""
+    _soft_setup(monkeypatch, hard=None, soft=None)
+    m = _real_marker(tmp_path)
+    assert piv.process_image_markers([m]) == []
+    gv = m.value["gate_verdict"]
+    assert "crop_thumb" not in gv and "crop_thumb_error" not in gv
+
+
+def test_corrupt_crop_emits_thumb_liveness_receipt(monkeypatch, tmp_path):
+    """Doctrine: a thumbnail that cannot be made is OBSERVABLE, never silence."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)  # fake PNG bytes -> Pillow cannot open them
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert "crop_thumb" not in gv
+        assert gv["crop_thumb_error"]
+        assert gv["crop_thumb_error"] != "too_large"  # the exception class
+        assert gv["veto"]["meaningful_prob"] == 0.93  # veto still recorded
+    finally:
+        _clear_log()
+
+
+def test_oversized_thumb_degrades_to_receipt(monkeypatch, tmp_path):
+    """No thumbnail beats a bloated envelope: over the cap -> 'too_large'."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_THUMB_KB", "1")
+    log = _fresh_log()
+    try:
+        m = _real_marker(tmp_path, size=(1400, 1000))
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert "crop_thumb" not in gv
+        assert gv["crop_thumb_error"] == "too_large"
+    finally:
+        _clear_log()
+
+
+def test_per_compile_cap_stops_embedding(monkeypatch, tmp_path):
+    """A pathological deal cannot balloon the envelope: after N thumbnails the
+    rest are receipted, not embedded."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_THUMB_MAX", "2")
+    log = _fresh_log()
+    try:
+        markers = [
+            _real_marker(tmp_path, size=(600, 400 + i), name=f"img{i}.png")
+            for i in range(5)
+        ]
+        assert piv.process_image_markers(markers) == []
+        verdicts = [m.value["gate_verdict"] for m in markers]
+        assert sum("crop_thumb" in gv for gv in verdicts) == 2
+        for gv in verdicts[2:]:
+            assert "crop_thumb" not in gv
+            assert gv["crop_thumb_error"] == "budget_exhausted"
+        # Every image is still vetoed and receipted — only pixels are capped.
+        assert all(gv["veto"]["meaningful_prob"] == 0.93 for gv in verdicts)
+        assert log.count(relation="pdf_image_veto") == 5
+    finally:
+        _clear_log()
+
+
+def test_thumb_budget_resets_per_compile(monkeypatch, tmp_path):
+    """The allowance is per compile, not per process — recompiling a deal gets
+    its own budget."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_THUMB_MAX", "1")
+    log = _fresh_log()
+    try:
+        for _ in range(2):
+            m = _real_marker(tmp_path)
+            assert piv.process_image_markers([m]) == []
+            assert "crop_thumb" in m.value["gate_verdict"]
+    finally:
+        _clear_log()
+
+
+def test_thumb_max_zero_disables_embedding(monkeypatch, tmp_path):
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_THUMB_MAX", "0")
+    log = _fresh_log()
+    try:
+        m = _real_marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert "crop_thumb" not in gv
+        assert gv["crop_thumb_error"] == "budget_exhausted"
+    finally:
+        _clear_log()
+
+
+def test_thumb_never_enters_the_training_row(monkeypatch, tmp_path):
+    """The log stays small: the full crop is already on blob for training use."""
+    _soft_setup(monkeypatch, hard=0.93, soft=None)
+    fake = _FakeContainer()
+    _blob_on(monkeypatch, fake)
+    log = _fresh_log()
+    try:
+        m = _real_marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        assert "crop_thumb" in m.value["gate_verdict"]
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert "crop_thumb" not in row.provenance
+        assert "crop_thumb_error" not in row.provenance
+        assert row.provenance["crop_ref"].endswith(".png")  # full crop on blob
+        assert "data:image/jpeg" not in row.raw_text
+    finally:
+        _clear_log()
+
+
+def test_thumb_does_not_change_routing_or_atoms(monkeypatch, tmp_path):
+    """A meaningful image routes and emits identically — thumbnails touch only
+    the skip receipt."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    monkeypatch.setattr(piv, "_vlm", _route_vlm(
+        "photo",
+        describe='{"description": "Battery charger mounted on the north wall", "facts": []}',
+    ))
+    m = _real_marker(tmp_path)
+    out = piv.process_image_markers([m])
+    assert [a.value["fact_kind"] for a in out] == ["image_description"]
+    assert "gate_verdict" not in m.value
+    assert piv._thumb_budget["used"] == 0
