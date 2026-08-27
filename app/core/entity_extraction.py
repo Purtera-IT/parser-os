@@ -29,6 +29,7 @@ import unicodedata
 from collections.abc import Iterable
 from typing import Any
 
+from app.core.atom_type_sanity import number_is_naming_label
 from app.core.phones import find_phones
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
@@ -2599,6 +2600,11 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
         except ValueError:
             continue
         if not _plausible(n):
+            continue
+        # "Building 704 new drop locations" names a building; it does not
+        # order 704 drops. A number whose immediately-preceding token is a
+        # naming noun is a label, not a count.
+        if number_is_naming_label(text, match.start(1)):
             continue
         keys.add(f"quantity:{n}")
 

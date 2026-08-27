@@ -1093,7 +1093,15 @@ def compile_project(
         sanity_changed = 0
         try:
             from app.core.atom_type_sanity import apply_type_sanity
-            atoms, _demoted, _surfaced = apply_type_sanity(atoms, project_id=resolved_project_id)
+            # ``artifact_paths`` is the compile's authoritative artifact set
+            # ({artifact_id: Path}); the promotion gate uses it to cap any
+            # atom whose source does not resolve to a real file.
+            atoms, _demoted, _surfaced = apply_type_sanity(
+                atoms,
+                project_id=resolved_project_id,
+                artifact_ids=set(artifact_paths),
+                documents=artifact_paths,
+            )
             sanity_changed = _demoted + _surfaced
             if _demoted:
                 warnings.append(f"INFO: atom_type_sanity demoted {_demoted} non-deliverable quantity atom(s) to pricing_assumption")
