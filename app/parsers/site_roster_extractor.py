@@ -98,6 +98,62 @@ _ROSTER_HEADER_PRESENCE_SIGNALS = (
 )
 
 
+# A roster names SITES. Every presence-signal above pairs a locational field
+# with one of these — except ``{street_address, city}``, which names only a
+# PLACE. Every invoice, quotation and letterhead in existence carries an
+# address and a city, so that pair alone matched them all and minted a ghost
+# site per billing block. A signal match now additionally requires the table
+# to identify a site, not merely sit at one.
+_SITE_IDENTITY_FIELDS: frozenset[str] = frozenset({
+    "site_id", "facility_name", "mdf_idf",
+})
+
+
+# Markers of an account / billing header block: the fields a remittance or
+# quotation carries and a site roster never does. Negative evidence, not a
+# hard reject — "Customer:" alone appears in plenty of real SOW rosters — so
+# two *independent* markers are required before a block is ruled a billing
+# header. Grouped by concept so that spelling variants of the SAME field
+# ("Account #" / "Account No" / "Account Number") count once, not twice.
+# Universal vocabulary, no customer terminology.
+_BILLING_HEADER_MARKER_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("account #", "account no", "account number", "acct #", "acct no"),
+    ("exp date", "expiration date", "expires"),
+    ("bill to", "billing address", "billed to"),
+    ("remit to", "remittance"),
+    ("rqstd by", "requested by", "req by"),
+    ("customer:", "customer #", "customer no"),
+    ("invoice",),
+    ("po #", "p o #", "po no", "purchase order"),
+    ("terms:", "payment terms"),
+    ("quotation", "quote #"),
+)
+
+_MIN_BILLING_MARKERS = 2
+
+#: Marker matching is whitespace-tolerant ("Account #", "Account#",
+#: "Account  #" are one marker) and punctuation-preserving (the ``#`` and
+#: ``:`` ARE the signal — a bare "customer" is just a word).
+_BILLING_MARKER_RES: tuple[tuple[re.Pattern[str], ...], ...] = tuple(
+    tuple(
+        re.compile(r"\b" + r"\s*".join(re.escape(tok) for tok in marker.split()))
+        for marker in group
+    )
+    for group in _BILLING_HEADER_MARKER_GROUPS
+)
+
+
+def _looks_like_billing_header(*parts: str) -> bool:
+    """Do these fragments carry two-or-more independent account-header markers?"""
+    blob = " ".join(p.lower() for p in parts if p)
+    if not blob:
+        return False
+    hits = sum(
+        1 for group in _BILLING_MARKER_RES if any(r.search(blob) for r in group)
+    )
+    return hits >= _MIN_BILLING_MARKERS
+
+
 # Fields that only a site roster carries. A ``site_id`` column alone is not
 # enough (BOMs, decision logs and port maps all reference a site); one of
 # these must be present for a table to be a roster. Shared with xlsx_parser
@@ -406,12 +462,24 @@ def looks_like_site_roster(
     if _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text):
         return True
 
+    # Negative evidence: an account / billing header block carries an address
+    # and a city like a roster does, but it is a remittance stub, not a site
+    # list. Applied only to the *heuristic* signals below — an explicit
+    # ``kind=physical_site`` declaration above still wins.
+    if _looks_like_billing_header(surrounding_text, " ".join(columns or ())):
+        return False
+
     # Signal 2: column header presence
     col_map = map_columns_to_fields(columns)
     fields_present = set(col_map.values())
     for signal_set in _ROSTER_HEADER_PRESENCE_SIGNALS:
-        if signal_set.issubset(fields_present):
-            return True
+        if not signal_set.issubset(fields_present):
+            continue
+        # A roster must identify a SITE, not just a place. Address+city alone
+        # describes every letterhead ever printed.
+        if not (fields_present & _SITE_IDENTITY_FIELDS):
+            continue
+        return True
 
     # Signal 3: row-shape — count rows whose leftmost non-empty cell
     # matches the site-ID shape. Accept when either
