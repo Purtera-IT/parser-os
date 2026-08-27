@@ -4483,10 +4483,11 @@ def _entities_to_atoms(
             if category == "site_clusters":
                 if _is_garbage_site(raw_text):
                     continue
-                # Recycled pipeline output is not evidence of a place.
-                if _is_serialized_source(entity.get("_source_text")) or _is_serialized_source(
-                    raw_text
-                ):
+                # Equipment is not a place; recycled output is not evidence.
+                # Shared with site_atom_backfill — see site_plausibility.
+                from app.core.site_plausibility import rejects_as_site as _rejects_site
+
+                if _rejects_site(raw_text, entity.get("_source_text")):
                     continue
                 # v55: MERGE step — if any of this cluster's forms matches
                 # a structural physical_site atom, enrich that atom's

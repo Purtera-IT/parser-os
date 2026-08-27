@@ -295,6 +295,7 @@ def backfill_physical_sites_from_entities(
 
     site_entities = []
     seen_keys: set[str] = set()
+    skipped_reasons: dict[str, int] = {}
     for ent in entities or []:
         sk = _site_key_from_entity(ent)
         if not sk or sk in seen_keys:
@@ -334,7 +335,6 @@ def backfill_physical_sites_from_entities(
         try:
             from app.core.vendor_site_ban import is_purtera_vendor_address
 
-            anchor_text = ""
             if anchor is not None:
                 anchor_text = str(
                     getattr(anchor, "raw_text", None) or getattr(anchor, "text", None) or ""
@@ -345,6 +345,22 @@ def backfill_physical_sites_from_entities(
             ):
                 continue
         except Exception:  # pragma: no cover
+            pass
+        anchor_text = str(
+            getattr(anchor, "raw_text", None) or getattr(anchor, "text", None) or ""
+        ) if anchor is not None else ""
+        # Equipment is not a place, and the pipeline's own prior output is
+        # not evidence of one. This backfill is a second, independent site
+        # minter — guarding only the entity_extraction path left these
+        # reaching production (deal 222b2173: "1 16u wall mounted").
+        try:
+            from app.core.site_plausibility import rejects_as_site
+
+            reason = rejects_as_site(display, anchor_text, site_key)
+            if reason:
+                skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+                continue
+        except Exception:  # pragma: no cover - never break a compile
             pass
         minted = _mint_physical_site(
             project_id=project_id,
