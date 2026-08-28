@@ -38,6 +38,8 @@ def _fitz_site_roster_fallback(
         from app.parsers.site_roster_extractor import (
             extract_site_roster,
             looks_like_site_roster,
+            source_row_binding,
+            source_row_text_parts,
         )
     except Exception:
         return []
@@ -184,22 +186,28 @@ def _fitz_site_roster_fallback(
                     canon_id = sid or site_row.facility_name or ""
                     if not canon_id:
                         continue
-                    site_text = " | ".join(
-                        f"{k}: {v}"
-                        for k, v in [
-                            ("site_id", sid or site_row.site_id),
-                            ("facility", site_row.facility_name),
-                            ("address", site_row.street_address),
-                            ("mdf_idf", site_row.mdf_idf),
-                            ("access", site_row.access_window),
-                            ("escort", site_row.escort_owner),
-                            ("contact", site_row.contact),
-                            ("phone", site_row.phone),
-                            ("email", site_row.email),
-                            ("notes", site_row.notes),
-                        ]
-                        if v
+                    _canonical = [
+                        ("site_id", sid or site_row.site_id),
+                        ("facility", site_row.facility_name),
+                        ("address", site_row.street_address),
+                        ("mdf_idf", site_row.mdf_idf),
+                        ("access", site_row.access_window),
+                        ("escort", site_row.escort_owner),
+                        ("contact", site_row.contact),
+                        ("phone", site_row.phone),
+                        ("email", site_row.email),
+                        ("notes", site_row.notes),
+                    ]
+                    _parts = [f"{k}: {v}" for k, v in _canonical if v]
+                    # Complete the summary with the columns the field map could
+                    # not place, so no cell of the row is invisible to the
+                    # promotion gate that checks names against this text.
+                    _parts.extend(
+                        source_row_text_parts(
+                            site_row, [str(v) for _, v in _canonical if v]
+                        )
                     )
+                    site_text = " | ".join(_parts)[:4000]
                     locator = {
                         **locator_base,
                         "row_index": site_row.row_index,
@@ -243,6 +251,10 @@ def _fitz_site_roster_fallback(
                                 "occupancy": site_row.occupancy,
                                 "notes": site_row.notes,
                                 "extras": dict(site_row.extra_fields),
+                                # The row this atom came from, capped and in
+                                # column order — under the keys semantic_dedup
+                                # whitelists, so it survives to the envelope.
+                                **source_row_binding(site_row),
                             },
                         )
                     )

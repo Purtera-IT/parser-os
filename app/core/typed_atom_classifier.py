@@ -332,14 +332,24 @@ def _atom_type_candidates() -> list[str]:
 
 
 def _atom_row_view(atom: Any) -> tuple[list[str], list[Any]] | None:
-    """(headers, values) for a per-row table atom, handling both emitted shapes
-    (``value._columns``/``value._row`` and ``value.cells``); else ``None``."""
+    """(headers, values) for a per-row table atom, handling every emitted shape
+    (``value._columns``/``value._row``, ``value.cells``, and the
+    ``value.raw_cells`` pair-list site atoms carry); else ``None``."""
     val = getattr(atom, "value", None)
     if not isinstance(val, dict):
         return None
     cells = val.get("cells")
     if isinstance(cells, dict) and cells:
         return [str(k) for k in cells], [cells[k] for k in cells]
+    # ``raw_cells``: ``[[header, value], ...]``. Site roster atoms bind the
+    # source row under this key because it is the one ``semantic_dedup``
+    # whitelists for physical_site values — a pair-list, not a dict, so
+    # duplicate and blank headers keep their own cells.
+    raw_cells = val.get("raw_cells")
+    if isinstance(raw_cells, (list, tuple)) and raw_cells:
+        pairs = [c for c in raw_cells if isinstance(c, (list, tuple)) and len(c) >= 2]
+        if pairs:
+            return [str(c[0]) for c in pairs], [c[1] for c in pairs]
     cols = val.get("_columns") or val.get("columns")
     row = val.get("_row")
     if cols and row is not None:

@@ -377,6 +377,106 @@ class SiteRosterRow:
         }
 
 
+# ── The source row an atom was minted from ───────────────────────
+#
+# An atom that cannot point at the row it came from makes every provenance
+# claim about it undecidable: the promotion gate
+# ``atom_type_sanity.strip_unsupported_names`` asks "does this display name
+# appear in the atom's own source text?", and for a roster atom whose text is
+# an extractor-COMPOSED summary the honest answer was "cannot tell". The row
+# is already captured — ``SiteRosterRow.raw_cells`` is the (header, value)
+# pairs exactly as read — it simply never survived to the atom.
+#
+# It is carried under the key ``raw_cells`` (plus ``row_index``) because
+# ``semantic_dedup._PHYSICAL_SITE_ALLOWED_FIELDS`` already whitelists both:
+# a value key outside that set is silently dropped by
+# ``_clean_physical_site_value`` before the atom ever reaches the envelope,
+# which is exactly how the previously-bound ``value["cells"]`` disappeared.
+#
+# SIZE. Envelopes already run to tens of MB, so the row is capped, not
+# copied wholesale: empty cells are dropped (they carry no evidence), each
+# header and value is truncated, and at most ``SOURCE_ROW_MAX_CELLS`` cells
+# survive — in column order, so the projection is deterministic and two
+# compiles of the same workbook produce byte-identical rows.
+
+#: Most non-empty cells carried from one source row. Real rosters run 5-25
+#: columns; this leaves headroom without letting a 500-column monster sheet
+#: multiply the envelope.
+SOURCE_ROW_MAX_CELLS = 48
+#: Per-cell character cap, applied to the header and the value alike. A cell
+#: longer than this is a paragraph pasted into a spreadsheet, not an identity
+#: token, and the prefix is enough to replay against the artifact.
+SOURCE_ROW_MAX_CELL_CHARS = 160
+
+
+def capped_source_row(
+    raw_cells: Sequence[Sequence[Any]] | None,
+) -> list[list[str]]:
+    """Bounded, deterministic projection of one table row's cells.
+
+    Returns ``[[header, value], ...]`` — a list of pairs rather than a dict
+    so duplicate and blank headers (``""``, ``col_7``, two ``Notes``
+    columns) keep their own cells instead of colliding, and so column order
+    survives serialization.
+
+    Empty values are dropped, header and value are truncated to
+    :data:`SOURCE_ROW_MAX_CELL_CHARS`, and at most
+    :data:`SOURCE_ROW_MAX_CELLS` cells are kept. Nothing is sorted,
+    re-cased, or de-duplicated: this is the row as read, only smaller.
+    """
+    out: list[list[str]] = []
+    for cell in raw_cells or ():
+        if len(out) >= SOURCE_ROW_MAX_CELLS:
+            break
+        try:
+            header, value = cell[0], cell[1]
+        except (TypeError, IndexError, ValueError):
+            continue
+        val = "" if value is None else str(value).strip()
+        if not val:
+            continue
+        head = "" if header is None else str(header).strip()
+        out.append([head[:SOURCE_ROW_MAX_CELL_CHARS], val[:SOURCE_ROW_MAX_CELL_CHARS]])
+    return out
+
+
+def source_row_binding(site_row: Any) -> dict[str, Any]:
+    """The replayable source-row record to merge into a site atom's value.
+
+    Empty when the row carried no cells, so a minter can splat this into a
+    value dict unconditionally without inventing keys it cannot fill.
+    """
+    cells = capped_source_row(getattr(site_row, "raw_cells", ()) or ())
+    if not cells:
+        return {}
+    return {"raw_cells": cells, "row_index": getattr(site_row, "row_index", None)}
+
+
+def source_row_text_parts(
+    site_row: Any, already_rendered: Sequence[str] = ()
+) -> list[str]:
+    """``"Header: value"`` parts for row cells the composed summary omitted.
+
+    The composed summary stays what it is — downstream reads it — but a
+    summary that silently drops columns makes its own atom unverifiable: a
+    facility name sitting in a column the field map could not place is
+    nowhere in the atom's text, so the promotion gate reads a legitimate
+    name as manufactured. This returns the *missing* cells in the summary's
+    own ``label: value`` shape so every column the row carried is visible.
+
+    ``already_rendered`` is the set of values the caller already emitted;
+    a cell whose value is already in the summary is not repeated.
+    """
+    seen = {str(v).strip() for v in already_rendered if v is not None and str(v).strip()}
+    parts: list[str] = []
+    for head, val in capped_source_row(getattr(site_row, "raw_cells", ()) or ()):
+        if val in seen:
+            continue
+        seen.add(val)
+        parts.append(f"{head}: {val}" if head else val)
+    return parts
+
+
 # ── Header / row detection ───────────────────────────────────────
 
 

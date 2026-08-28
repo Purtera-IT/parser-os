@@ -2096,6 +2096,12 @@ class XlsxParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    #: Hard ceiling on a roster atom's composed summary. Matches the ``[:4000]``
+    #: the other per-row minters in this module already use, so completing the
+    #: summary with the row's unmapped columns can never make a pathological
+    #: 500-column sheet balloon the envelope.
+    _SITE_ROW_TEXT_MAX_CHARS = 4000
+
     def _maybe_emit_site_roster_atoms(
         self,
         *,
@@ -2118,6 +2124,8 @@ class XlsxParser(BaseParser):
                 find_header_row,
                 looks_like_site_roster,
                 roster_preference_score,
+                source_row_binding,
+                source_row_text_parts,
             )
         except Exception:  # pragma: no cover
             return []
@@ -2189,6 +2197,7 @@ class XlsxParser(BaseParser):
                 "atm", artifact_id, sheet_name, row_index, "physical_site", canon_id
             )
             text_parts = []
+            rendered_values: list[str] = []
             for label, val in [
                 ("site_id", sid or site_row.site_id),
                 ("facility", site_row.facility_name),
@@ -2202,7 +2211,18 @@ class XlsxParser(BaseParser):
             ]:
                 if val:
                     text_parts.append(f"{label}: {val}")
-            row_text = " | ".join(text_parts) or canon_id
+                    rendered_values.append(str(val))
+            # Every remaining column the field map could not place, in the
+            # summary's own "label: value" shape — the same thing the DOCX
+            # roster minter already does for its ``extra_fields``. Without it
+            # a facility name in an unmapped column is nowhere in the atom's
+            # own text, so ``strip_unsupported_names`` cannot tell a real
+            # roster name from a manufactured one and strips both. This ADDS
+            # to the composed summary; it does not replace or reorder it.
+            text_parts.extend(source_row_text_parts(site_row, rendered_values))
+            row_text = (" | ".join(text_parts) or canon_id)[
+                : self._SITE_ROW_TEXT_MAX_CHARS
+            ]
             source_ref = SourceRef(
                 id=stable_id("src", atom_id),
                 artifact_id=artifact_id,
@@ -2262,11 +2282,14 @@ class XlsxParser(BaseParser):
                         # Rooms, Hardware/Services/Logistics budgets, Notes, ...),
                         # not just the canonical roster fields. _atom_bound_text
                         # renders these "Header: value | ..." at decide-time.
-                        "cells": (
-                            dict(data_rows[site_row.row_index])
-                            if 0 <= site_row.row_index < len(data_rows)
-                            else {}
-                        ),
+                        #
+                        # Carried as ``raw_cells``/``row_index`` — the keys
+                        # ``semantic_dedup._PHYSICAL_SITE_ALLOWED_FIELDS``
+                        # whitelists. The previous key, ``cells``, is NOT in
+                        # that set, so ``_clean_physical_site_value`` deleted
+                        # the row from every physical_site atom before the
+                        # envelope was written and the row never shipped.
+                        **source_row_binding(site_row),
                     },
                     entity_keys=sorted(set(entity_keys)),
                     source_refs=[source_ref],
