@@ -1,0 +1,157 @@
+{
+ "_comment": "Expected per-deal counts for tools/base_health.py site_count_drift. Regenerate with --update-baseline ONLY when a change is supposed to move these numbers, and say why in the commit message. See docs/BASE_HEALTH.md.",
+ "deals": {
+  "01a499f9-5dc1-4125-94eb-c38240cf9360": {
+   "atoms": 1211,
+   "site_atoms": 1
+  },
+  "0504ccbe-c2fc-466b-a6d8-28eafcd49e08": {
+   "atoms": 381,
+   "site_atoms": 1
+  },
+  "16159496-6ccd-4cb7-8531-76c4be71d823": {
+   "atoms": 51,
+   "site_atoms": 2
+  },
+  "1bf0c10e-e840-4a1f-b526-d8f417181ada": {
+   "atoms": 475,
+   "site_atoms": 1
+  },
+  "21ab89c6-ae2d-4075-95d0-c576a61e8160": {
+   "atoms": 100,
+   "site_atoms": 2
+  },
+  "222b2173-27bc-44a7-bf53-96234d41dac6": {
+   "atoms": 606,
+   "site_atoms": 1
+  },
+  "258464bf-3e4c-4f54-894f-15a51dab2c7e": {
+   "atoms": 857,
+   "site_atoms": 1
+  },
+  "3bbb2efa-dd33-4e42-8570-5f9158956dc3": {
+   "atoms": 6559,
+   "site_atoms": 4
+  },
+  "51975e6c-b6a5-4068-af88-d99ded4eac61": {
+   "atoms": 67,
+   "site_atoms": 0
+  },
+  "58752baf-43dc-4345-936b-2c87b8c0c728": {
+   "atoms": 3,
+   "site_atoms": 1
+  },
+  "5a93000d-b67c-4d28-b0df-ce797b3ca66a": {
+   "atoms": 45,
+   "site_atoms": 1
+  },
+  "5bc38618-24d9-4cf9-b767-7b1b2e726117": {
+   "atoms": 652,
+   "site_atoms": 1
+  },
+  "6543aa47-8025-41c1-8969-961302331e04": {
+   "atoms": 24,
+   "site_atoms": 1
+  },
+  "6aefa14f-d770-4c29-b995-c8504224f5f5": {
+   "atoms": 3477,
+   "site_atoms": 4
+  },
+  "7db4f784-09b3-4337-9759-80b37dcea0e9": {
+   "atoms": 614,
+   "site_atoms": 1
+  },
+  "841ea7e0-0e2f-412a-aebc-5794c199b85c": {
+   "atoms": 390,
+   "site_atoms": 5
+  },
+  "864b8962-0f4b-4962-a3cb-00f7241a59e1": {
+   "atoms": 346,
+   "site_atoms": 1
+  },
+  "8aa9051a-d211-4290-b446-580ce1c5dcb8": {
+   "atoms": 1833,
+   "site_atoms": 159
+  },
+  "9816e058-dee7-481f-b017-c4ec1bbd62a0": {
+   "atoms": 884,
+   "site_atoms": 0
+  },
+  "9b5d12f2-67df-4fa0-b1d5-6843cac3c99a": {
+   "atoms": 135,
+   "site_atoms": 2
+  },
+  "9ddaa511-5940-4b56-99f5-9aef0d8e6653": {
+   "atoms": 4010,
+   "site_atoms": 1
+  },
+  "adfa6411-afae-4168-86e4-655baa0693ed": {
+   "atoms": 127,
+   "site_atoms": 0
+  },
+  "b209be9e-a4be-4eaa-b6c0-51c19788c223": {
+   "atoms": 616,
+   "site_atoms": 1
+  },
+  "b2879080-09d2-4d65-8d00-09be4879c71f": {
+   "atoms": 3180,
+   "site_atoms": 1
+  },
+  "b3ff1b3d-dc12-4839-aefe-be7227c261f6": {
+   "atoms": 845,
+   "site_atoms": 1
+  },
+  "b5fdbd2a-168b-416e-af40-cda6a3e00bfa": {
+   "atoms": 3,
+   "site_atoms": 0
+  },
+  "bc33ba02-6888-4e27-abe3-f4fbe9d1758d": {
+   "atoms": 135,
+   "site_atoms": 1
+  },
+  "c8aa036d-6e55-4fe0-a6fe-af786dc6c2f7": {
+   "atoms": 174,
+   "site_atoms": 2
+  },
+  "d1d51b41-13ed-472e-a409-6603304b5341": {
+   "atoms": 2243,
+   "site_atoms": 205
+  },
+  "d39c099f-9778-47c9-ac62-9eee017a855c": {
+   "atoms": 333,
+   "site_atoms": 1
+  },
+  "d85ee904-b302-46b3-af99-398bd21a1289": {
+   "atoms": 899,
+   "site_atoms": 0
+  },
+  "e0771b49-6fd8-4890-87f9-e4ba252c7ebc": {
+   "atoms": 487,
+   "site_atoms": 1
+  },
+  "e1e88d05-6d8f-4de0-a5c4-cbfd623fff65": {
+   "atoms": 2728,
+   "site_atoms": 1
+  },
+  "e42ca5bc-4256-4708-a17e-e5947794f8a0": {
+   "atoms": 489,
+   "site_atoms": 9
+  },
+  "e781eca4-ead3-4072-a0ab-725a0313ada0": {
+   "atoms": 1182,
+   "site_atoms": 1
+  },
+  "e832d78f-1c94-4161-9a47-e7f9d85c8b71": {
+   "atoms": 8,
+   "site_atoms": 0
+  },
+  "f08bcf0a-c526-4162-bd73-0759c9754929": {
+   "atoms": 1158,
+   "site_atoms": 2
+  },
+  "fb718794-5d20-45a2-b79a-d763bfa6e36c": {
+   "atoms": 455,
+   "site_atoms": 0
+  }
+ }
+}
