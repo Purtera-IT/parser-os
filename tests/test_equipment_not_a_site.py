@@ -15,7 +15,7 @@ and "Cabinet Room" contain equipment-adjacent nouns and must survive.
 """
 import pytest
 
-from app.core.entity_extraction import _site_cluster_predicates_for_test as P
+from app.core import site_plausibility as P
 
 
 REJECTED_EQUIPMENT = [
@@ -89,6 +89,32 @@ def test_recycled_pipeline_output_is_not_a_site(text):
 @pytest.mark.parametrize("text", NOT_SERIALIZED)
 def test_prose_that_merely_says_context_survives(text):
     assert P.is_serialized_source(text) is False
+
+
+BOTH_MINTERS_REAL_CASES = [
+    # every physical_site atom deal 222b2173 produced on 2026-08-27 22:03,
+    # AFTER the first (incomplete) fix shipped — the reason this module exists
+    ("1 16u wall mounted", "equipment_not_a_place"),
+    ("1 28U Wall Mounted", "equipment_not_a_place"),
+    ("12 pair of pendant speakers", "equipment_not_a_place"),
+    ("3 sonance pendant subwoofer", "equipment_not_a_place"),
+]
+
+
+@pytest.mark.parametrize("name,reason", BOTH_MINTERS_REAL_CASES)
+def test_production_cases_are_rejected_with_a_recorded_reason(name, reason):
+    assert P.rejects_as_site(name) == reason
+
+
+def test_recycled_output_rejected_via_anchor_text():
+    assert P.rejects_as_site(
+        "South Warehouse", "context.prior_scope_process_v1.sowHandoff.x: y"
+    ) == "recycled_pipeline_output"
+
+
+def test_a_kept_site_returns_empty_reason_not_false():
+    """The contract is a reason string, so a rejection is always recordable."""
+    assert P.rejects_as_site("Clayton Homes of Chillicothe") == ""
 
 
 def test_rules_are_idempotent():
