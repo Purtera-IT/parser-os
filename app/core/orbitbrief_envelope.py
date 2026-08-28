@@ -1,71 +1,17 @@
 """OrbitBrief project envelope — the "perfect compressible" LLM input.
 
-DEPRECATED LOCATION — this module has moved to Orbitbrief-Core at
-``orbitbrief_core.envelope``. The copy in parser-os remains for
-back-compat with existing callers (app/cli.py, app/core/production_report.py,
-several scripts, several tests) and stays functionally identical.
+OWNER: this module builds the envelope. parser-os is stage one; it
+produces every ``orbitbrief.input.v2`` payload in blob, and Orbitbrief-Core
+consumes that payload across the seam (``orbitbrief_core.seam``) without
+ever re-parsing.
 
-The brief-layer surfaces (pm_dashboard, scope_truth, project_vitals,
-etc.) have always been Orbitbrief concerns; parser-os will keep this
-shim during a deprecation window, then drop it. New code should
-import from ``orbitbrief_core.envelope`` directly.
-
-See: https://github.com/Purtera-IT/Orbitbrief-Core
-PR:  feat/envelope-migration-from-parser-os
-
-
-
-A single ``orbitbrief.input.v1`` envelope packages every artifact in a
-project into one self-contained payload an open-source LLM (Llama-3.1
-70B, Qwen-2.5 72B, Mistral-Large, etc.) can consume in a single prompt.
-
-Two output formats are produced from the same in-memory envelope:
-
-* ``orbitbrief.input.json`` — strict, machine-consumable, deterministic.
-  Used by code-side consumers and as the source-of-truth for replay.
-* ``orbitbrief.input.md`` — token-efficient markdown projection.  Same
-  hierarchy, with stable ``<a id="..."></a>`` anchors so an LLM can
-  cite a region by anchor and a UI can scroll to the same place.
-
-Envelope shape (JSON)::
-
-    {
-      "schema_version": "orbitbrief.input.v1",
-      "project_id": "...",
-      "compile_id": "...",
-      "generated_at": "ISO-8601 UTC",
-      "summary": {
-          "artifact_count": int,
-          "page_count": int,
-          "atom_count": int,
-          "packet_count": int,
-          "by_atom_type": {AtomType.value: int, ...},
-          "by_authority_class": {AuthorityClass.value: int, ...},
-      },
-      "documents": [
-          {
-              "artifact_id": "...",
-              "filename": "...",
-              "artifact_type": "pdf|docx|xlsx|csv|email|transcript|txt",
-              "parser_name": "...",
-              "parser_version": "...",
-              "structured": <full PDF structured doc | projected envelope>,
-              "atom_ids": ["atm_...", ...],
-          },
-          ...
-      ],
-      "atoms": [<compact atom rows>, ...],
-      "packets": [<compact packet rows>, ...],
-      "indexes": {
-          "atoms_by_section_path": {"a > b": ["atm_..."]},
-          "atoms_by_atom_type":    {"scope_item": ["atm_..."]},
-          "atoms_by_authority":    {"contractual_scope": ["atm_..."]},
-      },
-    }
-
-A compact atom row is intentionally small — OrbitBrief can fetch the
-full ``EvidenceAtom`` from the compile result if needed.  The envelope
-is the "swallow it whole" view; the compile result is the audit log.
+An earlier docstring here claimed this module was deprecated and had
+"moved to Orbitbrief-Core". It had not. Core carried a 1,244-line copy
+that nothing imported, ~700 lines diverged from this one, whose own
+docstring claimed the opposite — each file telling the reader the other
+was authoritative. Core's copy was deleted 2026-08-28; this is the only
+envelope builder, and the seam model in ``orbitbrief_core.seam.envelope``
+is the only consumer-side contract.
 """
 from __future__ import annotations
 
