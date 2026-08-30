@@ -324,6 +324,25 @@ METRICS: tuple[MetricSpec, ...] = (
         rationale="a Deal Kit or SOW is the answer; reading it as evidence teaches the model to copy itself",
     ),
     MetricSpec(
+        key="post_cut_evidence",
+        label="evidence that postdates the deal's own answer",
+        kind="corpus_count",
+        # A document that reached us AFTER the quote or SOW went out cannot be
+        # part of why we priced it that way. Read as quoting evidence it is
+        # hindsight, and it trains a head on facts the head will not have at the
+        # moment it must answer.
+        #
+        # Measured 2026-08-30 on two independent size-stratified samples: 2 at
+        # --sample 40 (439 documents) and 2 at --sample 60 (634 documents). The
+        # two twos are DIFFERENT documents -- an RFP and a site survey in one, an
+        # RFP and an estimating calc in the other -- so the real population is
+        # larger than two and a zero bar would be flaky, not strict. 5 is above
+        # anything either sample saw and far below the dozens a broken cut, a
+        # regressed delivery timestamp, or a bad timeline re-derive would produce.
+        threshold=5,
+        rationale="arrived after the quote went out, still admitted as quoting evidence",
+    ),
+    MetricSpec(
         key="test_fixture_admitted",
         label="mock/test document admitted",
         kind="corpus_count",
@@ -480,6 +499,17 @@ def measure_envelope(envelope: Any, deal: str = "?") -> DealMeasure:
             note("output_document_as_evidence", f"{name} [{dtype}] read as evidence")
         if dtype == "TEST_FIXTURE" and adm not in ("quarantine", ""):
             note("test_fixture_admitted", f"{name} admitted as {adm}")
+        # `after_cut` is set by the envelope builder against the deal's own
+        # timeline, and is false whenever the question could not be answered --
+        # no cut, no delivery timestamp, no timeline for the deal. So a true here
+        # is a document we can date, on a deal whose commitment we can date,
+        # arriving on the wrong side of it.
+        if life.get("after_cut") and adm == "evidence":
+            note(
+                "post_cut_evidence",
+                f"{name} [{dtype}] arrived {life.get('delivered_at')} "
+                f"after the cut, read as evidence",
+            )
 
     for a in atoms:
         if not isinstance(a, dict):
@@ -639,13 +669,18 @@ class BlobUnavailable(RuntimeError):
 
 
 def _az(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-    if not shutil.which("az"):
+    # Run the RESOLVED path, not the bare name. On Windows `az` is a `.cmd`
+    # shim, which CreateProcess will not exec by name -- so calling ["az", ...]
+    # raises FileNotFoundError and the audit cannot be run anywhere but Linux
+    # CI. which() already found it; use what it found.
+    exe = shutil.which("az")
+    if not exe:
         raise BlobUnavailable(
             "the Azure CLI ('az') is not on PATH -- cannot read envelopes. "
             "Install it and run 'az login'."
         )
     try:
-        return subprocess.run(["az", *args], capture_output=True, text=True, timeout=timeout)
+        return subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise BlobUnavailable(f"az timed out after {timeout}s: az {' '.join(args[:3])}") from exc
 

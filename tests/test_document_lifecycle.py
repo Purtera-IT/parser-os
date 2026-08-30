@@ -3,6 +3,7 @@
 Both exist because a model got these wrong on real data, so the cases below are
 the ones that actually failed, not invented ones.
 """
+import pathlib
 import pytest
 
 from app.core.document_lifecycle import TAXONOMY, TYPES, check_state_claim, normalise, route
@@ -224,6 +225,44 @@ class TestBaseHealthGates:
         }]), "d")
         assert m.counts["test_fixture_admitted"] == 0
 
+    def test_evidence_arriving_after_the_cut_is_caught(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "RFP Network Switch upgrade.docx",
+            "lifecycle": {
+                "type": "RFP", "stage": "DISCOVERY", "admissible_for": "evidence",
+                "delivered_at": "2026-07-09T20:28:13Z", "after_cut": True,
+            },
+        }]), "d")
+        assert m.counts["post_cut_evidence"] == 1
+        assert "after the cut" in m.examples["post_cut_evidence"][0]
+
+    def test_post_cut_output_is_not_double_counted_as_evidence(self):
+        # A Deal Kit produced after the quote is the NORMAL case -- it is the
+        # answer. It must not land in this gate; `output_document_as_evidence`
+        # is the one that owns output, and only when output claims to be
+        # evidence.
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "Deal Kit.xlsx",
+            "lifecycle": {
+                "type": "DEAL_KIT", "stage": "QUOTED_OUTPUT", "admissible_for": "label",
+                "delivered_at": "2026-08-20T10:00:00Z", "after_cut": True,
+            },
+        }]), "d")
+        assert m.counts["post_cut_evidence"] == 0
+
+    def test_evidence_before_the_cut_does_not_fire(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "floor plan.pdf",
+            "lifecycle": {
+                "type": "FLOOR_PLAN", "stage": "DISCOVERY", "admissible_for": "evidence",
+                "delivered_at": "2026-05-01T10:00:00Z", "after_cut": False,
+            },
+        }]), "d")
+        assert m.counts["post_cut_evidence"] == 0
+
     def test_documents_without_lifecycle_are_ignored_not_failed(self):
         # Absent lifecycle means never classified. That is a gap, not a defect,
         # and these gates must stay silent about it.
@@ -319,3 +358,130 @@ class TestPackaging:
         from app.core.document_lifecycle.timeline import coverage as tl_coverage
         assert doc_coverage() > 1000
         assert tl_coverage()[0] > 150
+
+
+class TestTheCut:
+    """Timestamps, and the one comparison the cut actually turns on."""
+
+    def test_the_same_instant_spelled_two_ways_is_not_after_itself(self):
+        # The bug this replaced: the timeline writes naive UTC and a delivery
+        # stamp arrives with a Z, so `"...:07Z" > "...:07"` was True as a string
+        # and a document delivered exactly at the cut was ruled inadmissible.
+        from app.core.document_lifecycle.timeline import parse_ts
+        assert "2026-08-12T19:28:07Z" > "2026-08-12T19:28:07"      # the old test
+        assert parse_ts("2026-08-12T19:28:07Z") == parse_ts("2026-08-12T19:28:07")
+
+    def test_an_offset_is_normalised_to_utc(self):
+        from app.core.document_lifecycle.timeline import parse_ts
+        assert parse_ts("2026-08-12T15:28:07-04:00") == parse_ts("2026-08-12T19:28:07Z")
+
+    def test_microseconds_parse(self):
+        from app.core.document_lifecycle.timeline import parse_ts
+        assert parse_ts("2026-05-22T19:35:16.654000") is not None
+
+    def test_junk_is_none_not_an_exception(self):
+        from app.core.document_lifecycle.timeline import parse_ts
+        assert parse_ts("last Tuesday") is None
+        assert parse_ts("") is None
+        assert parse_ts(None) is None
+
+    def test_delivered_at_takes_the_earliest_send(self):
+        # A document re-sent after the quote did not become post-quote material.
+        from app.core.document_lifecycle.timeline import delivered_at
+        lc = {"delivered": [
+            {"ts": "2026-08-20T10:00:00Z"},
+            {"ts": "2026-06-01T09:00:00Z"},
+            {"ts": "2026-07-04T12:00:00Z"},
+        ]}
+        assert delivered_at(lc) == "2026-06-01T09:00:00Z"
+
+    def test_delivered_at_is_none_without_a_delivering_message(self):
+        from app.core.document_lifecycle.timeline import delivered_at
+        assert delivered_at({"delivered": []}) is None
+        assert delivered_at({}) is None
+        assert delivered_at(None) is None
+
+    def test_an_unparseable_stamp_does_not_win_the_min(self):
+        from app.core.document_lifecycle.timeline import delivered_at
+        lc = {"delivered": [{"ts": "whenever"}, {"ts": "2026-06-01T09:00:00Z"}]}
+        assert delivered_at(lc) == "2026-06-01T09:00:00Z"
+
+    def test_missing_information_keeps_a_document_admissible(self):
+        # Every unanswerable case must be False. Ruling real evidence OUT is the
+        # expensive direction of this error.
+        from app.core.document_lifecycle.timeline import is_after_cut
+        assert is_after_cut(None, "2026-08-20T10:00:00Z") is False
+        assert is_after_cut("no-such-deal", "2026-08-20T10:00:00Z") is False
+        assert is_after_cut("no-such-deal", None) is False
+
+    def test_a_real_deal_orders_around_its_own_cut(self):
+        from app.core.document_lifecycle.timeline import _table, is_after_cut, quote_asof
+        deal = next(d for d, v in _table().items() if v.get("quote_asof"))
+        cut = quote_asof(deal)
+        assert is_after_cut(deal, cut) is False, "the cut is not after itself"
+        assert is_after_cut(deal, "2099-01-01T00:00:00Z") is True
+        assert is_after_cut(deal, "2000-01-01T00:00:00Z") is False
+
+
+class TestLookupIsolation:
+    """The dataset is cached and shared; a caller's annotation must not stick."""
+
+    def test_lookup_returns_a_copy(self):
+        from app.core.document_lifecycle.dataset import lookup, _table
+        sha = next(iter(_table()))
+        first = lookup(sha)
+        first["after_cut"] = True
+        assert "after_cut" not in lookup(sha), "annotation leaked into the shared table"
+
+
+class TestTheCutReachesTheEnvelope:
+    """The wiring itself: a real compile must carry the deal's timeline."""
+
+    def _compile(self, tmp_path, project_id):
+        import pytest
+        from app.core.compiler import compile_project
+        from app.core.orbitbrief_envelope import build_orbitbrief_envelope
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "real_data_cases" / "COPPER_001_SPRING_LAKE_AUDITORIUM" / "CASE_DOSSIER.pdf"
+        )
+        if not src.is_file():
+            pytest.skip(f"Fixture PDF not present: {src}")
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / src.name).write_bytes(src.read_bytes())
+        result = compile_project(project_dir=project, project_id=project_id)
+        return build_orbitbrief_envelope(project_dir=project, compile_result=result)
+
+    def test_a_deal_with_a_cut_carries_it(self, tmp_path):
+        from app.core.document_lifecycle.timeline import _table, quote_asof
+        deal = next(d for d, v in _table().items() if v.get("quote_asof"))
+        env = self._compile(tmp_path, deal)
+
+        tl = env["deal_timeline"]
+        assert tl["known"] is True
+        assert tl["quote_asof"] == quote_asof(deal)
+        assert tl["events"], "a deal with a cut has the events the cut came from"
+        assert all(e.get("receipt") for e in tl["events"]), "every event keeps its sentence"
+        assert isinstance(tl["documents_after_cut"], int)
+
+    def test_an_unknown_deal_says_so_rather_than_implying_discovery(self, tmp_path):
+        # null quote_asof is ambiguous on its own -- "still in discovery" and
+        # "we have no timeline for this deal" are different facts. `known`
+        # separates them, and this is the case that would otherwise read as the
+        # permissive one.
+        env = self._compile(tmp_path, "00000000-0000-0000-0000-000000000000")
+        tl = env["deal_timeline"]
+        assert tl["known"] is False
+        assert tl["quote_asof"] is None
+        assert tl["events"] == []
+
+    def test_every_document_is_annotated_or_honestly_absent(self, tmp_path):
+        env = self._compile(tmp_path, "env_smoke_cut")
+        for d in env["documents"]:
+            life = d.get("lifecycle")
+            if life is None:
+                continue          # never classified -- a gap, not a guess
+            assert "after_cut" in life and "delivered_at" in life
+            assert life["after_cut"] is False, "an unknown deal has no cut to be after"

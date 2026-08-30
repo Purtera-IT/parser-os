@@ -33,10 +33,18 @@ def _table() -> dict[str, dict[str, Any]]:
 
 
 def lookup(sha256: str | None) -> dict[str, Any] | None:
-    """Lifecycle record for these bytes, or None when we have never seen them."""
+    """Lifecycle record for these bytes, or None when we have never seen them.
+
+    A COPY, not the stored record. The table is cached for the life of the
+    process and shared by every deal compiled in it, so handing out the stored
+    dict would let one caller's annotation -- the envelope adds ``delivered_at``
+    and ``after_cut`` per deal -- leak into every later lookup of the same bytes.
+    A shallow copy is enough: callers add keys, they do not edit ``delivered``.
+    """
     if not sha256:
         return None
-    return _table().get(str(sha256).strip().lower()[:KEY_LEN])
+    record = _table().get(str(sha256).strip().lower()[:KEY_LEN])
+    return dict(record) if record is not None else None
 
 
 def coverage() -> int:
