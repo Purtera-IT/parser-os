@@ -310,6 +310,32 @@ METRICS: tuple[MetricSpec, ...] = (
         rationale="an estimate/quote/calc file can never carry contract authority",
     ),
     MetricSpec(
+        key="output_document_as_evidence",
+        label="our own output admitted as evidence",
+        kind="corpus_count",
+        # A Deal Kit, quote, proposal or SOW is an ANSWER. Reading one as
+        # evidence teaches the head that produces those answers to copy itself,
+        # and the resulting eval score is meaningless because the label was in
+        # the input. Measured over 1,114 classified documents, ~61% of the
+        # document corpus is output -- so this is not a rare edge, it is the
+        # single largest contamination route into the quoting heads. There is no
+        # legitimate instance: zero, permanently.
+        threshold=0,
+        rationale="a Deal Kit or SOW is the answer; reading it as evidence teaches the model to copy itself",
+    ),
+    MetricSpec(
+        key="test_fixture_admitted",
+        label="mock/test document admitted",
+        kind="corpus_count",
+        # Four mock documents exist in the corpus ("Mock Document | Fictional
+        # data", "FOR HUMAN REVIEWER ONLY"). Before the TEST_FIXTURE type
+        # existed, one of them was already routed to `label` -- fictional data
+        # about to become a TRAINING TARGET. Anything above zero means invented
+        # content is shaping a real model.
+        threshold=0,
+        rationale="fictional documents must never reach evidence or training labels",
+    ),
+    MetricSpec(
         key="fabricated_names",
         label="fabricated display names",
         kind="corpus_count",
@@ -434,6 +460,26 @@ def measure_envelope(envelope: Any, deal: str = "?") -> DealMeasure:
         counts[key] += 1
         if len(examples[key]) < 3:
             examples[key].append(text[:150])
+
+    # Documents carry a `lifecycle` set by app.core.document_lifecycle: what the
+    # document is, and who may read it. Absent means never classified, which is
+    # not a failure here -- unknown content quarantines elsewhere. What IS a
+    # failure is a classified document routed against its own stage.
+    OUTPUT_STAGES = {"QUOTED_OUTPUT", "CONTRACTED"}
+    for d in documents:
+        if not isinstance(d, dict):
+            continue
+        life = d.get("lifecycle")
+        if not isinstance(life, dict):
+            continue
+        name = str(d.get("filename") or "?")
+        stage = str(life.get("stage") or "")
+        adm = str(life.get("admissible_for") or "")
+        dtype = str(life.get("type") or "")
+        if stage in OUTPUT_STAGES and adm == "evidence":
+            note("output_document_as_evidence", f"{name} [{dtype}] read as evidence")
+        if dtype == "TEST_FIXTURE" and adm not in ("quarantine", ""):
+            note("test_fixture_admitted", f"{name} admitted as {adm}")
 
     for a in atoms:
         if not isinstance(a, dict):

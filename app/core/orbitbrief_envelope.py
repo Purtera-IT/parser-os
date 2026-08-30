@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
 from app.core.orbitbrief_core import (
     build_bill_of_materials,
     build_change_order_timeline,
@@ -109,12 +110,18 @@ def build_orbitbrief_envelope(
             artifact_atoms=artifact_atoms,
             filename=fp.filename,
         )
+        # Which lifecycle stage this document belongs to, and therefore who may
+        # read it. Looked up by content hash from a precomputed table -- no model
+        # call in the compile path. Absent for documents we have never classified,
+        # and absent is not a guess: consumers quarantine rather than assume.
+        lifecycle = _lifecycle_lookup(fp.sha256)
         documents.append(
             {
                 "artifact_id": fp.artifact_id,
                 "filename": fp.filename,
                 "artifact_type": fp.artifact_type.value,
                 "sha256": fp.sha256,
+                "lifecycle": lifecycle,
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
