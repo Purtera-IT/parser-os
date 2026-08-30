@@ -231,3 +231,59 @@ class TestBaseHealthGates:
         m = measure_envelope(self._env([{"artifact_id": "1", "filename": "x.pdf"}]), "d")
         assert m.counts["output_document_as_evidence"] == 0
         assert m.counts["test_fixture_admitted"] == 0
+
+
+class TestDealTimeline:
+    """When a deal committed to an answer, and what that makes admissible."""
+
+    def test_coverage_is_substantial(self):
+        from app.core.document_lifecycle.timeline import coverage
+        deals, with_cut = coverage()
+        assert deals > 150
+        assert with_cut > 50
+
+    def test_events_are_ordered_and_carry_their_receipt(self):
+        import json
+        from pathlib import Path
+        data = json.loads(Path("app/core/document_lifecycle/data/deal_timeline.json").read_text())
+        for deal, rec in data.items():
+            dates = [e["date"] for e in rec["events"]]
+            assert dates == sorted(dates), f"{deal}: events out of order"
+            for e in rec["events"]:
+                assert e.get("receipt"), f"{deal}: event with no receipt was stored"
+
+    def test_the_cut_is_one_of_the_deals_own_events(self):
+        # The cut must be a moment that actually happened on the deal, never
+        # interpolated.
+        import json
+        from pathlib import Path
+        from app.core.document_lifecycle.timeline import COMMITTING_EVENTS
+        data = json.loads(Path("app/core/document_lifecycle/data/deal_timeline.json").read_text())
+        for deal, rec in data.items():
+            cut = rec.get("quote_asof")
+            if not cut:
+                continue
+            committing = [e["date"] for e in rec["events"] if e["type"] in COMMITTING_EVENTS]
+            assert cut == min(committing), f"{deal}: cut is not its earliest committing event"
+
+    def test_a_deal_still_in_discovery_has_no_cut(self):
+        # None is a real answer: nothing has been promised, so nothing is stale.
+        from app.core.document_lifecycle.timeline import quote_asof, is_after_cut
+        assert quote_asof("a-deal-that-does-not-exist") is None
+        assert is_after_cut("a-deal-that-does-not-exist", "2099-01-01") is False
+
+    def test_unknowable_never_reads_as_stale(self):
+        # Missing timestamp, missing cut: admissible until something proves
+        # otherwise. Silence must not exclude evidence.
+        from app.core.document_lifecycle.timeline import is_after_cut
+        assert is_after_cut(None, "2099-01-01") is False
+        assert is_after_cut("whatever", None) is False
+
+    def test_before_and_after_a_real_cut(self):
+        import json
+        from pathlib import Path
+        from app.core.document_lifecycle.timeline import is_after_cut
+        data = json.loads(Path("app/core/document_lifecycle/data/deal_timeline.json").read_text())
+        deal = next(d for d, v in data.items() if v.get("quote_asof"))
+        assert is_after_cut(deal, "2099-01-01") is True
+        assert is_after_cut(deal, "1999-01-01") is False
