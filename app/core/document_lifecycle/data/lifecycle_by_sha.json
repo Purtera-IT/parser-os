@@ -2690,6 +2690,22 @@
 "stage": "CONTRACTED",
 "type": "SOW_DRAFT"
 },
+"339ea88090bb1ef045158b27caec4dac": {
+"admissible_for": "reference",
+"confidence": 0.95,
+"delivered": [
+{
+"kind": "email",
+"text": "Re: 010209 Ralph Lauren Switch Replacement Project--Request For Quote--Due 8/17/2026 No problem Dan. I have attached 3 screenshots of our Demo that definitely don't do the portal justice, but it does showcase our scalabi",
+"ts": "2026-08-18T12:58:22Z"
+}
+],
+"read_by": "vision (no text layer)",
+"resolved_by": "content signature (vision)",
+"role": "overview of PurPulse AI software for IT Professional Services Operations, supplied by vendor",
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
+},
 "33d5b93a9eb3eddafc5b5e20db7b7d2a": {
 "admissible_for": "label",
 "confidence": 0.95,
@@ -3103,6 +3119,21 @@
 "role": "List of active and new site locations with detailed addresses and contacts, supplied for project or service planning",
 "stage": "DISCOVERY",
 "type": "SITE_LIST"
+},
+"3913c171fee8a2ee9a8cad52be3159fd": {
+"admissible_for": "evidence",
+"confidence": 0.95,
+"delivered": [
+{
+"kind": "email",
+"text": "RE: 010149 Re: Teams Phone Migration 3.7 RFQ Chase \u2013 Attached is a blank template (we may clean this up even more before this next phase). I also attached an example of hand filled map for and also what we create based o",
+"ts": "2026-08-04T15:48:22.925Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "office layout map for phone migration placement team",
+"stage": "DISCOVERY",
+"type": "FLOOR_PLAN"
 },
 "394a6e2ca75f5177dcd52ddd7ac88fed": {
 "admissible_for": "reference",
@@ -3839,7 +3870,7 @@
 },
 "47e2ea7cddf3d47d7f0facaaa9bf52c5": {
 "admissible_for": "neither",
-"confidence": 0.8,
+"confidence": 0.95,
 "delivered": [
 {
 "kind": "note",
@@ -3847,8 +3878,9 @@
 "ts": "2026-04-14T23:08:46.221Z"
 }
 ],
-"resolved_by": "content signature",
-"role": "Code of conduct guidelines for third parties, provided by U.S. Bank",
+"read_by": "vision (no text layer)",
+"resolved_by": "content signature (vision)",
+"role": "Third Party Code of Conduct for vendors and service providers supplied by U.S. Bank",
 "stage": "ADMIN",
 "type": "THIRD_PARTY_POLICY"
 },
@@ -4852,7 +4884,7 @@
 },
 "589bcb98797e9ba0d7cb3a0ea409ef95": {
 "admissible_for": "evidence",
-"confidence": 0.95,
+"confidence": 1.0,
 "delivered": [
 {
 "kind": "email",
@@ -4860,7 +4892,8 @@
 "ts": "2026-08-10T21:18:54Z"
 }
 ],
-"role": "office floor layout with monitor and arm counts for installation planning",
+"read_by": "vision (no text layer)",
+"role": "floor plan for Charlotte office showing monitor and camera monitor locations and room layouts, provided by PurTera-IT",
 "stage": "DISCOVERY",
 "type": "FLOOR_PLAN"
 },
@@ -4945,6 +4978,21 @@
 "role": "summary of deal financials, pricing, and cost rates provided by sales",
 "stage": "QUOTED_OUTPUT",
 "type": "DEAL_KIT"
+},
+"5a04af845db92a9dc6cbb9d521136453": {
+"admissible_for": "evidence",
+"confidence": 1.0,
+"delivered": [
+{
+"kind": "email",
+"text": "010202 RE: KPMG monitor / arm installation project O- you can see the questions I asked them. They don\u2019t know, so they just want hours x hourly rate for this work + uhaul/recycle of the boxes. Just quote them over email,",
+"ts": "2026-08-10T21:18:54Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "floor plan for Atlanta Ignition project supplied by PurTera-IT",
+"stage": "DISCOVERY",
+"type": "FLOOR_PLAN"
 },
 "5a27dd93336c2b8f38da671847ce8b5c": {
 "admissible_for": "evidence",
@@ -5077,6 +5125,21 @@
 "stage": "DELIVERY",
 "type": "INSTALL_INSTRUCTIONS"
 },
+"5c3a6c6e99a5430a966a3fdccdacc930": {
+"admissible_for": "evidence",
+"confidence": 0.9,
+"delivered": [
+{
+"kind": "note",
+"text": "",
+"ts": "2026-08-21T19:05:53.776Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "office wireless access point placement layout",
+"stage": "DISCOVERY",
+"type": "FLOOR_PLAN"
+},
 "5c63aa18083a8c5aa723bdc347217da9": {
 "admissible_for": "label",
 "confidence": 0.95,
@@ -5107,7 +5170,7 @@
 },
 "5c8e4608a20302ff322108a18740a997": {
 "admissible_for": "evidence",
-"confidence": 0.9,
+"confidence": 0.95,
 "delivered": [
 {
 "kind": "note",
@@ -5115,7 +5178,8 @@
 "ts": "2026-06-29T18:54:14.877Z"
 }
 ],
-"role": "office space network and security device layout provided by data center admin",
+"read_by": "vision (no text layer)",
+"role": "office space layout with wireless and camera locations, provided by building admin",
 "stage": "DISCOVERY",
 "type": "FLOOR_PLAN"
 },
@@ -6495,6 +6559,21 @@
 "stage": "DISCOVERY",
 "type": "QUESTIONNAIRE"
 },
+"74a9cdae6f0feab5e5c33f7271af1046": {
+"admissible_for": "evidence",
+"confidence": 0.9,
+"delivered": [
+{
+"kind": "note",
+"text": "",
+"ts": "2026-06-11T13:25:44.146Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "existing conditions floor plan for 7th floor space",
+"stage": "DISCOVERY",
+"type": "FLOOR_PLAN"
+},
 "752d34d191082ee5caf0f3ef92591020": {
 "admissible_for": "evidence",
 "confidence": 1.0,
@@ -6842,6 +6921,27 @@
 "stage": "CONTRACTED",
 "type": "SOW_DRAFT"
 },
+"7a331b80c6531f11b0d13cccc5445cfa": {
+"admissible_for": "reference",
+"confidence": 0.9,
+"delivered": [
+{
+"kind": "email",
+"text": "Re: RL PRO V24 POS Upgrade Hi Dan, Good morning. One area that will be a significant benefit to you and your customers is our in-house PMO platform. It\u2019s a major differentiator, especially for retail multi-site opportuni",
+"ts": "2026-05-19T13:18:40Z"
+},
+{
+"kind": "email",
+"text": "Fw: 010004 Re: Fortinet - scope of work & rollout Hi Brad, I don\u2019t have Amy or Sarah\u2019s email addresses to include on this thread. I\u2019m not usually a fan of long emails, but there was a lot to cover. Please review it and l",
+"ts": "2026-07-14T21:18:53Z"
+}
+],
+"read_by": "vision (no text layer)",
+"resolved_by": "content signature (vision)",
+"role": "Product overview supplied by vendor",
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
+},
 "7a44954472ec467ef505c53eb48a9619": {
 "admissible_for": "label",
 "confidence": 1.0,
@@ -7105,6 +7205,21 @@
 "role": "detailed cost and pricing breakdown for a deal",
 "stage": "QUOTED_OUTPUT",
 "type": "DEAL_KIT"
+},
+"7fe77cb89608bc04ac02885c2cfe387d": {
+"admissible_for": "evidence",
+"confidence": 0.9,
+"delivered": [
+{
+"kind": "note",
+"text": "Looks like we'll need a ladder, assuming we can get close enough to the tank. They may also have ladders onsite. Thanks, Mb",
+"ts": "2026-06-08T14:29:04.157Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "tank and site information form supplied by client for logistics planning",
+"stage": "DISCOVERY",
+"type": "SITE_SURVEY"
 },
 "802b856d3622c2061b0a9dd588764315": {
 "admissible_for": "label",
@@ -8354,13 +8469,12 @@
 "type": "SOW_DRAFT"
 },
 "97410b85fdb2d2944d63fbaae7fc9cf2": {
-"admissible_for": "quarantine",
-"confidence": 0.2,
-"needs": "image extraction \u2014 this is a drawing, not a thin document",
-"role": "note about additional TVs for office area",
-"stage": "UNKNOWN",
-"text_layer_empty": true,
-"type": "OTHER"
+"admissible_for": "evidence",
+"confidence": 0.9,
+"read_by": "vision (no text layer)",
+"role": "site layout and mounting locations for TVs and security panel, provided by architect",
+"stage": "DISCOVERY",
+"type": "SITE_SURVEY"
 },
 "982d0b22bbbbf65c5a07a2143f7da42b": {
 "admissible_for": "label",
@@ -11670,6 +11784,21 @@
 "stage": "CONTRACTED",
 "type": "SOW_DRAFT"
 },
+"d47df566d10827c836aecd903d88e2d7": {
+"admissible_for": "evidence",
+"confidence": 0.9,
+"delivered": [
+{
+"kind": "email",
+"text": "RE: PurTera IT: Global Professional Services execution with AI PMO oversight You don't often get email from ericb@cdw.com. Learn why this is important Hey Team, This is what I have thus far from Julio. Still working on g",
+"ts": "2026-08-12T15:17:37Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "Emergency action and layout map for Columbia facility provided by Julio",
+"stage": "DISCOVERY",
+"type": "FLOOR_PLAN"
+},
 "d4ab97c02f67361fa5c2dbe193976673": {
 "admissible_for": "evidence",
 "confidence": 0.9,
@@ -12138,7 +12267,7 @@
 },
 "d9144a0c674c6c148c3c0666ca7dfdf5": {
 "admissible_for": "evidence",
-"confidence": 0.8,
+"confidence": 0.9,
 "delivered": [
 {
 "kind": "email",
@@ -12151,9 +12280,10 @@
 "ts": "2026-07-02T19:56:34.752Z"
 }
 ],
-"role": "rack layout for site survey assessment provided by CDW",
+"read_by": "vision (no text layer)",
+"role": "rack layout for site survey assessment",
 "stage": "DISCOVERY",
-"type": "SITE_SURVEY"
+"type": "FLOOR_PLAN"
 },
 "d948bcec88e1f87bd51d96c50a7275be": {
 "admissible_for": "label",
@@ -13011,7 +13141,7 @@
 },
 "e806f4cd1a5356c79c476d563658ef80": {
 "admissible_for": "evidence",
-"confidence": 0.9,
+"confidence": 0.95,
 "delivered": [
 {
 "kind": "note",
@@ -13019,9 +13149,10 @@
 "ts": "2026-05-07T17:27:32.109Z"
 }
 ],
-"role": "camera location details for installation planning provided by client",
+"read_by": "vision (no text layer)",
+"role": "camera location layout for Tri Star Energy provided by client",
 "stage": "DISCOVERY",
-"type": "SITE_LIST"
+"type": "FLOOR_PLAN"
 },
 "e821f4dcbe2bc75e951b99daf77b3c7a": {
 "admissible_for": "label",
@@ -13565,6 +13696,21 @@
 "role": "Project services statement of work for wireless access point installation provided by PurTera LLC to Balata Data",
 "stage": "CONTRACTED",
 "type": "SOW_SIGNED"
+},
+"f1d2ed0a33afa74aac071346a464575d": {
+"admissible_for": "evidence",
+"confidence": 0.95,
+"delivered": [
+{
+"kind": "email",
+"text": "010202 RE: KPMG monitor / arm installation project O- you can see the questions I asked them. They don\u2019t know, so they just want hours x hourly rate for this work + uhaul/recycle of the boxes. Just quote them over email,",
+"ts": "2026-08-10T21:18:54Z"
+}
+],
+"read_by": "vision (no text layer)",
+"role": "office floor layout for monitor/arm installation project",
+"stage": "DISCOVERY",
+"type": "FLOOR_PLAN"
 },
 "f1d48e9a89724851c21b8ae552f25bd6": {
 "admissible_for": "evidence",

@@ -125,3 +125,43 @@ class TestDataset:
         leaked = [s for s, r in data.items()
                   if r["stage"] in ("QUOTED_OUTPUT", "CONTRACTED") and r["admissible_for"] == "evidence"]
         assert not leaked, f"{len(leaked)} output document(s) marked as evidence"
+
+
+class TestVisionFallback:
+    """PDFs that are drawings, not documents."""
+
+    def test_detects_a_drawing_wearing_a_text_layer(self):
+        from app.core.document_lifecycle.vision_fallback import has_empty_text_layer
+        # The real cases: a 13-page policy that yielded 596 chars of page furniture,
+        # and a one-page AP placement drawing with 37 characters on it.
+        assert has_empty_text_layer("x" * 596, 13) is True
+        assert has_empty_text_layer("x" * 37, 1) is True
+        assert has_empty_text_layer("", 2) is True
+
+    def test_leaves_real_documents_alone(self):
+        from app.core.document_lifecycle.vision_fallback import has_empty_text_layer
+        assert has_empty_text_layer("x" * 6000, 3) is False
+        assert has_empty_text_layer("x" * 2000, 1) is False
+
+    def test_zero_pages_is_not_a_drawing(self):
+        from app.core.document_lifecycle.vision_fallback import has_empty_text_layer
+        assert has_empty_text_layer("", 0) is False
+
+    def test_vision_read_documents_are_marked_as_such(self):
+        # A label derived from looking at a picture should say so, so a reader can
+        # weigh it differently from one derived from extracted text.
+        import json
+        from pathlib import Path
+        data = json.loads(Path("app/core/document_lifecycle/data/lifecycle_by_sha.json").read_text())
+        seen = [v for v in data.values() if v.get("read_by")]
+        assert seen, "no vision-read documents recorded"
+        assert all("vision" in v["read_by"] for v in seen)
+
+    def test_site_drawings_became_evidence(self):
+        # The point of the exercise: floor plans and AP placements were invisible.
+        import json
+        from pathlib import Path
+        data = json.loads(Path("app/core/document_lifecycle/data/lifecycle_by_sha.json").read_text())
+        vision = [v for v in data.values() if v.get("read_by")]
+        evidence = [v for v in vision if v["admissible_for"] == "evidence"]
+        assert len(evidence) >= 10, f"only {len(evidence)} of {len(vision)} became evidence"
