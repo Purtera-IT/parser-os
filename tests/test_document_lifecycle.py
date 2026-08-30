@@ -81,3 +81,47 @@ class TestStateClaims:
     def test_change_order_needs_change_language(self):
         kept, demoted, _ = check_state_claim("CHANGE_ORDER", "quarterly summary", "nothing relevant")
         assert (kept, demoted) == ("OTHER", True)
+
+
+class TestDataset:
+    """The precomputed table the envelope reads. No model call in a compile."""
+
+    def test_dataset_is_present_and_substantial(self):
+        from app.core.document_lifecycle.dataset import coverage
+        assert coverage() > 1000
+
+    def test_lookup_accepts_a_full_length_sha(self):
+        # The envelope holds a full sha256; the table is keyed on a 32-char prefix.
+        import json
+        from pathlib import Path
+        from app.core.document_lifecycle.dataset import lookup
+        data = json.loads((Path("app/core/document_lifecycle/data/lifecycle_by_sha.json")).read_text())
+        key = next(iter(data))
+        assert lookup(key + "f" * 32) == data[key]
+        assert lookup(key.upper()) == data[key]
+
+    def test_unknown_content_is_not_guessed(self):
+        from app.core.document_lifecycle.dataset import lookup
+        assert lookup("0" * 64) is None
+        assert lookup("") is None
+        assert lookup(None) is None
+
+    def test_every_stored_record_routes_consistently(self):
+        # A stored record must agree with the table it was derived from, or the
+        # dataset and the routing logic have drifted apart.
+        import json
+        from pathlib import Path
+        from app.core.document_lifecycle import route
+        data = json.loads((Path("app/core/document_lifecycle/data/lifecycle_by_sha.json")).read_text())
+        for sha, rec in data.items():
+            stage, adm = route(rec["type"])
+            assert (stage, adm) == (rec["stage"], rec["admissible_for"]), f"{sha}: {rec['type']}"
+
+    def test_our_own_output_is_never_stored_as_evidence(self):
+        # The whole point. If this fails, the leak is back.
+        import json
+        from pathlib import Path
+        data = json.loads((Path("app/core/document_lifecycle/data/lifecycle_by_sha.json")).read_text())
+        leaked = [s for s, r in data.items()
+                  if r["stage"] in ("QUOTED_OUTPUT", "CONTRACTED") and r["admissible_for"] == "evidence"]
+        assert not leaked, f"{len(leaked)} output document(s) marked as evidence"
