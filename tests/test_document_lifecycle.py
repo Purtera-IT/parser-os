@@ -287,3 +287,35 @@ class TestDealTimeline:
         deal = next(d for d, v in data.items() if v.get("quote_asof"))
         assert is_after_cut(deal, "2099-01-01") is True
         assert is_after_cut(deal, "1999-01-01") is False
+
+
+class TestPackaging:
+    """The dataset is data, and setuptools ships no file it is not told about.
+
+    This was a real, silent failure: the package installed cleanly into the
+    container without its JSON, every lookup returned None, and the envelope
+    carried `lifecycle: null` on all 65 documents of a deal whose 21 documents
+    were all in the table. Nothing raised. A missing dataset must be loud.
+    """
+
+    def test_pyproject_ships_the_lifecycle_data(self):
+        import tomllib
+        from pathlib import Path
+        cfg = tomllib.loads(Path("pyproject.toml").read_text())
+        patterns = cfg["tool"]["setuptools"]["package-data"]["app"]
+        assert any("document_lifecycle/data" in p for p in patterns), (
+            "app/core/document_lifecycle/data/*.json is not in package-data; "
+            "the wheel will install without its labels and silently classify nothing"
+        )
+
+    def test_both_datasets_exist_where_the_loaders_look(self):
+        from app.core.document_lifecycle import dataset, timeline
+        assert dataset._DATA.exists(), dataset._DATA
+        assert timeline._DATA.exists(), timeline._DATA
+
+    def test_loaders_report_real_coverage(self):
+        # If this drops to zero in a deployed environment, the data did not ship.
+        from app.core.document_lifecycle.dataset import coverage as doc_coverage
+        from app.core.document_lifecycle.timeline import coverage as tl_coverage
+        assert doc_coverage() > 1000
+        assert tl_coverage()[0] > 150
