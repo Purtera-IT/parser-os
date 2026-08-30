@@ -165,3 +165,69 @@ class TestVisionFallback:
         vision = [v for v in data.values() if v.get("read_by")]
         evidence = [v for v in vision if v["admissible_for"] == "evidence"]
         assert len(evidence) >= 10, f"only {len(evidence)} of {len(vision)} became evidence"
+
+
+class TestBaseHealthGates:
+    """The gates that stop the contamination coming back."""
+
+    def _env(self, docs):
+        return {"atoms": [{"id": "a", "text": "x"}], "documents": docs}
+
+    def test_output_read_as_evidence_is_caught(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "010215 Sodexo Deal Kit.xlsx",
+            "lifecycle": {"type": "DEAL_KIT", "stage": "QUOTED_OUTPUT", "admissible_for": "evidence"},
+        }]), "d")
+        assert m.counts["output_document_as_evidence"] == 1
+        assert "Deal Kit" in m.examples["output_document_as_evidence"][0]
+
+    def test_a_signed_sow_read_as_evidence_is_caught(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "SOW signed.pdf",
+            "lifecycle": {"type": "SOW_SIGNED", "stage": "CONTRACTED", "admissible_for": "evidence"},
+        }]), "d")
+        assert m.counts["output_document_as_evidence"] == 1
+
+    def test_correctly_routed_output_does_not_fire(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "Deal Kit.xlsx",
+            "lifecycle": {"type": "DEAL_KIT", "stage": "QUOTED_OUTPUT", "admissible_for": "label"},
+        }]), "d")
+        assert m.counts["output_document_as_evidence"] == 0
+
+    def test_real_evidence_does_not_fire(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "LA Office - Wireless AP Placement.pdf",
+            "lifecycle": {"type": "FLOOR_PLAN", "stage": "DISCOVERY", "admissible_for": "evidence"},
+        }]), "d")
+        assert m.counts["output_document_as_evidence"] == 0
+
+    def test_mock_data_reaching_a_training_label_is_caught(self):
+        # This actually happened: 07_contracting_procurement_packet.pdf, a
+        # document stamped "Fictional data", was routed to `label`.
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "07_contracting_procurement_packet.pdf",
+            "lifecycle": {"type": "TEST_FIXTURE", "stage": "UNKNOWN", "admissible_for": "label"},
+        }]), "d")
+        assert m.counts["test_fixture_admitted"] == 1
+
+    def test_quarantined_fixture_does_not_fire(self):
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{
+            "artifact_id": "1", "filename": "mock.pdf",
+            "lifecycle": {"type": "TEST_FIXTURE", "stage": "UNKNOWN", "admissible_for": "quarantine"},
+        }]), "d")
+        assert m.counts["test_fixture_admitted"] == 0
+
+    def test_documents_without_lifecycle_are_ignored_not_failed(self):
+        # Absent lifecycle means never classified. That is a gap, not a defect,
+        # and these gates must stay silent about it.
+        from tools.base_health import measure_envelope
+        m = measure_envelope(self._env([{"artifact_id": "1", "filename": "x.pdf"}]), "d")
+        assert m.counts["output_document_as_evidence"] == 0
+        assert m.counts["test_fixture_admitted"] == 0
