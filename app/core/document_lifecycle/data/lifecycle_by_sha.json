@@ -164,11 +164,12 @@
 "type": "RFP"
 },
 "03c053ad2f7b8e8d02a753cdf880fb6d": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.8,
+"resolved_by": "content signature",
 "role": "pricing estimate note from sales representative",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "045ad88257d8b7e8936e31603e397367": {
 "admissible_for": "atlas",
@@ -241,7 +242,7 @@
 "type": "PURCHASE_ORDER"
 },
 "06056aa12c2ed33bfa21606865038706": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
 "delivered": [
 {
@@ -250,9 +251,10 @@
 "ts": "2026-06-23T13:49:25.584Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Wi-Fi design proposal document supplied by network engineer",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "ENGINEERING_DESIGN"
 },
 "068879e46aa718aa0e586dd69ff0d63c": {
 "admissible_for": "label",
@@ -304,7 +306,7 @@
 "type": "SOW_DRAFT"
 },
 "0988349deec93d0387b5d0b8c76dc004": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.8,
 "delivered": [
 {
@@ -313,9 +315,10 @@
 "ts": "2026-07-20T22:00:09.074Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "technical specifications provided by OxBlue Corporation",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "VENDOR_DATASHEET"
 },
 "09a965c51548e02ecfc4556ba85f46e4": {
 "admissible_for": "label",
@@ -360,11 +363,12 @@
 "type": "INTAKE_REQUEST"
 },
 "09c8d700000be9aee20f4c470d7ebe01": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal communication for sales process",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "09ce45e1041c5407e7f4389398cc1113": {
 "admissible_for": "label",
@@ -889,11 +893,12 @@
 "type": "DEAL_KIT"
 },
 "138271f97aa160e6c0d27e80c7f5013a": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Sales follow-up note from Patrick Kelly to customer",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "1395e6a3154376ae8dbba4676da7ceef": {
 "admissible_for": "label",
@@ -1034,7 +1039,7 @@
 "type": "DEAL_KIT"
 },
 "161b3426cd7fff0b3303b03717848501": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
 "delivered": [
 {
@@ -1044,9 +1049,10 @@
 }
 ],
 "demoted_from": "AS_BUILT",
+"resolved_by": "content signature",
 "role": "detailed rack elevation and port count for network installation, supplied by installer",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "ENGINEERING_DESIGN"
 },
 "165fdcfd9e2ce158dbe6993a3dc4242f": {
 "admissible_for": "atlas",
@@ -1498,11 +1504,12 @@
 "type": "SOW_DRAFT"
 },
 "1f458757cfd33b4a64b4357f2cc03e63": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "logistics update from seller",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "1f7e8af9978c512c60f1b8fc6628ff73": {
 "admissible_for": "label",
@@ -2213,7 +2220,7 @@
 "type": "DEAL_KIT"
 },
 "2c603d6e01bbc816a96ed32d5c8cf845": {
-"admissible_for": "quarantine",
+"admissible_for": "reference",
 "confidence": 0.95,
 "delivered": [
 {
@@ -2222,9 +2229,10 @@
 "ts": "2026-04-30T17:40:35.412Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "overview of engineering capabilities and resources provided by a professional services partner",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
 },
 "2c821067a2b460dc5d19e4602a2c6500": {
 "admissible_for": "label",
@@ -2462,11 +2470,12 @@
 "type": "CREDIT_APPLICATION"
 },
 "303967bbdea58ff5997d255353b2f7e0": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 1.0,
+"resolved_by": "content signature",
 "role": "request for drafting MSA for Sodexo by Patrick Kelly",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "30432f12c03fa4bf11002c486e70b3c4": {
 "admissible_for": "evidence",
@@ -2991,11 +3000,12 @@
 "type": "SOW_DRAFT"
 },
 "37974197b8afcc3044d74c133e1c0adc": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Request for quote and capabilities from Purtera IT to Fred NMC",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "37fc01d243b6dd450ac7375bb99158d6": {
 "admissible_for": "label",
@@ -3080,11 +3090,12 @@
 "type": "DEAL_KIT"
 },
 "3905bc8ac5668bfe3c3a8786ddb8575a": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 1.0,
+"resolved_by": "content signature",
 "role": "internal communication from Patrick Kelly at purtera-it.com",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "390fbf9873e4db1993bda02e9c7d8118": {
 "admissible_for": "evidence",
@@ -3241,7 +3252,7 @@
 "type": "SOW_DRAFT"
 },
 "3d4fd3a1f7a65e4ea6ca0983d9dfc265": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.85,
 "delivered": [
 {
@@ -3251,9 +3262,10 @@
 }
 ],
 "demoted_from": "AS_BUILT",
+"resolved_by": "content signature",
 "role": "fiber rack elevation diagram showing installation and relocation of fiber patch panels",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "ENGINEERING_DESIGN"
 },
 "3d9771702cf83b2dbd614a94ae27cb44": {
 "admissible_for": "label",
@@ -3821,11 +3833,12 @@
 "47d1c01107d3c18b1cce8fdf6498ad3e": {
 "admissible_for": "quarantine",
 "confidence": 0.1,
+"resolved_by": "content signature",
 "stage": "UNKNOWN",
-"type": "OTHER"
+"type": "TEST_FIXTURE"
 },
 "47e2ea7cddf3d47d7f0facaaa9bf52c5": {
-"admissible_for": "quarantine",
+"admissible_for": "neither",
 "confidence": 0.8,
 "delivered": [
 {
@@ -3834,9 +3847,10 @@
 "ts": "2026-04-14T23:08:46.221Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Code of conduct guidelines for third parties, provided by U.S. Bank",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "ADMIN",
+"type": "THIRD_PARTY_POLICY"
 },
 "483d37cfb84c1171ef6dbcb8d5c8b730": {
 "admissible_for": "label",
@@ -4532,9 +4546,10 @@
 "ts": "2026-05-19T21:30:03.628Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Executive summary of deal scope, milestones, hardware, and risks provided by vendor",
 "stage": "UNKNOWN",
-"type": "OTHER"
+"type": "TEST_FIXTURE"
 },
 "536cecc9f96978ce3b9bd674cc7957f2": {
 "admissible_for": "evidence",
@@ -5506,11 +5521,12 @@
 "type": "SOW_SIGNED"
 },
 "64dd2ea9d4b04a48e195670d281b6183": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal communication for deal preparation",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "655d6dc46de9f0635a06b01759ad2431": {
 "admissible_for": "label",
@@ -5854,11 +5870,12 @@
 "type": "DEAL_KIT"
 },
 "6a7787b21047724909205b3cc1125f75": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Sales follow-up note from Purtera IT",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "6ac78d17ffde3eb9073f6497c8621cbd": {
 "admissible_for": "label",
@@ -5880,18 +5897,20 @@
 "type": "SOW_DRAFT"
 },
 "6ae9eb95c67fc582ab2b0a6a3a90ced1": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal pricing and training note from sales representative",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "6af2769349c58e7daf892581206eeffc": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal communication about document sharing",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "6b4e970d91e34338849587dd57a5fabe": {
 "admissible_for": "label",
@@ -6226,9 +6245,10 @@
 "ts": "2026-06-19T13:21:38.473Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Internal quality control and data validation for deal parsing",
 "stage": "UNKNOWN",
-"type": "OTHER"
+"type": "TEST_FIXTURE"
 },
 "70df346860c947211f904a49786ad8b7": {
 "admissible_for": "label",
@@ -6278,12 +6298,13 @@
 "type": "RFQ"
 },
 "71b5646080f06ced6993010c2572ee4b": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
 "demoted_from": "CHANGE_ORDER",
+"resolved_by": "content signature",
 "role": "additional scope request from customer for network installation",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "71c8d93a23efa0124e9792101e43a543": {
 "admissible_for": "evidence",
@@ -7283,7 +7304,7 @@
 "type": "INTAKE_REQUEST"
 },
 "8356eacc4ee395b1de970a1cbf52824d": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.95,
 "delivered": [
 {
@@ -7292,9 +7313,10 @@
 "ts": "2026-05-22T15:14:54Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Product information sheet supplied by sales",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "VENDOR_DATASHEET"
 },
 "83aa4b470cd220c609ac5a9cb7f1fd6c": {
 "admissible_for": "evidence",
@@ -7482,7 +7504,7 @@
 "type": "SOW_DRAFT"
 },
 "889d22a892268a9818a27c307e525cf8": {
-"admissible_for": "quarantine",
+"admissible_for": "reference",
 "confidence": 0.9,
 "delivered": [
 {
@@ -7496,9 +7518,10 @@
 "ts": "2026-08-19T19:17:59Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "marketing overview for staffing services by CDW",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
 },
 "88f38b42cead7aa9314de34d6840d799": {
 "admissible_for": "label",
@@ -7803,7 +7826,7 @@
 "type": "QUOTE"
 },
 "8e13ba41117bd8b265208b5d859613aa": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
 "delivered": [
 {
@@ -7812,9 +7835,10 @@
 "ts": "2026-08-04T03:10:41Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Data center rack elevation and cable management layout provided by customer or engineer",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "ENGINEERING_DESIGN"
 },
 "8e5935789cd3cc83e04503a106eaf47b": {
 "admissible_for": "atlas",
@@ -8332,8 +8356,10 @@
 "97410b85fdb2d2944d63fbaae7fc9cf2": {
 "admissible_for": "quarantine",
 "confidence": 0.2,
+"needs": "image extraction \u2014 this is a drawing, not a thin document",
 "role": "note about additional TVs for office area",
 "stage": "UNKNOWN",
+"text_layer_empty": true,
 "type": "OTHER"
 },
 "982d0b22bbbbf65c5a07a2143f7da42b": {
@@ -8351,11 +8377,12 @@
 "type": "SOW_DRAFT"
 },
 "985fcb33320caeb0189b2db36d1b0a73": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Call attempt record by sales or support",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "9862418a12295d6ddfe605519c49f5dd": {
 "admissible_for": "label",
@@ -8585,11 +8612,12 @@
 "type": "QUESTIONNAIRE"
 },
 "9c03c58c09558877619b2eca764c88bf": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal note for project tracking by account representative",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "9c0bfc1eff17a019c94489c153515dcb": {
 "admissible_for": "evidence",
@@ -8721,7 +8749,7 @@
 "type": "SOW_DRAFT"
 },
 "9e22e30662e0271a7115487be280a206": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.8,
 "delivered": [
 {
@@ -8730,9 +8758,10 @@
 "ts": "2026-07-20T22:00:09.188Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "technical specification provided by OxBlue Corporation",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "VENDOR_DATASHEET"
 },
 "9ea469386d7037deb277f0ff0a881cbe": {
 "admissible_for": "neither",
@@ -8742,7 +8771,7 @@
 "type": "W9"
 },
 "9ed46ec49fb54577403e9488bddcaa41": {
-"admissible_for": "quarantine",
+"admissible_for": "reference",
 "confidence": 0.9,
 "delivered": [
 {
@@ -8756,9 +8785,10 @@
 "ts": "2026-08-20T23:13:36.061Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Service offering overview from PurTeraIT",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
 },
 "9f3a690fd705978bff31175620848a6d": {
 "admissible_for": "atlas",
@@ -8775,11 +8805,12 @@
 "type": "SCHEDULE"
 },
 "9fae0bcb46b34d1c88ae4a925fa38807": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Sales team internal communication about pricing and service model",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "9fb2376f196c49c4c1e64bc4c07905b0": {
 "admissible_for": "label",
@@ -8850,7 +8881,7 @@
 "type": "QUOTE"
 },
 "a0a5a992307950e2ce496f9fdbf6b210": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
 "delivered": [
 {
@@ -8859,9 +8890,10 @@
 "ts": "2026-05-21T15:44:04.345Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Informational guide provided by Olin for customers on telemetry benefits and setup process",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "VENDOR_DATASHEET"
 },
 "a0f9c674f2b39f0a83ed38d4b39c7eb3": {
 "admissible_for": "label",
@@ -9299,7 +9331,7 @@
 "type": "QUOTE"
 },
 "acb83e9014cf558307eddef5b6f7e9a0": {
-"admissible_for": "quarantine",
+"admissible_for": "reference",
 "confidence": 0.9,
 "delivered": [
 {
@@ -9313,9 +9345,10 @@
 "ts": "2026-08-19T19:17:59Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Capability matrix for staffing services provided by CDW",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
 },
 "ad561767c6bfbf526d391a3b1906c811": {
 "admissible_for": "label",
@@ -9346,7 +9379,7 @@
 "type": "INSTALL_INSTRUCTIONS"
 },
 "ae4afbc619408aeaba4532c0036bc537": {
-"admissible_for": "quarantine",
+"admissible_for": "reference",
 "confidence": 0.95,
 "delivered": [
 {
@@ -9355,9 +9388,10 @@
 "ts": "2026-08-18T14:12:14Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Service provider marketing low-voltage cabling capabilities",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
 },
 "af1ec5b19725821ce4be2a2f30cf8a0c": {
 "admissible_for": "evidence",
@@ -9666,9 +9700,10 @@
 "ts": "2026-05-19T21:30:03.633Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Technical integration notes for dev environment supplied by internal team",
 "stage": "UNKNOWN",
-"type": "OTHER"
+"type": "TEST_FIXTURE"
 },
 "b35b271deb0d7ac295abf1bfd5989f85": {
 "admissible_for": "label",
@@ -10130,7 +10165,7 @@
 "type": "INSTALL_INSTRUCTIONS"
 },
 "bc8e3c8214cf02f004855442176b0473": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
 "delivered": [
 {
@@ -10139,9 +10174,10 @@
 "ts": "2026-06-05T11:33:50.263Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Network design overview for SD-WAN and switching deployment provided by Fortinet",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "ENGINEERING_DESIGN"
 },
 "bcc7660a534723352c4cd486bce84a18": {
 "admissible_for": "evidence",
@@ -10362,11 +10398,12 @@
 "type": "RATE_CARD"
 },
 "c098c3cf83973629a4180d0df6254671": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal sales update",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "c0a094cfc133bd5a3d6cc9451f601afb": {
 "admissible_for": "evidence",
@@ -10502,11 +10539,12 @@
 "type": "DEAL_KIT"
 },
 "c2e27a6132d98ade2733da610e3f5001": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "scoping call notes from Purtera IT representative",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "c3524bc1884efc811f3fca8f95004b6f": {
 "admissible_for": "evidence",
@@ -10530,11 +10568,12 @@
 "type": "SOW_DRAFT"
 },
 "c392d960dc0d6ce18dd6a2097a9337f9": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Technical standards for hardware configurations supplied by Dell & NetApp",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "TECHNICAL_STANDARDS"
 },
 "c3a5a46d12634085d75a20f95bb8fd6a": {
 "admissible_for": "label",
@@ -10612,7 +10651,7 @@
 "type": "DEAL_KIT"
 },
 "c572aac658245d8ea415f726cdcfd243": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 1.0,
 "delivered": [
 {
@@ -10621,9 +10660,10 @@
 "ts": "2026-06-24T18:18:29.931Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Meeting summary and transcript for internal use to prepare quote and SOW",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CALL_TRANSCRIPT"
 },
 "c5e7ccd75e87999b54d9261eb1e4d2de": {
 "admissible_for": "label",
@@ -10984,11 +11024,12 @@
 "type": "DEAL_KIT"
 },
 "cab4e6af59ca0e85c30953de7bebc4f6": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.95,
+"resolved_by": "content signature",
 "role": "Sales or project discussion transcript from internal or client meeting",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CALL_TRANSCRIPT"
 },
 "cab866dcc1b28da7fce3af56144d13b3": {
 "admissible_for": "label",
@@ -11439,11 +11480,12 @@
 "type": "SOW_DRAFT"
 },
 "d1209a584bc18b4dbec156cef8d225a8": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 1.0,
+"resolved_by": "content signature",
 "role": "Job description for Implementation Specialist in data center rack build and installation, provided by employer or recruiter",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "JOB_DESCRIPTION"
 },
 "d12a343edb98d98d5794d952e6d3830a": {
 "admissible_for": "neither",
@@ -11629,11 +11671,12 @@
 "type": "SOW_DRAFT"
 },
 "d4ab97c02f67361fa5c2dbe193976673": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal meeting note from Purtera IT",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "d4b37efa337e62a0dca7e7bd77ff9cdb": {
 "admissible_for": "label",
@@ -11765,11 +11808,12 @@
 "type": "SOW_SIGNED"
 },
 "d5a5d8743d758979fc19b580fa82967f": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "internal status update from AJ Evans",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "d5d6fe411acc2d3561953c8f826cdeef": {
 "admissible_for": "evidence",
@@ -11821,9 +11865,10 @@
 "d636aecac9cc6f27928c3b2005bc049b": {
 "admissible_for": "quarantine",
 "confidence": 0.8,
+"resolved_by": "content signature",
 "role": "notes on packaging and download status",
 "stage": "UNKNOWN",
-"type": "OTHER"
+"type": "TEST_FIXTURE"
 },
 "d660d0bdfa2504304a2a56087e1bc7a4": {
 "admissible_for": "evidence",
@@ -12366,11 +12411,12 @@
 "type": "SOW_DRAFT"
 },
 "de2ab0f3641d6c085594c21ca56fdf64": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 1.0,
+"resolved_by": "content signature",
 "role": "Internal discussion transcript for project planning and strategy",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CALL_TRANSCRIPT"
 },
 "de5626c58dfa6065fb266bc657acc219": {
 "admissible_for": "label",
@@ -12542,11 +12588,12 @@
 "type": "SOW_DRAFT"
 },
 "e168ed63e26b973a6102b7a71e921fd1": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "project update from sales representative",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "e1944d295150d842cca9268361837d03": {
 "admissible_for": "evidence",
@@ -12847,11 +12894,12 @@
 "type": "SOW_DRAFT"
 },
 "e6123d440ccf96f9330053bdd4103c3b": {
-"admissible_for": "quarantine",
+"admissible_for": "reference",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "Resource capability and engineer level reference provided by supplier",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "QUOTING",
+"type": "SALES_COLLATERAL"
 },
 "e62097f6d455d6107906a98450208d88": {
 "admissible_for": "label",
@@ -13152,11 +13200,12 @@
 "type": "SOW_DRAFT"
 },
 "eba0a12c66a5eeec21f75bc2dfd341e6": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.9,
+"resolved_by": "content signature",
 "role": "record of discussion by Trent Torrence",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "CRM_NOTE"
 },
 "ebaf7b812a052cef2ef21e9cf0bb3eda": {
 "admissible_for": "label",
@@ -13489,7 +13538,7 @@
 "type": "QUOTE"
 },
 "f1a183e0560333e3e24a9fffdf8fcab5": {
-"admissible_for": "quarantine",
+"admissible_for": "evidence",
 "confidence": 0.95,
 "delivered": [
 {
@@ -13498,9 +13547,10 @@
 "ts": "2026-05-22T15:14:54Z"
 }
 ],
+"resolved_by": "content signature",
 "role": "Product information sheet supplied by sales representative",
-"stage": "UNKNOWN",
-"type": "OTHER"
+"stage": "DISCOVERY",
+"type": "VENDOR_DATASHEET"
 },
 "f1cd155aed268ed9873123e4bf369f16": {
 "admissible_for": "label",
