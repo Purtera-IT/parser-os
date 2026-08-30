@@ -50,6 +50,11 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
+          # The dev extra pulls sentence-transformers, and therefore torch. Take
+          # the CPU wheel explicitly: pip's default resolution on Linux is the
+          # CUDA build, which is ~2.5GB for a suite that never runs a model.
+          # Installing it first means the extra resolves against it and stops.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev]"
 
       - name: Import check

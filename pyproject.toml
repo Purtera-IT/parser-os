@@ -63,6 +63,17 @@ dev = [
   # confirmed stable on Windows or CI moves to Linux containers.
   "pytest>=8.0,<9",
   "httpx>=0.28",
+  # tests/test_atom_run.py monkeypatches "sentence_transformers.SentenceTransformer"
+  # with an 8-dim stub, so the suite never loads a real model -- but monkeypatch
+  # must IMPORT the module to replace an attribute on it, and without the package
+  # installed that import raises and the test fails. It is declared here rather
+  # than soft-imported because app/learning/build_atom_store.py genuinely requires
+  # it at runtime; the test is stubbed, the trainer is not.
+  #
+  # It drags in torch and transformers. CI installs the CPU-only torch wheel first
+  # (see .github/workflows/tests.yml) so this costs ~200MB rather than the ~2.5GB
+  # CUDA build pip would otherwise resolve to on Linux.
+  "sentence-transformers>=3.0",
 ]
 
 [tool.setuptools.packages.find]

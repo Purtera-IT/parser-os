@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
+from app.core.document_lifecycle import timeline as _timeline
 from app.core.orbitbrief_core import (
     build_bill_of_materials,
     build_change_order_timeline,
@@ -115,6 +116,22 @@ def build_orbitbrief_envelope(
         # call in the compile path. Absent for documents we have never classified,
         # and absent is not a guess: consumers quarantine rather than assume.
         lifecycle = _lifecycle_lookup(fp.sha256)
+        # The timeline cut. A document that reached us AFTER we sent the quote or
+        # the SOW cannot be part of why we priced it that way -- reading it as
+        # quoting evidence is hindsight, and it trains a head on facts the head
+        # will not have at the moment it has to answer. So each document carries
+        # when it arrived and which side of the deal's own cut that falls on.
+        #
+        # Both fields are conservative by construction: no delivering message, no
+        # cut, or an unparseable timestamp all yield ``after_cut: false``. Ruling
+        # real evidence OUT is the expensive direction of this error, so the
+        # ambiguous case stays admissible and stays visible.
+        if lifecycle is not None:
+            arrived = _timeline.delivered_at(lifecycle)
+            lifecycle["delivered_at"] = arrived
+            lifecycle["after_cut"] = _timeline.is_after_cut(
+                compile_result.project_id, arrived,
+            )
         documents.append(
             {
                 "artifact_id": fp.artifact_id,
@@ -181,6 +198,22 @@ def build_orbitbrief_envelope(
         "entities": [_compact_entity(e, atoms_by_artifact, atoms) for e in entities],
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
+    }
+    # When this deal committed to an answer, and the verified events that say so.
+    # Present for every deal so a consumer can tell "no cut" (still in discovery,
+    # everything is evidence) from "never classified" (we have no timeline at
+    # all): ``known`` is the difference, and it is the only honest way to read a
+    # null ``quote_asof``. Each event carries the sentence it was extracted from.
+    _cut = _timeline.quote_asof(compile_result.project_id)
+    _events = _timeline.events(compile_result.project_id)
+    envelope["deal_timeline"] = {
+        "known": bool(_events) or _cut is not None,
+        "quote_asof": _cut,
+        "events": _events,
+        "documents_after_cut": sum(
+            1 for d in documents
+            if isinstance(d.get("lifecycle"), dict) and d["lifecycle"].get("after_cut")
+        ),
     }
     # OrbitBrief-Core deliverables — deterministic pre-aggregations so
     # the downstream LLM synthesis layer (and the PM cockpit) can render
