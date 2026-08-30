@@ -69,7 +69,16 @@ dev = [
 include = ["app*", "orbitbrief_page_os*"]
 
 [tool.setuptools.package-data]
-app = ["domain/*.yaml", "domain/ontology/*.yaml"]
+app = [
+  "domain/*.yaml",
+  "domain/ontology/*.yaml",
+  # The lifecycle labels are data, not code, and setuptools ships no non-Python
+  # file it is not told about. Omitting this installed the package without its
+  # dataset: every lookup returned None, every document came back unclassified,
+  # and nothing failed -- the envelope carried `lifecycle: null` on all 65
+  # documents of a deal whose 21 documents were all in the table.
+  "core/document_lifecycle/data/*.json",
+]
 orbitbrief_page_os = [
   "segmentation/core_runtime/chunks/*",
   "segmentation/headings/templates/*.json",
