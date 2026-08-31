@@ -201,3 +201,32 @@ class TestRealHubspotLabels:
     def test_display_label_is_stripped(self):
         # The section heading must not render a trailing space.
         assert deal_stage.stage_at_arrival("2026-08-12T18:31:00Z", self.LIVE) == "Submitted for Quoting"
+
+
+class TestManifestSidecarIsNotADocument:
+    """Purpulse's manifest is bookkeeping ABOUT the artifacts, never an artifact.
+
+    Left in the scan, parser-os parsed it as a document. On deal 010215 that
+    produced 789 of the envelope's 1,933 atoms -- 40% -- reading like:
+
+        artifacts[55].mime_type: message/rfc822
+        artifacts[42].metadata.ingestedAt: 2026-08-17T16:27:10.831Z
+        artifacts[9].attachment_id: d5690dc6-6907-403e-b9f2-1614dddd24e3
+
+    It also leaked a DIFFERENT deal's filename into this deal's evidence, and it
+    was the only "undated" item in the whole deal -- every real HubSpot
+    attachment carries a timestamp.
+    """
+
+    def test_the_sidecar_is_excluded_from_parsing(self):
+        from pathlib import Path
+        from app.core.compiler import _is_excluded_artifact
+
+        assert _is_excluded_artifact(Path("/p/.parser_manifest.json"), Path("/p")) is True
+
+    def test_real_documents_are_still_parsed(self):
+        from pathlib import Path
+        from app.core.compiler import _is_excluded_artifact
+
+        for name in ("SOW Marion.docx", "Sodexo Breakdown.xlsx", "010215-hs-email-1.eml"):
+            assert _is_excluded_artifact(Path(f"/p/{name}"), Path("/p")) is False, name

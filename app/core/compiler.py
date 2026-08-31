@@ -99,6 +99,14 @@ _NON_ARTIFACT_FILES = frozenset(
         "project.yaml",          # parser-os project config (read separately)
         "project.yml",
         ".parserignore",         # ignore-pattern list
+        # Purpulse's own manifest, which the envelope builder reads separately
+        # (orbitbrief_envelope._load_manifest_crm / _load_manifest_provenance).
+        # Left in the scan it was parsed as a DOCUMENT: on deal 010215 it
+        # produced 789 of the envelope's 1,933 atoms -- 40% -- consisting of
+        # mime types, ingest timestamps, attachment UUIDs and metadata email
+        # addresses. It also leaked another deal's filename into this deal's
+        # evidence. It is bookkeeping about the artifacts, never an artifact.
+        ".parser_manifest.json",
     }
 )
 
