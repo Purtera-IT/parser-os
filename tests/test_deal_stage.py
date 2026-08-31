@@ -136,3 +136,68 @@ class TestAnnotate:
         out = deal_stage.annotate(None, authored_at=None, direction=None, timeline=None)
         assert out["admissible_for"] is None
         assert out["unplaced"] is True
+
+
+class TestRealHubspotLabels:
+    """Stage labels are typed by people and are not clean strings.
+
+    The live pipeline on 2026-08-31 reads "Submitted for Quoting " with a
+    TRAILING SPACE and "Closed Won: 100%". The first version of this module
+    compared them literally, found nothing, and `_stage_index` returned -1 --
+    which made every stage compare as "after quoting", so our own outbound mail
+    during discovery came out labelled as produced output. The fixtures above
+    used idealised labels and sailed straight past it.
+    """
+
+    LIVE = {
+        "created_at": "2026-08-12T18:03:46.264Z",
+        "transitions": [
+            {"ts": "2026-08-12T18:03:46.264Z", "label": "Open- Awaiting Scope", "order": 0},
+            {"ts": "2026-08-12T18:11:39.978Z", "label": "Submitted for Quoting ", "order": 1},
+            {"ts": "2026-08-13T15:53:00.994Z", "label": "Decision Pending", "order": 2},
+            {"ts": "2026-08-28T12:40:20.296Z", "label": "Closed Won: 100%", "order": 3},
+        ],
+    }
+
+    def test_outbound_before_quoting_is_evidence_despite_the_trailing_space(self):
+        adm, _ = deal_stage.admissibility(
+            stage="Open- Awaiting Scope", direction="outbound",
+            classified_as=None, timeline=self.LIVE,
+        )
+        assert adm == "evidence"
+
+    def test_outbound_after_quoting_is_still_label(self):
+        adm, _ = deal_stage.admissibility(
+            stage="Decision Pending", direction="outbound",
+            classified_as=None, timeline=self.LIVE,
+        )
+        assert adm == "label"
+
+    def test_the_quoting_stage_itself_counts_as_quoted(self):
+        adm, _ = deal_stage.admissibility(
+            stage="Submitted for Quoting ", direction="outbound",
+            classified_as=None, timeline=self.LIVE,
+        )
+        assert adm == "label"
+
+    def test_closed_won_with_a_percentage_suffix_routes_to_atlas(self):
+        adm, _ = deal_stage.admissibility(
+            stage="Closed Won: 100%", direction="inbound",
+            classified_as=None, timeline=self.LIVE,
+        )
+        assert adm == "atlas"
+
+    def test_a_timeline_without_a_quoting_stage_does_not_assume_one(self):
+        # If we cannot see a quote going out, we must not claim outbound material
+        # postdates it. Previously -1 >= -1 made this "label".
+        tl = {"created_at": "2026-08-12T18:03:46Z", "transitions": [
+            {"ts": "2026-08-12T18:03:46Z", "label": "Open- Awaiting Scope", "order": 0},
+        ]}
+        adm, _ = deal_stage.admissibility(
+            stage="Open- Awaiting Scope", direction="outbound", classified_as=None, timeline=tl,
+        )
+        assert adm == "evidence"
+
+    def test_display_label_is_stripped(self):
+        # The section heading must not render a trailing space.
+        assert deal_stage.stage_at_arrival("2026-08-12T18:31:00Z", self.LIVE) == "Submitted for Quoting"

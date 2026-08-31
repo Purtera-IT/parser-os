@@ -39,17 +39,27 @@ COMPOSITION, IN ORDER
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
 
-# Stages after which our own outgoing material is a produced artifact rather
-# than part of the conversation that established scope.
+# Stage labels are typed by people into HubSpot and are NOT stable strings. The
+# live pipeline reads "Submitted for Quoting " (trailing space) and "Closed Won:
+# 100%". Matching those literally is how this module shipped its first bug:
+# `_stage_index("Submitted for Quoting")` found nothing, returned -1, and every
+# stage then compared as "after quoting" -- so our own outbound mail during
+# discovery was labelled produced output. Compare on a normalised form instead.
+def _norm(label: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(label or "").lower())
+
+
 _QUOTED = "Submitted for Quoting"
 _PRE_DEAL = "Before deal created"
 
 # Ordering is taken from the pipeline's own displayOrder, carried on each
 # transition, so a renamed or reordered stage does not silently change meaning.
-_CLOSED_WON = "Closed Won"
-_TERMINAL_NEITHER = ("Closed Lost", "Archive")
+# Prefix match: the live label is "Closed Won: 100%".
+_CLOSED_WON = "closedwon"
+_TERMINAL_NEITHER = ("closedlost", "archive")
 
 
 def stage_at_arrival(
@@ -76,7 +86,7 @@ def stage_at_arrival(
     for entry in transitions:
         ts = str(entry.get("ts") or "")
         if ts and authored_at >= ts:
-            current = str(entry.get("label") or "")
+            current = str(entry.get("label") or "").strip()
         else:
             break
     return current or None
@@ -86,8 +96,9 @@ def _stage_index(stage: str, timeline: Mapping[str, Any] | None) -> int:
     """Position of a stage in the pipeline, or -1 for pre-deal / unknown."""
     if stage == _PRE_DEAL:
         return -1
+    target = _norm(stage)
     for entry in (timeline or {}).get("transitions") or ():
-        if str(entry.get("label") or "") == stage:
+        if _norm(entry.get("label")) == target:
             return int(entry.get("order") or 0)
     return -1
 
@@ -114,14 +125,20 @@ def admissibility(
         return classified_as, "no stage: undated artifact or no deal timeline; left where the classifier put it"
 
     # 2. Stage x direction.
-    if stage in _TERMINAL_NEITHER:
+    norm = _norm(stage)
+    if norm.startswith(_TERMINAL_NEITHER):
         return "neither", f"arrived in {stage}; after the decision, carries no scope"
-    if stage == _CLOSED_WON:
+    if norm.startswith(_CLOSED_WON):
         return "atlas", "arrived after close; delivery material, belongs to Atlas"
     if stage == _PRE_DEAL:
         return "evidence", "predates the deal; discovery context"
 
-    quoted = _stage_index(stage, timeline) >= _stage_index(_QUOTED, timeline) and stage != _PRE_DEAL
+    # If the quoting stage is not in this deal's timeline at all, we cannot say
+    # whether our own outbound material postdates a quote -- so do not claim it
+    # does. -1 here previously made EVERY stage compare as quoted.
+    quoted_idx = _stage_index(_QUOTED, timeline)
+    here_idx = _stage_index(stage, timeline)
+    quoted = quoted_idx >= 0 and here_idx >= quoted_idx
     if direction == "inbound":
         # The case a pure-stage rule gets wrong: the customer is still sending us
         # scope long after the stage moved on.
