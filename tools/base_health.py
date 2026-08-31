@@ -284,6 +284,10 @@ class MetricSpec:
     threshold: float
     rationale: str
     denominator: str = ""
+    #: Counter naming how many items this metric could actually have judged.
+    #: A count of 0 offenders out of 0 judged is not a clean base, it is a blind
+    #: gate -- see `unmeasured` in evaluate().
+    coverage_key: str = ""
 
 
 METRICS: tuple[MetricSpec, ...] = (
@@ -322,6 +326,7 @@ METRICS: tuple[MetricSpec, ...] = (
         # legitimate instance: zero, permanently.
         threshold=0,
         rationale="a Deal Kit or SOW is the answer; reading it as evidence teaches the model to copy itself",
+        coverage_key="documents_with_lifecycle",
     ),
     MetricSpec(
         key="post_cut_evidence",
@@ -341,6 +346,7 @@ METRICS: tuple[MetricSpec, ...] = (
         # regressed delivery timestamp, or a bad timeline re-derive would produce.
         threshold=5,
         rationale="arrived after the quote went out, still admitted as quoting evidence",
+        coverage_key="documents_cut_judged",
     ),
     MetricSpec(
         key="test_fixture_admitted",
@@ -353,6 +359,7 @@ METRICS: tuple[MetricSpec, ...] = (
         # content is shaping a real model.
         threshold=0,
         rationale="fictional documents must never reach evidence or training labels",
+        coverage_key="documents_with_lifecycle",
     ),
     MetricSpec(
         key="fabricated_names",
@@ -430,6 +437,9 @@ class DealMeasure:
     #: dropped -- reported alongside the metrics.
     names_undecidable: int = 0
     counts: dict[str, int] = field(default_factory=dict)
+    #: How many items each coverage-bearing metric could have judged. Kept apart
+    #: from ``counts`` because these are denominators, not offences.
+    coverage: dict[str, int] = field(default_factory=dict)
     #: Small human-readable examples, for the failure message.
     examples: dict[str, list[str]] = field(default_factory=dict)
     error: str = ""
@@ -485,12 +495,21 @@ def measure_envelope(envelope: Any, deal: str = "?") -> DealMeasure:
     # not a failure here -- unknown content quarantines elsewhere. What IS a
     # failure is a classified document routed against its own stage.
     OUTPUT_STAGES = {"QUOTED_OUTPUT", "CONTRACTED"}
+    m.coverage = {"documents_with_lifecycle": 0, "documents_cut_judged": 0}
     for d in documents:
         if not isinstance(d, dict):
             continue
         life = d.get("lifecycle")
         if not isinstance(life, dict):
             continue
+        # Judgeable, and by which gates. A document with no lifecycle block was
+        # compiled before the classifier shipped; one with a lifecycle but no
+        # `after_cut` was compiled before the timeline cut shipped. Both are
+        # invisible to the gates below, and counting them here is what stops a
+        # zero from reading as clean.
+        m.coverage["documents_with_lifecycle"] += 1
+        if "after_cut" in life:
+            m.coverage["documents_cut_judged"] += 1
         name = str(d.get("filename") or "?")
         stage = str(life.get("stage") or "")
         adm = str(life.get("admissible_for") or "")
@@ -572,6 +591,10 @@ class Finding:
     display: str
     detail: str = ""
     deals: list[str] = field(default_factory=list)
+    #: How many items were judgeable, for metrics that declare a coverage key.
+    coverage: int | None = None
+    #: Nothing was judgeable, so the zero means "did not look", not "clean".
+    unmeasured: bool = False
 
 
 def drift_breaches(measures: list[DealMeasure], baseline: dict[str, Any]) -> tuple[list[str], int]:
@@ -613,6 +636,12 @@ def evaluate(measures: list[DealMeasure], baseline: dict[str, Any] | None) -> li
         for k in totals:
             totals[k] += m.counts.get(k, 0)
     site_atoms = sum(m.site_atoms for m in good)
+    cov_totals: dict[str, int] = {}
+    for spec in METRICS:
+        if spec.coverage_key:
+            cov_totals[spec.coverage_key] = sum(
+                m.coverage.get(spec.coverage_key, 0) for m in good
+            )
 
     findings: list[Finding] = []
     for spec in METRICS:
@@ -622,14 +651,27 @@ def evaluate(measures: list[DealMeasure], baseline: dict[str, Any] | None) -> li
                 (m for m in good if m.counts.get(spec.key)),
                 key=lambda m: -m.counts[spec.key],
             )
+            # A metric that declares a coverage key reports how many items it
+            # could actually have judged. Zero judged means the gate looked at
+            # nothing -- the corpus predates the field it reads -- and its zero
+            # must not render as a pass. Same rule the ratio branch already
+            # applies to an empty denominator.
+            cov = cov_totals.get(spec.coverage_key) if spec.coverage_key else None
+            unmeasured = spec.coverage_key != "" and not cov
+            display = f"{value:,}" if cov is None else f"{value:,} of {cov:,}"
+            detail = f"<= {spec.threshold:,.0f} corpus-wide"
+            if spec.coverage_key:
+                detail = f"<= {spec.threshold:,.0f} of {spec.coverage_key.replace('_', ' ')}"
             findings.append(Finding(
                 metric=spec.key,
                 value=value,
                 threshold=spec.threshold,
                 breached=value > spec.threshold,
-                display=f"{value:,}",
-                detail=f"<= {spec.threshold:,.0f} corpus-wide",
+                display=display,
+                detail=detail,
                 deals=[f"{m.deal[:8]} x{m.counts[spec.key]}" for m in offenders[:10]],
+                coverage=cov,
+                unmeasured=unmeasured,
             ))
         elif spec.kind == "corpus_ratio":
             denom = site_atoms if spec.denominator == "site_atoms" else len(good)
@@ -826,9 +868,27 @@ def render_table(findings: list[Finding], measures: list[DealMeasure],
         f"  {'-' * 36} {'-' * 20}  {'-' * 24}",
     ]
     for f in findings:
-        mark = "FAIL" if f.breached else "ok"
+        mark = "FAIL" if f.breached else ("NOT MEASURED" if f.unmeasured else "ok")
         lines.append(f"  {f.metric:<36} {f.display:>20}  {f.detail:<24} [{mark}]")
     lines.append("")
+    blind = [f for f in findings if f.unmeasured]
+    if blind:
+        lines.append(
+            f"  NOT MEASURED: {len(blind)} gate(s) judged nothing — "
+            "the sampled envelopes carry no"
+        )
+        lines.append(
+            "     lifecycle/cut field to read, so their zero means 'did not look', not"
+        )
+        lines.append(
+            "     'clean'. Envelopes compiled before the field shipped are invisible to"
+        )
+        lines.append(
+            "     these gates; they report real numbers once the corpus is recompiled."
+        )
+        lines.append("")
+        lines.extend(f"     {f.metric}" for f in blind)
+        lines.append("")
     for f in findings:
         if f.breached and f.deals:
             lines.append(f"  {f.metric} — offending deals:")
@@ -874,6 +934,8 @@ def build_report(findings: list[Finding], measures: list[DealMeasure]) -> dict[s
                 "threshold": f.threshold,
                 "threshold_detail": f.detail,
                 "breached": f.breached,
+                "coverage": f.coverage,
+                "unmeasured": f.unmeasured,
                 "rationale": METRIC_BY_KEY[f.metric].rationale,
                 "offenders": f.deals,
             }
@@ -960,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
             fh.write("\n")
 
     breached = [f.metric for f in findings if f.breached]
+    blind = [f.metric for f in findings if f.unmeasured]
     errors = len(measures) - len(good)
     if breached or errors:
         if not args.json:
@@ -968,7 +1031,20 @@ def main(argv: list[str] | None = None) -> int:
             if errors:
                 print(f"FAIL — {errors} envelope(s) could not be measured "
                       "(an unmeasurable envelope is a failure, not a pass)")
+            if blind:
+                print(f"ALSO NOT MEASURED: {', '.join(blind)} "
+                      "(judged nothing — see the table)")
+        # A breach outranks a blind gate: it is the actionable one, and the CI
+        # summary keys off this code to say "threshold breached".
         return EXIT_BREACH
+    if blind:
+        # Everything that COULD be measured is clean, but not everything could.
+        # This is the tool's own "could not measure" case, one metric down, and
+        # reporting it as PASS is exactly the lie this file exists to refuse.
+        if not args.json:
+            print(f"CANNOT MEASURE — {', '.join(blind)} judged nothing; "
+                  "the rest are within threshold")
+        return EXIT_CANNOT_MEASURE
     if not args.json:
         print("PASS — every metric within threshold")
     return EXIT_OK
