@@ -705,7 +705,10 @@ def _hardware_atoms_from_equipment_text(
             row_index += 1
         if matched:
             continue
-    if not atoms and any(ch.isalnum() for ch in text):
+    # Whole-image OCR fallback. Skipped for brand chrome: a signature logo is
+    # not scope, and emitting it as a scope_item puts unfalsifiable filler in the
+    # evidence set that can never verify.
+    if not atoms and any(ch.isalnum() for ch in text) and not _is_brand_chrome_ocr(text):
         src = _cid_equipment_source_ref(
             artifact_id=artifact_id,
             filename=filename,
@@ -745,6 +748,45 @@ def _hardware_atoms_from_equipment_text(
         )
     return atoms
 
+
+
+#: Chrome that appears in an email SIGNATURE image, not in anyone's scope.
+#
+# The CID fallback below emits whole-image OCR when no equipment rows parse out
+# of it. On deal 010215 that produced 91 atoms -- 17% of all email atoms -- typed
+# scope_item at confidence 0.7, and every one was a logo:
+#
+#     "CDW) OFFICIAL PROVIDER"                  x22
+#     "Tech & Services Support Request"         x22
+#     "sodexo Ik ol setorts eth the eversdoy"   x22   (tagline, OCR garbled)
+#     "PurTeraIT Intelligent Field Execution"          (our own signature)
+#
+# A logo read as scope is worse than no atom: it is unfalsifiable filler in the
+# evidence set, and it can never verify because the text is not in the body.
+_BRAND_CHROME_RE = re.compile(
+    r"official\s+provider|intelligent\s+field\s+execution|"
+    r"support\s+request|tech\s*&\s*services|"
+    r"^\s*(cdw|sodexo|purtera\s*it)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_brand_chrome_ocr(text: str) -> bool:
+    """True when whole-image OCR is a logo or signature block rather than scope.
+
+    Deliberately conservative: it fires on a recognised brand phrase, not on a
+    heuristic like "short" or "no digits". Dropping a real inline table would
+    lose evidence, which is the expensive direction of this error.
+    """
+    cleaned = " ".join(str(text or "").split())
+    if not cleaned:
+        return True
+    if _BRAND_CHROME_RE.search(cleaned):
+        return True
+    # OCR of a logo is mostly non-words: no sentence, no quantities, very short.
+    if len(cleaned) < 24 and not any(ch.isdigit() for ch in cleaned):
+        return True
+    return False
 
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)

@@ -64,3 +64,39 @@ class TestEmailLineOffset:
         p.write_bytes(b"\xff\xfe not really a message at all\n")
         # Must not raise; a wrong-but-old answer beats no receipt.
         assert isinstance(_replay_lines(None, _Ref({"message_index": 0}), p), list)
+
+
+class TestInlineImageOcrIsUnsupportedNotFailed:
+    """OCR of an inline image is not in the body, so a line range cannot check it.
+
+    Calling that "failed" asserts the receipt was checked and did not hold. It
+    was not checked -- the method does not apply. On deal 010215 this was 91 of
+    92 CID atoms, and it made email look like an 18% failure when every real
+    body atom verified.
+    """
+
+    def test_a_cid_locator_yields_unsupported(self, tmp_path):
+        from app.core.schemas import SourceRef
+        from app.core.source_replay import _verify_line_range
+
+        class _Atom:
+            raw_text = "CDW) OFFICIAL PROVIDER"
+            normalized_text = "cdw official provider"
+            id = "atm_x"
+            value: dict = {}
+
+        from app.core.schemas import ArtifactType
+
+        ref = SourceRef(
+            id="src_1",
+            artifact_id="art_1",
+            artifact_type=ArtifactType.email,
+            filename="m.eml",
+            locator={"kind": "email_cid_inline", "content_id": "image007.png",
+                     "message_index": 12, "line_start": 368, "line_end": 368},
+            extraction_method="ocr",
+            parser_version="test",
+        )
+        r = _verify_line_range(_Atom(), ref, _eml(tmp_path))
+        assert r.replay_status == "unsupported"
+        assert "not in the message body" in str(r.model_dump())

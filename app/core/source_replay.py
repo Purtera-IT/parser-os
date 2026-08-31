@@ -547,6 +547,19 @@ def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) ->
             atom, source_ref, body, label="Text locator missing line range"
         )
         return fallback or _receipt(atom, source_ref, "unsupported", "Line-range locator missing or invalid")
+    # OCR of an inline email image is not IN the body, so a line range can never
+    # match it -- the locator points at the [cid:...] anchor, the text came from
+    # a picture. Marking that "failed" asserts the receipt was checked and did
+    # not hold. It was not checked: this method does not apply. "unsupported" is
+    # the honest verdict, and it keeps "failed" meaning something.
+    if isinstance(locator, dict) and locator.get("kind") == "email_cid_inline":
+        return _receipt(
+            atom,
+            source_ref,
+            "unsupported",
+            "Inline-image OCR: text is not in the message body, so a line range cannot verify it",
+        )
+
     lines = _replay_lines(atom, source_ref, path)
     if line_end > len(lines):
         return _receipt(atom, source_ref, "failed", f"Line range {line_start}-{line_end} is out of bounds")
