@@ -25,6 +25,7 @@ from typing import Any
 
 from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
 from app.core.document_lifecycle import timeline as _timeline
+from app.core.document_lifecycle import deal_stage as _deal_stage
 from app.core.orbitbrief_core import (
     build_bill_of_materials,
     build_change_order_timeline,
@@ -100,6 +101,13 @@ def build_orbitbrief_envelope(
             if aid and isinstance(outcome, dict):
                 outcome_by_artifact[aid] = outcome
 
+    # WHEN each artifact was authored and WHOSE it is, plus the deal's own stage
+    # transitions. Together these decide where a document sits in the deal's life
+    # and therefore who may read it -- see document_lifecycle/deal_stage.py.
+    provenance = _load_manifest_provenance(project_dir)
+    _crm_ctx = _load_manifest_crm(project_dir) or {}
+    stage_timeline = _crm_ctx.get("stage_timeline") if isinstance(_crm_ctx, dict) else None
+
     documents: list[dict[str, Any]] = []
     artifact_iter = manifest.artifact_fingerprints if manifest is not None else []
     for fp in artifact_iter:
@@ -132,6 +140,13 @@ def build_orbitbrief_envelope(
             lifecycle["after_cut"] = _timeline.is_after_cut(
                 compile_result.project_id, arrived,
             )
+        prov = provenance.get(fp.filename, {})
+        deal_stage = _deal_stage.annotate(
+            lifecycle,
+            authored_at=prov.get("authored_at"),
+            direction=prov.get("direction"),
+            timeline=stage_timeline,
+        )
         documents.append(
             {
                 "artifact_id": fp.artifact_id,
@@ -139,6 +154,13 @@ def build_orbitbrief_envelope(
                 "artifact_type": fp.artifact_type.value,
                 "sha256": fp.sha256,
                 "lifecycle": lifecycle,
+                # The deal's own life, not the file's name: when this arrived,
+                # which stage was in force, whose it is, and who may read it.
+                "authored_at": prov.get("authored_at"),
+                "authored_at_precision": prov.get("authored_at_precision"),
+                "direction": prov.get("direction"),
+                "sender_domain": prov.get("sender_domain"),
+                "deal_stage": deal_stage,
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
@@ -576,6 +598,38 @@ def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
     stem = re.sub(r"^\d{6}\s*[-_\s]*", "", filename)
     stem = re.sub(r"\.[a-z0-9]{2,5}$", "", stem, flags=re.IGNORECASE)
     return "different" if _distinctive_words(stem) else "unknown"
+
+
+def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
+    """Per-artifact authored time and direction, keyed by filename.
+
+    Purpulse writes these onto each manifest artifact because only Purpulse knows
+    them: the authored time lives in HubSpot metadata under a different key per
+    source, and ``attachments.created_at`` is INGEST time -- on deal 010215 every
+    email row was created 2026-08-17 for a deal opened 2026-08-12, so using it
+    files the whole discovery phase under the wrong stage.
+    """
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return {}
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, TypeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for art in manifest.get("artifacts") or []:
+        if not isinstance(art, dict):
+            continue
+        name = str(art.get("filename") or "").strip()
+        if not name:
+            continue
+        out[name] = {
+            "authored_at": art.get("authored_at"),
+            "authored_at_precision": art.get("authored_at_precision"),
+            "direction": art.get("direction"),
+            "sender_domain": art.get("sender_domain"),
+        }
+    return out
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
