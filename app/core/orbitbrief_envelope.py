@@ -26,6 +26,7 @@ from typing import Any
 from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
 from app.core.document_lifecycle import timeline as _timeline
 from app.core.document_lifecycle import deal_stage as _deal_stage
+from app.core.document_lifecycle import scope as _scope
 from app.core.orbitbrief_core import (
     build_bill_of_materials,
     build_change_order_timeline,
@@ -108,6 +109,16 @@ def build_orbitbrief_envelope(
     _crm_ctx = _load_manifest_crm(project_dir) or {}
     stage_timeline = _crm_ctx.get("stage_timeline") if isinstance(_crm_ctx, dict) else None
 
+    # Which keys mean THIS deal, for scope detection. A document naming only
+    # these stays deal-scoped; one naming others is speaking for more than this
+    # deal. See document_lifecycle/scope.py.
+    _this_keys: list[str] = []
+    _dn = _deal_number_from_crm(_crm_ctx)
+    if _dn:
+        _this_keys.append(_dn)
+    for _d in (_scope.PO_RE.finditer(str(_crm_ctx.get("deal_name") or "")) if _crm_ctx else []):
+        _this_keys.append(_d.group(1))
+
     documents: list[dict[str, Any]] = []
     artifact_iter = manifest.artifact_fingerprints if manifest is not None else []
     for fp in artifact_iter:
@@ -141,6 +152,24 @@ def build_orbitbrief_envelope(
                 compile_result.project_id, arrived,
             )
         prov = provenance.get(fp.filename, {})
+        # HOW WIDE this document is. A rate card speaks for the customer, a
+        # programme breakdown for several deals; neither is wrong, but a rollup
+        # inside one is never THIS deal's number. Detected from the document's
+        # own content -- never its filename.
+        _delivered_text = " ".join(
+            str(d.get("text") or "") for d in ((lifecycle or {}).get("delivered") or [])
+        )
+        _scope_info = _scope.detect_scope(
+            texts=[a.text for a in artifact_atoms if getattr(a, "text", None)],
+            document_type=(lifecycle or {}).get("type"),
+            this_deal_keys=_this_keys,
+            delivering_text=_delivered_text,
+        )
+        _scope_summary = _scope.summarise(
+            [{"atom_type": getattr(a, "atom_type", None), "text": getattr(a, "text", "")} for a in artifact_atoms],
+            scope=_scope_info["scope"],
+            this_deal_keys=_this_keys,
+        )
         deal_stage = _deal_stage.annotate(
             lifecycle,
             authored_at=prov.get("authored_at"),
@@ -161,6 +190,7 @@ def build_orbitbrief_envelope(
                 "direction": prov.get("direction"),
                 "sender_domain": prov.get("sender_domain"),
                 "deal_stage": deal_stage,
+                "scope": {**_scope_info, **_scope_summary},
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
