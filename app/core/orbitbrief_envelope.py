@@ -160,13 +160,24 @@ def build_orbitbrief_envelope(
             str(d.get("text") or "") for d in ((lifecycle or {}).get("delivered") or [])
         )
         _scope_info = _scope.detect_scope(
-            texts=[a.text for a in artifact_atoms if getattr(a, "text", None)],
+            # EvidenceAtom exposes raw_text, not text. Reading the wrong
+            # attribute silently yielded empty strings, so no deal keys were
+            # found and every document scored `deal` -- the Sodexo Breakdown
+            # came back scope=deal with no foreign keys while the same atoms
+            # analysed directly gave scope=program, 33068 and 34150.
+            texts=[a.raw_text for a in artifact_atoms if getattr(a, "raw_text", None)],
             document_type=(lifecycle or {}).get("type"),
             this_deal_keys=_this_keys,
             delivering_text=_delivered_text,
         )
         _scope_summary = _scope.summarise(
-            [{"atom_type": getattr(a, "atom_type", None), "text": getattr(a, "text", "")} for a in artifact_atoms],
+            [
+                {
+                    "atom_type": getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None)),
+                    "text": getattr(a, "raw_text", "") or "",
+                }
+                for a in artifact_atoms
+            ],
             scope=_scope_info["scope"],
             this_deal_keys=_this_keys,
         )

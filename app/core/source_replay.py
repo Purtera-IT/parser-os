@@ -496,6 +496,44 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     )
 
 
+
+def _replay_lines(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> list[str]:
+    """The lines an atom's ``line_start`` actually counts.
+
+    A line number only means something against the same text the parser
+    numbered. For email it is NOT the raw file: EmailParser numbers the message
+    BODY, having stripped the RFC822 headers (``.eml``) or a leading pseudo-header
+    run (a ``.txt`` export). Reading the raw file here shifts every line by the
+    size of that header block, the snippet never matches, and the atom is marked
+    failed.
+
+    Measured on deal 010215 before this: documents, meetings and notes verified
+    at 0% failure while email failed at 82% -- 422 of 514 atoms. Nothing else in
+    the corpus has a header block that one side removes and the other keeps.
+    Email is also the corpus's largest evidence source, so the great majority of
+    what the system reads could not be receipt-verified.
+
+    Deliberately keyed on ``message_index``, which only the email parser emits,
+    rather than on the file suffix: a text file that was NOT parsed as email must
+    keep being read whole, or this fix breaks the paths that already work.
+    """
+    is_email_atom = isinstance(source_ref.locator, dict) and "message_index" in source_ref.locator
+    if not is_email_atom:
+        return read_text(path).splitlines()
+    try:
+        from app.parsers.email_body import _extract_email_text
+        from app.parsers.email_parser import _split_leading_pseudo_headers
+
+        text = _extract_email_text(path)
+        if path.suffix.lower() != ".eml":
+            _, text = _split_leading_pseudo_headers(text)
+        return text.splitlines()
+    except Exception:
+        # Never lose a receipt to an import or a malformed message; fall back to
+        # the old behaviour, which is wrong for email but not worse than before.
+        return read_text(path).splitlines()
+
+
 def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
     locator = source_ref.locator
     line_start = locator.get("line_start")
@@ -509,7 +547,7 @@ def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) ->
             atom, source_ref, body, label="Text locator missing line range"
         )
         return fallback or _receipt(atom, source_ref, "unsupported", "Line-range locator missing or invalid")
-    lines = read_text(path).splitlines()
+    lines = _replay_lines(atom, source_ref, path)
     if line_end > len(lines):
         return _receipt(atom, source_ref, "failed", f"Line range {line_start}-{line_end} is out of bounds")
     snippet = "\n".join(lines[line_start - 1 : line_end])

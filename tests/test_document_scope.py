@@ -110,3 +110,35 @@ class TestSummary:
         assert out["atoms_admitted"] == 0
         assert out["aggregates_withheld"] == 2
         assert out["reasons"]
+
+
+class TestAtomAttributeContract:
+    """Scope reads atom text off EvidenceAtom, and the field is `raw_text`.
+
+    Reading a non-existent `.text` returned empty strings for every atom, so no
+    deal keys were ever found: the Sodexo Breakdown came back scope=deal with no
+    foreign keys, while the very same atoms analysed directly gave scope=program
+    with 33068 and 34150. Nothing raised -- the feature simply never fired.
+    """
+
+    def test_evidence_atom_carries_raw_text_not_text(self):
+        from app.core.schemas import EvidenceAtom
+
+        fields = set(EvidenceAtom.model_fields)
+        assert "raw_text" in fields
+        assert "text" not in fields, "if this ever gains `text`, scope detection must be revisited"
+
+    def test_detection_finds_keys_when_given_raw_text(self):
+        # The shape the envelope passes: whatever it reads off each atom.
+        atoms = [{"raw_text": "Oppty: PO# 00034150"}, {"raw_text": "Total | Total: 4750"}]
+        d = S.detect_scope(
+            texts=[a["raw_text"] for a in atoms],
+            this_deal_keys=["010215", "34965"],
+        )
+        assert d["foreign_keys"] == ["34150"]
+
+    def test_detection_finds_nothing_when_handed_empty_strings(self):
+        # What the bug looked like from the outside: a clean, confident "deal".
+        d = S.detect_scope(texts=["", "", ""], this_deal_keys=["010215", "34965"])
+        assert d["scope"] == S.SCOPE_DEAL
+        assert d["foreign_keys"] == []
