@@ -485,3 +485,90 @@ class TestTheCutReachesTheEnvelope:
                 continue          # never classified -- a gap, not a guess
             assert "after_cut" in life and "delivered_at" in life
             assert life["after_cut"] is False, "an unknown deal has no cut to be after"
+
+
+class TestABlindGateIsNotAPass:
+    """A zero from a gate that judged nothing must never render as clean."""
+
+    def _measures(self, docs):
+        from tools.base_health import measure_envelope
+        return [measure_envelope({"atoms": [{"id": "a", "text": "x"}], "documents": docs}, "d")]
+
+    def _find(self, measures, key):
+        from tools.base_health import evaluate
+        return next(f for f in evaluate(measures, None) if f.metric == key)
+
+    def test_no_lifecycle_anywhere_is_unmeasured_not_ok(self):
+        # The live corpus on 2026-08-30: envelopes compiled before the classifier
+        # shipped, so every lifecycle gate read 0 and rendered [ok].
+        ms = self._measures([{"artifact_id": "1", "filename": "x.pdf"}])
+        f = self._find(ms, "output_document_as_evidence")
+        assert f.value == 0
+        assert f.coverage == 0
+        assert f.unmeasured is True
+        assert f.breached is False, "a blind gate is not a breach, it is a blind gate"
+
+    def test_a_classified_document_makes_the_gate_measured(self):
+        ms = self._measures([{
+            "artifact_id": "1", "filename": "floor plan.pdf",
+            "lifecycle": {"type": "FLOOR_PLAN", "stage": "DISCOVERY", "admissible_for": "evidence"},
+        }])
+        f = self._find(ms, "output_document_as_evidence")
+        assert f.coverage == 1 and f.unmeasured is False
+        assert "0 of 1" in f.display
+
+    def test_lifecycle_without_a_cut_leaves_only_the_cut_gate_blind(self):
+        # The half-deployed state: the classifier shipped, the timeline cut has
+        # not. The stage gates can see; post_cut_evidence still cannot.
+        ms = self._measures([{
+            "artifact_id": "1", "filename": "floor plan.pdf",
+            "lifecycle": {"type": "FLOOR_PLAN", "stage": "DISCOVERY", "admissible_for": "evidence"},
+        }])
+        assert self._find(ms, "output_document_as_evidence").unmeasured is False
+        assert self._find(ms, "post_cut_evidence").unmeasured is True
+
+    def test_after_cut_present_makes_the_cut_gate_measured(self):
+        ms = self._measures([{
+            "artifact_id": "1", "filename": "floor plan.pdf",
+            "lifecycle": {
+                "type": "FLOOR_PLAN", "stage": "DISCOVERY", "admissible_for": "evidence",
+                "delivered_at": "2026-05-01T10:00:00Z", "after_cut": False,
+            },
+        }])
+        f = self._find(ms, "post_cut_evidence")
+        assert f.coverage == 1 and f.unmeasured is False
+
+    def test_metrics_without_a_coverage_key_are_never_unmeasured(self):
+        # fabricated_names and friends judge atoms, which every envelope has.
+        ms = self._measures([{"artifact_id": "1", "filename": "x.pdf"}])
+        f = self._find(ms, "fabricated_names")
+        assert f.coverage is None and f.unmeasured is False
+
+    def test_a_blind_gate_blocks_the_pass_exit_code(self, tmp_path, monkeypatch):
+        # Everything measurable is clean, one gate judged nothing -> exit 2,
+        # the tool's own "could not measure", NOT exit 0.
+        import tools.base_health as bh
+        from tools.base_health import DealMeasure
+        clean = bh.measure_envelope(
+            {"atoms": [{"id": "a", "text": "x"}],
+             "documents": [{"artifact_id": "1", "filename": "x.pdf"}]}, "d")
+        monkeypatch.setattr(bh, "list_envelopes", lambda **k: [("deals/d/e.json", 1)])
+        monkeypatch.setattr(bh, "pick_sample", lambda rows, n: rows)
+        monkeypatch.setattr(bh, "stream_measures", lambda sample, verbose=True: [clean])
+        monkeypatch.setattr(bh, "load_baseline", lambda p: None)
+        code = bh.main(["--quiet", "--baseline", str(tmp_path / "none.json")])
+        assert code == bh.EXIT_CANNOT_MEASURE, "a blind gate reported as PASS"
+
+    def test_a_real_breach_still_outranks_a_blind_gate(self, tmp_path, monkeypatch):
+        import tools.base_health as bh
+        dirty = bh.measure_envelope({
+            "atoms": [{"id": "a", "text": "x", "authority_class": "contractual_scope",
+                       "verified": "unverified"}],
+            "documents": [{"artifact_id": "1", "filename": "x.pdf"}],
+        }, "d")
+        monkeypatch.setattr(bh, "list_envelopes", lambda **k: [("deals/d/e.json", 1)])
+        monkeypatch.setattr(bh, "pick_sample", lambda rows, n: rows)
+        monkeypatch.setattr(bh, "stream_measures", lambda sample, verbose=True: [dirty] * 10)
+        monkeypatch.setattr(bh, "load_baseline", lambda p: None)
+        code = bh.main(["--quiet", "--baseline", str(tmp_path / "none.json")])
+        assert code == bh.EXIT_BREACH
