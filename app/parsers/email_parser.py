@@ -1474,7 +1474,23 @@ class EmailParser(BaseParser):
         pseudo_headers: dict[str, str] = {}
         if path.suffix.lower() != ".eml":
             pseudo_headers, text = _split_leading_pseudo_headers(text)
-        blocks = self._split_blocks(text)
+        # For .eml the RFC822 headers never reach the body, so the first
+        # message has no From/Sent line to find. Read them off the envelope.
+        envelope_sender = ""
+        envelope_sent_at = ""
+        if path.suffix.lower() == ".eml":
+            try:
+                hdrs = parse_email_thread_headers(path)
+                envelope_sender = str(hdrs.get("sender") or "")
+                envelope_sent_at = str(hdrs.get("date_raw") or "")
+            except Exception:
+                # A malformed .eml must not lose its body; an empty locator is
+                # worse than no locator only when it is silent, and the atoms
+                # still carry their text either way.
+                pass
+        blocks = self._split_blocks(
+            text, envelope_sender=envelope_sender, envelope_sent_at=envelope_sent_at,
+        )
         atoms: list[EvidenceAtom] = []
         for block in blocks:
             authority = self._authority_for_block(block)
@@ -1952,7 +1968,13 @@ class EmailParser(BaseParser):
             pages=pages,
         )
 
-    def _split_blocks(self, text: str) -> list[dict[str, Any]]:
+    def _split_blocks(
+        self,
+        text: str,
+        *,
+        envelope_sender: str = "",
+        envelope_sent_at: str = "",
+    ) -> list[dict[str, Any]]:
         lines = text.splitlines()
         if not lines:
             return []
@@ -1967,17 +1989,66 @@ class EmailParser(BaseParser):
                 and any(not l.strip().lower().startswith(("from:", "sent:", "date:", "subject:")) for _, l in current)
             )
             if current and (is_new_message_boundary or is_from_after_body):
-                blocks.append(self._build_block(blocks, current))
+                blocks.append(
+                    self._build_block(
+                        blocks, current,
+                        envelope_sender=envelope_sender,
+                        envelope_sent_at=envelope_sent_at,
+                    )
+                )
                 current = []
             current.append((idx, line))
         if current:
-            blocks.append(self._build_block(blocks, current))
+            blocks.append(
+                self._build_block(
+                    blocks, current,
+                    envelope_sender=envelope_sender,
+                    envelope_sent_at=envelope_sent_at,
+                )
+            )
         return blocks
 
-    def _build_block(self, existing: list[dict[str, Any]], lines: list[tuple[int, str]]) -> dict[str, Any]:
+    def _build_block(
+        self,
+        existing: list[dict[str, Any]],
+        lines: list[tuple[int, str]],
+        *,
+        envelope_sender: str = "",
+        envelope_sent_at: str = "",
+    ) -> dict[str, Any]:
+        """One message in a thread, with who sent it and when.
+
+        Sender and date are read out of the BODY, because in a quoted reply
+        chain that is where they live -- "From: ... Sent: ..." above each older
+        message. The top-level message is the exception: in an .eml its headers
+        are in the RFC822 envelope and were stripped before the body ever got
+        here, so it found nothing and recorded sender "unknown" with no date.
+
+        That is not cosmetic. Receipt verification anchors a quote through the
+        locator, and an empty locator cannot be anchored: measured on deal
+        010215, 82% of email atoms failed verification against 0% for
+        documents, meetings and notes -- 257 of them with exactly this
+        signature. Email is the largest evidence source in the corpus, so most
+        of what the system reads was carrying claims it could not prove.
+
+        The envelope values are a fallback for the FIRST block only. Later
+        blocks are quoted messages whose own headers are in the text; letting
+        the envelope override those would attribute every message in a thread
+        to whoever sent the last reply.
+        """
         stripped_lines = [line.strip() for _, line in lines]
         sender = self._find_header_value(stripped_lines, "from")
         sent_at = self._find_header_value(stripped_lines, "sent") or self._find_header_value(stripped_lines, "date")
+        # Deliberately NOT folded into `sender`. _authority_for_block reads that
+        # field, and giving the first block a real sender flips the top-level
+        # message of every .eml we wrote from customer_current_authored to
+        # machine_extractor. That is almost certainly the more correct answer --
+        # an email we sent is not customer-authored -- but it re-ranks the
+        # authority lattice across the whole corpus, which is a much larger
+        # change than fixing a locator and needs its own review. Kept separate
+        # so the receipt fix does not smuggle it in.
+        locator_sender = sender or (envelope_sender if not existing else "")
+        locator_sent_at = sent_at or (envelope_sent_at if not existing else "")
         quoted = any(line.startswith(">") for line in stripped_lines) or len(existing) > 0
         return {
             "message_index": len(existing),
@@ -1985,6 +2056,11 @@ class EmailParser(BaseParser):
             "line_end": lines[-1][0],
             "sender": sender or "unknown",
             "sent_at": sent_at or "",
+            # What the LOCATOR should carry: the same values, plus the envelope
+            # fallback for the first message. This is what receipt verification
+            # anchors a quote through.
+            "locator_sender": locator_sender or "unknown",
+            "locator_sent_at": locator_sent_at or "",
             "quoted": quoted,
             "lines": stripped_lines,
         }
@@ -2112,8 +2188,8 @@ class EmailParser(BaseParser):
             "message_index": block["message_index"],
             "line_start": start,
             "line_end": end,
-            "sender": block["sender"],
-            "sent_at": block["sent_at"],
+            "sender": block.get("locator_sender") or block["sender"],
+            "sent_at": block.get("locator_sent_at") or block["sent_at"],
             "quoted": block["quoted"],
         }
         if section_path:
