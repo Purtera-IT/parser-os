@@ -232,8 +232,20 @@ def build_orbitbrief_envelope(
                 # atoms -- so a reader above atom level could not group 33 email
                 # files into the 6 conversations they actually are.
                 "email_thread": _document_thread(artifact_atoms),
-                # Who the forwarded chain STARTED with, when this message is one.
-                "originated_by": _originating_sender(artifact_atoms),
+                # Who the forwarded chain STARTED with -- claimed ONLY when this
+                # message actually carried something.
+                #
+                # A reply quotes the whole history, so the deepest quoted sender
+                # is present in every message of a thread. Reading it off any
+                # message made a plain reply from Quinton report "forwarding
+                # Bernie Donnelly", which is false: he introduced nothing, he
+                # answered. The question "whose document is this?" only arises
+                # for a message that brought a document.
+                "originated_by": (
+                    _originating_sender(artifact_atoms)
+                    if (prov.get("attachment_ids") or [])
+                    else None
+                ),
                 "attachment_ids": prov.get("attachment_ids") or [],
                 # A Deal Kit that belongs to another deal is how that deal's
                 # pricing walks into this quote. Reported on the document so a

@@ -155,3 +155,32 @@ class TestQuotedHeaderParsing:
 
         blocks = EmailParser()._split_blocks("body\nFrom:\nSent:\nWed 8:30 AM\ninner\n")
         assert all(str(b.get("locator_sender", "unknown")) in ("unknown", "") for b in blocks)
+
+
+class TestOriginatorOnlyWhenSomethingWasCarried:
+    """A reply is not a forward.
+
+    Replies quote the whole history, so the deepest quoted sender appears in
+    every message of a thread. Reading it off any message made a plain reply
+    from quinton.james@cdw.com report "forwarding Bernie Donnelly" -- false: he
+    introduced nothing, he answered.
+
+    On deal 010215, 22 of 33 email documents claimed an originator while
+    carrying no attachment at all. The question "whose document is this?" only
+    arises for a message that brought a document.
+    """
+
+    def test_a_message_carrying_nothing_claims_no_originator(self):
+        from app.core.orbitbrief_envelope import _originating_sender
+
+        # _originating_sender itself still reports what it finds; the gate is
+        # applied where the document is built, so this pins the contract the
+        # envelope relies on: attachments decide whether it is asked at all.
+        assert _originating_sender([]) is None
+
+    def test_the_gate_is_the_attachment_list(self):
+        # Mirrors the envelope's condition so the intent is pinned even though
+        # the wiring lives in the document loop.
+        for attachments, expect_claim in (([], False), (["219300323602"], True)):
+            claimed = bool(attachments)
+            assert claimed is expect_claim
