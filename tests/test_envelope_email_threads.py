@@ -88,3 +88,66 @@ class TestThreadIndex:
 
     def test_documents_without_a_thread_are_ignored(self):
         assert _thread_index([{"artifact_id": "f1"}, {"artifact_id": "f2", "email_thread": None}]) == []
+
+
+class TestAtomThreadContext:
+    """An atom needs the conversation, not just its own message.
+
+    Threading already answers "what is this a reply to" via the per-atom gist.
+    It does not answer "what conversation is this, who is in it, and is this the
+    last word" -- which is what a reader needs to weigh a single line like
+    "Yes, approved, go ahead with 36".
+    """
+
+    def _setup(self):
+        from app.core.orbitbrief_envelope import _enrich_atom_threads
+
+        threads = _thread_index([
+            doc("a1", "thr_1", MAIN, "nick@cdw.com", "2026-08-12T14:00:00Z"),
+            doc("a2", "thr_1", MAIN, "patrick@purtera-it.com", "2026-08-21T09:00:00Z"),
+        ])
+        atoms = [
+            {"id": "atm_1", "structured": {"email_thread": {"thread_id": "thr_1", "date": "2026-08-12T14:00:00Z"}}},
+            {"id": "atm_2", "structured": {"email_thread": {"thread_id": "thr_1", "date": "2026-08-21T09:00:00Z"}}},
+        ]
+        _enrich_atom_threads(atoms, threads)
+        return atoms
+
+    def test_an_atom_learns_the_conversation_name_and_participants(self):
+        a = self._setup()[0]["structured"]["email_thread"]
+        assert a["thread_name"] == MAIN
+        assert set(a["participants"]) == {"nick@cdw.com", "patrick@purtera-it.com"}
+        assert a["thread_first_message_at"].startswith("2026-08-12")
+        assert a["thread_last_message_at"].startswith("2026-08-21")
+
+    def test_it_knows_whether_it_is_the_last_word(self):
+        # An approval later revised reads very differently from one nobody
+        # answered.
+        atoms = self._setup()
+        assert atoms[0]["structured"]["email_thread"]["is_latest_in_thread"] is False
+        assert atoms[1]["structured"]["email_thread"]["is_latest_in_thread"] is True
+
+    def test_no_summary_is_invented(self):
+        # A generated gist of twenty messages would be an unfalsifiable claim
+        # sitting in the evidence set. Only deterministic facts are added.
+        a = self._setup()[0]["structured"]["email_thread"]
+        assert not any("summary" in k for k in a)
+
+    def test_an_unthreaded_atom_is_left_alone(self):
+        from app.core.orbitbrief_envelope import _enrich_atom_threads
+
+        atoms = [{"id": "x", "structured": {"kind": "table_row"}}, {"id": "y"}]
+        before = [dict(a) for a in atoms]
+        _enrich_atom_threads(atoms, _thread_index([doc("a1", "thr_1", MAIN, "n@cdw.com", "2026-08-12T14:00:00Z")]))
+        assert atoms == before
+
+    def test_a_split_conversation_is_carried_to_the_atom(self):
+        from app.core.orbitbrief_envelope import _enrich_atom_threads
+
+        threads = _thread_index([
+            doc("a1", "thr_1", MAIN, "n@cdw.com", "2026-08-12T14:00:00Z"),
+            doc("a2", "thr_2", STRIPPED, "p@x.com", "2026-08-31T14:00:00Z"),
+        ])
+        atoms = [{"id": "atm_1", "structured": {"email_thread": {"thread_id": "thr_1", "date": "2026-08-12T14:00:00Z"}}}]
+        _enrich_atom_threads(atoms, threads)
+        assert atoms[0]["structured"]["email_thread"]["thread_looks_split_with"] == ["thr_2"]

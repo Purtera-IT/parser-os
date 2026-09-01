@@ -491,6 +491,7 @@ def build_orbitbrief_envelope(
     threads = _thread_index(documents)
     if threads:
         envelope["email_threads"] = threads
+        _enrich_atom_threads(envelope.get("atoms") or [], threads)
     return envelope
 
 
@@ -649,6 +650,50 @@ def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
     return "different" if _distinctive_words(stem) else "unknown"
 
 
+
+
+
+def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, Any]]) -> None:
+    """Give every email atom the whole conversation, not just its own message.
+
+    email_threading.py already stamps each atom with its position and the gist
+    of the message it replies to. That answers "what is this a reply to". It does
+    not answer "what is this conversation, who is in it, and is this the last
+    word" -- which is what a reader needs to weigh a single line like
+    "Yes, approved, go ahead with 36".
+
+    Thread-level facts only, all deterministic: the conversation's name, who
+    took part, when it ran, and whether this message is the latest in it. No
+    summary is invented -- a generated gist of twenty messages would be an
+    unfalsifiable claim sitting in the evidence set, which is the one thing this
+    pipeline must not produce.
+
+    Mutates in place; additive, so an atom that was never threaded is untouched.
+    """
+    by_id = {t["thread_id"]: t for t in threads}
+    if not by_id:
+        return
+    for atom in atoms:
+        structured = atom.get("structured")
+        if not isinstance(structured, dict):
+            continue
+        block = structured.get("email_thread")
+        if not isinstance(block, dict):
+            continue
+        thread = by_id.get(block.get("thread_id"))
+        if not thread:
+            continue
+        block["thread_name"] = thread.get("name")
+        block["participants"] = thread.get("participants") or []
+        block["thread_first_message_at"] = thread.get("first_message_at")
+        block["thread_last_message_at"] = thread.get("last_message_at")
+        # "Is this the last word on it?" -- an approval that was later revised
+        # reads very differently from one nobody answered.
+        date = block.get("date")
+        last = thread.get("last_message_at")
+        block["is_latest_in_thread"] = bool(date and last and str(date) >= str(last))
+        if thread.get("looks_split_with"):
+            block["thread_looks_split_with"] = thread["looks_split_with"]
 
 
 def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
