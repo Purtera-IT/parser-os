@@ -488,6 +488,7 @@ def build_orbitbrief_envelope(
     # the manifest blob.
     if crm:
         envelope["crm"] = crm
+    _resolve_delivered_by(documents)
     threads = _thread_index(documents)
     if threads:
         envelope["email_threads"] = threads
@@ -694,6 +695,65 @@ def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, An
         block["is_latest_in_thread"] = bool(date and last and str(date) >= str(last))
         if thread.get("looks_split_with"):
             block["thread_looks_split_with"] = thread["looks_split_with"]
+
+
+
+_EMAIL_ADDR_RE = re.compile(r"[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
+    """Say WHO sent the message that delivered each file.
+
+    A file carries no sender of its own. The lifecycle work recovered the
+    message that delivered it, but only as ``{kind, text, ts}`` -- so the UI
+    could say *which* email brought a document and not who wrote it, which is
+    the difference between a SOW draft they sent and one we sent.
+
+    The delivering message is itself a document in this envelope, and email
+    documents carry a sender. Match on TIMESTAMP, which is exact and unique to
+    the minute, rather than on subject text, which drifts across a thread.
+
+    Falls back to the first address in the delivered text -- these are forwards
+    and the sender's signature is usually in them ("Trent Torrence ...
+    t@purtera-it.com"). Marked as a fallback so a consumer can tell a resolved
+    sender from a scraped one.
+
+    Mutates in place. A file with no delivering message is left alone: an
+    unattributed document must not end up looking attributed.
+    """
+    emails: list[tuple[str, dict[str, Any]]] = []
+    for doc in documents:
+        thread = doc.get("email_thread") or {}
+        when = thread.get("date") or doc.get("authored_at")
+        if when and thread.get("sender"):
+            emails.append((str(when)[:19], doc))
+
+    for doc in documents:
+        delivered = ((doc.get("lifecycle") or {}).get("delivered")) or []
+        if not delivered or doc.get("email_thread"):
+            continue
+        first = next((d for d in delivered if isinstance(d, dict) and d.get("ts")), None)
+        if first is None:
+            continue
+        stamp = str(first.get("ts") or "")[:19]
+
+        match = next((d for ts, d in emails if ts and stamp and ts[:16] == stamp[:16]), None)
+        if match is not None:
+            thread = match.get("email_thread") or {}
+            doc["delivered_by"] = thread.get("sender")
+            # Deliberately NOT copying the delivering message's `direction`.
+            # HubSpot's direction is about the message's relationship to the DEAL
+            # record, not about who wrote it: the Marion County SOWs resolve to
+            # t@purtera-it.com -- our own domain -- on a message HubSpot marked
+            # INCOMING. Showing "They sent - t@purtera-it.com" would be a claim
+            # this join cannot support. The person is a fact; the side is not.
+            doc["delivered_by_source"] = "delivering message"
+            continue
+
+        found = _EMAIL_ADDR_RE.search(str(first.get("text") or ""))
+        if found:
+            doc["delivered_by"] = found.group(0)
+            doc["delivered_by_source"] = "signature in the forwarded message"
 
 
 def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
