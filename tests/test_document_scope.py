@@ -142,3 +142,68 @@ class TestAtomAttributeContract:
         d = S.detect_scope(texts=["", "", ""], this_deal_keys=["010215", "34965"])
         assert d["scope"] == S.SCOPE_DEAL
         assert d["foreign_keys"] == []
+
+
+class TestRowNarrowing:
+    """Part 2: resolve each row to the deal it actually belongs to.
+
+    A multi-deal workbook is blocked by opportunity, and line items sit under
+    their deal's header rather than repeating it. Judging each row on its own
+    text calls every line item "unattributed" -- true, and useless.
+
+    Fixtures are the real Sodexo Breakdown rows on deal 010215.
+    """
+
+    BREAKDOWN = [
+        {"atom_type": "service_line", "text": "Oppty: 10131 | Site: Boston, MA", "locator": {"sheet": "Sheet1", "row": 2}},
+        {"atom_type": "service_line", "text": "Unit tyoe: Additional Onsite Hourly | Unit Rate: 115", "locator": {"sheet": "Sheet1", "row": 3}},
+        {"atom_type": "service_line", "text": "Oppty: 10082 | Site: Southern Farm", "locator": {"sheet": "Sheet1", "row": 18}},
+        {"atom_type": "service_line", "text": "Unit tyoe: Cat6/5 Cable Drops", "locator": {"sheet": "Sheet1", "row": 20}},
+        {"atom_type": "scope_item", "text": "Oppty: 10115 | Site: Decom Delta", "locator": {"sheet": "Sheet1", "row": 28}},
+        {"atom_type": "scope_item", "text": "Total | Total: 4750", "locator": {"sheet": "Sheet1", "row": 30}},
+    ]
+
+    def test_a_bare_oppty_number_is_a_deal_key(self):
+        # The workbook writes 010131 as "10131". Requiring the leading zero made
+        # every section header invisible, so rows inherited whichever PO number
+        # appeared earlier -- attributing Boston's rows to a Decom PO.
+        assert S._keys_in("Oppty: 10131 | Site: Boston, MA") == {"10131"}
+
+    def test_a_line_item_inherits_the_header_above_it(self):
+        rows = S.narrow_rows(self.BREAKDOWN, scope=S.SCOPE_PROGRAM, this_deal_keys=["010215"])
+        by_text = {r["text"][:24]: r for r in rows}
+        assert by_text["Unit tyoe: Additional On"]["belongs_to"] == "10131"
+        assert by_text["Unit tyoe: Additional On"]["inherited"] is True
+
+    def test_rows_are_rescued_for_the_deal_that_owns_them(self):
+        rows = S.narrow_rows(self.BREAKDOWN, scope=S.SCOPE_PROGRAM, this_deal_keys=["010082"])
+        assert sum(1 for r in rows if r["verdict"] == "admit") == 2
+
+    def test_a_deal_the_document_does_not_cover_gets_nothing(self):
+        # The Breakdown genuinely contains nothing for 010215. "Nothing" is the
+        # right answer, not a failure.
+        rows = S.narrow_rows(self.BREAKDOWN, scope=S.SCOPE_PROGRAM, this_deal_keys=["010215"])
+        assert all(r["verdict"] == "context" for r in rows)
+
+    def test_an_aggregate_is_never_rescued(self):
+        # "Total: 4750" sits under 10115's header, so narrowing knows whose it
+        # is -- and it still must not become that deal's number from a
+        # multi-deal document.
+        rows = S.narrow_rows(self.BREAKDOWN, scope=S.SCOPE_PROGRAM, this_deal_keys=["010115"])
+        total = next(r for r in rows if r["text"].startswith("Total"))
+        assert total["verdict"] == "context"
+        assert total["belongs_to"] == "10115"
+
+    def test_a_row_before_any_header_stays_unattributed(self):
+        # Inheriting backwards would be inventing a key.
+        rows = S.narrow_rows(
+            [{"atom_type": "service_line", "text": "Unit Rate: 115", "locator": {"sheet": "S", "row": 1}},
+             {"atom_type": "service_line", "text": "Oppty: 10131", "locator": {"sheet": "S", "row": 2}}],
+            scope=S.SCOPE_PROGRAM, this_deal_keys=["010131"],
+        )
+        assert rows[0]["belongs_to"] is None
+        assert rows[0]["verdict"] == "context"
+
+    def test_a_deal_scoped_document_is_untouched(self):
+        rows = S.narrow_rows(self.BREAKDOWN, scope=S.SCOPE_DEAL, this_deal_keys=["010215"])
+        assert all(r["verdict"] == "admit" for r in rows)

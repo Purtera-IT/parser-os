@@ -41,6 +41,13 @@ from typing import Any, Iterable, Mapping
 DEAL_NUMBER_RE = re.compile(r"\b(0\d{5})\b")
 #: PO / opportunity keys as they appear in these workbooks: "Oppty: PO# 00034150".
 PO_RE = re.compile(r"\bPO[#\s-]*0*(\d{6,8})\b", re.IGNORECASE)
+#: An explicit Oppty label carrying a bare number: "Oppty: 10131".
+#
+# The Sodexo breakdown writes deal numbers WITHOUT their leading zero, so
+# DEAL_NUMBER_RE (which requires 0#####) saw nothing and every section header in
+# the workbook was invisible -- line items then inherited whichever PO number
+# happened to appear earlier, attributing Boston's rows to a Decom PO.
+OPPTY_LABEL_RE = re.compile(r"\boppty\s*[#:]?\s*0*(\d{4,6})\b", re.IGNORECASE)
 
 #: Language a document uses when it is speaking for more than one deal.
 #
@@ -85,6 +92,7 @@ def _keys_in(text: str) -> set[str]:
     """Every deal key a piece of text names: deal numbers and PO numbers."""
     out = {_norm_key(m.group(1)) for m in DEAL_NUMBER_RE.finditer(text)}
     out |= {_norm_key(m.group(1)) for m in PO_RE.finditer(text)}
+    out |= {_norm_key(m.group(1)) for m in OPPTY_LABEL_RE.finditer(text)}
     return {k for k in out if k}
 
 
@@ -210,3 +218,67 @@ def summarise(atoms: Iterable[Mapping[str, Any]], *, scope: str, this_deal_keys:
         "aggregates_withheld": aggregates,
         "reasons": reasons[:4],
     }
+
+
+def narrow_rows(
+    atoms: list[Mapping[str, Any]],
+    *,
+    scope: str,
+    this_deal_keys: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Resolve each row to the deal it actually belongs to.
+
+    Part 2 of docs/CROSS_DEAL_KNOWLEDGE.md. Part 1 marks a whole document;
+    this reads it row by row.
+
+    A multi-deal workbook is blocked by opportunity, and the line items sit
+    under their deal's header rather than repeating it:
+
+        r2   Oppty: 10131 | Site: Boston, MA        <- header
+        r3     Additional Onsite Hourly | 115 | 2       belongs to 10131
+        r10  Oppty: 10132 | Site: Avon CT           <- header
+        r11    Additional Onsite Hourly | 115 | 2       belongs to 10132
+
+    Judging each row on its own text calls every line item "unattributed", which
+    is true and useless. Walking back to the nearest preceding key in document
+    order says which deal it is -- so a row that IS this deal's can be admitted
+    instead of demoted with the rest.
+
+    Document order comes from (sheet, row), which is only meaningful now that
+    locators carry real worksheet rows rather than a block counter.
+
+    A row before ANY header stays unattributed. In a multi-deal document that is
+    still a demotion: silence there is not neutral, and inheriting a key
+    backwards would be inventing one.
+    """
+    mine = {_norm_key(k) for k in this_deal_keys if _norm_key(k)}
+
+    def order(atom: Mapping[str, Any]) -> tuple:
+        loc = atom.get("locator") or {}
+        return (str(loc.get("sheet") or ""), int(loc.get("row") or 0))
+
+    out: list[dict[str, Any]] = []
+    carried: str | None = None
+    for atom in sorted(atoms, key=order):
+        text = str(atom.get("text") or "")
+        own = _keys_in(text)
+        if own:
+            # A row naming a key IS the header for what follows.
+            carried = sorted(own)[0] if not (own & mine) else sorted(own & mine)[0]
+
+        verdict, why = admit_atom(atom, scope=scope, this_deal_keys=this_deal_keys)
+        belongs = sorted(own)[0] if own else carried
+
+        # Only ever RESCUES a row the flat rule demoted; it never admits an
+        # aggregate, and never overrides a document scoped to this deal.
+        if verdict == "context" and not is_aggregate(atom) and belongs and belongs in mine:
+            verdict, why = "admit", f"row sits under this deal's section ({belongs})"
+
+        out.append({
+            "text": text[:200],
+            "verdict": verdict,
+            "why": why,
+            "belongs_to": belongs,
+            "inherited": bool(belongs and not own),
+        })
+    return out

@@ -171,6 +171,21 @@ def build_orbitbrief_envelope(
             this_deal_keys=_this_keys,
             delivering_text=_delivered_text,
         )
+        # Part 2: resolve each row to the deal it belongs to, so a row that IS
+        # this deal's is admitted rather than demoted with the rest of a
+        # multi-deal document.
+        _scope_rows = _scope.narrow_rows(
+            [
+                {
+                    "atom_type": getattr(getattr(a, "atom_type", None), "value", None),
+                    "text": getattr(a, "raw_text", "") or "",
+                    "locator": (a.source_refs[0].locator if getattr(a, "source_refs", None) else {}),
+                }
+                for a in artifact_atoms
+            ],
+            scope=_scope_info["scope"],
+            this_deal_keys=_this_keys,
+        ) if _scope_info["scope"] != _scope.SCOPE_DEAL else []
         _scope_summary = _scope.summarise(
             [
                 {
@@ -202,7 +217,15 @@ def build_orbitbrief_envelope(
                 "direction": prov.get("direction"),
                 "sender_domain": prov.get("sender_domain"),
                 "deal_stage": deal_stage,
-                "scope": {**_scope_info, **_scope_summary},
+                "scope": {
+                    **_scope_info,
+                    **_scope_summary,
+                    **({"rows": _scope_rows,
+                        "covers_deals": sorted({r["belongs_to"] for r in _scope_rows if r["belongs_to"]}),
+                        "atoms_admitted": sum(1 for r in _scope_rows if r["verdict"] == "admit"),
+                        "atoms_demoted": sum(1 for r in _scope_rows if r["verdict"] == "context")}
+                       if _scope_rows else {}),
+                },
                 # The conversation this message belongs to. Threading already
                 # runs as a compile stage and stamps every atom, but only the
                 # atoms -- so a reader above atom level could not group 33 email
