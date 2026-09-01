@@ -207,6 +207,8 @@ def build_orbitbrief_envelope(
                 # atoms -- so a reader above atom level could not group 33 email
                 # files into the 6 conversations they actually are.
                 "email_thread": _document_thread(artifact_atoms),
+                # Who the forwarded chain STARTED with, when this message is one.
+                "originated_by": _originating_sender(artifact_atoms),
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
@@ -740,7 +742,13 @@ def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
         match = next((d for ts, d in emails if ts and stamp and ts[:16] == stamp[:16]), None)
         if match is not None:
             thread = match.get("email_thread") or {}
-            doc["delivered_by"] = thread.get("sender")
+            # The originator beats the forwarder. HubSpot only knows the message
+            # that carried the file into the deal; the person who actually sent
+            # it is further up the quoted chain.
+            origin = match.get("originated_by")
+            doc["delivered_by"] = origin or thread.get("sender")
+            if origin and origin != thread.get("sender"):
+                doc["forwarded_by"] = thread.get("sender")
             # Deliberately NOT copying the delivering message's `direction`.
             # HubSpot's direction is about the message's relationship to the DEAL
             # record, not about who wrote it: the Marion County SOWs resolve to
@@ -821,6 +829,40 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     out.sort(key=lambda t: (t["last_message_at"] or ""), reverse=True)
     return out
+
+
+
+def _originating_sender(artifact_atoms: list[Any]) -> str | None:
+    """The person a forwarded chain STARTED with, not whoever forwarded it last.
+
+    An attachment that arrives inside a forward belongs to whoever actually sent
+    it. On deal 010215 the ten Marion County SOWs reached HubSpot only when
+    Trent forwarded the chain in -- HubSpot associates the files with that one
+    message and knows nothing earlier. Attributing the documents to him says the
+    customer's own SOWs came from us.
+
+    The chain is in the body. The parser splits a forward into message blocks,
+    oldest last, so the highest message_index is the original:
+
+        msg1  Patrick Kelly <patrick@purtera-it.com>       1:12 PM
+        msg2  Trent Torrence <t@purtera-it.com>            1:5x PM
+        msg3  Quinton James <quinton.james@cdw.com>       10:20 AM
+        msg4  Donnelly, Bernie <Bernie.Donnelly@sodexo.com> 8:3x AM   <- the customer
+    """
+    best_index = -1
+    best_sender = None
+    for atom in artifact_atoms or []:
+        for ref in getattr(atom, "source_refs", None) or []:
+            locator = getattr(ref, "locator", None)
+            if not isinstance(locator, dict):
+                continue
+            sender = str(locator.get("sender") or "").strip()
+            index = locator.get("message_index")
+            if not sender or sender.lower() == "unknown" or not isinstance(index, int):
+                continue
+            if index > best_index:
+                best_index, best_sender = index, sender
+    return best_sender
 
 
 def _document_thread(artifact_atoms: list[Any]) -> dict[str, Any] | None:

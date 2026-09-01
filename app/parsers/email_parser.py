@@ -2108,9 +2108,46 @@ class EmailParser(BaseParser):
         }
 
     def _find_header_value(self, lines: list[str], key: str) -> str | None:
-        pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.+)$", flags=re.IGNORECASE)
-        for line in lines:
+        """The value of a quoted header, whether it is on the label's line or the next.
+
+        HTML mail puts each header label in its own element, so converting to
+        text yields:
+
+            From:
+            Patrick Kelly <patrick@purtera-it.com>
+            Sent:
+            Wednesday, August 12, 2026 1:12 PM
+
+        Requiring the value on the SAME line matched nothing there, so every
+        quoted message in a forward read sender "unknown". That is not cosmetic:
+        the ten Marion County SOWs arrived inside a forward, and with no sender
+        on the inner messages the only name available was whoever forwarded it
+        last -- attributing the customer's own documents to us.
+        """
+        pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.*)$", flags=re.IGNORECASE)
+        for idx, line in enumerate(lines):
             match = pattern.match(line)
+            if match and not (match.group(1) or "").strip():
+                # Label alone on its line: the value is the next non-empty line,
+                # unless that line is itself another header label.
+                for nxt in lines[idx + 1 : idx + 3]:
+                    candidate = (nxt or "").strip()
+                    if not candidate:
+                        continue
+                    if re.match(r"^(from|sent|date|to|cc|bcc|subject)\s*:", candidate, re.IGNORECASE):
+                        break
+                    # HTML mail wraps a long display name away from its address,
+                    # leaving "Trent Torrence <" with "t@purtera-it.com>" on the
+                    # next line. Rejoin them, or the sender is a name with no
+                    # address and cannot be matched to anyone.
+                    if candidate.endswith("<"):
+                        tail = next(
+                            (x.strip() for x in lines[idx + 2 : idx + 4] if (x or "").strip()), ""
+                        )
+                        if "@" in tail:
+                            candidate = f"{candidate}{tail}"
+                    return candidate
+                continue
             if match:
                 return match.group(1).strip()
         return None

@@ -84,3 +84,74 @@ class TestDeliveredBy:
         docs = [file_doc("SOW.docx", "2026-08-12T18:31:00Z", text="Fw: something with no address at all")]
         _resolve_delivered_by(docs)
         assert "delivered_by" not in docs[0]
+
+
+class TestOriginatorBeatsForwarder:
+    """An attachment inside a forward belongs to whoever actually sent it.
+
+    On deal 010215 the ten Marion County SOWs reached HubSpot only when Trent
+    forwarded the chain in. HubSpot associates the files with that one message
+    and knows nothing earlier, so attributing them to him said the CUSTOMER'S
+    own SOWs came from us. The real chain is in the body:
+
+        msg1  Patrick Kelly <patrick@purtera-it.com>
+        msg2  Trent Torrence <t@purtera-it.com>
+        msg3  Quinton James <quinton.james@cdw.com>
+        msg4  Donnelly, Bernie <Bernie.Donnelly@sodexo.com>   <- the customer
+    """
+
+    def test_the_deepest_quoted_sender_wins(self):
+        from app.core.orbitbrief_envelope import _resolve_delivered_by
+
+        email = email_doc("e1", "t@purtera-it.com", "2026-08-12T18:00:00Z")
+        email["originated_by"] = "Donnelly, Bernie <Bernie.Donnelly@sodexo.com>"
+        docs = [email, file_doc("SOW Palmetto.docx", "2026-08-12T18:00:00Z")]
+        _resolve_delivered_by(docs)
+        assert "Bernie.Donnelly@sodexo.com" in docs[1]["delivered_by"]
+
+    def test_the_forwarder_is_kept_separately(self):
+        # Both facts are useful: who sent it, and who brought it into the deal.
+        from app.core.orbitbrief_envelope import _resolve_delivered_by
+
+        email = email_doc("e1", "t@purtera-it.com", "2026-08-12T18:00:00Z")
+        email["originated_by"] = "Donnelly, Bernie <Bernie.Donnelly@sodexo.com>"
+        docs = [email, file_doc("SOW.docx", "2026-08-12T18:00:00Z")]
+        _resolve_delivered_by(docs)
+        assert docs[1]["forwarded_by"] == "t@purtera-it.com"
+
+    def test_no_forwarded_by_when_the_sender_is_the_originator(self):
+        from app.core.orbitbrief_envelope import _resolve_delivered_by
+
+        email = email_doc("e1", "octavian@purtera-it.com", "2026-08-27T16:14:00Z")
+        docs = [email, file_doc("Breakdown.xlsx", "2026-08-27T16:14:00Z")]
+        _resolve_delivered_by(docs)
+        assert "forwarded_by" not in docs[1]
+        assert docs[1]["delivered_by"] == "octavian@purtera-it.com"
+
+
+class TestQuotedHeaderParsing:
+    """HTML mail puts a header label and its value on separate lines."""
+
+    def test_a_label_alone_on_its_line_still_finds_its_value(self):
+        from app.parsers.email_parser import EmailParser
+
+        blocks = EmailParser()._split_blocks(
+            "Hey Q,\nbody text here\nFrom:\nQuinton James <quinton.james@cdw.com>\n"
+            "Sent:\nWednesday, August 12, 2026 10:20 AM\nSubject:\nFW: Time Clock Installs\ninner body\n"
+        )
+        assert any("quinton.james@cdw.com" in str(b.get("locator_sender")) for b in blocks)
+
+    def test_a_wrapped_address_is_rejoined(self):
+        from app.parsers.email_parser import EmailParser
+
+        blocks = EmailParser()._split_blocks(
+            "body\nFrom:\nDonnelly, Bernie <\nBernie.Donnelly@sodexo.com>\nSent:\nWed 8:30 AM\ninner\n"
+        )
+        assert any("Bernie.Donnelly@sodexo.com" in str(b.get("locator_sender")) for b in blocks)
+
+    def test_a_label_followed_by_another_label_yields_nothing(self):
+        # An empty header must not swallow the next header as its value.
+        from app.parsers.email_parser import EmailParser
+
+        blocks = EmailParser()._split_blocks("body\nFrom:\nSent:\nWed 8:30 AM\ninner\n")
+        assert all(str(b.get("locator_sender", "unknown")) in ("unknown", "") for b in blocks)
