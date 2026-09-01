@@ -4151,13 +4151,25 @@ class XlsxParser(BaseParser):
         def _section_path(title: str | None) -> list[str]:
             return [sheet_name, title] if (sheet_name and title) else ([sheet_name] if sheet_name else [])
 
-        def _src(rid: str, sp: list[str], extraction: str) -> SourceRef:
+        def _src(rid: str, sp: list[str], extraction: str, sheet_row: int | None = None) -> SourceRef:
             return SourceRef(
                 id=stable_id("src", rid),
                 artifact_id=artifact_id,
                 artifact_type=artifact_type,
                 filename=filename,
-                locator={"sheet": sheet_name, "row": seq, "section_path": sp, "extraction": extraction},
+                # `row` must be the WORKSHEET row, because that is what source
+                # replay reads. It used to be `seq`, a running counter over the
+                # detected blocks: on deal 010215 every atom cited a row exactly
+                # two off, and none of the Deal Kit's priced service lines could
+                # be verified. `seq` is kept as `block_seq` -- it is still the
+                # reading order, it just is not a location.
+                locator={
+                    "sheet": sheet_name,
+                    "row": sheet_row if sheet_row is not None else seq,
+                    "block_seq": seq,
+                    "section_path": sp,
+                    "extraction": extraction,
+                },
                 extraction_method=extraction,
                 parser_version=self.parser_version,
             )
@@ -4166,8 +4178,10 @@ class XlsxParser(BaseParser):
             sp = _section_path(b.get("title"))
             if b["kind"] == "table":
                 header = b["header"]
-                for row_cells in b["rows"]:
+                row_indices = b.get("row_indices") or []
+                for _ri, row_cells in enumerate(b["rows"]):
                     seq += 1
+                    sheet_row = row_indices[_ri] if _ri < len(row_indices) else None
                     # Summary / total rows ("Subtotal", "Recommended fixed fee
                     # hours", "Safer bid hours", "Grand Total") are NOT task rows —
                     # don't force the first column's header ("Task Category") onto
@@ -4199,7 +4213,7 @@ class XlsxParser(BaseParser):
                         value={"_columns": list(header), "_row": list(row_cells), "_table_idx": bi,
                                "_row_idx": seq, "_filename": filename, "_sheet": sheet_name,
                                "section_path": sp, "_artifact_type": "xlsx"},
-                        entity_keys=[], source_refs=[_src(rtr_id, sp, "xlsx_block_raw_table_row")], receipts=[],
+                        entity_keys=[], source_refs=[_src(rtr_id, sp, "xlsx_block_raw_table_row", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
@@ -4212,7 +4226,7 @@ class XlsxParser(BaseParser):
                         atom_type=AtomType.scope_item, raw_text=body, normalized_text=body.lower(),
                         value={"kind": "table_row", "columns": list(header),
                                "cells": {header[j]: row_cells[j] for j in range(min(len(header), len(row_cells))) if row_cells[j] != ""}},
-                        entity_keys=[], source_refs=[_src(si_id, sp, "xlsx_block_row_v1")], receipts=[],
+                        entity_keys=[], source_refs=[_src(si_id, sp, "xlsx_block_row_v1", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],

@@ -27,8 +27,28 @@ def _clean(v) -> str:
     return "" if s.lower() in ("none", "nan") else s
 
 
+class _Row(list):
+    """A sheet row that remembers which row of the sheet it is.
+
+    Block detection slices rows by blank-row bands and blank-column groups, and
+    the resulting `row` in an atom's locator was a running counter over those
+    blocks -- not a worksheet row. Source replay reads absolute worksheet rows,
+    so on deal 010215 every xlsx_block_row_v1 atom cited a row exactly two off,
+    and the Deal Kit's priced service lines could not be verified at all.
+
+    A list subclass so every existing check (_row_blank, _filled, indexing,
+    len) behaves identically; only the origin travels with it.
+    """
+
+    __slots__ = ("sheet_row",)
+
+    def __init__(self, cells, sheet_row=None):
+        super().__init__(cells)
+        self.sheet_row = sheet_row
+
+
 def _grid(rows):
-    return [[_clean(c) for c in r] for r in rows]
+    return [_Row((_clean(c) for c in r), i + 1) for i, r in enumerate(rows)]
 
 
 def _row_blank(r):
@@ -69,7 +89,12 @@ def _col_split(band):
         groups.append((start, width))
     out = []
     for (a, b) in groups:
-        sub = [[(r[c] if c < len(r) else "") for c in range(a, b)] for r in band]
+        # Carry each row's sheet origin across the column slice, or the block
+        # loses the only link back to where it came from.
+        sub = [
+            _Row(((r[c] if c < len(r) else "") for c in range(a, b)), getattr(r, "sheet_row", None))
+            for r in band
+        ]
         # KEEP blank rows: a column often stacks several sub-tables separated by
         # rows that are blank IN THIS column (but not across the sheet). Dropping
         # them here would erase those boundaries and collapse the sub-tables into
@@ -330,7 +355,12 @@ def sheet_blocks(rows, styles=None):
             header = [h if h != "" else f"col{j+1}" for j, h in enumerate(body[0])]
             data = [r for r in body[1:] if _filled(r)]
             if data:
-                out.append({"title": title, "kind": "table", "header": header, "rows": data})
+                out.append({
+                    "title": title, "kind": "table", "header": header, "rows": data,
+                    # 1-based worksheet row for each data row, so an atom can cite
+                    # where it actually came from and source replay can find it.
+                    "row_indices": [getattr(r, "sheet_row", None) for r in data],
+                })
         elif kind == "keyval":
             body = block if hidx is None else block[hidx:]
             pairs = []
