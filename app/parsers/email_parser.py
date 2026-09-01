@@ -1397,6 +1397,35 @@ def _split_leading_pseudo_headers(text: str) -> tuple[dict[str, str], str]:
     return values, "\n".join([""] * consumed + lines[consumed:])
 
 
+def _normalize_sender(value: str) -> str:
+    """Repair a display name whose address was wrapped across lines.
+
+    Rejoining "Trent Torrence <" with the address on the next line produced
+    ``Trent Torrence <t@purtera-it.com`` -- an unbalanced bracket, because the
+    closing ">" had wrapped too, or sat inside a `<mailto:...>` decoration that
+    the text conversion left behind.
+
+    A malformed sender is not merely untidy. ``_originating_sender`` takes the
+    HIGHEST message index in a forward chain -- the oldest message, the person
+    a document actually came from -- so it lands precisely on the deepest,
+    most-wrapped blocks. On deal 010215 the well-formed senders sat at index 1
+    and every index from 2 to 16 carried a truncated one, so a forward whose
+    chain started with the customer was attributed to us instead.
+    """
+    text = " ".join(str(value or "").split())
+    if not text:
+        return text
+    # "name@host<mailto:NAME@HOST>" -- the anchor text repeated as a link.
+    text = re.sub(r"<mailto:[^>]*>?", "", text, flags=re.IGNORECASE).strip()
+    if "<" in text and ">" not in text:
+        # Close it only when what follows the bracket is actually an address;
+        # otherwise leave the text alone rather than inventing structure.
+        head, _, tail = text.partition("<")
+        if "@" in tail:
+            text = f"{head.strip()} <{tail.strip()}>".strip()
+    return text
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -2130,7 +2159,7 @@ class EmailParser(BaseParser):
             if match and not (match.group(1) or "").strip():
                 # Label alone on its line: the value is the next non-empty line,
                 # unless that line is itself another header label.
-                for nxt in lines[idx + 1 : idx + 3]:
+                for offset, nxt in enumerate(lines[idx + 1 : idx + 3], start=1):
                     candidate = (nxt or "").strip()
                     if not candidate:
                         continue
@@ -2140,16 +2169,23 @@ class EmailParser(BaseParser):
                     # leaving "Trent Torrence <" with "t@purtera-it.com>" on the
                     # next line. Rejoin them, or the sender is a name with no
                     # address and cannot be matched to anyone.
+                    #
+                    # The tail was searched from a FIXED lines[idx+2:idx+4],
+                    # while the candidate itself may have come from idx+2 when
+                    # idx+1 was blank -- so the join could swallow the candidate
+                    # or reach past the address entirely. Search from wherever
+                    # the candidate actually was.
                     if candidate.endswith("<"):
+                        after = idx + 1 + offset
                         tail = next(
-                            (x.strip() for x in lines[idx + 2 : idx + 4] if (x or "").strip()), ""
+                            (x.strip() for x in lines[after : after + 3] if (x or "").strip()), ""
                         )
                         if "@" in tail:
                             candidate = f"{candidate}{tail}"
-                    return candidate
+                    return _normalize_sender(candidate)
                 continue
             if match:
-                return match.group(1).strip()
+                return _normalize_sender(match.group(1).strip())
         return None
 
     def _authority_for_block(self, block: dict[str, Any]) -> AuthorityClass:
