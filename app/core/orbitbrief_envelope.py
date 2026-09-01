@@ -544,6 +544,9 @@ def build_orbitbrief_envelope(
     # Must follow _resolve_delivered_by: the originator is what the inference
     # reads, and it does not exist until delivery has been matched.
     _direction_from_originator(documents, stage_timeline)
+    # Last, so it gates the corrected picture: a customer document that stopped
+    # being called ours a moment ago must be readable by the models that had it.
+    _annotate_reader_scope(documents, stage_timeline)
     threads = _thread_index(documents)
     if threads:
         envelope["email_threads"] = threads
@@ -824,6 +827,35 @@ def _direction_from_originator(
                 lifecycle["admissible_for"] = adm
             changed += 1
     return changed
+
+
+def _annotate_reader_scope(
+    documents: list[dict[str, Any]],
+    timeline: Mapping[str, Any] | None,
+) -> None:
+    """Record, per document, which models were allowed to read it.
+
+    Training a Deal Kit model on a finished deal is only honest if it sees what
+    the person saw. A document that arrived after the kit was produced teaches
+    the model from its own answer -- and on a manually-worked corpus that is the
+    default outcome unless something stops it.
+
+    Written onto the document rather than computed by each consumer, so the
+    answer is one thing a person can audit rather than several that can drift.
+    """
+    from app.core.document_lifecycle import reader_scope as _rs
+
+    for doc in documents:
+        block = doc.get("deal_stage") or {}
+        stage = block.get("stage_at_arrival")
+        adm = block.get("admissible_for") or (doc.get("lifecycle") or {}).get("admissible_for")
+        seen: dict[str, Any] = {}
+        for consumer in _rs.consumers():
+            ok, why = _rs.visible_to(
+                consumer, stage=stage, admissible_for=adm, timeline=timeline
+            )
+            seen[consumer] = {"visible": ok, "why": why}
+        doc["reader_scope"] = seen
 
 
 def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
