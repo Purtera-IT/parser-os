@@ -282,3 +282,36 @@ def narrow_rows(
             "inherited": bool(belongs and not own),
         })
     return out
+
+
+def misfiled_verdict(rows: list[Mapping[str, Any]], *, this_deal_keys: Iterable[str] = ()) -> dict[str, Any] | None:
+    """Is this document attached to the wrong deal entirely?
+
+    Narrowing resolves each row to a deal. When EVERY resolved row names a deal
+    that is not this one, the document is not merely wide -- nothing in it is
+    ours. The Sodexo Breakdown on 010215 is exactly that: 13 rows across
+    010131, 010132, 010082 and 010115, and not one line for the deal it is
+    filed under.
+
+    That is a provenance fact, not a judgement about importance -- the rows say
+    whose they are. It is reported, never acted on: a document can be legitimately
+    attached for context, and detaching on this signal alone would be the system
+    deciding something only a person should.
+
+    Returns None unless the evidence is unambiguous: at least three resolved
+    rows, none of them this deal's. Two rows is a coincidence away from a false
+    alarm, and a checker people distrust is worse than none.
+    """
+    mine = {_norm_key(k) for k in this_deal_keys if _norm_key(k)}
+    resolved = [r for r in rows if r.get("belongs_to")]
+    if len(resolved) < 3 or not mine:
+        return None
+    others = sorted({str(r["belongs_to"]) for r in resolved} - mine)
+    if not others or any(str(r["belongs_to"]) in mine for r in resolved):
+        return None
+    return {
+        "kind": "document_names_only_other_deals",
+        "detail": f"All {len(resolved)} attributable rows belong to {', '.join(others)} — none to this deal.",
+        "fix": "Check whether this document is attached to the right deal.",
+        "other_deals": others,
+    }

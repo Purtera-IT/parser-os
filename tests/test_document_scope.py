@@ -207,3 +207,47 @@ class TestRowNarrowing:
     def test_a_deal_scoped_document_is_untouched(self):
         rows = S.narrow_rows(self.BREAKDOWN, scope=S.SCOPE_DEAL, this_deal_keys=["010215"])
         assert all(r["verdict"] == "admit" for r in rows)
+
+
+class TestMisfiledDocument:
+    """A document whose every row belongs to another deal.
+
+    Not merely wide -- nothing in it is ours. The Sodexo Breakdown on 010215 is
+    13 rows across 010131, 010132, 010082 and 010115, and not one line for the
+    deal it is filed under.
+
+    A provenance fact, not a judgement about importance: the rows say whose they
+    are. Reported, never acted on -- a document can be legitimately attached for
+    context, and detaching on this alone would be the system deciding something
+    only a person should.
+    """
+
+    ROWS = TestRowNarrowing.BREAKDOWN
+
+    def test_flags_a_document_with_no_rows_for_this_deal(self):
+        rows = S.narrow_rows(self.ROWS, scope=S.SCOPE_PROGRAM, this_deal_keys=["010215"])
+        v = S.misfiled_verdict(rows, this_deal_keys=["010215"])
+        assert v and v["kind"] == "document_names_only_other_deals"
+
+    def test_silent_when_the_document_does_hold_this_deal_s_rows(self):
+        rows = S.narrow_rows(self.ROWS, scope=S.SCOPE_PROGRAM, this_deal_keys=["010082"])
+        assert S.misfiled_verdict(rows, this_deal_keys=["010082"]) is None
+
+    def test_needs_more_than_two_rows_before_it_speaks(self):
+        # Two rows is a coincidence away from a false alarm, and a checker
+        # people distrust is worse than none.
+        rows = S.narrow_rows(
+            [{"atom_type": "service_line", "text": "Oppty: 10131", "locator": {"sheet": "S", "row": 1}},
+             {"atom_type": "service_line", "text": "Unit Rate: 115", "locator": {"sheet": "S", "row": 2}}],
+            scope=S.SCOPE_PROGRAM, this_deal_keys=["010215"],
+        )
+        assert S.misfiled_verdict(rows, this_deal_keys=["010215"]) is None
+
+    def test_silent_when_this_deal_is_unknown(self):
+        rows = S.narrow_rows(self.ROWS, scope=S.SCOPE_PROGRAM, this_deal_keys=[])
+        assert S.misfiled_verdict(rows, this_deal_keys=[]) is None
+
+    def test_names_the_deals_it_actually_belongs_to(self):
+        rows = S.narrow_rows(self.ROWS, scope=S.SCOPE_PROGRAM, this_deal_keys=["010215"])
+        v = S.misfiled_verdict(rows, this_deal_keys=["010215"])
+        assert "10131" in v["other_deals"] and "10082" in v["other_deals"]

@@ -223,7 +223,8 @@ def build_orbitbrief_envelope(
                     **({"rows": _scope_rows,
                         "covers_deals": sorted({r["belongs_to"] for r in _scope_rows if r["belongs_to"]}),
                         "atoms_admitted": sum(1 for r in _scope_rows if r["verdict"] == "admit"),
-                        "atoms_demoted": sum(1 for r in _scope_rows if r["verdict"] == "context")}
+                        "atoms_demoted": sum(1 for r in _scope_rows if r["verdict"] == "context"),
+                        **({"misfiled": _mf} if (_mf := _scope.misfiled_verdict(_scope_rows, this_deal_keys=_this_keys)) else {})}
                        if _scope_rows else {}),
                 },
                 # The conversation this message belongs to. Threading already
