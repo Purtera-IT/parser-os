@@ -364,6 +364,10 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     sheet = locator.get("sheet")
     row_number = locator.get("row")
     columns = locator.get("columns") or {}
+    # The xlsx parser writes a singular `col` on block rows. Treat it as a cited
+    # column rather than as no citation at all.
+    if not columns and locator.get("col") is not None:
+        columns = {"value": locator.get("col")}
     if not isinstance(row_number, int) or row_number < 1:
         return _receipt(atom, source_ref, "failed", "Spreadsheet locator missing valid row number")
 
@@ -413,7 +417,19 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     ]
     extracted_snippet = " | ".join(part for part in snippet_parts if part and not part.endswith("="))
     if not extracted_snippet:
-        return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")
+        # No cells were cited, or none were readable. That is not evidence the
+        # atom is wrong -- the row may still say exactly what the atom says. Fall
+        # through to the full-row check below rather than failing here, which is
+        # what stripped the Deal Kit of every receipt it could have had.
+        full_row_only = _spreadsheet_full_row_text(
+            path, sheet if isinstance(sheet, str) else None, row_number
+        )
+        if full_row_only and _snippet_matches_atom(atom, full_row_only):
+            return _receipt(
+                atom, source_ref, "verified", "Spreadsheet row verified against the whole row", full_row_only,
+            )
+        if not full_row_only:
+            return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")
     if _snippet_matches_atom(atom, extracted_snippet):
         return _receipt(atom, source_ref, "verified", "Spreadsheet row and cited cells verified", extracted_snippet)
 
@@ -891,7 +907,19 @@ def replay_source_ref(atom: EvidenceAtom, source_ref: SourceRef, artifact_paths:
 
     suffix = path.suffix.lower()
     try:
-        if source_ref.locator.get("row") is not None and source_ref.locator.get("columns"):
+        # A spreadsheet locator is one with a row, on a spreadsheet file.
+        #
+        # This used to also require `columns`, so an atom that cited a row but
+        # named no cells fell past every branch to "No verifier available". On
+        # deal 010215 that was 89 atoms -- and NOT ONE atom from the deal's own
+        # Deal Kit was verified (0 of 55), nor from the Sodexo Breakdown (0 of
+        # 8). Those are the two documents carrying the money. The row-level
+        # fallbacks below already handle an empty `columns`; nothing was missing
+        # except the route to them.
+        _sheet_suffix = suffix in {".xlsx", ".xlsm", ".csv", ".tsv"}
+        if source_ref.locator.get("row") is not None and (
+            source_ref.locator.get("columns") or _sheet_suffix
+        ):
             return _verify_spreadsheet_row(atom, source_ref, path)
         # Line numbers are checked BEFORE the artifact type, which is right for
         # a text file and wrong for a format that has its own verifier. The
