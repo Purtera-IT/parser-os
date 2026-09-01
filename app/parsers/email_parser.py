@@ -2338,6 +2338,18 @@ class EmailParser(BaseParser):
         # ``pending_lead_in`` holds framing prose ("By the end of the meeting
         # customer clarified:") until the next Include/Exclude list consumes it.
         in_signature = False
+        # HTML mail puts each header label in its own element, so converting to
+        # text yields the label and its value on SEPARATE lines:
+        #
+        #     From:
+        #     Quinton James <quinton.james@cdw.com>
+        #     Sent:
+        #     Wednesday, August 12, 2026 10:20 AM
+        #
+        # `_PSEUDO_HEADER_RE` needs "Label:" on the same line, so the value line
+        # walked straight through and became a scope_item. This latches on a
+        # bare label and consumes the one line that follows it.
+        after_bare_header_label = False
         current_section: str | None = None  # "include" | "exclude" | None
         pending_lead_in: list[str] = []
         active_lead_in: list[str] = []
@@ -2403,9 +2415,35 @@ class EmailParser(BaseParser):
             #    is name/title/phone/URL chrome, not deal content.
             if in_signature:
                 continue
-            if not block["quoted"] and _SIGNOFF_RE.match(cleaned):
+            # Quoted messages sign off too, and this was gated to the authored
+            # one only -- so every quoted signature was atomised in full. A
+            # forward chain carries one signature per message, and deal 010215's
+            # runs sixteen deep: 64 of its 75 chrome atoms sat at depth >= 1,
+            # emitting `t`, `Q`, `404.771.3490` and `M: 404-918-0783` as
+            # scope_items. `t` and `Q` are wrapped initials of Trent and
+            # Quinton.
+            #
+            # `in_signature` is per-block state, so latching it inside a quoted
+            # message ends at that message's boundary and never bleeds into the
+            # next. Site extraction runs above this and is untouched, so an
+            # address in a signature is still recovered.
+            if _SIGNOFF_RE.match(cleaned):
                 in_signature = True
                 continue
+            # 1b) A quoted message's own header block ("To: …", "Sent: …",
+            #     "Cc: …"). The sender and date are already captured
+            #     structurally on the locator, so these lines carry nothing a
+            #     reader needs and arrive as address fragments like
+            #     "mike.stephens <" once the line wraps.
+            if block["quoted"]:
+                header_match = _PSEUDO_HEADER_RE.match(cleaned)
+                if header_match:
+                    # A bare label ("From:") means its value is the next line.
+                    after_bare_header_label = not (header_match.group(2) or "").strip()
+                    continue
+                if after_bare_header_label:
+                    after_bare_header_label = False
+                    continue
             # 2) Salutation opener — not an atom. Captured later as
             #    ``value.addressee`` / ``to_greeting`` on sibling body atoms
             #    (and the email header) so Atom Quality can show "To: Eddie"
