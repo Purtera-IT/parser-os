@@ -452,6 +452,66 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
     return kept, dropped
 
 
+# ── contact / header / table chrome ──
+# An atom whose ENTIRE text is a bare identifier carries no scope. Measured on
+# deal 010215's Deal Kit context: 41% of the prompt was this, typed as
+# scope_item -- "USA", "t", "Q", "M: 404-918-0783", "quinton.james@cdw.com",
+# "Quinton James <", "3 | 4 | 5", and "Note" at confidence 0.98.
+#
+# That is not merely wasteful. A model reading `t` as a scope item is being
+# misled, and so is anything downstream that counts atoms.
+#
+# Anchored to the WHOLE string throughout. A sentence that mentions an address
+# ("email Bernie at bernie.donnelly@sodexo.com about the SOWs") is real content
+# and flows through untouched.
+_BARE_EMAIL_RE = re.compile(r"^[<;,\s]*[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}[>;,\s]*$")
+_BARE_PHONE_RE = re.compile(r"^(?:[MmOoTtFfCc]\s*:\s*)?\+?[(\d][\d\s().\-]{6,}$")
+# "Quinton James <" / "; Finn, Melody <" -- a recipient list cut mid-address.
+_TRUNCATED_ADDRESSEE_RE = re.compile(r"^[;,\s]*[A-Za-z][A-Za-z.'\-]*(?:[,\s]+[A-Za-z][A-Za-z.'\-]*){0,3}\s*<\s*$")
+# "3 | 4 | 5" / "1 . 2 . 3" -- a table row reduced to separators and digits.
+_SEPARATOR_ROW_RE = re.compile(r"^[\d\s|.,;:/\\\-]+$")
+
+
+def _is_contact_chrome(text: str) -> bool:
+    """True when the whole atom is a bare identifier rather than a claim."""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return True
+    # One or two characters cannot state anything about a deal.
+    if len(t) <= 2:
+        return True
+    if _BARE_EMAIL_RE.match(t):
+        return True
+    if _BARE_PHONE_RE.match(t):
+        return True
+    if _TRUNCATED_ADDRESSEE_RE.match(t):
+        return True
+    if _SEPARATOR_ROW_RE.match(t):
+        return True
+    return False
+
+
+def drop_contact_chrome(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Partition into (kept, dropped).
+
+    Only generic-prose types are judged. An email address IS the content of a
+    ``stakeholder`` atom and a phone number IS the content of a contact one --
+    dropping those would destroy the very fact they exist to carry. This is
+    about an address appearing where a SCOPE ITEM should be.
+    """
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        if _atom_type_str(atom) not in _FILLER_ELIGIBLE:
+            kept.append(atom)
+            continue
+        if _is_contact_chrome(_atom_text(atom)):
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
 def _atom_page(atom: Any) -> int | None:
     """Page number from the first source_ref locator, if present."""
     refs = getattr(atom, "source_refs", None) or []
@@ -821,6 +881,8 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     all_dropped.extend(d)
     kept, d = drop_nonsubstantive_fragments(kept)
     all_dropped.extend(d)
+    kept, d = drop_contact_chrome(kept)
+    all_dropped.extend(d)
     kept, d = drop_section_headers(kept)
     all_dropped.extend(d)
     kept, d = drop_email_non_scope(kept)
@@ -837,6 +899,7 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
 __all__ = [
     "apply_substance_gate",
     "collapse_ambiguous_user_quantities",
+    "drop_contact_chrome",
     "drop_contextless_stakeholders",
     "drop_email_non_scope",
     "drop_nonsubstantive_fragments",
