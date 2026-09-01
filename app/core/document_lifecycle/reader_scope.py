@@ -63,6 +63,13 @@ CONSUMERS: dict[str, dict[str, Any]] = {
         "produces": ("sow_", "sow "),
         "why": "a SOW is negotiated after the quote goes out",
     },
+    "orbitbrief": {
+        # The compile itself. It builds the picture of the deal, so it reads
+        # every piece of evidence -- but still not our own answer, or the brief
+        # would be quoting us back to ourselves.
+        "through": None,
+        "why": "the compile reads all evidence on the deal",
+    },
     "atlas": {
         "through": None,
         "reads": ("evidence", "reference", "atlas"),

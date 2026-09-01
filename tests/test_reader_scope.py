@@ -233,3 +233,16 @@ def test_our_own_output_is_still_excluded_by_type_not_by_the_clock():
     out = audit([KIT, LATE_NOTE, CUSTOMER_SOW], consumer="deal_kit", timeline=TIMELINE)
     why = next(r["why"] for r in out["hidden"] if r["filename"] == KIT["filename"])
     assert "not readable by deal_kit" in why
+
+
+def test_orbitbrief_reads_every_stage_but_not_our_own_answer():
+    # The compile builds the picture of the deal, so no stage cut applies. It
+    # still may not read our own output, or the brief quotes us back to
+    # ourselves.
+    assert ok("orbitbrief", "Decision Pending")[0] is True
+    assert ok("orbitbrief", "Closed Won: 100%")[0] is True
+    assert ok("orbitbrief", "Decision Pending", adm="label")[0] is False
+
+
+def test_every_named_consumer_is_present():
+    assert set(consumers()) == {"deal_kit", "sow", "orbitbrief", "atlas"}
