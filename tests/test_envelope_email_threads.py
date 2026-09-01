@@ -151,3 +151,45 @@ class TestAtomThreadContext:
         atoms = [{"id": "atm_1", "structured": {"email_thread": {"thread_id": "thr_1", "date": "2026-08-12T14:00:00Z"}}}]
         _enrich_atom_threads(atoms, threads)
         assert atoms[0]["structured"]["email_thread"]["thread_looks_split_with"] == ["thr_2"]
+
+
+class TestPerMessageDetail:
+    """A thread must say which message carried what.
+
+    "This thread discussed the SOWs" and "THIS message is where the SOWs came
+    from" are different facts, and only the second tells you whose documents
+    they are. On deal 010215 exactly one message carries all eleven Marion
+    County attachments -- and its originator is the customer, not the forwarder.
+    """
+
+    def _docs(self):
+        a = doc("a1", "thr_1", MAIN, "t@purtera-it.com", "2026-08-12T18:00:00Z")
+        a["sender_email"] = "t@purtera-it.com"
+        a["originated_by"] = "Donnelly, Bernie <Bernie.Donnelly@sodexo.com>"
+        a["attachment_ids"] = [str(i) for i in range(11)]
+        a["direction"] = "inbound"
+        b = doc("a2", "thr_1", MAIN, "patrick@purtera-it.com", "2026-08-12T18:11:00Z")
+        b["sender_email"] = "patrick@purtera-it.com"
+        b["attachment_ids"] = []
+        return [a, b]
+
+    def test_each_message_reports_its_sender_and_attachment_count(self):
+        t = _thread_index(self._docs())[0]
+        msgs = t["messages"]
+        assert [m["attachment_count"] for m in msgs] == [11, 0]
+        assert msgs[0]["sender"] == "t@purtera-it.com"
+
+    def test_a_message_reports_who_the_chain_started_with(self):
+        t = _thread_index(self._docs())[0]
+        assert "Bernie.Donnelly@sodexo.com" in t["messages"][0]["originated_by"]
+
+    def test_messages_are_in_time_order(self):
+        t = _thread_index(self._docs())[0]
+        assert [m["date"] for m in t["messages"]] == sorted(m["date"] for m in t["messages"])
+
+    def test_the_thread_totals_what_it_carried(self):
+        assert _thread_index(self._docs())[0]["attachments_carried"] == 11
+
+    def test_a_thread_with_no_attachments_reports_zero(self):
+        docs = [doc("a1", "thr_2", "quick sync", "n@cdw.com", "2026-08-12T14:00:00Z")]
+        assert _thread_index(docs)[0]["attachments_carried"] == 0

@@ -209,6 +209,8 @@ def build_orbitbrief_envelope(
                 "email_thread": _document_thread(artifact_atoms),
                 # Who the forwarded chain STARTED with, when this message is one.
                 "originated_by": _originating_sender(artifact_atoms),
+                "attachment_ids": prov.get("attachment_ids") or [],
+                "sender_email": prov.get("sender_email"),
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
@@ -783,7 +785,7 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from collections import Counter, defaultdict
 
     groups: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"subjects": Counter(), "docs": [], "senders": Counter(), "dates": []}
+        lambda: {"subjects": Counter(), "docs": [], "senders": Counter(), "dates": [], "messages": []}
     )
     for doc in documents:
         block = doc.get("email_thread")
@@ -797,6 +799,18 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
             g["senders"][str(block["sender"])] += 1
         if block.get("date"):
             g["dates"].append(str(block["date"]))
+        # Per message: who sent it and what it carried. "This thread discussed
+        # the SOWs" and "THIS message is where the SOWs came from" are different
+        # facts, and only the second tells you whose documents they are.
+        g["messages"].append({
+            "artifact_id": doc.get("artifact_id"),
+            "sender": doc.get("sender_email") or block.get("sender"),
+            "originated_by": doc.get("originated_by"),
+            "date": block.get("date"),
+            "subject": block.get("subject"),
+            "direction": doc.get("direction"),
+            "attachment_count": len(doc.get("attachment_ids") or []),
+        })
 
     out: list[dict[str, Any]] = []
     for thread_id, g in groups.items():
@@ -813,6 +827,8 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "first_message_at": dates[0] if dates else None,
                 "last_message_at": dates[-1] if dates else None,
                 "subject_variants": sorted(subjects),
+                "messages": sorted(g["messages"], key=lambda m: str(m.get("date") or "")),
+                "attachments_carried": sum(m["attachment_count"] for m in g["messages"]),
             }
         )
 
@@ -922,11 +938,17 @@ def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
         name = str(art.get("filename") or "").strip()
         if not name:
             continue
+        md = art.get("metadata") if isinstance(art.get("metadata"), dict) else {}
         out[name] = {
             "authored_at": art.get("authored_at"),
             "authored_at_precision": art.get("authored_at_precision"),
             "direction": art.get("direction"),
             "sender_domain": art.get("sender_domain"),
+            # Which files a message carried. HubSpot records it per email, and
+            # it is the difference between "this thread discussed the SOWs" and
+            # "this message is where the SOWs came from".
+            "attachment_ids": [str(x) for x in (md.get("attachmentIds") or []) if x],
+            "sender_email": md.get("senderEmail"),
         }
     return out
 
