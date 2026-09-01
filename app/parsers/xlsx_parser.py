@@ -4241,12 +4241,18 @@ class XlsxParser(BaseParser):
                 # rows in one box. ``box_label`` repeats the section title on
                 # every atom so the grouping survives even where the renderer
                 # flattens section_path.
-                pairs = [(str(k).strip(), str(v).strip()) for k, v in b["pairs"]]
-                pairs = [(k, v) for k, v in pairs if k or v]
+                # Keep each pair's worksheet row beside it: same reason as the
+                # table branch, an atom's `row` must be where it actually is.
+                _raw_rows = b.get("pair_rows") or []
+                _paired = [
+                    (str(k).strip(), str(v).strip(), _raw_rows[i] if i < len(_raw_rows) else None)
+                    for i, (k, v) in enumerate(b["pairs"])
+                ]
+                pairs = [(k, v, rr) for k, v, rr in _paired if k or v]
                 n = len(pairs)
                 box_label = sp[-1] if len(sp) > 1 else None
                 box_fill = b.get("fill")  # the highlight color the rows share
-                for pi, (k, v) in enumerate(pairs):
+                for pi, (k, v, sheet_row) in enumerate(pairs):
                     seq += 1
                     line = (f"{k}: {v}" if v else k).strip()
                     if not line:
@@ -4265,7 +4271,7 @@ class XlsxParser(BaseParser):
                         value={"kind": "key_value", "label": k, "value": v,
                                "group_index": pi, "group_size": n,
                                "box_label": box_label, "box_fill": box_fill},
-                        entity_keys=[], source_refs=[_src(kv_id, sp, "xlsx_block_keyval_v1")], receipts=[],
+                        entity_keys=[], source_refs=[_src(kv_id, sp, "xlsx_block_keyval_v1", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],

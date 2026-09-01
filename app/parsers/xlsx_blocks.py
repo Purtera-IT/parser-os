@@ -209,7 +209,11 @@ def _synth_keyval_title(pairs):
     returns None and the rows stay grouped by section_path + group metadata
     alone, never by invented text.
     """
-    labels = [str(k).strip() for k, _ in pairs if str(k).strip()]
+    # Index rather than unpack: pairs carry a third element (the worksheet row
+    # each came from) inside sheet_blocks, and unpacking two silently raised
+    # here -- swallowed upstream, so a sheet produced ZERO block atoms and
+    # simply looked empty.
+    labels = [str(p[0]).strip() for p in pairs if str(p[0]).strip()]
     if len(labels) < 2:
         return None
     toks = [re.split(r"\s+", l) for l in labels]
@@ -259,15 +263,15 @@ def _fill_runs(pairs, label_fill):
     striping, not grouping, so the box stays whole."""
     if not label_fill or len(pairs) < 2:
         return [(label_fill.get(pairs[0][0]) if (label_fill and pairs) else None, pairs)]
-    fills = [label_fill.get(k) for k, _ in pairs]
+    fills = [label_fill.get(p[0]) for p in pairs]
     changes = sum(1 for i in range(1, len(fills)) if fills[i] != fills[i - 1])
     if changes > len(pairs) / 2:            # zebra / decorative — do not split
         return [(fills[0], pairs)]
     runs, cur, cur_fill = [], [], object()
-    for (k, v), f in zip(pairs, fills):
+    for pair, f in zip(pairs, fills):
         if cur and f != cur_fill:
             runs.append((cur_fill, cur)); cur = []
-        cur_fill = f; cur.append((k, v))
+        cur_fill = f; cur.append(pair)
     if cur:
         runs.append((cur_fill, cur))
     return runs
@@ -363,13 +367,15 @@ def sheet_blocks(rows, styles=None):
                 })
         elif kind == "keyval":
             body = block if hidx is None else block[hidx:]
+            # Same reason as the table branch: an atom's `row` must be a
+            # worksheet row, and pairs alone lose which row each came from.
             pairs = []
             for r in body:
                 nz = [x for x in r if x != ""]
                 if len(nz) >= 2:
-                    pairs.append((nz[0], " ".join(nz[1:])))
+                    pairs.append((nz[0], " ".join(nz[1:]), getattr(r, "sheet_row", None)))
                 elif len(nz) == 1:
-                    pairs.append((nz[0], ""))
+                    pairs.append((nz[0], "", getattr(r, "sheet_row", None)))
             if not pairs:
                 continue
             # A styled banner header sitting INSIDE the block (a lone dark-fill
@@ -378,13 +384,14 @@ def sheet_blocks(rows, styles=None):
             # so the rows under it group beneath that heading.
             groups = []                      # (group_title, group_pairs)
             cur_title, cur = title, []
-            for (kk, vv) in pairs:
+            for pair in pairs:
+                kk, vv = pair[0], pair[1]
                 if banner_titles and vv == "" and kk in banner_titles:
                     if cur:
                         groups.append((cur_title, cur))
                     cur_title, cur = kk, []
                 else:
-                    cur.append((kk, vv))
+                    cur.append(pair)
             if cur:
                 groups.append((cur_title, cur))
             for gt, gp in groups:
@@ -396,8 +403,14 @@ def sheet_blocks(rows, styles=None):
                         # No caption anywhere — recover a heading from the
                         # labels' shared stem so the box still reads as a group.
                         rt = _synth_keyval_title(run_pairs)
-                    out.append({"title": _clean_title(rt), "kind": "keyval",
-                                "pairs": run_pairs, "fill": run_fill})
+                    out.append({
+                        "title": _clean_title(rt), "kind": "keyval",
+                        # 2-tuples for every existing consumer; the worksheet row
+                        # each pair came from travels alongside.
+                        "pairs": [(p[0], p[1]) for p in run_pairs],
+                        "pair_rows": [p[2] if len(p) > 2 else None for p in run_pairs],
+                        "fill": run_fill,
+                    })
         else:
             txt = " ".join(x for r in block for x in r if x != "")
             if txt.strip():
