@@ -858,6 +858,12 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "subject": block.get("subject"),
             "direction": doc.get("direction"),
             "attachment_count": len(doc.get("attachment_ids") or []),
+            # The ids themselves, not just how many. A count is a number nobody
+            # can check: on deal 010215 one message advertised 11 attachments
+            # and every one of them resolved to a file that had never been
+            # mirrored. With the ids present the reader can be taken to the
+            # actual documents, and the ones that are missing can say so.
+            "attachment_ids": [str(x) for x in (doc.get("attachment_ids") or []) if x],
         })
 
     out: list[dict[str, Any]] = []
