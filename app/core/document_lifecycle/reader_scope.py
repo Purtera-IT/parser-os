@@ -43,7 +43,7 @@ who originated them. This module trusts that answer and gates on time.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from app.core.document_lifecycle.deal_stage import _norm, _stage_index
 
@@ -52,10 +52,15 @@ from app.core.document_lifecycle.deal_stage import _norm, _stage_index
 CONSUMERS: dict[str, dict[str, Any]] = {
     "deal_kit": {
         "through": "Submitted for Quoting",
+        # Filenames of the artifact this consumer PRODUCES. When one is present
+        # on the deal, the moment it was authored is a better cut than the
+        # stage boundary -- see cut_at() below.
+        "produces": ("deal kit",),
         "why": "the Deal Kit is built during quoting; anything later postdates it",
     },
     "sow": {
         "through": "Decision Pending",
+        "produces": ("sow_", "sow "),
         "why": "a SOW is negotiated after the quote goes out",
     },
     "atlas": {
@@ -79,12 +84,59 @@ def consumers() -> tuple[str, ...]:
     return tuple(CONSUMERS)
 
 
+def cut_at(
+    consumer: str,
+    documents: Sequence[Mapping[str, Any]] | None,
+) -> str | None:
+    """The moment this consumer's own output was authored, if it is on the deal.
+
+    The stage boundary is administrative and the work is not. On deal 010215 the
+    Deal Kit was authored 15:50:30 and the deal moved to Decision Pending at
+    15:53:00 -- so a note that arrived 15:52:24, 114 seconds AFTER the kit
+    existed, sat inside the model's readable set. That is the model reading its
+    own future.
+
+    A fixed buffer before the stage change would close it, but the gap varies
+    per deal: on one where the customer sent scope ten minutes before quoting, a
+    buffer discards input the person demonstrably had. The produced artifact's
+    own timestamp is the actual moment, and it is exact.
+
+    Returns None when the deal has no such artifact -- then the stage boundary
+    stands, because a cut we cannot locate is not a cut we should invent.
+    """
+    spec = CONSUMERS.get(consumer) or {}
+    names = spec.get("produces") or ()
+    if not names:
+        return None
+    stamps = []
+    for doc in documents or ():
+        fn = str(doc.get("filename") or "").lower()
+        if not any(n in fn for n in names):
+            continue
+        # Only OUR output anchors the cut. A customer document named "SOW
+        # Smarthands ..." is exactly what the model is meant to read, and
+        # letting it set the boundary would cut the deal at the customer's
+        # first message.
+        block = doc.get("deal_stage") or {}
+        adm = block.get("admissible_for") or (doc.get("lifecycle") or {}).get("admissible_for")
+        if adm != "label":
+            continue
+        when = doc.get("authored_at")
+        if when:
+            stamps.append(str(when))
+    # Earliest, not latest: a revised kit issued later does not license reading
+    # what came between.
+    return min(stamps) if stamps else None
+
+
 def visible_to(
     consumer: str,
     *,
     stage: str | None,
     admissible_for: str | None,
     timeline: Mapping[str, Any] | None,
+    authored_at: str | None = None,
+    produced_at: str | None = None,
 ) -> tuple[bool, str]:
     """May ``consumer`` read a document that arrived in ``stage``?
 
@@ -106,6 +158,14 @@ def visible_to(
     #    Excluded, and said out loud, so an auditor can see the size of the gap.
     if not stage:
         return False, "no stage: undated artifact or no deal timeline; cannot place it before the cut"
+
+    # 1b. When this consumer's own output is on the deal, its timestamp is the
+    #     cut. Exact, per deal, and it closes the window between "the work was
+    #     done" and "somebody moved the stage".
+    if produced_at and authored_at:
+        if str(authored_at) < str(produced_at):
+            return True, f"arrived before {consumer} output was authored ({str(produced_at)[:16]})"
+        return False, f"arrived after {consumer} output was authored ({str(produced_at)[:16]})"
 
     through = spec["through"]
     if through is None:
@@ -142,11 +202,19 @@ def audit(
     """
     visible: list[dict[str, Any]] = []
     hidden: list[dict[str, Any]] = []
+    produced_at = cut_at(consumer, documents)
     for doc in documents:
         block = doc.get("deal_stage") or {}
         stage = block.get("stage_at_arrival")
         adm = block.get("admissible_for") or (doc.get("lifecycle") or {}).get("admissible_for")
-        ok, why = visible_to(consumer, stage=stage, admissible_for=adm, timeline=timeline)
+        ok, why = visible_to(
+            consumer,
+            stage=stage,
+            admissible_for=adm,
+            timeline=timeline,
+            authored_at=doc.get("authored_at"),
+            produced_at=produced_at,
+        )
         row = {
             "filename": doc.get("filename"),
             "stage": stage,
@@ -159,6 +227,7 @@ def audit(
     return {
         "consumer": consumer,
         "through": CONSUMERS.get(consumer, {}).get("through"),
+        "produced_at": produced_at,
         "visible_count": len(visible),
         "hidden_count": len(hidden),
         "visible": visible,

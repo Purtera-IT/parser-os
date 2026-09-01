@@ -158,3 +158,78 @@ def test_audit_splits_a_deal_and_explains_each_side():
 
 def test_consumers_are_discoverable():
     assert set(consumers()) >= {"deal_kit", "sow", "atlas"}
+
+
+# ── cutting at the produced artifact's own timestamp ────────────────────────
+#
+# The stage boundary is administrative and the work is not. On deal 010215 the
+# Deal Kit was authored 15:50:30 and the deal moved to Decision Pending at
+# 15:53:00 -- so a note that arrived 15:52:24, 114 seconds AFTER the kit
+# existed, sat inside the model's readable set. That is the model reading its
+# own future.
+
+from app.core.document_lifecycle.reader_scope import cut_at
+
+KIT = {
+    "filename": "010215  Sodexo Deal Kit.xlsx",
+    "authored_at": "2026-08-13T15:50:30.720Z",
+    "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": "label"},
+}
+LATE_NOTE = {
+    "filename": "010215-hs-note-114812740653-Note.txt",
+    "authored_at": "2026-08-13T15:52:24.032Z",
+    "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": "evidence"},
+}
+CUSTOMER_SOW = {
+    "filename": "SOW Smarthands Marion County SD Marion High School.docx",
+    "authored_at": "2026-08-12T18:05:00Z",
+    "deal_stage": {"stage_at_arrival": "Open- Awaiting Scope", "admissible_for": "evidence"},
+}
+
+
+def test_the_cut_is_the_moment_our_own_kit_was_authored():
+    assert cut_at("deal_kit", [KIT, LATE_NOTE, CUSTOMER_SOW]) == "2026-08-13T15:50:30.720Z"
+
+
+def test_a_customer_document_named_sow_never_sets_the_cut():
+    # The customer's files are named "SOW Smarthands ..." and are exactly what
+    # the model is meant to read. Letting one anchor the boundary would cut the
+    # deal at the customer's first message.
+    assert cut_at("sow", [CUSTOMER_SOW]) is None
+
+
+def test_the_earliest_output_wins_when_there_are_several():
+    later = dict(KIT, filename="010215 Deal Kit v2.xlsx", authored_at="2026-08-20T09:00:00Z")
+    # A revised kit issued later does not license reading what came between.
+    assert cut_at("deal_kit", [later, KIT]) == KIT["authored_at"]
+
+
+def test_no_output_on_the_deal_means_no_cut_to_apply():
+    # A cut we cannot locate is not a cut we should invent; the stage boundary
+    # stands instead.
+    assert cut_at("deal_kit", [CUSTOMER_SOW]) is None
+    assert cut_at("deal_kit", []) is None
+
+
+def test_the_114_second_leak_is_closed():
+    out = audit([KIT, LATE_NOTE, CUSTOMER_SOW], consumer="deal_kit", timeline=TIMELINE)
+    names = {r["filename"] for r in out["visible"]}
+    assert CUSTOMER_SOW["filename"] in names
+    assert LATE_NOTE["filename"] not in names
+    why = next(r["why"] for r in out["hidden"] if r["filename"] == LATE_NOTE["filename"])
+    assert "after deal_kit output was authored" in why
+
+
+def test_the_stage_boundary_still_applies_without_a_produced_artifact():
+    out = audit([CUSTOMER_SOW, LATE_NOTE], consumer="deal_kit", timeline=TIMELINE)
+    assert out["produced_at"] is None
+    # Both are inside Submitted for Quoting, so both remain readable.
+    assert out["visible_count"] == 2
+
+
+def test_our_own_output_is_still_excluded_by_type_not_by_the_clock():
+    # The SOW attached alongside the kit is withheld because of WHAT it is.
+    # The clock only closes the gap for genuine inbound material.
+    out = audit([KIT, LATE_NOTE, CUSTOMER_SOW], consumer="deal_kit", timeline=TIMELINE)
+    why = next(r["why"] for r in out["hidden"] if r["filename"] == KIT["filename"])
+    assert "not readable by deal_kit" in why
