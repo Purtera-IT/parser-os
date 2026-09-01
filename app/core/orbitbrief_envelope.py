@@ -541,6 +541,9 @@ def build_orbitbrief_envelope(
     if crm:
         envelope["crm"] = crm
     _resolve_delivered_by(documents)
+    # Must follow _resolve_delivered_by: the originator is what the inference
+    # reads, and it does not exist until delivery has been matched.
+    _direction_from_originator(documents, stage_timeline)
     threads = _thread_index(documents)
     if threads:
         envelope["email_threads"] = threads
@@ -751,6 +754,76 @@ def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, An
 
 
 _EMAIL_ADDR_RE = re.compile(r"[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _direction_from_originator(
+    documents: list[dict[str, Any]],
+    timeline: Mapping[str, Any] | None = None,
+) -> int:
+    """Give a FILE the direction of whoever originated it, and re-decide admissibility.
+
+    A file carries no direction of its own -- only email and notes do -- so with
+    none available the classifier falls back to the name. On deal 010215 that
+    read "SOW Smarthands Marion County SD ..." and returned ``label``: material
+    we produced. Those ten documents are the CUSTOMER's, one per school, sent by
+    Bernie Donnelly at Sodexo and forwarded in by Trent.
+
+    That is not a cosmetic mislabel. ``admissibility`` makes type decisive over
+    stage on purpose, so our own output can never be readmitted as evidence --
+    which means a Deal Kit model would be denied the exact ten documents the
+    real Deal Kit was built from, and the gate would look like it was working.
+
+    The side is inferred from the ORIGINATOR, never from HubSpot's `direction`.
+    HubSpot's flag is about a message's relationship to the deal record, not
+    about who wrote it: the message carrying these was marked INCOMING while
+    sent from our own address. The person at the top of the quoted chain is a
+    fact; the flag is not.
+
+    Only external -> ``inbound`` is asserted. An internal originator is left
+    alone: we may be forwarding someone else's material, which is precisely the
+    case here, and calling that "ours" would repeat the error in the other
+    direction.
+
+    Returns how many documents were re-decided.
+    """
+    from app.core.internal_author import extract_email_domain, INTERNAL_EMAIL_DOMAINS
+
+    changed = 0
+    for doc in documents:
+        if doc.get("direction"):
+            continue
+        origin = doc.get("delivered_by")
+        if not origin:
+            continue
+        domain = extract_email_domain(str(origin))
+        if not domain or domain in INTERNAL_EMAIL_DOMAINS:
+            continue
+
+        doc["direction"] = "inbound"
+        doc["direction_source"] = "originator of the delivering message"
+
+        block = doc.get("deal_stage")
+        if not isinstance(block, dict):
+            continue
+        # Re-decide with the direction we now have. `classified_as` is reset to
+        # None deliberately: the name-based guess is what put the customer's
+        # documents in `label`, and keeping it would win over the stage rule
+        # again by the same route.
+        adm, why = _deal_stage.admissibility(
+            stage=block.get("stage_at_arrival"),
+            direction="inbound",
+            classified_as=None,
+            timeline=timeline,
+        )
+        if adm and adm != block.get("admissible_for"):
+            block["admissible_for"] = adm
+            block["why"] = f"{why}; direction from {domain}, who originated it"
+            block["changed_from_classifier"] = True
+            lifecycle = doc.get("lifecycle")
+            if isinstance(lifecycle, dict):
+                lifecycle["admissible_for"] = adm
+            changed += 1
+    return changed
 
 
 def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
