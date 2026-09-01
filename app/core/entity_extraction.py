@@ -662,6 +662,35 @@ _QUANTITY_REGEX = re.compile(
 # noun must be from the install-vocabulary list (extensible) so this
 # does not match prices ("50 dollars"), dates ("2026 March"), or
 # generic prose ("50 reasons").
+#: "ten locations" is the same count as "10 locations" -- a spelled-out
+#: number is dress, not content. The Marion County deal's entire site scope
+#: ("SOW's for each of the ten locations") minted zero quantity keys because
+#: every quantity matcher reads digits only. Word-numbers are only trusted
+#: when anchored to a countable noun, mirroring the digit path's discipline.
+_WORD_NUMBERS: dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100,
+}
+
+#: Nouns a word-number may count. Deliberately the scope-critical set (sites,
+#: documents, devices) rather than every noun -- "a ten minute call" must not
+#: mint quantity:10.
+_WORD_NUM_NOUNS = (
+    r"locations?|sites?|schools?|stores?|branch(?:es)?|buildings?|"
+    r"facilit(?:y|ies)|campus(?:es)?|offices?|properties|"
+    r"timeclocks?|time\s+clocks?|clocks?|devices?|units?|"
+    r"sows?|statements?\s+of\s+work|documents?|quotes?"
+)
+
+_WORD_QUANTITY_REGEX = re.compile(
+    r"\b(" + "|".join(_WORD_NUMBERS) + r")\s+(?:" + _WORD_NUM_NOUNS + r")\b",
+    re.IGNORECASE,
+)
+
 _QUANTITY_NOUN_REGEX = re.compile(
     r"\b([0-9]+(?:,[0-9]{3})*)\s+"
     # Allow common qualifier prefixes that precede the device noun:
@@ -2591,6 +2620,13 @@ def _emit_quantity_keys(value: Any, text: str) -> set[str]:
             continue
         keys.add(f"quantity:{n}")
 
+    # Word-number quantities: "ten locations", "five sites". Same
+    # plausibility gate as every other path.
+    for match in _WORD_QUANTITY_REGEX.finditer(text):
+        n = _WORD_NUMBERS[match.group(1).lower()]
+        if _plausible(n):
+            keys.add(f"quantity:{n}")
+
     # Noun-anchored quantities: "Install 50 access points",
     # "60 wireless devices", "5 distribution switches", etc.
     for match in _QUANTITY_NOUN_REGEX.finditer(text):
@@ -2807,6 +2843,11 @@ def parse_quantity_spans(text: str) -> list[dict[str, Any]]:
     only (the cross-doc conflict's ``quantity:`` key parser is int-only)."""
     out: list[dict[str, Any]] = []
     seen: set[int] = set()
+    for match in _WORD_QUANTITY_REGEX.finditer(text):
+        n = _WORD_NUMBERS[match.group(1).lower()]
+        if 0 < n <= 100_000 and n not in seen:
+            seen.add(n)
+            out.append({"quantity": n, "unit": "count", "raw": match.group(0).strip()})
     for rx, guarded in ((_QUANTITY_REGEX, False), (_QUANTITY_NOUN_REGEX, True)):
         for match in rx.finditer(text):
             try:

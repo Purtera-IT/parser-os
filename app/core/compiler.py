@@ -1767,6 +1767,25 @@ def compile_project(
             warnings.append(f"WARNING: pm_answer atoms skipped: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(pm_atoms))
 
+    with telemetry.stage("declared_scope", input_count=len(atoms)) as stage:
+        # Declared-vs-found reconciliation (Marion County lesson): a customer
+        # sentence like "SOW's for each of the ten locations" must surface as
+        # an open question when the parse found fewer sites or none of the
+        # referenced documents. Additive only -- never breaks a compile.
+        ds_atoms: list = []
+        try:
+            from app.core.declared_scope import declared_scope_questions
+
+            ds_atoms = declared_scope_questions(
+                project_id=resolved_project_id, atoms=atoms
+            )
+            atoms = atoms + ds_atoms
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(
+                f"WARNING: declared_scope skipped: {type(exc).__name__}: {exc}"
+            )
+        telemetry.end_stage(stage, output_count=len(ds_atoms))
+
     with telemetry.stage("graph_build", input_count=len(atoms)) as stage:
         edges = build_edges(project_id=resolved_project_id, atoms=atoms, entities=entities)
         telemetry.end_stage(stage, output_count=len(edges))
