@@ -27,6 +27,7 @@ from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
 from app.core.document_lifecycle import timeline as _timeline
 from app.core.document_lifecycle import deal_stage as _deal_stage
 from app.core.document_lifecycle import scope as _scope
+from app.core.document_lifecycle.kit_health import check_deal_kit as _check_deal_kit
 from app.core.orbitbrief_core import (
     build_bill_of_materials,
     build_change_order_timeline,
@@ -210,6 +211,17 @@ def build_orbitbrief_envelope(
                 # Who the forwarded chain STARTED with, when this message is one.
                 "originated_by": _originating_sender(artifact_atoms),
                 "attachment_ids": prov.get("attachment_ids") or [],
+                # A Deal Kit that belongs to another deal is how that deal's
+                # pricing walks into this quote. Reported on the document so a
+                # PM sees it where the file is, not in a separate report.
+                **(
+                    {"kit_health": _check_deal_kit(
+                        atoms=[{"atom_type": getattr(getattr(a, "atom_type", None), "value", None),
+                                "text": getattr(a, "raw_text", "")} for a in artifact_atoms],
+                        deal_number=_dn,
+                    )}
+                    if (lifecycle or {}).get("type") == "DEAL_KIT" else {}
+                ),
                 "sender_email": prov.get("sender_email"),
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,

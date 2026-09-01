@@ -1585,6 +1585,22 @@ class XlsxParser(BaseParser):
         supports_source_replay=True,
     )
 
+    def _note_block_failure(self, message: str) -> None:
+        """Record that block detection crashed on a sheet.
+
+        Both call sites return [] on failure, which is correct -- one bad sheet
+        must not lose the rest of a workbook. What was wrong is that [] also
+        means "no blocks here", so a crash and an empty sheet were the same
+        answer. A TypeError in block detection silently produced a Deal Kit with
+        ZERO block atoms; the compiler saw a clean parse and the sheet simply
+        read as empty.
+        """
+        notes = getattr(self, "_block_detection_failures", None)
+        if notes is None:
+            notes = []
+            self._block_detection_failures = notes
+        notes.append(message)
+
     def match(self, path: Path, sample_text: str | None, domain_pack: DomainPack | None) -> ParserMatch:
         del sample_text, domain_pack
         suffix = path.suffix.lower()
@@ -1735,6 +1751,12 @@ class XlsxParser(BaseParser):
         if _bs_note:
             warnings.append(_bs_note)
             self._coverage_backstop_note = ""
+        # Surface any sheet whose block detection crashed. Without this the
+        # sheet contributes nothing and looks empty, which is the one failure
+        # mode this pipeline exists to prevent.
+        for _bf in getattr(self, "_block_detection_failures", []) or []:
+            warnings.append(f"WARNING: block detection failed on {_bf}")
+        self._block_detection_failures = []
         # Mark embedded charts / images / drawings / OLE objects in .xlsx so an
         # embedded diagram or logo-as-data can't silently vanish. (CSV has no
         # zip container, so this is a no-op there.)
@@ -2721,7 +2743,15 @@ class XlsxParser(BaseParser):
         from app.parsers.xlsx_blocks import sheet_blocks
         try:
             blocks = sheet_blocks(rows)
-        except Exception:
+        except Exception as exc:
+            # A crash here is NOT "this sheet has no blocks". Returning [] made
+            # the two look identical: a TypeError in block detection silently
+            # produced a Deal Kit with ZERO block atoms, the compiler saw a
+            # clean parse, and the sheet simply read as empty. A silent zero and
+            # a real zero must never look the same.
+            self._note_block_failure(
+                f"{sheet_name}: {type(exc).__name__}: {str(exc)[:200]}"
+            )
             return []
         seen = set()
         for a in existing:
@@ -4109,7 +4139,12 @@ class XlsxParser(BaseParser):
         from app.parsers.xlsx_blocks import sheet_blocks
         try:
             blocks = sheet_blocks(rows, styles=styles)
-        except Exception:
+        except Exception as exc:
+            # See the note on the other call site: an exception here used to be
+            # indistinguishable from an empty sheet.
+            self._note_block_failure(
+                f"{sheet_name}: {type(exc).__name__}: {str(exc)[:200]}"
+            )
             return []
         # Take over ONLY genuinely multi-block sheets (>=2 substantive table/
         # key-value blocks) — exactly the case the single-header-per-sheet model
