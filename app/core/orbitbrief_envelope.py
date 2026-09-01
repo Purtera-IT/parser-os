@@ -202,6 +202,11 @@ def build_orbitbrief_envelope(
                 "sender_domain": prov.get("sender_domain"),
                 "deal_stage": deal_stage,
                 "scope": {**_scope_info, **_scope_summary},
+                # The conversation this message belongs to. Threading already
+                # runs as a compile stage and stamps every atom, but only the
+                # atoms -- so a reader above atom level could not group 33 email
+                # files into the 6 conversations they actually are.
+                "email_thread": _document_thread(artifact_atoms),
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
@@ -483,6 +488,9 @@ def build_orbitbrief_envelope(
     # the manifest blob.
     if crm:
         envelope["crm"] = crm
+    threads = _thread_index(documents)
+    if threads:
+        envelope["email_threads"] = threads
     return envelope
 
 
@@ -639,6 +647,109 @@ def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
     stem = re.sub(r"^\d{6}\s*[-_\s]*", "", filename)
     stem = re.sub(r"\.[a-z0-9]{2,5}$", "", stem, flags=re.IGNORECASE)
     return "different" if _distinctive_words(stem) else "unknown"
+
+
+
+
+def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The deal's conversations, newest activity first.
+
+    A deal's email is not 33 files, it is 6 conversations. Without this a reader
+    has to reconstruct that from filenames that carry only HubSpot ids.
+
+    NAMING. The thread's name is the most frequent normalised subject, breaking
+    ties toward the LONGEST -- on deal 010215 the same conversation appears as
+    both "010215 time clock installs for marion county school district" and
+    "time clock installs for marion county school district", and the one
+    carrying the deal number is the more useful name.
+
+    Every variant seen is kept in `subject_variants`. Subject drift is how two
+    halves of one conversation end up as two threads, so it is reported rather
+    than smoothed away -- see `looks_split`.
+    """
+    from collections import Counter, defaultdict
+
+    groups: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"subjects": Counter(), "docs": [], "senders": Counter(), "dates": []}
+    )
+    for doc in documents:
+        block = doc.get("email_thread")
+        if not isinstance(block, dict) or not block.get("thread_id"):
+            continue
+        g = groups[str(block["thread_id"])]
+        if block.get("subject_norm"):
+            g["subjects"][str(block["subject_norm"])] += 1
+        g["docs"].append(doc.get("artifact_id"))
+        if block.get("sender"):
+            g["senders"][str(block["sender"])] += 1
+        if block.get("date"):
+            g["dates"].append(str(block["date"]))
+
+    out: list[dict[str, Any]] = []
+    for thread_id, g in groups.items():
+        subjects = g["subjects"]
+        name = max(subjects.items(), key=lambda kv: (kv[1], len(kv[0])))[0] if subjects else ""
+        dates = sorted(g["dates"])
+        out.append(
+            {
+                "thread_id": thread_id,
+                "name": name,
+                "message_count": len(g["docs"]),
+                "artifact_ids": g["docs"],
+                "participants": [s for s, _ in g["senders"].most_common()],
+                "first_message_at": dates[0] if dates else None,
+                "last_message_at": dates[-1] if dates else None,
+                "subject_variants": sorted(subjects),
+            }
+        )
+
+    # Subject drift splits one conversation in two: someone replies having
+    # stripped or added a prefix, and the References chain does not bridge it.
+    # Flag the pair rather than merging -- a prefix rule over-fires, and a wrong
+    # merge is harder to notice than a reported suspicion.
+    for a in out:
+        a["looks_split_with"] = [
+            b["thread_id"]
+            for b in out
+            if b is not a and a["name"] and b["name"] and (a["name"].endswith(b["name"]) or b["name"].endswith(a["name"]))
+        ]
+
+    out.sort(key=lambda t: (t["last_message_at"] or ""), reverse=True)
+    return out
+
+
+def _document_thread(artifact_atoms: list[Any]) -> dict[str, Any] | None:
+    """The thread block for a whole email document, lifted from its atoms.
+
+    email_threading.py groups messages by RFC 5322 Message-ID / In-Reply-To /
+    References, falling back to a normalised subject -- headers first, because
+    they are facts and subjects drift. It writes the result onto every atom, and
+    nowhere else, so nothing above atom level could see it.
+
+    Document-level fields only: which conversation, where in it, and what it is
+    called. The per-atom `gist` of the message being replied to stays on the
+    atoms, where it belongs -- it is context for one utterance, not for a file.
+    """
+    for atom in artifact_atoms or []:
+        block = None
+        structured = getattr(atom, "structured", None)
+        if isinstance(structured, dict):
+            block = structured.get("email_thread")
+        if block is None:
+            value = getattr(atom, "value", None)
+            if isinstance(value, dict):
+                block = value.get("email_thread")
+        if isinstance(block, dict) and block.get("thread_id"):
+            return {
+                "thread_id": block.get("thread_id"),
+                "thread_index": block.get("thread_index"),
+                "thread_size": block.get("thread_size"),
+                "subject": block.get("subject"),
+                "subject_norm": block.get("subject_norm"),
+                "sender": block.get("sender"),
+                "date": block.get("date"),
+            }
+    return None
 
 
 def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
