@@ -74,3 +74,52 @@ class TestRowOnlyLocator:
         ref = _ref({"sheet": "Assumptions", "row": 999})
         r = replay_source_ref(_atom("Union labor is not in scope.", ref), ref, {"art_1": p})
         assert r.replay_status == "failed"
+
+
+class TestRowOnlyIsNotTooGenerous:
+    """A whole-row match must still identify WHICH row.
+
+    _snippet_matches_atom's last resort is "two important terms appear
+    somewhere", which is fine against cells the parser named and far too
+    generous against a whole row of a repetitive sheet.
+
+    On the 010215 Deal Kit rate card three atoms passed against the wrong row --
+    "Cancellation/Turnaway Fee" verified against the row holding "Additional
+    Onsite Hourly Technician Labor", because both are rate rows whose numbers
+    look alike. A receipt pointing at the wrong row is worse than no receipt: it
+    says "checked" about something that was not.
+    """
+
+    def _rates(self, tmp_path: Path) -> Path:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Summary"
+        ws["A1"], ws["C1"], ws["F1"] = "Additional Onsite Hourly Technician Labor", 115, 1
+        ws["A2"], ws["C2"], ws["F2"] = "Cancellation/Turnaway Fee", 400, 2
+        p = tmp_path / "rates.xlsx"
+        wb.save(p)
+        return p
+
+    def test_a_lookalike_rate_row_no_longer_passes(self, tmp_path):
+        p = self._rates(tmp_path)
+        ref = _ref({"sheet": "Summary", "row": 1, "extraction": "xlsx_block_row_v1"})
+        r = replay_source_ref(
+            _atom("Price: Cancellation/Turnaway Fee | NB Price: 400 | Hours: 2", ref), ref, {"art_1": p},
+        )
+        assert r.replay_status == "failed"
+
+    def test_the_right_row_still_passes(self, tmp_path):
+        p = self._rates(tmp_path)
+        ref = _ref({"sheet": "Summary", "row": 2, "extraction": "xlsx_block_row_v1"})
+        r = replay_source_ref(
+            _atom("Price: Cancellation/Turnaway Fee | NB Price: 400 | Hours: 2", ref), ref, {"art_1": p},
+        )
+        assert r.replay_status == "verified"
+
+    def test_a_short_label_falls_back_rather_than_failing_outright(self, tmp_path):
+        # A bare numeric or very short atom cannot identify a row by label, and
+        # rejecting those outright would lose real receipts.
+        p = self._rates(tmp_path)
+        ref = _ref({"sheet": "Summary", "row": 2, "extraction": "xlsx_block_row_v1"})
+        r = replay_source_ref(_atom("400", ref), ref, {"art_1": p})
+        assert r.replay_status in {"verified", "failed"}  # decided by the ordinary matcher, not crashed

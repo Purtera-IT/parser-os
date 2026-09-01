@@ -307,6 +307,35 @@ def _snippet_matches_atom(atom: EvidenceAtom, snippet: str) -> bool:
     return matched >= required
 
 
+
+def _row_only_match(atom: EvidenceAtom, row_text: str) -> bool:
+    """A stricter match for the case where NO columns were cited.
+
+    _snippet_matches_atom's last resort is "two important terms appear
+    somewhere in the text". That is fine when the parser named the cells it
+    read, because the snippet is already narrowed to them. It is far too
+    generous against a WHOLE ROW of a repetitive sheet.
+
+    Measured on the 010215 Deal Kit rate card: three atoms passed against the
+    wrong row. The atom for "Cancellation/Turnaway Fee" verified against the row
+    holding "Additional Onsite Hourly Technician Labor", because both are rate
+    rows whose numbers look alike. A receipt pointing at the wrong row is worse
+    than no receipt -- it says "checked" about something that was not.
+
+    So the row must contain the atom's own LABEL: the text before the first
+    column separator, minus a "Price:"-style field prefix. That is the part that
+    identifies which row this is, and it is exactly what differs between two
+    rate lines that otherwise look identical.
+    """
+    label = str(getattr(atom, "raw_text", "") or "").split("|")[0]
+    label = re.sub(r"^\s*[A-Za-z ]{0,18}:\s*", "", label).strip()
+    # Too short to identify anything -- fall back to the ordinary matcher rather
+    # than rejecting outright, or bare numeric rows could never verify.
+    if len(label) < 8:
+        return _snippet_matches_atom(atom, row_text)
+    return _replay_norm(label) in _replay_norm(row_text)
+
+
 def _spreadsheet_full_row_text(
     path: Path, sheet: str | None, row_number: int
 ) -> str:
@@ -424,9 +453,17 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
         full_row_only = _spreadsheet_full_row_text(
             path, sheet if isinstance(sheet, str) else None, row_number
         )
-        if full_row_only and _snippet_matches_atom(atom, full_row_only):
+        if full_row_only and _row_only_match(atom, full_row_only):
             return _receipt(
                 atom, source_ref, "verified", "Spreadsheet row verified against the whole row", full_row_only,
+            )
+        if full_row_only:
+            return _receipt(
+                atom,
+                source_ref,
+                "failed",
+                "Spreadsheet row does not carry this atom's label",
+                full_row_only,
             )
         if not full_row_only:
             return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")
