@@ -363,7 +363,12 @@ def emit_atoms_for_schema(
         return []
     _section_path = list(section_path) if section_path else []
 
-    row_dict = dict(zip(columns, row + [""] * max(0, len(columns) - len(row))))
+    # NOT dict(zip(...)): a merged header repeats a column name, and the zip
+    # silently keeps only the last cell under it. This registry is fed _columns
+    # by the docx, xlsx and quote parsers, so the loss applied to every format.
+    from app.core.table_cells import cells_by_column
+
+    row_dict = cells_by_column(columns, row + [""] * max(0, len(columns) - len(row)))
     row_text = " | ".join(v for v in row if v.strip())
     if not row_text.strip():
         return []
