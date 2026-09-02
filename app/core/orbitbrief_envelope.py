@@ -540,6 +540,16 @@ def build_orbitbrief_envelope(
     # the manifest blob.
     if crm:
         envelope["crm"] = crm
+    # What THIS run was asked for, so a consumer can distinguish a deliberately
+    # cut corpus from a full one. `applied` is the discriminator: a null cutoff
+    # on a full run and a null cutoff because nobody recorded one look the same
+    # otherwise, which is the failure this field exists to end.
+    _run_cutoff = _load_manifest_run_cutoff(project_dir)
+    envelope["run_scope"] = {
+        "as_of": _run_cutoff,
+        "applied": _run_cutoff is not None,
+        "documents_in_scope": len(documents),
+    }
     _resolve_delivered_by(documents)
     # Must follow _resolve_delivered_by: the originator is what the inference
     # reads, and it does not exist until delivery has been matched.
@@ -1110,6 +1120,39 @@ def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
             "sender_email": md.get("senderEmail"),
         }
     return out
+
+
+def _load_manifest_run_cutoff(project_dir: Path) -> str | None:
+    """The as-of the RUN was given, from ``context.as_of`` on the manifest sidecar.
+
+    This is not ``deal_timeline.quote_asof``. That is a fact about the DEAL --
+    when it first committed to an answer -- and is true no matter how the
+    compile was invoked. This is a fact about THIS RUN: the operator asked for
+    "data up to 20 minutes before Decision Pending", and the manifest was cut to
+    match before parser-os ever saw it.
+
+    Nothing recorded it, and the absence was not harmless. A cut run and a full
+    run produced envelopes that were indistinguishable, so the UI could not say
+    which set it was showing: on 010215 the page displayed 11 of 69 documents
+    under a selector reading "All data - no cutoff", and the 18 documents the cut
+    had excluded rendered as "Awaiting parse" -- as though the parser had failed
+    on them, rather than as the deliberate answer to the question that was asked.
+
+    A run that cannot say what it was asked cannot be audited.
+    """
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        ctx = manifest.get("context")
+        if not isinstance(ctx, dict):
+            return None
+        value = ctx.get("as_of") or ctx.get("quote_asof")
+        text = str(value).strip() if value is not None else ""
+        return text or None
+    except (json.JSONDecodeError, OSError, TypeError):
+        return None
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
