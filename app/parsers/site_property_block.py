@@ -114,6 +114,17 @@ def _shape_fields(rows: list[dict | None]) -> dict[str, str]:
     addrs = street_addresses(flat)
     if addrs:
         out["address"] = addrs[0]
+    else:
+        # No English street suffix — "4820 Camino Del Rio", "100 Broadway".
+        # A number-led phrase is accepted ONLY when the block also carries a
+        # postal code or a state, which is what separates a place from a
+        # quantity like "1 UKG DX Clock".
+        from app.parsers.value_shapes import candidate_addresses, looks_like_site_block as _lsb
+        has_geo = any(classify_value(c) in ("postal", "state") for c in flat)
+        if has_geo:
+            cands = candidate_addresses(flat)
+            if cands:
+                out["address"] = cands[0]
     for cell in flat:
         kind = classify_value(cell)
         if kind == "postal":
@@ -138,9 +149,49 @@ def site_from_property_rows(rows: list[dict | None]) -> dict[str, str] | None:
     for cells in rows or []:
         for k, v in fields_from_property_row(cells).items():
             merged.setdefault(k, v)
+    # A vendor who labels the field differently still gets a name: structure
+    # finds it where vocabulary cannot.
+    if not merged.get("name"):
+        structural = site_name_from_block(rows)
+        if structural:
+            merged["name"] = structural
     if not merged.get("name") and not merged.get("address"):
         return None
     return merged
+
+
+def site_name_from_block(rows: list[dict | None]) -> str | None:
+    """The site's name, found by STRUCTURE rather than by a label whitelist.
+
+    In a property block the labels are short and the values are not: "City",
+    "Address Line 1", "Cost Center/Loc #" against "Marion County School District
+    Johnakin Middle School". The name is the longest run of text that types as
+    nothing (not an address, postal code, state, phone or email), carries
+    several words, and does not read as a label itself.
+
+    Measured on the ten 010215 SOWs: this picks the school every time, with no
+    knowledge that the field is called "Cost Center/Loc Name". A vendor calling
+    it "Site", "Location" or nothing at all is read identically.
+    """
+    from app.parsers.value_shapes import classify_value
+
+    seen: list[str] = []
+    for cells in rows or []:
+        if not isinstance(cells, dict):
+            continue
+        for v in cells.values():
+            t = _norm(v)
+            if t and t not in seen:
+                seen.append(t)
+
+    cands = [
+        t for t in seen
+        if not classify_value(t)
+        and len(t.split()) >= 3
+        # A label announces a field; it does not name a place.
+        and not t.rstrip().endswith(("#", ":", "?"))
+    ]
+    return max(cands, key=len) if cands else None
 
 
 def site_key(site: dict[str, str]) -> str:
@@ -168,10 +219,24 @@ def site_key(site: dict[str, str]) -> str:
     name = _norm(site.get("name", ""))
     if name:
         return "loc_" + re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:80]
+
+    # Then the ADDRESS, before any account number.
+    #
+    # The old order tried site_id next, which collapses a vendor whose documents
+    # all carry one shared account code — the same failure as 010215's district
+    # cost centre, just arrived at from the other side. An address that has been
+    # shape-typed AND found beside a postal code or state is a verified place,
+    # not the prose-scraped guess the ghost-site guard was written against.
+    addr = _norm(site.get("address", ""))
+    if addr:
+        return "loc_" + re.sub(r"[^a-z0-9]+", "_", addr.lower()).strip("_")[:80]
+
+    # An account code only when nothing identifies the place itself. Shared
+    # codes still collapse here, which is correct: a block with no name and no
+    # address has not told us there is more than one site.
     if site.get("site_id"):
         return "loc_" + re.sub(r"[^a-z0-9]+", "_", str(site["site_id"]).lower()).strip("_")
-    addr = _norm(site.get("address", ""))
-    return "loc_" + re.sub(r"[^a-z0-9]+", "_", addr.lower()).strip("_")[:80] if addr else ""
+    return ""
 
 
 def site_display_name(site: dict[str, str]) -> str:

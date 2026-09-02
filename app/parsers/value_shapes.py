@@ -50,6 +50,16 @@ PHONE = re.compile(
 )
 
 
+# A street SUFFIX is an English vocabulary. Real addresses often have none:
+# "4820 Camino Del Rio", "100 Broadway", "1 Infinite Loop". Requiring one makes
+# the reader monolingual, which is the same brittleness as a label whitelist.
+#
+# So a number-led phrase is a CANDIDATE address, promoted only by co-location
+# with a postal code or state in the same block. That structural check is what
+# keeps "1 UKG DX Clock" — a hardware quantity — from being read as a place.
+CANDIDATE_ADDRESS = re.compile(r"^\d{1,6}\s+[\w.\-/'’ ]{3,}$")
+
+
 def classify_value(value: object) -> str | None:
     """What this cell IS, from its own text. None when nothing is certain.
 
@@ -70,6 +80,24 @@ def classify_value(value: object) -> str | None:
     if PHONE.match(s) and sum(c.isdigit() for c in s) >= 7:
         return "phone"
     return None
+
+
+def candidate_addresses(cells: object) -> list[str]:
+    """Number-led phrases that MIGHT be addresses, in order, de-duplicated.
+
+    Only meaningful alongside looks_like_site_block: on its own this matches
+    quantities. Co-location is what makes it safe.
+    """
+    out: list[str] = []
+    try:
+        it = list(cells or [])
+    except TypeError:
+        return out
+    for c in it:
+        s = str(c or "").strip()
+        if classify_value(s) in (None, "address") and CANDIDATE_ADDRESS.match(s) and s not in out:
+            out.append(s)
+    return out
 
 
 def street_addresses(cells: object) -> list[str]:

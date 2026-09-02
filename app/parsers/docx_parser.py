@@ -323,11 +323,19 @@ class DocxParser(BaseParser):
 
                 for _r_idx, _row_cells in enumerate(table.rows):
                     _texts = [c.text.strip() for c in _row_cells.cells]
-                    _f = fields_from_property_row({str(i): v for i, v in enumerate(_texts)})
+                    _cells = {str(i): v for i, v in enumerate(_texts)}
+                    _f = fields_from_property_row(_cells)
+                    # Collect on STRUCTURE too, not only on a label we happen to
+                    # recognise: a vendor whose block says "Site" and "Location"
+                    # matches no label, so a label-gated collector gathers
+                    # nothing and the document reports no site at all — silent
+                    # blindness rather than a visible gap.
+                    if not _f:
+                        from app.parsers.value_shapes import classify_value as _cv
+                        if any(_cv(v) in ("address", "postal", "state") for v in _texts):
+                            _f = {"_structural": "1"}
                     if _f:
-                        _property_site_rows.append(
-                            ({str(i): v for i, v in enumerate(_texts)}, table_idx, _r_idx)
-                        )
+                        _property_site_rows.append((_cells, table_idx, _r_idx))
             except Exception:  # never let a site read break the parse
                 pass
 

@@ -178,3 +178,53 @@ def test_the_cost_centre_is_only_a_fallback():
     assert site_key({"site_id": "94575001"}) == "loc_94575001"
     # A name always wins over the shared cost centre.
     assert site_key({"name": "Palmetto MS", "site_id": "94575001"}) == "loc_palmetto_ms"
+
+
+# ── universality: it must work for a vendor we have never seen ────────────
+
+def test_a_vendor_with_completely_different_labels_still_works():
+    """No 'Cost Center/Loc Name', no 'Address Line 1' — nothing we whitelisted.
+
+    A label vocabulary is one vendor wide. The next customer writes "Site" and
+    "Location", or leaves cells unlabelled, and a whitelist finds nothing —
+    which looks exactly like a document containing nothing.
+    """
+    rows = [
+        {"0": "Site", "1": "Riverside Distribution Centre"},
+        {"0": "Location", "1": "4820 Camino Del Rio"},
+        {"0": "Town", "1": "San Diego", "2": "Prov", "3": "CA"},
+        {"0": "Postcode", "1": "92108"},
+    ]
+    site = site_from_property_rows(rows)
+    assert site is not None
+    assert site["address"] == "4820 Camino Del Rio"
+    assert site["zip"] == "92108"
+    assert site["state"] == "CA"
+    assert "Riverside" in site["name"]
+
+
+def test_no_labels_at_all():
+    # An unlabelled block still yields the place.
+    rows = [{"0": "Harbour Point Logistics Hub"}, {"0": "1180 Peachtree St"}, {"0": "GA", "1": "30309"}]
+    site = site_from_property_rows(rows)
+    assert site["address"] == "1180 Peachtree St"
+    assert site["state"] == "GA" and site["zip"] == "30309"
+
+
+def test_a_shared_account_code_no_longer_collapses_sites():
+    """The 010215 failure from the other side.
+
+    A vendor whose blocks all carry one account number used to key on it, so
+    every site merged into one. The address is the identity when no name exists.
+    """
+    from app.parsers.site_property_block import site_key
+    a = site_key({"site_id": "ACCT-100", "address": "601 Gurley St"})
+    b = site_key({"site_id": "ACCT-100", "address": "747 Millers Rd"})
+    assert a != b, "two addresses under one account code are two sites"
+
+
+def test_the_account_code_is_the_last_resort_only():
+    from app.parsers.site_property_block import site_key
+    # Nothing identifies the place itself — collapsing is then correct, because
+    # the block has not told us there is more than one.
+    assert site_key({"site_id": "ACCT-100"}) == "loc_acct_100"
