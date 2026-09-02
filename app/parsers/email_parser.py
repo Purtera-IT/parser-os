@@ -958,16 +958,32 @@ def _is_email_list_framing_lead_in(cleaned: str) -> bool:
     return any(c in lowered for c in cues)
 
 
+_QUOTE_OPEN = ('"', "\u201c")
+_QUOTE_CLOSE = ('"', "\u201d")
+
+
 def _is_customer_quote_line(cleaned: str) -> bool:
-    """True when the line is a quoted customer utterance (not a requirement)."""
+    """True when the line is a quoted customer utterance (not a requirement).
+
+    A closing mark used to be required. But lines are split into sentences
+    before typing, so a quote spanning two sentences arrives as:
+
+        "Network build out does not need to be built into this.
+        We will handle that separately."
+
+    The first piece opens a quote and never closes it, so it failed the test and
+    was typed ``scope_item`` -- a paraphrase-shaped requirement -- when it is the
+    customer telling us what NOT to build. That is the exact confusion the
+    customer_instruction class exists to prevent.
+
+    An opening mark is therefore enough. A closing mark with no opening one is
+    not: that is the tail of a quote whose opening piece already claimed it, and
+    typing it too would double-count one utterance.
+    """
     text = (cleaned or "").strip()
     if len(text) < 8:
         return False
-    if (text.startswith('"') and text.endswith('"')) or (
-        text.startswith("\u201c") and text.endswith("\u201d")
-    ):
-        return True
-    return False
+    return text.startswith(_QUOTE_OPEN)
 
 
 # OCR equipment rows that are truncated / ellipsis-garbled must not become atoms.
