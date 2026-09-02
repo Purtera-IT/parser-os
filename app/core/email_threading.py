@@ -188,6 +188,9 @@ def thread_emails(
     # branching thread doesn't mislabel "in reply to" as the chronologically
     # previous email. Falls back to chronological prev when headers are absent.
     parent_by_artifact: dict[str, str] = {}
+    # Artifacts whose thread membership was decided by RFC headers. The subject
+    # fallback must not move these -- see below.
+    header_linked: set[str] = set()
     for aid, meta in meta_by_artifact.items():
         refs: list[str] = []
         if meta.get("in_reply_to"):
@@ -197,6 +200,8 @@ def thread_emails(
             other = msgid_to_artifact.get(ref)
             if other and other != aid:
                 uf.union(aid, other)
+                header_linked.add(aid)
+                header_linked.add(other)
         # First resolvable ancestor (In-Reply-To beats References; among
         # References the last is nearest) becomes the parent for context.
         in_reply_first = (str(meta.get("in_reply_to") or "").strip(),)
@@ -209,11 +214,21 @@ def thread_emails(
                 parent_by_artifact[aid] = other
                 break
 
-    # Subject fallback: union all messages sharing a non-empty normalised
-    # subject. Within one deal compile this reliably reunites a back-and-forth
-    # whose .eml exports stripped the References chain (common from HubSpot).
+    # Subject fallback: union messages sharing a non-empty normalised subject,
+    # for the ones RFC headers could not place. Within one deal compile this
+    # reunites a back-and-forth whose .eml export stripped the References chain.
+    #
+    # It is a FALLBACK and was not behaving as one: it unioned every subject
+    # match unconditionally, so two different conversations that happen to share
+    # a line -- "Site Survey" on two deals -- merged even when their headers
+    # said otherwise, and headers could never win.
+    #
+    # A message already placed by its headers is left alone. One that has none
+    # still gets the safety net, which is the case the fallback exists for.
     subject_groups: dict[str, list[str]] = {}
     for aid, meta in meta_by_artifact.items():
+        if aid in header_linked:
+            continue
         subj = (meta.get("subject_norm") or "").strip()
         if subj:
             subject_groups.setdefault(subj, []).append(aid)

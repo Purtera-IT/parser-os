@@ -1590,6 +1590,14 @@ class EmailParser(BaseParser):
             )
         if header_atom is not None:
             atoms.append(header_atom)
+        # Every quoted message's own routing line, so the chain survives
+        # whatever body hygiene removes.
+        atoms.extend(
+            self._quoted_chain_atoms(
+                project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, blocks=blocks,
+            )
+        )
         # Attachments are the real deal docs more often than the body — mark
         # each one so it can't silently vanish (the file content is a separate
         # artifact; this is a located pointer the PM/census can see).
@@ -1660,6 +1668,77 @@ class EmailParser(BaseParser):
             parser_version=self.parser_version,
             source_refs=[src],
         )
+
+    def _quoted_chain_atoms(
+        self, *, project_id: str, artifact_id: str, filename: str, blocks: list[dict]
+    ) -> list[EvidenceAtom]:
+        """One routing atom per QUOTED message, mirroring ``_header_atom``.
+
+        The outer message's From/To/Subject/Date has always been surfaced as a
+        ``deal_metadata`` atom, so it can never silently vanish and can never be
+        mistaken for scope. Quoted messages had no equivalent: their sender and
+        date lived only on the LOCATOR of whatever body atoms happened to
+        survive.
+
+        That is a real loss of information -- a forward's chain is who asked
+        whom for what, and it is exactly the context a reader needs -- and it is
+        also fragile. Cleaning header and signature chrome out of quoted blocks
+        left one of deal 010215's messages with no atoms at all, so its sender
+        went with them and ``_originating_sender`` credited the customer's own
+        documents to somebody else.
+
+        Attribution must not depend on which body lines happened to be worth
+        keeping. Emitted as ``deal_metadata`` at low confidence: routing
+        context, never a claim about the work.
+        """
+        atoms: list[EvidenceAtom] = []
+        for block in blocks:
+            if not block.get("quoted"):
+                continue
+            sender = str(block.get("sender") or "").strip()
+            sent_at = str(block.get("sent_at") or "").strip()
+            if not sender or sender.lower() == "unknown":
+                continue
+            index = int(block.get("message_index") or 0)
+            parts = [f"From: {sender}"]
+            if sent_at:
+                parts.append(f"Sent: {sent_at}")
+            text = " | ".join(parts)
+            src = SourceRef(
+                id=stable_id("src", artifact_id, "quoted_header", index),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.email,
+                filename=filename,
+                locator={
+                    "kind": "email_quoted_header",
+                    "message_index": index,
+                    "sender": sender,
+                    "sent_at": sent_at,
+                    "line_start": int(block.get("line_start") or 0),
+                    "line_end": int(block.get("line_start") or 0),
+                    "quoted": True,
+                },
+                extraction_method="email_quoted_headers",
+                parser_version=self.parser_version,
+            )
+            atoms.append(
+                EvidenceAtom(
+                    id=stable_id("atm", project_id, artifact_id, "quoted_header", index),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.deal_metadata,
+                    raw_text=text,
+                    normalized_text=normalize_text(text),
+                    value={"kind": "quoted_message_header", "sender": sender,
+                           "sent_at": sent_at, "message_index": index},
+                    source_refs=[src],
+                    authority_class=AuthorityClass.quoted_old_email,
+                    confidence=0.45,
+                    review_status=ReviewStatus.auto_accepted,
+                    parser_version=self.parser_version,
+                )
+            )
+        return atoms
 
     def _header_atom(
         self, *, project_id: str, artifact_id: str, path: Path
