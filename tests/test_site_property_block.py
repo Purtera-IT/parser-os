@@ -134,3 +134,47 @@ def test_ten_per_site_sows_yield_ten_sites(tmp_path):
     assert "1123 Sandy Bluff Rd" in sites, "leading digit must survive"
     assert "601 Gurley St" in sites
     assert not any(s and "1205 S Main St" in s and "Gurley" in s for s in sites), "no fusing"
+
+
+def test_ten_sites_get_ten_distinct_keys():
+    """site_readiness keys on value["id"]; a shared key silently merges sites.
+
+    All ten 010215 SOWs carry Cost Center/Loc # 94575001 — the DISTRICT's number,
+    not the school's. Keying on it collapses ten schools into one, which loses
+    exactly as much as dropping nine of them.
+    """
+    import glob
+    from pathlib import Path
+    from app.parsers.docx_parser import DocxParser
+
+    corpus = sorted(glob.glob(
+        "/private/tmp/claude-501/-Users-purtera/688e4b18-55b8-4411-9d01-a00049d5ca4f"
+        "/scratchpad/sodexo_all/SOW Smarthands*.docx"
+    ))
+    if len(corpus) < 10:
+        import pytest
+        pytest.skip("fixture corpus not present on this machine")
+
+    keys, ids = set(), set()
+    for f in corpus:
+        atoms = DocxParser().parse(Path(f))
+        v = ([a for a in atoms if str(getattr(a, "atom_type", "")).endswith("physical_site")][0].value or {})
+        keys.add(v.get("id"))
+        ids.add(v.get("site_id"))
+
+    assert len(keys) == 10, "each school must key distinctly"
+    assert len(ids) == 1, "the cost centre really is shared — that is why it cannot be the key"
+
+
+def test_two_schools_at_one_address_stay_two_sites():
+    from app.parsers.site_property_block import site_key
+    a = site_key({"name": "Marion County School District Marion High School", "address": "1205 S Main St"})
+    b = site_key({"name": "Marion County School District Marion Intermediate School", "address": "1205 S Main St"})
+    assert a != b, "a shared address does not make two schools one site"
+
+
+def test_the_cost_centre_is_only_a_fallback():
+    from app.parsers.site_property_block import site_key
+    assert site_key({"site_id": "94575001"}) == "loc_94575001"
+    # A name always wins over the shared cost centre.
+    assert site_key({"name": "Palmetto MS", "site_id": "94575001"}) == "loc_palmetto_ms"

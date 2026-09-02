@@ -479,6 +479,7 @@ class DocxParser(BaseParser):
                 from app.parsers.site_property_block import (
                     site_from_property_rows,
                     site_display_name,
+                    site_key,
                 )
 
                 _site = site_from_property_rows([c for c, _t, _r in _property_site_rows])
@@ -494,7 +495,17 @@ class DocxParser(BaseParser):
                             atom_type=AtomType.physical_site,
                             raw_text=_label,
                             normalized_text=_label.lower(),
-                            value={"kind": "physical_site", "source": "property_block", **_site},
+                            # `id` is what site_readiness keys on. It must be
+                            # the per-site identity the document states, not the
+                            # cost centre — all ten 010215 SOWs share 94575001,
+                            # which is the district's, and keying on it collapses
+                            # ten schools into one.
+                            value={
+                                "kind": "physical_site",
+                                "source": "property_block",
+                                "id": site_key(_site),
+                                **_site,
+                            },
                             # The document states its own site in a labelled
                             # block; that is the contract speaking, not an
                             # inference, so it carries the same authority as a

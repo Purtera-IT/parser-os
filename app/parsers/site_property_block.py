@@ -105,6 +105,37 @@ def site_from_property_rows(rows: list[dict | None]) -> dict[str, str] | None:
     return merged
 
 
+def site_key(site: dict[str, str]) -> str:
+    """A stable per-site key, from the identity the DOCUMENT states.
+
+    site_readiness keys on ``value["id"] or value["site_id"]`` and skips a site
+    that has neither -- deliberately, because an address-derived slug produced
+    ghost sites like "site:address_1180_peachtree_st". That guard is right.
+
+    But the cost-centre number is not a site id here. All ten 010215 SOWs carry
+    the same one, 94575001, because it identifies the DISTRICT, not the school.
+    Keying on it collapses ten schools into one, which is the same information
+    loss as dropping nine of them.
+
+    The location NAME is different: it is a labelled field the document fills in
+    per site ("Cost Center/Loc Name | Marion County School District Johnakin
+    Middle School"), not a string a regex guessed out of prose. Two schools
+    sharing an address -- Marion HS and Marion Intermediate both sit at 1205 S
+    Main St -- stay distinct under it, correctly, because they are distinct
+    schools.
+
+    Falls back to the cost centre, then the address, so a block that names no
+    location still keys on something the document asserted.
+    """
+    name = _norm(site.get("name", ""))
+    if name:
+        return "loc_" + re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:80]
+    if site.get("site_id"):
+        return "loc_" + re.sub(r"[^a-z0-9]+", "_", str(site["site_id"]).lower()).strip("_")
+    addr = _norm(site.get("address", ""))
+    return "loc_" + re.sub(r"[^a-z0-9]+", "_", addr.lower()).strip("_")[:80] if addr else ""
+
+
 def site_display_name(site: dict[str, str]) -> str:
     """A human label for the site, preferring what the document called it."""
     name = _norm(site.get("name", "")).replace("\n", " ")
