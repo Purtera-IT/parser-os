@@ -1585,6 +1585,22 @@ class XlsxParser(BaseParser):
         supports_source_replay=True,
     )
 
+    def _note_block_failure(self, message: str) -> None:
+        """Record that block detection crashed on a sheet.
+
+        Both call sites return [] on failure, which is correct -- one bad sheet
+        must not lose the rest of a workbook. What was wrong is that [] also
+        means "no blocks here", so a crash and an empty sheet were the same
+        answer. A TypeError in block detection silently produced a Deal Kit with
+        ZERO block atoms; the compiler saw a clean parse and the sheet simply
+        read as empty.
+        """
+        notes = getattr(self, "_block_detection_failures", None)
+        if notes is None:
+            notes = []
+            self._block_detection_failures = notes
+        notes.append(message)
+
     def match(self, path: Path, sample_text: str | None, domain_pack: DomainPack | None) -> ParserMatch:
         del sample_text, domain_pack
         suffix = path.suffix.lower()
@@ -1735,6 +1751,12 @@ class XlsxParser(BaseParser):
         if _bs_note:
             warnings.append(_bs_note)
             self._coverage_backstop_note = ""
+        # Surface any sheet whose block detection crashed. Without this the
+        # sheet contributes nothing and looks empty, which is the one failure
+        # mode this pipeline exists to prevent.
+        for _bf in getattr(self, "_block_detection_failures", []) or []:
+            warnings.append(f"WARNING: block detection failed on {_bf}")
+        self._block_detection_failures = []
         # Mark embedded charts / images / drawings / OLE objects in .xlsx so an
         # embedded diagram or logo-as-data can't silently vanish. (CSV has no
         # zip container, so this is a no-op there.)
@@ -2721,7 +2743,15 @@ class XlsxParser(BaseParser):
         from app.parsers.xlsx_blocks import sheet_blocks
         try:
             blocks = sheet_blocks(rows)
-        except Exception:
+        except Exception as exc:
+            # A crash here is NOT "this sheet has no blocks". Returning [] made
+            # the two look identical: a TypeError in block detection silently
+            # produced a Deal Kit with ZERO block atoms, the compiler saw a
+            # clean parse, and the sheet simply read as empty. A silent zero and
+            # a real zero must never look the same.
+            self._note_block_failure(
+                f"{sheet_name}: {type(exc).__name__}: {str(exc)[:200]}"
+            )
             return []
         seen = set()
         for a in existing:
@@ -4109,7 +4139,12 @@ class XlsxParser(BaseParser):
         from app.parsers.xlsx_blocks import sheet_blocks
         try:
             blocks = sheet_blocks(rows, styles=styles)
-        except Exception:
+        except Exception as exc:
+            # See the note on the other call site: an exception here used to be
+            # indistinguishable from an empty sheet.
+            self._note_block_failure(
+                f"{sheet_name}: {type(exc).__name__}: {str(exc)[:200]}"
+            )
             return []
         # Take over ONLY genuinely multi-block sheets (>=2 substantive table/
         # key-value blocks) — exactly the case the single-header-per-sheet model
@@ -4151,13 +4186,25 @@ class XlsxParser(BaseParser):
         def _section_path(title: str | None) -> list[str]:
             return [sheet_name, title] if (sheet_name and title) else ([sheet_name] if sheet_name else [])
 
-        def _src(rid: str, sp: list[str], extraction: str) -> SourceRef:
+        def _src(rid: str, sp: list[str], extraction: str, sheet_row: int | None = None) -> SourceRef:
             return SourceRef(
                 id=stable_id("src", rid),
                 artifact_id=artifact_id,
                 artifact_type=artifact_type,
                 filename=filename,
-                locator={"sheet": sheet_name, "row": seq, "section_path": sp, "extraction": extraction},
+                # `row` must be the WORKSHEET row, because that is what source
+                # replay reads. It used to be `seq`, a running counter over the
+                # detected blocks: on deal 010215 every atom cited a row exactly
+                # two off, and none of the Deal Kit's priced service lines could
+                # be verified. `seq` is kept as `block_seq` -- it is still the
+                # reading order, it just is not a location.
+                locator={
+                    "sheet": sheet_name,
+                    "row": sheet_row if sheet_row is not None else seq,
+                    "block_seq": seq,
+                    "section_path": sp,
+                    "extraction": extraction,
+                },
                 extraction_method=extraction,
                 parser_version=self.parser_version,
             )
@@ -4166,8 +4213,10 @@ class XlsxParser(BaseParser):
             sp = _section_path(b.get("title"))
             if b["kind"] == "table":
                 header = b["header"]
-                for row_cells in b["rows"]:
+                row_indices = b.get("row_indices") or []
+                for _ri, row_cells in enumerate(b["rows"]):
                     seq += 1
+                    sheet_row = row_indices[_ri] if _ri < len(row_indices) else None
                     # Summary / total rows ("Subtotal", "Recommended fixed fee
                     # hours", "Safer bid hours", "Grand Total") are NOT task rows —
                     # don't force the first column's header ("Task Category") onto
@@ -4199,7 +4248,7 @@ class XlsxParser(BaseParser):
                         value={"_columns": list(header), "_row": list(row_cells), "_table_idx": bi,
                                "_row_idx": seq, "_filename": filename, "_sheet": sheet_name,
                                "section_path": sp, "_artifact_type": "xlsx"},
-                        entity_keys=[], source_refs=[_src(rtr_id, sp, "xlsx_block_raw_table_row")], receipts=[],
+                        entity_keys=[], source_refs=[_src(rtr_id, sp, "xlsx_block_raw_table_row", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
@@ -4212,7 +4261,7 @@ class XlsxParser(BaseParser):
                         atom_type=AtomType.scope_item, raw_text=body, normalized_text=body.lower(),
                         value={"kind": "table_row", "columns": list(header),
                                "cells": {header[j]: row_cells[j] for j in range(min(len(header), len(row_cells))) if row_cells[j] != ""}},
-                        entity_keys=[], source_refs=[_src(si_id, sp, "xlsx_block_row_v1")], receipts=[],
+                        entity_keys=[], source_refs=[_src(si_id, sp, "xlsx_block_row_v1", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
@@ -4227,12 +4276,18 @@ class XlsxParser(BaseParser):
                 # rows in one box. ``box_label`` repeats the section title on
                 # every atom so the grouping survives even where the renderer
                 # flattens section_path.
-                pairs = [(str(k).strip(), str(v).strip()) for k, v in b["pairs"]]
-                pairs = [(k, v) for k, v in pairs if k or v]
+                # Keep each pair's worksheet row beside it: same reason as the
+                # table branch, an atom's `row` must be where it actually is.
+                _raw_rows = b.get("pair_rows") or []
+                _paired = [
+                    (str(k).strip(), str(v).strip(), _raw_rows[i] if i < len(_raw_rows) else None)
+                    for i, (k, v) in enumerate(b["pairs"])
+                ]
+                pairs = [(k, v, rr) for k, v, rr in _paired if k or v]
                 n = len(pairs)
                 box_label = sp[-1] if len(sp) > 1 else None
                 box_fill = b.get("fill")  # the highlight color the rows share
-                for pi, (k, v) in enumerate(pairs):
+                for pi, (k, v, sheet_row) in enumerate(pairs):
                     seq += 1
                     line = (f"{k}: {v}" if v else k).strip()
                     if not line:
@@ -4251,7 +4306,7 @@ class XlsxParser(BaseParser):
                         value={"kind": "key_value", "label": k, "value": v,
                                "group_index": pi, "group_size": n,
                                "box_label": box_label, "box_fill": box_fill},
-                        entity_keys=[], source_refs=[_src(kv_id, sp, "xlsx_block_keyval_v1")], receipts=[],
+                        entity_keys=[], source_refs=[_src(kv_id, sp, "xlsx_block_keyval_v1", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],

@@ -705,7 +705,10 @@ def _hardware_atoms_from_equipment_text(
             row_index += 1
         if matched:
             continue
-    if not atoms and any(ch.isalnum() for ch in text):
+    # Whole-image OCR fallback. Skipped for brand chrome: a signature logo is
+    # not scope, and emitting it as a scope_item puts unfalsifiable filler in the
+    # evidence set that can never verify.
+    if not atoms and any(ch.isalnum() for ch in text) and not _is_brand_chrome_ocr(text):
         src = _cid_equipment_source_ref(
             artifact_id=artifact_id,
             filename=filename,
@@ -745,6 +748,45 @@ def _hardware_atoms_from_equipment_text(
         )
     return atoms
 
+
+
+#: Chrome that appears in an email SIGNATURE image, not in anyone's scope.
+#
+# The CID fallback below emits whole-image OCR when no equipment rows parse out
+# of it. On deal 010215 that produced 91 atoms -- 17% of all email atoms -- typed
+# scope_item at confidence 0.7, and every one was a logo:
+#
+#     "CDW) OFFICIAL PROVIDER"                  x22
+#     "Tech & Services Support Request"         x22
+#     "sodexo Ik ol setorts eth the eversdoy"   x22   (tagline, OCR garbled)
+#     "PurTeraIT Intelligent Field Execution"          (our own signature)
+#
+# A logo read as scope is worse than no atom: it is unfalsifiable filler in the
+# evidence set, and it can never verify because the text is not in the body.
+_BRAND_CHROME_RE = re.compile(
+    r"official\s+provider|intelligent\s+field\s+execution|"
+    r"support\s+request|tech\s*&\s*services|"
+    r"^\s*(cdw|sodexo|purtera\s*it)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_brand_chrome_ocr(text: str) -> bool:
+    """True when whole-image OCR is a logo or signature block rather than scope.
+
+    Deliberately conservative: it fires on a recognised brand phrase, not on a
+    heuristic like "short" or "no digits". Dropping a real inline table would
+    lose evidence, which is the expensive direction of this error.
+    """
+    cleaned = " ".join(str(text or "").split())
+    if not cleaned:
+        return True
+    if _BRAND_CHROME_RE.search(cleaned):
+        return True
+    # OCR of a logo is mostly non-words: no sentence, no quantities, very short.
+    if len(cleaned) < 24 and not any(ch.isdigit() for ch in cleaned):
+        return True
+    return False
 
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
@@ -916,16 +958,32 @@ def _is_email_list_framing_lead_in(cleaned: str) -> bool:
     return any(c in lowered for c in cues)
 
 
+_QUOTE_OPEN = ('"', "\u201c")
+_QUOTE_CLOSE = ('"', "\u201d")
+
+
 def _is_customer_quote_line(cleaned: str) -> bool:
-    """True when the line is a quoted customer utterance (not a requirement)."""
+    """True when the line is a quoted customer utterance (not a requirement).
+
+    A closing mark used to be required. But lines are split into sentences
+    before typing, so a quote spanning two sentences arrives as:
+
+        "Network build out does not need to be built into this.
+        We will handle that separately."
+
+    The first piece opens a quote and never closes it, so it failed the test and
+    was typed ``scope_item`` -- a paraphrase-shaped requirement -- when it is the
+    customer telling us what NOT to build. That is the exact confusion the
+    customer_instruction class exists to prevent.
+
+    An opening mark is therefore enough. A closing mark with no opening one is
+    not: that is the tail of a quote whose opening piece already claimed it, and
+    typing it too would double-count one utterance.
+    """
     text = (cleaned or "").strip()
     if len(text) < 8:
         return False
-    if (text.startswith('"') and text.endswith('"')) or (
-        text.startswith("\u201c") and text.endswith("\u201d")
-    ):
-        return True
-    return False
+    return text.startswith(_QUOTE_OPEN)
 
 
 # OCR equipment rows that are truncated / ellipsis-garbled must not become atoms.
@@ -1355,6 +1413,35 @@ def _split_leading_pseudo_headers(text: str) -> tuple[dict[str, str], str]:
     return values, "\n".join([""] * consumed + lines[consumed:])
 
 
+def _normalize_sender(value: str) -> str:
+    """Repair a display name whose address was wrapped across lines.
+
+    Rejoining "Trent Torrence <" with the address on the next line produced
+    ``Trent Torrence <t@purtera-it.com`` -- an unbalanced bracket, because the
+    closing ">" had wrapped too, or sat inside a `<mailto:...>` decoration that
+    the text conversion left behind.
+
+    A malformed sender is not merely untidy. ``_originating_sender`` takes the
+    HIGHEST message index in a forward chain -- the oldest message, the person
+    a document actually came from -- so it lands precisely on the deepest,
+    most-wrapped blocks. On deal 010215 the well-formed senders sat at index 1
+    and every index from 2 to 16 carried a truncated one, so a forward whose
+    chain started with the customer was attributed to us instead.
+    """
+    text = " ".join(str(value or "").split())
+    if not text:
+        return text
+    # "name@host<mailto:NAME@HOST>" -- the anchor text repeated as a link.
+    text = re.sub(r"<mailto:[^>]*>?", "", text, flags=re.IGNORECASE).strip()
+    if "<" in text and ">" not in text:
+        # Close it only when what follows the bracket is actually an address;
+        # otherwise leave the text alone rather than inventing structure.
+        head, _, tail = text.partition("<")
+        if "@" in tail:
+            text = f"{head.strip()} <{tail.strip()}>".strip()
+    return text
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -1474,7 +1561,23 @@ class EmailParser(BaseParser):
         pseudo_headers: dict[str, str] = {}
         if path.suffix.lower() != ".eml":
             pseudo_headers, text = _split_leading_pseudo_headers(text)
-        blocks = self._split_blocks(text)
+        # For .eml the RFC822 headers never reach the body, so the first
+        # message has no From/Sent line to find. Read them off the envelope.
+        envelope_sender = ""
+        envelope_sent_at = ""
+        if path.suffix.lower() == ".eml":
+            try:
+                hdrs = parse_email_thread_headers(path)
+                envelope_sender = str(hdrs.get("sender") or "")
+                envelope_sent_at = str(hdrs.get("date_raw") or "")
+            except Exception:
+                # A malformed .eml must not lose its body; an empty locator is
+                # worse than no locator only when it is silent, and the atoms
+                # still carry their text either way.
+                pass
+        blocks = self._split_blocks(
+            text, envelope_sender=envelope_sender, envelope_sent_at=envelope_sent_at,
+        )
         atoms: list[EvidenceAtom] = []
         for block in blocks:
             authority = self._authority_for_block(block)
@@ -1503,6 +1606,14 @@ class EmailParser(BaseParser):
             )
         if header_atom is not None:
             atoms.append(header_atom)
+        # Every quoted message's own routing line, so the chain survives
+        # whatever body hygiene removes.
+        atoms.extend(
+            self._quoted_chain_atoms(
+                project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, blocks=blocks,
+            )
+        )
         # Attachments are the real deal docs more often than the body — mark
         # each one so it can't silently vanish (the file content is a separate
         # artifact; this is a located pointer the PM/census can see).
@@ -1573,6 +1684,77 @@ class EmailParser(BaseParser):
             parser_version=self.parser_version,
             source_refs=[src],
         )
+
+    def _quoted_chain_atoms(
+        self, *, project_id: str, artifact_id: str, filename: str, blocks: list[dict]
+    ) -> list[EvidenceAtom]:
+        """One routing atom per QUOTED message, mirroring ``_header_atom``.
+
+        The outer message's From/To/Subject/Date has always been surfaced as a
+        ``deal_metadata`` atom, so it can never silently vanish and can never be
+        mistaken for scope. Quoted messages had no equivalent: their sender and
+        date lived only on the LOCATOR of whatever body atoms happened to
+        survive.
+
+        That is a real loss of information -- a forward's chain is who asked
+        whom for what, and it is exactly the context a reader needs -- and it is
+        also fragile. Cleaning header and signature chrome out of quoted blocks
+        left one of deal 010215's messages with no atoms at all, so its sender
+        went with them and ``_originating_sender`` credited the customer's own
+        documents to somebody else.
+
+        Attribution must not depend on which body lines happened to be worth
+        keeping. Emitted as ``deal_metadata`` at low confidence: routing
+        context, never a claim about the work.
+        """
+        atoms: list[EvidenceAtom] = []
+        for block in blocks:
+            if not block.get("quoted"):
+                continue
+            sender = str(block.get("sender") or "").strip()
+            sent_at = str(block.get("sent_at") or "").strip()
+            if not sender or sender.lower() == "unknown":
+                continue
+            index = int(block.get("message_index") or 0)
+            parts = [f"From: {sender}"]
+            if sent_at:
+                parts.append(f"Sent: {sent_at}")
+            text = " | ".join(parts)
+            src = SourceRef(
+                id=stable_id("src", artifact_id, "quoted_header", index),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.email,
+                filename=filename,
+                locator={
+                    "kind": "email_quoted_header",
+                    "message_index": index,
+                    "sender": sender,
+                    "sent_at": sent_at,
+                    "line_start": int(block.get("line_start") or 0),
+                    "line_end": int(block.get("line_start") or 0),
+                    "quoted": True,
+                },
+                extraction_method="email_quoted_headers",
+                parser_version=self.parser_version,
+            )
+            atoms.append(
+                EvidenceAtom(
+                    id=stable_id("atm", project_id, artifact_id, "quoted_header", index),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.deal_metadata,
+                    raw_text=text,
+                    normalized_text=normalize_text(text),
+                    value={"kind": "quoted_message_header", "sender": sender,
+                           "sent_at": sent_at, "message_index": index},
+                    source_refs=[src],
+                    authority_class=AuthorityClass.quoted_old_email,
+                    confidence=0.45,
+                    review_status=ReviewStatus.auto_accepted,
+                    parser_version=self.parser_version,
+                )
+            )
+        return atoms
 
     def _header_atom(
         self, *, project_id: str, artifact_id: str, path: Path
@@ -1952,7 +2134,13 @@ class EmailParser(BaseParser):
             pages=pages,
         )
 
-    def _split_blocks(self, text: str) -> list[dict[str, Any]]:
+    def _split_blocks(
+        self,
+        text: str,
+        *,
+        envelope_sender: str = "",
+        envelope_sent_at: str = "",
+    ) -> list[dict[str, Any]]:
         lines = text.splitlines()
         if not lines:
             return []
@@ -1967,17 +2155,66 @@ class EmailParser(BaseParser):
                 and any(not l.strip().lower().startswith(("from:", "sent:", "date:", "subject:")) for _, l in current)
             )
             if current and (is_new_message_boundary or is_from_after_body):
-                blocks.append(self._build_block(blocks, current))
+                blocks.append(
+                    self._build_block(
+                        blocks, current,
+                        envelope_sender=envelope_sender,
+                        envelope_sent_at=envelope_sent_at,
+                    )
+                )
                 current = []
             current.append((idx, line))
         if current:
-            blocks.append(self._build_block(blocks, current))
+            blocks.append(
+                self._build_block(
+                    blocks, current,
+                    envelope_sender=envelope_sender,
+                    envelope_sent_at=envelope_sent_at,
+                )
+            )
         return blocks
 
-    def _build_block(self, existing: list[dict[str, Any]], lines: list[tuple[int, str]]) -> dict[str, Any]:
+    def _build_block(
+        self,
+        existing: list[dict[str, Any]],
+        lines: list[tuple[int, str]],
+        *,
+        envelope_sender: str = "",
+        envelope_sent_at: str = "",
+    ) -> dict[str, Any]:
+        """One message in a thread, with who sent it and when.
+
+        Sender and date are read out of the BODY, because in a quoted reply
+        chain that is where they live -- "From: ... Sent: ..." above each older
+        message. The top-level message is the exception: in an .eml its headers
+        are in the RFC822 envelope and were stripped before the body ever got
+        here, so it found nothing and recorded sender "unknown" with no date.
+
+        That is not cosmetic. Receipt verification anchors a quote through the
+        locator, and an empty locator cannot be anchored: measured on deal
+        010215, 82% of email atoms failed verification against 0% for
+        documents, meetings and notes -- 257 of them with exactly this
+        signature. Email is the largest evidence source in the corpus, so most
+        of what the system reads was carrying claims it could not prove.
+
+        The envelope values are a fallback for the FIRST block only. Later
+        blocks are quoted messages whose own headers are in the text; letting
+        the envelope override those would attribute every message in a thread
+        to whoever sent the last reply.
+        """
         stripped_lines = [line.strip() for _, line in lines]
         sender = self._find_header_value(stripped_lines, "from")
         sent_at = self._find_header_value(stripped_lines, "sent") or self._find_header_value(stripped_lines, "date")
+        # Deliberately NOT folded into `sender`. _authority_for_block reads that
+        # field, and giving the first block a real sender flips the top-level
+        # message of every .eml we wrote from customer_current_authored to
+        # machine_extractor. That is almost certainly the more correct answer --
+        # an email we sent is not customer-authored -- but it re-ranks the
+        # authority lattice across the whole corpus, which is a much larger
+        # change than fixing a locator and needs its own review. Kept separate
+        # so the receipt fix does not smuggle it in.
+        locator_sender = sender or (envelope_sender if not existing else "")
+        locator_sent_at = sent_at or (envelope_sent_at if not existing else "")
         quoted = any(line.startswith(">") for line in stripped_lines) or len(existing) > 0
         return {
             "message_index": len(existing),
@@ -1985,16 +2222,65 @@ class EmailParser(BaseParser):
             "line_end": lines[-1][0],
             "sender": sender or "unknown",
             "sent_at": sent_at or "",
+            # What the LOCATOR should carry: the same values, plus the envelope
+            # fallback for the first message. This is what receipt verification
+            # anchors a quote through.
+            "locator_sender": locator_sender or "unknown",
+            "locator_sent_at": locator_sent_at or "",
             "quoted": quoted,
             "lines": stripped_lines,
         }
 
     def _find_header_value(self, lines: list[str], key: str) -> str | None:
-        pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.+)$", flags=re.IGNORECASE)
-        for line in lines:
+        """The value of a quoted header, whether it is on the label's line or the next.
+
+        HTML mail puts each header label in its own element, so converting to
+        text yields:
+
+            From:
+            Patrick Kelly <patrick@purtera-it.com>
+            Sent:
+            Wednesday, August 12, 2026 1:12 PM
+
+        Requiring the value on the SAME line matched nothing there, so every
+        quoted message in a forward read sender "unknown". That is not cosmetic:
+        the ten Marion County SOWs arrived inside a forward, and with no sender
+        on the inner messages the only name available was whoever forwarded it
+        last -- attributing the customer's own documents to us.
+        """
+        pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.*)$", flags=re.IGNORECASE)
+        for idx, line in enumerate(lines):
             match = pattern.match(line)
+            if match and not (match.group(1) or "").strip():
+                # Label alone on its line: the value is the next non-empty line,
+                # unless that line is itself another header label.
+                for offset, nxt in enumerate(lines[idx + 1 : idx + 3], start=1):
+                    candidate = (nxt or "").strip()
+                    if not candidate:
+                        continue
+                    if re.match(r"^(from|sent|date|to|cc|bcc|subject)\s*:", candidate, re.IGNORECASE):
+                        break
+                    # HTML mail wraps a long display name away from its address,
+                    # leaving "Trent Torrence <" with "t@purtera-it.com>" on the
+                    # next line. Rejoin them, or the sender is a name with no
+                    # address and cannot be matched to anyone.
+                    #
+                    # The tail was searched from a FIXED lines[idx+2:idx+4],
+                    # while the candidate itself may have come from idx+2 when
+                    # idx+1 was blank -- so the join could swallow the candidate
+                    # or reach past the address entirely. Search from wherever
+                    # the candidate actually was.
+                    if candidate.endswith("<"):
+                        after = idx + 1 + offset
+                        tail = next(
+                            (x.strip() for x in lines[after : after + 3] if (x or "").strip()), ""
+                        )
+                        if "@" in tail:
+                            candidate = f"{candidate}{tail}"
+                    return _normalize_sender(candidate)
+                continue
             if match:
-                return match.group(1).strip()
+                return _normalize_sender(match.group(1).strip())
         return None
 
     def _authority_for_block(self, block: dict[str, Any]) -> AuthorityClass:
@@ -2112,8 +2398,8 @@ class EmailParser(BaseParser):
             "message_index": block["message_index"],
             "line_start": start,
             "line_end": end,
-            "sender": block["sender"],
-            "sent_at": block["sent_at"],
+            "sender": block.get("locator_sender") or block["sender"],
+            "sent_at": block.get("locator_sent_at") or block["sent_at"],
             "quoted": block["quoted"],
         }
         if section_path:
@@ -2147,6 +2433,18 @@ class EmailParser(BaseParser):
         # ``pending_lead_in`` holds framing prose ("By the end of the meeting
         # customer clarified:") until the next Include/Exclude list consumes it.
         in_signature = False
+        # HTML mail puts each header label in its own element, so converting to
+        # text yields the label and its value on SEPARATE lines:
+        #
+        #     From:
+        #     Quinton James <quinton.james@cdw.com>
+        #     Sent:
+        #     Wednesday, August 12, 2026 10:20 AM
+        #
+        # `_PSEUDO_HEADER_RE` needs "Label:" on the same line, so the value line
+        # walked straight through and became a scope_item. This latches on a
+        # bare label and consumes the one line that follows it.
+        after_bare_header_label = False
         current_section: str | None = None  # "include" | "exclude" | None
         pending_lead_in: list[str] = []
         active_lead_in: list[str] = []
@@ -2212,9 +2510,35 @@ class EmailParser(BaseParser):
             #    is name/title/phone/URL chrome, not deal content.
             if in_signature:
                 continue
-            if not block["quoted"] and _SIGNOFF_RE.match(cleaned):
+            # Quoted messages sign off too, and this was gated to the authored
+            # one only -- so every quoted signature was atomised in full. A
+            # forward chain carries one signature per message, and deal 010215's
+            # runs sixteen deep: 64 of its 75 chrome atoms sat at depth >= 1,
+            # emitting `t`, `Q`, `404.771.3490` and `M: 404-918-0783` as
+            # scope_items. `t` and `Q` are wrapped initials of Trent and
+            # Quinton.
+            #
+            # `in_signature` is per-block state, so latching it inside a quoted
+            # message ends at that message's boundary and never bleeds into the
+            # next. Site extraction runs above this and is untouched, so an
+            # address in a signature is still recovered.
+            if _SIGNOFF_RE.match(cleaned):
                 in_signature = True
                 continue
+            # 1b) A quoted message's own header block ("To: …", "Sent: …",
+            #     "Cc: …"). The sender and date are already captured
+            #     structurally on the locator, so these lines carry nothing a
+            #     reader needs and arrive as address fragments like
+            #     "mike.stephens <" once the line wraps.
+            if block["quoted"]:
+                header_match = _PSEUDO_HEADER_RE.match(cleaned)
+                if header_match:
+                    # A bare label ("From:") means its value is the next line.
+                    after_bare_header_label = not (header_match.group(2) or "").strip()
+                    continue
+                if after_bare_header_label:
+                    after_bare_header_label = False
+                    continue
             # 2) Salutation opener — not an atom. Captured later as
             #    ``value.addressee`` / ``to_greeting`` on sibling body atoms
             #    (and the email header) so Atom Quality can show "To: Eddie"

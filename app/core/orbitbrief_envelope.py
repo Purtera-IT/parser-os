@@ -25,6 +25,9 @@ from typing import Any
 
 from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
 from app.core.document_lifecycle import timeline as _timeline
+from app.core.document_lifecycle import deal_stage as _deal_stage
+from app.core.document_lifecycle import scope as _scope
+from app.core.document_lifecycle.kit_health import check_deal_kit as _check_deal_kit
 from app.core.orbitbrief_core import (
     build_bill_of_materials,
     build_change_order_timeline,
@@ -100,6 +103,23 @@ def build_orbitbrief_envelope(
             if aid and isinstance(outcome, dict):
                 outcome_by_artifact[aid] = outcome
 
+    # WHEN each artifact was authored and WHOSE it is, plus the deal's own stage
+    # transitions. Together these decide where a document sits in the deal's life
+    # and therefore who may read it -- see document_lifecycle/deal_stage.py.
+    provenance = _load_manifest_provenance(project_dir)
+    _crm_ctx = _load_manifest_crm(project_dir) or {}
+    stage_timeline = _crm_ctx.get("stage_timeline") if isinstance(_crm_ctx, dict) else None
+
+    # Which keys mean THIS deal, for scope detection. A document naming only
+    # these stays deal-scoped; one naming others is speaking for more than this
+    # deal. See document_lifecycle/scope.py.
+    _this_keys: list[str] = []
+    _dn = _deal_number_from_crm(_crm_ctx)
+    if _dn:
+        _this_keys.append(_dn)
+    for _d in (_scope.PO_RE.finditer(str(_crm_ctx.get("deal_name") or "")) if _crm_ctx else []):
+        _this_keys.append(_d.group(1))
+
     documents: list[dict[str, Any]] = []
     artifact_iter = manifest.artifact_fingerprints if manifest is not None else []
     for fp in artifact_iter:
@@ -132,6 +152,57 @@ def build_orbitbrief_envelope(
             lifecycle["after_cut"] = _timeline.is_after_cut(
                 compile_result.project_id, arrived,
             )
+        prov = provenance.get(fp.filename, {})
+        # HOW WIDE this document is. A rate card speaks for the customer, a
+        # programme breakdown for several deals; neither is wrong, but a rollup
+        # inside one is never THIS deal's number. Detected from the document's
+        # own content -- never its filename.
+        _delivered_text = " ".join(
+            str(d.get("text") or "") for d in ((lifecycle or {}).get("delivered") or [])
+        )
+        _scope_info = _scope.detect_scope(
+            # EvidenceAtom exposes raw_text, not text. Reading the wrong
+            # attribute silently yielded empty strings, so no deal keys were
+            # found and every document scored `deal` -- the Sodexo Breakdown
+            # came back scope=deal with no foreign keys while the same atoms
+            # analysed directly gave scope=program, 33068 and 34150.
+            texts=[a.raw_text for a in artifact_atoms if getattr(a, "raw_text", None)],
+            document_type=(lifecycle or {}).get("type"),
+            this_deal_keys=_this_keys,
+            delivering_text=_delivered_text,
+        )
+        # Part 2: resolve each row to the deal it belongs to, so a row that IS
+        # this deal's is admitted rather than demoted with the rest of a
+        # multi-deal document.
+        _scope_rows = _scope.narrow_rows(
+            [
+                {
+                    "atom_type": getattr(getattr(a, "atom_type", None), "value", None),
+                    "text": getattr(a, "raw_text", "") or "",
+                    "locator": (a.source_refs[0].locator if getattr(a, "source_refs", None) else {}),
+                }
+                for a in artifact_atoms
+            ],
+            scope=_scope_info["scope"],
+            this_deal_keys=_this_keys,
+        ) if _scope_info["scope"] != _scope.SCOPE_DEAL else []
+        _scope_summary = _scope.summarise(
+            [
+                {
+                    "atom_type": getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None)),
+                    "text": getattr(a, "raw_text", "") or "",
+                }
+                for a in artifact_atoms
+            ],
+            scope=_scope_info["scope"],
+            this_deal_keys=_this_keys,
+        )
+        deal_stage = _deal_stage.annotate(
+            lifecycle,
+            authored_at=prov.get("authored_at"),
+            direction=prov.get("direction"),
+            timeline=stage_timeline,
+        )
         documents.append(
             {
                 "artifact_id": fp.artifact_id,
@@ -139,6 +210,55 @@ def build_orbitbrief_envelope(
                 "artifact_type": fp.artifact_type.value,
                 "sha256": fp.sha256,
                 "lifecycle": lifecycle,
+                # The deal's own life, not the file's name: when this arrived,
+                # which stage was in force, whose it is, and who may read it.
+                "authored_at": prov.get("authored_at"),
+                "authored_at_precision": prov.get("authored_at_precision"),
+                "direction": prov.get("direction"),
+                "sender_domain": prov.get("sender_domain"),
+                "deal_stage": deal_stage,
+                "scope": {
+                    **_scope_info,
+                    **_scope_summary,
+                    **({"rows": _scope_rows,
+                        "covers_deals": sorted({r["belongs_to"] for r in _scope_rows if r["belongs_to"]}),
+                        "atoms_admitted": sum(1 for r in _scope_rows if r["verdict"] == "admit"),
+                        "atoms_demoted": sum(1 for r in _scope_rows if r["verdict"] == "context"),
+                        **({"misfiled": _mf} if (_mf := _scope.misfiled_verdict(_scope_rows, this_deal_keys=_this_keys)) else {})}
+                       if _scope_rows else {}),
+                },
+                # The conversation this message belongs to. Threading already
+                # runs as a compile stage and stamps every atom, but only the
+                # atoms -- so a reader above atom level could not group 33 email
+                # files into the 6 conversations they actually are.
+                "email_thread": _document_thread(artifact_atoms),
+                # Who the forwarded chain STARTED with -- claimed ONLY when this
+                # message actually carried something.
+                #
+                # A reply quotes the whole history, so the deepest quoted sender
+                # is present in every message of a thread. Reading it off any
+                # message made a plain reply from Quinton report "forwarding
+                # Bernie Donnelly", which is false: he introduced nothing, he
+                # answered. The question "whose document is this?" only arises
+                # for a message that brought a document.
+                "originated_by": (
+                    _originating_sender(artifact_atoms)
+                    if (prov.get("attachment_ids") or [])
+                    else None
+                ),
+                "attachment_ids": prov.get("attachment_ids") or [],
+                # A Deal Kit that belongs to another deal is how that deal's
+                # pricing walks into this quote. Reported on the document so a
+                # PM sees it where the file is, not in a separate report.
+                **(
+                    {"kit_health": _check_deal_kit(
+                        atoms=[{"atom_type": getattr(getattr(a, "atom_type", None), "value", None),
+                                "text": getattr(a, "raw_text", "")} for a in artifact_atoms],
+                        deal_number=_dn,
+                    )}
+                    if (lifecycle or {}).get("type") == "DEAL_KIT" else {}
+                ),
+                "sender_email": prov.get("sender_email"),
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
@@ -420,6 +540,17 @@ def build_orbitbrief_envelope(
     # the manifest blob.
     if crm:
         envelope["crm"] = crm
+    _resolve_delivered_by(documents)
+    # Must follow _resolve_delivered_by: the originator is what the inference
+    # reads, and it does not exist until delivery has been matched.
+    _direction_from_originator(documents, stage_timeline)
+    # Last, so it gates the corrected picture: a customer document that stopped
+    # being called ours a moment ago must be readable by the models that had it.
+    _annotate_reader_scope(documents, stage_timeline)
+    threads = _thread_index(documents)
+    if threads:
+        envelope["email_threads"] = threads
+        _enrich_atom_threads(envelope.get("atoms") or [], threads)
     return envelope
 
 
@@ -576,6 +707,409 @@ def _account_match(crm: Mapping[str, Any] | None, filename: str) -> str:
     stem = re.sub(r"^\d{6}\s*[-_\s]*", "", filename)
     stem = re.sub(r"\.[a-z0-9]{2,5}$", "", stem, flags=re.IGNORECASE)
     return "different" if _distinctive_words(stem) else "unknown"
+
+
+
+
+
+def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, Any]]) -> None:
+    """Give every email atom the whole conversation, not just its own message.
+
+    email_threading.py already stamps each atom with its position and the gist
+    of the message it replies to. That answers "what is this a reply to". It does
+    not answer "what is this conversation, who is in it, and is this the last
+    word" -- which is what a reader needs to weigh a single line like
+    "Yes, approved, go ahead with 36".
+
+    Thread-level facts only, all deterministic: the conversation's name, who
+    took part, when it ran, and whether this message is the latest in it. No
+    summary is invented -- a generated gist of twenty messages would be an
+    unfalsifiable claim sitting in the evidence set, which is the one thing this
+    pipeline must not produce.
+
+    Mutates in place; additive, so an atom that was never threaded is untouched.
+    """
+    by_id = {t["thread_id"]: t for t in threads}
+    if not by_id:
+        return
+    for atom in atoms:
+        structured = atom.get("structured")
+        if not isinstance(structured, dict):
+            continue
+        block = structured.get("email_thread")
+        if not isinstance(block, dict):
+            continue
+        thread = by_id.get(block.get("thread_id"))
+        if not thread:
+            continue
+        block["thread_name"] = thread.get("name")
+        block["participants"] = thread.get("participants") or []
+        block["thread_first_message_at"] = thread.get("first_message_at")
+        block["thread_last_message_at"] = thread.get("last_message_at")
+        # "Is this the last word on it?" -- an approval that was later revised
+        # reads very differently from one nobody answered.
+        date = block.get("date")
+        last = thread.get("last_message_at")
+        block["is_latest_in_thread"] = bool(date and last and str(date) >= str(last))
+        if thread.get("looks_split_with"):
+            block["thread_looks_split_with"] = thread["looks_split_with"]
+
+
+
+_EMAIL_ADDR_RE = re.compile(r"[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _direction_from_originator(
+    documents: list[dict[str, Any]],
+    timeline: Mapping[str, Any] | None = None,
+) -> int:
+    """Give a FILE the direction of whoever originated it, and re-decide admissibility.
+
+    A file carries no direction of its own -- only email and notes do -- so with
+    none available the classifier falls back to the name. On deal 010215 that
+    read "SOW Smarthands Marion County SD ..." and returned ``label``: material
+    we produced. Those ten documents are the CUSTOMER's, one per school, sent by
+    Bernie Donnelly at Sodexo and forwarded in by Trent.
+
+    That is not a cosmetic mislabel. ``admissibility`` makes type decisive over
+    stage on purpose, so our own output can never be readmitted as evidence --
+    which means a Deal Kit model would be denied the exact ten documents the
+    real Deal Kit was built from, and the gate would look like it was working.
+
+    The side is inferred from the ORIGINATOR, never from HubSpot's `direction`.
+    HubSpot's flag is about a message's relationship to the deal record, not
+    about who wrote it: the message carrying these was marked INCOMING while
+    sent from our own address. The person at the top of the quoted chain is a
+    fact; the flag is not.
+
+    Only external -> ``inbound`` is asserted. An internal originator is left
+    alone: we may be forwarding someone else's material, which is precisely the
+    case here, and calling that "ours" would repeat the error in the other
+    direction.
+
+    Returns how many documents were re-decided.
+    """
+    from app.core.internal_author import extract_email_domain, INTERNAL_EMAIL_DOMAINS
+
+    changed = 0
+    for doc in documents:
+        if doc.get("direction"):
+            continue
+        origin = doc.get("delivered_by")
+        if not origin:
+            continue
+        domain = extract_email_domain(str(origin))
+        if not domain or domain in INTERNAL_EMAIL_DOMAINS:
+            continue
+
+        doc["direction"] = "inbound"
+        doc["direction_source"] = "originator of the delivering message"
+
+        block = doc.get("deal_stage")
+        if not isinstance(block, dict):
+            continue
+        # Re-decide with the direction we now have. `classified_as` is reset to
+        # None deliberately: the name-based guess is what put the customer's
+        # documents in `label`, and keeping it would win over the stage rule
+        # again by the same route.
+        adm, why = _deal_stage.admissibility(
+            stage=block.get("stage_at_arrival"),
+            direction="inbound",
+            classified_as=None,
+            timeline=timeline,
+        )
+        if adm and adm != block.get("admissible_for"):
+            block["admissible_for"] = adm
+            block["why"] = f"{why}; direction from {domain}, who originated it"
+            block["changed_from_classifier"] = True
+            lifecycle = doc.get("lifecycle")
+            if isinstance(lifecycle, dict):
+                lifecycle["admissible_for"] = adm
+            changed += 1
+    return changed
+
+
+def _annotate_reader_scope(
+    documents: list[dict[str, Any]],
+    timeline: Mapping[str, Any] | None,
+) -> None:
+    """Record, per document, which models were allowed to read it.
+
+    Training a Deal Kit model on a finished deal is only honest if it sees what
+    the person saw. A document that arrived after the kit was produced teaches
+    the model from its own answer -- and on a manually-worked corpus that is the
+    default outcome unless something stops it.
+
+    Written onto the document rather than computed by each consumer, so the
+    answer is one thing a person can audit rather than several that can drift.
+    """
+    from app.core.document_lifecycle import reader_scope as _rs
+
+    for doc in documents:
+        block = doc.get("deal_stage") or {}
+        stage = block.get("stage_at_arrival")
+        adm = block.get("admissible_for") or (doc.get("lifecycle") or {}).get("admissible_for")
+        seen: dict[str, Any] = {}
+        for consumer in _rs.consumers():
+            ok, why = _rs.visible_to(
+                consumer, stage=stage, admissible_for=adm, timeline=timeline
+            )
+            seen[consumer] = {"visible": ok, "why": why}
+        doc["reader_scope"] = seen
+
+
+def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
+    """Say WHO sent the message that delivered each file.
+
+    A file carries no sender of its own. The lifecycle work recovered the
+    message that delivered it, but only as ``{kind, text, ts}`` -- so the UI
+    could say *which* email brought a document and not who wrote it, which is
+    the difference between a SOW draft they sent and one we sent.
+
+    The delivering message is itself a document in this envelope, and email
+    documents carry a sender. Match on TIMESTAMP, which is exact and unique to
+    the minute, rather than on subject text, which drifts across a thread.
+
+    Falls back to the first address in the delivered text -- these are forwards
+    and the sender's signature is usually in them ("Trent Torrence ...
+    t@purtera-it.com"). Marked as a fallback so a consumer can tell a resolved
+    sender from a scraped one.
+
+    Mutates in place. A file with no delivering message is left alone: an
+    unattributed document must not end up looking attributed.
+    """
+    emails: list[tuple[str, dict[str, Any]]] = []
+    for doc in documents:
+        thread = doc.get("email_thread") or {}
+        when = thread.get("date") or doc.get("authored_at")
+        if when and thread.get("sender"):
+            emails.append((str(when)[:19], doc))
+
+    for doc in documents:
+        delivered = ((doc.get("lifecycle") or {}).get("delivered")) or []
+        if not delivered or doc.get("email_thread"):
+            continue
+        first = next((d for d in delivered if isinstance(d, dict) and d.get("ts")), None)
+        if first is None:
+            continue
+        stamp = str(first.get("ts") or "")[:19]
+
+        match = next((d for ts, d in emails if ts and stamp and ts[:16] == stamp[:16]), None)
+        if match is not None:
+            thread = match.get("email_thread") or {}
+            # The originator beats the forwarder. HubSpot only knows the message
+            # that carried the file into the deal; the person who actually sent
+            # it is further up the quoted chain.
+            origin = match.get("originated_by")
+            doc["delivered_by"] = origin or thread.get("sender")
+            if origin and origin != thread.get("sender"):
+                doc["forwarded_by"] = thread.get("sender")
+            # Deliberately NOT copying the delivering message's `direction`.
+            # HubSpot's direction is about the message's relationship to the DEAL
+            # record, not about who wrote it: the Marion County SOWs resolve to
+            # t@purtera-it.com -- our own domain -- on a message HubSpot marked
+            # INCOMING. Showing "They sent - t@purtera-it.com" would be a claim
+            # this join cannot support. The person is a fact; the side is not.
+            doc["delivered_by_source"] = "delivering message"
+            continue
+
+        found = _EMAIL_ADDR_RE.search(str(first.get("text") or ""))
+        if found:
+            doc["delivered_by"] = found.group(0)
+            doc["delivered_by_source"] = "signature in the forwarded message"
+
+
+def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The deal's conversations, newest activity first.
+
+    A deal's email is not 33 files, it is 6 conversations. Without this a reader
+    has to reconstruct that from filenames that carry only HubSpot ids.
+
+    NAMING. The thread's name is the most frequent normalised subject, breaking
+    ties toward the LONGEST -- on deal 010215 the same conversation appears as
+    both "010215 time clock installs for marion county school district" and
+    "time clock installs for marion county school district", and the one
+    carrying the deal number is the more useful name.
+
+    Every variant seen is kept in `subject_variants`. Subject drift is how two
+    halves of one conversation end up as two threads, so it is reported rather
+    than smoothed away -- see `looks_split`.
+    """
+    from collections import Counter, defaultdict
+
+    groups: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"subjects": Counter(), "docs": [], "senders": Counter(), "dates": [], "messages": []}
+    )
+    for doc in documents:
+        block = doc.get("email_thread")
+        if not isinstance(block, dict) or not block.get("thread_id"):
+            continue
+        g = groups[str(block["thread_id"])]
+        if block.get("subject_norm"):
+            g["subjects"][str(block["subject_norm"])] += 1
+        g["docs"].append(doc.get("artifact_id"))
+        if block.get("sender"):
+            g["senders"][str(block["sender"])] += 1
+        if block.get("date"):
+            g["dates"].append(str(block["date"]))
+        # Per message: who sent it and what it carried. "This thread discussed
+        # the SOWs" and "THIS message is where the SOWs came from" are different
+        # facts, and only the second tells you whose documents they are.
+        g["messages"].append({
+            "artifact_id": doc.get("artifact_id"),
+            "sender": doc.get("sender_email") or block.get("sender"),
+            "originated_by": doc.get("originated_by"),
+            "date": block.get("date"),
+            "subject": block.get("subject"),
+            "direction": doc.get("direction"),
+            "attachment_count": len(doc.get("attachment_ids") or []),
+            # The ids themselves, not just how many. A count is a number nobody
+            # can check: on deal 010215 one message advertised 11 attachments
+            # and every one of them resolved to a file that had never been
+            # mirrored. With the ids present the reader can be taken to the
+            # actual documents, and the ones that are missing can say so.
+            "attachment_ids": [str(x) for x in (doc.get("attachment_ids") or []) if x],
+        })
+
+    out: list[dict[str, Any]] = []
+    for thread_id, g in groups.items():
+        subjects = g["subjects"]
+        name = max(subjects.items(), key=lambda kv: (kv[1], len(kv[0])))[0] if subjects else ""
+        dates = sorted(g["dates"])
+        out.append(
+            {
+                "thread_id": thread_id,
+                "name": name,
+                "message_count": len(g["docs"]),
+                "artifact_ids": g["docs"],
+                "participants": [s for s, _ in g["senders"].most_common()],
+                "first_message_at": dates[0] if dates else None,
+                "last_message_at": dates[-1] if dates else None,
+                "subject_variants": sorted(subjects),
+                "messages": sorted(g["messages"], key=lambda m: str(m.get("date") or "")),
+                "attachments_carried": sum(m["attachment_count"] for m in g["messages"]),
+            }
+        )
+
+    # Subject drift splits one conversation in two: someone replies having
+    # stripped or added a prefix, and the References chain does not bridge it.
+    # Flag the pair rather than merging -- a prefix rule over-fires, and a wrong
+    # merge is harder to notice than a reported suspicion.
+    for a in out:
+        a["looks_split_with"] = [
+            b["thread_id"]
+            for b in out
+            if b is not a and a["name"] and b["name"] and (a["name"].endswith(b["name"]) or b["name"].endswith(a["name"]))
+        ]
+
+    out.sort(key=lambda t: (t["last_message_at"] or ""), reverse=True)
+    return out
+
+
+
+def _originating_sender(artifact_atoms: list[Any]) -> str | None:
+    """The person a forwarded chain STARTED with, not whoever forwarded it last.
+
+    An attachment that arrives inside a forward belongs to whoever actually sent
+    it. On deal 010215 the ten Marion County SOWs reached HubSpot only when
+    Trent forwarded the chain in -- HubSpot associates the files with that one
+    message and knows nothing earlier. Attributing the documents to him says the
+    customer's own SOWs came from us.
+
+    The chain is in the body. The parser splits a forward into message blocks,
+    oldest last, so the highest message_index is the original:
+
+        msg1  Patrick Kelly <patrick@purtera-it.com>       1:12 PM
+        msg2  Trent Torrence <t@purtera-it.com>            1:5x PM
+        msg3  Quinton James <quinton.james@cdw.com>       10:20 AM
+        msg4  Donnelly, Bernie <Bernie.Donnelly@sodexo.com> 8:3x AM   <- the customer
+    """
+    best_index = -1
+    best_sender = None
+    for atom in artifact_atoms or []:
+        for ref in getattr(atom, "source_refs", None) or []:
+            locator = getattr(ref, "locator", None)
+            if not isinstance(locator, dict):
+                continue
+            sender = str(locator.get("sender") or "").strip()
+            index = locator.get("message_index")
+            if not sender or sender.lower() == "unknown" or not isinstance(index, int):
+                continue
+            if index > best_index:
+                best_index, best_sender = index, sender
+    return best_sender
+
+
+def _document_thread(artifact_atoms: list[Any]) -> dict[str, Any] | None:
+    """The thread block for a whole email document, lifted from its atoms.
+
+    email_threading.py groups messages by RFC 5322 Message-ID / In-Reply-To /
+    References, falling back to a normalised subject -- headers first, because
+    they are facts and subjects drift. It writes the result onto every atom, and
+    nowhere else, so nothing above atom level could see it.
+
+    Document-level fields only: which conversation, where in it, and what it is
+    called. The per-atom `gist` of the message being replied to stays on the
+    atoms, where it belongs -- it is context for one utterance, not for a file.
+    """
+    for atom in artifact_atoms or []:
+        block = None
+        structured = getattr(atom, "structured", None)
+        if isinstance(structured, dict):
+            block = structured.get("email_thread")
+        if block is None:
+            value = getattr(atom, "value", None)
+            if isinstance(value, dict):
+                block = value.get("email_thread")
+        if isinstance(block, dict) and block.get("thread_id"):
+            return {
+                "thread_id": block.get("thread_id"),
+                "thread_index": block.get("thread_index"),
+                "thread_size": block.get("thread_size"),
+                "subject": block.get("subject"),
+                "subject_norm": block.get("subject_norm"),
+                "sender": block.get("sender"),
+                "date": block.get("date"),
+            }
+    return None
+
+
+def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
+    """Per-artifact authored time and direction, keyed by filename.
+
+    Purpulse writes these onto each manifest artifact because only Purpulse knows
+    them: the authored time lives in HubSpot metadata under a different key per
+    source, and ``attachments.created_at`` is INGEST time -- on deal 010215 every
+    email row was created 2026-08-17 for a deal opened 2026-08-12, so using it
+    files the whole discovery phase under the wrong stage.
+    """
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return {}
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, TypeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for art in manifest.get("artifacts") or []:
+        if not isinstance(art, dict):
+            continue
+        name = str(art.get("filename") or "").strip()
+        if not name:
+            continue
+        md = art.get("metadata") if isinstance(art.get("metadata"), dict) else {}
+        out[name] = {
+            "authored_at": art.get("authored_at"),
+            "authored_at_precision": art.get("authored_at_precision"),
+            "direction": art.get("direction"),
+            "sender_domain": art.get("sender_domain"),
+            # Which files a message carried. HubSpot records it per email, and
+            # it is the difference between "this thread discussed the SOWs" and
+            # "this message is where the SOWs came from".
+            "attachment_ids": [str(x) for x in (md.get("attachmentIds") or []) if x],
+            "sender_email": md.get("senderEmail"),
+        }
+    return out
 
 
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:

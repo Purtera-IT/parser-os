@@ -185,6 +185,8 @@ def test_the_builder_meta_is_honest(tmp_path, monkeypatch) -> None:
     shape: a candidate that cannot describe itself cannot be promoted."""
     import json
     import sqlite3
+    import sys
+    import types
 
     from app.learning import build_atom_store as bas
 
@@ -221,6 +223,19 @@ def test_the_builder_meta_is_honest(tmp_path, monkeypatch) -> None:
             Path(path).mkdir(parents=True, exist_ok=True)
             (Path(path) / "stub.json").write_text("{}")
 
+    # sentence_transformers is an optional runtime dependency -- the app imports
+    # it lazily inside a function, so its absence is fine there. Patching it by
+    # dotted path is not: that needs the module importable, so this test failed
+    # with ModuleNotFoundError on any machine without a ~2GB torch install,
+    # while testing nothing about embeddings.
+    #
+    # A stub module keeps the patch target real. What this test actually asserts
+    # -- that build_atom_store's meta carries its caveats, tau and ready bit --
+    # is unchanged.
+    if "sentence_transformers" not in sys.modules:
+        stub = types.ModuleType("sentence_transformers")
+        stub.SentenceTransformer = lambda *a, **k: _TinyModel()
+        monkeypatch.setitem(sys.modules, "sentence_transformers", stub)
     monkeypatch.setattr(
         "sentence_transformers.SentenceTransformer", lambda *a, **k: _TinyModel()
     )

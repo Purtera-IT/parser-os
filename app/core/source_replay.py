@@ -307,6 +307,35 @@ def _snippet_matches_atom(atom: EvidenceAtom, snippet: str) -> bool:
     return matched >= required
 
 
+
+def _row_only_match(atom: EvidenceAtom, row_text: str) -> bool:
+    """A stricter match for the case where NO columns were cited.
+
+    _snippet_matches_atom's last resort is "two important terms appear
+    somewhere in the text". That is fine when the parser named the cells it
+    read, because the snippet is already narrowed to them. It is far too
+    generous against a WHOLE ROW of a repetitive sheet.
+
+    Measured on the 010215 Deal Kit rate card: three atoms passed against the
+    wrong row. The atom for "Cancellation/Turnaway Fee" verified against the row
+    holding "Additional Onsite Hourly Technician Labor", because both are rate
+    rows whose numbers look alike. A receipt pointing at the wrong row is worse
+    than no receipt -- it says "checked" about something that was not.
+
+    So the row must contain the atom's own LABEL: the text before the first
+    column separator, minus a "Price:"-style field prefix. That is the part that
+    identifies which row this is, and it is exactly what differs between two
+    rate lines that otherwise look identical.
+    """
+    label = str(getattr(atom, "raw_text", "") or "").split("|")[0]
+    label = re.sub(r"^\s*[A-Za-z ]{0,18}:\s*", "", label).strip()
+    # Too short to identify anything -- fall back to the ordinary matcher rather
+    # than rejecting outright, or bare numeric rows could never verify.
+    if len(label) < 8:
+        return _snippet_matches_atom(atom, row_text)
+    return _replay_norm(label) in _replay_norm(row_text)
+
+
 def _spreadsheet_full_row_text(
     path: Path, sheet: str | None, row_number: int
 ) -> str:
@@ -364,6 +393,10 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     sheet = locator.get("sheet")
     row_number = locator.get("row")
     columns = locator.get("columns") or {}
+    # The xlsx parser writes a singular `col` on block rows. Treat it as a cited
+    # column rather than as no citation at all.
+    if not columns and locator.get("col") is not None:
+        columns = {"value": locator.get("col")}
     if not isinstance(row_number, int) or row_number < 1:
         return _receipt(atom, source_ref, "failed", "Spreadsheet locator missing valid row number")
 
@@ -413,7 +446,27 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     ]
     extracted_snippet = " | ".join(part for part in snippet_parts if part and not part.endswith("="))
     if not extracted_snippet:
-        return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")
+        # No cells were cited, or none were readable. That is not evidence the
+        # atom is wrong -- the row may still say exactly what the atom says. Fall
+        # through to the full-row check below rather than failing here, which is
+        # what stripped the Deal Kit of every receipt it could have had.
+        full_row_only = _spreadsheet_full_row_text(
+            path, sheet if isinstance(sheet, str) else None, row_number
+        )
+        if full_row_only and _row_only_match(atom, full_row_only):
+            return _receipt(
+                atom, source_ref, "verified", "Spreadsheet row verified against the whole row", full_row_only,
+            )
+        if full_row_only:
+            return _receipt(
+                atom,
+                source_ref,
+                "failed",
+                "Spreadsheet row does not carry this atom's label",
+                full_row_only,
+            )
+        if not full_row_only:
+            return _receipt(atom, source_ref, "failed", "Spreadsheet row found but no cited cells were readable")
     if _snippet_matches_atom(atom, extracted_snippet):
         return _receipt(atom, source_ref, "verified", "Spreadsheet row and cited cells verified", extracted_snippet)
 
@@ -496,6 +549,44 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     )
 
 
+
+def _replay_lines(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> list[str]:
+    """The lines an atom's ``line_start`` actually counts.
+
+    A line number only means something against the same text the parser
+    numbered. For email it is NOT the raw file: EmailParser numbers the message
+    BODY, having stripped the RFC822 headers (``.eml``) or a leading pseudo-header
+    run (a ``.txt`` export). Reading the raw file here shifts every line by the
+    size of that header block, the snippet never matches, and the atom is marked
+    failed.
+
+    Measured on deal 010215 before this: documents, meetings and notes verified
+    at 0% failure while email failed at 82% -- 422 of 514 atoms. Nothing else in
+    the corpus has a header block that one side removes and the other keeps.
+    Email is also the corpus's largest evidence source, so the great majority of
+    what the system reads could not be receipt-verified.
+
+    Deliberately keyed on ``message_index``, which only the email parser emits,
+    rather than on the file suffix: a text file that was NOT parsed as email must
+    keep being read whole, or this fix breaks the paths that already work.
+    """
+    is_email_atom = isinstance(source_ref.locator, dict) and "message_index" in source_ref.locator
+    if not is_email_atom:
+        return read_text(path).splitlines()
+    try:
+        from app.parsers.email_body import _extract_email_text
+        from app.parsers.email_parser import _split_leading_pseudo_headers
+
+        text = _extract_email_text(path)
+        if path.suffix.lower() != ".eml":
+            _, text = _split_leading_pseudo_headers(text)
+        return text.splitlines()
+    except Exception:
+        # Never lose a receipt to an import or a malformed message; fall back to
+        # the old behaviour, which is wrong for email but not worse than before.
+        return read_text(path).splitlines()
+
+
 def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
     locator = source_ref.locator
     line_start = locator.get("line_start")
@@ -509,7 +600,20 @@ def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) ->
             atom, source_ref, body, label="Text locator missing line range"
         )
         return fallback or _receipt(atom, source_ref, "unsupported", "Line-range locator missing or invalid")
-    lines = read_text(path).splitlines()
+    # OCR of an inline email image is not IN the body, so a line range can never
+    # match it -- the locator points at the [cid:...] anchor, the text came from
+    # a picture. Marking that "failed" asserts the receipt was checked and did
+    # not hold. It was not checked: this method does not apply. "unsupported" is
+    # the honest verdict, and it keeps "failed" meaning something.
+    if isinstance(locator, dict) and locator.get("kind") == "email_cid_inline":
+        return _receipt(
+            atom,
+            source_ref,
+            "unsupported",
+            "Inline-image OCR: text is not in the message body, so a line range cannot verify it",
+        )
+
+    lines = _replay_lines(atom, source_ref, path)
     if line_end > len(lines):
         return _receipt(atom, source_ref, "failed", f"Line range {line_start}-{line_end} is out of bounds")
     snippet = "\n".join(lines[line_start - 1 : line_end])
@@ -840,7 +944,19 @@ def replay_source_ref(atom: EvidenceAtom, source_ref: SourceRef, artifact_paths:
 
     suffix = path.suffix.lower()
     try:
-        if source_ref.locator.get("row") is not None and source_ref.locator.get("columns"):
+        # A spreadsheet locator is one with a row, on a spreadsheet file.
+        #
+        # This used to also require `columns`, so an atom that cited a row but
+        # named no cells fell past every branch to "No verifier available". On
+        # deal 010215 that was 89 atoms -- and NOT ONE atom from the deal's own
+        # Deal Kit was verified (0 of 55), nor from the Sodexo Breakdown (0 of
+        # 8). Those are the two documents carrying the money. The row-level
+        # fallbacks below already handle an empty `columns`; nothing was missing
+        # except the route to them.
+        _sheet_suffix = suffix in {".xlsx", ".xlsm", ".csv", ".tsv"}
+        if source_ref.locator.get("row") is not None and (
+            source_ref.locator.get("columns") or _sheet_suffix
+        ):
             return _verify_spreadsheet_row(atom, source_ref, path)
         # Line numbers are checked BEFORE the artifact type, which is right for
         # a text file and wrong for a format that has its own verifier. The

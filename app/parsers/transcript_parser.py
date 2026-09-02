@@ -127,12 +127,45 @@ class TranscriptParser(BaseParser):
             confidence = 0.95
             reasons.append(f"caption_extension:{suffix}")
         elif suffix == ".json" and text:
+            # A transcript is recognised by SHAPE, not by parsing whole.
+            #
+            # This required json.loads() to succeed on `sample_text` -- which is
+            # a truncated head of the file. A Fireflies transcript runs ~77 KB,
+            # so the sample is cut mid-array, json.loads raises, and this scored
+            # 0.0. JsonParser's deliberate 0.55 deferral then won by default and
+            # flattened the call into key/value atoms: 1,315 of them on one deal,
+            # typed `scope_item`, including `utterances[25].speaker: Trent
+            # Torrence`. A speaker's name became a scope item, and 147,132 atoms
+            # corpus-wide -- 35% of all evidence -- were conversational
+            # fragments wearing the authority of extracted scope.
+            #
+            # Both parsers already agree on the signature; only this side
+            # insisted on proof it cannot have from a truncated sample.
+            head = text[:8000]
+            # "segments" alone is NOT a transcript signal. It is an ordinary
+            # business word -- network segments, cable segments, customer
+            # segments -- and claiming every file containing it was how an
+            # intake manifest ended up here. Diarised speech is `utterances`,
+            # or per-item speaker AND text.
+            shaped = '"utterances"' in head or ('"speaker"' in head and '"text"' in head)
+            parsed_whole = False
             try:
-                if isinstance(json.loads(text), (dict, list)):
-                    confidence = 0.8
-                    reasons.append("json_transcript_candidate")
+                parsed_whole = isinstance(json.loads(text), (dict, list))
             except Exception:
-                confidence = 0.0
+                parsed_whole = False
+            # Shape is required either way. This branch used to fire on ANY
+            # .json that parsed, so a `case_manifest.json` mentioning
+            # "segments" -- network segments, cable segments, an ordinary
+            # business word -- was claimed as a transcript at 0.8 and taken
+            # from the parser that could actually read it.
+            if parsed_whole and shaped:
+                confidence = 0.8
+                reasons.append("json_transcript_candidate")
+            elif shaped:
+                # Above JsonParser's 0.55 deferral, below a clean parse, because
+                # a shape read off a truncated head is the weaker claim.
+                confidence = 0.7
+                reasons.append("json_transcript_shape_truncated_sample")
         elif suffix in {".txt", ".md"}:
             if "open questions:" in lowered or "decisions:" in lowered:
                 confidence = 0.9
