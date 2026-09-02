@@ -45,6 +45,41 @@ WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 WORD_TBL_TAG = f"{{{WORD_NS['w']}}}tbl"
 
 
+def _cells_by_column(header_cells, cell_texts) -> dict:
+    """Map a table row's cells onto its column names WITHOUT losing any.
+
+    `dict(zip(header, cells))` looks obvious and silently discards data: python-docx
+    expands a merged cell into one entry per grid column, repeating its text, so a
+    header cell spanning four columns yields ["Requestor Information"] * 4 and three
+    of every four cells are overwritten by the fourth.
+
+    Measured on the dev corpus 2026-09-02: 204 of 418 docx (49%) across 99 deals
+    contain at least one such table, and 3,836 cell values were being dropped. On
+    deal 010215 that was 141 cells per site SOW -- including "Address Line 1 | 601
+    Gurley St" -- which is why ten per-site scope documents produced three atoms
+    each and no site addresses, and why sites had to be scraped out of email prose
+    instead, arriving merged and truncated.
+
+    A repeated column name is disambiguated positionally rather than allowed to
+    collide, so every cell survives and the original name stays recoverable.
+    """
+    out: dict = {}
+    if not header_cells:
+        return {f"col_{i}": v for i, v in enumerate(cell_texts)}
+    seen: dict = {}
+    for i, value in enumerate(cell_texts):
+        name = header_cells[i] if i < len(header_cells) else ""
+        name = str(name).strip() or f"col_{i}"
+        if name in seen:
+            seen[name] += 1
+            key = f"{name}__{seen[name]}"
+        else:
+            seen[name] = 0
+            key = name
+        out[key] = value
+    return out
+
+
 def _iter_block_items(parent):
     """Yield ``("p", element)`` / ``("tbl", element)`` for the block-level
     paragraphs and tables under ``parent``, IN READING ORDER, **descending into
@@ -389,7 +424,7 @@ class DocxParser(BaseParser):
                         value={
                             "kind": "table_row",
                             "columns": header_cells,
-                            "cells": dict(zip(header_cells, cell_texts)) if header_cells else {f"col_{i}": v for i, v in enumerate(cell_texts)},
+                            "cells": _cells_by_column(header_cells, cell_texts),
                         },
                         entity_keys=[],
                         source_refs=[row_src],

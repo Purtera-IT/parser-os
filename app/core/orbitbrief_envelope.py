@@ -403,6 +403,28 @@ def build_orbitbrief_envelope(
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
     envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    # Does the number of sites we RESOLVED match the number the deal SAYS it has?
+    #
+    # On 010215 the emails stated "10" nine times and a quantity entity of 10 was
+    # extracted and kept, while the site layer resolved six addresses -- four of
+    # them two addresses fused, one truncated, three sites missing entirely. Both
+    # facts sat in this envelope and nothing compared them, so a PM had no way to
+    # know the site list was short until a technician stood at the wrong address.
+    #
+    # This does not correct the count. It refuses to let the contradiction pass
+    # unremarked, which is the only honest thing to do when two parts of the same
+    # evidence disagree.
+    try:
+        from app.core.site_count_reconcile import reconcile_site_count
+
+        _sr = envelope.get("site_readiness") or {}
+        envelope["site_count_reconciliation"] = reconcile_site_count(
+            atoms, int(_sr.get("site_count") or 0)
+        )
+    except Exception as _scr_exc:  # never fail a compile over a cross-check
+        import logging as _lg_scr
+
+        _lg_scr.getLogger(__name__).warning("site_count_reconcile failed: %s", _scr_exc)
 
     # v49 FIX 6: enrich site_readiness rows with structured attributes
     # (address, mdf_idf, access_window, escort, users, rooms, notes,
