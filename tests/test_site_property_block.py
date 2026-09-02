@@ -1,0 +1,136 @@
+"""Read the site out of a per-site SOW's own header block.
+
+Deal 010215: emails said "10 sites" eight times, ten per-site SOWs arrived, and
+the site layer resolved two — because `physical_site` was only emitted for site
+ROSTER tables (one site per data row), and a per-site SOW is the opposite shape:
+one document, one site, stated as a labelled property block.
+"""
+
+from __future__ import annotations
+
+from app.parsers.site_property_block import (
+    fields_from_property_row,
+    site_from_property_rows,
+    site_display_name,
+)
+
+# Exactly as the parser now emits them, after the merged-header cell fix.
+NAME_ROW = {
+    "Requestor Information": "Cost Center/Loc Name",
+    "Requestor Information__1": "Marion County School District\nJohnakin Middle School",
+    "Requestor Information__2": "Cost Center/Loc #",
+    "Requestor Information__3": "94575001",
+}
+ADDR_ROW = {
+    "Requestor Information": "Address Line 1",
+    "Requestor Information__1": "601 Gurley St",
+    "Requestor Information__2": "Address Line 2",
+}
+CITY_ROW = {
+    "Requestor Information": "City",
+    "Requestor Information__1": "Marion",
+    "Requestor Information__2": "Country",
+    "Requestor Information__3": "USA",
+}
+STATE_ROW = {
+    "Requestor Information": "State",
+    "Requestor Information__1": "SC",
+    "Requestor Information__2": "Zip Code",
+    "Requestor Information__3": "29571",
+}
+
+
+def test_it_reads_the_real_johnakin_block():
+    site = site_from_property_rows([NAME_ROW, ADDR_ROW, CITY_ROW, STATE_ROW])
+    assert site["address"] == "601 Gurley St"
+    assert site["city"] == "Marion"
+    assert site["state"] == "SC"
+    assert site["zip"] == "29571"
+    assert site["site_id"] == "94575001"
+    assert "Johnakin" in site["name"]
+
+
+def test_the_address_is_whole_and_untruncated():
+    # The email-scraped versions arrived fused and truncated
+    # ("601 gurley street 1205 south main street", "1123" -> "123").
+    site = site_from_property_rows([ADDR_ROW])
+    assert site["address"] == "601 Gurley St"
+    assert "1205" not in site["address"], "two addresses must never fuse"
+
+
+def test_a_label_with_no_value_does_not_swallow_the_next_label():
+    # "Address Line 2 | City | Marion" must not read Address Line 2 = "City".
+    row = {"a": "Address Line 2", "b": "City", "c": "Marion"}
+    out = fields_from_property_row(row)
+    assert "address2" not in out
+    assert out.get("city") == "Marion"
+
+
+def test_placeholder_values_are_not_addresses():
+    assert fields_from_property_row({"a": "Address Line 1", "b": "N/A"}) == {}
+    assert fields_from_property_row({"a": "Address Line 1", "b": "TBD"}) == {}
+
+
+def test_a_block_with_no_name_or_address_is_not_a_site():
+    # City + state alone names no place; emitting it would invent a site.
+    assert site_from_property_rows([CITY_ROW, STATE_ROW]) is None
+
+
+def test_an_address_alone_is_enough():
+    assert site_from_property_rows([ADDR_ROW])["address"] == "601 Gurley St"
+
+
+def test_unrecognised_labels_are_ignored_rather_than_guessed():
+    assert fields_from_property_row({"a": "Favourite Colour", "b": "blue"}) == {}
+
+
+def test_empty_input_is_safe():
+    assert fields_from_property_row(None) == {}
+    assert fields_from_property_row({}) == {}
+    assert site_from_property_rows([]) is None
+    assert site_from_property_rows([None]) is None
+
+
+def test_display_name_prefers_what_the_document_called_it():
+    site = site_from_property_rows([NAME_ROW, ADDR_ROW])
+    assert "Johnakin" in site_display_name(site)
+    assert "\n" not in site_display_name(site)
+
+
+def test_display_name_falls_back_to_the_address():
+    assert site_display_name({"address": "601 Gurley St", "city": "Marion"}).startswith("601 Gurley St")
+
+
+# ── end to end on the real documents ─────────────────────────────────────
+
+def test_ten_per_site_sows_yield_ten_sites(tmp_path):
+    """The whole point: 10 documents describing 10 locations => 10 sites.
+
+    Before this, `physical_site` was only emitted for roster tables (one site
+    per data row), so these ten contributed zero and the deal resolved its sites
+    by scraping email prose — arriving fused and truncated.
+    """
+    import glob
+    from pathlib import Path
+    from app.parsers.docx_parser import DocxParser
+
+    corpus = sorted(glob.glob(
+        "/private/tmp/claude-501/-Users-purtera/688e4b18-55b8-4411-9d01-a00049d5ca4f"
+        "/scratchpad/sodexo_all/SOW Smarthands*.docx"
+    ))
+    if len(corpus) < 10:
+        import pytest
+        pytest.skip("fixture corpus not present on this machine")
+
+    sites = []
+    for f in corpus:
+        atoms = DocxParser().parse(Path(f))
+        got = [a for a in atoms if str(getattr(a, "atom_type", "")).endswith("physical_site")]
+        assert len(got) == 1, f"{Path(f).name} should yield exactly one site, got {len(got)}"
+        sites.append((got[0].value or {}).get("address"))
+
+    assert len(sites) == 10
+    # Addresses the email-scraped path got wrong: truncated and fused.
+    assert "1123 Sandy Bluff Rd" in sites, "leading digit must survive"
+    assert "601 Gurley St" in sites
+    assert not any(s and "1205 S Main St" in s and "Gurley" in s for s in sites), "no fusing"

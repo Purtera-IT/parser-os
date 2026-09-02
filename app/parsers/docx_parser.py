@@ -291,12 +291,45 @@ class DocxParser(BaseParser):
             if not self._paragraph_in_table(p)
         )
 
+        # Property-block rows seen anywhere in this document, merged into ONE
+        # site after the loop (see site_property_block for why).
+        _property_site_rows: list[tuple[dict, int, int]] = []
+
         for table_idx, table in enumerate(_all_tables(document)):
             # Build a column/rows view of the table for the site_roster
             # extractor (and a per-row atom emitter below).
             table_rows: list[list[str]] = []
             for row_cells in table.rows:
                 table_rows.append([c.text.strip() for c in row_cells.cells])
+
+            # Per-site property block — the roster's opposite shape.
+            #
+            # A roster is one site per DATA ROW. A per-site SOW is one site per
+            # DOCUMENT, declared in a labelled block:
+            #
+            #   Cost Center/Loc Name | Marion County School District Johnakin MS
+            #   Address Line 1       | 601 Gurley St
+            #   City | Marion | State | SC | Zip Code | 29571
+            #
+            # That correctly fails looks_like_site_roster, so on deal 010215 ten
+            # per-site SOWs contributed ZERO sites while the emails said "10
+            # sites" eight times. The only sites the deal could resolve were
+            # scraped from email prose, arriving fused and truncated.
+            #
+            # Collected here and emitted once per document below, so a document
+            # describing one site yields one site rather than one per row.
+            try:
+                from app.parsers.site_property_block import fields_from_property_row
+
+                for _r_idx, _row_cells in enumerate(table.rows):
+                    _texts = [c.text.strip() for c in _row_cells.cells]
+                    _f = fields_from_property_row({str(i): v for i, v in enumerate(_texts)})
+                    if _f:
+                        _property_site_rows.append(
+                            ({str(i): v for i, v in enumerate(_texts)}, table_idx, _r_idx)
+                        )
+            except Exception:  # never let a site read break the parse
+                pass
 
             # Site-roster fast path — when the first non-empty row
             # looks like roster headers + a roster-specific column,
@@ -438,6 +471,62 @@ class DocxParser(BaseParser):
                         parser_version=self.parser_version,
                     )
                 )
+
+        # One document describing one site yields ONE site — not one per row,
+        # and not none. See site_property_block for the 010215 measurement.
+        if _property_site_rows:
+            try:
+                from app.parsers.site_property_block import (
+                    site_from_property_rows,
+                    site_display_name,
+                )
+
+                _site = site_from_property_rows([c for c, _t, _r in _property_site_rows])
+                if _site:
+                    _t_idx, _r_idx = _property_site_rows[0][1], _property_site_rows[0][2]
+                    _label = site_display_name(_site)
+                    _sid = stable_id("atm", artifact_id, "docx_property_site", _label)
+                    atoms.append(
+                        EvidenceAtom(
+                            id=_sid,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            atom_type=AtomType.physical_site,
+                            raw_text=_label,
+                            normalized_text=_label.lower(),
+                            value={"kind": "physical_site", "source": "property_block", **_site},
+                            # The document states its own site in a labelled
+                            # block; that is the contract speaking, not an
+                            # inference, so it carries the same authority as a
+                            # roster row and a confidence to match.
+                            authority_class=AuthorityClass.contractual_scope,
+                            confidence=0.95,
+                            confidence_raw=0.95,
+                            calibrated_confidence=0.95,
+                            review_status=ReviewStatus.auto_accepted,
+                            entity_keys=[],
+                            source_refs=[
+                                SourceRef(
+                                    id=stable_id("src", _sid),
+                                    artifact_id=artifact_id,
+                                    artifact_type=ArtifactType.docx,
+                                    filename=path.name,
+                                    locator={
+                                        "table_index": _t_idx,
+                                        "row": _r_idx,
+                                        "extraction": "docx_site_property_block_v1",
+                                    },
+                                    extraction_method="docx_site_property_block_v1",
+                                    parser_version=self.parser_version,
+                                )
+                            ],
+                            review_flags=[],
+                            parser_version=self.parser_version,
+                        )
+                    )
+            except Exception as _site_exc:  # a site read must never break the parse
+                import logging as _lg_sp
+                _lg_sp.getLogger(__name__).warning("site property block emit failed: %s", _site_exc)
 
         atoms.extend(
             self._extract_tracked_change_atoms(
