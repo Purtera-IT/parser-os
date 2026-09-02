@@ -90,13 +90,51 @@ def fields_from_property_row(cells: dict | None) -> dict[str, str]:
     return out
 
 
+def _shape_fields(rows: list[dict | None]) -> dict[str, str]:
+    """Fields read from the VALUES, with no label vocabulary at all.
+
+    A label whitelist is one vendor wide: the next customer writes "Site
+    Address" or leaves the cell unlabelled and the reader silently finds
+    nothing. Shape survives that -- "601 Gurley St" is an address in any
+    document, under any label.
+
+    Measured on the ten 010215 SOWs: shape alone finds 10/10 addresses with
+    exactly one candidate each. Labels are still consulted afterwards, but only
+    for what shape cannot decide (a site's NAME looks like ordinary text), and
+    never to overrule a value that typed itself.
+    """
+    from app.parsers.value_shapes import classify_value, street_addresses
+
+    flat: list[str] = []
+    for cells in rows or []:
+        if isinstance(cells, dict):
+            flat.extend(str(v or "") for v in cells.values())
+
+    out: dict[str, str] = {}
+    addrs = street_addresses(flat)
+    if addrs:
+        out["address"] = addrs[0]
+    for cell in flat:
+        kind = classify_value(cell)
+        if kind == "postal":
+            out.setdefault("zip", cell.strip())
+        elif kind == "state":
+            out.setdefault("state", cell.strip())
+    return out
+
+
 def site_from_property_rows(rows: list[dict | None]) -> dict[str, str] | None:
     """Merge a document's property rows into one site, or None if it is not one.
 
     Requires a name or an address: a block carrying only a city and state names
     no place, and emitting it would create a site the document never asserted.
     """
-    merged: dict[str, str] = {}
+    # Shape first: a value that types itself needs no label to be trusted, and
+    # cannot be missed because a vendor renamed the field.
+    merged: dict[str, str] = dict(_shape_fields(rows))
+    # Labels second, and only where shape was silent — a site's NAME, its
+    # segment, its tax status all look like ordinary text and cannot be typed by
+    # shape. setdefault means a label never overrules a typed value.
     for cells in rows or []:
         for k, v in fields_from_property_row(cells).items():
             merged.setdefault(k, v)
