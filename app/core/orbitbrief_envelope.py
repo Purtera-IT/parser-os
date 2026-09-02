@@ -414,6 +414,37 @@ def build_orbitbrief_envelope(
     # This does not correct the count. It refuses to let the contradiction pass
     # unremarked, which is the only honest thing to do when two parts of the same
     # evidence disagree.
+    # Two documents asserting two different addresses for one site is not a
+    # duplicate to merge — it is a disagreement to report. On 010215 the Academy
+    # of Early Learning SOW says 600 E Northside Ave and the customer's own
+    # locations list says 111 Academy St; eight of ten sites agree exactly and
+    # two do not. Picking a winner silently is how a technician reaches the wrong
+    # school while the system reports full confidence.
+    try:
+        from app.core.site_evidence_conflict import find_site_address_conflicts
+
+        _claims = []
+        for _a in atoms:
+            if str(getattr(getattr(_a, "atom_type", None), "value", getattr(_a, "atom_type", "")))\
+                    .endswith("physical_site"):
+                _v = getattr(_a, "value", None) or {}
+                if not isinstance(_v, dict):
+                    continue
+                _refs = getattr(_a, "source_refs", None) or []
+                _claims.append({
+                    "name": _v.get("name") or getattr(_a, "raw_text", ""),
+                    "address": _v.get("address"),
+                    "source": getattr(_refs[0], "filename", None) if _refs else None,
+                    "authored_at": None,
+                })
+        _conf = find_site_address_conflicts(_claims)
+        if _conf:
+            envelope["site_evidence_conflicts"] = _conf
+    except Exception as _sec_exc:
+        import logging as _lg_sec
+
+        _lg_sec.getLogger(__name__).warning("site_evidence_conflict failed: %s", _sec_exc)
+
     try:
         from app.core.site_count_reconcile import reconcile_site_count
 

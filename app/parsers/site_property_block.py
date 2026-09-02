@@ -38,6 +38,16 @@ _LABELS: dict[str, tuple[str, ...]] = {
     "zip": ("zip code", "zip", "postal code", "postcode"),
     "site_id": ("cost center/loc #", "cost center", "loc #", "site id", "store #",
                 "location #", "site #"),
+    # Not identity, but stated per-site and commercially material. A raw-vs-
+    # captured check against the ten 010215 SOWs showed the site atom was
+    # carrying 6 of the 9 labelled fields; these are the other three. Tax-exempt
+    # status changes what may be billed, and segment routes the work — dropping
+    # them means a downstream reader has to re-open the document to find facts
+    # the parser already had in hand.
+    "country": ("country",),
+    "segment": ("segment", "business segment", "vertical"),
+    "tax_exempt": ("is location tax exempt?", "is location tax exempt",
+                   "tax exempt", "tax exempt?"),
 }
 
 _NOISE = re.compile(r"^(n/?a|none|tbd|-|—|)$", re.I)
