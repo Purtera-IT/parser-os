@@ -501,6 +501,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # exactly as before.
     try:
         from app.parsers.contact_property_block import fields_from_contact_row
+        from app.parsers.quantity_property_block import quantities_from_property_row
 
         def _row_cells(a: Any) -> dict | None:
             v = getattr(a, "value", None)
@@ -518,7 +519,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         survivors = []
         for a in promotable:
             cells = _row_cells(a)
-            if cells and fields_from_contact_row(cells):
+            if cells and (fields_from_contact_row(cells) or quantities_from_property_row(cells)):
                 contact_deflected += 1
                 continue
             survivors.append(a)

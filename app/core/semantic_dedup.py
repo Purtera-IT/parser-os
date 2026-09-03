@@ -1646,9 +1646,13 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     # existing union naturally accumulates every site the person actually
     # appears at onto the survivor.
     def _key_for_generic_pass(atom: Any) -> tuple | None:
-        if _atom_type_value(atom) == "stakeholder":
-            return None
-        return _value_key(atom)
+        key = _value_key(atom)
+        if key is not None and _atom_type_value(atom) in _DEFERRED_IDENTITY_TYPES:
+            # Collapse duplicates WITHIN one document now (they share a site
+            # anyway); defer only the cross-document collapse until each
+            # instance has been tagged with its own site.
+            return (*key, str(getattr(atom, "artifact_id", "") or ""))
+        return key
 
     # Pick the highest-confidence winner per key (scan confidence-desc).
     winners: dict[tuple, Any] = {}
@@ -1677,6 +1681,14 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(ordered))
 
 
+# Types whose identity collapse waits until after site_provenance_join, so an
+# identity common to many single-site documents keeps every site it appears at.
+# stakeholder: the district-wide backup contact named in all ten SOWs.
+# bom_line: "1 UKG DX Clock" stated in all ten SOWs -- ten clocks at ten
+# schools, which collapsed to one clock at one school when deduped first.
+_DEFERRED_IDENTITY_TYPES = frozenset({"stakeholder", "bom_line"})
+
+
 def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
     """Collapse duplicate stakeholder identities -- deferred here, and only
     here, so every instance keeps its OWN document's site: key first.
@@ -1700,7 +1712,7 @@ def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
 
     winners: dict[tuple, Any] = {}
     for atom in sorted(atoms, key=_confidence, reverse=True):
-        if _atom_type_value(atom) != "stakeholder":
+        if _atom_type_value(atom) not in _DEFERRED_IDENTITY_TYPES:
             continue
         key = _value_key(atom)
         if key is None:
@@ -1716,7 +1728,7 @@ def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
     seen: set[tuple] = set()
     out: list[Any] = []
     for atom in atoms:
-        if _atom_type_value(atom) != "stakeholder":
+        if _atom_type_value(atom) not in _DEFERRED_IDENTITY_TYPES:
             out.append(atom)
             continue
         key = _value_key(atom)

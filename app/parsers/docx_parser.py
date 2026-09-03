@@ -301,6 +301,11 @@ class DocxParser(BaseParser):
         # downstream reader: it assigns fields by POSITION, so "OSC phone" (a
         # label) was read as a person's name and the phone number as an email.
         _property_contact_rows: list[dict] = []
+        # R2: labelled quantity rows ("Hardware to be Installed | 1 UKG DX Clock").
+        # The BOM schema keys on header columns; a merged header means it
+        # never fires, so the row went to the LLM, which typed 3 of 10 SOWs'
+        # clock rows as bom_line and left 7 as scope_item. Read them by shape.
+        _property_quantity_rows: list[dict] = []
 
         for table_idx, table in enumerate(_all_tables(document)):
             # Build a column/rows view of the table for the site_roster
@@ -349,7 +354,9 @@ class DocxParser(BaseParser):
             try:
                 for _row_cells in table.rows:
                     _c_texts = [c.text.strip() for c in _row_cells.cells]
-                    _property_contact_rows.append({str(i): v for i, v in enumerate(_c_texts)})
+                    _cells_pos = {str(i): v for i, v in enumerate(_c_texts)}
+                    _property_contact_rows.append(_cells_pos)
+                    _property_quantity_rows.append(_cells_pos)
             except Exception:  # never let a contact read break the parse
                 pass
 
@@ -401,6 +408,27 @@ class DocxParser(BaseParser):
                     and len(cell_texts) >= 2
                     and all(len(c) <= 30 for c in cell_texts)
                     and not any(re.search(r"[\d@$]", c) for c in cell_texts)
+                ):
+                    continue
+                # R1: a property row whose VALUE cells are all blank is an empty
+                # form field, not scope. Under a merged header (every header
+                # cell the same section title) the row alternates label, value,
+                # label, value -- "Responder Name | '' | Email Address | ''" is
+                # the SOW's unfilled post-install section, and it was emitted
+                # ten times per deal as work to be done. A guard elsewhere
+                # checked `any(cell)` and passed it on the strength of its
+                # labels. Judge the values, not the labels.
+                # NB `cell_texts` above has already dropped blank cells, which is
+                # exactly what hides an empty form row ("Responder Name | Email
+                # Address" is what survives). Judge the positional, unfiltered
+                # cells instead.
+                _pos_cells = [c.text.strip() for c in row_cells.cells]
+                if (
+                    header_cells
+                    and row_idx > 0
+                    and len(set(header_cells)) <= 1
+                    and len(_pos_cells) >= 2
+                    and not any(_pos_cells[i] for i in range(1, len(_pos_cells), 2))
                 ):
                     continue
                 row_text = " | ".join(cell_texts)
@@ -615,6 +643,56 @@ class DocxParser(BaseParser):
             except Exception as _contact_exc:  # a contact read must never break the parse
                 import logging as _lg_cp
                 _lg_cp.getLogger(__name__).warning("contact property block emit failed: %s", _contact_exc)
+
+        # One document, its stated quantities. entity_keys stays empty so the
+        # site join attaches each to its school; bom_line dedup is deferred
+        # until after that join (see semantic_dedup) so ten identical
+        # "1 UKG DX Clock" rows keep ten site keys rather than collapsing to one
+        # school's -- the same fix the shared backup contact needed.
+        if _property_quantity_rows:
+            try:
+                from app.parsers.quantity_property_block import quantities_from_property_row
+
+                _seen_q: set[str] = set()
+                for _qrow in _property_quantity_rows:
+                    for _q in quantities_from_property_row(_qrow):
+                        if _q["description"] in _seen_q:
+                            continue
+                        _seen_q.add(_q["description"])
+                        _q_id = stable_id("atm", artifact_id, "docx_quantity_property_block", _q["description"])
+                        atoms.append(
+                            EvidenceAtom(
+                                id=_q_id,
+                                project_id=project_id,
+                                artifact_id=artifact_id,
+                                atom_type=AtomType.bom_line,
+                                raw_text=f"{_q.get('label') or 'Quantity'}: {_q['description']}",
+                                normalized_text=_q["description"].lower(),
+                                value=_q,
+                                authority_class=AuthorityClass.contractual_scope,
+                                confidence=0.9,
+                                confidence_raw=0.9,
+                                calibrated_confidence=0.9,
+                                review_status=ReviewStatus.auto_accepted,
+                                entity_keys=[],
+                                source_refs=[
+                                    SourceRef(
+                                        id=stable_id("src", _q_id),
+                                        artifact_id=artifact_id,
+                                        artifact_type=ArtifactType.docx,
+                                        filename=path.name,
+                                        locator={"extraction": "docx_quantity_property_block_v1"},
+                                        extraction_method="docx_quantity_property_block_v1",
+                                        parser_version=self.parser_version,
+                                    )
+                                ],
+                                review_flags=[],
+                                parser_version=self.parser_version,
+                            )
+                        )
+            except Exception as _q_exc:  # a quantity read must never break the parse
+                import logging as _lg_q
+                _lg_q.getLogger(__name__).warning("quantity property block emit failed: %s", _q_exc)
 
         atoms.extend(
             self._extract_tracked_change_atoms(
