@@ -229,6 +229,15 @@ def test_vendor_rate_midrow_and_total_sentence():
     assert b.atom_type == AtomType.commercial_total and b.value["amount"] == 93583.25
 
 
+def test_a_bare_list_marker_line_is_a_pending_bullet():
+    from app.parsers.orbitbrief_pdf import _BARE_ENUM_RE, _BULLET_LINE_RE
+    for marker in ("a.", "c. ", " 3.", "iv)"):
+        assert _BARE_ENUM_RE.match(marker), marker
+    for not_marker in ("a. Switch", "Switch", "Camera ", "2. Each location will have different needs", "ok."):
+        assert not _BARE_ENUM_RE.match(not_marker), not_marker
+    assert _BULLET_LINE_RE.match("b. Access Point (Indoor Only)").group(2) == "Access Point (Indoor Only)"
+
+
 def test_a_numbered_sentence_starting_with_a_negator_is_not_a_heading():
     from app.parsers.orbitbrief_pdf import _split_runon_numbered_clause
     assert _split_runon_numbered_clause("1. No Provider Pre-Existing Materials are included in any Work Product unless identified as such in the SOW.") is None

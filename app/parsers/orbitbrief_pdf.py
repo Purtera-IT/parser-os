@@ -3522,6 +3522,13 @@ _BULLET_LINE_RE = re.compile(
 # The next content line is the bullet's text. True bullet glyphs only (not 'o'/'-',
 # ambiguous with the letter o / a dash), so prose is never mis-read.
 _BARE_BULLET_RE = re.compile(r"^\s*[•▪●◦‣]\s*$")
+# A list MARKER alone on its line ("a.", "c.", "3.", "iv)") -- the text layer
+# of a lettered list often splits marker and item onto separate lines while
+# its neighbours stay joined. Live 010300 (signed PSOW): "a. / Switch / b.
+# Access Point (Indoor Only) / c. / Camera / d. Firewall" lost Switch and
+# Camera and glued "c." onto the Access Point. A sentence never ends on a line
+# that is only "c.", so this reading has no rival.
+_BARE_ENUM_RE = re.compile(r"^\s*(?:[a-z]|\d{1,2}|[ivx]{1,4})[.)]\s*$")
 _HEADING_LINE_RE = re.compile(
     r"^\s*((?:[A-Z0-9][A-Z0-9 &/\-,()]{2,80})|(?:#{1,6}\s+.{2,80}))\s*$"
 )
@@ -5041,7 +5048,7 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         # wrapped tail then joins via the lowercase-continuation rule below) — so a
         # glyph-per-line BOM list separates into items instead of gluing into one
         # mega-atom (or, with column extraction, scrambling).
-        if _BARE_BULLET_RE.match(line):
+        if _BARE_BULLET_RE.match(line) or _BARE_ENUM_RE.match(line):
             flush_paragraph()
             pending_bullet = True
             continue
