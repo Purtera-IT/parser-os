@@ -242,7 +242,7 @@ def build_orbitbrief_envelope(
                 # answered. The question "whose document is this?" only arises
                 # for a message that brought a document.
                 "originated_by": (
-                    _originating_sender(artifact_atoms)
+                    _originating_sender(artifact_atoms, artifact_id=fp.artifact_id)
                     if (prov.get("attachment_ids") or [])
                     else None
                 ),
@@ -949,10 +949,18 @@ def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
     Mutates in place. A file with no delivering message is left alone: an
     unattributed document must not end up looking attributed.
     """
+    # authored_at FIRST, and only then the thread date. Both name the same
+    # instant, but `email_thread.date` is the raw RFC 2822 header --
+    # "Wed, 12 Aug 2026 18:00:51 +0000" -- while the delivered stamp it is
+    # compared against is ISO 8601. Slicing the RFC form to 16 characters yields
+    # "Wed, 12 Aug 2026", which can never equal "2026-08-12T18:00", so this join
+    # matched nothing and every file silently took the signature-scraping
+    # fallback below. The fallback reads the FIRST address in a forward, which
+    # is the forwarder -- the opposite of what this function is for.
     emails: list[tuple[str, dict[str, Any]]] = []
     for doc in documents:
         thread = doc.get("email_thread") or {}
-        when = thread.get("date") or doc.get("authored_at")
+        when = doc.get("authored_at") or thread.get("date")
         if when and thread.get("sender"):
             emails.append((str(when)[:19], doc))
 
@@ -1078,7 +1086,9 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 
-def _originating_sender(artifact_atoms: list[Any]) -> str | None:
+def _originating_sender(
+    artifact_atoms: list[Any], artifact_id: str | None = None
+) -> str | None:
     """The person a forwarded chain STARTED with, not whoever forwarded it last.
 
     An attachment that arrives inside a forward belongs to whoever actually sent
@@ -1094,11 +1104,24 @@ def _originating_sender(artifact_atoms: list[Any]) -> str | None:
         msg2  Trent Torrence <t@purtera-it.com>            1:5x PM
         msg3  Quinton James <quinton.james@cdw.com>       10:20 AM
         msg4  Donnelly, Bernie <Bernie.Donnelly@sodexo.com> 8:3x AM   <- the customer
+
+    ``artifact_id`` scopes the walk to THIS document's own refs. Dedup merges
+    atoms across documents, and a winner keeps the losers' source_refs -- so a
+    message in the same thread contributes its refs here. Two messages quote the
+    same history, and ``message_index`` counts from the top of whichever message
+    it came from, so indices from two chains are not comparable. Mixing them made
+    the delivering email report "Trent Torrence <t@purtera-it.com>" at index 2,
+    a string that appears nowhere in its own chain: it was the reply's index 2,
+    read as if it were this forward's. The customer's own SOWs were then
+    attributed to us, and the ten documents were filed unreadable.
     """
     best_index = -1
     best_sender = None
+    want = str(artifact_id or "")
     for atom in artifact_atoms or []:
         for ref in getattr(atom, "source_refs", None) or []:
+            if want and str(getattr(ref, "artifact_id", "") or "") != want:
+                continue
             locator = getattr(ref, "locator", None)
             if not isinstance(locator, dict):
                 continue
