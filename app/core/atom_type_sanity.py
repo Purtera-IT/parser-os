@@ -1386,6 +1386,16 @@ def strip_document_chrome(atoms: list[Any]) -> int:
         if _atom_type_str(a) in ("scope_item", "requirement") and _LABEL_ONLY_RE.match(text):
             changed += 1
             continue
+        # A note's provenance pointer is metadata whatever type it inherited
+        # from the atom it points at (live 010300: "SOW" as a scope_item).
+        _v = getattr(a, "value", None)
+        if _atom_type_str(a) == "scope_item" and isinstance(_v, dict) and _v.get("field_name") == "hubspot_note_provenance":
+            try:
+                from app.core.schemas import AtomType as _AT
+                a.atom_type = _AT.deal_metadata
+            except Exception:
+                a.atom_type = "deal_metadata"
+            changed += 1
         survivors.append(a)
     atoms[:] = survivors
     return changed
@@ -1419,49 +1429,91 @@ def merge_signature_rows(atoms: list[Any]) -> int:
         parties: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         loose: list[str] = []
+        _LABELS = {"by", "name", "title", "date", "signature"}
         for a in rows:
             for cell in re.split(r"\s*\|\s*", _atom_text(a)):
                 cell = cell.strip()
                 if not cell:
                     continue
-                m = _SIG_CELL_RE.match(cell)
-                if not m:
-                    loose.append(cell)
-                    continue
-                party = m.group("party").strip()
-                label = (m.group("label") or "").lower()
-                val = m.group("val").strip()
-                rec = parties.setdefault(party, {"party": party})
-                if party not in order:
-                    order.append(party)
-                if not val:
-                    continue
-                if label in ("by", "name", "signature"):
-                    dm = _SIG_DATE_RE.search(val)
-                    if dm:
-                        rec.setdefault("signed_at", dm.group(0).strip("() "))
-                        val = val[: dm.start()].strip(" (")
-                    if val and _SIG_NAME_RE.match(val):
-                        rec.setdefault("name", val)
-                elif label == "title":
-                    rec.setdefault("title", val)
-                elif label == "date":
-                    rec.setdefault("signed_at", val)
+                # Labels glued into one cell ("Name: Mike Murphy Name: Shelly
+                # Lewis Title: …") are several cells. A party prefix, when the
+                # cell has one, stays on the first piece and is repeated on
+                # the rest so "CDW Technologies LLC: By: Mike Murphy" is not
+                # torn from its party.
+                pm = re.match(r"^\s*(?P<party>[^:|]{2,60}?)\s*:\s*(?P<rest>.*)$", cell)
+                party_prefix = ""
+                body = cell
+                if pm and pm.group("party").strip().lower().rstrip(":") not in _LABELS and not re.search(r"\d", pm.group("party")):
+                    party_prefix = pm.group("party").strip()
+                    body = pm.group("rest")
+                parts = [p.strip() for p in re.split(r"\s+(?=(?:By|Name|Title|Date|Signature)\s*:)", body, flags=re.I) if p.strip()]
+                if party_prefix:
+                    pieces = [f"{party_prefix}: {p}" for p in parts] or [f"{party_prefix}:"]
                 else:
-                    dm = _SIG_DATE_RE.fullmatch(val) or _SIG_DATE_RE.search(val)
-                    if dm and len(val) <= 40:
-                        rec.setdefault("signed_at", dm.group(0))
-                    elif _SIG_NAME_RE.match(val):
-                        rec.setdefault("name", val)
-                    elif len(val.split()) <= 8:
-                        rec.setdefault("title", val)
+                    pieces = parts
+                for piece in pieces:
+                    m = _SIG_CELL_RE.match(piece)
+                    if not m:
+                        loose.append(piece)
+                        continue
+                    party = m.group("party").strip()
+                    label = (m.group("label") or "").lower()
+                    val = m.group("val").strip()
+                    # A "party" that is itself a label ("By: Shelly Lewis …") or
+                    # carries digits ("Shelly Lewis (Mar 25, 2025 11") names no
+                    # party; its value is loose and lands by name below.
+                    if party.lower().rstrip(":") in _LABELS or re.search(r"\d", party):
+                        loose.append(val if label or not party else f"{party}: {val}")
+                        continue
+                    if label == "" and val.lower().rstrip(":") in _LABELS:
+                        continue  # "CDW Technologies LLC: Date:" -- an empty labelled cell
+                    rec = parties.setdefault(party, {"party": party})
+                    if party not in order:
+                        order.append(party)
+                    if not val:
+                        continue
+                    if label in ("by", "name", "signature"):
+                        dm = _SIG_DATE_RE.search(val)
+                        if dm:
+                            rec.setdefault("signed_at", dm.group(0).strip("() "))
+                            val = val[: dm.start()].strip(" (")
+                        if val and _SIG_NAME_RE.match(val):
+                            rec.setdefault("name", val)
+                    elif label == "title":
+                        rec.setdefault("title", val.rstrip(":").strip())
+                    elif label == "date":
+                        rec.setdefault("signed_at", val)
+                    else:
+                        dm = _SIG_DATE_RE.fullmatch(val) or _SIG_DATE_RE.search(val)
+                        if dm and len(val) <= 40:
+                            rec.setdefault("signed_at", dm.group(0))
+                        elif _SIG_NAME_RE.match(val):
+                            rec.setdefault("name", val)
+                        elif len(val.split()) <= 8 and not re.search(r"\d", val):
+                            rec.setdefault("title", val.rstrip(":").strip())
+        # A real party appears on more than one row; a one-off "party" is a
+        # mis-split cell. Its fields survive only by matching a real party's name.
+        real = [p for p in order if sum(1 for a in rows if p in _atom_text(a)) >= 2] or order[:2]
+        for p in list(parties):
+            if p not in real:
+                stray = parties.pop(p)
+                order.remove(p)
+                nm = stray.get("name")
+                for q in real:
+                    if nm and parties[q].get("name") == nm:
+                        for k in ("title", "signed_at"):
+                            if stray.get(k) and not parties[q].get(k):
+                                parties[q][k] = stray[k]
         # A bare cell ("Shelly Lewis") goes to the party that lacks that field.
         for cell in loose:
-            if _SIG_NAME_RE.match(cell):
-                for p in order:
-                    if not parties[p].get("name"):
-                        parties[p]["name"] = cell
-                        break
+            dm = _SIG_DATE_RE.search(cell)
+            name_part = cell[: dm.start()].strip(" (") if dm else cell
+            if _SIG_NAME_RE.match(name_part):
+                target = next((p for p in order if parties[p].get("name") == name_part), None) or next((p for p in order if not parties[p].get("name")), None)
+                if target:
+                    parties[target].setdefault("name", name_part)
+                    if dm:
+                        parties[target].setdefault("signed_at", dm.group(0).strip("() "))
         if not parties or not any(r.get("name") or r.get("title") for r in parties.values()):
             continue
         keep = rows[0]

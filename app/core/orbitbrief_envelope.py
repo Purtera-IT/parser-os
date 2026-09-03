@@ -1212,8 +1212,12 @@ def _link_caption_notes(
     meta_by_doc: dict[str, dict[str, Any]] = {}
     for a in envelope.get("atoms") or []:
         s = a.get("structured") if isinstance(a.get("structured"), dict) else {}
-        if s.get("field_name") == "hubspot_note_meta":
-            meta_by_doc[str(a.get("artifact_id"))] = s
+        if s.get("source") != "hubspot_note" and s.get("field_name") not in ("hubspot_note_meta", "hubspot_note_provenance"):
+            continue
+        cur = meta_by_doc.setdefault(str(a.get("artifact_id")), {})
+        for k in ("title", "author", "author_email"):
+            if s.get(k) and not cur.get(k):
+                cur[k] = s.get(k)
     notes = []
     for d in documents or []:
         aid = str(d.get("artifact_id"))
@@ -1242,8 +1246,10 @@ def _link_caption_notes(
         if abs(best[0] - when) > _CAPTION_WINDOW_SEC:
             continue
         _, note_doc, meta = best
-        author = str(meta.get("author_email") or meta.get("author") or "").strip()
+        author = str(meta.get("author_email") or meta.get("author") or note_doc.get("sender_email") or "").strip()
         direction = str(note_doc.get("direction") or "").strip() or None
+        if not author and not direction:
+            continue  # nothing to inherit
         d["delivered_by"] = author or None
         d["delivered_by_source"] = "caption_note"
         d["caption"] = str(meta.get("title") or "")

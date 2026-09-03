@@ -252,10 +252,14 @@ def test_signature_rows_merge_into_one_record_per_party():
         _p("Shelly Lewis"),
         _p("NewBold LLC: EVP & COO"),
         _p("CDW Technologies LLC: Mar 26, 2025 | NewBold LLC: Mar 25, 2025"),
+        # live shapes that had minted junk parties "By", "Name", "Title"
+        _p("By: Shelly Lewis (Mar 25, 2025 11:49 EDT)"),
+        _p("Name: Mike Murphy Name: Shelly Lewis Title: Professional Services Manager Title:"),
     ]
-    assert merge_signature_rows(atoms) == 5
+    assert merge_signature_rows(atoms) == 7
     assert len(atoms) == 1
     signers = {s["party"]: s for s in atoms[0].value["signers"]}
+    assert set(signers) == {"CDW Technologies LLC", "NewBold LLC"}, signers
     assert signers["CDW Technologies LLC"]["name"] == "Mike Murphy"
     assert signers["CDW Technologies LLC"]["title"] == "Professional Services Manager"
     assert signers["CDW Technologies LLC"]["signed_at"].startswith("Mar 26, 2025")
@@ -272,10 +276,11 @@ def test_caption_note_gives_an_upload_its_provenance():
          "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": None}, "lifecycle": {"admissible_for": None}},
         {"artifact_id": "late", "artifact_type": "pdf", "filename": "other.pdf", "authored_at": "2026-09-03T19:00:00Z", "direction": None, "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": None}},
     ]
-    env = {"atoms": [{"artifact_id": "note", "atom_type": "deal_metadata", "structured": {"field_name": "hubspot_note_meta", "title": "psow from current partner", "author_email": "patrick@purtera-it.com"}}]}
+    # live shape: a caption note carries only its provenance atom (title, no author)
+    env = {"atoms": [{"artifact_id": "note", "atom_type": "deal_metadata", "structured": {"field_name": "hubspot_note_provenance", "title": "psow from current partner", "source": "hubspot_note"}}]}
     assert _link_caption_notes(docs, env, timeline) == 1
     pdf = docs[1]
-    assert pdf["delivered_by"] == "patrick@purtera-it.com" and pdf["caption"] == "psow from current partner"
+    assert pdf["delivered_by"] is None and pdf["caption"] == "psow from current partner"
     assert pdf["direction"] == "internal" and pdf["deal_stage"]["admissible_for"] == "evidence"
     assert docs[2].get("delivered_by") is None
 
