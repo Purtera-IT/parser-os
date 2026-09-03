@@ -280,6 +280,27 @@ def test_caption_note_gives_an_upload_its_provenance():
     assert docs[2].get("delivered_by") is None
 
 
+def test_cross_document_same_name_and_nameless_phone_rows_fold():
+    from app.core.semantic_dedup import dedupe_stakeholder_atoms
+    def mk(aid, name, **v):
+        a = _atom(AtomType.stakeholder, name or "Job Title | Sr. CSDA | Phone Number | 404-918-0783", kind="person", name=name, **v)
+        a.artifact_id = aid
+        return a
+    out = dedupe_stakeholder_atoms([
+        mk("e1", "Quinton James", role="Senior Client Executive, Northeast Majors", phone="708.288.8778"),
+        mk("e2", "Quinton James", role="Client Executive | Northeast Majors", email="quinton.james@cdw.com"),
+        mk("e3", "Quinton James", email="someone.else@other.com"),  # conflicting identity: stays apart
+        mk("s1", "Bernard Donnelly", email="bernie.donnelly@sodexo.com", phone="404-918-0783"),
+        mk("s1", None, role="Sr. CSDA", phone="404-918-0783"),
+    ])
+    names = [(a.artifact_id, a.value.get("name")) for a in out]
+    assert names.count(("e2", "Quinton James")) + names.count(("e1", "Quinton James")) == 1
+    assert ("e3", "Quinton James") in names
+    bern = [a for a in out if a.value.get("name") == "Bernard Donnelly"]
+    assert len(bern) == 1 and bern[0].value.get("title") == "Sr. CSDA"
+    assert not any(a.value.get("name") is None for a in out)
+
+
 def test_short_list_items_are_atoms():
     from app.parsers.orbitbrief_pdf import _atoms_for_bullet
     out = []

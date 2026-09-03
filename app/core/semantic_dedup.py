@@ -1787,6 +1787,15 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             return False
         return all(fi.get(k) == val for k, val in si.items())
 
+    def _full_name(a: Any) -> str:
+        v = getattr(a, "value", None) or {}
+        return " ".join(str(v.get("name") or "").lower().split()) if isinstance(v, dict) else ""
+
+    def _agree(a: Any, b: Any) -> bool:
+        """No identity token on either side contradicts the other."""
+        ia, ib = _ident(a), _ident(b)
+        return all(ib.get(k) == val for k, val in ia.items() if k in ib)
+
     people = [a for a in atoms if _atom_type_value(a) == "stakeholder" and _parts(a)]
     drop: set[int] = set()
     for a in sorted(people, key=_richness):
@@ -1794,10 +1803,39 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
         for b in sorted(people, key=_richness, reverse=True):
             if b is a or id(b) in drop or id(a) in drop:
                 continue
+            same_doc = str(getattr(b, "artifact_id", "")) == str(getattr(a, "artifact_id", ""))
+            fb, lb = _parts(b)
+            if same_doc and la == lb and (fa[:3] == fb[:3]) and _subsumed(a, b):
+                _merge_atom_metadata(b, a)
+                drop.add(id(a))
+                break
+            # Across documents the bar is higher: the SAME full name and no
+            # contradicting email or phone. Live 010215: Quinton James's two
+            # signatures (one with a phone, one with an email) were two records.
+            if (not same_doc) and _full_name(a) and _full_name(a) == _full_name(b) and _agree(a, b) and _richness(a) <= _richness(b):
+                _merge_atom_metadata(b, a)
+                drop.add(id(a))
+                break
+    # A record with NO name but a phone or email that another record of the
+    # same document carries is that person's other row ("Job Title | Sr. CSDA
+    # | Phone Number | 404-918-0783"); its role rides along as a title.
+    named = [a for a in atoms if _atom_type_value(a) == "stakeholder" and id(a) not in drop and _full_name(a)]
+    for a in atoms:
+        if _atom_type_value(a) != "stakeholder" or id(a) in drop or _full_name(a):
+            continue
+        ia = _ident(a)
+        if not ia:
+            continue
+        for b in named:
             if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
                 continue
-            fb, lb = _parts(b)
-            if la == lb and (fa[:3] == fb[:3]) and _subsumed(a, b):
+            ib = _ident(b)
+            if ia and all(ib.get(k) == val for k, val in ia.items()):
+                va, vb = getattr(a, "value", None) or {}, getattr(b, "value", None) or {}
+                if isinstance(va, dict) and isinstance(vb, dict):
+                    role = str(va.get("role") or "").strip()
+                    if role and not vb.get("title") and role.lower() not in {"stakeholder", "person"}:
+                        vb["title"] = role
                 _merge_atom_metadata(b, a)
                 drop.add(id(a))
                 break

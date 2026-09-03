@@ -4787,6 +4787,15 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
         # it survive to the envelope as an uninformative duplicate.
         if slug in _covered_slugs and not (value.get("email") or value.get("phone")):
             return
+        # In a label | value row, a "name" that occurs only inside a LABEL cell
+        # ("On Site Contact Name | Belisha Crouch | …" -> "Site Contact") is
+        # the label's wording, not a person. Live 010215.
+        if "|" in raw and not (value.get("email") or value.get("phone")):
+            _cells = [c.strip() for c in raw.split("|")]
+            _labels, _values = _cells[0::2], _cells[1::2]
+            _nm = str(value.get("name") or "").strip().lower()
+            if _nm and any(_nm in c.lower() for c in _labels) and not any(_nm in c.lower() for c in _values):
+                return
         _sp = slug.split("_")
         if len(_sp) > 2 and "_".join(_sp[:2]) in _covered_slugs and not (value.get("email") or value.get("phone")):
             return
