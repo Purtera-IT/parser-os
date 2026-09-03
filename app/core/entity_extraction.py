@@ -4722,11 +4722,43 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
     stakeholder_candidates: dict[str, tuple[Any, dict[str, Any], str, float]] = {}
     signatory_candidates: dict[tuple[str, str], tuple[Any, dict[str, Any], str, float]] = {}
 
+    # Slugs a HIGH-PRECISION structural reader already named as a person, with
+    # an email or a phone attached (contact_property_block, the roster path,
+    # etc.). Deal 010215: this function's bare owner_re/delegate_re fallback
+    # -- role defaults to the literal string "stakeholder", no email, no phone
+    # -- fired a SECOND time on the same ten on-site contacts a property-block
+    # reader had already emitted correctly, because it works from entity_keys
+    # + raw-text name matching and has no way to know a fuller record for that
+    # identity already exists. The two do not dedupe downstream: this
+    # function's slug key ("rosalyn_hemingway") and the real atom's dedup key
+    # (its email) are different strings, so semantic_dedup keeps both. Building
+    # this set once, up front, lets every _put_stakeholder call refuse to
+    # create a strictly worse duplicate of a person the deal already has.
+    _covered_slugs: set[str] = set()
+    for _a in atom_list:
+        _a_type = getattr(_a, "atom_type", None)
+        _a_type_str = _a_type.value if hasattr(_a_type, "value") else str(_a_type or "")
+        if _a_type_str != "stakeholder":
+            continue
+        _v = getattr(_a, "value", None)
+        if not isinstance(_v, dict) or _v.get("kind") != "person":
+            continue
+        if not (_v.get("email") or _v.get("phone")):
+            continue
+        _nm = str(_v.get("name") or "").strip()
+        if _nm:
+            _covered_slugs.add(_slug(_nm))
+
     def _put_stakeholder(slug: str, source_atom: Any, value: dict[str, Any], raw: str, confidence: float) -> None:
         if not slug or slug in {"mock_vendor", "vendor", "customer", "project_manager"}:
             return
         parts = slug.split("_")
         if value.get("kind") != "team_contact" and len(parts) < 2:
+            return
+        # A bare name-only record (no email, no phone) adds nothing once a
+        # fuller one exists for the same person -- refuse it rather than let
+        # it survive to the envelope as an uninformative duplicate.
+        if slug in _covered_slugs and not (value.get("email") or value.get("phone")):
             return
         prev = stakeholder_candidates.get(slug)
         if prev is None or confidence > prev[3] or (value.get("email") and not prev[1].get("email")):

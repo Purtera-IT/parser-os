@@ -1331,6 +1331,28 @@ def compile_project(
             )
         telemetry.end_stage(stage, output_count=site_join_n)
 
+    # Stakeholder atoms were deliberately left uncollapsed by semantic_dedup so
+    # each instance could still be tagged with its OWN document's site above --
+    # a person common to every one of ten per-site SOWs (a district-wide backup
+    # contact) must accumulate all ten site: keys, not the one its dedup
+    # survivor happened to inherit. Collapse them now, after the join, so
+    # _merge_atom_metadata's existing entity_keys union does that accumulation.
+    with telemetry.stage("stakeholder_dedup", input_count=len(atoms)) as stage:
+        try:
+            from app.core.semantic_dedup import dedupe_stakeholder_atoms
+
+            before_sh = len(atoms)
+            atoms = dedupe_stakeholder_atoms(atoms)
+            dropped_sh = before_sh - len(atoms)
+            if dropped_sh > 0:
+                warnings.append(
+                    f"INFO: stakeholder_dedup collapsed {dropped_sh} duplicate "
+                    f"stakeholder identity atom(s)"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: stakeholder_dedup failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     with telemetry.stage("note_provenance_backfill", input_count=len(atoms)) as stage:
         note_prov_n = 0
         try:

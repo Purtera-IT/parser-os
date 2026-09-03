@@ -1629,10 +1629,31 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     if not atoms:
         return atoms
 
+    # Stakeholder atoms are exempt from THIS pass -- deferred to
+    # dedupe_stakeholder_atoms, which runs after site_provenance_join. Collapsing
+    # here happens before any atom carries a site: key (site_provenance_join is a
+    # later compiler stage), so a person legitimately common to many single-site
+    # documents -- a district-wide backup contact named in all ten Marion County
+    # SOWs -- collapsed to ONE surviving atom BEFORE any of the ten could be
+    # tagged with its school. The survivor then inherited only whichever single
+    # document its winning instance happened to belong to: correct name, email,
+    # phone, wrong (or rather, incomplete) site attribution -- a person relevant
+    # to ten schools, shown as belonging to one.
+    #
+    # _merge_atom_metadata already unions entity_keys from loser into winner (see
+    # below), so the fix is ordering, not new merge logic: let each instance keep
+    # its OWN document's site: key first, THEN collapse identities, and the
+    # existing union naturally accumulates every site the person actually
+    # appears at onto the survivor.
+    def _key_for_generic_pass(atom: Any) -> tuple | None:
+        if _atom_type_value(atom) == "stakeholder":
+            return None
+        return _value_key(atom)
+
     # Pick the highest-confidence winner per key (scan confidence-desc).
     winners: dict[tuple, Any] = {}
     for atom in sorted(atoms, key=_confidence, reverse=True):
-        key = _value_key(atom)
+        key = _key_for_generic_pass(atom)
         if key is None:
             continue
         if key not in winners:
@@ -1644,7 +1665,7 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     seen: set[tuple] = set()
     ordered: list[Any] = []
     for atom in atoms:
-        key = _value_key(atom)
+        key = _key_for_generic_pass(atom)
         if key is None:
             ordered.append(atom)
             continue
@@ -1656,4 +1677,57 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(ordered))
 
 
-__all__ = ["semantic_dedup_atoms", "cross_type_dedup_atoms"]
+def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
+    """Collapse duplicate stakeholder identities -- deferred here, and only
+    here, so every instance keeps its OWN document's site: key first.
+
+    semantic_dedup_atoms deliberately exempts stakeholder atoms from its
+    generic collapse and defers to this function, which is meant to run AFTER
+    site_provenance_join. The reason is ordering: collapsing ten identical
+    "Backup Contact: Bernard Donnelly" atoms (one per Marion County SOW) down
+    to one BEFORE any of them could be tagged with its school left the
+    survivor attributed to whichever single document its winning instance
+    happened to come from -- correct name, email, phone, but a person
+    relevant to ten schools shown as belonging to one.
+
+    _merge_atom_metadata already unions entity_keys from loser into winner, so
+    running this pass after the join needs no new merge logic: each of the ten
+    instances already carries its own site: key by the time they collapse, and
+    the existing union accumulates all ten onto the survivor.
+    """
+    if not atoms:
+        return atoms
+
+    winners: dict[tuple, Any] = {}
+    for atom in sorted(atoms, key=_confidence, reverse=True):
+        if _atom_type_value(atom) != "stakeholder":
+            continue
+        key = _value_key(atom)
+        if key is None:
+            continue
+        if key not in winners:
+            winners[key] = atom
+        else:
+            _merge_values(winners[key], atom)
+
+    if not winners:
+        return atoms
+
+    seen: set[tuple] = set()
+    out: list[Any] = []
+    for atom in atoms:
+        if _atom_type_value(atom) != "stakeholder":
+            out.append(atom)
+            continue
+        key = _value_key(atom)
+        if key is None:
+            out.append(atom)
+            continue
+        if key in seen:
+            continue
+        out.append(winners[key])
+        seen.add(key)
+    return out
+
+
+__all__ = ["semantic_dedup_atoms", "cross_type_dedup_atoms", "dedupe_stakeholder_atoms"]
