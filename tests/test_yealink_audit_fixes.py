@@ -56,6 +56,65 @@ def test_name_role_list_line_splits_name_from_title():
     assert name_and_role_from_list_line("Carl Painter") is None
 
 
+def test_signature_cluster_lines_are_marked_as_chrome():
+    from app.parsers.signature_block import signature_line_indexes
+    lines = ["Thanks,", "", "Patrick Kelly", "", "Account Executive", "", "patrick@purtera-it.com", "", "770.769.7311", "Next steps below."]
+    idx = signature_line_indexes(lines)
+    assert 2 in idx and 4 in idx and 6 in idx and 8 in idx
+    assert 0 not in idx and 9 not in idx
+
+
+def test_salutation_and_sign_off_are_not_a_signature():
+    from app.parsers.signature_block import people_from_signature_lines
+    assert people_from_signature_lines(["Hi Hiran,", "We need to swap 12 access points.", "Thanks,", "Chase", "Office: 555-123-4567"]) == []
+
+
+def test_nameless_or_party_phrase_stakeholders_are_dropped():
+    from app.core.atom_substance_gate import drop_contextless_stakeholders
+    atoms = [
+        _atom(AtomType.stakeholder, "Each Party will appoint a person", kind="person", name=None, role="approver"),
+        _atom(AtomType.stakeholder, "The Buyer", kind="person", name="The Buyer", role="approver"),
+        _atom(AtomType.stakeholder, "Carl Painter | Sr. Account Manager", kind="person", name="Carl Painter", role="Sr. Account Manager", email="carlpai@cdw.com"),
+        _atom(AtomType.stakeholder, "Jacob Long Project Manager Phone and ITAD", kind="person", name="Jacob Long", role="Project Manager Phone and ITAD"),
+    ]
+    kept, dropped = drop_contextless_stakeholders(atoms)
+    assert [a.value.get("name") for a in dropped] == [None, "The Buyer"]
+    assert [a.value.get("name") for a in kept] == ["Carl Painter", "Jacob Long"]
+
+
+def test_party_page_sites_become_party_addresses():
+    from app.core.party_address_veto import veto_party_page_sites
+    def _p(atom_type, text, page, **value):
+        a = _atom(atom_type, text, **value)
+        a.source_refs = [SourceRef(id=f"s_{page}_{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": page}, extraction_method="t", parser_version="t")]
+        return a
+    site = _p(AtomType.physical_site, "200 N. Milwaukee Ave., Vernon Hills, IL 60061", 6, kind="physical_site")
+    site.entity_keys = ["site:vernon_hills_il_60061"]
+    hq = _p(AtomType.physical_site, "2970 Brandywine Rd, Suite 200, Atlanta, GA 30341", 4, kind="physical_site")
+    hq.entity_keys = ["site:atlanta_ga_30341"]
+    sig = _p(AtomType.signatory, "CDW Technologies LLC: By: Mike Murphy", 6)
+    assert veto_party_page_sites([site, hq, sig]) == 1
+    assert site.atom_type == AtomType.deal_metadata and site.value["kind"] == "party_address" and site.entity_keys == []
+    assert hq.atom_type == AtomType.physical_site and hq.entity_keys == ["site:atlanta_ga_30341"]
+
+
+def test_quoted_author_display_name_resolves_through_the_signature():
+    from app.core.orbitbrief_envelope import _annotate_quoted_message_scope
+    timeline = {"transitions": [{"label": "Open- Awaiting Scope", "order": 1}, {"label": "Submitted for Quoting", "order": 2}]}
+    docs = [{"artifact_id": "reply", "filename": "reply.eml",
+             "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": "label"},
+             "reader_scope": {"deal_kit": {"visible": False, "why": "label"}, "sow": {"visible": False, "why": ""}, "orbitbrief": {"visible": True, "why": ""}, "atlas": {"visible": True, "why": ""}}}]
+    env = {"atoms": [
+        {"artifact_id": "reply", "atom_type": "deal_metadata", "text": "There are about 170+ sites and growing across the US.",
+         "structured": {"quoted": True, "author": "Carl Painter Jr", "message_index": 3}},
+        {"artifact_id": "reply", "atom_type": "stakeholder", "text": "Carl Painter | Sr. Account Manager | carlpai@cdw.com",
+         "structured": {"kind": "person", "name": "Carl Painter", "email": "carlpai@cdw.com", "message_index": 3, "quoted": True, "author": "Carl Painter Jr"}},
+    ]}
+    assert _annotate_quoted_message_scope(env, docs, timeline) == 2
+    assert env["atoms"][0]["reader_scope"]["deal_kit"]["visible"] is True
+    assert env["atoms"][0]["structured"]["author_resolved"] == "carlpai@cdw.com"
+
+
 # --- Y-05: link-only lines ----------------------------------------------------
 
 def test_link_only_lines_are_chrome():
@@ -63,7 +122,7 @@ def test_link_only_lines_are_chrome():
     assert _is_link_only_line("PurTera-IT.com<https://nam13.safelinks.protection.outlook.com/?url=https%3A%2F%2Fx>")
     assert _is_link_only_line("url=https%3A%2F%2Furldefense.proofpoint.com%2Fv2%2Furl%3Fu%3Dhttp-3A__purtera-2Dit.com_")
     assert _is_link_only_line("t@purtera-it.com<mailto:T@purtera-it.com>")
-    assert _is_link_only_line("Get Outlook for Mac<https://aka.ms/GetOutlookForMac>") is False  # four words: a sentence with a link
+    assert _is_link_only_line("Get Outlook for Mac<https://aka.ms/GetOutlookForMac>")  # an anchor: label glued to its link
     assert not _is_link_only_line("Please see the PSOW at https://cdw.com/psow before Friday.")
 
 
@@ -164,6 +223,10 @@ def test_document_header_date_is_read_from_a_date_label_on_page_one():
              _row("Customer Name: | DENTISTRY FOR CHILDREN")]
     assert _document_header_date(atoms) == "2025-03-21"
     assert _document_header_date([_row("Customer Name: | DENTISTRY FOR CHILDREN")]) is None
+    # the file's own first page, when the header table never became an atom
+    page = "STATEMENT OF WORK\nProject Name: D4C Site Assessment\nCustomer Name: DENTISTRY FOR CHILDREN\nDate:                          March 21, 2025\nThis statement of work ... dated the 15th day of October, 2024."
+    assert _document_header_date([], page) == "2025-03-21"
+    assert _document_header_date([], "Drafted By: Sasha Beard\nMSA dated the 15th day of October, 2024.") is None
 
 
 # --- Y-01/Y-03/Y-05 end to end through the email parser ----------------------

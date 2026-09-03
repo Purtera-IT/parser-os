@@ -1319,8 +1319,15 @@ def compile_project(
     with telemetry.stage("site_provenance_join", input_count=len(atoms)) as stage:
         site_join_n = 0
         try:
+            from app.core.party_address_veto import veto_party_page_sites
             from app.core.site_provenance_join import join_atoms_to_document_site
 
+            # An address on a signature page is a party's, not a site's. Done
+            # here, before the join, so a document never "resolves to exactly
+            # one site" that is its own signatory's mailing address.
+            _party_n = veto_party_page_sites(atoms)
+            if _party_n:
+                warnings.append(f"INFO: {_party_n} address(es) on signature pages kept as party_address, not sites")
             site_join_n = join_atoms_to_document_site(atoms)
             if site_join_n:
                 warnings.append(

@@ -349,6 +349,14 @@ def _looks_like_bare_name(text: str) -> bool:
     return True
 
 
+#: Closed grammatical class, not a vocabulary of roles: a "name" that starts
+#: with one of these is a phrase about a party, never a person's name.
+_FUNCTION_WORDS = frozenset({
+    "the", "a", "an", "each", "every", "both", "all", "any", "our", "your", "their",
+    "its", "this", "that", "these", "those", "such", "no", "none", "either", "neither",
+})
+
+
 def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Partition into (kept, dropped). A ``stakeholder`` atom with no
     role/affiliation/contact context AND a bare-name shape is dropped — it is a
@@ -382,6 +390,16 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             kept.append(atom)
             continue
         entity_keys = list(getattr(atom, "entity_keys", None) or [])
+        # A person record needs a person in it. No name, or a "name" that is
+        # a noun phrase headed by a function word ("The Buyer", "Each Party"),
+        # with no email or phone to stand on, is a role mention, not a record.
+        # Live 010300: "None | approver", "The Buyer | approver".
+        if kind == "person" and not (value.get("email") or value.get("phone")):
+            _nm = str(value.get("name") or "").strip()
+            _first = _nm.split()[0].lower() if _nm else ""
+            if not _nm or _first in _FUNCTION_WORDS:
+                dropped.append(atom)
+                continue
         if _has_role_context(text, value, entity_keys):
             kept.append(atom)
             continue

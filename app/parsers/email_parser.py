@@ -1499,6 +1499,11 @@ def _is_link_only_line(text: str) -> bool:
     t = (text or "").strip()
     if not t or not _LINK_TOKEN_RE.search(t):
         return False
+    # An anchor: label glued to its link with no space ("Get Outlook for
+    # Mac<https://aka.ms/…>", "PurTera-IT.com<https://…>"). Prose that
+    # mentions a link has a space before it.
+    if re.match(r"^[^<>]{1,60}<(?:https?://|mailto:)[^>]+>$", t):
+        return True
     rest = _LINK_TOKEN_RE.sub(" ", t).strip(" <>;,|-–—")
     if not rest:
         return True
@@ -2496,10 +2501,13 @@ class EmailParser(BaseParser):
         # Live 010300: ten stakeholder records and not one email or phone,
         # while Carl Painter's signature listed title, direct, mobile and
         # email on consecutive lines.
+        _signature_rows: set[int] = set()
         try:
-            from app.parsers.signature_block import people_from_signature_lines
+            from app.parsers.signature_block import people_from_signature_lines, signature_line_indexes
             _block_lines = [str(x) for x in (block.get("lines") or [])]
+            _signature_rows = signature_line_indexes(_block_lines)
             for _p in people_from_signature_lines(_block_lines):
+                _p = {k: v for k, v in _p.items() if k != "_span"}
                 _slug = re.sub(r"[^a-z0-9]+", "_", str(_p.get("name") or "").lower()).strip("_")
                 if not _slug:
                     continue
@@ -2592,6 +2600,10 @@ class EmailParser(BaseParser):
             # body) and a quoted "; Nick Robateau <" reach the vocabulary
             # typer, which stamped them `exclusion` at 0.86.
             if _is_identity_only_line(cleaned):
+                continue
+            # Inside a signature cluster every line is contact chrome (title,
+            # org, phone label); the person was already read from it above.
+            if (line_num - int(block.get("line_start") or 0)) in _signature_rows:
                 continue
             # A line that is only a link -- a bare URL, "word<https://…>",
             # "url=…", a mailto -- is mail chrome. Live 010300: nine

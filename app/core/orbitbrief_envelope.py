@@ -223,7 +223,7 @@ def build_orbitbrief_envelope(
         # 2026-09-03 (HubSpot file time), so a cut would have called them
         # today's evidence. Only an upload-grade precision is overridden, and
         # only by an EARLIER header date; an exact send time is left alone.
-        _hdr = _document_header_date(artifact_atoms)
+        _hdr = _document_header_date(artifact_atoms, _page_one_text(project_dir, fp.filename))
         if _hdr and prov.get("authored_at_precision") in (None, "edited") and (
             not prov.get("authored_at") or str(_hdr) < str(prov.get("authored_at"))
         ):
@@ -867,7 +867,7 @@ def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, An
 _EMAIL_ADDR_RE = re.compile(r"[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
-_HEADER_DATE_LABEL_RE = re.compile(r"(?:^|\|)\s*(?:col_\d+:\s*)?(?:date|dated|effective date|issue date|revision date)\s*:", re.I)
+_HEADER_DATE_LABEL_RE = re.compile(r"(?:^|\|)\s*(?:col_\d+:\s*)?(?:date|dated|effective date|issue date|revision date)\s*:", re.I | re.M)
 _DATE_VALUE_RE = re.compile(
     r"(?:\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}"
     r"|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{4}"
@@ -876,19 +876,66 @@ _DATE_VALUE_RE = re.compile(
 )
 
 
-def _document_header_date(artifact_atoms: list[Any]) -> str | None:
+_PAGE_ONE_TEXT_CACHE: dict[str, str] = {}
+
+
+def _page_one_text(project_dir: Any, filename: str) -> str:
+    """Text of a PDF's first page from its own text layer (best effort, cached).
+
+    The parser's structured projection drops the header table's cells once it
+    recovers them as a table, so "Date: March 21, 2025" never reaches an atom.
+    The file itself still says it.
+    """
+    key = f"{project_dir}::{filename}"
+    if key in _PAGE_ONE_TEXT_CACHE:
+        return _PAGE_ONE_TEXT_CACHE[key]
+    text = ""
+    try:
+        if str(filename).lower().endswith(".pdf"):
+            try:
+                import pymupdf as fitz  # PyMuPDF
+            except Exception:  # pragma: no cover - older wheel
+                import fitz  # type: ignore
+            root = Path(project_dir)
+            cand = next(iter(root.rglob(filename)), None) if filename else None
+            if cand is not None and cand.is_file():
+                with fitz.open(str(cand)) as doc:
+                    if len(doc):
+                        text = doc[0].get_text() or ""
+    except Exception:
+        text = ""
+    _PAGE_ONE_TEXT_CACHE[key] = text
+    return text
+
+
+def _document_header_date(artifact_atoms: list[Any], page_text: str | None = None) -> str | None:
     """The date a document states about itself, as ISO ``YYYY-MM-DD``, or None.
 
     Read from the first page's labelled fields ("Date: | March 21, 2025",
     "Date: March 05, 2025"): a label that IS a date label and a value that
     parses as a date. Signature dates, delivery dates and dates in prose are
-    not the document's own date and are not read here.
+    not the document's own date and are not read here. ``page_text`` is the
+    first page's own text, consulted the same way when given.
     """
     try:
         from dateutil import parser as _dp
     except Exception:  # pragma: no cover
         return None
     best: str | None = None
+    if page_text:
+        for m in _HEADER_DATE_LABEL_RE.finditer(page_text):
+            window = page_text[m.end(): m.end() + 120]
+            vals = _DATE_VALUE_RE.findall(window)
+            if not vals:
+                continue
+            try:
+                dt = _dp.parse(vals[0].strip(), fuzzy=True, default=datetime(1900, 1, 1))
+            except Exception:
+                continue
+            if 1990 <= dt.year <= 2100:
+                iso = dt.strftime("%Y-%m-%d")
+                if best is None or iso < best:
+                    best = iso
     for a in artifact_atoms or []:
         refs = getattr(a, "source_refs", None) or []
         loc = getattr(refs[0], "locator", None) if refs else None
@@ -944,15 +991,50 @@ def _annotate_quoted_message_scope(
     from app.core.internal_author import extract_email_domain, INTERNAL_EMAIL_DOMAINS
 
     by_id = {str(d.get("artifact_id")): d for d in documents or []}
+    atoms_all = envelope.get("atoms") or []
+
+    def _name_stem(text: str) -> str:
+        toks = [t for t in re.split(r"[^A-Za-z]+", str(text or "")) if t]
+        return " ".join(t.lower() for t in toks[:2]) if len(toks) >= 2 else ""
+
+    def _resolve_author(author: str, artifact_id: str, message_index: Any) -> str | None:
+        """A quoted From: often shows only a display name ("From: Carl
+        Painter Jr") -- Outlook drops the address for a sender in the same
+        directory. Resolve it to an address the envelope already knows:
+        first the signature read from the SAME quoted message (it carries the
+        email), then any email document whose sender or signature matches the
+        name. Live 010300: 4 of 5 quoted customer lines were skipped for this."""
+        if extract_email_domain(author):
+            return author
+        stem = _name_stem(author)
+        if not stem:
+            return None
+        same_msg, any_doc = [], []
+        for b in atoms_all:
+            if b.get("atom_type") != "stakeholder":
+                continue
+            sb = b.get("structured") if isinstance(b.get("structured"), dict) else {}
+            em = str(sb.get("email") or "").strip()
+            if not em or _name_stem(sb.get("name")) != stem:
+                continue
+            if str(b.get("artifact_id")) == artifact_id and sb.get("message_index") == message_index:
+                same_msg.append(em)
+            else:
+                any_doc.append(em)
+        return (same_msg or any_doc or [None])[0]
+
     n = 0
-    for a in envelope.get("atoms") or []:
+    for a in atoms_all:
         s = a.get("structured") if isinstance(a.get("structured"), dict) else {}
         if not s.get("quoted"):
             continue
         author = str(s.get("author") or "").strip()
-        domain = extract_email_domain(author) if author else None
+        resolved = _resolve_author(author, str(a.get("artifact_id")), s.get("message_index")) if author else None
+        domain = extract_email_domain(resolved) if resolved else None
         if not domain or domain in INTERNAL_EMAIL_DOMAINS:
             continue
+        if resolved != author:
+            s["author_resolved"] = resolved
         doc = by_id.get(str(a.get("artifact_id"))) or {}
         block = doc.get("deal_stage") if isinstance(doc.get("deal_stage"), dict) else {}
         stage = block.get("stage_at_arrival")

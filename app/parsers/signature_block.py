@@ -84,6 +84,23 @@ def _phones_from(line: str) -> list[tuple[str, str]]:
     return out
 
 
+def signature_line_indexes(lines: list[str]) -> set[int]:
+    """Indexes of every line that belongs to a signature cluster.
+
+    The cluster is the same one ``people_from_signature_lines`` reads; the
+    title, phone, email, link and org lines inside it are contact chrome and
+    must not be typed as deal content. Live 010300: "Account Executive" and
+    "Executive Vice President of Sales" became stakeholder records of their
+    own once the name lines around them were (correctly) skipped.
+    """
+    out: set[int] = set()
+    for rec in people_from_signature_lines(lines):
+        span = rec.get("_span")
+        if span:
+            out.update(range(span[0], span[1]))
+    return out
+
+
 def people_from_signature_lines(lines: list[str]) -> list[dict[str, Any]]:
     """Person records from the signature clusters in ``lines``.
 
@@ -118,6 +135,7 @@ def people_from_signature_lines(lines: list[str]) -> list[dict[str, Any]]:
                 titles.append(c)
         j = i + 1
         gap = 0
+        last_hit = i
         while j < n and gap < _MAX_GAP:
             raw = lines[j]
             core = _clean(raw)
@@ -146,8 +164,11 @@ def people_from_signature_lines(lines: list[str]) -> list[dict[str, Any]]:
                 gap = 0
             else:
                 gap += 1
+            if gap == 0:
+                last_hit = j
             j += 1
         if rec.get("email") or phones:
+            rec["_span"] = (i, last_hit + 1)
             if titles:
                 rec["role"] = titles[0]
             if phones:
