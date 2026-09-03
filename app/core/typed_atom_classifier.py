@@ -515,17 +515,50 @@ def classify_atoms(atoms: list[Any]) -> int:
                 return {str(i): c for i, c in enumerate(cells.values())}
             return None
 
+        from app.parsers.contact_property_block import people_from_multiline_cells, _NAME_SHAPE
+        from app.parsers.value_shapes import classify_value
+
+        def _is_marker(a: Any) -> bool:
+            # binary_markers placeholders ("[Image awaiting OCR / vision …]") are
+            # bookkeeping, not content; one was typed open_question.
+            v = getattr(a, "value", None)
+            if isinstance(v, dict) and str(v.get("kind") or "").endswith("_marker"):
+                return True
+            t = str(getattr(a, "raw_text", "") or "").lstrip()
+            return t.startswith("[") and "awaiting OCR" in t
+
+        def _is_bare_identity(a: Any) -> bool:
+            # A line that is ONLY a person's name, an email, a phone, or a
+            # punctuation fragment around one ("; Nick Robateau <") carries no
+            # scope. Three such lines from a top-posted Outlook signature were
+            # typed `exclusion` at 0.86 and auto-accepted.
+            t = str(getattr(a, "raw_text", "") or "").strip()
+            if not t or len(t) > 60:
+                return False
+            core = t.strip(" ;,<>:|-")
+            return bool(_NAME_SHAPE.match(core)) or classify_value(core) in ("email", "phone")
+
         contact_deflected = 0
+        marker_deflected = 0
+        identity_deflected = 0
         survivors = []
         for a in promotable:
+            if _is_marker(a):
+                marker_deflected += 1
+                continue
+            if _is_bare_identity(a):
+                identity_deflected += 1
+                continue
             cells = _row_cells(a)
-            if cells and (fields_from_contact_row(cells) or quantities_from_property_row(cells)):
+            if cells and (fields_from_contact_row(cells) or quantities_from_property_row(cells) or people_from_multiline_cells(cells)):
                 contact_deflected += 1
                 continue
             survivors.append(a)
         promotable = survivors
     except Exception:
         contact_deflected = 0
+        marker_deflected = 0
+        identity_deflected = 0
     if not promotable:
         return 0
 
@@ -537,13 +570,14 @@ def classify_atoms(atoms: list[Any]) -> int:
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
     _dfl = {"store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
-            "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected}
+            "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected,
+            "marker": marker_deflected, "bare_identity": identity_deflected}
     _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
                "contrastive": 0.0, "rubric_gate": 0.0, "post": 0.0}
     # + contact_deflected: those atoms left `promotable` before this count was
     # taken, so the telemetry input must include them back or the deflect rate
     # under-reports what actually happened this call.
-    _dfl_input = len(promotable) + contact_deflected
+    _dfl_input = len(promotable) + contact_deflected + marker_deflected + identity_deflected
     _t_start = time.perf_counter()
     _t_llm = 0.0
 

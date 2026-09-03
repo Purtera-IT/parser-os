@@ -3387,6 +3387,26 @@ def _emit_stakeholders(text: str) -> set[str]:
         sentence = sentence.replace("<DOT>", ".").strip()
         if not sentence:
             continue
+        # A table row alternates label, value, label, value. A capitalised
+        # phrase in a LABEL cell -- "On Site Contact Name" -- is not a person,
+        # yet "Site Contact" was emitted as one (stakeholder:site_contact, then
+        # a bare person atom named "Site Contact"). Only VALUE cells can name
+        # people; labels are the cells that precede them.
+        if "|" in sentence:
+            cells = [c.strip() for c in sentence.split("|")]
+            # Only a row with label/value SHAPE is filtered: four or more cells,
+            # every even-position cell short (a label is a few words, no
+            # sentence punctuation). "Noah Patel | Regional Facilities Manager
+            # | owns access windows." is a prose signature line, not a form
+            # row, and its name sits in cell 0 -- it must stay whole.
+            labels = cells[0::2]
+            if len(cells) >= 4 and all(
+                c and len(c.split()) <= 5 and not c.rstrip().endswith(".") for c in labels
+            ):
+                values = [c for c in cells[1::2] if c]
+                sentence = " ; ".join(values)
+                if not sentence:
+                    continue
         # Skip sentences without a role cue — saves work
         if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
             continue

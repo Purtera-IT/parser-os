@@ -341,9 +341,13 @@ def _make_summary_atom(
     artifact_type = getattr(tmpl_src, "artifact_type", None)
     filename = getattr(tmpl_src, "filename", "") or ""
 
-    if is_commercial:
-        lo = min(values) if values else 0.0
-        hi = max(values) if values else 0.0
+    # A "commercial" fold with NO money values is a form table, not a pricing
+    # sheet: every Marion County SOW produced ": 43 pricing lines, $0-$0" from
+    # its 43 blank response rows. No values, no banner -- fall through to the
+    # plain rollup.
+    if is_commercial and values:
+        lo = min(values)
+        hi = max(values)
         total = sum(values)
         money_keys = sorted(
             {f"money:{int(round(v))}" for v in (lo, hi, total) if v >= min_money_value}

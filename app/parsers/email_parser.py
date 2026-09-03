@@ -850,6 +850,20 @@ _GREETING_LEAD_RE = re.compile(
     re.IGNORECASE,
 )
 
+_IDENTITY_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
+
+
+def _is_identity_only_line(text: str) -> bool:
+    """True for a line that is only a person's name, an email, a phone, or a
+    punctuation fragment around one. Shape only -- no names, no domains."""
+    from app.parsers.value_shapes import classify_value
+
+    core = (text or "").strip().strip(" ;,<>:|-")
+    if not core or len(core) > 60:
+        return False
+    return bool(_IDENTITY_NAME_RE.match(core)) or classify_value(core) in ("email", "phone")
+
+
 # A sign-off phrase that opens the trailing signature block. Everything after
 # it in an AUTHORED message is name/title/contact chrome — the sender identity
 # is already captured as structured email-header metadata, so it is not scope.
@@ -2433,6 +2447,13 @@ class EmailParser(BaseParser):
         # ``pending_lead_in`` holds framing prose ("By the end of the meeting
         # customer clarified:") until the next Include/Exclude list consumes it.
         in_signature = False
+        # A top-posted Outlook signature -- name line, then address line --
+        # opens some authored messages. The sign-off latch below only catches
+        # the TRAILING block, so "Nick Robateau" / "Nick.Robateau@CDW.com"
+        # walked through as content and the classifier typed them `exclusion`.
+        # Until an authored block says something substantive, an identity-only
+        # line is chrome.
+        seen_substantive = False
         # HTML mail puts each header label in its own element, so converting to
         # text yields the label and its value on SEPARATE lines:
         #
@@ -2471,6 +2492,10 @@ class EmailParser(BaseParser):
             cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
+            if not block.get("quoted") and not seen_substantive:
+                if _is_identity_only_line(cleaned):
+                    continue
+                seen_substantive = True
             # Bullets inherit the active Include/Exclude header; compute before
             # hygiene continues so per-line locators carry section_path.
             section_for_line = current_section if is_bullet else None

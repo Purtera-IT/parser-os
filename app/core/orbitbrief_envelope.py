@@ -618,6 +618,7 @@ def build_orbitbrief_envelope(
     # Last, so it gates the corrected picture: a customer document that stopped
     # being called ours a moment ago must be readable by the models that had it.
     _annotate_reader_scope(documents, stage_timeline)
+    _retype_produced_material_scope(envelope, documents)
     threads = _thread_index(documents)
     if threads:
         envelope["email_threads"] = threads
@@ -828,6 +829,30 @@ def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, An
 
 
 _EMAIL_ADDR_RE = re.compile(r"[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _retype_produced_material_scope(envelope: dict[str, Any], documents: list[dict[str, Any]]) -> int:
+    """scope_item from a document the lifecycle filed as produced/vendor
+    material becomes site_implementation_note.
+
+    The Kronos install instructions (admissible_for=atlas) contributed 99
+    scope_item atoms: "Route the power supply cable through the clamps" is a
+    vendor's procedure step, not something the customer asked us to do. The
+    lifecycle had already made the document-level call; the atom type just
+    never followed it. Reads the decision it already made -- no vocabulary.
+    """
+    atlas = {str(d.get("artifact_id")) for d in documents or [] if (d.get("deal_stage") or {}).get("admissible_for") == "atlas"}
+    if not atlas:
+        return 0
+    n = 0
+    for a in envelope.get("atoms") or []:
+        if str(a.get("artifact_id")) in atlas and a.get("atom_type") == "scope_item":
+            a["atom_type"] = "site_implementation_note"
+            prov = dict(a.get("decision_provenance") or {})
+            prov.update({"source": "produced_material", "rationale": "document filed as atlas (produced/vendor material); its rows are procedure, not customer scope"})
+            a["decision_provenance"] = prov
+            n += 1
+    return n
 
 
 def _direction_from_originator(

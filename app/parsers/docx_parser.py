@@ -428,7 +428,13 @@ class DocxParser(BaseParser):
                     and row_idx > 0
                     and len(set(header_cells)) <= 1
                     and len(_pos_cells) >= 2
-                    and not any(_pos_cells[i] for i in range(1, len(_pos_cells), 2))
+                    and (
+                        not any(_pos_cells[i] for i in range(1, len(_pos_cells), 2))
+                        # or one title repeated across every merged cell
+                        # ("Response | Response | Response | Response"): a
+                        # section heading, not a fact.
+                        or len(set(_pos_cells)) == 1
+                    )
                 ):
                     continue
                 row_text = " | ".join(cell_texts)

@@ -47,6 +47,7 @@ _ROLE_LABELS: dict[str, tuple[str, ...]] = {
 }
 
 _NAME_SHAPE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
+_LABEL_LIKE = re.compile(r"[:?#]\s*$")
 _NOISE = re.compile(r"^(n/?a|none|tbd|-|—|)$", re.I)
 
 
@@ -105,7 +106,42 @@ def fields_from_contact_row(cells: dict | None) -> dict[str, str]:
     return out
 
 
-def contacts_from_property_rows(rows: list[dict | None]) -> list[dict[str, str]]:
+def people_from_multiline_cells(cells: dict | None) -> list[dict[str, Any]]:
+    """A person typed into ONE cell across lines, under any label.
+
+        TECH Contact Information (Main) | "Bernie Donnelly\n404-918-0783" | Escalation Contact | ""
+
+    Neither the role-label reader nor the LLM handled this: the live record
+    came out with the phone in the email field. Split the cell on newlines and
+    let each line type itself -- a name-shaped line is the name, an email line
+    the email, a phone line the phone. The label cell becomes the role verbatim.
+    """
+    if not isinstance(cells, dict) or not cells:
+        return []
+    values = list(cells.values())
+    out: list[dict[str, Any]] = []
+    for i in range(1, len(values)):
+        label, raw = _norm(values[i - 1]), str(values[i] or "")
+        if not label or "\n" not in raw or _match_role_label(label):
+            continue
+        lines = [_norm(x) for x in raw.split("\n") if _norm(x)]
+        if len(lines) < 2:
+            continue
+        person: dict[str, Any] = {"role": _LABEL_LIKE.sub("", label).strip(), "kind": "person"}
+        for ln in lines:
+            kind = classify_value(ln)
+            if kind == "email" and "email" not in person:
+                person["email"] = ln
+            elif kind == "phone" and "phone" not in person:
+                person["phone"] = ln
+            elif kind is None and _NAME_SHAPE.match(ln) and "name" not in person:
+                person["name"] = ln
+        if person.get("name") and (person.get("email") or person.get("phone")):
+            out.append(person)
+    return out
+
+
+def contacts_from_property_rows(rows: list[dict | None]) -> list[dict[str, Any]]:
     """Merge a document's contact rows into up to two people: primary + backup.
 
     Requires a name, an email, or a phone for a person to be emitted -- a role
@@ -131,4 +167,10 @@ def contacts_from_property_rows(rows: list[dict | None]) -> list[dict[str, str]]
         if phone:
             person["phone"] = phone
         people.append(person)
+    seen_names = {p.get("name") for p in people}
+    for cells in rows or []:
+        for p in people_from_multiline_cells(cells):
+            if p.get("name") not in seen_names:
+                people.append(p)
+                seen_names.add(p.get("name"))
     return people

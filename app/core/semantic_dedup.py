@@ -1739,7 +1739,48 @@ def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
             continue
         out.append(winners[key])
         seen.add(key)
-    return out
+    return _fold_bare_name_variants(out)
+
+
+def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
+    """A name-only stakeholder folds into a fuller one from the SAME document
+    when the surnames match and the given names share a stem.
+
+    "Bernie Donnelly" (requestor row, no contact details captured) and
+    "Bernard Donnelly" (backup contact, email + phone) are one person named
+    two ways in one SOW. Dedup keys on email, then on the exact name, so they
+    stayed two records -- the most important contact on the deal split in two.
+    Same artifact + same surname + shared given-name stem (>= 3 chars) + one
+    side bare is the narrowest rule that closes this without merging two real
+    people who happen to share a surname across documents.
+    """
+    def _parts(a: Any):
+        v = getattr(a, "value", None) or {}
+        nm = str(v.get("name") or "").strip() if isinstance(v, dict) else ""
+        toks = [t for t in re.split(r"[^A-Za-z]+", nm) if t]
+        return (toks[0].lower(), toks[-1].lower()) if len(toks) >= 2 else None
+
+    def _bare(a: Any) -> bool:
+        v = getattr(a, "value", None) or {}
+        return isinstance(v, dict) and not (v.get("email") or v.get("phone"))
+
+    people = [a for a in atoms if _atom_type_value(a) == "stakeholder" and _parts(a)]
+    drop: set[int] = set()
+    for a in people:
+        if not _bare(a):
+            continue
+        fa, la = _parts(a)
+        for b in people:
+            if b is a or _bare(b) or id(b) in drop:
+                continue
+            if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
+                continue
+            fb, lb = _parts(b)
+            if la == lb and (fa[:3] == fb[:3]):
+                _merge_atom_metadata(b, a)
+                drop.add(id(a))
+                break
+    return [a for a in atoms if id(a) not in drop]
 
 
 __all__ = ["semantic_dedup_atoms", "cross_type_dedup_atoms", "dedupe_stakeholder_atoms"]
