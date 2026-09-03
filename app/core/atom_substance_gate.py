@@ -394,10 +394,19 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         # a noun phrase headed by a function word ("The Buyer", "Each Party"),
         # with no email or phone to stand on, is a role mention, not a record.
         # Live 010300: "None | approver", "The Buyer | approver".
-        if kind == "person" and not (value.get("email") or value.get("phone")):
+        if not (value.get("email") or value.get("phone")):
             _nm = str(value.get("name") or "").strip()
             _first = _nm.split()[0].lower() if _nm else ""
-            if not _nm or _first in _FUNCTION_WORDS:
+            # No name in the record AND no name shape in the text: a role
+            # with nobody in it ("Step 5: Appoint a contact person for each
+            # party"). A record whose name only lives in its text is kept.
+            if not _nm and (
+                kind == "person"
+                or (kind in ("", None) and not re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z]\.)?\s+[A-Z][a-z]+\b", text))
+            ):
+                dropped.append(atom)
+                continue
+            if kind == "person" and _first in _FUNCTION_WORDS:
                 dropped.append(atom)
                 continue
         if _has_role_context(text, value, entity_keys):

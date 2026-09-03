@@ -74,11 +74,12 @@ def test_nameless_or_party_phrase_stakeholders_are_dropped():
     atoms = [
         _atom(AtomType.stakeholder, "Each Party will appoint a person", kind="person", name=None, role="approver"),
         _atom(AtomType.stakeholder, "The Buyer", kind="person", name="The Buyer", role="approver"),
+        _atom(AtomType.stakeholder, "Step 5: Appoint a contact person for each party", role="contact person"),
         _atom(AtomType.stakeholder, "Carl Painter | Sr. Account Manager", kind="person", name="Carl Painter", role="Sr. Account Manager", email="carlpai@cdw.com"),
         _atom(AtomType.stakeholder, "Jacob Long Project Manager Phone and ITAD", kind="person", name="Jacob Long", role="Project Manager Phone and ITAD"),
     ]
     kept, dropped = drop_contextless_stakeholders(atoms)
-    assert [a.value.get("name") for a in dropped] == [None, "The Buyer"]
+    assert [a.value.get("name") for a in dropped] == [None, "The Buyer", None]
     assert [a.value.get("name") for a in kept] == ["Carl Painter", "Jacob Long"]
 
 
