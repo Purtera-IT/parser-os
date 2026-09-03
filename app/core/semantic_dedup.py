@@ -56,6 +56,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.site_evidence_conflict import normalize_address
 from app.core.address_parse import normalized_address_key
 
 
@@ -171,12 +172,21 @@ def _is_structural_roster_atom(atom: Any) -> bool:
     ground truth even when the sheet ships no ID column, while an id-less atom
     from prose really is a ghost.
     """
+    # A per-site SOW's labelled property block is structural for the same
+    # reason a roster row is: the document declares the site in a table, in
+    # named fields. It is not a name recovered from prose or promoted by a
+    # classifier, so the id-less/ghost rule must not swallow it.
+    #
+    # Without this, deal 010215's ten per-site SOWs produced ten correct
+    # physical_site atoms and dedup dropped eight of them — the parser was
+    # right and the site count still read 2.
+    STRUCTURAL_METHODS = ("site_roster", "site_property_block")
     for ref in (getattr(atom, "source_refs", None) or []):
         method = str(getattr(ref, "extraction_method", "") or "")
-        if "site_roster" in method:
+        if any(m in method for m in STRUCTURAL_METHODS):
             return True
         loc = getattr(ref, "locator", None)
-        if isinstance(loc, dict) and "site_roster" in str(loc.get("extraction", "")):
+        if isinstance(loc, dict) and any(m in str(loc.get("extraction", "")) for m in STRUCTURAL_METHODS):
             return True
     return False
 
@@ -677,11 +687,70 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
         if ra != rb:
             parent[rb] = ra
 
+    # A town is not a site. ``city|STATE|zip`` (and ``zip:``) buckets exist so a
+    # city-only variant can attach to the full-address atom for the same place --
+    # but they are shared by EVERY facility in that town, so on their own they
+    # union ten distinct schools in Marion SC 29571 into one. Ten per-site SOWs
+    # collapsed to two that way, and the loss was silent.
+    #
+    # The veto is structural, not a vocabulary list: when two groups each carry a
+    # KNOWN street and no street is common to both, they are different places and
+    # no shared town bucket may merge them. A group with no street of its own is
+    # unaffected, so the city-only-attaches-to-street case this function was
+    # written for still works.
+    street_keys: dict[str, set[str]] = {}
+    for canon, group in grouped.items():
+        streets: set[str] = set()
+        for atom in group:
+            val = getattr(atom, "value", None) or {}
+            if not isinstance(val, dict):
+                continue
+            raw = str(val.get("street_address") or val.get("address") or "").strip()
+            if not raw:
+                continue
+            norm = normalize_address(raw)
+            if norm:
+                streets.add(norm)
+        if streets:
+            street_keys[canon] = streets
+
+    # Token SETS, with subset treated as agreement, so "Johnakin Middle" and
+    # "Johnakin Middle School" still merge while two different schools do not.
+    # No name vocabulary is involved.
+    name_tokens: dict[str, frozenset[str]] = {}
+    for canon, group in grouped.items():
+        toks: set[str] = set()
+        for atom in group:
+            val = getattr(atom, "value", None) or {}
+            if not isinstance(val, dict):
+                continue
+            nm = str(val.get("name") or val.get("facility_name") or "").strip()
+            if nm:
+                toks |= {t for t in re.split(r"[^a-z0-9]+", nm.lower()) if t}
+        if toks:
+            name_tokens[canon] = frozenset(toks)
+
     keyed = [c for c in canons if c in canon_buckets]
     for i, c1 in enumerate(keyed):
         for c2 in keyed[i + 1 :]:
-            if canon_buckets[c1] & canon_buckets[c2]:
-                _union(c1, c2)
+            if not (canon_buckets[c1] & canon_buckets[c2]):
+                continue
+            s1, s2 = street_keys.get(c1), street_keys.get(c2)
+            if s1 and s2 and not (s1 & s2):
+                # Both know their street, and the streets differ.
+                continue
+            # A name is identity evidence exactly as a street is. Two of these
+            # ten SOWs carry the address of the school in the PRECEDING SOW --
+            # a customer copy-paste -- so Academy of Early Learning and
+            # Easterling Primary share a street. Merging on the shared street
+            # deletes a real school and reports full confidence. Distinct names
+            # veto the merge; the duplicate address is then surfaced by
+            # find_site_address_conflicts for a human, which is the honest
+            # output when two customer documents disagree.
+            n1, n2 = name_tokens.get(c1), name_tokens.get(c2)
+            if n1 and n2 and not (n1 <= n2 or n2 <= n1):
+                continue
+            _union(c1, c2)
 
     clusters: dict[str, list[str]] = {}
     for c in canons:

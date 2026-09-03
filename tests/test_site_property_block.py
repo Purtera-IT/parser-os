@@ -46,7 +46,10 @@ def test_it_reads_the_real_johnakin_block():
     assert site["city"] == "Marion"
     assert site["state"] == "SC"
     assert site["zip"] == "29571"
-    assert site["site_id"] == "94575001"
+    # The shared account code is cost_center, NOT site_id: all ten SOWs carry
+    # 94575001 (the district's), and calling it site_id made dedup collapse ten
+    # schools into one.
+    assert site["cost_center"] == "94575001"
     assert "Johnakin" in site["name"]
 
 
@@ -155,15 +158,17 @@ def test_ten_sites_get_ten_distinct_keys():
         import pytest
         pytest.skip("fixture corpus not present on this machine")
 
-    keys, ids = set(), set()
+    keys, sids, centres = set(), set(), set()
     for f in corpus:
         atoms = DocxParser().parse(Path(f))
         v = ([a for a in atoms if str(getattr(a, "atom_type", "")).endswith("physical_site")][0].value or {})
         keys.add(v.get("id"))
-        ids.add(v.get("site_id"))
+        sids.add(v.get("site_id"))
+        centres.add(v.get("cost_center"))
 
     assert len(keys) == 10, "each school must key distinctly"
-    assert len(ids) == 1, "the cost centre really is shared — that is why it cannot be the key"
+    assert len(sids) == 10, "site_id must identify the SITE, since dedup reads it first"
+    assert len(centres) == 1, "the cost centre really is shared — that is why it cannot be the key"
 
 
 def test_two_schools_at_one_address_stay_two_sites():
@@ -175,9 +180,9 @@ def test_two_schools_at_one_address_stay_two_sites():
 
 def test_the_cost_centre_is_only_a_fallback():
     from app.parsers.site_property_block import site_key
-    assert site_key({"site_id": "94575001"}) == "loc_94575001"
+    assert site_key({"cost_center": "94575001"}) == "loc_94575001"
     # A name always wins over the shared cost centre.
-    assert site_key({"name": "Palmetto MS", "site_id": "94575001"}) == "loc_palmetto_ms"
+    assert site_key({"name": "Palmetto MS", "cost_center": "94575001"}) == "loc_palmetto_ms"
 
 
 # ── universality: it must work for a vendor we have never seen ────────────
@@ -218,8 +223,8 @@ def test_a_shared_account_code_no_longer_collapses_sites():
     every site merged into one. The address is the identity when no name exists.
     """
     from app.parsers.site_property_block import site_key
-    a = site_key({"site_id": "ACCT-100", "address": "601 Gurley St"})
-    b = site_key({"site_id": "ACCT-100", "address": "747 Millers Rd"})
+    a = site_key({"cost_center": "ACCT-100", "address": "601 Gurley St"})
+    b = site_key({"cost_center": "ACCT-100", "address": "747 Millers Rd"})
     assert a != b, "two addresses under one account code are two sites"
 
 
@@ -227,4 +232,4 @@ def test_the_account_code_is_the_last_resort_only():
     from app.parsers.site_property_block import site_key
     # Nothing identifies the place itself — collapsing is then correct, because
     # the block has not told us there is more than one.
-    assert site_key({"site_id": "ACCT-100"}) == "loc_acct_100"
+    assert site_key({"cost_center": "ACCT-100"}) == "loc_acct_100"

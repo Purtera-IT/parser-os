@@ -508,10 +508,15 @@ class DocxParser(BaseParser):
                             # cost centre — all ten 010215 SOWs share 94575001,
                             # which is the district's, and keying on it collapses
                             # ten schools into one.
+                            # BOTH id and site_id carry the per-site key.
+                            # semantic_dedup reads `site_id` before `id`, so
+                            # leaving a shared account code in site_id collapses
+                            # every site in the deal into one.
                             value={
                                 "kind": "physical_site",
                                 "source": "property_block",
                                 "id": site_key(_site),
+                                "site_id": site_key(_site),
                                 **_site,
                             },
                             # The document states its own site in a labelled

@@ -36,8 +36,12 @@ _LABELS: dict[str, tuple[str, ...]] = {
     "city": ("city", "town"),
     "state": ("state", "province", "region"),
     "zip": ("zip code", "zip", "postal code", "postcode"),
-    "site_id": ("cost center/loc #", "cost center", "loc #", "site id", "store #",
-                "location #", "site #"),
+    # NOT "site_id". This code is frequently the ACCOUNT's, not the site's: all
+    # ten 010215 SOWs carry 94575001, the district's. Naming it site_id made
+    # semantic_dedup — which reads `site_id` before `id` — collapse ten schools
+    # into one. A field that claims to identify a site must actually do so.
+    "cost_center": ("cost center/loc #", "cost center", "loc #", "site id",
+                    "store #", "location #", "site #"),
     # Not identity, but stated per-site and commercially material. A raw-vs-
     # captured check against the ten 010215 SOWs showed the site atom was
     # carrying 6 of the 9 labelled fields; these are the other three. Tax-exempt
@@ -216,26 +220,33 @@ def site_key(site: dict[str, str]) -> str:
     Falls back to the cost centre, then the address, so a block that names no
     location still keys on something the document asserted.
     """
+    slug = lambda t: re.sub(r"[^a-z0-9]+", "_", str(t or "").lower()).strip("_")
     name = _norm(site.get("name", ""))
-    if name:
-        return "loc_" + re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:80]
-
-    # Then the ADDRESS, before any account number.
-    #
-    # The old order tried site_id next, which collapses a vendor whose documents
-    # all carry one shared account code — the same failure as 010215's district
-    # cost centre, just arrived at from the other side. An address that has been
-    # shape-typed AND found beside a postal code or state is a verified place,
-    # not the prose-scraped guess the ghost-site guard was written against.
     addr = _norm(site.get("address", ""))
-    if addr:
-        return "loc_" + re.sub(r"[^a-z0-9]+", "_", addr.lower()).strip("_")[:80]
 
-    # An account code only when nothing identifies the place itself. Shared
-    # codes still collapse here, which is correct: a block with no name and no
-    # address has not told us there is more than one site.
-    if site.get("site_id"):
-        return "loc_" + re.sub(r"[^a-z0-9]+", "_", str(site["site_id"]).lower()).strip("_")
+    # Address FIRST, then a name tail.
+    #
+    # Two reasons, both learned the hard way. semantic_dedup only treats an id as
+    # canonical when it contains a digit (`_looks_complete_site_id`, written for
+    # enterprise codes like ATL-HQ-01); a purely name-derived key has none, so
+    # all ten 010215 sites fell out of the canonical index and collapsed back to
+    # two. An address carries its house number, which satisfies that AND is the
+    # most site-identifying thing a block contains.
+    #
+    # The name tail still matters: Marion HS and Marion Intermediate share
+    # 1205 S Main St and are two schools. Only the last words are used, because
+    # the leading words are the account's ("Marion County School District…") and
+    # identical across every site in the deal.
+    tail = "_".join(slug(name).split("_")[-3:]) if name else ""
+    if addr and tail:
+        return f"loc_{slug(addr)}_{tail}"[:90]
+    if addr:
+        return f"loc_{slug(addr)}"[:90]
+    if name:
+        return f"loc_{slug(name)}"[:90]
+
+    if site.get("cost_center"):
+        return "loc_" + re.sub(r"[^a-z0-9]+", "_", str(site["cost_center"]).lower()).strip("_")
     return ""
 
 
