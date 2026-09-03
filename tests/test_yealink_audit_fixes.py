@@ -180,6 +180,62 @@ def test_ocr_debris_is_unreadable_and_prose_is_not():
         assert not is_unreadable(t), (t, readability(t))
 
 
+def test_capitalised_debris_is_unreadable_but_names_are_allowed():
+    from app.core.text_quality import is_unreadable, readability
+    debris = [
+        "Dut Su nee, es ae a Stoeger see ene Scoala ny Syne tae",
+        "IC Tes Pia a OE SPR Seep a france",
+        "Sips tensts te Deg ao [eo area ae",
+        "“ShuulsSthamn uated nate tmnt Sra",
+        "eprint tia Shcttrtininsr mame",
+        "Pepa Cota he? COW TesterLE",
+    ]
+    # garbled but mostly words: an OCR'd bullet list stays readable
+    assert not is_unreadable("(© Change conto and management (© Statusmeetings and reporting ‘SCOPE")
+    keep = [
+        "Nisha Ngyuen Project Manager Networking",
+        "Carl Painter | Sr. Account Manager | carlpai@cdw.com",
+        "Re: 010300 CDW/ Dentistry For Children Partner Swap",
+        "Step 4: Box up old phones in the new equipment boxes and leave them onsite with the location MOD.",
+        "+ MPS6-E2-TEAMS + Mss MPs2-E2-TEAMS For each location, Customer is responsible for requesting either two (2) hours of onsite support",
+    ]
+    for t in debris:
+        assert is_unreadable(t), (t, readability(t))
+    for t in keep:
+        assert not is_unreadable(t), (t, readability(t))
+
+
+def test_header_lines_are_not_banners_and_footers_count_across_documents():
+    from app.parsers.email_parser import _is_title_case_banner
+    assert not _is_title_case_banner("From: Carl Painter Jr")
+    assert not _is_title_case_banner("Subject: Fw: CDW/ Dentistry For Children Partner Swap")
+    from app.core.atom_type_sanity import strip_document_chrome
+    def _p(aid, text, page):
+        a = _atom(AtomType.deal_metadata, text)
+        a.artifact_id = aid
+        a.source_refs = [SourceRef(id=f"s{aid}{page}", artifact_id=aid, artifact_type="pdf", filename=f"{aid}.pdf", locator={"page": page}, extraction_method="t", parser_version="t")]
+        return a
+    atoms = [_p("a", "Page 2 CDW Technologies LLC", 2), _p("a", "Page 3 CDW Technologies LLC", 3), _p("b", "Page 6 CDW Technologies LLC", 6), _p("b", "Install the switch in closet 2.", 1)]
+    strip_document_chrome(atoms)
+    assert [a.raw_text for a in atoms] == ["Install the switch in closet 2."]
+
+
+def test_vendor_rate_midrow_and_total_sentence():
+    from app.core.atom_type_sanity import enrich_vendor_line_items
+    a = _atom(AtomType.vendor_line_item, "48 Hour Cancellation or Turnaway Fee – Per $500.00 Item – Per Item | 1 $500.00")
+    b = _atom(AtomType.vendor_line_item, "Services Fees will be calculated on a TIME AND MATERIALS basis. The invoiced amount of Services Fees will equal the rate applicable for a unit of a service. Services Fees of $93,583.25 is merely an estimate and does not represent a fixed fee.")
+    assert enrich_vendor_line_items([a, b]) == 2
+    assert (a.value["rate"], a.value["units"], a.value["subtotal"]) == (500.0, 1, 500.0)
+    assert b.atom_type == AtomType.commercial_total and b.value["amount"] == 93583.25
+
+
+def test_a_numbered_sentence_starting_with_a_negator_is_not_a_heading():
+    from app.parsers.orbitbrief_pdf import _split_runon_numbered_clause
+    assert _split_runon_numbered_clause("1. No Provider Pre-Existing Materials are included in any Work Product unless identified as such in the SOW.") is None
+    got = _split_runon_numbered_clause("8. Contract Award and Interpretations ACE may accept or reject any proposal at its discretion.")
+    assert got and got[0] == "Contract Award and Interpretations"
+
+
 def test_document_chrome_is_stripped_by_shape():
     from app.core.atom_type_sanity import strip_document_chrome
     def _p(atom_type, text, page):

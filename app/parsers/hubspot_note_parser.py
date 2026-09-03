@@ -397,7 +397,12 @@ class HubspotNoteParser(BaseParser):
                 )
             )
 
-        if body:
+        if body and title and " ".join(body.lower().split()) == " ".join(title.lower().split()):
+            # The note's body IS its title: a caption on an upload ("SOW",
+            # "psow from current partner"), not scope. Live 010300: three such
+            # notes each became a scope_item.
+            atom_types = [AtomType.deal_metadata]
+        elif body:
             atom_types: list[AtomType] = [AtomType.scope_item]
             if _INSTRUCTION_RE.search(body):
                 atom_types.append(AtomType.customer_instruction)

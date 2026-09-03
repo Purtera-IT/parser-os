@@ -27,11 +27,22 @@ _CONSONANT_RUN_RE = re.compile(r"[bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ]{5,}"
 _WORDLIST = Path(__file__).with_name("data") / "english_words.txt.gz"
 
 
+#: The two-letter words worth believing. The full dictionary also lists "te",
+#: "ae", "oe", "ao" (musical notes, Scots, digraphs), which is exactly what OCR
+#: debris is made of, so two-letter tokens are only words from this closed set.
+_SHORT_WORDS = frozenset({
+    "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if", "in", "is",
+    "it", "me", "my", "no", "of", "ok", "on", "or", "so", "to", "up", "us", "we", "pm",
+    "id", "hr", "sr", "jr", "mr", "ms", "dr", "st", "rd", "ne", "nw", "se", "sw", "ip",
+    "pc", "tv", "ac", "dc", "re", "vs", "ex", "et", "al", "ca", "co", "la", "de", "ft",
+})
+
+
 @lru_cache(maxsize=1)
 def _words() -> frozenset[str]:
     try:
         with gzip.open(_WORDLIST, "rt", encoding="utf-8") as fh:
-            return frozenset(w.strip() for w in fh if w.strip())
+            return frozenset(w.strip() for w in fh if len(w.strip()) >= 3) | _SHORT_WORDS
     except Exception:
         return frozenset()
 
@@ -45,9 +56,11 @@ def _shape_ok(tok: str) -> bool:
 
 def _is_word(tok: str) -> bool:
     core = tok.strip("'’-").lower()
+    words = _words()
+    if len(core) < 3:
+        return core in words if words else True
     if len(core) < 3:
         return True
-    words = _words()
     if words:
         if core in words:
             return True
@@ -67,15 +80,36 @@ def _is_word(tok: str) -> bool:
     return _shape_ok(core)
 
 
+_NAME_ALLOWANCE = 2  # capitalised non-words a line may carry as names before they count
+
+
+def _plain(text: str) -> str:
+    """Text with URLs, emails and product codes removed: they are not language."""
+    return re.sub(r"\S*://\S*|\S+@\S+|www\.\S+|\S*\d\S*", " ", text or "")
+
+
 def _judged(text: str) -> list[str]:
-    """Lowercase alphabetic tokens of length >= 3: the only ones that can be debris."""
-    out: list[str] = []
-    for t in _TOKEN_RE.findall(text or ""):
+    """Tokens that can be debris: every lowercase alphabetic token of length
+    >= 3, plus capitalised tokens beyond an allowance of two that are not
+    words either (a line has a name or two; "Dut Su nee, es ae a Stoeger see
+    ene Scoala ny Syne tae" has six). All-caps abbreviations and tokens with
+    digits are never judged."""
+    lower: list[str] = []
+    caps_unknown: list[str] = []
+    for t in _TOKEN_RE.findall(_plain(text)):
         core = t.strip("'’-")
-        if len(core) < 3 or not core[0].islower():
-            continue  # capitalised = name/product/heading; never held against the line
-        out.append(t)
-    return out
+        if len(core) < 3:
+            continue
+        if core[0].islower():
+            lower.append(t)
+        elif core.isupper():
+            continue  # SOW, PSOW, CDW: abbreviation
+        elif not _is_word(t):
+            caps_unknown.append(t)
+    # One or two capitalised non-words are names; three or more are debris and
+    # every one of them is judged.
+    extra = caps_unknown if len(caps_unknown) > _NAME_ALLOWANCE else []
+    return lower + extra
 
 
 def readability(text: str) -> float:
@@ -99,6 +133,35 @@ def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) ->
     # is debris on its own: no language has an 18-letter word that is not one.
     if any(len(t.strip("'’-")) >= 18 and not _is_word(t) for t in toks):
         return True
+    # Whole-line view: when fewer than a third of ALL alphabetic tokens are
+    # words -- capitalised or not, abbreviations included -- the line is
+    # debris whatever its case pattern ("IC Tes Pia a OE SPR Seep a france").
+    all_toks = [t for t in _TOKEN_RE.findall(_plain(text)) if len(t.strip("'’-")) >= 2]
+    if len(all_toks) >= 4:
+        words = _words()
+
+        def _known_strict(t: str) -> bool:
+            core = t.strip("'’-")
+            if core.isupper() and 2 <= len(core) <= 6:
+                return True  # SOW, PSOW, CDW, TEAMS: abbreviations are language
+            core = core.lower()
+            if words:
+                return core in words or (len(core) >= 3 and _is_word(t))
+            return _shape_ok(core)
+
+        # Evidence FOR the line: tokens of four or more letters that are words
+        # (short dictionary oddities like "oe" or "pia" prove nothing).
+        # Evidence AGAINST: tokens of three or more letters that are not.
+        known = sum(1 for t in all_toks if len(t.strip("'’-")) >= 4 and _known_strict(t))
+        unknown = sum(1 for t in all_toks if not _known_strict(t))
+        if unknown >= 2 and known / len(all_toks) < 0.35:
+            return True
+    # A line whose capitalised tokens are mostly not words either ("IC Tes Pia
+    # a OE SPR Seep a france") has fewer lowercase tokens to judge, but the
+    # excess capitalised non-words are the judgement.
+    caps_excess = sum(1 for t in toks if t.strip("'’-")[:1].isupper())
+    if caps_excess and len(toks) >= 2:
+        return readability(text) < threshold
     if len(toks) < min_tokens:
         return False
     return readability(text) < threshold

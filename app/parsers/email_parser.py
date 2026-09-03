@@ -1495,6 +1495,10 @@ def _is_title_case_banner(text: str) -> bool:
     words = t.split()
     if len(words) < 4 or len(words) > 12 or re.search(r"\d", t) or t.endswith((".", "?", "!", ":")):
         return False
+    # A label-value line ("From: Carl Painter Jr", "Subject: Fw: …") is a
+    # header, handled by the header latch, never a banner.
+    if re.match(r"^[A-Za-z][A-Za-z \-]{0,20}:\s", t):
+        return False
     caps = sum(1 for w in words if w[:1].isupper())
     return caps / len(words) >= 0.8
 

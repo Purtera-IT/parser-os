@@ -2786,6 +2786,11 @@ def _atoms_for_block(
                             "phone": site_row.phone,
                             "email": site_row.email,
                             "city_state": site_row.city_state,
+                            # Resolved on the row, never carried on the atom until
+                            # live 010300 (HQ with no city/state/ZIP).
+                            "city": site_row.city,
+                            "state": site_row.state,
+                            "zip": site_row.zip,
                             "sqft": site_row.sqft,
                             "occupancy": site_row.occupancy,
                             "notes": site_row.notes,
@@ -4019,6 +4024,14 @@ def _looks_like_scope_subheading(stripped: str, lines: list[str], idx: int) -> b
         return True
 
 
+#: Closed grammatical class: a clause whose Title-Case run starts with one of
+#: these is a sentence with a capitalised opener, not a heading followed by a body.
+_SENTENCE_OPENERS = frozenset({
+    "no", "not", "all", "any", "each", "every", "both", "neither", "either",
+    "this", "these", "those", "such", "the", "a", "an", "if", "unless", "when",
+})
+
+
 def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
     """A numbered clause whose Title-Case heading runs straight into its body on
     ONE line — e.g. ``"8.  Contract Award and Interpretations ACE may accept …"``
@@ -4067,6 +4080,13 @@ def _split_runon_numbered_clause(line: str) -> tuple[str, str] | None:
         if w[:1].isupper() and w.lower() not in _CLAUSE_TITLE_FUNC:
             cut = i - 1
     title_toks = toks[:cut]
+    # A run that BEGINS with a determiner, negator or quantifier is a sentence,
+    # never a title: "1. No Provider Pre-Existing Materials are included…"
+    # became heading "No Provider Pre-Existing" + body "Materials are
+    # included…", which says the opposite of the clause (live 010300). Same
+    # closed grammatical class the mid-run rule above already relies on.
+    if title_toks and _bare(title_toks[0]).lower() in _SENTENCE_OPENERS:
+        return None
     content_caps = [t for t in title_toks
                     if _bare(t)[:1].isupper() and _bare(t).lower() not in _CLAUSE_TITLE_FUNC]
     heading = " ".join(title_toks).strip().rstrip(".,;:")

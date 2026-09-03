@@ -1328,13 +1328,20 @@ def strip_document_chrome(atoms: list[Any]) -> int:
     changed = 0
     # 1) footers: same text (page number removed) on >= 3 pages of one artifact
     footer_counts: dict[tuple[str, str], set[Any]] = {}
+    footer_pages_any_doc: dict[str, set[tuple[str, Any]]] = {}
     for a in atoms:
         m = _PAGE_FOOTER_RE.match(_atom_text(a))
         if not m:
             continue
-        key = (str(getattr(a, "artifact_id", "")), " ".join(m.group("rest").lower().split()))
-        footer_counts.setdefault(key, set()).add(_atom_page(a))
+        rest = " ".join(m.group("rest").lower().split())
+        aid = str(getattr(a, "artifact_id", ""))
+        footer_counts.setdefault((aid, rest), set()).add(_atom_page(a))
+        footer_pages_any_doc.setdefault(rest, set()).add((aid, _atom_page(a)))
+    # The same footer on three pages of one document, or on three pages across
+    # the deal's documents (one scanned PSOW kept a single legible footer; its
+    # sibling PSOW carries the same one on every page).
     footers = {k for k, pages in footer_counts.items() if len(pages) >= 3}
+    footers |= {k for k in footer_counts if k[1] and len(footer_pages_any_doc.get(k[1], ())) >= 3}
     survivors: list[Any] = []
     for a in atoms:
         text = _atom_text(a)
@@ -1415,6 +1422,30 @@ def enrich_vendor_line_items(atoms: list[Any]) -> int:
             if v["units"]:
                 v["rate"] = round(v["subtotal"] / v["units"], 2)
             v["line_shape"] = "qty_x_item_total"
+            n += 1
+            continue
+        # Rate mid-row, then "| units $subtotal" at the end: "48 Hour
+        # Cancellation or Turnaway Fee – Per $500.00 Item – Per Item | 1 $500.00"
+        monies = re.findall(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)", text)
+        tail = re.search(r"\|\s*(?P<units>\d{1,6})\s*\$\s?(?P<subtotal>\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*$", text)
+        if tail and monies:
+            v["rate"] = float(monies[0].replace(",", ""))
+            v["units"] = int(tail.group("units"))
+            v["subtotal"] = float(tail.group("subtotal").replace(",", ""))
+            v["item"] = v.get("item") or re.sub(r"\s+", " ", re.sub(r"\$\s?[\d,]+(?:\.\d{2})?", "", text.split("|")[0])).strip(" |:-–")
+            v["line_shape"] = "rate_midrow_units_subtotal"
+            n += 1
+            continue
+        # A sentence quoting one total and no units is the commercial total,
+        # not a line item: "Services Fees of $93,583.25 is merely an estimate…"
+        if "|" not in text and 1 <= len(monies) <= 2 and not re.search(r"\b\d{1,6}\s*[×x]\b", text) and len(text.split()) > 12:
+            try:
+                from app.core.schemas import AtomType as _AT
+                a.atom_type = _AT.commercial_total
+            except Exception:
+                a.atom_type = "commercial_total"
+            v["amount"] = v.get("amount") or float(monies[-1].replace(",", ""))
+            v["line_shape"] = "total_sentence"
             n += 1
     return n
 

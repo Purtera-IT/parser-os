@@ -237,6 +237,13 @@ def _fitz_site_roster_fallback(
                                 "phone": site_row.phone,
                                 "email": site_row.email,
                                 "city_state": site_row.city_state,
+                                # The row already resolved these (enrich_location_fields);
+                                # the atom just never carried them. Live 010300: HQ came
+                                # out with no city, state or ZIP and the two PSOWs' ZIP
+                                # conflict (30341 vs 30641) could not be raised.
+                                "city": site_row.city,
+                                "state": site_row.state,
+                                "zip": site_row.zip,
                                 # Organisational territory, NOT geography.
                                 "region": getattr(site_row, "region", None),
                                 "sqft": site_row.sqft,
