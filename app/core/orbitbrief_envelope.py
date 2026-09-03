@@ -966,7 +966,18 @@ def _resolve_delivered_by(documents: list[dict[str, Any]]) -> None:
 
     for doc in documents:
         delivered = ((doc.get("lifecycle") or {}).get("delivered")) or []
-        if not delivered or doc.get("email_thread"):
+        # Skip documents that speak for themselves. The test is whether this IS
+        # a message -- a message carries its own sender, a file never does --
+        # NOT whether it happens to carry a thread block. Those differ: the
+        # Academy of Early Learning SOW picked up a stray email_thread from a
+        # thread it was never delivered on, and being skipped here left it with
+        # no delivered_by, so the originator rescue could not fire and it stayed
+        # filed as our own material while its nine sibling SOWs were readmitted.
+        # A mis-threaded file must still get its sender resolved.
+        speaks_for_itself = bool(
+            doc.get("sender_email") or (doc.get("email_thread") or {}).get("sender")
+        )
+        if not delivered or speaks_for_itself:
             continue
         first = next((d for d in delivered if isinstance(d, dict) and d.get("ts")), None)
         if first is None:

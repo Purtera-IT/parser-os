@@ -92,3 +92,42 @@ def test_delivered_by_joins_on_the_iso_stamp_not_the_rfc_header():
     assert sow["delivered_by"] == "Donnelly, Bernie <Bernie.Donnelly@sodexo.com>"
     assert sow["delivered_by_source"] == "delivering message"
     assert sow["forwarded_by"] == "t@purtera-it.com"
+
+
+def test_a_stray_thread_tag_does_not_block_a_file_s_sender():
+    """A file that wrongly picked up a thread block must still be resolved.
+
+    On 010215 exactly one of the ten SOWs carried an email_thread it was never
+    delivered on. Skipping it here left it with no delivered_by, the originator
+    rescue could not fire, and it alone stayed filed as our own material -- 40
+    atoms hidden while its nine siblings were readmitted.
+    """
+    documents = [
+        {
+            "filename": "fwd.eml",
+            "sender_email": "t@purtera-it.com",
+            "authored_at": "2026-08-12T18:00:51.058Z",
+            "email_thread": {"sender": "t@purtera-it.com"},
+            "originated_by": "Donnelly, Bernie <Bernie.Donnelly@sodexo.com>",
+        },
+        {
+            "filename": "SOW Academy Of Early Learning.docx",
+            # Wrongly tagged onto a thread it never travelled on.
+            "email_thread": {"thread_id": "thr_2f96", "thread_index": 2},
+            "lifecycle": {"delivered": [{"kind": "email", "ts": "2026-08-12T18:00:51.058Z",
+                                         "text": "Fw: … t@purtera-it.com"}]},
+        },
+    ]
+    _resolve_delivered_by(documents)
+    assert documents[1]["delivered_by"] == "Donnelly, Bernie <Bernie.Donnelly@sodexo.com>"
+
+
+def test_a_real_message_is_still_left_alone():
+    documents = [{
+        "filename": "reply.eml",
+        "sender_email": "quinton.james@cdw.com",
+        "email_thread": {"sender": "quinton.james@cdw.com"},
+        "lifecycle": {"delivered": [{"kind": "email", "ts": "2026-08-12T10:20:00Z", "text": "x@y.com"}]},
+    }]
+    _resolve_delivered_by(documents)
+    assert "delivered_by" not in documents[0]
