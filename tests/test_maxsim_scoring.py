@@ -21,6 +21,8 @@ max-sim is ~1.0 on an exact match. No network.
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -32,10 +34,18 @@ _D = 256
 
 def _basis_embed(texts: list[str]) -> np.ndarray:
     """Each distinct text -> its own one-hot basis vector (near-orthogonal to
-    every other text). Identical text -> identical vector (cosine 1.0)."""
+    every other text). Identical text -> identical vector (cosine 1.0).
+
+    The index MUST come from a stable hash. Python's built-in ``hash()`` on a
+    str is randomized per process by PYTHONHASHSEED, so an untaught token landed
+    on a taught token's basis vector in ~0.3% of runs -- giving cosine 1.000 and
+    failing test_maxsim_does_not_fire_on_untaught_token at random, on one Python
+    version and not the other. A hermetic test must not depend on the seed.
+    """
     out = np.zeros((len(texts), _D), dtype=np.float32)
     for i, t in enumerate(texts):
-        out[i, abs(hash(t.lower().strip())) % _D] = 1.0
+        digest = hashlib.blake2b(t.lower().strip().encode("utf-8"), digest_size=8).digest()
+        out[i, int.from_bytes(digest, "big") % _D] = 1.0
     return out
 
 
