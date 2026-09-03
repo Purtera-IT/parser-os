@@ -78,8 +78,9 @@ def test_nameless_or_party_phrase_stakeholders_are_dropped():
         _atom(AtomType.stakeholder, "Carl Painter | Sr. Account Manager", kind="person", name="Carl Painter", role="Sr. Account Manager", email="carlpai@cdw.com"),
         _atom(AtomType.stakeholder, "Jacob Long Project Manager Phone and ITAD", kind="person", name="Jacob Long", role="Project Manager Phone and ITAD"),
     ]
+    atoms.append(_atom(AtomType.stakeholder, "both parties | contact person", kind="party", name="both parties", role="contact person"))
     kept, dropped = drop_contextless_stakeholders(atoms)
-    assert [a.value.get("name") for a in dropped] == [None, "The Buyer", None]
+    assert [a.value.get("name") for a in dropped] == [None, "The Buyer", None, "both parties"]
     assert [a.value.get("name") for a in kept] == ["Carl Painter", "Jacob Long"]
 
 
@@ -236,6 +237,18 @@ def test_a_bare_list_marker_line_is_a_pending_bullet():
     for not_marker in ("a. Switch", "Switch", "Camera ", "2. Each location will have different needs", "ok."):
         assert not _BARE_ENUM_RE.match(not_marker), not_marker
     assert _BULLET_LINE_RE.match("b. Access Point (Indoor Only)").group(2) == "Access Point (Indoor Only)"
+
+
+def test_short_list_items_are_atoms():
+    from app.parsers.orbitbrief_pdf import _atoms_for_bullet
+    out = []
+    for i, text in enumerate(["Switch", "Access Point (Indoor Only)", "Camera", "Firewall", "•"]):
+        out += list(_atoms_for_bullet(
+            item={"text": text}, depth=1, path_indices=[i], project_id="p", artifact_id="d1",
+            filename="x.pdf", parser_version="t", base_locator={"page": 2, "block_kind": "bullet_list"},
+            section_path=["SITE VISIT 1", "install any of the following four items while onsite for Visit 1"],
+        ))
+    assert [a.raw_text for a in out] == ["Switch", "Access Point (Indoor Only)", "Camera", "Firewall"]
 
 
 def test_a_numbered_sentence_starting_with_a_negator_is_not_a_heading():

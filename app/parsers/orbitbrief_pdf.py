@@ -2903,7 +2903,16 @@ def _atoms_for_bullet(
     # a real list ("a. main office", "1. Total Cost of Hardware") — a genuine
     # fact, not a stray fragment — so applying that filter here silently drops
     # legitimate short list items (intern reports: coverage areas + pricing lines).
-    if text and len(text) >= 10 and not _looks_like_form_field(text) and not _looks_like_page_footer(text):
+    # The same reasoning applies to LENGTH: "Switch", "Camera", "Firewall" are
+    # three of the four items a signed SOW says we may install per site (live
+    # 010300) and a ten-character floor silently dropped them. A list item
+    # needs letters or digits, not a minimum width.
+    if (
+        text
+        and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3
+        and not _looks_like_form_field(text)
+        and not _looks_like_page_footer(text)
+    ):
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="bullet")
         # Derive meeting-summary connective tissue when caller didn't stamp it.
         ls = list_section

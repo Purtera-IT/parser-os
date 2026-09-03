@@ -406,8 +406,8 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             ):
                 dropped.append(atom)
                 continue
-            if kind == "person" and _first in _FUNCTION_WORDS:
-                dropped.append(atom)
+            if _first in _FUNCTION_WORDS:
+                dropped.append(atom)  # "both parties | contact person": a phrase, not a person
                 continue
         if _has_role_context(text, value, entity_keys):
             kept.append(atom)
