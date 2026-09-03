@@ -1391,6 +1391,107 @@ def strip_document_chrome(atoms: list[Any]) -> int:
     return changed
 
 
+_SIG_CELL_RE = re.compile(r"^\s*(?P<party>[^:|]{2,60}?)\s*:\s*(?:(?P<label>By|Name|Title|Date|Signature)\s*:\s*)?(?P<val>.*?)\s*$", re.I)
+_SIG_DATE_RE = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*[AP]?M?\s*[A-Z]{0,4})?", re.I)
+_SIG_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
+
+
+def merge_signature_rows(atoms: list[Any]) -> int:
+    """One signatory record per PARTY instead of one per table row.
+
+    A signature block is a two-column table; the row parser emits every row
+    ("By: …", "Title: …", "Date: …") as its own signatory atom, so a two-party
+    SOW shows six or seven signatory lines and no signer record. Cells are
+    "<Party>: <Label>: <value>" or "<Party>: <value>"; the label, or the
+    value's shape (a name, a date, otherwise a title), says what each is.
+    Rows of one document and page merge into one atom per party; a row that
+    names no party is attached to the party missing that field. Returns the
+    number of rows folded away.
+    """
+    by_doc: dict[tuple[str, Any], list[Any]] = {}
+    for a in atoms:
+        if _atom_type_str(a) == "signatory":
+            by_doc.setdefault((str(getattr(a, "artifact_id", "")), _atom_page(a)), []).append(a)
+    folded = 0
+    for key, rows in by_doc.items():
+        if len(rows) < 2:
+            continue
+        parties: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        loose: list[str] = []
+        for a in rows:
+            for cell in re.split(r"\s*\|\s*", _atom_text(a)):
+                cell = cell.strip()
+                if not cell:
+                    continue
+                m = _SIG_CELL_RE.match(cell)
+                if not m:
+                    loose.append(cell)
+                    continue
+                party = m.group("party").strip()
+                label = (m.group("label") or "").lower()
+                val = m.group("val").strip()
+                rec = parties.setdefault(party, {"party": party})
+                if party not in order:
+                    order.append(party)
+                if not val:
+                    continue
+                if label in ("by", "name", "signature"):
+                    dm = _SIG_DATE_RE.search(val)
+                    if dm:
+                        rec.setdefault("signed_at", dm.group(0).strip("() "))
+                        val = val[: dm.start()].strip(" (")
+                    if val and _SIG_NAME_RE.match(val):
+                        rec.setdefault("name", val)
+                elif label == "title":
+                    rec.setdefault("title", val)
+                elif label == "date":
+                    rec.setdefault("signed_at", val)
+                else:
+                    dm = _SIG_DATE_RE.fullmatch(val) or _SIG_DATE_RE.search(val)
+                    if dm and len(val) <= 40:
+                        rec.setdefault("signed_at", dm.group(0))
+                    elif _SIG_NAME_RE.match(val):
+                        rec.setdefault("name", val)
+                    elif len(val.split()) <= 8:
+                        rec.setdefault("title", val)
+        # A bare cell ("Shelly Lewis") goes to the party that lacks that field.
+        for cell in loose:
+            if _SIG_NAME_RE.match(cell):
+                for p in order:
+                    if not parties[p].get("name"):
+                        parties[p]["name"] = cell
+                        break
+        if not parties or not any(r.get("name") or r.get("title") for r in parties.values()):
+            continue
+        keep = rows[0]
+        merged = []
+        for p in order:
+            rec = parties[p]
+            if not (rec.get("name") or rec.get("title") or rec.get("signed_at")):
+                continue
+            merged.append(rec)
+        if not merged:
+            continue
+        # Rewrite the first row as the merged record set; drop the rest.
+        text = " | ".join(
+            f"{r['party']}: " + ", ".join(v for v in (r.get("name"), r.get("title"), r.get("signed_at")) if v)
+            for r in merged
+        )
+        _set_text(keep, text)
+        v = getattr(keep, "value", None)
+        if isinstance(v, dict):
+            v["kind"] = "signature_block"
+            v["signers"] = merged
+        for a in rows[1:]:
+            try:
+                atoms.remove(a)
+                folded += 1
+            except ValueError:
+                pass
+    return folded
+
+
 def enrich_vendor_line_items(atoms: list[Any]) -> int:
     """Fill rate / units / subtotal on vendor_line_item atoms from the row's
     own shape: "… $115.00 | 1 $115.00", "… $550.00 169 $92,950.00",
@@ -1470,6 +1571,7 @@ def apply_type_sanity(
     """
     demoted = demote_nondeliverable_quantities(atoms)
     demoted += strip_document_chrome(atoms)
+    demoted += merge_signature_rows(atoms)
     demoted += enrich_vendor_line_items(atoms)
     demoted += demote_exclusions_without_negation(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)

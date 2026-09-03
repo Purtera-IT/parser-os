@@ -239,6 +239,47 @@ def test_a_bare_list_marker_line_is_a_pending_bullet():
     assert _BULLET_LINE_RE.match("b. Access Point (Indoor Only)").group(2) == "Access Point (Indoor Only)"
 
 
+def test_signature_rows_merge_into_one_record_per_party():
+    from app.core.atom_type_sanity import merge_signature_rows
+    def _p(text):
+        a = _atom(AtomType.signatory, text)
+        a.source_refs = [SourceRef(id=f"s{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 6}, extraction_method="t", parser_version="t")]
+        return a
+    atoms = [
+        _p("CDW Technologies LLC: | NewBold LLC: Shelly Lewis"),
+        _p("CDW Technologies LLC: By: Mike Murphy (Mar 26, 2025 10:24 EDT) | NewBold LLC: By: Shelly Lewis (Mar 25, 2025 11:49 EDT)"),
+        _p("CDW Technologies LLC: Title: Professional Services Manager | NewBold LLC: Title:"),
+        _p("Shelly Lewis"),
+        _p("NewBold LLC: EVP & COO"),
+        _p("CDW Technologies LLC: Mar 26, 2025 | NewBold LLC: Mar 25, 2025"),
+    ]
+    assert merge_signature_rows(atoms) == 5
+    assert len(atoms) == 1
+    signers = {s["party"]: s for s in atoms[0].value["signers"]}
+    assert signers["CDW Technologies LLC"]["name"] == "Mike Murphy"
+    assert signers["CDW Technologies LLC"]["title"] == "Professional Services Manager"
+    assert signers["CDW Technologies LLC"]["signed_at"].startswith("Mar 26, 2025")
+    assert signers["NewBold LLC"]["name"] == "Shelly Lewis"
+    assert signers["NewBold LLC"]["title"] == "EVP & COO"
+
+
+def test_caption_note_gives_an_upload_its_provenance():
+    from app.core.orbitbrief_envelope import _link_caption_notes
+    timeline = {"transitions": [{"label": "Open- Awaiting Scope", "order": 1}, {"label": "Submitted for Quoting", "order": 2}]}
+    docs = [
+        {"artifact_id": "note", "artifact_type": "txt", "filename": "hs-note-psow from current partner.txt", "authored_at": "2026-09-03T17:05:52.424Z", "direction": "internal"},
+        {"artifact_id": "pdf", "artifact_type": "pdf", "filename": "NEWBOLD PSOW.pdf", "authored_at": "2026-09-03T17:06:05.843Z", "direction": None,
+         "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": None}, "lifecycle": {"admissible_for": None}},
+        {"artifact_id": "late", "artifact_type": "pdf", "filename": "other.pdf", "authored_at": "2026-09-03T19:00:00Z", "direction": None, "deal_stage": {"stage_at_arrival": "Submitted for Quoting", "admissible_for": None}},
+    ]
+    env = {"atoms": [{"artifact_id": "note", "atom_type": "deal_metadata", "structured": {"field_name": "hubspot_note_meta", "title": "psow from current partner", "author_email": "patrick@purtera-it.com"}}]}
+    assert _link_caption_notes(docs, env, timeline) == 1
+    pdf = docs[1]
+    assert pdf["delivered_by"] == "patrick@purtera-it.com" and pdf["caption"] == "psow from current partner"
+    assert pdf["direction"] == "internal" and pdf["deal_stage"]["admissible_for"] == "evidence"
+    assert docs[2].get("delivered_by") is None
+
+
 def test_short_list_items_are_atoms():
     from app.parsers.orbitbrief_pdf import _atoms_for_bullet
     out = []

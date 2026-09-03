@@ -650,6 +650,7 @@ def build_orbitbrief_envelope(
     # Must follow _resolve_delivered_by: the originator is what the inference
     # reads, and it does not exist until delivery has been matched.
     _direction_from_originator(documents, stage_timeline)
+    _link_caption_notes(documents, envelope, stage_timeline)
     # Last, so it gates the corrected picture: a customer document that stopped
     # being called ours a moment ago must be readable by the models that had it.
     _annotate_reader_scope(documents, stage_timeline)
@@ -1174,6 +1175,97 @@ def _direction_from_originator(
                 lifecycle["admissible_for"] = adm
             changed += 1
     return changed
+
+
+_CAPTION_WINDOW_SEC = 180
+
+
+def _link_caption_notes(
+    documents: list[dict[str, Any]],
+    envelope: dict[str, Any],
+    timeline: Mapping[str, Any] | None,
+) -> int:
+    """A HubSpot note written within seconds of a file upload captions it.
+
+    A file uploaded to the deal has no sender and no direction, so the
+    lifecycle cannot place it (live 010300: the Teams PSOW sat with
+    ``admissible_for: None``). The person who uploaded it usually leaves a
+    note at the same moment ("psow from current partner", 13 seconds before
+    the file). Timing plus a caption-shaped body (short, no digits) links the
+    two: the note's author delivered the file, the file takes the note's
+    direction, and admissibility is re-decided with that direction. Only files
+    with NO provenance are touched; a file an email delivered keeps that.
+
+    Returns how many files were linked.
+    """
+    from datetime import datetime as _dt
+
+    def _ts(v: Any) -> float | None:
+        s = str(v or "").strip()
+        if not s:
+            return None
+        try:
+            return _dt.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return None
+
+    meta_by_doc: dict[str, dict[str, Any]] = {}
+    for a in envelope.get("atoms") or []:
+        s = a.get("structured") if isinstance(a.get("structured"), dict) else {}
+        if s.get("field_name") == "hubspot_note_meta":
+            meta_by_doc[str(a.get("artifact_id"))] = s
+    notes = []
+    for d in documents or []:
+        aid = str(d.get("artifact_id"))
+        meta = meta_by_doc.get(aid)
+        if not meta:
+            continue
+        title = str(meta.get("title") or "").strip()
+        if not title or len(title.split()) > 8 or re.search(r"\d|\$", title):
+            continue  # a caption is short and says nothing numeric
+        when = _ts(d.get("authored_at"))
+        if when is None:
+            continue
+        notes.append((when, d, meta))
+    if not notes:
+        return 0
+    n = 0
+    for d in documents or []:
+        if d.get("direction") or d.get("delivered_by"):
+            continue
+        if str(d.get("artifact_type") or "") in ("email", "txt", "md"):
+            continue
+        when = _ts(d.get("ingested_at") or d.get("authored_at"))
+        if when is None:
+            continue
+        best = min(notes, key=lambda t: abs(t[0] - when))
+        if abs(best[0] - when) > _CAPTION_WINDOW_SEC:
+            continue
+        _, note_doc, meta = best
+        author = str(meta.get("author_email") or meta.get("author") or "").strip()
+        direction = str(note_doc.get("direction") or "").strip() or None
+        d["delivered_by"] = author or None
+        d["delivered_by_source"] = "caption_note"
+        d["caption"] = str(meta.get("title") or "")
+        d["caption_note"] = note_doc.get("artifact_id")
+        if direction:
+            d["direction"] = direction
+            d["direction_source"] = "caption note written within seconds of the upload"
+            block = d.get("deal_stage")
+            if isinstance(block, dict):
+                adm, why = _deal_stage.admissibility(
+                    stage=block.get("stage_at_arrival"), direction=direction,
+                    classified_as=None, timeline=timeline,
+                )
+                if adm and adm != block.get("admissible_for"):
+                    block["admissible_for"] = adm
+                    block["why"] = f"{why}; direction from the note that captions this upload ({author or 'unknown author'})"
+                    block["changed_from_classifier"] = True
+                    lifecycle = d.get("lifecycle")
+                    if isinstance(lifecycle, dict):
+                        lifecycle["admissible_for"] = adm
+        n += 1
+    return n
 
 
 def _annotate_reader_scope(
