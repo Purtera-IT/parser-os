@@ -80,3 +80,41 @@ def test_ten_per_site_sows_stay_ten_distinct_sites():
     join_atoms_to_document_site(atoms)
     windows = [a for a in atoms if a.atom_type == "site_access_window"]
     assert len({k for w in windows for k in w.entity_keys if k.startswith("site:")}) == 4
+
+
+def test_the_envelope_carries_how_the_link_was_made():
+    """A derived link must not look identical to an asserted one."""
+    from app.core.orbitbrief_envelope import _compact_atom
+
+    class _Ref:
+        locator = {}
+
+    class _A:
+        id = "atm_1"
+        artifact_id = "art_1"
+        raw_text = "Days of Operation | Monday - Friday"
+        entity_keys = ["site:johnakin_middle_school"]
+        value = {}
+        source_refs = [_Ref()]
+        receipts = []
+        confidence = 0.9
+        confidence_raw = 0.9
+        calibrated_confidence = 0.9
+        decision_provenance = {"source": "document_scope", "site_key": "site:johnakin_middle_school"}
+
+        class atom_type:
+            value = "site_access_window"
+
+        class authority_class:
+            value = "customer_current_authored"
+
+        class review_status:
+            value = "auto_accepted"
+
+    out = _compact_atom(_A())
+    assert out["decision_provenance"]["source"] == "document_scope"
+
+    _A.decision_provenance = None
+    assert "decision_provenance" not in _compact_atom(_A()), (
+        "absent when nothing stamped it, so existing envelopes are unchanged"
+    )

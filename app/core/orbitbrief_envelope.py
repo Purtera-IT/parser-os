@@ -2155,7 +2155,7 @@ def _build_indexes(
 
 def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
     primary_ref = atom.source_refs[0] if atom.source_refs else None
-    return {
+    projected: dict[str, Any] = {
         "id": atom.id,
         "artifact_id": atom.artifact_id,
         "atom_type": atom.atom_type.value,
@@ -2183,6 +2183,19 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         "review_status": atom.review_status.value if hasattr(atom.review_status, "value") else atom.review_status,
         "confidence_raw": getattr(atom, "confidence_raw", None),
     }
+    # HOW a decision was made, when something recorded it. Emitted only when
+    # present, so envelopes for atoms nothing stamped are byte-identical.
+    #
+    # This carries real weight for site links: after site_provenance_join, an
+    # atom joined to a school because it lived in that school's SOW looks
+    # exactly like one that named the school in its own text. Without this
+    # field an auditor cannot tell a derived link from an asserted one, which
+    # is the same silent-equivalence problem as a zero that might be an
+    # absence.
+    prov = getattr(atom, "decision_provenance", None)
+    if prov:
+        projected["decision_provenance"] = dict(prov)
+    return projected
 
 
 def _atom_verification_state(atom: EvidenceAtom) -> str:
