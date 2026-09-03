@@ -1513,6 +1513,14 @@ def compile_project(
                 )
         except Exception as exc:
             warnings.append(f"WARNING: site_facility_head failed: {type(exc).__name__}: {exc}")
+        # Any site this head minted from a signature page is a party address.
+        try:
+            from app.core.party_address_veto import veto_party_page_sites
+            _party_late = veto_party_page_sites(atoms)
+            if _party_late:
+                warnings.append(f"INFO: {_party_late} signature-page site(s) re-vetoed after site_facility_head")
+        except Exception as exc:
+            warnings.append(f"WARNING: late party_address_veto failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=facility_n)
 
     # Noise suppression (learning-loop gate): divert reference/template atoms

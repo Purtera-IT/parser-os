@@ -209,7 +209,11 @@ def _ollama_vision_direct(
         "prompt": prompt,
         "images": [_encode_image_b64(image_bytes)],
         "stream": False,
-        "options": {"num_predict": max_tokens, "temperature": 0.1},
+        # Deterministic: the same scan must yield the same atoms on every
+        # compile. Live 010300: three back-to-back runs of one image-only
+        # PSOW produced three different "Step N" paraphrase sets (13 of 20
+        # task atoms present in one run and absent in the next) at 0.1.
+        "options": {"num_predict": max_tokens, "temperature": 0.0, "seed": 7},
     }
     try:
         r = requests.post(f"{host}/api/generate", json=payload, timeout=120)

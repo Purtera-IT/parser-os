@@ -39,10 +39,23 @@ def veto_party_page_sites(atoms: list[Any]) -> int:
         return 0
     n = 0
     for a in atoms:
-        if _type_str(a) != "physical_site":
-            continue
         key = (str(getattr(a, "artifact_id", "")), _page_of(a))
         if key not in signature_pages:
+            continue
+        # Nothing on a signature page is a site fact. Strip site keys from
+        # every atom there, so no later stage can promote the signatures
+        # preamble into a site because it sits beside a mailing address
+        # (live 010300 round 6: "In acknowledgement that the parties below…"
+        # came back as physical_site site:vernon_hills).
+        if _type_str(a) != "physical_site":
+            keys = list(getattr(a, "entity_keys", None) or [])
+            kept = [k for k in keys if not str(k).startswith("site:")]
+            if len(kept) != len(keys):
+                try:
+                    a.entity_keys = kept
+                    n += 1
+                except Exception:
+                    pass
             continue
         try:
             from app.core.schemas import AtomType
