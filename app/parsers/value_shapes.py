@@ -45,8 +45,13 @@ EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.\w{2,}$")
 # typed as one under a permissive pattern, which would have put an account
 # number in a contact field. Require either separator punctuation or a full
 # 10-11 digit national number.
+# En dash (\u2013) and em dash (\u2014) show up interchangeably with a hyphen
+# in hand-typed phone numbers -- "843\u2014464-3725" on deal 010215 -- and an
+# extension marker is conventionally case-insensitive ("X 5110" as often as
+# "x5110"). Neither is vendor vocabulary; both are how people type phone
+# numbers, so both are accepted.
 PHONE = re.compile(
-    r"^(?=.*[-().+ ])[\d\-().+ ]{7,}(?:\s*x\s*\d+)?$|^\+?\d{10,11}$"
+    r"^(?=.*[-\u2013\u2014().+ ])[\d\-\u2013\u2014().+ ]{7,}(?:\s*[xX]\s*\d+)?$|^\+?\d{10,11}$"
 )
 
 

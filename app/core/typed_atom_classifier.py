@@ -478,6 +478,56 @@ def classify_atoms(atoms: list[Any]) -> int:
     if not promotable:
         return 0
 
+    # Deterministic deflect: a table_row already readable as a contact by
+    # contact_property_block does not need the LLM to guess at it.
+    #
+    # "stakeholder" is value-heavy (fields=[name,role,email,authority_class]),
+    # so it always reaches the LLM below, which free-form fills those fields
+    # from the row's flattened text. On deal 010215 that guess was wrong in a
+    # specific, structural way: for "OSC phone | 843-423-2571 x3645 |
+    # Backup Contact | Bernard Donnelly" it read name="OSC phone" (a LABEL) and
+    # email="843-423-2571 x3645" (a PHONE NUMBER) -- the row's first two cells
+    # taken positionally, ignoring that cells 0 and 2 are themselves labels
+    # and the real name sits in cell 3. Every one of the ten Marion County
+    # schools carries this exact row shape, so this was not a one-off miss.
+    #
+    # contact_property_block reads the SAME row deterministically, by label
+    # AND by value-shape (an email must classify as an email, a phone as a
+    # phone), and gets it right. Once that reader can name the row, the LLM's
+    # independent guess is redundant at best and wrong at worst -- so the row
+    # is deflected before the LLM ever sees it. One-sided, like the deflection
+    # layers below: this can only remove a promotion candidate, never
+    # fabricate one, so a row neither reader recognises still reaches the LLM
+    # exactly as before.
+    try:
+        from app.parsers.contact_property_block import fields_from_contact_row
+
+        def _row_cells(a: Any) -> dict | None:
+            v = getattr(a, "value", None)
+            if not isinstance(v, dict):
+                return None
+            row = v.get("_row")
+            if isinstance(row, list) and row:
+                return {str(i): c for i, c in enumerate(row)}
+            cells = v.get("cells")
+            if isinstance(cells, dict) and cells:
+                return {str(i): c for i, c in enumerate(cells.values())}
+            return None
+
+        contact_deflected = 0
+        survivors = []
+        for a in promotable:
+            cells = _row_cells(a)
+            if cells and fields_from_contact_row(cells):
+                contact_deflected += 1
+                continue
+            survivors.append(a)
+        promotable = survivors
+    except Exception:
+        contact_deflected = 0
+    if not promotable:
+        return 0
+
     # --- #70 deflect-layer instrumentation ---------------------------------
     # Each cascade layer below removes confidently-_keep atoms from the LLM
     # batch, but historically NONE logged how many — so we could not tell which
@@ -486,10 +536,13 @@ def classify_atoms(atoms: list[Any]) -> int:
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
     _dfl = {"store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
-            "contrastive": 0, "rubric_gate": 0}
+            "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected}
     _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
                "contrastive": 0.0, "rubric_gate": 0.0, "post": 0.0}
-    _dfl_input = len(promotable)
+    # + contact_deflected: those atoms left `promotable` before this count was
+    # taken, so the telemetry input must include them back or the deflect rate
+    # under-reports what actually happened this call.
+    _dfl_input = len(promotable) + contact_deflected
     _t_start = time.perf_counter()
     _t_llm = 0.0
 

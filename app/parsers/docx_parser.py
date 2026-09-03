@@ -294,6 +294,13 @@ class DocxParser(BaseParser):
         # Property-block rows seen anywhere in this document, merged into ONE
         # site after the loop (see site_property_block for why).
         _property_site_rows: list[tuple[dict, int, int]] = []
+        # Contact rows from the SAME property blocks -- "On Site Contact Name",
+        # "OSC phone", "Backup Contact" -- collected alongside the site rows so
+        # a per-site SOW yields its site AND the people to call about it. See
+        # contact_property_block for why this could not be left to the generic
+        # downstream reader: it assigns fields by POSITION, so "OSC phone" (a
+        # label) was read as a person's name and the phone number as an email.
+        _property_contact_rows: list[dict] = []
 
         for table_idx, table in enumerate(_all_tables(document)):
             # Build a column/rows view of the table for the site_roster
@@ -337,6 +344,13 @@ class DocxParser(BaseParser):
                     if _f:
                         _property_site_rows.append((_cells, table_idx, _r_idx))
             except Exception:  # never let a site read break the parse
+                pass
+
+            try:
+                for _row_cells in table.rows:
+                    _c_texts = [c.text.strip() for c in _row_cells.cells]
+                    _property_contact_rows.append({str(i): v for i, v in enumerate(_c_texts)})
+            except Exception:  # never let a contact read break the parse
                 pass
 
             # Site-roster fast path — when the first non-empty row
@@ -551,6 +565,56 @@ class DocxParser(BaseParser):
             except Exception as _site_exc:  # a site read must never break the parse
                 import logging as _lg_sp
                 _lg_sp.getLogger(__name__).warning("site property block emit failed: %s", _site_exc)
+
+        # One document, up to two people: the on-site contact and their
+        # backup. entity_keys is left empty here -- site_provenance_join gives
+        # every atom of a single-site document that site's key after dedup, so
+        # a contact from a per-site SOW is attached to the right school for
+        # free, the same way scope_item and site_access_window already are.
+        if _property_contact_rows:
+            try:
+                from app.parsers.contact_property_block import contacts_from_property_rows
+
+                for _person in contacts_from_property_rows(_property_contact_rows):
+                    _p_label = _person.get("name") or _person.get("email") or _person.get("role") or "contact"
+                    _p_id = stable_id("atm", artifact_id, "docx_contact_property_block", _p_label,
+                                       _person.get("role", ""))
+                    atoms.append(
+                        EvidenceAtom(
+                            id=_p_id,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            atom_type=AtomType.stakeholder,
+                            raw_text=f"{_person.get('role','contact')}: {_p_label}",
+                            normalized_text=_p_label.lower(),
+                            value=_person,
+                            # The document states its own contact in a labelled
+                            # block -- the same standing as the site atom this
+                            # person is attached to.
+                            authority_class=AuthorityClass.contractual_scope,
+                            confidence=0.9,
+                            confidence_raw=0.9,
+                            calibrated_confidence=0.9,
+                            review_status=ReviewStatus.auto_accepted,
+                            entity_keys=[],
+                            source_refs=[
+                                SourceRef(
+                                    id=stable_id("src", _p_id),
+                                    artifact_id=artifact_id,
+                                    artifact_type=ArtifactType.docx,
+                                    filename=path.name,
+                                    locator={"extraction": "docx_contact_property_block_v1"},
+                                    extraction_method="docx_contact_property_block_v1",
+                                    parser_version=self.parser_version,
+                                )
+                            ],
+                            review_flags=[],
+                            parser_version=self.parser_version,
+                        )
+                    )
+            except Exception as _contact_exc:  # a contact read must never break the parse
+                import logging as _lg_cp
+                _lg_cp.getLogger(__name__).warning("contact property block emit failed: %s", _contact_exc)
 
         atoms.extend(
             self._extract_tracked_change_atoms(
