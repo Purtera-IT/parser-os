@@ -1827,10 +1827,12 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
         if not ia:
             continue
         for b in named:
-            if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
-                continue
             ib = _ident(b)
-            if ia and all(ib.get(k) == val for k, val in ia.items()):
+            same_doc = str(getattr(b, "artifact_id", "")) == str(getattr(a, "artifact_id", ""))
+            # Across documents an exact email or full phone is identity enough
+            # (live 010215: Bernard's record survives in one SOW after dedup,
+            # his "Sr. CSDA" job-title rows sit in the other nine).
+            if ia and all(ib.get(k) == val for k, val in ia.items()) and (same_doc or "email" in ia or ("phone" in ia and len(ia["phone"]) >= 10)):
                 va, vb = getattr(a, "value", None) or {}, getattr(b, "value", None) or {}
                 if isinstance(va, dict) and isinstance(vb, dict):
                     role = str(va.get("role") or "").strip()

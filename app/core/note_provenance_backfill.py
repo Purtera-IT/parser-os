@@ -63,6 +63,13 @@ def _best_duplicate_match(note_body: str, atoms: list[Any], *, exclude_artifact_
     return best[1] if best else None
 
 
+def _caption_shaped(body: str, title: str) -> bool:
+    """A short, number-free body that repeats the note's title is a caption."""
+    b = " ".join(str(body or "").lower().split())
+    t = " ".join(str(title or "").lower().split())
+    return bool(b) and b == t and len(b.split()) <= 8 and not re.search(r"\d|\$", b)
+
+
 def _mint_provenance_atom(
     *,
     project_id: str,
@@ -179,7 +186,10 @@ def _mint_provenance_atom(
     elif re.search(r"\b(?:ROM|\$\s*\d|2k|1500)\b", text, re.I):
         atom_type = AtomType.commercial_total
         value["category"] = "ROM"
-    elif duplicate_atom and dup_type in {"scope_item", "customer_instruction", "constraint"}:
+    elif duplicate_atom and dup_type in {"scope_item", "customer_instruction", "constraint"} and not _caption_shaped(text, title):
+        # A substantive note that dedup folded into another document's atom
+        # keeps contributing that atom's type; a caption ("SOW", "psow from
+        # current partner") is provenance only. Live 010300.
         atom_type = AtomType(dup_type) if dup_type in {t.value for t in AtomType} else AtomType.deal_metadata
 
     return EvidenceAtom(

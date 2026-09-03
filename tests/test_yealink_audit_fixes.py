@@ -297,6 +297,7 @@ def test_cross_document_same_name_and_nameless_phone_rows_fold():
         mk("e3", "Quinton James", email="someone.else@other.com"),  # conflicting identity: stays apart
         mk("s1", "Bernard Donnelly", email="bernie.donnelly@sodexo.com", phone="404-918-0783"),
         mk("s1", None, role="Sr. CSDA", phone="404-918-0783"),
+        mk("s2", None, role="Sr. CSDA", phone="404-918-0783"),  # another SOW's row: same full phone
     ])
     names = [(a.artifact_id, a.value.get("name")) for a in out]
     assert names.count(("e2", "Quinton James")) + names.count(("e1", "Quinton James")) == 1
@@ -304,6 +305,18 @@ def test_cross_document_same_name_and_nameless_phone_rows_fold():
     bern = [a for a in out if a.value.get("name") == "Bernard Donnelly"]
     assert len(bern) == 1 and bern[0].value.get("title") == "Sr. CSDA"
     assert not any(a.value.get("name") is None for a in out)
+
+
+def test_caption_note_provenance_pointer_is_metadata_but_a_real_note_keeps_its_type():
+    from app.core.note_provenance_backfill import _mint_provenance_atom
+    dup = _atom(AtomType.scope_item, "SOW")
+    cap = _mint_provenance_atom(project_id="p", artifact_id="n1", filename="n1.txt", note_body="SOW",
+                                parsed={"note_id": "1", "title": "SOW"}, duplicate_atom=dup)
+    assert cap.atom_type == AtomType.deal_metadata
+    dup2 = _atom(AtomType.scope_item, "Please remove the West Wing from scope for now")
+    real = _mint_provenance_atom(project_id="p", artifact_id="n2", filename="n2.txt", note_body="Please remove the West Wing from scope for now",
+                                 parsed={"note_id": "2", "title": "West Wing"}, duplicate_atom=dup2)
+    assert real.atom_type == AtomType.scope_item
 
 
 def test_short_list_items_are_atoms():
