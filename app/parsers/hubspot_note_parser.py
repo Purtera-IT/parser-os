@@ -397,7 +397,12 @@ class HubspotNoteParser(BaseParser):
                 )
             )
 
-        if body and title and " ".join(body.lower().split()) == " ".join(title.lower().split()):
+        if (
+            body and title
+            and " ".join(body.lower().split()) == " ".join(title.lower().split())
+            and len(body.split()) <= 8
+            and not re.search(r"\d|\$", body)
+        ):
             # The note's body IS its title: a caption on an upload ("SOW",
             # "psow from current partner"), not scope. Live 010300: three such
             # notes each became a scope_item.
