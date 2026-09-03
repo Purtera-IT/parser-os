@@ -1282,6 +1282,18 @@ def compile_project(
                 cross_type_dedup_atoms,
                 semantic_dedup_atoms,
             )
+            # A party's signature-page address must stop being a site BEFORE
+            # the location-bucket merge, or it is folded into a real site and
+            # takes that site's city, state and ZIP with it. Live 010300: HQ
+            # "2970 Brandywine Rd, STE 200, Atlanta, GA 30641" came out as
+            # "2970 Brandywine Rd", no city, alias "vernon hills".
+            try:
+                from app.core.party_address_veto import veto_party_page_sites
+                _party_early = veto_party_page_sites(atoms)
+                if _party_early:
+                    warnings.append(f"INFO: {_party_early} signature-page address(es) kept as party_address before dedup")
+            except Exception as exc:
+                warnings.append(f"WARNING: party_address_veto failed: {type(exc).__name__}: {exc}")
             atoms = semantic_dedup_atoms(atoms)
             # Cross-type pass: the same sentence emitted as raw_table_row +
             # scope_item + service_line + task collapses to the single most-

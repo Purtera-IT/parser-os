@@ -97,6 +97,30 @@ def test_party_page_sites_become_party_addresses():
     assert veto_party_page_sites([site, hq, sig]) == 1
     assert site.atom_type == AtomType.deal_metadata and site.value["kind"] == "party_address" and site.entity_keys == []
     assert hq.atom_type == AtomType.physical_site and hq.entity_keys == ["site:atlanta_ga_30341"]
+    assert veto_party_page_sites([site, hq, sig]) == 0, "idempotent: it runs before dedup and again before the join"
+
+
+def test_party_address_does_not_pollute_the_real_site_through_dedup():
+    """The veto runs before the location-bucket merge, so the HQ keeps its
+    city, state and ZIP and never inherits the party's aliases."""
+    from app.core.party_address_veto import veto_party_page_sites
+    from app.core.semantic_dedup import semantic_dedup_atoms
+    def _site(text, page, **v):
+        a = _atom(AtomType.physical_site, text, kind="physical_site", **v)
+        a.source_refs = [SourceRef(id=f"s{page}{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": page}, extraction_method="t", parser_version="t")]
+        return a
+    hq = _site("facility: HQ | address: 2970 Brandywine Rd, STE 200", 4, id="HQ", site_id="HQ", name="HQ", street_address="2970 Brandywine Rd, STE 200", city="Atlanta", state="GA", zip="30641")
+    hq.entity_keys = ["site:hq"]
+    party = _site("200 N. Milwaukee Ave., Vernon Hills, IL 60061", 6, id="VERNON", site_id="VERNON", name="Vernon Hills Office", street_address="200 N. Milwaukee Ave.", city="Vernon Hills", state="IL", zip="60061", aliases=["vernon hills"])
+    party.entity_keys = ["site:vernon_hills_il_60061"]
+    sig = _atom(AtomType.signatory, "CDW Technologies LLC: By: Mike Murphy")
+    sig.source_refs = [SourceRef(id="ssig", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 6}, extraction_method="t", parser_version="t")]
+    atoms = [hq, party, sig]
+    veto_party_page_sites(atoms)
+    out = semantic_dedup_atoms(atoms)
+    sites = [a for a in out if a.atom_type == AtomType.physical_site]
+    assert len(sites) == 1 and sites[0].value["city"] == "Atlanta" and sites[0].value["zip"] == "30641"
+    assert "vernon hills" not in (sites[0].value.get("aliases") or [])
 
 
 def test_quoted_author_display_name_resolves_through_the_signature():
