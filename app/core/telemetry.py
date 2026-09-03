@@ -105,6 +105,7 @@ class CompileTelemetry:
         compile_id: str = "pending_compile_id",
         stream=None,
         on_stage_end: StageEndCallback | None = None,
+        on_stage_start: Callable[[str, list[CompileStageTrace]], None] | None = None,
     ) -> None:
         self.project_id = project_id
         self.compile_id = compile_id
@@ -114,6 +115,11 @@ class CompileTelemetry:
         # Optional: worker uses this to write compile-progress.json after
         # every stage so the UI can render live pipeline progress.
         self._on_stage_end: StageEndCallback | None = on_stage_end
+        # Optional: fired when a stage OPENS, so a consumer can name the stage
+        # that is running now rather than the one that last finished. Live
+        # 010300: the cockpit showed "discover_artifacts" for the whole of a
+        # 171-second parse because only stage ENDS were reported.
+        self._on_stage_start = on_stage_start
 
     def set_compile_id(self, compile_id: str) -> None:
         self.compile_id = compile_id
@@ -166,6 +172,12 @@ class CompileTelemetry:
             started_perf=perf_counter(),
             input_count=input_count,
         )
+        if self._on_stage_start is not None:
+            try:
+                self._on_stage_start(stage_name, list(self.stages))
+            except Exception:
+                # Never let a progress callback failure crash the compile.
+                pass
         # Register on the heartbeat stack so the watchdog can report this
         # stage's liveness/elapsed every interval until end_stage pops it.
         _ensure_heartbeat_thread()

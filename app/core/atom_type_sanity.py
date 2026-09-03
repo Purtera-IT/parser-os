@@ -1229,6 +1229,53 @@ def number_is_naming_label(text: str, number_start: int) -> bool:
     return bool(_NAMING_CONTEXT_RE.search((text or "")[:number_start]))
 
 
+_NEGATION_RE = re.compile(
+    # A negation, or a removal directive: both take something OUT. "Please
+    # remove the West Wing from scope" excludes without a "not".
+    r"(?:\b(?:no|not|never|none|neither|nor|without|except|excluding|exclud\w*|exclusion\w*|omit\w*"
+    r"|remov\w*|drop\w*|cancel\w*|postpone\w*|defer\w*|delet\w*|withdraw\w*|descope\w*)\b"
+    r"|n't\b|\bnon-|\bout\s+of\s+scope\b|\bnot?\s+in\s+scope\b|\bby\s+others\b|\bhold\s+off\b|\btake\w*\s+\w+\s+out\b)",
+    re.IGNORECASE,
+)
+
+
+def demote_exclusions_without_negation(atoms: list[Any]) -> int:
+    """An ``exclusion`` with nothing negated in it is not an exclusion.
+
+    Structural precondition, not a vocabulary of what may be excluded: to
+    exclude something a sentence has to carry a negation or an exclusion word
+    somewhere. Live 010300: seven of ten exclusions had none -- "There is a
+    site assessment survey that gets completed after each install", "We have
+    you covered on an A+ PM", "Qualified Technicians (Network and Phone) for
+    the two separate projects" -- promoted by the learned typer. They go back
+    to ``scope_item`` with a flag; the typer's own evidence is untouched.
+    """
+    demoted = 0
+    for atom in atoms:
+        if _atom_type_str(atom) != "exclusion":
+            continue
+        text = _atom_text(atom)
+        if _NEGATION_RE.search(text):
+            continue
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict) and val.get("list_section") == "exclude":
+            continue  # an item under an "Excluded:" header is negated by its header
+        try:
+            from app.core.schemas import AtomType as _AT
+            atom.atom_type = _AT.scope_item
+        except Exception:
+            atom.atom_type = "scope_item"
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if "exclusion_without_negation" not in flags:
+            flags.append("exclusion_without_negation")
+        try:
+            atom.review_flags = flags
+        except Exception:
+            pass
+        demoted += 1
+    return demoted
+
+
 def apply_type_sanity(
     atoms: list[Any],
     *,
@@ -1248,6 +1295,7 @@ def apply_type_sanity(
     no-op rather than a guess.
     """
     demoted = demote_nondeliverable_quantities(atoms)
+    demoted += demote_exclusions_without_negation(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)
     demoted += demote_email_include_list_microtasks(atoms)
     demoted += demote_customer_quote_requirements(atoms)

@@ -1760,23 +1760,44 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
         toks = [t for t in re.split(r"[^A-Za-z]+", nm) if t]
         return (toks[0].lower(), toks[-1].lower()) if len(toks) >= 2 else None
 
-    def _bare(a: Any) -> bool:
+    def _ident(a: Any) -> dict[str, str]:
         v = getattr(a, "value", None) or {}
-        return isinstance(v, dict) and not (v.get("email") or v.get("phone"))
+        if not isinstance(v, dict):
+            return {}
+        out: dict[str, str] = {}
+        em = str(v.get("email") or "").strip().lower()
+        ph = re.sub(r"\D", "", str(v.get("phone") or ""))
+        if em:
+            out["email"] = em
+        if ph:
+            out["phone"] = ph[-10:]
+        return out
+
+    def _richness(a: Any) -> int:
+        return len(_ident(a))
+
+    def _subsumed(sparse: Any, full: Any) -> bool:
+        # The sparser record carries no contact detail that CONTRADICTS the
+        # fuller one: every identity token it has, the fuller record has too.
+        # Live 010215: "Bernie Donnelly" with only a phone, "Bernard Donnelly"
+        # with email + the SAME phone -- the shared phone is the strongest
+        # evidence they are one person, and a bare-only rule left them split.
+        si, fi = _ident(sparse), _ident(full)
+        if len(si) >= len(fi):
+            return False
+        return all(fi.get(k) == val for k, val in si.items())
 
     people = [a for a in atoms if _atom_type_value(a) == "stakeholder" and _parts(a)]
     drop: set[int] = set()
-    for a in people:
-        if not _bare(a):
-            continue
+    for a in sorted(people, key=_richness):
         fa, la = _parts(a)
-        for b in people:
-            if b is a or _bare(b) or id(b) in drop:
+        for b in sorted(people, key=_richness, reverse=True):
+            if b is a or id(b) in drop or id(a) in drop:
                 continue
             if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
                 continue
             fb, lb = _parts(b)
-            if la == lb and (fa[:3] == fb[:3]):
+            if la == lb and (fa[:3] == fb[:3]) and _subsumed(a, b):
                 _merge_atom_metadata(b, a)
                 drop.add(id(a))
                 break

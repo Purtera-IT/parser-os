@@ -96,6 +96,9 @@ def _gist_for_artifact(atoms: list[EvidenceAtom]) -> str:
             continue
         if v.get("kind") in {"attachment", "attachment_marker", "email_attachment"}:
             continue
+        # A person record read from the signature is who wrote, not what.
+        if str(getattr(atom.atom_type, "value", atom.atom_type)) == "stakeholder":
+            continue
         text = (atom.raw_text or "").strip()
         if not text or not any(c.isalnum() for c in text):
             continue

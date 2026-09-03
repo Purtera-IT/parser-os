@@ -1456,6 +1456,56 @@ def _normalize_sender(value: str) -> str:
     return text
 
 
+_LINK_TOKEN_RE = re.compile(r"(?:<?(?:https?://|mailto:)\S+>?|\burl=\S+|\[cid:[^\]]*\]|<mailto:[^>]*>)", re.I)
+
+
+_PARTY_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_PARTY_PHONE_RE = re.compile(r"(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}")
+_PARTY_WINDOW = 4
+
+
+def _is_party_address_context(lines: list[str], idx: int) -> bool:
+    """True when line ``idx`` sits in a signature-shaped cluster.
+
+    Within ``_PARTY_WINDOW`` lines on either side there is at least one
+    email-shaped line and at least one phone-shaped line. That cluster is
+    a person's contact block; an address inside it belongs to the party,
+    not to the project. No vocabulary, no company names.
+    """
+    if not lines or idx < 0 or idx >= len(lines):
+        return False
+    lo, hi = max(0, idx - _PARTY_WINDOW), min(len(lines), idx + _PARTY_WINDOW + 1)
+    has_email = has_phone = False
+    for j in range(lo, hi):
+        if j == idx:
+            continue
+        t = str(lines[j] or "")
+        if _PARTY_EMAIL_RE.search(t):
+            has_email = True
+        if _PARTY_PHONE_RE.search(t):
+            has_phone = True
+        if has_email and has_phone:
+            return True
+    return False
+
+
+def _is_link_only_line(text: str) -> bool:
+    """True when nothing but links (and the word they wrap) is on the line.
+
+    Shape: remove every URL / mailto / cid token; what is left is at most one
+    short word with no spaces ("PurTera-IT.com", "t@purtera-it.com") or
+    nothing. A sentence that CONTAINS a link keeps its words and is not this.
+    """
+    t = (text or "").strip()
+    if not t or not _LINK_TOKEN_RE.search(t):
+        return False
+    rest = _LINK_TOKEN_RE.sub(" ", t).strip(" <>;,|-–—")
+    if not rest:
+        return True
+    words = rest.split()
+    return len(words) <= 1 and len(rest) <= 40
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -2441,6 +2491,49 @@ class EmailParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         confidence = 0.45 if authority == AuthorityClass.quoted_old_email else 0.86
 
+        # People, read from the block's SIGNATURE clusters by shape (a name line
+        # with an email/phone line near it), before the body lines are typed.
+        # Live 010300: ten stakeholder records and not one email or phone,
+        # while Carl Painter's signature listed title, direct, mobile and
+        # email on consecutive lines.
+        try:
+            from app.parsers.signature_block import people_from_signature_lines
+            _block_lines = [str(x) for x in (block.get("lines") or [])]
+            for _p in people_from_signature_lines(_block_lines):
+                _slug = re.sub(r"[^a-z0-9]+", "_", str(_p.get("name") or "").lower()).strip("_")
+                if not _slug:
+                    continue
+                _src = self._build_source_ref(
+                    artifact_id=artifact_id, filename=filename, block=block,
+                )
+                _val = {
+                    **_p,
+                    "message_index": block["message_index"],
+                    "quoted": block["quoted"],
+                    "author": str(block.get("locator_sender") or block.get("sender") or "").strip() or None,
+                    "source": "email_signature_block",
+                }
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id("atm", project_id, artifact_id, block["message_index"], "signature_person", _slug),
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.stakeholder,
+                        raw_text=" | ".join(str(v) for v in (_p.get("name"), _p.get("role"), _p.get("email"), _p.get("phone")) if v),
+                        normalized_text=normalize_text(str(_p.get("name") or "")),
+                        value=_val,
+                        entity_keys=[f"stakeholder:{_slug}"],
+                        source_refs=[_src],
+                        authority_class=authority,
+                        confidence=max(confidence, 0.8),
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    )
+                )
+        except Exception:
+            pass
+
         # Body-hygiene state, per message block. ``in_signature`` latches once
         # an authored message reaches its sign-off. ``current_section`` carries
         # an Include/Exclude list header down onto the bullet items beneath it.
@@ -2492,10 +2585,58 @@ class EmailParser(BaseParser):
             cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
-            if not block.get("quoted") and not seen_substantive:
-                if _is_identity_only_line(cleaned):
-                    continue
+            # Shape, not position: a line that is ONLY a name, an email, a
+            # phone, or a punctuation fragment around one carries no scope
+            # wherever it sits. Live 010215 (R3): the leading-lines-only rule
+            # above still let a trailing "Nick Robateau" (authored, after the
+            # body) and a quoted "; Nick Robateau <" reach the vocabulary
+            # typer, which stamped them `exclusion` at 0.86.
+            if _is_identity_only_line(cleaned):
+                continue
+            # A line that is only a link -- a bare URL, "word<https://…>",
+            # "url=…", a mailto -- is mail chrome. Live 010300: nine
+            # scope_items and one open_question were safelinks/urldefense
+            # wrappers around "PurTera-IT.com".
+            if _is_link_only_line(cleaned):
+                continue
+            if not block.get("quoted"):
                 seen_substantive = True
+            # A bullet that is a name shape followed by capitalised title words
+            # ("Rhonda Sharp Professional Services Manager") is a person WITH a
+            # role, not a five-word name and not scope. Live 010300.
+            if is_bullet:
+                try:
+                    from app.parsers.signature_block import name_and_role_from_list_line
+                    _nr = name_and_role_from_list_line(cleaned)
+                except Exception:
+                    _nr = None
+                if _nr:
+                    _slug = re.sub(r"[^a-z0-9]+", "_", _nr["name"].lower()).strip("_")
+                    atoms.append(
+                        EvidenceAtom(
+                            id=stable_id("atm", project_id, artifact_id, block["message_index"], line_num, "list_person", _slug),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            atom_type=AtomType.stakeholder,
+                            raw_text=cleaned,
+                            normalized_text=normalize_text(cleaned),
+                            value={
+                                **_nr,
+                                "message_index": block["message_index"],
+                                "quoted": block["quoted"],
+                                "author": str(block.get("locator_sender") or block.get("sender") or "").strip() or None,
+                                "source": "email_name_role_list",
+                            },
+                            entity_keys=[f"stakeholder:{_slug}"],
+                            source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num)],
+                            authority_class=authority,
+                            confidence=max(confidence, 0.75),
+                            review_status=ReviewStatus.auto_accepted,
+                            review_flags=[],
+                            parser_version=self.parser_version,
+                        )
+                    )
+                    continue
             # Bullets inherit the active Include/Exclude header; compute before
             # hygiene continues so per-line locators carry section_path.
             section_for_line = current_section if is_bullet else None
@@ -2514,7 +2655,18 @@ class EmailParser(BaseParser):
             # Site atoms are attempted on EVERY line (an address can appear in a
             # signature or under any label) — the helper guards vendor
             # letterhead — so hygiene skips below never lose a real site.
+            #
+            # ...except inside a PARTY block. Live 010300: CDW's own "200 N
+            # Milwaukee Ave | Vernon Hills, IL 60061" from Carl's signature
+            # became the deal's only physical site, and the provenance join
+            # then stamped it on every atom of the email. An address that sits
+            # in a cluster of email-shaped and phone-shaped lines is where a
+            # PERSON can be reached, not where the work happens. Shape only.
+            _party_ctx = in_signature or _is_party_address_context(
+                block.get("lines") or [], line_num - int(block.get("line_start") or 0)
+            )
             atoms.extend(
+                [] if _party_ctx else
                 self._site_atoms_from_line(
                     project_id=project_id,
                     artifact_id=artifact_id,
@@ -2674,6 +2826,12 @@ class EmailParser(BaseParser):
                     "quoted": block["quoted"],
                     "kind": "email_body_line",
                     "line": line_num,
+                    # WHO wrote this line -- the quoted message's own From:,
+                    # not the file's sender. Live 010300: the customer's ask
+                    # lived only in quoted blocks of our replies and carried
+                    # our address, so it was filed as material we produced.
+                    "author": str(block.get("locator_sender") or block.get("sender") or "").strip() or None,
+                    "authored_at": str(block.get("locator_sent_at") or block.get("sent_at") or "").strip() or None,
                 }
                 if section_for_line:
                     atom_value["list_section"] = section_for_line
@@ -2806,4 +2964,20 @@ class EmailParser(BaseParser):
                         parser_version=self.parser_version,
                     )
                 )
+        # Every atom from this block says WHO wrote the message it came from --
+        # the block's own From:/Sent:, not the file's sender -- whichever
+        # emitter above produced it. The envelope decides visibility per
+        # quoted message from this.
+        _author = str(block.get("locator_sender") or block.get("sender") or "").strip()
+        _authored_at = str(block.get("locator_sent_at") or block.get("sent_at") or "").strip()
+        if _author.lower() == "unknown":
+            _author = ""
+        for _a in atoms:
+            _v = getattr(_a, "value", None)
+            if isinstance(_v, dict):
+                if _author and not _v.get("author"):
+                    _v["author"] = _author
+                if _authored_at and not _v.get("authored_at"):
+                    _v["authored_at"] = _authored_at
+                _v.setdefault("quoted", bool(block.get("quoted")))
         return atoms

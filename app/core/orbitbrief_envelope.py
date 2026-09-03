@@ -81,6 +81,27 @@ def build_orbitbrief_envelope(
     project_dir = Path(project_dir).resolve()
     manifest = compile_result.manifest
     atoms = list(compile_result.atoms or [])
+    # Binary-region placeholders ("[Image awaiting OCR / vision …]") are
+    # coverage bookkeeping, not evidence. One reached the PM as an
+    # open_question (live 010215, R5). They leave the atom stream here and are
+    # reported under ``coverage.unrecovered_regions`` so a silent zero and a
+    # real zero never look the same: the region is still named, just not
+    # asked as a question.
+    unrecovered_regions: list[dict[str, Any]] = []
+    _kept: list[EvidenceAtom] = []
+    for _a in atoms:
+        _v = _a.value if isinstance(getattr(_a, "value", None), dict) else {}
+        if str(_v.get("kind") or "").endswith("_marker"):
+            unrecovered_regions.append({
+                "artifact_id": _a.artifact_id,
+                "kind": _v.get("kind"),
+                "region_ref": _v.get("region_ref"),
+                "size_bytes": _v.get("size_bytes"),
+                "text": _a.raw_text,
+            })
+        else:
+            _kept.append(_a)
+    atoms = _kept
     packets = list(compile_result.packets or [])
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
@@ -197,6 +218,19 @@ def build_orbitbrief_envelope(
             scope=_scope_info["scope"],
             this_deal_keys=_this_keys,
         )
+        # A document that states its own date outranks the time we uploaded
+        # it. Live 010300: two PSOWs dated March 2025 carried authored_at
+        # 2026-09-03 (HubSpot file time), so a cut would have called them
+        # today's evidence. Only an upload-grade precision is overridden, and
+        # only by an EARLIER header date; an exact send time is left alone.
+        _hdr = _document_header_date(artifact_atoms)
+        if _hdr and prov.get("authored_at_precision") in (None, "edited") and (
+            not prov.get("authored_at") or str(_hdr) < str(prov.get("authored_at"))
+        ):
+            prov = dict(prov)
+            prov["ingested_at"] = prov.get("authored_at")
+            prov["authored_at"] = _hdr
+            prov["authored_at_precision"] = "document_header"
         deal_stage = _deal_stage.annotate(
             lifecycle,
             authored_at=prov.get("authored_at"),
@@ -318,6 +352,7 @@ def build_orbitbrief_envelope(
         "entities": [_compact_entity(e, atoms_by_artifact, atoms) for e in entities],
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
+        "coverage": {"unrecovered_regions": unrecovered_regions},
     }
     # When this deal committed to an answer, and the verified events that say so.
     # Present for every deal so a consumer can tell "no cut" (still in discovery,
@@ -618,6 +653,7 @@ def build_orbitbrief_envelope(
     # Last, so it gates the corrected picture: a customer document that stopped
     # being called ours a moment ago must be readable by the models that had it.
     _annotate_reader_scope(documents, stage_timeline)
+    _annotate_quoted_message_scope(envelope, documents, stage_timeline)
     _retype_produced_material_scope(envelope, documents)
     threads = _thread_index(documents)
     if threads:
@@ -831,6 +867,120 @@ def _enrich_atom_threads(atoms: list[dict[str, Any]], threads: list[dict[str, An
 _EMAIL_ADDR_RE = re.compile(r"[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
+_HEADER_DATE_LABEL_RE = re.compile(r"(?:^|\|)\s*(?:col_\d+:\s*)?(?:date|dated|effective date|issue date|revision date)\s*:", re.I)
+_DATE_VALUE_RE = re.compile(
+    r"(?:\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}"
+    r"|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{4}"
+    r"|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b)",
+    re.I,
+)
+
+
+def _document_header_date(artifact_atoms: list[Any]) -> str | None:
+    """The date a document states about itself, as ISO ``YYYY-MM-DD``, or None.
+
+    Read from the first page's labelled fields ("Date: | March 21, 2025",
+    "Date: March 05, 2025"): a label that IS a date label and a value that
+    parses as a date. Signature dates, delivery dates and dates in prose are
+    not the document's own date and are not read here.
+    """
+    try:
+        from dateutil import parser as _dp
+    except Exception:  # pragma: no cover
+        return None
+    best: str | None = None
+    for a in artifact_atoms or []:
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        page = (loc or {}).get("page") if isinstance(loc, dict) else None
+        if page not in (None, 0, 1):
+            continue
+        text = str(getattr(a, "raw_text", "") or "").replace("\n", " ")
+        m = _HEADER_DATE_LABEL_RE.search(text)
+        if not m:
+            continue
+        # The value is the LAST date-shaped token after the label: a table row
+        # serialises as "col_0: Date: | <column heading>: March 21, 2025".
+        vals = _DATE_VALUE_RE.findall(text[m.end():])
+        if not vals:
+            continue
+        raw = vals[-1].strip()
+        try:
+            dt = _dp.parse(raw, fuzzy=True, default=datetime(1900, 1, 1))
+        except Exception:
+            continue
+        if dt.year < 1990 or dt.year > 2100:
+            continue
+        iso = dt.strftime("%Y-%m-%d")
+        if best is None or iso < best:
+            best = iso
+    return best
+
+
+def _annotate_quoted_message_scope(
+    envelope: dict[str, Any],
+    documents: list[dict[str, Any]],
+    timeline: Mapping[str, Any] | None,
+) -> int:
+    """Give a QUOTED message from an external author its own reader scope.
+
+    Admissibility is decided per file, but an email is many authors: a reply
+    we sent carries, quoted, the message it answers. Live 010300: the
+    customer's entire ask ("170+ sites and growing", "Yealink phones on
+    Nextiva", "two separate projects", "an A+ PM") existed only inside two
+    OUTBOUND replies, filed `label`, and the Deal Kit could not see it.
+
+    For each atom whose line came from a quoted block with an external
+    author (the block's own From:, stamped by the email parser), re-decide
+    admissibility as INBOUND at the carrier's stage and write the result on
+    the atom as ``reader_scope`` plus ``decision_provenance``. Consumers that
+    read scope off the document keep doing so; one that honours the atom's
+    own scope (deal-ask) sees the customer's words. Internal authors are
+    left alone: quoting ourselves does not make our words the customer's.
+
+    Returns how many atoms were annotated.
+    """
+    from app.core.document_lifecycle import reader_scope as _rs
+    from app.core.internal_author import extract_email_domain, INTERNAL_EMAIL_DOMAINS
+
+    by_id = {str(d.get("artifact_id")): d for d in documents or []}
+    n = 0
+    for a in envelope.get("atoms") or []:
+        s = a.get("structured") if isinstance(a.get("structured"), dict) else {}
+        if not s.get("quoted"):
+            continue
+        author = str(s.get("author") or "").strip()
+        domain = extract_email_domain(author) if author else None
+        if not domain or domain in INTERNAL_EMAIL_DOMAINS:
+            continue
+        doc = by_id.get(str(a.get("artifact_id"))) or {}
+        block = doc.get("deal_stage") if isinstance(doc.get("deal_stage"), dict) else {}
+        stage = block.get("stage_at_arrival")
+        adm, why = _deal_stage.admissibility(
+            stage=stage, direction="inbound", classified_as=None, timeline=timeline,
+        )
+        if not adm:
+            continue
+        scope: dict[str, Any] = {}
+        for consumer in _rs.consumers():
+            ok, cwhy = _rs.visible_to(consumer, stage=stage, admissible_for=adm, timeline=timeline)
+            scope[consumer] = {"visible": ok, "why": cwhy}
+        doc_scope = doc.get("reader_scope") or {}
+        if all((doc_scope.get(c) or {}).get("visible") == v.get("visible") for c, v in scope.items()):
+            continue  # same answer as the file; nothing to override
+        a["reader_scope"] = scope
+        prov = dict(a.get("decision_provenance") or {})
+        prov.update({
+            "source": "quoted_message",
+            "author": author,
+            "admissible_for": adm,
+            "rationale": f"quoted message authored by {domain}, decided as inbound: {why}",
+        })
+        a["decision_provenance"] = prov
+        n += 1
+    return n
+
+
 def _retype_produced_material_scope(envelope: dict[str, Any], documents: list[dict[str, Any]]) -> int:
     """scope_item from a document the lifecycle filed as produced/vendor
     material becomes site_implementation_note.
@@ -841,15 +991,34 @@ def _retype_produced_material_scope(envelope: dict[str, Any], documents: list[di
     lifecycle had already made the document-level call; the atom type just
     never followed it. Reads the decision it already made -- no vocabulary.
     """
-    atlas = {str(d.get("artifact_id")) for d in documents or [] if (d.get("deal_stage") or {}).get("admissible_for") == "atlas"}
-    if not atlas:
+    # Live 010215: the Kronos instructions arrived INBOUND before quoting, so
+    # the stage x direction rule (correctly) filed them as `evidence` -- they
+    # are what we quote FROM -- and an `admissible_for == atlas` test never
+    # fired. The signal that survives that re-decision is the lifecycle's own
+    # taxonomy verdict: stage DELIVERY / CLOSEOUT (install instructions,
+    # runbooks, checklists, as-builts) and scope `global` (a standing reference,
+    # not deal-specific by nature). Either says "procedure", whatever stage the
+    # deal was in when it arrived.
+    produced: dict[str, str] = {}
+    for d in documents or []:
+        aid = str(d.get("artifact_id"))
+        lc = d.get("lifecycle") if isinstance(d.get("lifecycle"), dict) else {}
+        ds = d.get("deal_stage") if isinstance(d.get("deal_stage"), dict) else {}
+        if ds.get("admissible_for") == "atlas":
+            produced[aid] = "document filed as atlas (produced/vendor material); its rows are procedure, not customer scope"
+        elif str(lc.get("stage") or "").upper() in ("DELIVERY", "CLOSEOUT"):
+            produced[aid] = f"lifecycle type {lc.get('type') or '?'} (stage {lc.get('stage')}): vendor/delivery material; its rows are procedure, not customer scope"
+        elif str(((d.get("scope") or {}) if isinstance(d.get("scope"), dict) else {}).get("scope") or "") == "global":
+            produced[aid] = "standing reference (global scope, not deal-specific); its rows are procedure, not customer scope"
+    if not produced:
         return 0
     n = 0
     for a in envelope.get("atoms") or []:
-        if str(a.get("artifact_id")) in atlas and a.get("atom_type") == "scope_item":
+        aid = str(a.get("artifact_id"))
+        if aid in produced and a.get("atom_type") == "scope_item":
             a["atom_type"] = "site_implementation_note"
             prov = dict(a.get("decision_provenance") or {})
-            prov.update({"source": "produced_material", "rationale": "document filed as atlas (produced/vendor material); its rows are procedure, not customer scope"})
+            prov.update({"source": "produced_material", "rationale": produced[aid]})
             a["decision_provenance"] = prov
             n += 1
     return n

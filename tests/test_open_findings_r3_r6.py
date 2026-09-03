@@ -39,6 +39,19 @@ def test_bernie_and_bernard_fold_in_one_document():
     atoms = [mk("d1", "Bernard Donnelly", email="bernie.donnelly@sodexo.com", phone="404-918-0783"), mk("d1", "Bernie Donnelly")]
     out = dedupe_stakeholder_atoms(atoms)
     assert [a.value["name"] for a in out] == ["Bernard Donnelly"]
+    # live 010215 shape: the sparser record carries the SAME phone (from a
+    # multi-line TECH-contact cell) -- shared identity token, still one person
+    out_phone = dedupe_stakeholder_atoms([
+        mk("d1", "Bernard Donnelly", email="bernie.donnelly@sodexo.com", phone="404-918-0783"),
+        mk("d1", "Bernie Donnelly", phone="(404) 918-0783"),
+    ])
+    assert [a.value["name"] for a in out_phone] == ["Bernard Donnelly"], [a.value for a in out_phone]
+    # a CONFLICTING phone is evidence of two people; never fold
+    out_conf = dedupe_stakeholder_atoms([
+        mk("d1", "Bernard Donnelly", email="bernie.donnelly@sodexo.com", phone="404-918-0783"),
+        mk("d1", "Bernie Donnelly", phone="404-555-0100"),
+    ])
+    assert len(out_conf) == 2
     # different documents, or two real people sharing a surname, stay apart
     out2 = dedupe_stakeholder_atoms([mk("d1", "Bernard Donnelly", email="b@x.com"), mk("d2", "Bernie Donnelly")])
     assert len(out2) == 2
@@ -55,6 +68,54 @@ def test_r6_atlas_document_rows_become_implementation_notes():
     assert _retype_produced_material_scope(env, docs) == 1
     assert [a["atom_type"] for a in env["atoms"]] == ["site_implementation_note", "task", "scope_item"]
     assert env["atoms"][0]["decision_provenance"]["source"] == "produced_material"
+
+
+def test_r6_inbound_install_instructions_are_still_procedure():
+    """Live 010215: the Kronos instructions arrived inbound BEFORE quoting, so
+    the stage rule filed them as `evidence` (what we quote from). The taxonomy
+    verdict -- type INSTALL_INSTRUCTIONS, stage DELIVERY, scope global -- is the
+    signal that survives, and it must be enough on its own."""
+    env = {"atoms": [
+        {"artifact_id": "kronos", "atom_type": "scope_item", "text": "Route the power supply cable through the clamps"},
+        {"artifact_id": "sow", "atom_type": "scope_item", "text": "Install Time Clock at designated Location"},
+    ]}
+    docs = [
+        {"artifact_id": "kronos", "deal_stage": {"admissible_for": "evidence"},
+         "lifecycle": {"type": "INSTALL_INSTRUCTIONS", "stage": "DELIVERY", "admissible_for": "evidence"},
+         "scope": {"scope": "global"}},
+        {"artifact_id": "sow", "deal_stage": {"admissible_for": "evidence"},
+         "lifecycle": {"type": "SOW", "stage": "QUOTING", "admissible_for": "evidence"}},
+    ]
+    assert _retype_produced_material_scope(env, docs) == 1
+    assert [a["atom_type"] for a in env["atoms"]] == ["site_implementation_note", "scope_item"]
+    assert "INSTALL_INSTRUCTIONS" in env["atoms"][0]["decision_provenance"]["rationale"]
+
+def test_trailing_and_quoted_signature_lines_are_never_typed(tmp_path):
+    """Live 010215 (R3, after the first fix): the leading-lines rule let a
+    TRAILING authored signature and a QUOTED fragment through, and the
+    vocabulary typer stamped them `exclusion`. Shape decides, not position."""
+    from pathlib import Path
+    from app.parsers.email_parser import EmailParser
+    eml = (
+        "From: Nick Robateau <nick.robateau@cdw.com>\n"
+        "To: patrick@purtera-it.com\n"
+        "Date: Thu, 13 Aug 2026 14:27:14 +0000\n"
+        "Subject: Re: Time Clock Installs\n"
+        "Message-ID: <a@x>\n\n"
+        "Quinton - please exclude the West Wing from scope.\n\n"
+        "Nick Robateau\n"
+        "Nick.Robateau@CDW.com\n\n"
+        "From: Quinton James <quinton.james@cdw.com>\n"
+        "Sent: Thursday, August 13, 2026 12:56 AM\n"
+        "Subject: Re: Time Clock Installs\n\n"
+        "Best,\n; Nick Robateau <\n"
+    )
+    p = tmp_path / "t.eml"; p.write_text(eml, encoding="utf-8")
+    atoms = EmailParser().parse(Path(p))
+    texts = [str(getattr(a, "raw_text", "")).strip() for a in atoms if str(getattr(a.atom_type, "value", a.atom_type)) == "exclusion"]
+    assert any("West Wing" in t for t in texts), texts
+    assert not any(t in ("Nick Robateau", "Nick.Robateau@CDW.com", "; Nick Robateau <") for t in texts), texts
+
 
 def test_identity_only_line_shape():
     assert _is_identity_only_line("Nick Robateau")

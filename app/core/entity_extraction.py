@@ -4768,6 +4768,13 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
         _nm = str(_v.get("name") or "").strip()
         if _nm:
             _covered_slugs.add(_slug(_nm))
+            # The same person read with a title glued on ("Rhonda Sharp
+            # Professional Services Manager") slugs differently from the
+            # fuller record ("Rhonda Sharp"). Cover the given+surname stem too,
+            # so the glued variant is refused as the duplicate it is.
+            _toks = [t for t in _nm.split() if t]
+            if len(_toks) >= 2:
+                _covered_slugs.add(_slug(" ".join(_toks[:2])))
 
     def _put_stakeholder(slug: str, source_atom: Any, value: dict[str, Any], raw: str, confidence: float) -> None:
         if not slug or slug in {"mock_vendor", "vendor", "customer", "project_manager"}:
@@ -4779,6 +4786,9 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
         # fuller one exists for the same person -- refuse it rather than let
         # it survive to the envelope as an uninformative duplicate.
         if slug in _covered_slugs and not (value.get("email") or value.get("phone")):
+            return
+        _sp = slug.split("_")
+        if len(_sp) > 2 and "_".join(_sp[:2]) in _covered_slugs and not (value.get("email") or value.get("phone")):
             return
         prev = stakeholder_candidates.get(slug)
         if prev is None or confidence > prev[3] or (value.get("email") and not prev[1].get("email")):

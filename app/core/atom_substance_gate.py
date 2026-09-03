@@ -645,8 +645,33 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         ):
             dropped.append(atom)
             continue
+        # Conversational prose typed as scope, by shape rather than by a list
+        # of pleasantries: no scope verb, no digits, no entity key, and no
+        # proper noun after the first word ("Excited to knock this out of the
+        # park with y'all.", "This has been received and we are on it."). A
+        # line that names a thing (Nextiva, PSOW, a site) keeps its place.
+        # Live 010300: eight such lines were scope_items.
+        if at == "scope_item" and kind == "email_body_line" and _is_conversational_prose(
+            text, list(getattr(atom, "entity_keys", None) or [])
+        ):
+            dropped.append(atom)
+            continue
         kept.append(atom)
     return kept, dropped
+
+
+def _is_conversational_prose(text: str, entity_keys: list[str]) -> bool:
+    if _has_deal_substance(text, entity_keys):
+        return False
+    if re.search(r"\d", text):
+        return False
+    words = text.split()
+    if not words or len(words) > 14:
+        return False
+    inner = words[1:]
+    if any(w[:1].isupper() and w.strip(".,!?;:'\"()").isalpha() for w in inner):
+        return False
+    return True
 
 
 def drop_transcript_conversational(atoms: list[Any]) -> tuple[list[Any], list[Any]]:

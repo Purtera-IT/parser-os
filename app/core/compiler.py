@@ -376,6 +376,7 @@ def compile_project(
     abstain_threshold: float = 0.70,
     use_cache: bool = True,
     stage_callback: Callable[..., None] | None = None,
+    stage_start_callback: Callable[..., None] | None = None,
 ) -> CompileResult:
     project_dir = project_dir.resolve()
     if not project_dir.exists():
@@ -419,6 +420,7 @@ def compile_project(
     telemetry = CompileTelemetry(
         project_id=resolved_project_id,
         on_stage_end=stage_callback,
+        on_stage_start=stage_start_callback,
     )
     warnings: list[str] = []
     if pack_routing_decision is not None:
