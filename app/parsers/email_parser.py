@@ -1675,6 +1675,47 @@ class EmailParser(BaseParser):
             )
         if header_atom is not None:
             atoms.append(header_atom)
+            # The sender is a person with an address: the one contact every
+            # email is guaranteed to name. Live 010300: Charlie Magee sent a
+            # message with no signature block and never became a stakeholder.
+            try:
+                from email.utils import parseaddr
+                _hv = header_atom.value if isinstance(header_atom.value, dict) else {}
+                _nm, _addr = parseaddr(str(_hv.get("from") or ""))
+                _nm = _nm.strip().strip('"')
+                _addr = _addr.strip().lower()
+                _already = any(
+                    str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))) == "stakeholder"
+                    and isinstance(getattr(a, "value", None), dict)
+                    and str(a.value.get("email") or "").lower() == _addr
+                    for a in atoms
+                )
+                if _nm and _addr and "@" in _addr and not _already and len(_nm.split()) >= 2 and not any(ch.isdigit() for ch in _nm):
+                    _slug = re.sub(r"[^a-z0-9]+", "_", _nm.lower()).strip("_")
+                    atoms.append(
+                        EvidenceAtom(
+                            id=stable_id("atm", project_id, artifact_id, "email_from_person", _slug),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            atom_type=AtomType.stakeholder,
+                            raw_text=f"{_nm} <{_addr}>",
+                            normalized_text=normalize_text(_nm),
+                            value={
+                                "kind": "person", "name": _nm, "email": _addr,
+                                "source": "email_from_header", "message_index": 0, "quoted": False,
+                                "author": _addr,
+                            },
+                            entity_keys=[f"stakeholder:{_slug}"],
+                            source_refs=list(header_atom.source_refs),
+                            authority_class=AuthorityClass.machine_extractor,
+                            confidence=0.8,
+                            review_status=ReviewStatus.auto_accepted,
+                            review_flags=[],
+                            parser_version=self.parser_version,
+                        )
+                    )
+            except Exception:
+                pass
         # Every quoted message's own routing line, so the chain survives
         # whatever body hygiene removes.
         atoms.extend(

@@ -4809,6 +4809,12 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
         raw = getattr(atom, "raw_text", "") or ""
         if not raw:
             continue
+        # A person record is not prose about a person. Its rendered text
+        # ("Patrick Kelly | Account Executive | patrick@…") re-read here made
+        # "Account Executive" a second person. Live 010300.
+        _at = getattr(atom, "atom_type", None)
+        if str(getattr(_at, "value", _at) or "") == "stakeholder":
+            continue
         stakeholder_keys = [
             k[len("stakeholder:"):]
             for k in (getattr(atom, "entity_keys", []) or [])

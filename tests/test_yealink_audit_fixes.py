@@ -115,6 +115,25 @@ def test_quoted_author_display_name_resolves_through_the_signature():
     assert env["atoms"][0]["structured"]["author_resolved"] == "carlpai@cdw.com"
 
 
+def test_email_sender_becomes_a_contact_even_without_a_signature(tmp_path):
+    from app.parsers.email_parser import EmailParser
+    eml = ("From: Charlie Magee <charlie.magee@cdw.com>\nTo: t@purtera-it.com\nDate: Thu, 03 Sep 2026 17:37:05 +0000\n"
+           "Subject: Re: 010300 Partner Swap\nMessage-ID: <c@x>\n\nTT - clean up aisle Purtera.\n\nGet Outlook for Mac<https://aka.ms/GetOutlookForMac>\n")
+    p = tmp_path / "c.eml"; p.write_text(eml, encoding="utf-8")
+    atoms = EmailParser().parse(Path(p))
+    people = [a.value for a in atoms if str(getattr(a.atom_type, "value", a.atom_type)) == "stakeholder"]
+    assert any(v.get("name") == "Charlie Magee" and v.get("email") == "charlie.magee@cdw.com" for v in people), people
+
+
+def test_a_rendered_person_record_is_not_reread_as_another_person():
+    from app.core.entity_extraction import _structural_people_atoms
+    rec = _atom(AtomType.stakeholder, "Patrick Kelly | Account Executive | patrick@purtera-it.com | 770.769.7311",
+                kind="person", name="Patrick Kelly", role="Account Executive", email="patrick@purtera-it.com")
+    rec.entity_keys = ["stakeholder:patrick_kelly"]
+    out = _structural_people_atoms([rec], project_id="p")
+    assert not any(a.value.get("name") == "Account Executive" for a in out), [a.value for a in out]
+
+
 # --- Y-05: link-only lines ----------------------------------------------------
 
 def test_link_only_lines_are_chrome():
