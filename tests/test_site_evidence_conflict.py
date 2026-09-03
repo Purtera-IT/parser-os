@@ -83,3 +83,31 @@ def test_empty_and_missing_inputs_are_safe():
     assert find_site_address_conflicts([]) == []
     assert find_site_address_conflicts(None) == []
     assert find_site_address_conflicts([{"name": "X"}]) == []
+
+
+def test_two_schools_at_one_address_are_reported():
+    """The mirror case: dedup keeps both, so something must say they collide."""
+    from app.core.site_evidence_conflict import find_address_collisions
+
+    out = find_address_collisions([
+        {"name": "Academy of Early Learning", "address": "600 E Northside Ave",
+         "source": "SOW-A", "authored_at": "2026-08-12"},
+        {"name": "Easterling Primary School", "address": "600 E Northside Avenue",
+         "source": "SOW-B", "authored_at": "2026-08-13"},
+        {"name": "Johnakin Middle School", "address": "601 Gurley St",
+         "source": "SOW-C", "authored_at": "2026-08-12"},
+    ])
+    assert len(out) == 1
+    assert out[0]["site_count"] == 2
+    assert [s["name"] for s in out[0]["sites"]] == [
+        "Academy of Early Learning", "Easterling Primary School"
+    ]
+
+
+def test_one_site_at_one_address_is_not_a_collision():
+    from app.core.site_evidence_conflict import find_address_collisions
+
+    assert find_address_collisions([
+        {"name": "Johnakin Middle School", "address": "601 Gurley St"},
+        {"name": "Johnakin Middle School", "address": "601 Gurley Street"},
+    ]) == []

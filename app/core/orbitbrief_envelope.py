@@ -421,7 +421,10 @@ def build_orbitbrief_envelope(
     # two do not. Picking a winner silently is how a technician reaches the wrong
     # school while the system reports full confidence.
     try:
-        from app.core.site_evidence_conflict import find_site_address_conflicts
+        from app.core.site_evidence_conflict import (
+            find_address_collisions,
+            find_site_address_conflicts,
+        )
 
         _claims = []
         for _a in atoms:
@@ -437,7 +440,12 @@ def build_orbitbrief_envelope(
                     "source": getattr(_refs[0], "filename", None) if _refs else None,
                     "authored_at": None,
                 })
-        _conf = find_site_address_conflicts(_claims)
+        # Both directions of the same disagreement: one site with two addresses,
+        # and one address with two sites. Dedup no longer merges the second case
+        # (distinct names veto it), so without this the collision would survive
+        # into the envelope with nothing saying the two schools collide.
+        _conf = list(find_site_address_conflicts(_claims))
+        _conf += find_address_collisions(_claims)
         if _conf:
             envelope["site_evidence_conflicts"] = _conf
     except Exception as _sec_exc:

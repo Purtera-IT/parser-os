@@ -98,3 +98,52 @@ def find_site_address_conflicts(sites: list[dict[str, Any]]) -> list[dict[str, A
             "reason": f"{len(distinct)} different addresses are asserted for this site",
         })
     return sorted(conflicts, key=lambda c: str(c.get("site") or ""))
+
+
+def find_address_collisions(sites: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One address asserted for more than one differently-named site.
+
+    The mirror of find_site_address_conflicts, and the other half of the same
+    problem. Two of Marion County's ten SOWs carry the address of the school in
+    the PRECEDING SOW, so Academy of Early Learning and Easterling Primary both
+    claim 600 E Northside Ave.
+
+    Dedup used to merge them on the shared address, which silently deleted a
+    school. It no longer does -- distinct names veto that merge -- so both
+    survive, and this is what tells a human the addresses collide. Without it
+    the fix would be its own quiet failure: two sites, one address, nothing
+    saying so, and a technician sent to the wrong school.
+    """
+    by_addr: dict[str, list[dict[str, Any]]] = {}
+    for s in sites or []:
+        addr = normalize_address(s.get("address"))
+        name = str(s.get("name") or "").strip()
+        if not addr or not name:
+            continue
+        by_addr.setdefault(addr, []).append(s)
+
+    collisions: list[dict[str, Any]] = []
+    for _addr, rows in by_addr.items():
+        distinct: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            distinct.setdefault(_norm_name(r.get("name")), r)
+        if len(distinct) < 2:
+            continue
+        ordered = sorted(distinct.values(), key=lambda x: str(x.get("authored_at") or ""))
+        collisions.append({
+            "address": ordered[0].get("address"),
+            "site_count": len(distinct),
+            "sites": [
+                {
+                    "name": r.get("name"),
+                    "source": r.get("source"),
+                    "authored_at": r.get("authored_at"),
+                }
+                for r in ordered
+            ],
+            "reason": (
+                f"{len(distinct)} differently-named sites are asserted at this "
+                "address; at most one can be right"
+            ),
+        })
+    return sorted(collisions, key=lambda c: str(c.get("address") or ""))

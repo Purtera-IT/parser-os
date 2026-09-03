@@ -363,9 +363,13 @@ def _strip_location_label_prefix(text: str) -> str:
         s = re.sub(r"^location\s*:\s*", "", s, flags=re.I).strip()
     # Prefer the street-number segment when a label and address were concatenated.
     # Optional suite/ste/unit/apt after the street type must stay on street_address.
+    # A route NUMBER is part of the street name: "6641 South Hwy 41" carved to
+    # "6641 South Hwy", which is a different place. Only route-type suffixes take
+    # a bare trailing number -- a number after "Street" is not part of the name.
     m = re.search(
         r"(\d{1,6}\s+[A-Za-z0-9][^\n,]{2,80}"
-        r"(?:blvd|boulevard|st|street|ave|avenue|dr|drive|way|ln|lane|rd|road|hwy|ct|court|pl|place)\.?\b"
+        r"(?:(?:hwy|highway|route|rte|alt)\.?\s*\d{1,4}\b"
+        r"|(?:blvd|boulevard|st|street|ave|avenue|dr|drive|way|ln|lane|rd|road|hwy|ct|court|pl|place)\.?\b)"
         r"(?:\s*(?:suite|ste\.?|unit|apt\.?|apartment|#)\s*[A-Za-z0-9-]+)?)",
         s,
         re.I,
