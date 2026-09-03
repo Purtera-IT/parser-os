@@ -191,17 +191,59 @@ def thread_emails(
     # Artifacts whose thread membership was decided by RFC headers. The subject
     # fallback must not move these -- see below.
     header_linked: set[str] = set()
+
+    # Every reference token -> every artifact that cites it in In-Reply-To or
+    # References, whether or not that token also happens to BE another
+    # artifact's own Message-ID.
+    #
+    # msgid_to_artifact-only resolution assumed References always names an
+    # ancestor EMAIL present in this compile -- true RFC 5322 semantics, where
+    # a reply's References is a chain of prior Message-IDs. HubSpot instead
+    # stamps every message in a conversation with the SAME synthetic anchor
+    # (References: <hs-thread-…@hubspot.invalid>), identical across all of
+    # them and matching no individual email's Message-ID. That token was never
+    # a key in msgid_to_artifact, so it never resolved, header_linked was never
+    # set, and grouping fell through to the subject fallback -- which then
+    # failed too, because "Fw: Time Clock Installs…" and "RE: 010215 Time
+    # Clock Installs…" are not the same normalised subject. All 11 attachments
+    # landed on a message severed from the six-message discussion that
+    # delivered them.
+    #
+    # The fix generalises rather than special-cases HubSpot: union any two
+    # artifacts that cite the SAME reference token, resolvable or not. A real
+    # ancestor Message-ID still works exactly as before (two replies to the
+    # same email cite it and are unioned); a shared synthetic anchor now works
+    # too, by the identical mechanism, with no vendor name in the logic.
+    refs_by_artifact: dict[str, list[str]] = {}
+    citers_by_token: dict[str, list[str]] = {}
     for aid, meta in meta_by_artifact.items():
         refs: list[str] = []
         if meta.get("in_reply_to"):
             refs.append(str(meta["in_reply_to"]).strip())
         refs.extend(str(r).strip() for r in (meta.get("references") or []))
+        refs = [r for r in refs if r]
+        refs_by_artifact[aid] = refs
+        for ref in refs:
+            citers_by_token.setdefault(ref, []).append(aid)
+
+    for aid, refs in refs_by_artifact.items():
         for ref in refs:
             other = msgid_to_artifact.get(ref)
             if other and other != aid:
                 uf.union(aid, other)
                 header_linked.add(aid)
                 header_linked.add(other)
+        for ref in refs:
+            co_citers = citers_by_token.get(ref) or []
+            if len(co_citers) < 2:
+                continue
+            for other in co_citers:
+                if other != aid:
+                    uf.union(aid, other)
+                    header_linked.add(aid)
+                    header_linked.add(other)
+
+    for aid, meta in meta_by_artifact.items():
         # First resolvable ancestor (In-Reply-To beats References; among
         # References the last is nearest) becomes the parent for context.
         in_reply_first = (str(meta.get("in_reply_to") or "").strip(),)
