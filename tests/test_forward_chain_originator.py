@@ -112,8 +112,15 @@ def test_a_stray_thread_tag_does_not_block_a_file_s_sender():
         },
         {
             "filename": "SOW Academy Of Early Learning.docx",
-            # Wrongly tagged onto a thread it never travelled on.
-            "email_thread": {"thread_id": "thr_2f96", "thread_index": 2},
+            # Wrongly tagged onto a thread it never travelled on -- and that
+            # block carries its OWN sender, quinton.james@cdw.com, who did not
+            # deliver this file. Skipping on that inner sender is what kept this
+            # one SOW hidden after its nine siblings were readmitted.
+            "email_thread": {
+                "thread_id": "thr_2f96",
+                "thread_index": 2,
+                "sender": "quinton.james@cdw.com",
+            },
             "lifecycle": {"delivered": [{"kind": "email", "ts": "2026-08-12T18:00:51.058Z",
                                          "text": "Fw: … t@purtera-it.com"}]},
         },

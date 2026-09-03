@@ -9,11 +9,17 @@ from app.core.orbitbrief_envelope import _resolve_delivered_by
 
 
 def email_doc(aid, sender, when, direction="inbound"):
+    # sender_email is what makes this a MESSAGE rather than a file, and every
+    # real email document carries it (7 of 7 on deal 010215; 0 of 11 files do).
+    # Omitting it here made this fixture something the pipeline never produces,
+    # and a guard was once widened to satisfy the fixture -- which reopened the
+    # bug the widening was meant to fix.
     return {
         "artifact_id": aid,
         "filename": f"010215-hs-email-{aid}.eml",
         "direction": direction,
         "authored_at": when,
+        "sender_email": sender,
         "email_thread": {"thread_id": "thr_1", "sender": sender, "date": when},
     }
 
