@@ -1276,6 +1276,149 @@ def demote_exclusions_without_negation(atoms: list[Any]) -> int:
     return demoted
 
 
+_ESIGN_TOKEN_RE = re.compile(r"\{\{[^{}]*\}\}")
+_PAGE_FOOTER_RE = re.compile(r"^\s*page\s+\d+\s*(?:of\s+\d+)?\s*(?P<rest>.*)$", re.I)
+# A trailing single letter / roman numeral / bullet glyph is the NEXT item's
+# label caught by column bleed ("… (Indoor Only) c.", "… FRAMEWORK o"). A
+# trailing number is content ("closet 2.") and is left alone.
+_TRAILING_ENUMERATOR_RE = re.compile(r"\s+(?:[a-z]|[ivx]{1,4}|•|▪)[.)]?\s*$")
+_LABEL_ONLY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z /&()\-]{0,40})\s*:\s*$")
+_MONEY_RE = r"\$\s?(?P<{n}>\d{{1,3}}(?:,\d{{3}})*(?:\.\d{{2}})?)"
+_RATE_UNITS_SUBTOTAL_RE = re.compile(
+    _MONEY_RE.format(n="rate") + r"\s*\|?\s*(?P<units>\d{1,6})\s*" + _MONEY_RE.format(n="subtotal")
+)
+_QTY_X_ITEM_TOTAL_RE = re.compile(r"^\s*(?P<units>\d{1,6})\s*[×x]\s*(?P<item>.+?)\s*=\s*" + _MONEY_RE.format(n="subtotal") + r"\s*$")
+
+
+def _atom_page(atom: Any) -> Any:
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    return loc.get("page") if isinstance(loc, dict) else None
+
+
+def _set_text(atom: Any, text: str) -> None:
+    try:
+        atom.raw_text = text
+    except Exception:
+        pass
+    try:
+        from app.core.normalizers import normalize_text as _nt  # type: ignore
+        atom.normalized_text = _nt(text)
+    except Exception:
+        try:
+            atom.normalized_text = " ".join(text.lower().split())
+        except Exception:
+            pass
+
+
+def strip_document_chrome(atoms: list[Any]) -> int:
+    """Remove chrome that is not content, by shape. Returns atoms changed.
+
+    Live 010300 (signed PSOW):
+    - e-sign template tokens ``{{Sig_es_:signer3:signature}}`` inside
+      signatory rows; a row that is only labels once they are gone
+      ("CDW Technologies LLC: Date: | NewBold LLC: Date:") is dropped
+    - running footers "Page 1 CDW Technologies LLC" typed scope_item /
+      deal_metadata on every page: the same line on three or more pages of
+      one document with only the page number varying
+    - a trailing enumerator captured from the next list item by column
+      bleed ("Access Point (Indoor Only) c.", "… FRAMEWORK o")
+    - a scope_item that is only a label ("Project Name:")
+    """
+    changed = 0
+    # 1) footers: same text (page number removed) on >= 3 pages of one artifact
+    footer_counts: dict[tuple[str, str], set[Any]] = {}
+    for a in atoms:
+        m = _PAGE_FOOTER_RE.match(_atom_text(a))
+        if not m:
+            continue
+        key = (str(getattr(a, "artifact_id", "")), " ".join(m.group("rest").lower().split()))
+        footer_counts.setdefault(key, set()).add(_atom_page(a))
+    footers = {k for k, pages in footer_counts.items() if len(pages) >= 3}
+    survivors: list[Any] = []
+    for a in atoms:
+        text = _atom_text(a)
+        m = _PAGE_FOOTER_RE.match(text)
+        if m and (str(getattr(a, "artifact_id", "")), " ".join(m.group("rest").lower().split())) in footers:
+            changed += 1
+            continue  # dropped
+        # A footer glued to a real sentence ("…Locations”). Page 5 CDW Technologies LLC")
+        for k in footers:
+            if k[0] == str(getattr(a, "artifact_id", "")) and k[1]:
+                tail = re.search(r"\s*page\s+\d+\s+" + re.escape(k[1]) + r"\s*$", text, re.I)
+                if tail:
+                    text = text[: tail.start()].rstrip()
+                    _set_text(a, text)
+                    changed += 1
+        survivors.append(a)
+    atoms[:] = survivors
+    # 2) e-sign tokens + label-only signatory rows
+    survivors = []
+    for a in atoms:
+        text = _atom_text(a)
+        if _ESIGN_TOKEN_RE.search(text):
+            text = re.sub(r"\s{2,}", " ", _ESIGN_TOKEN_RE.sub("", text)).strip(" |")
+            _set_text(a, text)
+            changed += 1
+        if _atom_type_str(a) == "signatory":
+            cells = [c.strip() for c in re.split(r"\s*\|\s*", text) if c.strip()]
+            if not cells or all(re.match(r"^[A-Za-z][A-Za-z .&]*:\s*(?:[A-Za-z .&]+:\s*)?$", c) for c in cells):
+                changed += 1
+                continue  # labels only: "CDW Technologies LLC: Date: | NewBold LLC: Date:"
+        survivors.append(a)
+    atoms[:] = survivors
+    # 3) trailing enumerators + label-only scope
+    survivors = []
+    for a in atoms:
+        text = _atom_text(a)
+        t2 = _TRAILING_ENUMERATOR_RE.sub("", text) if len(text.split()) >= 3 else text
+        if t2 != text and len(t2) >= 8:
+            _set_text(a, t2)
+            changed += 1
+            text = t2
+        if _atom_type_str(a) in ("scope_item", "requirement") and _LABEL_ONLY_RE.match(text):
+            changed += 1
+            continue
+        survivors.append(a)
+    atoms[:] = survivors
+    return changed
+
+
+def enrich_vendor_line_items(atoms: list[Any]) -> int:
+    """Fill rate / units / subtotal on vendor_line_item atoms from the row's
+    own shape: "… $115.00 | 1 $115.00", "… $550.00 169 $92,950.00",
+    "1 × 1 Tech onsite for 4 Hours – Per Item = $570.00". Returns enriched."""
+    n = 0
+    for a in atoms:
+        if _atom_type_str(a) != "vendor_line_item":
+            continue
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            continue
+        if v.get("unit_price") is not None or v.get("rate") is not None:
+            continue
+        text = _atom_text(a)
+        m = _RATE_UNITS_SUBTOTAL_RE.search(text)
+        if m:
+            v["rate"] = float(m.group("rate").replace(",", ""))
+            v["units"] = int(m.group("units"))
+            v["subtotal"] = float(m.group("subtotal").replace(",", ""))
+            v["item"] = v.get("item") or re.sub(r"\s+", " ", text[: m.start()]).strip(" |:-–")
+            v["line_shape"] = "rate_units_subtotal"
+            n += 1
+            continue
+        m = _QTY_X_ITEM_TOTAL_RE.match(text)
+        if m:
+            v["units"] = int(m.group("units"))
+            v["subtotal"] = float(m.group("subtotal").replace(",", ""))
+            v["item"] = v.get("item") or m.group("item").strip()
+            if v["units"]:
+                v["rate"] = round(v["subtotal"] / v["units"], 2)
+            v["line_shape"] = "qty_x_item_total"
+            n += 1
+    return n
+
+
 def apply_type_sanity(
     atoms: list[Any],
     *,
@@ -1295,6 +1438,8 @@ def apply_type_sanity(
     no-op rather than a guess.
     """
     demoted = demote_nondeliverable_quantities(atoms)
+    demoted += strip_document_chrome(atoms)
+    demoted += enrich_vendor_line_items(atoms)
     demoted += demote_exclusions_without_negation(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)
     demoted += demote_email_include_list_microtasks(atoms)

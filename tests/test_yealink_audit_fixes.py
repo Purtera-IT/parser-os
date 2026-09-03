@@ -135,6 +135,77 @@ def test_a_rendered_person_record_is_not_reread_as_another_person():
     assert not any(a.value.get("name") == "Account Executive" for a in out), [a.value for a in out]
 
 
+def test_ocr_debris_is_unreadable_and_prose_is_not():
+    from app.core.text_quality import is_unreadable, readability
+    debris = [
+        "‘Tes aks wilenur tht projetcompen mee egutements olin inthe ope seve Minasthe towing cine",
+        "Psat iy Wa ns ache A VIA, 2 Tlpmsnapenen nem ori pr ni ptm deSo Suunchnayrlirgity",
+        "44 Marware and materats ae ot nclded ia this scope oping.",
+        "tonmnuinunvionetenatucnnihnapusstsnse tet oa",
+    ]
+    prose = [
+        "Customer has approximately 169 locations (network closets) listed in Exhibit A.",
+        "Hardware and materials are not included in this scope or pricing.",
+        "1 × 1 Tech onsite for 4 Hours – Per Item = $570.00",
+        "PSOW for D4C: MP58-WHE2-TEAMS and MP56-E2-TEAMS phones on PoE.",
+        "If work i cancelled with less han 48 hours noice, Seller wilbe responsible 100% of the aso fe.",  # OCR typos, still mostly words
+    ]
+    for t in debris:
+        assert is_unreadable(t), (t, readability(t))
+    for t in prose:
+        assert not is_unreadable(t), (t, readability(t))
+
+
+def test_document_chrome_is_stripped_by_shape():
+    from app.core.atom_type_sanity import strip_document_chrome
+    def _p(atom_type, text, page):
+        a = _atom(atom_type, text)
+        a.source_refs = [SourceRef(id=f"s{page}{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": page}, extraction_method="t", parser_version="t")]
+        return a
+    atoms = [
+        _p(AtomType.scope_item, "Page 1 CDW Technologies LLC", 1),
+        _p(AtomType.deal_metadata, "Page 2 CDW Technologies LLC", 2),
+        _p(AtomType.deal_metadata, "Page 3 CDW Technologies LLC", 3),
+        _p(AtomType.scope_item, "Seller will provide Services benefiting the following locations. Page 5 CDW Technologies LLC", 5),
+        _p(AtomType.signatory, "CDW Technologies LLC: {{Sig_es_:signer3:signature}} | NewBold LLC: {{Sig_es_:signer1:signature}} Shelly Lewis", 6),
+        _p(AtomType.signatory, "CDW Technologies LLC: Date: | NewBold LLC: Date:", 6),
+        _p(AtomType.scope_item, "Access Point (Indoor Only) c.", 2),
+        _p(AtomType.scope_item, "COMPREHENSIVE PROJECT PLANNING AND MANAGEMENT FRAMEWORK o", 1),
+        _p(AtomType.scope_item, "Project Name:", 1),
+        _p(AtomType.scope_item, "Install the switch in closet 2.", 2),
+    ]
+    strip_document_chrome(atoms)
+    texts = [a.raw_text for a in atoms]
+    assert "Page 1 CDW Technologies LLC" not in texts and "Page 2 CDW Technologies LLC" not in texts
+    assert "Seller will provide Services benefiting the following locations." in texts
+    assert "CDW Technologies LLC: | NewBold LLC: Shelly Lewis" in texts
+    assert "CDW Technologies LLC: Date: | NewBold LLC: Date:" not in texts
+    assert "Access Point (Indoor Only)" in texts
+    assert "COMPREHENSIVE PROJECT PLANNING AND MANAGEMENT FRAMEWORK" in texts
+    assert "Project Name:" not in texts
+    assert "Install the switch in closet 2." in texts
+
+
+def test_vendor_line_items_get_rate_units_subtotal_by_shape():
+    from app.core.atom_type_sanity import enrich_vendor_line_items
+    a = _atom(AtomType.vendor_line_item, "Additional Onsite Hours – Per Hour – Per Hour $115.00 | 1 $115.00")
+    b = _atom(AtomType.vendor_line_item, "Unit Type Unit Rate Billable Units Subtotal First Site Visit - Site Assessment with Report & $550.00 169 $92,950.00 Installation – Per Si – Per Item")
+    c = _atom(AtomType.vendor_line_item, "1 × 1 Tech onsite for 4 Hours – Per Item = $570.00")
+    assert enrich_vendor_line_items([a, b, c]) == 3
+    assert (a.value["rate"], a.value["units"], a.value["subtotal"]) == (115.0, 1, 115.0)
+    assert (b.value["rate"], b.value["units"], b.value["subtotal"]) == (550.0, 169, 92950.0)
+    assert (c.value["units"], c.value["subtotal"], c.value["rate"]) == (1, 570.0, 570.0)
+
+
+def test_broken_anchor_and_url_tail_and_banner_are_chrome():
+    from app.parsers.email_parser import _is_link_only_line, _is_title_case_banner
+    assert _is_link_only_line("Report Suspicious<https://us-phishalarm-ewt.proofpoint.com/EWT/v1/HUqgN_M!")
+    assert _is_link_only_line("-Qbq_7kcmFNziBwcstvtkGDG0MwYN6d8iclpycVjKwWxeNBNpmBFHBO3GBNQLuitRgx9OhruWntvfRzV-aAeLybnKnCZunNpjArA0YtzfwpTdXTSUXUCy_maqQ6HQnLgAX1L24bwKfCEbvp78g$>")
+    assert _is_title_case_banner("This Message Is From an External Sender")
+    assert not _is_title_case_banner("Please remove the West Wing from scope.")
+    assert not _is_title_case_banner("Marion County School District needs 10 clocks")
+
+
 # --- Y-05: link-only lines ----------------------------------------------------
 
 def test_link_only_lines_are_chrome():

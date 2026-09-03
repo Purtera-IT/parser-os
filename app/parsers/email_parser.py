@@ -1489,6 +1489,16 @@ def _is_party_address_context(lines: list[str], idx: int) -> bool:
     return False
 
 
+def _is_title_case_banner(text: str) -> bool:
+    """Four or more words, at least 80% capitalised, no digits, no sentence end."""
+    t = (text or "").strip()
+    words = t.split()
+    if len(words) < 4 or len(words) > 12 or re.search(r"\d", t) or t.endswith((".", "?", "!", ":")):
+        return False
+    caps = sum(1 for w in words if w[:1].isupper())
+    return caps / len(words) >= 0.8
+
+
 def _is_link_only_line(text: str) -> bool:
     """True when nothing but links (and the word they wrap) is on the line.
 
@@ -1497,12 +1507,24 @@ def _is_link_only_line(text: str) -> bool:
     nothing. A sentence that CONTAINS a link keeps its words and is not this.
     """
     t = (text or "").strip()
-    if not t or not _LINK_TOKEN_RE.search(t):
+    if not t:
+        return False
+    # A wrapped URL's continuation line: one long token, no spaces, carrying
+    # URL punctuation ("-Qbq_7kcm…78g$>"), and not an address.
+    if " " not in t and len(t) >= 30 and re.search(r"[%$=&/_]|>$", t) and "@" not in t:
+        return True
+    if not _LINK_TOKEN_RE.search(t):
         return False
     # An anchor: label glued to its link with no space ("Get Outlook for
     # Mac<https://aka.ms/…>", "PurTera-IT.com<https://…>"). Prose that
     # mentions a link has a space before it.
     if re.match(r"^[^<>]{1,60}<(?:https?://|mailto:)[^>]+>$", t):
+        return True
+    # The same anchor with its URL wrapped onto the next line: an opening
+    # "<https://…" with no closing on this line ("Report Suspicious<https://
+    # us-phishalarm…!"), and the continuation line itself -- one long token
+    # with no spaces that carries URL punctuation ("-Qbq_7kcm…78g$>").
+    if re.match(r"^[^<>]{1,60}<(?:https?://|mailto:)\S*$", t):
         return True
     rest = _LINK_TOKEN_RE.sub(" ", t).strip(" <>;,|-–—")
     if not rest:
@@ -2651,6 +2673,23 @@ class EmailParser(BaseParser):
             # scope_items and one open_question were safelinks/urldefense
             # wrappers around "PurTera-IT.com".
             if _is_link_only_line(cleaned):
+                continue
+            # A Title-Case line with no digits and no sentence end ("This
+            # Message Is From an External Sender") is a banner or heading,
+            # not a sentence about the work. Kept as routing metadata.
+            if not is_bullet and _is_title_case_banner(cleaned):
+                atoms.append(
+                    EvidenceAtom(
+                        id=stable_id("atm", project_id, artifact_id, block["message_index"], line_num, "email_banner", cleaned),
+                        project_id=project_id, artifact_id=artifact_id,
+                        atom_type=AtomType.deal_metadata, raw_text=cleaned,
+                        normalized_text=normalize_text(cleaned),
+                        value={"text": cleaned, "message_index": block["message_index"], "quoted": block["quoted"], "kind": "email_banner", "line": line_num},
+                        entity_keys=[], source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num)],
+                        authority_class=AuthorityClass.machine_extractor, confidence=0.5,
+                        review_status=ReviewStatus.auto_accepted, review_flags=[], parser_version=self.parser_version,
+                    )
+                )
                 continue
             if not block.get("quoted"):
                 seen_substantive = True

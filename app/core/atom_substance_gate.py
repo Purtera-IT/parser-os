@@ -687,6 +687,38 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     return kept, dropped
 
 
+def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Drop atoms whose text is OCR debris rather than words (see text_quality).
+
+    Only prose-bearing types are judged; a vendor line, a quantity or a
+    signatory row is short and numeric by nature and is left alone unless it
+    too is mostly debris. Lossless at the compiler: dropped atoms go to the
+    retained-suppression ledger like every other gate drop.
+    """
+    from app.core.text_quality import is_unreadable
+
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for atom in atoms:
+        at = _atom_type_str(atom)
+        if at in {"physical_site", "stakeholder", "signatory", "quantity", "bom_line", "raw_table_row"}:
+            kept.append(atom)
+            continue
+        text = _atom_text(atom)
+        if is_unreadable(text):
+            flags = list(getattr(atom, "review_flags", None) or [])
+            if "unreadable_ocr" not in flags:
+                flags.append("unreadable_ocr")
+            try:
+                atom.review_flags = flags
+            except Exception:
+                pass
+            dropped.append(atom)
+            continue
+        kept.append(atom)
+    return kept, dropped
+
+
 def _is_conversational_prose(text: str, entity_keys: list[str]) -> bool:
     if _has_deal_substance(text, entity_keys):
         return False
@@ -944,6 +976,8 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     kept, d = drop_risk_fragments(kept)
     all_dropped.extend(d)
     kept, d = collapse_ambiguous_user_quantities(kept)
+    all_dropped.extend(d)
+    kept, d = drop_unreadable_text(kept)
     all_dropped.extend(d)
     return kept, all_dropped
 

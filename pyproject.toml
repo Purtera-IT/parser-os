@@ -83,6 +83,8 @@ include = ["app*", "orbitbrief_page_os*"]
 app = [
   "domain/*.yaml",
   "domain/ontology/*.yaml",
+  # English wordlist for the OCR-debris gate (app/core/text_quality.py).
+  "core/data/*.gz",
   # The lifecycle labels are data, not code, and setuptools ships no non-Python
   # file it is not told about. Omitting this installed the package without its
   # dataset: every lookup returned None, every document came back unclassified,
