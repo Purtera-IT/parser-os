@@ -1308,6 +1308,29 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # A per-site document speaks for its own rows. The name-mention linker only
+    # joins an atom to a site when the site's NAME is in the atom's own text,
+    # which a per-site SOW says exactly once -- in the row that becomes the site
+    # atom. Marion County resolved ten schools and linked nothing to them: 10 of
+    # 486 atoms carried a site key, and those 10 WERE the sites. This runs after
+    # dedup, so the sites are already canonical.
+    with telemetry.stage("site_provenance_join", input_count=len(atoms)) as stage:
+        site_join_n = 0
+        try:
+            from app.core.site_provenance_join import join_atoms_to_document_site
+
+            site_join_n = join_atoms_to_document_site(atoms)
+            if site_join_n:
+                warnings.append(
+                    f"INFO: site_provenance_join attached a site to {site_join_n} atom(s) "
+                    f"from documents that resolve to exactly one site"
+                )
+        except Exception as exc:
+            warnings.append(
+                f"WARNING: site_provenance_join failed: {type(exc).__name__}: {exc}"
+            )
+        telemetry.end_stage(stage, output_count=site_join_n)
+
     with telemetry.stage("note_provenance_backfill", input_count=len(atoms)) as stage:
         note_prov_n = 0
         try:
