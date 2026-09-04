@@ -934,3 +934,21 @@ def test_signature_cells_repeated_without_party_labels_are_swept():
     assert [s["name"] for s in sig.value["signers"]] == ["Mike Murphy", "Shelly Lewis"]
     assert sig.value["parties"] == ["CDW Technologies LLC", "NewBold LLC"]
     assert texts[1].startswith("Provider will use the following subcontractor")
+
+
+def test_a_sentence_of_necessity_is_not_banter():
+    """'We will need to be able to address multiple sites daily and weekly.'
+    (12 words, no digit, no proper noun) was dropped as conversational. A
+    modal of necessity is grammar; the sentence is a demand on us."""
+    from app.core.atom_substance_gate import drop_email_non_scope
+    from app.core.schemas import AuthorityClass
+
+    def _line(text):
+        a = _atom(AtomType.scope_item, text, kind="email_body_line", quoted=True, author="Carl Painter Jr")
+        a.authority_class = AuthorityClass.quoted_old_email
+        return a
+
+    need = _line("We will need to be able to address multiple sites daily and weekly.")
+    banter = _line("It was good talking with you today.")
+    kept, dropped = drop_email_non_scope([need, banter])
+    assert kept == [need] and dropped == [banter]

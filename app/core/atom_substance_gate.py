@@ -802,10 +802,22 @@ def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     return kept, dropped
 
 
+_NECESSITY_RE = re.compile(
+    r"\b(?:need(?:s|ed)?|must|shall|should|ha(?:ve|s)\s+to|requir(?:e|es|ed)|cannot|can'?t|unable|expect(?:s|ed)?)\b",
+    re.I,
+)
+
+
 def _is_conversational_prose(text: str, entity_keys: list[str]) -> bool:
     if _has_deal_substance(text, entity_keys):
         return False
     if re.search(r"\d", text):
+        return False
+    # A modal of necessity is grammar, not vocabulary: "We will need to be
+    # able to address multiple sites daily and weekly" is a demand on us,
+    # whatever the nouns are. Live 010300 dropped the customer's capacity
+    # requirement as banter.
+    if _NECESSITY_RE.search(text):
         return False
     words = text.split()
     if not words or len(words) > 14:
