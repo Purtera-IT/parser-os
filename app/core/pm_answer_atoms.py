@@ -74,6 +74,45 @@ def is_substantive_answer(answer: str) -> bool:
     return not _EMPTY_ANSWER.match(a)
 
 
+def _answer_entity_keys(answer: str, rule_id: str) -> list[str]:
+    """Entity keys for a PM's answer, read from the answer AND the question.
+
+    Two sources, each for what it alone can give: the rule id says which SITE
+    the card was about, and the answer says what the PM decided. The question's
+    own prose is not read — those are the system's words, not the PM's.
+    """
+    keys: list[str] = []
+
+    # The site the card was about, taken from the rule id rather than from the
+    # prose. Core writes `site.<slug>.<kind>`, and the question text spells the
+    # site however the roster happened to spell it that run — lower-cased, or
+    # with the suite number — which the address extractor does not recognise.
+    m = re.match(r"^site\.(.+)\.[a-z0-9_]+$", str(rule_id or ""), re.I)
+    if m:
+        slug = re.sub(r"[^a-z0-9]+", "_", m.group(1).lower()).strip("_")
+        if slug:
+            keys.append(f"site:{slug}")
+
+    # Then whatever the ANSWER itself names. Only the answer: the question is
+    # the system's own wording and its keys would credit the PM with facts they
+    # did not state. Stakeholder keys are dropped — a person mentioned inside a
+    # sentence is not a contact record, and "Implementation Site Visit" became
+    # `stakeholder:site_visit` on the first live answer.
+    try:
+        from app.core.entity_extraction import extract_keys
+        from app.domain import get_active_domain_pack
+
+        found = extract_keys(answer or "", pack=get_active_domain_pack())
+    except Exception:
+        found = ()
+    for k in found or ():
+        k = str(k)
+        if not k or k in keys or k.startswith("stakeholder:"):
+            continue
+        keys.append(k)
+    return keys[:24]
+
+
 def build_claim(question: str, answer: str) -> str:
     """Join the two verbatim strings into a self-contained claim.
 
@@ -83,7 +122,7 @@ def build_claim(question: str, answer: str) -> str:
     inventing wording nobody approved. Labelling both halves keeps it faithful
     and self-contained.
     """
-    q = _norm(question).rstrip("?")
+    q = _norm(question).rstrip(" .?!")
     a = _norm(answer)
     if not q:
         return a
@@ -145,6 +184,12 @@ def pm_answer_to_atom(
             "kind": "pm_answer",
         },
         source_refs=[source],
+        # A PM's answer is evidence like any other, so it has to carry the same
+        # keys any other evidence would: the site it is about, the dates, the
+        # equipment. Without them the atom is an island — it never reaches the
+        # site rollups, the scope truth or a conflict, and the answer that was
+        # supposed to settle a question cannot be found by the thing it settles.
+        entity_keys=_answer_entity_keys(answer_n, rule_id),
         authority_class=AuthorityClass.pm_confirmed,
         confidence=PM_ANSWER_CONFIDENCE,
         # A human authored it; it does not go back in the review queue.

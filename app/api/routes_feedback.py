@@ -71,15 +71,31 @@ def _active_store():
     a 409 on the end.
     """
     store = get_store()
-    if store is not None:
-        return store
-    try:
-        from app.core.compiler import _maybe_wire_feedback_store
+    if store is None:
+        try:
+            from app.core.compiler import _maybe_wire_feedback_store
 
-        _maybe_wire_feedback_store()
-    except Exception:  # pragma: no cover - defensive
+            _maybe_wire_feedback_store()
+        except Exception:  # pragma: no cover - defensive
+            return None
+        store = get_store()
+    if store is None:
         return None
-    return get_store()
+    # Pull in what was learned anywhere else. The store is per-process SQLite,
+    # and the service runs behind replicas that recycle, so a correction
+    # written by one replica is invisible to the next — and to every fresh
+    # container. The compiler already syncs the blob mirror before a compile
+    # for exactly this reason; the service endpoints need it too, or a
+    # question the PM taught us to hold back is screened against an empty
+    # store and shown again. Live: 16 corrections in blob,
+    # GET /feedback/corrections answering 0.
+    try:
+        from app.core import feedback_blob as _fb
+
+        _fb.sync_into_store(store)
+    except Exception:  # pragma: no cover - a sync failure must not 500
+        pass
+    return store
 
 
 def _require_store():
@@ -525,6 +541,13 @@ class PMCorrectionRequest(BaseModel):
     new_value: str = Field(..., description="What the PM says it is — the verdict to learn.")
     scope: str = SCOPE_DEAL
     context: str = ""
+    #: WHY the PM made this call. Recorded on the correction and shown wherever
+    #: it fires; deliberately NOT embedded with the exemplar, because a reason
+    #: describes the judgment and would drag the prototype off the thing it has
+    #: to match. The field was missing here while the caller was already
+    #: sending it, so every forwarded rejection stored "PM Gap: valid →
+    #: invalid" and lost the sentence that made it teachable.
+    rationale: str = ""
     relations: dict = Field(default_factory=dict)
     candidates: list[str] = Field(default_factory=list)
     pm: str = ""
@@ -543,7 +566,9 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
         "head": req.head, "dealId": req.deal_id or project_id, "compileId": req.compile_id,
         "targetId": req.target_id, "text": req.text, "oldValue": req.old_value,
         "newValue": req.new_value, "scope": req.scope, "context": req.context,
-        "relations": req.relations, "pm": req.pm or project_id,
+        "rationale": req.rationale,
+        # Attribution, not a placeholder: a deal id in `created_by` says nobody.
+        "relations": req.relations, "pm": req.pm or "pm",
     }
     try:
         cid = apply_pm_correction(store, payload)

@@ -239,6 +239,7 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
     # one gold row per exemplar, mirroring complaint_intake.confirm, and mirror
     # the rows to blob so they reach the worker's training log. Never raises;
     # no-op when SOWSMITH_TRAINING_LOG_DB is unset.
+    _rows = []
     try:
         from app.core.training_log import TEACHER_PM, TrainingRow, log_rows
 
@@ -260,14 +261,21 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
             for ex in corr.exemplars
             if ex and ex.strip()
         ]
-        if _rows:
-            log_rows(_rows)
-            try:
-                from app.core import feedback_blob as _fb2
-
-                _fb2.upload_training_rows(corr.id, _rows)
-            except Exception:  # pragma: no cover
-                pass
     except Exception:  # pragma: no cover - training-log is additive, never fatal
-        pass
+        _rows = []
+    # The blob mirror is what actually reaches the retrain, and it must not
+    # depend on this process having a local training log. The service has no
+    # SOWSMITH_TRAINING_LOG_DB, so every correction made through the API wrote
+    # a correction blob and no gold row: instant learning, nothing durable.
+    if _rows:
+        try:
+            log_rows(_rows)
+        except Exception:  # pragma: no cover - a local log is optional
+            pass
+        try:
+            from app.core import feedback_blob as _fb2
+
+            _fb2.upload_training_rows(corr.id, _rows)
+        except Exception:  # pragma: no cover
+            pass
     return corr.id
