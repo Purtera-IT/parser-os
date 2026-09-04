@@ -1395,8 +1395,13 @@ def _readability_score(atom: Any) -> float:
 
 
 def _rank(atom: Any) -> tuple[float, float]:
-    """Winner order among duplicates: confidence first, then the cleaner text."""
-    return (_confidence(atom), _readability_score(atom))
+    """Winner order among duplicates: confidence to the nearest tenth first,
+    then the cleaner text. A 0.88 OCR copy and a 0.80 text-layer copy of the
+    same clause are the same fact at the same confidence; the one whose words
+    are words should survive (live 010300: "does mot include any permits")."""
+    import math
+
+    return (math.floor(_confidence(atom) * 10 + 1e-9) / 10.0, _readability_score(atom))
 
 
 def _merge_values(winner: Any, loser: Any) -> None:

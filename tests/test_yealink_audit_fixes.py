@@ -1234,3 +1234,33 @@ def test_a_roster_site_is_never_suppressed_as_the_vendor_address(monkeypatch):
     atoms, dropped = g.suppress_vendor_sites([hq, party, sig], project_id="p")
     assert hq in atoms and hq.atom_type == AtomType.physical_site
     assert party.atom_type == AtomType.deal_metadata and party.value["kind"] == "party_address"
+
+
+def test_clean_copy_beats_ocr_copy_even_at_slightly_lower_confidence():
+    from app.core.semantic_dedup import _rank
+
+    clean = _atom(AtomType.pricing_assumption, "This quote does not include any permits.", kind="bullet")
+    clean.confidence = 0.80
+    # ("mot" happens to be an English word; a real OCR non-word shows the rule.)
+    ocr = _atom(AtomType.pricing_assumption, "This quote does not inclode any permitz.", kind="bullet")
+    ocr.confidence = 0.88
+    assert _rank(clean) > _rank(ocr)
+    far = _atom(AtomType.pricing_assumption, "This quote does not inclode any permitz.", kind="bullet")
+    far.confidence = 0.95
+    assert _rank(far) > _rank(clean)
+
+
+def test_conflict_headline_lists_each_differing_figure_once():
+    from app.core.cross_document_conflicts import find_cross_document_conflicts
+
+    def _a(doc, text):
+        a = _atom(AtomType.vendor_line_item, text, kind="table_row")
+        a.artifact_id = doc
+        a.source_refs = [SourceRef(id=f"s{doc}{abs(hash(text))}", artifact_id=doc, artifact_type="pdf", filename=f"{doc}.pdf", locator={"page": 4}, extraction_method="t", parser_version="t")]
+        return a
+
+    qs = find_cross_document_conflicts([
+        _a("signed", "48 Hour Cancellation or Turnaway Fee – Per Item $500.00 | 1 $500.00"),
+        _a("scan", "48 Hour Cancellation or Turnaway Fee – Per Item $300.00 | 1 $300.00"),
+    ], project_id="p")
+    assert len(qs) == 1 and "$500.00 vs $300.00" in qs[0].raw_text, qs[0].raw_text
