@@ -564,7 +564,10 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
-        if _atom_type_str(atom) not in _FILLER_ELIGIBLE:
+        # A raw transcript turn is judged too: "Yeah." / "Okay." / "You know
+        # what?" carry nothing a PM can act on (live 010300: 58 of the call's
+        # 207 atoms were three words or fewer).
+        if _atom_type_str(atom) not in _FILLER_ELIGIBLE | {"raw_utterance"}:
             kept.append(atom)
             continue
         text = _atom_text(atom)
@@ -989,6 +992,127 @@ def drop_transcript_conversational(atoms: list[Any]) -> tuple[list[Any], list[An
     return kept, dropped
 
 
+_TRANSCRIPT_TYPED = frozenset(
+    {"open_question", "action_item", "constraint", "decision", "milestone_phase", "quantity",
+     "customer_instruction", "meeting_commitment", "exclusion", "scope_item"}
+)
+
+
+def _is_transcript_turn(atom: Any) -> bool:
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    return isinstance(loc, dict) and loc.get("utterance_index") is not None
+
+
+# General-language function words: they ground nothing. Not deal
+# vocabulary -- pronouns, auxiliaries, determiners, prepositions and the
+# conversational glue every English sentence carries.
+_GLUE_WORDS: frozenset[str] = frozenset(
+    """
+    this that these those there their them they then than what when where which while
+    who whom whose with without would could should shall will might must have having
+    been being were was does done doing just like know knew think thought thing things
+    something anything nothing everything some many much more most other another such
+    only also very really still even ever never always often again back over under
+    into onto from about after before because since until though although through
+    here your yours ours mine himself herself itself themselves myself yourself
+    said says saying tell told want wants wanted need needs needed going gone come
+    came make made making take took taken give gave given look looked looking
+    right okay yeah well good great sure kind sort little year years today tomorrow
+    week weeks month months time times day days people person guys everybody
+    """.split()
+)
+
+
+def _grounding_tokens(text: str) -> list[str]:
+    return [
+        t for t in _content_tokens(text)
+        if len(t) >= 4 and t.isalpha() and t not in _NONCONTENT_TOKENS and t not in _GLUE_WORDS
+    ]
+
+
+_LEXICON_MIN_WORDS = 20
+
+_CALENDAR_RE = re.compile(
+    r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|weekday)s?\b|"
+    r"\b(?:january|february|march|april|june|july|august|september|october|november|december)\b|"
+    r"\bafter[- ]hours\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\bo'clock\b",
+    re.IGNORECASE,
+)
+
+
+def _is_dictionary_word(token: str) -> bool:
+    try:
+        from app.core.text_quality import _is_word
+        return bool(_is_word(token))
+    except Exception:
+        return True
+
+
+def _deal_lexicon(atoms: list[Any]) -> set[str]:
+    """Content words the deal's DOCUMENTS use (everything that is not a
+    transcript turn or a provenance record): the ground a call is measured
+    against. Empty when the documents are too thin to ground anything."""
+    words: set[str] = set()
+    for atom in atoms:
+        if _is_transcript_turn(atom):
+            continue
+        val = _atom_value(atom)
+        if str(val.get("kind") or "").endswith(("_header", "_marker")):
+            continue
+        words.update(_grounding_tokens(_atom_text(atom)))
+    return words if len(words) >= _LEXICON_MIN_WORDS else set()
+
+
+def demote_transcript_smalltalk(atoms: list[Any], lexicon: set[str] | None = None) -> tuple[list[Any], list[Any]]:
+    """A typed transcript turn keeps its type only when it is about the deal.
+
+    The transcript typer works on shape -- a question mark makes an
+    open_question, "send" makes an action_item -- so a call's small talk
+    arrives typed (live 010300: "And they play Youngstown State, right?"
+    as open_question, "Their schedule this year is insane." as
+    action_item). Grounding, not a word list: a turn is about the deal when
+    it carries a scope verb, a deal entity, a figure, or a content word the
+    deal's own documents use ("dentistry", "hours", "quote"). Anything
+    else goes back to ``raw_utterance``: the words are kept, the claim is
+    withdrawn. With no documents to ground against, only short turns are
+    demoted. Retag in place; ``dropped`` is always empty."""
+    from app.core.schemas import AtomType
+
+    if lexicon is None:
+        lexicon = _deal_lexicon(atoms)
+    for atom in atoms:
+        if _atom_type_str(atom) not in _TRANSCRIPT_TYPED or not _is_transcript_turn(atom):
+            continue
+        text = _atom_text(atom)
+        entity_keys = list(getattr(atom, "entity_keys", None) or [])
+        # A figure or a calendar shape (a weekday, a month, a clock time,
+        # "after hours") is a claim about quantity or schedule on its own.
+        if _has_deal_substance(text, entity_keys) or re.search(r"\d", text) or _CALENDAR_RE.search(text):
+            continue
+        tokens = [t for t in _content_tokens(text) if t]
+        if lexicon:
+            # Two shared content words, one of them specific (six letters or
+            # more, or a word the dictionary does not know: a product, a
+            # vendor, a customer name). Two short ordinary words in common
+            # ("play", "state") ground nothing.
+            shared = {t for t in _grounding_tokens(text) if t in lexicon}
+            strong = [t for t in shared if len(t) >= 6 or not _is_dictionary_word(t)]
+            if (len(shared) >= 2 and strong) or any(not _is_dictionary_word(t) for t in shared):
+                continue
+        elif len(tokens) > 8 and not _CONVERSATIONAL_LEAD_RE.search(text):
+            continue
+        atom.atom_type = AtomType.raw_utterance
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if "transcript_smalltalk_demoted" not in flags:
+            flags.append("transcript_smalltalk_demoted")
+        try:
+            atom.review_flags = flags
+        except Exception:
+            pass
+    return atoms, []
+
+
 def drop_risk_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Drop risk atoms that are mid-sentence clippings without risk structure.
 
@@ -1166,6 +1290,8 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     all_dropped.extend(d)
     kept, d = drop_transcript_conversational(kept)
     all_dropped.extend(d)
+    kept, d = demote_transcript_smalltalk(kept)
+    all_dropped.extend(d)
     kept, d = drop_risk_fragments(kept)
     all_dropped.extend(d)
     kept, d = collapse_ambiguous_user_quantities(kept)
@@ -1185,4 +1311,5 @@ __all__ = [
     "drop_risk_fragments",
     "drop_section_headers",
     "drop_transcript_conversational",
+    "demote_transcript_smalltalk",
 ]

@@ -1017,6 +1017,12 @@ def _document_header_date(artifact_atoms: list[Any], page_text: str | None = Non
     not the document's own date and are not read here. ``page_text`` is the
     first page's own text, consulted the same way when given.
     """
+    # A document that states its own date in a provenance record (a call
+    # transcript's header: title, date, participants) is dated by it.
+    for a in artifact_atoms or []:
+        _val = getattr(a, "value", None)
+        if isinstance(_val, dict) and str(_val.get("kind") or "").endswith("_header") and _val.get("document_date"):
+            return str(_val["document_date"])
     try:
         from dateutil import parser as _dp
     except Exception:  # pragma: no cover
@@ -2776,9 +2782,15 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         loc = getattr(refs[0], "locator", None) if refs else None
         loc = loc if isinstance(loc, dict) else {}
         when = doc_when.get(aid, "9999")
-        msg_when = _parse_loose_datetime(str(v.get("authored_at") or "")) if v.get("message_index") is not None else ""
-        if msg_when:
-            when = msg_when
+        # Inside one email file the quoted history reads oldest first
+        # (position_in_file 1 = earliest); the file itself sits at its own
+        # header date. Quoted "Sent:" clocks are local and unzoned, so they
+        # are never compared against header dates from other files.
+        pos = ((v.get("email_thread") or {}).get("position_in_file") if isinstance(v.get("email_thread"), dict) else None)
+        try:
+            pos = int(pos) if pos is not None else 10**6
+        except (TypeError, ValueError):
+            pos = 10**6
         page = loc.get("page")
         try:
             page = int(page) if page is not None else 0
@@ -2789,7 +2801,7 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
             line = int(line) if line is not None else 0
         except (TypeError, ValueError):
             line = 0
-        return (when, doc_pos.get(aid, 10**6), page, line, str(getattr(a, "id", "")))
+        return (when, doc_pos.get(aid, 10**6), pos, page, line, str(getattr(a, "id", "")))
 
     return sorted(atoms, key=key)
 

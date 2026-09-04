@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.core.textio import read_text
 
 import json
@@ -90,6 +92,45 @@ SCOPE_IMPACTING_TYPES = {
     AtomType.quantity,
 }
 
+
+
+_ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+def _ulid_iso(ulid: str) -> str | None:
+    """The creation time a ULID encodes, as ISO-8601 UTC, when the id is one."""
+    u = (ulid or "").strip().upper()
+    if not _ULID_RE.match(u):
+        return None
+    ms = 0
+    for ch in u[:10]:
+        ms = ms * 32 + _ULID_ALPHABET.index(ch)
+    try:
+        dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    if not (2000 <= dt.year <= 2100):
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_date(value: Any) -> str | None:
+    """A JSON date field (ISO string or epoch ms) as ISO-8601 UTC, or None."""
+    if value is None or value == "":
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            ms = float(value)
+            dt = datetime.fromtimestamp(ms / 1000 if ms > 1e11 else ms, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        text = str(value).strip()
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None
 
 class TranscriptParser(BaseParser):
     parser_name = "transcript"
@@ -303,6 +344,9 @@ class TranscriptParser(BaseParser):
         del domain_pack
         segments = self._segments_from_path(path)
         atoms: list[EvidenceAtom] = []
+        header = self._call_header_atom(project_id=project_id, artifact_id=artifact_id, path=path)
+        if header is not None:
+            atoms.append(header)
         for segment in segments:
             atoms.extend(
                 self._atoms_from_segment(
@@ -317,6 +361,68 @@ class TranscriptParser(BaseParser):
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _call_header_atom(self, *, project_id: str, artifact_id: str, path: Path) -> EvidenceAtom | None:
+        """One provenance record for the call itself: title, date, participants.
+
+        A JSON transcript states its own date when the exporter wrote one;
+        a Fireflies id is a ULID, whose first ten characters are the
+        creation time, so a call is dated even when the exporter did not
+        say (live 010300: the Carl Painter call sorted after every document
+        because nothing dated it). ``document_date`` is what the envelope
+        reads as the document's own date.
+        """
+        if path.suffix.lower() != ".json":
+            return None
+        try:
+            payload = json.loads(read_text(path))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        title = " ".join(str(payload.get("title") or "").split())
+        date_iso = _iso_date(payload.get("date")) or _ulid_iso(str(payload.get("id") or ""))
+        participants = [str(x).strip() for x in (payload.get("participants") or []) if str(x).strip()]
+        if not (title or date_iso or participants):
+            return None
+        parts = []
+        if title:
+            parts.append(f"Call: {title}")
+        if date_iso:
+            parts.append(f"Date: {date_iso}")
+        if participants:
+            parts.append("Participants: " + ", ".join(participants))
+        text = " | ".join(parts)
+        value: dict[str, Any] = {"kind": "transcript_header", "text": text, "title": title or None}
+        if date_iso:
+            value["document_date"] = date_iso
+        if participants:
+            value["participants"] = participants
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, "transcript_header", text),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=text,
+            normalized_text=normalize_text(text),
+            value=value,
+            authority_class=AuthorityClass.meeting_note,
+            confidence=0.95,
+            review_status=ReviewStatus.auto_accepted,
+            entity_keys=[],
+            parser_version=self.parser_version,
+            source_refs=[
+                SourceRef(
+                    id=stable_id("src", artifact_id, "transcript_header"),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.transcript,
+                    filename=path.name,
+                    locator={"line_start": 0, "line_end": 0, "kind": "transcript_header"},
+                    extraction_method="transcript_metadata",
+                    parser_version=self.parser_version,
+                )
+            ],
         )
 
     def _build_structured_doc(

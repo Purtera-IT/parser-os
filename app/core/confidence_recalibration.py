@@ -250,6 +250,22 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
             n += 1
             stats["provenance"] += 1
             continue
+        # A raw transcript turn is context, not a claim: what was said, kept
+        # for the record. Queueing it asks a PM to "review" that someone
+        # spoke (live 010300: 181 of 231 queued atoms were the call's turns).
+        _at = getattr(atom, "atom_type", None)
+        if str(getattr(_at, "value", _at) or "") == "raw_utterance":
+            atom.review_status = ReviewStatus.auto_accepted
+            _fl = list(getattr(atom, "review_flags", None) or [])
+            if "context_only" not in _fl:
+                _fl.append("context_only")
+                try:
+                    atom.review_flags = _fl
+                except Exception:
+                    pass
+            n += 1
+            stats["context"] = stats.get("context", 0) + 1
+            continue
         if any(_is_doubt(f) for f in (getattr(atom, "review_flags", None) or [])):
             stats["doubt"] += 1
             continue

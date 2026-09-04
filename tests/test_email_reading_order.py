@@ -135,9 +135,10 @@ def test_reading_order_is_oldest_message_first_then_page_and_line() -> None:
         {"artifact_id": "eml", "authored_at": "2026-09-03T13:20:00"},
     ]
     atoms = [
-        _atom("z_top_reply", "eml", message_index=0, authored_at="Thu, 03 Sep 2026 13:20:00 -0400", _line=3),
-        _atom("y_carl", "eml", message_index=1, authored_at="Thursday, September 3, 2026 11:44 AM", _line=20),
-        _atom("x_trent", "eml", message_index=2, authored_at="Thursday, September 3, 2026 9:02 AM", _line=30),
+        _atom("z_top_reply", "eml", message_index=0, email_thread={"position_in_file": 3}, _line=3),
+        _atom("y_carl", "eml", message_index=1, email_thread={"position_in_file": 2}, _line=20),
+        # A quoted header row without a clock of its own still sits with its message.
+        _atom("x_trent", "eml", message_index=2, email_thread={"position_in_file": 1}, _line=30),
         _atom("w_psow_p2", "psow", _page=2, _line=1),
         _atom("v_psow_p1", "psow", _page=1, _line=5),
     ]
