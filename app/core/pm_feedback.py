@@ -57,6 +57,30 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
 _THRESHOLD_DEAL = 0.74
 _THRESHOLD_GLOBAL = 0.82
 
+# Some heads judge text that is uniformly close in embedding space, so the
+# default bars cannot separate a true match from a near neighbour. Measured on
+# the live corpus with the worker's embedder:
+#
+#   1.000  the same question card, reworded not at all
+#   0.768  "…badging requirements for 5000 Clayton RD" vs "…for AMP 01"   (same ask)
+#   0.754  "Who provides the customer bridge?" vs the full card            (same ask)
+#   0.746  "Who signs site acceptance at Palo Alto?" vs "Confirm technician
+#          parking at the Palo Alto office."                              (DIFFERENT ask)
+#
+# A true match and a false one are 0.008 apart at the default deal bar, so a
+# rejection of one site question would silence an unrelated one. Questions are
+# grounded in the card the PM was looking at, which scores ~1.0, so the bar can
+# be raised well clear of the noise without losing the case that matters.
+# Repeated judgments still relax it one step per deal.
+_HEAD_THRESHOLDS: dict[str, tuple[float, float]] = {
+    "gap": (0.82, 0.88),  # (deal, global)
+}
+
+
+def _threshold_for(head: str, scope: str) -> float:
+    deal_bar, global_bar = _HEAD_THRESHOLDS.get(head, (_THRESHOLD_DEAL, _THRESHOLD_GLOBAL))
+    return global_bar if scope == SCOPE_GLOBAL else deal_bar
+
 
 #: A repeated judgment is stronger evidence than a single one, so the same
 #: correction made again widens rather than replaces. Never below the bar a
@@ -121,7 +145,7 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
         scope=scope,
         scope_key=("" if scope == SCOPE_GLOBAL else deal_id),
         exemplars=[exemplar],
-        threshold=(_THRESHOLD_GLOBAL if scope == SCOPE_GLOBAL else _THRESHOLD_DEAL),
+        threshold=_threshold_for(head, scope),
         relations={**dict(payload.get("relations") or {}), _DEALS_KEY: [deal_id] if deal_id else []},
         # The PM's own reason rides with the correction, so wherever it fires
         # the brief can say whose judgment this was and why they made it.
@@ -138,6 +162,14 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
         created_at=now,
         updated_at=now,
     )
+
+
+def _head_of(corr: Correction) -> str:
+    """The head a correction belongs to, from its relation."""
+    for head, spec in HEAD_REGISTRY.items():
+        if spec.relation == getattr(corr, "relation", ""):
+            return head
+    return ""
 
 
 def _merge_with_existing(store, corr: Correction) -> Correction:
@@ -176,7 +208,9 @@ def _merge_with_existing(store, corr: Correction) -> Correction:
 
     evidence = max(len(seen), len(deals))
     base = float(getattr(corr, "threshold", _THRESHOLD_DEAL))
-    relaxed = max(_THRESHOLD_FLOOR, round(base - _THRESHOLD_STEP * (evidence - 1), 4))
+    # Never below the bar THIS head trusts for a single in-deal correction.
+    floor = _HEAD_THRESHOLDS.get(_head_of(corr), (_THRESHOLD_FLOOR, _THRESHOLD_FLOOR))[0]
+    relaxed = max(min(floor, base), round(base - _THRESHOLD_STEP * (evidence - 1), 4))
     return dataclasses.replace(corr, exemplars=seen, threshold=relaxed, relations=rel)
 
 

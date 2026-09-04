@@ -275,3 +275,49 @@ def test_grounding_refuses_a_card_that_is_about_something_else() -> None:
 
     live = ["Confirm AP count/model for this quote.", "What are the approved work hours?"]
     assert ground_in_questions("Who provides the customer bridge?", live) == ""
+
+
+def test_the_gap_head_keeps_a_bar_that_clears_its_own_noise() -> None:
+    """Measured on the live corpus: a reworded same-ask scores 0.754-0.768 and
+    a DIFFERENT ask about the same site scores 0.746. Eight thousandths apart,
+    so the default bars cannot separate them and the gap head carries its own.
+    A note is grounded in the card the PM was looking at, which scores ~1.0,
+    so the higher bar costs nothing that matters."""
+    from app.core.pm_feedback import _HEAD_THRESHOLDS, _THRESHOLD_DEAL, _threshold_for
+
+    assert _threshold_for("gap", "deal") == 0.82
+    assert _threshold_for("gap", "global") == 0.88
+    assert _threshold_for("type", "deal") == _THRESHOLD_DEAL
+    assert _HEAD_THRESHOLDS["gap"][0] > 0.746, "must clear the measured false positive"
+
+
+def test_repeated_judgments_relax_the_bar_but_never_below_the_heads_own_floor() -> None:
+    from app.core.pm_feedback import _merge_with_existing, pm_correction_to_correction
+
+    class Store:
+        def __init__(self):
+            self.rows = {}
+
+        def get(self, cid):
+            return self.rows.get(cid)
+
+    store = Store()
+    seen = []
+    for deal in ("a", "b", "c", "d", "e", "f"):
+        corr = pm_correction_to_correction(
+            {
+                "head": "gap",
+                "dealId": deal,
+                "targetId": "r1",
+                "text": "Who signs acceptance?",
+                "oldValue": "valid",
+                "newValue": "invalid",
+                "scope": "global",
+            }
+        )
+        corr = _merge_with_existing(store, corr)
+        store.rows[corr.id] = corr
+        seen.append(corr.threshold)
+    assert seen[0] == 0.88
+    assert seen[1] < seen[0], "evidence buys reach"
+    assert min(seen) >= 0.82, "never below the bar one in-deal correction clears"

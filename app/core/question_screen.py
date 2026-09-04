@@ -43,6 +43,14 @@ def _store(explicit: Any = None) -> Any:
     try:
         from app.core.decide import get_store
 
+        store = get_store()
+        if store is not None:
+            return store
+        # A service process never ran the compiler, so nothing wired the store;
+        # do the same env-driven wiring here rather than reporting the loop off.
+        from app.core.compiler import _maybe_wire_feedback_store
+
+        _maybe_wire_feedback_store()
         return get_store()
     except Exception:
         return None

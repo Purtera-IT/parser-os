@@ -59,19 +59,33 @@ HEAD_REGISTRY: dict[str, str] = {
 }
 
 
+def _active_store():
+    """The wired store, activating it from env on first use. Returns ``None``
+    when the learning loop is switched off.
+
+    The service mounts this router but never calls ``set_store``: only the
+    compiler did that, so in a service process every endpoint that read
+    ``get_store()`` directly saw None and reported the loop inactive even
+    though ``SOWSMITH_FEEDBACK_STORE_DB`` was set. Endpoints that degrade
+    rather than refuse use this; :func:`_require_store` is the same path with
+    a 409 on the end.
+    """
+    store = get_store()
+    if store is not None:
+        return store
+    try:
+        from app.core.compiler import _maybe_wire_feedback_store
+
+        _maybe_wire_feedback_store()
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return get_store()
+
+
 def _require_store():
     """Return the wired feedback store, or 409 if none is active. Attempts the
     env-driven wiring the compiler uses, so a fresh process self-activates."""
-    store = get_store()
-    if store is None:
-        # Try the same opt-in wiring the compiler performs.
-        try:
-            from app.core.compiler import _maybe_wire_feedback_store
-
-            _maybe_wire_feedback_store()
-            store = get_store()
-        except Exception:  # pragma: no cover - defensive
-            store = None
+    store = _active_store()
     if store is None:
         raise HTTPException(
             status_code=409,
@@ -382,7 +396,7 @@ def feedback_note(project_id: str, req: NoteRequest) -> dict[str, Any]:
     if not note:
         raise HTTPException(status_code=400, detail="note is required")
     deal_id = (req.deal_id or project_id).strip()
-    store = get_store()
+    store = _active_store()
 
     if req.dry_run or store is None:
         routing = route_note(
@@ -437,7 +451,8 @@ def feedback_questions_screen(project_id: str, req: QuestionScreenRequest) -> di
 
     deal_id = (req.deal_id or project_id).strip()
     rows = [q.model_dump() for q in req.questions]
-    results = screen_questions(rows, deal_id=deal_id, facts=req.facts)
+    store = _active_store()
+    results = screen_questions(rows, deal_id=deal_id, facts=req.facts, store=store)
     dropped = [r for r in results if r.get("verdict") == "invalid"]
     return {
         "deal_id": deal_id,
@@ -445,7 +460,7 @@ def feedback_questions_screen(project_id: str, req: QuestionScreenRequest) -> di
         "suppressed": len(dropped),
         "suppressed_ids": suppressed_ids(results),
         "results": results,
-        "store_active": get_store() is not None,
+        "store_active": store is not None,
     }
 
 
