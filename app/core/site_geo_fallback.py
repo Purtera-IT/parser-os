@@ -201,6 +201,19 @@ def _site_address_text(atom: Any) -> tuple[str, str]:
     return (primary, context)
 
 
+def _is_roster_site(atom: Any) -> bool:
+    """Did this site come out of a locations table (site roster row)?"""
+    for ref in (getattr(atom, "source_refs", None) or []):
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and str(loc.get("extraction") or "").startswith("site_roster"):
+            return True
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict):
+        if str(v.get("kind") or "") == "physical_site" and v.get("site_id") and v.get("facility_name") and not v.get("inferred"):
+            return True
+    return False
+
+
 def suppress_vendor_sites(
     atoms: list[Any], *, project_id: str
 ) -> tuple[list[Any], int]:
@@ -220,6 +233,19 @@ def suppress_vendor_sites(
     from app.core.vendor_site_ban import drop_banned_vendor_physical_sites
 
     atoms, det_dropped = drop_banned_vendor_physical_sites(atoms)
+
+    # A signature-page mailing address is a party's, decided by SHAPE before
+    # any model sees the sites. Otherwise the party address counts as the
+    # second site, the LLM is asked to pick the vendor among two, and it can
+    # pick the customer's HQ (local 010300: "2970 Brandywine Rd, Atlanta"
+    # judged vendor_or_billing_address, the CDW mailing address kept, then
+    # vetoed -- zero sites).
+    try:
+        from app.core.party_address_veto import veto_party_page_sites
+
+        veto_party_page_sites(atoms)
+    except Exception:
+        pass
 
     # Route the address-role judgment through the universal decide() chokepoint.
     # Phase 2: the feedback store is not yet wired, so decide() is a transparent
@@ -254,6 +280,11 @@ def suppress_vendor_sites(
     for a in sites:
         aid = getattr(a, "id", None)
         if not aid:
+            continue
+        # A row of a locations table ("Customer-Designated Locations", a site
+        # roster) is a job site by construction -- the document listed it as a
+        # place where work happens. No model judgment overrides that shape.
+        if _is_roster_site(a):
             continue
         addr, context = _site_address_text(a)
         if not addr:

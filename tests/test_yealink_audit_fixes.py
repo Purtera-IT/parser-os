@@ -1202,3 +1202,35 @@ def test_a_postal_address_is_never_debris():
     assert not is_unreadable("2970 Brandywine Rd, STE 200, Atlanta, GA 30641")
     assert not is_unreadable("Mailing Address: 4801 Woodway Dr Ste 300E, Houston, TX 77056")
     assert is_unreadable("T metry and Cr idencial ‘ape th La echnodogies L y and Confidential Pag")
+
+
+def test_a_roster_site_is_never_suppressed_as_the_vendor_address(monkeypatch):
+    """Local 010300: with the party's mailing address counted as a second site,
+    the vendor-address model picked the customer's HQ as the vendor. A row of
+    the locations table is a job site by construction; and the party address
+    is vetoed by shape before any model is asked."""
+    from app.core import site_geo_fallback as g
+
+    def _site(text, page, **v):
+        a = _atom(AtomType.physical_site, text, kind="physical_site", **v)
+        a.source_refs = [SourceRef(id=f"s{page}{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": page, "extraction": "site_roster_v1" if v.get("site_id") == "HQ" else "prose"}, extraction_method="t", parser_version="t")]
+        return a
+
+    hq = _site("facility: HQ | address: 2970 Brandywine Rd, STE 200", 4, id="HQ", site_id="HQ", name="HQ", facility_name="HQ", street_address="2970 Brandywine Rd, STE 200", address="2970 Brandywine Rd, STE 200", city="Atlanta", state="GA", zip="30641")
+    hq.entity_keys = ["site:hq"]
+    party = _site("200 N. Milwaukee Ave., Vernon Hills, IL 60061", 6, id="VERNON", site_id="VERNON", name="Vernon Hills Office", street_address="200 N. Milwaukee Ave.", city="Vernon Hills", state="IL", zip="60061", inferred=True)
+    party.entity_keys = ["site:vernon_hills_il_60061"]
+    sig = _atom(AtomType.signatory, "CDW Technologies LLC: Mike Murphy, Professional Services Manager | NewBold LLC: Shelly Lewis, EVP & COO", kind="signature_block", signers=[{"party": "CDW Technologies LLC", "name": "Mike Murphy"}])
+    sig.source_refs = [SourceRef(id="ssig", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 6}, extraction_method="t", parser_version="t")]
+
+    class _Verdict:
+        verdict = "vendor_or_billing_address"
+        confidence = 0.99
+
+    # Whatever a model says, the roster row stays a site.
+    monkeypatch.setattr(g, "decide", lambda *a, **k: _Verdict(), raising=False)
+    import app.core.decide as decide_mod
+    monkeypatch.setattr(decide_mod, "decide", lambda *a, **k: _Verdict())
+    atoms, dropped = g.suppress_vendor_sites([hq, party, sig], project_id="p")
+    assert hq in atoms and hq.atom_type == AtomType.physical_site
+    assert party.atom_type == AtomType.deal_metadata and party.value["kind"] == "party_address"
