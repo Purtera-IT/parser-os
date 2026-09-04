@@ -210,11 +210,23 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
     """
     from app.core.schemas import AuthorityClass, ReviewStatus
 
+    # Bookkeeping flags record what a pass DID (an authority demotion, a
+    # typer tag); they are not doubt about the text. Live 010300: every
+    # queued atom carried `unearned_contract_authority_demoted` -- "a file
+    # format is not a contract" -- and the queue never emptied.
+    def _is_doubt(flag: str) -> bool:
+        f = str(flag or "")
+        if f in _BOOKKEEPING_FLAGS:
+            return False
+        if f.endswith(("_demoted", "_retyped", "_promoted", "_tag")):
+            return False
+        return True
+
     n = 0
     for atom in atoms:
         if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
             continue
-        if list(getattr(atom, "review_flags", None) or []):
+        if any(_is_doubt(f) for f in (getattr(atom, "review_flags", None) or [])):
             continue
         # calibrated_confidence defaults to 0.0 on atoms recalibration never
         # touched (live 010300: 110 of 116 queued atoms) -- that is "not
@@ -236,11 +248,17 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
             continue
         atom.review_status = ReviewStatus.auto_accepted
         try:
-            atom.review_flags = ["accepted_verified_receipt"]
+            atom.review_flags = list(getattr(atom, "review_flags", None) or []) + ["accepted_verified_receipt"]
         except Exception:
             pass
         n += 1
     return n
+
+
+_BOOKKEEPING_FLAGS = frozenset({
+    "unearned_contract_authority_demoted", "accepted_verified_receipt", "task", "conv",
+    "scope_dimension", "typed_by_store", "typed_by_student", "typed_by_head",
+})
 
 
 def recalibrate_confidence(
