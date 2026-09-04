@@ -1084,6 +1084,13 @@ def demote_transcript_smalltalk(atoms: list[Any], lexicon: set[str] | None = Non
     for atom in atoms:
         if _atom_type_str(atom) not in _TRANSCRIPT_TYPED or not _is_transcript_turn(atom):
             continue
+        # A turn filed under an author's own heading ("Open Questions:",
+        # "Action Items:") was typed by the person who wrote the notes, not
+        # by shape; it is never small talk.
+        _refs = getattr(atom, "source_refs", None) or []
+        _loc = getattr(_refs[0], "locator", None) if _refs else None
+        if isinstance(_loc, dict) and _loc.get("section"):
+            continue
         text = _atom_text(atom)
         entity_keys = list(getattr(atom, "entity_keys", None) or [])
         # A figure or a calendar shape (a weekday, a month, a clock time,
