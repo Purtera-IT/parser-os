@@ -1125,8 +1125,33 @@ def test_same_clause_different_figures_across_documents_is_an_open_question():
     ]
     qs = find_cross_document_conflicts(atoms, project_id="p")
     texts = [q.raw_text for q in qs]
-    assert len(qs) == 1, texts  # fee $500 vs $300; the 48-hour clause agrees, the notice clause differs in wording too
-    assert "$500" in texts[0] and "$300" in texts[0]
-    assert qs[0].atom_type == AtomType.open_question and qs[0].review_status == ReviewStatus.needs_review
-    assert sorted(qs[0].value["artifact_ids"]) == ["scan", "signed"]
-    assert len(qs[0].source_refs) == 2
+    # The fee ($500 vs $300) and the notice (two weeks vs five business days)
+    # conflict; the 48-hour clause and the thirty-day validity agree.
+    assert len(qs) == 2, texts
+    fee = next(q for q in qs if "$500" in q.raw_text)
+    assert "$300" in fee.raw_text and "48" not in fee.value["values"][0]["figures"]
+    assert fee.atom_type == AtomType.open_question and fee.review_status == ReviewStatus.needs_review
+    assert sorted(fee.value["artifact_ids"]) == ["scan", "signed"]
+    assert len(fee.source_refs) == 2
+    assert any("2" in q.value["values"][0]["figures"] and "5" in q.value["values"][1]["figures"] for q in qs if q is not fee)
+
+
+def test_ocr_noise_does_not_hide_a_cross_document_conflict():
+    from app.core.cross_document_conflicts import find_cross_document_conflicts
+
+    def _a(doc, atom_type, text):
+        a = _atom(atom_type, text, kind="bullet")
+        a.artifact_id = doc
+        a.source_refs = [SourceRef(id=f"s{doc}{abs(hash(text))}", artifact_id=doc, artifact_type="pdf", filename=f"{doc}.pdf", locator={"page": 2}, extraction_method="t", parser_version="t")]
+        return a
+
+    atoms = [
+        _a("signed", AtomType.change_order_rule, "Any additional onsite labor outside of the allotted hours assigned for a location will be invoiced at a rate of $115.00 per hour billed in 30-minute increments."),
+        _a("scan", AtomType.change_order_rule, "Auny additional onsite labor outside of the allotted hours. assigned for a location will be invoiced at a rate of $150.00 per hour billed in 30-minute increments."),
+        _a("signed", AtomType.dependency, "Provider to own scheduling rights and requires a minimum of two (2) weeks’ notice for implementation work."),
+        _a("scan", AtomType.dependency, "Providerto own scheduling rights and requires a minimum of five (5) business days for implementation work."),
+    ]
+    qs = find_cross_document_conflicts(atoms, project_id="p")
+    texts = " || ".join(q.raw_text for q in qs)
+    assert len(qs) == 2, texts
+    assert "$115" in texts and "$150" in texts and "2" in texts and "5" in texts

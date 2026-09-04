@@ -96,8 +96,36 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
             continue
         groups.setdefault(tpl, []).append(atom)
 
+    # OCR'd copies never match a clean copy letter for letter ("bess than 48
+    # hours", "Tumaway Fee"); a template is the same clause when most of its
+    # words are shared. Merge template groups whose word sets overlap enough.
+    keys = list(groups)
+    tok = {k: {w for w in k.split() if w != "#" and len(w) > 2} for k in keys}
+    parent = {k: k for k in keys}
+
+    def _root(k: str) -> str:
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            ta, tb = tok[a], tok[b]
+            if not ta or not tb or _root(a) == _root(b):
+                continue
+            inter = len(ta & tb)
+            # Six shared words and three of every five in common: "Provider
+            # to own scheduling rights and requires a minimum of two (2)
+            # weeks' notice" / "... five (5) business days" is one clause.
+            if inter >= _MIN_WORDS and inter / len(ta | tb) >= 0.6:
+                parent[_root(b)] = _root(a)
+    merged_groups: dict[str, list[Any]] = {}
+    for k in keys:
+        merged_groups.setdefault(_root(k), []).extend(groups[k])
+
     out: list[EvidenceAtom] = []
-    for tpl, members in groups.items():
+    for tpl, members in merged_groups.items():
         by_doc: dict[str, Any] = {}
         for a in members:
             by_doc.setdefault(str(getattr(a, "artifact_id", "")), a)
@@ -110,15 +138,24 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
             continue  # same figures in every document: agreement, not conflict
         reps = list(variants.values())
         first = reps[0]
-        values = [
-            {
-                "figures": key,
-                "text": _text(a)[:300],
-                "atom_id": str(getattr(a, "id", "")),
-                "artifact_id": str(getattr(a, "artifact_id", "")),
-            }
-            for key, a in variants.items()
-        ]
+        # Only the figures that actually differ go in the headline ("$115.00
+        # vs $150.00", not "$115.00 30 vs $150.00 30").
+        fig_lists = [_figures(_text(a)) for a in reps]
+        common = set(fig_lists[0])
+        for fl in fig_lists[1:]:
+            common &= set(fl)
+        values = []
+        for (key, a), fl in zip(variants.items(), fig_lists):
+            differing = [f for f in fl if f not in common] or fl
+            values.append(
+                {
+                    "figures": " ".join(differing),
+                    "all_figures": key,
+                    "text": _text(a)[:300],
+                    "atom_id": str(getattr(a, "id", "")),
+                    "artifact_id": str(getattr(a, "artifact_id", "")),
+                }
+            )
         summary = " vs ".join(v["figures"] for v in values)
         text = (
             f"Documents disagree on one clause: {summary}. "
