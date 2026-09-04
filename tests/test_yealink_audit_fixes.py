@@ -323,6 +323,7 @@ def test_a_sow_between_other_parties_is_third_party_terms():
     from app.core.document_parties import annotate_document_parties, our_org_tokens
     assert "purtera" in our_org_tokens()
     docs = [{"artifact_id": "pdf", "filename": "NEWBOLD PSOW.pdf", "authored_at": "2025-03-05"},
+            {"artifact_id": "scan", "filename": "NEWBOLD scanned.pdf"},
             {"artifact_id": "ours", "filename": "PurTera SOW.docx"}]
     env = {"summary": {}, "atoms": [
         {"artifact_id": "pdf", "atom_type": "deal_metadata", "text": "col_0: Provider Name: | D4C Site Assessment and Implementation Program – Phase 1: NewBold LLC FKA NewBold Corporation"},
@@ -331,11 +332,13 @@ def test_a_sow_between_other_parties_is_third_party_terms():
         {"artifact_id": "pdf", "atom_type": "signatory", "text": "CDW Technologies LLC: Mike Murphy | NewBold LLC: Shelly Lewis",
          "structured": {"signers": [{"party": "CDW Technologies LLC", "name": "Mike Murphy"}, {"party": "NewBold LLC", "name": "Shelly Lewis"}]}},
         {"artifact_id": "pdf", "atom_type": "vendor_line_item", "text": "1 × 1 Tech onsite for 4 Hours – Per Item = $570.00"},
+        {"artifact_id": "scan", "atom_type": "deal_metadata", "text": "|ProviderName:|NewBold LLC FKA NewBold Corporation"},
         {"artifact_id": "ours", "atom_type": "deal_metadata", "text": "Provider: PurTera IT LLC"},
         {"artifact_id": "ours", "atom_type": "deal_metadata", "text": "Customer: Marion County School District"},
     ]}
-    assert annotate_document_parties(docs, env) == 2
-    pdf, ours = docs
+    assert annotate_document_parties(docs, env) == 3
+    pdf, scan, ours = docs
+    assert scan["third_party_terms"] is True and scan["terms_owner"].startswith("NewBold")
     assert pdf["third_party_terms"] is True and pdf["terms_owner"] == "NewBold LLC FKA NewBold Corporation"
     assert pdf["parties"]["roles"]["customer"] == "DENTISTRY FOR CHILDREN" and pdf["parties"]["roles"]["seller"] == "CDW"
     assert pdf["our_role"] is None

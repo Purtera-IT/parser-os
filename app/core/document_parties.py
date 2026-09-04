@@ -29,7 +29,8 @@ from app.core.internal_author import INTERNAL_EMAIL_DOMAINS
 _ROLES = ("provider", "seller", "buyer", "customer", "client", "vendor", "contractor",
           "subcontractor", "supplier", "partner", "reseller", "affiliate")
 _ROLE_LABEL_RE = re.compile(
-    r"(?:^|\|)\s*(?:col_\d+:\s*)?(?:[A-Za-z ]{0,20}\s)?(?P<role>" + "|".join(_ROLES) + r")(?:\s+name)?\s*:\s*(?P<val>[^|]*)",
+    # "Provider Name:", "ProviderName:" (OCR drops the space), "Provider:"
+    r"(?:^|\|)\s*(?:col_\d+:\s*)?(?:[A-Za-z ]{0,20}\s)?(?P<role>" + "|".join(_ROLES) + r")(?:\s*name)?\s*:\s*(?P<val>[^|]*)",
     re.I,
 )
 _PROVIDER_LIKE = {"provider", "seller", "vendor", "contractor", "subcontractor", "supplier", "reseller"}
