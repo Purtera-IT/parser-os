@@ -690,6 +690,14 @@ class TranscriptParser(BaseParser):
         source_ref = self._base_source_ref(artifact_id, filename, segment, speaker_role)
         entity_keys = extract_meeting_entities(text)
 
+        # A question is an ask, never a commitment. Live 010300: "Is the
+        # children dentistry done after hours?" was emitted twice, once as an
+        # open_question and once as a CONSTRAINT, so the brief carried a
+        # question mark as a rule the crew had to work to. Asking whether
+        # something is so does not make it so, whatever words the sentence
+        # shares with a real constraint.
+        _is_question = text.rstrip().endswith("?")
+
         atom_types: list[AtomType] = []
         if DECISION_RE.search(text):
             atom_types.append(AtomType.decision)
@@ -708,7 +716,8 @@ class TranscriptParser(BaseParser):
             for patterns in pack.constraint_patterns.values()
             for pattern in patterns
         ):
-            atom_types.append(AtomType.constraint)
+            if not _is_question:
+                atom_types.append(AtomType.constraint)
         if EXCLUSION_RE.search(text) or any(
             re.search(rf"\b{re.escape(normalize_text(pattern))}\b", lowered)
             for pattern in pack.exclusion_patterns

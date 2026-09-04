@@ -233,6 +233,16 @@ def _looks_like_site_phrase(phrase: str) -> bool:
         return False
     if norm in _SITE_BLOCKLIST:
         return False
+    # A unit of measure is not a place: "Per Item" is the unit column of a
+    # pricing table. Live 010300 admitted it to the authoritative catalog,
+    # which then keyed 19 atoms to `site:per_item`.
+    try:
+        from app.core.entity_extraction import slug_is_unit_of_measure
+
+        if slug_is_unit_of_measure(norm.replace(" ", "_")):
+            return False
+    except Exception:
+        pass
     # Multi-clause / header fragments: phrases containing common
     # PDF-header glue tokens are header strings, not names
     _HEADER_GLUE = (

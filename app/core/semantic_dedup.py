@@ -1703,6 +1703,87 @@ def _suppress_line_item_doubles(atoms: list[Any]) -> list[Any]:
     return out
 
 
+def _is_speech(atom: Any) -> bool:
+    """True for an atom that came from a spoken turn."""
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    return isinstance(loc, dict) and loc.get("utterance_index") is not None
+
+
+def collapse_repeated_speech(atoms: list[Any], *, threshold: float = 0.8) -> list[Any]:
+    """People repeat themselves; a claim said twice is one claim.
+
+    Live 010300: "Send me new Bold's quote to you." and "Send me new bold's
+    quote." both became action items, because the dedup key is a text
+    truncation and the two truncations differ. On the page that reads as two
+    things to do.
+
+    Scoped to SPEECH on purpose. Two similar lines in a document are usually
+    two facts — "install phones at Site A" and "at Site B" overlap heavily and
+    must both survive — but a repetition inside one conversation is the same
+    person saying the same thing again. Same artifact, same type, high word
+    overlap; the fullest wording wins.
+    """
+    if not atoms:
+        return atoms
+    groups: dict[tuple, list[Any]] = {}
+    passthrough: list[Any] = []
+    for atom in atoms:
+        if not _is_speech(atom):
+            passthrough.append(atom)
+            continue
+        key = (
+            str(getattr(atom, "artifact_id", "")),
+            str(getattr(getattr(atom, "atom_type", None), "value", getattr(atom, "atom_type", ""))),
+        )
+        groups.setdefault(key, []).append(atom)
+
+    kept: list[Any] = []
+    dropped: list[Any] = []
+    for group in groups.values():
+        survivors: list[Any] = []
+        for atom in group:
+            twin = next(
+                (
+                    s
+                    for s in survivors
+                    if _texts_alike(s, atom, threshold=threshold)
+                ),
+                None,
+            )
+            if twin is None:
+                survivors.append(atom)
+                continue
+            # Keep the fuller wording: the shorter one is the truncated retelling.
+            if len(str(getattr(atom, "raw_text", "") or "")) > len(
+                str(getattr(twin, "raw_text", "") or "")
+            ):
+                survivors[survivors.index(twin)] = atom
+                dropped.append(twin)
+            else:
+                dropped.append(atom)
+        kept.extend(survivors)
+
+    if dropped:
+        try:
+            from app.core.suppression_ledger import note_suppressed
+
+            note_suppressed("repeated_speech", dropped)
+        except Exception:
+            pass
+
+    survivor_ids = {id(a) for a in kept}
+    dropped_ids = {id(a) for a in dropped}
+    out: list[Any] = []
+    for atom in atoms:
+        if id(atom) in dropped_ids:
+            continue
+        if _is_speech(atom) and id(atom) not in survivor_ids:
+            continue
+        out.append(atom)
+    return out
+
+
 def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
     """Collapse atoms that share a semantic key into one (highest-
     confidence wins; loser values merged into winner).

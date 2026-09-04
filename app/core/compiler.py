@@ -1310,6 +1310,16 @@ def compile_project(
     # req_id / sku / email. Drops milestone_phase from 23→6, requirement
     # from 19→5, etc., losslessly (loser fields merged into winner).
     with telemetry.stage("semantic_dedup", input_count=len(atoms)) as stage:
+        # A conversation repeats itself; two tellings of one commitment are one
+        # commitment. Speech only — two similar lines in a document are two facts.
+        from app.core.semantic_dedup import collapse_repeated_speech
+
+        _before_speech = len(atoms)
+        atoms = collapse_repeated_speech(atoms)
+        if len(atoms) != _before_speech:
+            warnings.append(
+                f"INFO: collapsed {_before_speech - len(atoms)} repeated spoken claim(s)"
+            )
         before_sem_atoms = list(atoms)
         before_sem = len(atoms)
         try:

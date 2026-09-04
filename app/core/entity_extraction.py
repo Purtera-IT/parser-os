@@ -1518,10 +1518,28 @@ _SITE_BOILERPLATE_SUBSTRINGS = (
 )
 
 
+#: A rate is not a place. "Per Item", "Per Foot", "Per New Cable" are the unit
+#: column of a pricing table, and live 010300 turned them into sites: 19 atoms
+#: — including a clause about 169 locations — were keyed `site:per_item`, and
+#: `site:per_item` was fused in as an alias of the real Atlanta office.
+#:
+#: Shape, not vocabulary: a place name never opens with a distributive
+#: preposition. "Per" and "each" introduce a unit of measure; no building is
+#: called "Per Item".
+_UNIT_LEADING_TOKENS = frozenset({"per", "each", "every"})
+
+
+def slug_is_unit_of_measure(slug: str) -> bool:
+    head = str(slug or "").lower().strip("_ ").split("_")[0]
+    return head in _UNIT_LEADING_TOKENS
+
+
 def is_site_boilerplate_slug(slug: str) -> bool:
     """Drop integration-doc / test phrasing masquerading as site entities."""
     s = slug.lower().strip()
     if not s:
+        return True
+    if slug_is_unit_of_measure(s):
         return True
     if _SITE_SLUG_CODE_RE.match(s):
         return False
@@ -1541,7 +1559,7 @@ def _emit_sites(text: str) -> set[str]:
     for regex in _SITE_SUFFIX_REGEXES:
         for match in regex.finditer(text):
             full = " ".join(match.groups()).strip()
-            if not full:
+            if not full or slug_is_unit_of_measure(_slugify(full)):
                 continue
             # Strip leading articles / demonstratives so "The Andrews
             # Information Systems Building" produces only

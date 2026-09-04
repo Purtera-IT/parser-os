@@ -560,12 +560,14 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
             for alias in aliases:
                 if isinstance(alias, str) and alias.strip():
                     slug = _re.sub(r"[^a-z0-9]+", "_", alias.lower()).strip("_")
-                    if slug:
+                    # The LLM's cluster aliases went in unchecked, which is how
+                    # a pricing unit became an alias of a real office.
+                    if slug and not is_site_boilerplate_slug(slug):
                         site_keys.add(f"site:{slug}")
             canon = cluster.get("canonical_name")
             if isinstance(canon, str) and canon.strip():
                 slug = _re.sub(r"[^a-z0-9]+", "_", canon.lower()).strip("_")
-                if slug:
+                if slug and not is_site_boilerplate_slug(slug):
                     site_keys.add(f"site:{slug}")
             if len(site_keys) >= 2:
                 all_groups.append(site_keys)
