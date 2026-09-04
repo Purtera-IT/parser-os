@@ -651,6 +651,11 @@ def build_orbitbrief_envelope(
     # reads, and it does not exist until delivery has been matched.
     _direction_from_originator(documents, stage_timeline)
     _link_caption_notes(documents, envelope, stage_timeline)
+    try:
+        from app.core.document_parties import annotate_document_parties
+        annotate_document_parties(documents, envelope)
+    except Exception as _exc:  # pragma: no cover - never fail the envelope
+        envelope.setdefault("warnings", []).append(f"document_parties failed: {type(_exc).__name__}: {_exc}")
     # Last, so it gates the corrected picture: a customer document that stopped
     # being called ours a moment ago must be readable by the models that had it.
     _annotate_reader_scope(documents, stage_timeline)

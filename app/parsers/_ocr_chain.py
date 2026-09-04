@@ -87,7 +87,11 @@ def ocr_pdf_page(page) -> dict[str, Any]:
 
     # 1) PyMuPDF built-in OCR
     try:
-        tp = page.get_textpage_ocr(language=_ocr_language(), full=True)
+        # At the default 72 dpi a scanned SOW reads as debris ("Tes aks
+        # wilenur tht projetcompen…", readability 0.55); at 200 dpi the same
+        # page reads at 0.9 (live 010300, measured). Resolution is the fix,
+        # not a better model.
+        tp = page.get_textpage_ocr(language=_ocr_language(), full=True, dpi=int(os.environ.get("PARSER_OS_OCR_DPI", "200")))
         text = page.get_text("text", textpage=tp) or ""
         if text.strip():
             return {

@@ -1767,6 +1767,16 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
         out: dict[str, str] = {}
         em = str(v.get("email") or "").strip().lower()
         ph = re.sub(r"\D", "", str(v.get("phone") or ""))
+        # A record whose contact detail sits only in its text ("Job Title |
+        # Sr. CSDA | Phone Number | 404-918-0783", live 010215) still has an
+        # identity: read the email / phone shapes off the text.
+        text = str(getattr(a, "raw_text", "") or "")
+        if not em:
+            m = re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", text)
+            em = m.group(0).lower() if m else ""
+        if not ph:
+            m = re.search(r"(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}", text)
+            ph = re.sub(r"\D", "", m.group(0)) if m else ""
         if em:
             out["email"] = em
         if ph:

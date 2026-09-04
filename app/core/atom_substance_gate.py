@@ -683,8 +683,47 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         ):
             dropped.append(atom)
             continue
+        # Email prose with no scope OBJECT -- no scope verb, no entity key, no
+        # digit, no proper noun beyond our own name -- is context, not scope.
+        # Kept, visible, typed as what it is. Live 010300: "TT - clean up
+        # aisle Purtera.", "We have not notified customer yet that we will be
+        # moving partners…".
+        if at == "scope_item" and kind == "email_body_line" and not _has_scope_object(
+            text, list(getattr(atom, "entity_keys", None) or [])
+        ):
+            try:
+                from app.core.schemas import AtomType as _AT
+                atom.atom_type = _AT.deal_metadata
+            except Exception:
+                atom.atom_type = "deal_metadata"
+            val["kind"] = "email_context"
+            val["retagged_from"] = "scope_item"
+            kept.append(atom)
+            continue
         kept.append(atom)
     return kept, dropped
+
+
+def _has_scope_object(text: str, entity_keys: list[str]) -> bool:
+    if _has_deal_substance(text, entity_keys):
+        return True
+    if re.search(r"\d", text):
+        return True
+    try:
+        from app.core.document_parties import our_org_tokens
+        ours = our_org_tokens()
+    except Exception:
+        ours = set()
+    words = text.split()
+    for w in words[1:]:
+        core = w.strip(".,!?;:'\"()-")
+        if core[:1].isupper() and core.isalpha() and len(core) >= 3:
+            if any(tok in core.lower() for tok in ours):
+                continue  # our own name is not a scope object
+            if core.isupper() and len(core) <= 3:
+                continue  # "TT", "PM": initials and role abbreviations
+            return True
+    return False
 
 
 def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:

@@ -319,6 +319,41 @@ def test_caption_note_provenance_pointer_is_metadata_but_a_real_note_keeps_its_t
     assert real.atom_type == AtomType.scope_item
 
 
+def test_a_sow_between_other_parties_is_third_party_terms():
+    from app.core.document_parties import annotate_document_parties, our_org_tokens
+    assert "purtera" in our_org_tokens()
+    docs = [{"artifact_id": "pdf", "filename": "NEWBOLD PSOW.pdf", "authored_at": "2025-03-05"},
+            {"artifact_id": "ours", "filename": "PurTera SOW.docx"}]
+    env = {"summary": {}, "atoms": [
+        {"artifact_id": "pdf", "atom_type": "deal_metadata", "text": "col_0: Provider Name: | D4C Site Assessment and Implementation Program – Phase 1: NewBold LLC FKA NewBold Corporation"},
+        {"artifact_id": "pdf", "atom_type": "deal_metadata", "text": "col_0: Customer Name: | D4C Site Assessment and Implementation Program – Phase 1: DENTISTRY FOR CHILDREN"},
+        {"artifact_id": "pdf", "atom_type": "deal_metadata", "text": "Seller: CDW"},
+        {"artifact_id": "pdf", "atom_type": "signatory", "text": "CDW Technologies LLC: Mike Murphy | NewBold LLC: Shelly Lewis",
+         "structured": {"signers": [{"party": "CDW Technologies LLC", "name": "Mike Murphy"}, {"party": "NewBold LLC", "name": "Shelly Lewis"}]}},
+        {"artifact_id": "pdf", "atom_type": "vendor_line_item", "text": "1 × 1 Tech onsite for 4 Hours – Per Item = $570.00"},
+        {"artifact_id": "ours", "atom_type": "deal_metadata", "text": "Provider: PurTera IT LLC"},
+        {"artifact_id": "ours", "atom_type": "deal_metadata", "text": "Customer: Marion County School District"},
+    ]}
+    assert annotate_document_parties(docs, env) == 2
+    pdf, ours = docs
+    assert pdf["third_party_terms"] is True and pdf["terms_owner"] == "NewBold LLC FKA NewBold Corporation"
+    assert pdf["parties"]["roles"]["customer"] == "DENTISTRY FOR CHILDREN" and pdf["parties"]["roles"]["seller"] == "CDW"
+    assert pdf["our_role"] is None
+    assert env["atoms"][4]["decision_provenance"]["terms_owner"].startswith("NewBold")
+    assert ours["third_party_terms"] is False and ours["our_role"] == "provider"
+    assert env["summary"]["third_party_terms"][0]["provider"].startswith("NewBold")
+
+
+def test_email_prose_without_a_scope_object_is_context():
+    from app.core.atom_substance_gate import _has_scope_object
+    assert not _has_scope_object("TT - clean up aisle Purtera.", [])
+    assert not _has_scope_object("We have not notified customer yet that we will be moving partners until we have the sorted on the back end with you.", [])
+    assert _has_scope_object("One more call out while you work on PSOW for the Phone Project. The Phone project is for a Yealink phones that is being deployed on an Nextiva platform", [])
+    assert _has_scope_object("There are about 170+ sites and growing across the US.", [])
+    assert _has_scope_object("Please remove the west wing from scope.", ["site:west_wing"])
+    assert _has_scope_object("Install the new clocks at each school.", [])
+
+
 def test_short_list_items_are_atoms():
     from app.parsers.orbitbrief_pdf import _atoms_for_bullet
     out = []

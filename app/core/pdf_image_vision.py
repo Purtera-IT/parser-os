@@ -1280,6 +1280,22 @@ def _transcribe(
 ) -> list[EvidenceAtom]:
     ocr_text = _ocr_crop(saved_path, crop, allow_vlm=True)
     ocr_norm = " ".join(re.findall(r"[A-Za-z0-9]+", ocr_text.lower()))
+    # A scanned PAGE of prose is text, not a picture: when its own OCR is long
+    # and readable, the page-OCR path already emitted it verbatim through the
+    # normal splitter, and a VLM "Step N" paraphrase would only duplicate it
+    # in the model's words (live 010300: 20 paraphrased steps beside the
+    # verbatim clauses, typed by the paraphrase's imperative framing).
+    try:
+        from app.core.text_quality import readability as _readability
+        if len(ocr_text) >= 400 and _readability(ocr_text) >= 0.8:
+            _stamp_skip_verdict(
+                marker, "page_scan_text", via="ocr_readable",
+                confidence=round(_readability(ocr_text), 2), ocr_preview=ocr_text[:400],
+            )
+            logger.info("pdf_image_vision: %s is a readable page scan; page OCR carries it", region_ref)
+            return []
+    except Exception:
+        pass
     raw = _vlm(
         crop, _TRANSCRIBE_PROMPT.format(envelope=envelope, ocr=ocr_text[:4000]),
         model=_describe_model(), max_tokens=1200,
