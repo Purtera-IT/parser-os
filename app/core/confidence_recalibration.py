@@ -186,6 +186,62 @@ def _build_contradiction_set(edges: list[Any]) -> set[str]:
     return out
 
 
+import re as _re
+
+_DERIVED_EXTRACTION_RE = _re.compile(r"vision|ocr|marker|backfill|llm|paraphrase|summary", _re.I)
+
+
+def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float = 0.85) -> int:
+    """Flip ``needs_review`` to ``auto_accepted`` where nothing is in doubt.
+
+    Most parsers emit every atom as ``needs_review`` by default, so a PM's
+    review queue is the whole document (live 010300: 127 of 148 atoms, 72 of
+    them at 0.9 confidence with every receipt verified). Review is a signal
+    only when it is scarce. An atom is accepted here when ALL hold:
+
+    * it carries no review flag (a flag is somebody's explicit doubt);
+    * its recalibrated confidence is at least ``min_confidence``;
+    * it has receipts and every one replayed ``verified`` -- the text is
+      provably in the source;
+    * it is verbatim, not derived: not quoted old email, not vision / OCR /
+      marker / backfill / LLM extraction.
+
+    Everything else stays exactly as it was. Returns the number accepted.
+    """
+    from app.core.schemas import AuthorityClass, ReviewStatus
+
+    n = 0
+    for atom in atoms:
+        if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
+            continue
+        if list(getattr(atom, "review_flags", None) or []):
+            continue
+        conf = getattr(atom, "calibrated_confidence", None)
+        if conf is None:
+            conf = getattr(atom, "confidence", None)
+        if conf is None or float(conf) < min_confidence:
+            continue
+        receipts = list(getattr(atom, "receipts", None) or [])
+        if not receipts or any(getattr(r, "replay_status", None) != "verified" for r in receipts):
+            continue
+        if getattr(atom, "authority_class", None) == AuthorityClass.quoted_old_email:
+            continue
+        refs = getattr(atom, "source_refs", None) or []
+        method = str(getattr(refs[0], "extraction_method", "") or "") if refs else ""
+        if _DERIVED_EXTRACTION_RE.search(method):
+            continue
+        v = getattr(atom, "value", None)
+        if isinstance(v, dict) and str(v.get("kind") or "").endswith("_marker"):
+            continue
+        atom.review_status = ReviewStatus.auto_accepted
+        try:
+            atom.review_flags = ["accepted_verified_receipt"]
+        except Exception:
+            pass
+        n += 1
+    return n
+
+
 def recalibrate_confidence(
     atoms: list[Any],
     *,

@@ -1616,6 +1616,15 @@ def compile_project(
                 atoms, artifact_authority=_artifact_tier, edges=[],
                 abstain_threshold=abstain_threshold,
             )
+            # Review is a signal only when scarce: a verbatim atom with every
+            # receipt verified and high confidence has nothing left to review.
+            try:
+                from app.core.confidence_recalibration import accept_verified_high_confidence
+                _accepted = accept_verified_high_confidence(atoms)
+                if _accepted:
+                    warnings.append(f"INFO: accepted {_accepted} verified high-confidence atom(s) out of the review queue")
+            except Exception as exc:
+                warnings.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             warnings.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
         if recal_count:

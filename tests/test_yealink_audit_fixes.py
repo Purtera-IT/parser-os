@@ -357,6 +357,31 @@ def test_email_prose_without_a_scope_object_is_context():
     assert _has_scope_object("Install the new clocks at each school.", [])
 
 
+def test_verified_high_confidence_atoms_leave_the_review_queue():
+    from app.core.confidence_recalibration import accept_verified_high_confidence
+    from app.core.schemas import ReviewStatus, EvidenceReceipt
+    def mk(text, *, conf=0.9, receipt="verified", flags=None, method="pdf_prose_v1", authority=AuthorityClass.contractual_scope):
+        a = _atom(AtomType.scope_item, text)
+        a.confidence = conf; a.calibrated_confidence = conf
+        a.review_status = ReviewStatus.needs_review
+        a.review_flags = list(flags or [])
+        a.authority_class = authority
+        a.source_refs = [SourceRef(id=f"s{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 1}, extraction_method=method, parser_version="t")]
+        if receipt:
+            a.receipts = [EvidenceReceipt(atom_id=a.id, artifact_id="d1", filename="x.pdf", source_ref_id=a.source_refs[0].id,
+                                          replay_status=receipt, reason="t", verifier_version="t")]
+        return a
+    verified = mk("Hardware and materials are not included in this scope or pricing.")
+    low = mk("This quote is valid for thirty days.", conf=0.6)
+    unsupported = mk("Provider assumes technicians will be granted all access required.", receipt="unsupported")
+    flagged = mk("Step 4: Box up old phones.", flags=["calibration_abstain"])
+    derived = mk("This image outlines the scope.", method="pdf_image_vision_describe")
+    quoted = mk("There are about 170+ sites and growing.", authority=AuthorityClass.quoted_old_email)
+    assert accept_verified_high_confidence([verified, low, unsupported, flagged, derived, quoted]) == 1
+    assert verified.review_status == ReviewStatus.auto_accepted and verified.review_flags == ["accepted_verified_receipt"]
+    assert all(a.review_status == ReviewStatus.needs_review for a in (low, unsupported, flagged, derived, quoted))
+
+
 def test_short_list_items_are_atoms():
     from app.parsers.orbitbrief_pdf import _atoms_for_bullet
     out = []
