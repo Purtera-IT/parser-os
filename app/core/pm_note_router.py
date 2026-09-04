@@ -157,6 +157,10 @@ class NoteRouting:
     lessons: list[Lesson] = field(default_factory=list)
     unrouted: list[str] = field(default_factory=list)
     rationale: str = ""
+    #: True when the shapes could not read a clause AND the model that would
+    #: have read it was unreachable. Without this an unroutable note and an
+    #: offline model look identical to the PM: both return nothing.
+    model_unavailable: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -177,6 +181,7 @@ class NoteRouting:
             ],
             "unrouted": list(self.unrouted),
             "rationale": self.rationale,
+            "model_unavailable": self.model_unavailable,
         }
 
 
@@ -499,8 +504,29 @@ parser into STRUCTURED lessons for a learned correction store.
 
 Each lesson names the HEAD it corrects and the VERDICT that head should return.
 
-Heads:
+Heads, and the kind of thing a PM is saying when they mean each one:
 {heads}
+
+What the PM is doing, in their words -> which head and which verdict:
+- saying an ask should NOT be put to the customer — we already know, it is our
+  own decision, it is wasted effort, stop asking -> head "gap", verdict "invalid"
+- saying an ask MUST be put every time, we always need it -> head "gap",
+  verdict "valid"
+- saying an extracted line was filed as the wrong kind of thing -> head "type",
+  verdict is the correct atom type
+- saying something was extracted that is not real, or is US and not the
+  customer -> head "admission", verdict "drop"
+- saying something real was thrown away and should be kept -> head "admission",
+  verdict "keep"
+- stating house wording or a term we prefer -> head "terminology", verdict is
+  the preferred term
+- correcting a figure, a rate or a quantity -> head "norm", verdict is the
+  correct value
+- saying what kind of work the deal IS -> head "router"
+
+Polarity is the whole point of a gap lesson: "invalid" means never ask this,
+"valid" means always ask it. Getting it backwards teaches the opposite of what
+the PM said.
 
 Atom types (verdicts for the "type" head):
 {types}
@@ -522,16 +548,60 @@ Output ONLY a JSON object: {{"lessons": [{{"head": ..., "exemplar": ..., \
 JSON:"""
 
 
+#: A PM is waiting on this call, but it is a JSON completion from a 14b model,
+#: not a one-word classification. The service's global budget is 12 seconds,
+#: which cut off every note the shape rules could not read — and an empty
+#: result reads to a PM as "your note was the problem". The shapes answer the
+#: common notes instantly, so only genuinely novel prose ever waits this long.
+#: Override with SOWSMITH_NOTE_LLM_TIMEOUT.
+_NOTE_LLM_TIMEOUT_S = 60
+
+
+def _note_llm_timeout() -> int:
+    import os
+
+    try:
+        return max(5, int(os.environ.get("SOWSMITH_NOTE_LLM_TIMEOUT", _NOTE_LLM_TIMEOUT_S)))
+    except (TypeError, ValueError):
+        return _NOTE_LLM_TIMEOUT_S
+
+
 def _default_synthesize(note: str) -> dict:
     from app.core.plain_rule_compiler import _call_ollama, _extract_json_object
 
-    heads = "\n".join(
-        f'- "{k}": {v.label} (relation {v.relation})' for k, v in sorted(HEAD_REGISTRY.items())
-    )
+    def _head_line(key: str, spec: Any) -> str:
+        verdicts = (
+            f' — verdict must be one of {", ".join(spec.candidates)}'
+            if getattr(spec, "candidates", ())
+            else ""
+        )
+        return f'- "{key}": {spec.label}{verdicts}'
+
+    heads = "\n".join(_head_line(k, v) for k, v in sorted(HEAD_REGISTRY.items()))
     heads += f'\n- "{_TERMINOLOGY_HEAD}": Preferred wording (relation preferred_term)'
     types = ", ".join(sorted(_atom_type_names())) or "(unavailable)"
-    raw = _call_ollama(_LLM_PROMPT.format(heads=heads, types=types, note=note), max_tokens=768)
+    raw = _call_ollama(
+        _LLM_PROMPT.format(heads=heads, types=types, note=note),
+        max_tokens=768,
+        timeout=_note_llm_timeout(),
+    )
     return _extract_json_object(raw)
+
+
+def _grounded_in(text: str, source: str, *, floor: float = 0.6) -> bool:
+    """Is this text the PM's own, or the model's invention?
+
+    A model asked to produce examples will hand the prompt's examples back.
+    Live: one note about cable pathway returned eight lessons — gap invalid AND
+    gap valid, admission drop AND keep, "norm 100", "router project_metadata" —
+    every one of them lifted from the instructions, none of them said by
+    anybody. A lesson may only quote the person who wrote the note.
+    """
+    want = _content_words(text)
+    if not want:
+        return False
+    have = _content_words(source)
+    return bool(have) and len(want & have) / len(want) >= floor
 
 
 def _llm_lessons(
@@ -562,6 +632,15 @@ def _llm_lessons(
             continue
         if head == "type" and types and new_value not in types:
             continue
+        # A verdict outside the head's closed set can never fire, so a lesson
+        # carrying one is not a lesson. The model returned "gap_valid" — the
+        # relation — and, for admission, the PM's entire sentence.
+        allowed = getattr(HEAD_REGISTRY.get(head), "candidates", ()) if head in HEAD_REGISTRY else ()
+        if allowed and new_value.strip().lower() not in allowed:
+            continue
+        # The exemplar has to be the PM's words, not the instructions'.
+        if not _grounded_in(exemplar, note):
+            continue
         row_scope = str(row.get("scope") or scope).strip().lower()
         out.append(
             Lesson(
@@ -576,7 +655,18 @@ def _llm_lessons(
                 confidence=0.7,
             )
         )
-    return out
+    return _drop_contradictions(out)
+
+
+def _drop_contradictions(lessons: list[Lesson]) -> list[Lesson]:
+    """One note cannot mean both. A head that comes back with two different
+    verdicts for one note is the model hedging, and banking either would be
+    a coin toss on the PM's behalf."""
+    verdicts: dict[str, set[str]] = {}
+    for l in lessons:
+        verdicts.setdefault(l.head, set()).add(l.new_value.strip().lower())
+    conflicted = {h for h, v in verdicts.items() if len(v) > 1}
+    return [l for l in lessons if l.head not in conflicted]
 
 
 def _dedupe(lessons: list[Lesson]) -> list[Lesson]:
@@ -658,12 +748,25 @@ def route_note(
         routing.lessons.extend(found)
 
     if unrouted:
+        reachable = {"ok": True}
+
+        def _probe(text: str) -> dict:
+            fn = synthesize or _default_synthesize
+            out = fn(text) or {}
+            # An empty result from the DEFAULT synthesizer means the model said
+            # nothing — usually because it could not be reached at all.
+            if not out and synthesize is None:
+                reachable["ok"] = False
+            return out
+
         proposed = _llm_lessons(
-            " ".join(unrouted), note_condition, routing.rationale, default_scope, synthesize
+            " ".join(unrouted), note_condition, routing.rationale, default_scope, _probe
         )
         if proposed:
             routing.lessons.extend(proposed)
             unrouted = []
+        elif not reachable["ok"]:
+            routing.model_unavailable = True
 
     routing.lessons = _dedupe(routing.lessons)
     routing.unrouted = unrouted
@@ -701,6 +804,9 @@ def apply_note(
         "committed": committed,
         "failed": failed,
         "unrouted": routing.unrouted,
+        # So a caller can tell "nothing to learn here" from "nothing was
+        # listening" — they look the same from the outside.
+        "model_unavailable": routing.model_unavailable,
     }
 
 

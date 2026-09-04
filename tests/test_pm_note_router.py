@@ -113,16 +113,19 @@ def test_clauses_split_but_short_fragments_are_not_lessons() -> None:
 
 
 def test_the_llm_only_proposes_inside_the_registry() -> None:
-    def rogue(note):
+    # The exemplars quote the note, so only the head and verdict checks decide.
+    note = "Nobody needs to be asked who signs acceptance on these dental sites."
+
+    def rogue(_note):
         return {
             "lessons": [
-                {"head": "not_a_head", "exemplar": "x", "new_value": "y"},
-                {"head": "type", "exemplar": "a line", "new_value": "not_an_atom_type"},
-                {"head": "gap", "exemplar": "who signs acceptance?", "new_value": "invalid"},
+                {"head": "not_a_head", "exemplar": note, "new_value": "y"},
+                {"head": "type", "exemplar": note, "new_value": "not_an_atom_type"},
+                {"head": "gap", "exemplar": "who signs acceptance on these dental sites", "new_value": "invalid"},
             ]
         }
 
-    r = route_note("something the patterns cannot read at all zzz", synthesize=rogue)
+    r = route_note(note, synthesize=rogue)
     assert _heads(r) == {"gap"}, "invented heads and verdicts are refused"
 
 
@@ -321,3 +324,98 @@ def test_repeated_judgments_relax_the_bar_but_never_below_the_heads_own_floor() 
     assert seen[0] == 0.88
     assert seen[1] < seen[0], "evidence buys reach"
     assert min(seen) >= 0.82, "never below the bar one in-deal correction clears"
+
+
+def test_an_unreadable_note_and_an_offline_model_are_not_the_same_thing(monkeypatch) -> None:
+    """Live: the service's model endpoint pointed at an address it cannot
+    route to, so every note the shapes could not read cost 39 seconds and came
+    back empty. Empty because the note said nothing teachable, and empty
+    because nothing was listening, looked identical to the PM."""
+    from app.core import pm_note_router as router
+
+    monkeypatch.setattr(router, "_default_synthesize", lambda note: {})
+    offline = router.route_note("The facilities team owns every cable pathway on hospital work.")
+    assert offline.lessons == []
+    assert offline.unrouted
+    assert offline.model_unavailable is True
+    assert offline.as_dict()["model_unavailable"] is True
+
+    # A model that answers and simply finds nothing teachable is not an outage.
+    monkeypatch.setattr(router, "_default_synthesize", lambda note: {"lessons": []})
+    quiet = router.route_note("The facilities team owns every cable pathway on hospital work.")
+    assert quiet.model_unavailable is False
+
+
+def test_a_readable_note_never_waits_on_the_model() -> None:
+    """The shapes answer first, so the common notes cost nothing at all."""
+    from app.core import pm_note_router as router
+
+    def explode(note):
+        raise AssertionError("the model must not be called for a note the shapes can read")
+
+    r = router.route_note("Prefer SLO instead of SLA because we commit to objectives.", synthesize=explode)
+    assert [l.head for l in r.lessons] == ["terminology"]
+
+
+def test_a_lesson_may_only_quote_the_person_who_wrote_the_note() -> None:
+    """Asked to produce examples, a model hands the prompt's examples back.
+    Live: one note about cable pathway returned eight lessons — gap invalid AND
+    gap valid, admission drop AND keep, "norm 100", "router project_metadata" —
+    every one lifted from the instructions, none of them said by anybody."""
+    from app.core.pm_note_router import route_note
+
+    def echoes_the_prompt(note):
+        return {
+            "lessons": [
+                {"head": "gap", "exemplar": "an ask should not be put to the customer", "new_value": "invalid"},
+                {"head": "norm", "exemplar": "correcting a figure, a rate or a quantity", "new_value": "100"},
+                {"head": "router", "exemplar": "saying what kind of work the deal is", "new_value": "project_metadata"},
+            ]
+        }
+
+    r = route_note(
+        "The facilities team owns every cable pathway on hospital work.",
+        synthesize=echoes_the_prompt,
+    )
+    assert r.lessons == [], "nothing the PM did not say gets banked"
+
+
+def test_a_verdict_the_head_cannot_return_is_refused() -> None:
+    """The model returned "gap_valid" — the relation, not a verdict — and, for
+    admission, the PM's whole sentence. Neither can ever fire."""
+    from app.core.pm_feedback import HEAD_REGISTRY
+    from app.core.pm_note_router import route_note
+
+    assert HEAD_REGISTRY["gap"].candidates == ("valid", "invalid")
+    assert HEAD_REGISTRY["admission"].candidates == ("keep", "drop")
+
+    note = "The facilities team owns every cable pathway on hospital work."
+
+    def wrong_verdict(_note):
+        return {"lessons": [{"head": "gap", "exemplar": note, "new_value": "gap_valid"}]}
+
+    assert route_note(note, synthesize=wrong_verdict).lessons == []
+
+    def right_verdict(_note):
+        return {"lessons": [{"head": "gap", "exemplar": note, "new_value": "invalid"}]}
+
+    kept = route_note(note, synthesize=right_verdict).lessons
+    assert [(l.head, l.new_value) for l in kept] == [("gap", "invalid")]
+
+
+def test_one_note_cannot_mean_both() -> None:
+    """A head that comes back with two verdicts for one note is the model
+    hedging, and banking either would be a coin toss on the PM's behalf."""
+    from app.core.pm_note_router import route_note
+
+    note = "The facilities team owns every cable pathway on hospital work."
+
+    def hedges(_note):
+        return {
+            "lessons": [
+                {"head": "gap", "exemplar": note, "new_value": "invalid"},
+                {"head": "gap", "exemplar": note, "new_value": "valid"},
+            ]
+        }
+
+    assert route_note(note, synthesize=hedges).lessons == []

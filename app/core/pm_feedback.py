@@ -30,6 +30,12 @@ class HeadSpec:
     mode: str = "classify" # "classify" (verdict ∈ candidate set, resolve()-driven)
                            #  | "extract" (verdict is a value the head extracts; stored
                            #     as gold for retrain, applied at extraction time not resolve)
+    # The closed verdict set, where one exists. A verdict outside it cannot
+    # fire, so a correction carrying one is dead on arrival: the note router's
+    # model returned "gap_valid" (the relation) and, for admission, the PM's
+    # whole sentence. Empty means open-ended (an extract head, or a taxonomy
+    # validated elsewhere, like `type` against AtomType).
+    candidates: tuple[str, ...] = ()
 
 
 # ── the single source of truth for EVERY trainable head ───────────────────────
@@ -37,8 +43,8 @@ class HeadSpec:
 # into the correction loop (UI affordance → store → instant-learn → retrain).
 HEAD_REGISTRY: dict[str, HeadSpec] = {
     "type":      HeadSpec("atom_type",       "atom",   "Atom type"),
-    "admission": HeadSpec("admission",       "atom",   "Keep / drop"),
-    "gap":       HeadSpec("gap_valid",       "gap",    "Gap"),
+    "admission": HeadSpec("admission",       "atom",   "Keep / drop", candidates=("keep", "drop")),
+    "gap":       HeadSpec("gap_valid",       "gap",    "Gap", candidates=("valid", "invalid")),
     "conflict":  HeadSpec("edge_relation",   "edge",   "Cross-doc conflict"),
     "site":      HeadSpec("same_site",       "entity", "Site identity"),
     "norm":      HeadSpec("value_norm",      "atom",   "Value / amount", mode="extract"),

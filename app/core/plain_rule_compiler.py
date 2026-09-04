@@ -379,7 +379,7 @@ def _extract_json_object(text: str) -> dict:
         return {}
 
 
-def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
+def _call_ollama(prompt: str, *, max_tokens: int = 1024, timeout: int | None = None) -> str:
     # Global kill-switch: SOWSMITH_DISABLE_LLM forces the deterministic
     # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
     if os.environ.get("SOWSMITH_DISABLE_LLM"):
@@ -396,7 +396,12 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     model = os.environ.get("SOWSMITH_RULE_MODEL") or os.environ.get(
         "OLLAMA_BIG_MODEL", _DEFAULT_MODEL
     )
-    timeout = int(os.environ.get("SOWSMITH_LLM_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+    # A caller that knows what it is asking for may set its own budget. The
+    # service ships SOWSMITH_LLM_TIMEOUT=12, which is right for a one-word
+    # classification and far too short for a JSON completion from a 14b
+    # model — the note router timed out on every note the shape rules could
+    # not read, and looked to the PM like the note was the problem.
+    timeout = int(timeout or os.environ.get("SOWSMITH_LLM_TIMEOUT", str(_DEFAULT_TIMEOUT)))
     # A host that cannot return five tokens will not return this either, and
     # the timeout above is measured in minutes. Probe once, then degrade to
     # the deterministic path the same way an empty completion already does.
