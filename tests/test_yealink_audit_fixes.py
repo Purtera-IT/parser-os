@@ -1471,3 +1471,12 @@ def test_fee_prose_retyped_to_pricing_assumption_loses_the_weak_label():
     _weak_label_prose_line_items([a, row])
     assert a.atom_type == AtomType.pricing_assumption and "weak_label" not in a.review_flags
     assert row.atom_type == AtomType.vendor_line_item and "weak_label" in row.review_flags
+
+
+def test_fee_prose_keeps_its_confidence_when_retyped():
+    from app.parsers.orbitbrief_pdf import _weak_label_prose_line_items
+
+    a = _atom(AtomType.vendor_line_item, "Services Fees will be calculated on a TIME AND MATERIALS basis.", kind="paragraph")
+    a.confidence = 0.88; a.review_flags = []
+    _weak_label_prose_line_items([a])
+    assert a.atom_type == AtomType.pricing_assumption and a.confidence == 0.88 and "weak_label" not in a.review_flags

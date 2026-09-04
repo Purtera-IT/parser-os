@@ -1430,6 +1430,9 @@ def _weak_label_prose_line_items(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
                 a.review_flags = [f for f in (getattr(a, "review_flags", None) or []) if f != "weak_label"]
             except Exception:  # pragma: no cover
                 pass
+            # A retyped pricing term keeps its confidence: lowering it to 0.45
+            # first put every fee sentence under the 0.50 floor (live 010300 r30).
+            continue
         try:
             if a.confidence and a.confidence > 0.5:
                 a.confidence = 0.45
