@@ -1413,6 +1413,18 @@ def _weak_label_prose_line_items(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
                 a.review_flags = flags
             except Exception:  # pragma: no cover — frozen atom
                 pass
+        # A prose sentence under a fees heading is a pricing term, not a
+        # line item: "Services Fees will be calculated on a TIME AND
+        # MATERIALS basis", "150% of the Unit Rates". A line item has a
+        # money figure AND a count; prose that lacks that pair is retyped.
+        _txt = str(getattr(a, "raw_text", "") or "")
+        _has_money = bool(re.search(r"\$\s*\d", _txt))
+        _has_count = bool(re.search(r"\b\d+\s*[×x]\s|\|\s*\d+\s*\$|\bqty\b|\bquantity\b", _txt, re.I))
+        if not (_has_money and _has_count):
+            try:
+                a.atom_type = AtomType.pricing_assumption
+            except Exception:  # pragma: no cover
+                pass
         try:
             if a.confidence and a.confidence > 0.5:
                 a.confidence = 0.45
