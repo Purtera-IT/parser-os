@@ -1193,3 +1193,12 @@ def test_recalibration_survives_a_missing_abstain_threshold():
     assert isinstance(n, int)
     assert a.calibrated_confidence is not None
     assert a.review_status == ReviewStatus.auto_accepted
+
+
+def test_a_postal_address_is_never_debris():
+    from app.core.text_quality import is_unreadable
+
+    assert not is_unreadable("200 N. Milwaukee Ave. Vernon Hills, IL  60061")
+    assert not is_unreadable("2970 Brandywine Rd, STE 200, Atlanta, GA 30641")
+    assert not is_unreadable("Mailing Address: 4801 Woodway Dr Ste 300E, Houston, TX 77056")
+    assert is_unreadable("T metry and Cr idencial ‘ape th La echnodogies L y and Confidential Pag")

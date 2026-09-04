@@ -131,12 +131,25 @@ def _compound_of_words(token: str) -> bool:
     return len(parts) >= 2 and all(len(p) <= 2 or _is_word(p) for p in parts)
 
 
+_ADDRESS_SHAPE_RE = re.compile(
+    r"(?:^|[\s,|:])\d{1,6}[A-Za-z]?\s+(?:[NSEW]\.?\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\s+(?:Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pkwy|Parkway|Hwy|Highway|Ct|Court|Pl|Place|Cir|Circle|Ter|Terrace|Trl|Trail|Suite|Ste|Floor|FLR)\b"
+    r"|\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b"
+)
+
+
 def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) -> bool:
     """True when the lowercase words of the text are mostly not words.
 
     Needs at least ``min_tokens`` judged tokens: a short line is never called
     debris on the strength of one odd token.
     """
+    # A postal address is proper nouns by nature ("200 N. Milwaukee Ave.
+    # Vernon Hills, IL 60061" -- live 010300 dropped it as debris). A house
+    # number before a capitalised word, or a "City, ST 12345" tail, is the
+    # shape of an address in any language that uses one; the words are not
+    # expected to be in a dictionary.
+    if _ADDRESS_SHAPE_RE.search(text or ""):
+        return False
     toks = _judged(text)
     # One very long lowercase non-word ("tonmnuinunvionetenatucnnihnapusstsnse")
     # is debris on its own: no language has an 18-letter word that is not one.
