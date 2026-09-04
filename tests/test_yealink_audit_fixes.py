@@ -398,13 +398,16 @@ def test_verified_high_confidence_atoms_leave_the_review_queue():
                                           replay_status=receipt, reason="t", verifier_version="t")]
         return a
     verified = mk("Hardware and materials are not included in this scope or pricing.")
+    uncalibrated = mk("Cabling is not included in this quote.")
+    uncalibrated.calibrated_confidence = 0.0  # never recalibrated: not "zero confidence"
     low = mk("This quote is valid for thirty days.", conf=0.6)
     unsupported = mk("Provider assumes technicians will be granted all access required.", receipt="unsupported")
     flagged = mk("Step 4: Box up old phones.", flags=["calibration_abstain"])
     derived = mk("This image outlines the scope.", method="pdf_image_vision_describe")
     quoted = mk("There are about 170+ sites and growing.", authority=AuthorityClass.quoted_old_email)
-    assert accept_verified_high_confidence([verified, low, unsupported, flagged, derived, quoted]) == 1
+    assert accept_verified_high_confidence([verified, uncalibrated, low, unsupported, flagged, derived, quoted]) == 2
     assert verified.review_status == ReviewStatus.auto_accepted and verified.review_flags == ["accepted_verified_receipt"]
+    assert uncalibrated.review_status == ReviewStatus.auto_accepted
     assert all(a.review_status == ReviewStatus.needs_review for a in (low, unsupported, flagged, derived, quoted))
 
 

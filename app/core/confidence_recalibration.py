@@ -216,9 +216,10 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
             continue
         if list(getattr(atom, "review_flags", None) or []):
             continue
-        conf = getattr(atom, "calibrated_confidence", None)
-        if conf is None:
-            conf = getattr(atom, "confidence", None)
+        # calibrated_confidence defaults to 0.0 on atoms recalibration never
+        # touched (live 010300: 110 of 116 queued atoms) -- that is "not
+        # calibrated", not "zero confidence"; fall back to the parser's own.
+        conf = getattr(atom, "calibrated_confidence", None) or getattr(atom, "confidence", None)
         if conf is None or float(conf) < min_confidence:
             continue
         receipts = list(getattr(atom, "receipts", None) or [])

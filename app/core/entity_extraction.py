@@ -3411,7 +3411,7 @@ def _emit_stakeholders(text: str) -> set[str]:
         # person: "Title: Svcs Engagement Advisor", "Provider: NewBold". The
         # label is the document's word for what the value is; believe it.
         sentence = re.sub(
-            r"\b(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)\s*:\s*[^:;,|\n]{1,60}",
+            r"\b(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)(?:\s*name)?\s*:\s*[^:;,|\n]{1,60}",
             " ",
             sentence,
             flags=re.I,
@@ -4810,12 +4810,13 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
             # A value whose own label says it is a title or a party ("Title:
             # Svcs Engagement Advisor", "Provider: NewBold") is not a person.
             for _lab, _val in zip(_labels, _values):
-                if _nm and _nm in _val.lower() and re.search(r"(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)\s*:?\s*$", _lab.strip(), re.I):
+                if _nm and _nm in _val.lower() and re.search(r"(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)(?:\s*name)?\s*:?\s*$", _lab.strip(), re.I):
                     return
-        # Same rule for a "Label: value" written inline without cells.
+        # Same rule for a "Label: value" written inline without cells
+        # ("ProviderName:|NewBold" from a scanned header, label glued).
         _nm2 = str(value.get("name") or "").strip()
         if _nm2 and not (value.get("email") or value.get("phone")) and re.search(
-            r"(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)\s*:\s*" + re.escape(_nm2), raw, re.I
+            r"(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)(?:\s*name)?\s*:\s*\|?\s*" + re.escape(_nm2), raw, re.I
         ):
             return
         _sp = slug.split("_")

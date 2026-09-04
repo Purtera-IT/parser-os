@@ -402,8 +402,8 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             # party"). A record whose name only lives in its text is kept.
             _shape = re.search(r"\b(?P<first>[A-Z][a-z]+)(?:\s+[A-Z]\.)?\s+[A-Z][a-z]+\b", text)
             _shape_is_person = bool(_shape) and _shape.group("first").lower() not in _FUNCTION_WORDS
-            if not _nm and (kind == "person" or (kind in ("", None) and not _shape_is_person)):
-                dropped.append(atom)  # "Each Party will appoint a person…" names nobody
+            if not _nm and (kind == "person" or not _shape_is_person):
+                dropped.append(atom)  # "Each Party will appoint a person…" names nobody, whatever its kind
                 continue
             if _first in _FUNCTION_WORDS:
                 dropped.append(atom)  # "both parties | contact person": a phrase, not a person
