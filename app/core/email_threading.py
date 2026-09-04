@@ -373,9 +373,33 @@ def thread_emails(
 
             # 5) Additive stamp on EVERY atom of this artifact. We touch only
             # value["email_thread"] — no id / type / text change → no drops.
+            # The file-level block describes the FILE (its top message). A
+            # quoted block inside the file is an older message with its own
+            # author and time; its atoms say so, and say which message they
+            # answer (the next-older block in the same file) — live 010300:
+            # Carl's requirements were stamped "sender: patrick@purtera-it.com"
+            # and the audit could not tell who was replying to whom.
+            _blocks = _message_blocks(atoms_by_artifact.get(aid, []))
             for atom in atoms_by_artifact.get(aid, []):
                 if isinstance(atom.value, dict):
-                    atom.value["email_thread"] = thread_block
+                    tb = dict(thread_block)
+                    mi = atom.value.get("message_index")
+                    try:
+                        mi = int(mi) if mi is not None else None
+                    except (TypeError, ValueError):
+                        mi = None
+                    if mi is not None and mi in _blocks:
+                        me = _blocks[mi]
+                        tb["message"] = {"index": mi, "author": me["author"], "sent_at": me["sent_at"], "quoted": mi > 0}
+                        older = _blocks.get(mi + 1)
+                        if older:
+                            tb["in_reply_to"] = {"author": older["author"], "sent_at": older["sent_at"], "gist": older["gist"]}
+                        newer = _blocks.get(mi - 1) if mi > 0 else None
+                        if newer:
+                            tb["answered_by"] = {"author": newer["author"], "sent_at": newer["sent_at"]}
+                        # 1 = the earliest message in this file's history.
+                        tb["position_in_file"] = len(_blocks) - mi
+                    atom.value["email_thread"] = tb
 
         summary_threads.append(
             {
@@ -394,6 +418,41 @@ def thread_emails(
         "threads": summary_threads,
     }
     return atoms, summary
+
+
+def _message_blocks(atoms: list[EvidenceAtom]) -> dict[int, dict[str, str]]:
+    from app.parsers.email_parser import _is_greeting_line
+
+    """message_index -> {author, sent_at, gist} for one email artifact, read off
+    the atoms' own author stamps (the block's From:/Sent:)."""
+    out: dict[int, dict[str, str]] = {}
+    for a in atoms:
+        v = a.value if isinstance(a.value, dict) else None
+        if not v or v.get("message_index") is None:
+            continue
+        try:
+            mi = int(v.get("message_index"))
+        except (TypeError, ValueError):
+            continue
+        rec = out.setdefault(mi, {"author": "", "sent_at": "", "gist": ""})
+        if not rec["author"] and v.get("author"):
+            rec["author"] = str(v.get("author"))
+        if not rec["sent_at"] and v.get("authored_at"):
+            rec["sent_at"] = str(v.get("authored_at"))
+        kind = str(v.get("kind") or "")
+        text = str(a.raw_text or "").strip()
+        # A body line is the gist; a message that is only a pleasantry
+        # ("Thank you for the opportunity!") falls back to that line.
+        if kind == "email_body_line" and len(text.split()) >= 4 and not _is_greeting_line(text):
+            if not rec["gist"] or rec.get("_fallback"):
+                rec["gist"] = text[:120]
+                rec.pop("_fallback", None)
+        elif kind == "email_body_context" and not rec["gist"] and len(text.split()) >= 3:
+            rec["gist"] = text[:120]
+            rec["_fallback"] = "1"
+    for rec in out.values():
+        rec.pop("_fallback", None)
+    return out
 
 
 def _norm_key(atom: EvidenceAtom) -> str:

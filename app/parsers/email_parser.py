@@ -850,6 +850,8 @@ _GREETING_LEAD_RE = re.compile(
     re.IGNORECASE,
 )
 
+_GREETING_CLOSE_RE = re.compile(r"\s*[,:\-–—!]+\s*$")
+
 _IDENTITY_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
 
 
@@ -1061,12 +1063,19 @@ def _is_greeting_line(cleaned: str) -> bool:
     email header so Atom Quality can show a "To: Eddie" tag without a
     standalone reviewable ``Eddie,`` atom.
     """
-    if not cleaned.endswith(","):
+    stripped = (cleaned or "").rstrip()
+    # A greeting-led opener may close with any salutation punctuation
+    # ("Hello Team-", "Hi Carl:", "Good morning!"); a bare name-shaped
+    # opener still needs the comma so a list item "Cabling-" never counts.
+    if _GREETING_LEAD_RE.match(stripped) and _GREETING_CLOSE_RE.search(stripped):
+        # "Hello Carl and CDW team-" is five words and still a salutation.
+        return 1 <= len(_GREETING_CLOSE_RE.sub("", stripped).split()) <= 7
+    if not stripped.endswith(","):
         return False
-    words = cleaned.rstrip(",").split()
+    words = stripped.rstrip(",").split()
     if not (1 <= len(words) <= 4):
         return False
-    if _GREETING_LEAD_RE.match(cleaned):
+    if _GREETING_LEAD_RE.match(stripped):
         return True
     # Pure name-shaped salutation: every token is alphabetic (allowing an
     # initial's period / hyphen / apostrophe) — "Eddie", "Mr. Smith", "Jean-Luc".
@@ -1075,11 +1084,11 @@ def _is_greeting_line(cleaned: str) -> bool:
 
 def _greeting_addressee_name(cleaned: str) -> str:
     """Extract the display name from a salutation line ("Eddie," → "Eddie")."""
-    text = (cleaned or "").rstrip(",").strip()
+    text = _GREETING_CLOSE_RE.sub("", (cleaned or "").rstrip()).strip()
     if not text:
         return ""
     if _GREETING_LEAD_RE.match(cleaned or ""):
-        rest = _GREETING_LEAD_RE.sub("", text).strip(" ,")
+        rest = _GREETING_LEAD_RE.sub("", text).strip(" ,:-–—!")
         return rest or text
     return text
 
@@ -1096,14 +1105,33 @@ _ADDRESSEE_STAMP_KINDS: frozenset[str] = frozenset(
 )
 
 
-def _stamp_email_addressee(atoms: list[EvidenceAtom], addressee: str) -> None:
-    """Attach body-greeting addressee as structured metadata on email atoms."""
+def _stamp_email_addressee(
+    atoms: list[EvidenceAtom], addressee: str, message_index: int | None = None
+) -> None:
+    """Attach a salutation addressee as structured metadata on email atoms.
+
+    With ``message_index`` only that message's atoms are stamped: each block
+    of a thread has its own greeting ("Hello Trent-" in Carl's mail, "Hello
+    Team-" in Patrick's forward), so one name must never cover the file.
+    """
     name = (addressee or "").strip()
     if not name:
         return
+
+    def _mi(val: dict[str, Any], loc: dict[str, Any]) -> int | None:
+        raw = val.get("message_index", loc.get("message_index"))
+        try:
+            return int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
     for atom in atoms:
         val = atom.value if isinstance(atom.value, dict) else None
         if val is None:
+            continue
+        refs = list(getattr(atom, "source_refs", None) or [])
+        loc = refs[0].locator if refs and isinstance(getattr(refs[0], "locator", None), dict) else {}
+        if message_index is not None and _mi(val, loc) != message_index:
             continue
         kind = str(val.get("kind") or "")
         if kind in _ADDRESSEE_STAMP_KINDS:
@@ -1111,24 +1139,52 @@ def _stamp_email_addressee(atoms: list[EvidenceAtom], addressee: str) -> None:
             val["to_greeting"] = name
             continue
         # BOM / backfill rows from CID OCR: stamp when locator is email-sourced.
-        refs = list(getattr(atom, "source_refs", None) or [])
-        loc = refs[0].locator if refs and isinstance(getattr(refs[0], "locator", None), dict) else {}
         if loc.get("kind") == "email_cid_inline" or "message_index" in loc:
             val["addressee"] = name
             val["to_greeting"] = name
 
 
+_GREETING_WINDOW_LINES = 2
+
+
+def _block_greeting_addressee(block: dict[str, Any]) -> str | None:
+    """The salutation name of ONE message block, read from its opening lines.
+
+    Position is the rule, not vocabulary: a greeting opens a message, so only
+    the first two content lines (after any quoted From:/Sent: header rows)
+    count. A sign-off further down ("Thanks," above a signature) has the
+    same shape as a one-word salutation and was being stamped as the
+    addressee (live 010300: ``to_greeting: Thanks``).
+    """
+    seen = 0
+    after_bare_label = False
+    for line in block.get("lines") or []:
+        raw = str(line or "").lstrip("> ").strip()
+        cleaned = _BULLET_PREFIX_RE.sub("", raw).strip()
+        if not cleaned:
+            continue
+        if block.get("quoted"):
+            header_match = _PSEUDO_HEADER_RE.match(cleaned)
+            if header_match:
+                after_bare_label = not (header_match.group(2) or "").strip()
+                continue
+            if after_bare_label:
+                after_bare_label = False
+                continue
+        seen += 1
+        if _is_greeting_line(cleaned):
+            return _greeting_addressee_name(cleaned) or None
+        if seen >= _GREETING_WINDOW_LINES:
+            return None
+    return None
+
+
 def _body_greeting_addressee(blocks: list[dict[str, Any]]) -> str | None:
-    """First authored-message salutation name, if any."""
+    """Salutation name of the first authored (non-quoted) message, if any."""
     for block in blocks or []:
         if block.get("quoted"):
             continue
-        for line in block.get("lines") or []:
-            raw = str(line or "").lstrip("> ").strip()
-            cleaned = _BULLET_PREFIX_RE.sub("", raw).strip()
-            if cleaned and _is_greeting_line(cleaned):
-                name = _greeting_addressee_name(cleaned)
-                return name or None
+        return _block_greeting_addressee(block)
     return None
 
 
@@ -1489,6 +1545,25 @@ def _is_party_address_context(lines: list[str], idx: int) -> bool:
     return False
 
 
+_MAIL_SELF_REFERENCE_RE = re.compile(
+    r"^(?:this|the)\s+(?:message|e-?mail|sender)\b.*\b(?:outside|external)\b|"
+    r"^(?:caution|warning|attention)\b.*\b(?:outside|external)\b.*\b(?:organi[sz]ation|sender|source)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_mail_self_reference_banner(text: str) -> bool:
+    """A one-sentence line about the MESSAGE itself rather than the work:
+    the mail system's external-sender notice ("This message came from
+    outside your organization."). Mail-format chrome, like From:/Sent:
+    rows — not deal vocabulary. Live 010300: it became a scope_item and
+    the gist of Trent's message."""
+    t = " ".join((text or "").split())
+    if not t or len(t.split()) > 16:
+        return False
+    return bool(_MAIL_SELF_REFERENCE_RE.search(t))
+
+
 def _is_title_case_banner(text: str) -> bool:
     """Four or more words, at least 80% capitalised, no digits, no sentence end."""
     t = (text or "").strip()
@@ -1783,9 +1858,13 @@ class EmailParser(BaseParser):
             )
         )
         # Body greeting ("Eddie,") is metadata/tag — not a reviewable atom.
-        greeting = _body_greeting_addressee(blocks)
-        if greeting:
-            _stamp_email_addressee(atoms, greeting)
+        # Stamped per message block: every quoted reply carries its own
+        # salutation, so Carl's atoms say "To: Trent" and Patrick's forward
+        # says "To: Team" instead of one name covering the whole thread.
+        for block in blocks or []:
+            greeting = _block_greeting_addressee(block)
+            if greeting:
+                _stamp_email_addressee(atoms, greeting, message_index=block.get("message_index"))
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
@@ -2771,7 +2850,7 @@ class EmailParser(BaseParser):
             # A Title-Case line with no digits and no sentence end ("This
             # Message Is From an External Sender") is a banner or heading,
             # not a sentence about the work. Kept as routing metadata.
-            if not is_bullet and _is_title_case_banner(cleaned):
+            if not is_bullet and (_is_title_case_banner(cleaned) or _is_mail_self_reference_banner(cleaned)):
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id("atm", project_id, artifact_id, block["message_index"], line_num, "email_banner", cleaned),

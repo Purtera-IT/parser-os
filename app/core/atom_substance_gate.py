@@ -608,10 +608,43 @@ _TRUNCATED_ADDRESSEE_RE = re.compile(r"^[;,\s]*[A-Za-z][A-Za-z.'\-]*(?:[,\s]+[A-
 _SEPARATOR_ROW_RE = re.compile(r"^[\d\s|.,;:/\\\-]+$")
 
 
+_DATE_SHAPE = r"(?:[A-Z][a-z]+\.? \d{1,2}, \d{4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})"
+_NAME_SHAPE = r"[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,3}"
+# "March 05, 2025 Ryan Adamski" / "Ryan Adamski 3/5/2025" -- a signature
+# row's date and signer with no label: an identifier pair, not a claim.
+_DATE_NAME_ROW_RE = re.compile(
+    rf"^[\W_]*(?:{_DATE_SHAPE}\s+{_NAME_SHAPE}|{_NAME_SHAPE}\s+{_DATE_SHAPE})[\W_]*$"
+)
+
+
+def _is_contact_row(t: str) -> bool:
+    """A contact-card row: a phone-shaped span with at most six other tokens
+    and no running sentence ("--a DENTISTRY FOR CHILDREN +1 (847) 9689740").
+    The phone is the tell; the words beside it are whose phone it is."""
+    if not _PHONE_RE.search(t) or _SENTENCE_END_RE.search(t):
+        return False
+    rest = _PHONE_RE.sub(" ", t)
+    rest = re.sub(r"[^A-Za-z0-9&']+", " ", rest).split()
+    return len(rest) <= 6
+
+
 def _is_contact_chrome(text: str) -> bool:
-    """True when the whole atom is a bare identifier rather than a claim."""
+    """True when the whole atom is a bare identifier rather than a claim.
+
+    Shape only, and judged for every prose type: the typer labels the same
+    cover-page rows stakeholder on one run and scope_item on the next
+    (live 010300 rounds 31 vs 32), and a drop that depends on the label
+    comes and goes with it."""
     t = " ".join(str(text or "").split())
     if not t:
+        return True
+    if _DATE_NAME_ROW_RE.match(t):
+        return True
+    if _is_contact_row(t):
+        return True
+    # A table header row: label cells joined by "|" and closing with the
+    # colon of the last label ("... Onsite Support | Seller Representative:").
+    if "|" in t and _LABEL_ONLY_RE.match(t):
         return True
     # One or two characters cannot state anything about a deal.
     if len(t) <= 2:

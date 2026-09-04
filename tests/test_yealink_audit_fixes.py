@@ -1504,3 +1504,29 @@ def test_site_entity_is_named_like_a_place_not_a_slug():
         al = [row["facility_name"], row["street_address"]]
         ent["aliases"] = al
     assert envelope["entities"][0]["canonical_name"] == "HQ — 2970 Brandywine Rd, Atlanta, GA 30641"
+
+
+
+def test_cover_page_rows_are_chrome_whatever_the_typer_called_them():
+    """Round 31 vs 32 on live 010300: the same three cover-page rows were
+    dropped as stakeholder/deal_metadata one run and kept as scope_item the
+    next. The drop is by shape now, so the label no longer decides."""
+    from app.core.atom_substance_gate import _is_contact_chrome, drop_contact_chrome
+    rows = [
+        "——a DENTISTRY FOR CHILDREN +1 (847) 9689740",
+        "March 05, 2025 Ryan Adamski",
+        "Ryan Adamski 3/5/2025",
+        "mic Teams Phone Implementation Onsite Support | Seller Representative:",
+    ]
+    for r in rows:
+        assert _is_contact_chrome(r), r
+    for keep in (
+        "Install 4 Yealink handsets at the Atlanta HQ before cutover.",
+        "Site contact: call 770.769.7311 to schedule access.",
+        "Provider to own scheduling rights and requires a minimum of five (3) business days notice.",
+        "The Provider will complete the following:",
+    ):
+        assert not _is_contact_chrome(keep), keep
+    atoms = [_atom(AtomType.scope_item, r) for r in rows] + [_atom(AtomType.scope_item, "Install 4 Yealink handsets at the Atlanta HQ before cutover.")]
+    kept, dropped = drop_contact_chrome(atoms)
+    assert len(dropped) == 4 and len(kept) == 1

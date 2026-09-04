@@ -359,7 +359,11 @@ def build_orbitbrief_envelope(
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": summary,
         "documents": documents,
-        "atoms": [_compact_atom(a) for a in atoms],
+        # Reading order, not id order: documents by their own date, an
+        # email's quoted history oldest first, then page and line. The audit
+        # view was reading the newest reply first and could not tell what
+        # answered what (live 010300).
+        "atoms": [_compact_atom(a) for a in _in_reading_order(atoms, documents)],
         "packets": [_compact_packet(p) for p in packets],
         "entities": [_compact_entity(e, atoms_by_artifact, atoms) for e in entities],
         "edges": [_compact_edge(edge) for edge in edges],
@@ -2729,6 +2733,65 @@ def _build_indexes(
         "edges_by_atom": {k: sorted(v) for k, v in sorted(edges_by_atom.items())},
         "entity_id_by_canonical_key": dict(sorted(entities_by_key.items())),
     }
+
+
+def _parse_loose_datetime(text: str) -> str:
+    """ISO-8601 for the date shapes email clients write, or "" when unreadable."""
+    import re as _re
+    from datetime import datetime as _dt
+    from email.utils import parsedate_to_datetime
+
+    t = " ".join(str(text or "").split())
+    if not t:
+        return ""
+    try:
+        d = parsedate_to_datetime(t)
+        if d:
+            return d.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        pass
+    t2 = _re.sub(r"\s+at\s+", " ", t)
+    for fmt in ("%A, %B %d, %Y %I:%M %p", "%A, %B %d, %Y %H:%M", "%B %d, %Y %I:%M %p", "%B %d, %Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return _dt.strptime(t2, fmt).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            continue
+    m = _re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", t)
+    return m.group(1) if m else ""
+
+
+def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list[Any]:
+    doc_when = {}
+    doc_pos = {}
+    for i, d in enumerate(documents or []):
+        aid = str(d.get("artifact_id") or "")
+        doc_when[aid] = _parse_loose_datetime(str(d.get("authored_at") or "")) or "9999"
+        doc_pos[aid] = i
+
+    def key(a: Any):
+        aid = str(getattr(a, "artifact_id", "") or "")
+        v = getattr(a, "value", None)
+        v = v if isinstance(v, dict) else {}
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        loc = loc if isinstance(loc, dict) else {}
+        when = doc_when.get(aid, "9999")
+        msg_when = _parse_loose_datetime(str(v.get("authored_at") or "")) if v.get("message_index") is not None else ""
+        if msg_when:
+            when = msg_when
+        page = loc.get("page")
+        try:
+            page = int(page) if page is not None else 0
+        except (TypeError, ValueError):
+            page = 0
+        line = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
+        try:
+            line = int(line) if line is not None else 0
+        except (TypeError, ValueError):
+            line = 0
+        return (when, doc_pos.get(aid, 10**6), page, line, str(getattr(a, "id", "")))
+
+    return sorted(atoms, key=key)
 
 
 def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
