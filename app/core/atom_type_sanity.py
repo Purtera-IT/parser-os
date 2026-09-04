@@ -1443,9 +1443,17 @@ def merge_signature_rows(atoms: list[Any]) -> int:
         # Mike Murphy (Mar 26, 2025 ...)" typed scope_item, no signer record
         # at all). A row with a signature label and a name or party is a
         # signature row whatever its label.
-        if _atom_type_str(a) == "signatory" or (
-            _atom_type_str(a) in ("scope_item", "deal_metadata", "stakeholder", "entity")
-            and _looks_like_signature_row(_atom_text(a))
+        _t = _atom_text(a)
+        _is_row = _looks_like_signature_row(_t) or bool(_ESIGN_TOKEN_RE.search(_t)) or (
+            _atom_type_str(a) == "signatory" and len(_t.split()) < 12
+        )
+        # A sentence the typer happened to label "signatory" ("In
+        # acknowledgement that the parties below have read...", live 010300
+        # round 26: the Contact Persons and Expenses clauses) is not a row of
+        # the signature table and must not be folded away with it.
+        if _is_row and (
+            _atom_type_str(a) == "signatory"
+            or _atom_type_str(a) in ("scope_item", "deal_metadata", "stakeholder", "entity")
         ):
             by_doc.setdefault((str(getattr(a, "artifact_id", "")), _atom_page(a)), []).append(a)
     folded = 0
@@ -1674,6 +1682,9 @@ def enrich_vendor_line_items(atoms: list[Any]) -> int:
 
 _ADDRESS_TAIL_RE = re.compile(r"\b[A-Z]{2}\s+\d{4,5}(?:-\d{4})?\s*$|\b(?:Ave|Avenue|St|Street|Rd|Road|Blvd|Dr|Drive|Ln|Lane|Suite|Ste)\.?\b", re.I)
 _SIG_LABEL_ONLY_RE = re.compile(r"^\s*(?:(?:By|Name|Title|Date|Signature|Mailing Address)\s*:?\s*)+$", re.I)
+#: A running sentence: a lowercase word followed by more words and a full stop
+#: somewhere -- what a signature form row never has.
+_SENTENCE_LIKE_RE = re.compile(r"\b[a-z]{2,}\s+[a-z]{2,}\b.*[.!?;:]")
 
 
 def demote_signatory_chrome(atoms: list[Any]) -> int:
@@ -1692,6 +1703,27 @@ def demote_signatory_chrome(atoms: list[Any]) -> int:
         if isinstance(v, dict) and v.get("signers"):
             continue
         text = _atom_text(a).strip()
+        # A sentence is never furniture: a clause the typer labelled
+        # "signatory" because it mentions the parties ("The Customer also may
+        # appoint a contact person...") keeps its words and becomes a
+        # contract term instead of vanishing as chrome.
+        if len(text.split()) >= 12 and _SENTENCE_LIKE_RE.search(text):
+            try:
+                from app.core.schemas import AtomType as _AT2
+
+                a.atom_type = _AT2.contract_term
+                if isinstance(v, dict):
+                    v["kind"] = "clause"
+                    v.pop("name", None)
+                    v.pop("role", None)
+                flags = list(getattr(a, "review_flags", None) or [])
+                if "signatory_sentence_retyped" not in flags:
+                    a.review_flags = flags + ["signatory_sentence_retyped"]
+                a.entity_keys = [k for k in (getattr(a, "entity_keys", None) or []) if not str(k).startswith("stakeholder:")]
+                changed += 1
+            except Exception:
+                pass
+            continue
         nm = str((v or {}).get("name") or "").strip() if isinstance(v, dict) else ""
         has_name_shape = bool(_SIG_NAME_RE.match(nm)) or bool(
             re.search(r"\b(?:Name|By)\s*:\s*[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}", text)

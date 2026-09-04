@@ -81,7 +81,23 @@ def capture_suppressed(
         if isinstance(val, dict):
             val["_suppression"] = {"stage": stage, "reason": reason}
         suppressed.append(atom)
+    note_suppressed(stage, suppressed)
     return suppressed
+
+
+#: One line per suppressed atom, in order, for the compile trace: which stage
+#: removed which text. Reset by the compiler at the start of a compile.
+DROP_NOTES: list[str] = []
+
+
+def note_suppressed(stage: str, atoms: list[Any], *, cap: int = 400) -> None:
+    for a in atoms or []:
+        if len(DROP_NOTES) >= cap:
+            return
+        t = getattr(a, "atom_type", None)
+        t = str(getattr(t, "value", t) or "")
+        text = " ".join(str(getattr(a, "raw_text", None) or getattr(a, "normalized_text", None) or "").split())
+        DROP_NOTES.append(f"INFO: dropped[{stage}] {t}: {text[:140]}")
 
 
 def merge_suppressed(

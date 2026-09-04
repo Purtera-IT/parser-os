@@ -1264,3 +1264,49 @@ def test_conflict_headline_lists_each_differing_figure_once():
         _a("scan", "48 Hour Cancellation or Turnaway Fee – Per Item $300.00 | 1 $300.00"),
     ], project_id="p")
     assert len(qs) == 1 and "$500.00 vs $300.00" in qs[0].raw_text, qs[0].raw_text
+
+
+def test_nameless_contactless_stakeholders_never_collapse_into_each_other():
+    """Live 010300 round 26: the typer labelled three different clauses
+    ('Each Party will appoint…', 'The Customer also may appoint…', 'Provider
+    will invoice Buyer for … direct costs…') as nameless stakeholders; the
+    identity dedup keyed them alike and kept one sentence of three. A record
+    with no name, email or phone has no identity to collapse on."""
+    from app.core.semantic_dedup import _value_key, dedupe_stakeholder_atoms
+
+    a = _atom(AtomType.stakeholder, "Each Party will appoint a person to act as that Party’s point of contact.", kind="person", name=None, role="approver")
+    b = _atom(AtomType.stakeholder, "The Customer also may appoint a contact person, and both are authorized to approve materials.", kind="person", name=None, role="approver")
+    c = _atom(AtomType.stakeholder, "Provider will invoice Buyer for Provider's reasonable, direct costs incurred in performance of the Services.", kind="person", name=None, role="approver")
+    named1 = _atom(AtomType.stakeholder, "Carl Painter | Sr. Account Manager", kind="person", name="Carl Painter", role="Sr. Account Manager", email="carlpai@cdw.com")
+    named2 = _atom(AtomType.stakeholder, "Carl Painter | carlpai@cdw.com", kind="person", name="Carl Painter", email="carlpai@cdw.com")
+    assert _value_key(a) is None and _value_key(b) is None and _value_key(c) is None
+    out = dedupe_stakeholder_atoms([a, b, c, named1, named2])
+    texts = [x.raw_text for x in out]
+    assert a.raw_text in texts and b.raw_text in texts and c.raw_text in texts
+    assert sum(1 for x in out if (x.value or {}).get("name") == "Carl Painter") == 1
+
+
+def test_a_sentence_typed_signatory_is_not_folded_into_the_signature_block():
+    """Live 010300 round 26: the typer labelled the Expenses clause and the
+    Contact Persons clause 'signatory'; the signature merge folded them into
+    the signer record and their words vanished."""
+    from app.core.atom_type_sanity import demote_signatory_chrome, merge_signature_rows
+
+    def _row(atom_type, text):
+        a = _atom(atom_type, text, kind="table_row")
+        a.source_refs = [SourceRef(id=f"s{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 6}, extraction_method="t", parser_version="t")]
+        return a
+
+    clause = _row(AtomType.signatory, "Provider will invoice Buyer for Provider's reasonable, direct costs incurred in performance of the Services. Direct expenses include, but may not be limited to: airfare, lodging, mileage.")
+    preamble = _row(AtomType.signatory, "In acknowledgement that the parties below have read and understood this Statement of Work and agree to be bound by it, each party has caused this Statement of Work to be signed.")
+    atoms = [
+        _row(AtomType.signatory, "CDW Technologies LLC: By: Mike Murphy (Mar 26, 2025 10:24 EDT) | NewBold LLC: By: Shelly Lewis (Mar 25, 2025 11:49 EDT)"),
+        _row(AtomType.signatory, "CDW Technologies LLC: Title: Professional Services Manager | NewBold LLC: Title: EVP & COO"),
+        clause, preamble,
+    ]
+    merge_signature_rows(atoms)
+    demote_signatory_chrome(atoms)
+    assert clause in atoms and preamble in atoms
+    assert clause.atom_type == AtomType.contract_term and preamble.atom_type == AtomType.contract_term
+    sig = [a for a in atoms if a.atom_type == AtomType.signatory]
+    assert len(sig) == 1 and [s["name"] for s in sig[0].value["signers"]] == ["Mike Murphy", "Shelly Lewis"]

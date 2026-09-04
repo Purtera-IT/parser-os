@@ -465,6 +465,11 @@ def compile_project(
     # complaints stay localizable and every drop stays auditable. Pure sidecar
     # — never re-enters the accepted atom set.
     suppressed_atoms: list[EvidenceAtom] = []
+    try:
+        from app.core.suppression_ledger import DROP_NOTES as _DROP_NOTES_RESET
+        _DROP_NOTES_RESET.clear()
+    except Exception:
+        pass
     fingerprints = []
     parser_atom_counts: Counter[str] = Counter()
     parser_routing: list[dict] = []
@@ -1415,6 +1420,7 @@ def compile_project(
             from app.core.semantic_dedup import dedupe_stakeholder_atoms
 
             before_sh = len(atoms)
+            _before_sh_atoms = list(atoms)
             atoms = dedupe_stakeholder_atoms(atoms)
             dropped_sh = before_sh - len(atoms)
             if dropped_sh > 0:
@@ -1422,9 +1428,11 @@ def compile_project(
                     f"INFO: stakeholder_dedup collapsed {dropped_sh} duplicate "
                     f"stakeholder identity atom(s)"
                 )
+                _kept_sh = {id(a) for a in atoms}
+                _sh_notes = _dropped_atom_notes("stakeholder_dedup", [a for a in _before_sh_atoms if id(a) not in _kept_sh])
         except Exception as exc:
             warnings.append(f"WARNING: stakeholder_dedup failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=len(atoms))
+        telemetry.end_stage(stage, output_count=len(atoms), warnings=locals().get("_sh_notes") or [])
 
     with telemetry.stage("note_provenance_backfill", input_count=len(atoms)) as stage:
         note_prov_n = 0
@@ -2048,10 +2056,18 @@ def compile_project(
         validation_messages = validate_compile_result(result, source_files_available=True)
         hard_errors = [m for m in validation_messages if m.startswith("ERROR:")]
         validation_warnings = [m for m in validation_messages if m.startswith("WARNING:")]
+        # Every atom any stage suppressed, one line each, so a live compile's
+        # losses are readable from its trace (live 010300 round 26: two
+        # clauses vanished with no stage owning the loss).
+        try:
+            from app.core.suppression_ledger import DROP_NOTES as _DROP_NOTES
+            _ledger_notes = list(_DROP_NOTES)
+        except Exception:
+            _ledger_notes = []
         telemetry.end_stage(
             stage,
             output_count=len(validation_messages),
-            warnings=validation_warnings,
+            warnings=validation_warnings + _ledger_notes,
             errors=hard_errors,
         )
     if allow_unverified_receipts:
