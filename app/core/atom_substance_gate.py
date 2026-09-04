@@ -364,6 +364,7 @@ _SENTENCE_END_RE = re.compile(r"[.!?;:]\s*[\"”’')\]]*\s*$")
 _ORG_LINK_WORDS = frozenset({"for", "of", "and", "&", "the", "de", "du", "des", "la", "le"})
 #: Legal-form suffixes: a closed class of company designators, not a vocabulary
 #: of companies.
+_CORP_WORD_RE = re.compile(r"\b(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Ltd\.?|Limited|LLP|PLC|GmbH|S\.A\.|SARL|B\.V\.|N\.V\.|Pty)\b", re.I)
 _CORP_SUFFIX_RE = re.compile(
     r"\b(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Ltd\.?|Limited|LLP|L\.P\.|LP|PLC|GmbH|AG|S\.A\.|SA|SAS|SARL|B\.V\.|BV|N\.V\.|NV|Pty|Co\.|Company|Group|Holdings)\s*$",
     re.I,
@@ -464,6 +465,10 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         # person, whatever role the typer attached (live 010300 round 23).
         if _nm_any and (
             _CORP_SUFFIX_RE.search(_nm_any)
+            # A legal-form word anywhere inside a long "name" ("NewBaold LLC
+            # FRA NewBold Corporation carlpai@cdw.com CDW Technologies LLC
+            # Drafted By", an OCR'd header line) marks an organisation too.
+            or (len(_nm_any.split()) >= 3 and _CORP_WORD_RE.search(_nm_any))
             or re.search(r"[“\"']\s*" + re.escape(_nm_any) + r"\s*[”\"']", text)
         ):
             dropped.append(atom)

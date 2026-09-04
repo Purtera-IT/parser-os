@@ -1450,3 +1450,12 @@ def test_bom_line_without_device_key_still_counts_by_its_model():
     b.entity_keys = []
     truth = build_scope_truth(atoms=[a, b], edges=[])
     assert truth["device_count"] == 2, truth
+
+
+def test_an_ocr_header_line_with_company_words_is_not_a_person():
+    from app.core.atom_substance_gate import drop_contextless_stakeholders
+
+    org = _atom(AtomType.stakeholder, "NewBaold LLC FRA NewBold Corporation carlpai@edw.com CDW Technologies LLC Drafted By:", kind="person", name="NewBaold LLC FRA NewBold Corporation carlpai@edw.com CDW Technologies LLC Drafted By", email="carlpai@edw.com")
+    person = _atom(AtomType.stakeholder, "Carl Painter | carlpai@cdw.com", kind="person", name="Carl Painter", email="carlpai@cdw.com")
+    kept, dropped = drop_contextless_stakeholders([org, person])
+    assert dropped == [org] and kept == [person]
