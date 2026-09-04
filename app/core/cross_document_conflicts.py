@@ -146,7 +146,10 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
             common &= set(fl)
         values = []
         for (key, a), fl in zip(variants.items(), fig_lists):
-            differing = [f for f in fl if f not in common] or fl
+            # A copy that simply lacks the figure ("at a rate of per hour",
+            # the draft left the rate blank) says so, instead of borrowing a
+            # figure both copies share.
+            differing = [f for f in fl if f not in common] or ["(no figure)"]
             values.append(
                 {
                     "figures": " ".join(differing),
