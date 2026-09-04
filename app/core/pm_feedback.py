@@ -13,6 +13,7 @@ layer (``app.api.routes_feedback``) derives its head→relation mapping from thi
 registry — never duplicate it.
 """
 from __future__ import annotations
+import dataclasses
 import hashlib
 import time
 from dataclasses import dataclass
@@ -52,8 +53,24 @@ _THRESHOLD_DEAL = 0.74
 _THRESHOLD_GLOBAL = 0.82
 
 
-def _cid(head: str, deal_id: str, target_id: str, new_value: str) -> str:
-    h = hashlib.sha1(f"{head}|{deal_id}|{target_id}|{new_value}".encode()).hexdigest()[:12]
+#: A repeated judgment is stronger evidence than a single one, so the same
+#: correction made again widens rather than replaces. Never below the bar a
+#: single in-deal correction already clears.
+_EXEMPLAR_CAP = 12
+_THRESHOLD_STEP = 0.02
+_THRESHOLD_FLOOR = _THRESHOLD_DEAL
+#: Which deals this judgment has been reached on, carried inside `relations`.
+_DEALS_KEY = "pm_seen_deals"
+
+
+def _cid(head: str, deal_id: str, target_id: str, new_value: str, scope: str = SCOPE_DEAL) -> str:
+    # A GLOBAL correction is a judgment about the thing, not about the deal it
+    # was noticed on: the same rule rejected on three deals must be ONE
+    # correction with three exemplars, not three corrections with one each.
+    # Live: `mode.av_install.cable_conceal_drywall` was dismissed on deals
+    # 3bbb2efa, 221a2bae and 02557291 with identical wording.
+    key_deal = "" if scope == SCOPE_GLOBAL else deal_id
+    h = hashlib.sha1(f"{head}|{key_deal}|{target_id}|{new_value}".encode()).hexdigest()[:12]
     return f"pm_{head}_{h}"
 
 
@@ -87,20 +104,60 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
                 else f"{text}\n[ctx] {payload['context']}")
     now = time.time()
     return Correction(
-        id=_cid(head, deal_id, target_id, new_value),
+        id=_cid(head, deal_id, target_id, new_value, scope),
         relation=spec.relation,
         verdict=new_value,
         scope=scope,
         scope_key=("" if scope == SCOPE_GLOBAL else deal_id),
         exemplars=[exemplar],
         threshold=(_THRESHOLD_GLOBAL if scope == SCOPE_GLOBAL else _THRESHOLD_DEAL),
-        relations=dict(payload.get("relations") or {}),
+        relations={**dict(payload.get("relations") or {}), _DEALS_KEY: [deal_id] if deal_id else []},
         instruction=f"PM {spec.label}: {payload.get('oldValue','?')} → {new_value}",
         complaint_id=target_id or None,
         created_by=str(payload.get("pm") or "pm"),
         created_at=now,
         updated_at=now,
     )
+
+
+def _merge_with_existing(store, corr: Correction) -> Correction:
+    """Fold a repeat of the same judgment into the correction it repeats.
+
+    ``store.add`` is INSERT-OR-REPLACE by id, so without this the second time
+    a PM makes the same call it overwrites the first and the store learns
+    nothing from the repetition. Each new exemplar widens the prototype, and
+    the threshold relaxes one step per extra exemplar down to the bar a single
+    deal-scoped correction already clears — evidence buys reach, never a free
+    pass.
+    """
+    try:
+        prior = store.get(corr.id)
+    except Exception:
+        prior = None
+    if prior is None:
+        return corr
+    seen = list(getattr(prior, "exemplars", None) or [])
+    for ex in corr.exemplars:
+        if ex and ex not in seen:
+            seen.append(ex)
+    seen = seen[:_EXEMPLAR_CAP]
+
+    # Evidence is measured in DEALS, not in repetitions. Six clicks on one
+    # wording is one judgment; the same judgment reached independently on
+    # three deals is three. Live: the pathway ask was rejected six times
+    # across three deals with identical wording.
+    rel = dict(getattr(prior, "relations", None) or {})
+    deals = list(rel.get(_DEALS_KEY) or [])
+    for d in (dict(getattr(corr, "relations", None) or {}).get(_DEALS_KEY) or []):
+        if d and d not in deals:
+            deals.append(d)
+    rel.update(dict(getattr(corr, "relations", None) or {}))
+    rel[_DEALS_KEY] = deals[:_EXEMPLAR_CAP]
+
+    evidence = max(len(seen), len(deals))
+    base = float(getattr(corr, "threshold", _THRESHOLD_DEAL))
+    relaxed = max(_THRESHOLD_FLOOR, round(base - _THRESHOLD_STEP * (evidence - 1), 4))
+    return dataclasses.replace(corr, exemplars=seen, threshold=relaxed, relations=rel)
 
 
 def apply_pm_correction(store, payload: dict[str, Any]) -> str:
@@ -110,6 +167,7 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
     is picked up by the nightly retrain. Works for every head in HEAD_REGISTRY.
     """
     corr = pm_correction_to_correction(payload)
+    corr = _merge_with_existing(store, corr)
     store.add(corr)
     # Mirror to blob so the worker (which runs decide() during compile) and the
     # nightly retrain see this correction too, and it survives container

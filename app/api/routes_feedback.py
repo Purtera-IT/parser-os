@@ -351,6 +351,50 @@ def feedback_correction_chip(project_id: str, req: CorrectionRequest) -> Feedbac
     )
 
 
+class QuestionScreenItem(BaseModel):
+    """One candidate question the brief is about to show."""
+
+    id: str = ""
+    rule_id: str = ""
+    text: str
+    context: str = ""
+
+
+class QuestionScreenRequest(BaseModel):
+    questions: list[QuestionScreenItem] = Field(default_factory=list)
+    deal_id: str = ""
+
+
+@router.post("/{project_id}/feedback/questions/screen")
+def feedback_questions_screen(project_id: str, req: QuestionScreenRequest) -> dict[str, Any]:
+    """Which of these questions has a PM already taught us not to ask?
+
+    The ``gap`` head's whole purpose. A rejection is stored as an embedding
+    prototype, so this fires on a paraphrase, a renamed site or a different
+    rule id — anything semantically close to what a PM threw out, inside the
+    scope they threw it out for.
+
+    Degrades open, never closed: with no store, no embedder or no confident
+    match every verdict is ``null`` and the caller shows the question. A
+    silent suppression is a lost requirement; a repeated question is a
+    nuisance.
+    """
+    from app.core.question_screen import screen_questions, suppressed_ids
+
+    deal_id = (req.deal_id or project_id).strip()
+    rows = [q.model_dump() for q in req.questions]
+    results = screen_questions(rows, deal_id=deal_id)
+    dropped = [r for r in results if r.get("verdict") == "invalid"]
+    return {
+        "deal_id": deal_id,
+        "screened": len(results),
+        "suppressed": len(dropped),
+        "suppressed_ids": suppressed_ids(results),
+        "results": results,
+        "store_active": get_store() is not None,
+    }
+
+
 def _scope_from_chip(scope: str, project_id: str) -> tuple[str, str]:
     s = (scope or "deal").strip().lower()
     if s == "global":

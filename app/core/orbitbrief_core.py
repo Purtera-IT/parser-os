@@ -324,6 +324,14 @@ def build_pm_dashboard(
         from app.core.open_question_resolution import generate_gap_questions
         _srl = build_srl_missing_checklist(atoms=atoms)
         gap_questions = generate_gap_questions(_srl)
+        # A standing PM judgment stops the ask being minted, not just hidden.
+        from app.core.question_screen import drop_learned_bad_questions
+
+        gap_questions, _dropped_gaps = drop_learned_bad_questions(
+            gap_questions,
+            text_key="summary",
+            deal_id=str(getattr(atoms[0], "project_id", "") if atoms else ""),
+        )
     except Exception:
         gap_questions = []
     for gq in gap_questions:
