@@ -29,8 +29,10 @@ class FakeStore:
         self.raises = raises
         self.calls = []
 
-    def resolve(self, *, relation, text, candidates, context, scope, instruction, relations):
-        self.calls.append({"relation": relation, "text": text, "scope": scope, "candidates": candidates})
+    def resolve(self, *, relation, text, candidates, context, scope, instruction, relations, facts=None):
+        self.calls.append(
+            {"relation": relation, "text": text, "scope": scope, "candidates": candidates, "facts": facts}
+        )
         if self.raises:
             raise RuntimeError("embedder unreachable")
         if relation != GAP_RELATION:
@@ -64,6 +66,13 @@ def test_a_question_nobody_judged_is_shown() -> None:
 def test_an_explicit_keep_is_reported_as_valid() -> None:
     q = "Confirm the approved cutover window."
     assert screen_question(q, store=FakeStore({q: "valid"}))["verdict"] == "valid"
+
+
+def test_the_deals_facts_reach_the_store_so_a_conditional_lesson_can_judge() -> None:
+    q = "Who pays for the project management effort?"
+    store = FakeStore({q: "invalid"})
+    screen_question(q, deal_id="d1", store=store, facts={"owner": "Chase Whitfield"})
+    assert store.calls[0]["facts"] == {"owner": "Chase Whitfield"}
 
 
 def test_no_store_means_show_everything() -> None:

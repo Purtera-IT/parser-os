@@ -66,6 +66,26 @@ def _schematic_review_safe(atoms):
         return {"present": False}
 
 
+
+def _pm_facts(atoms: list[Any] | None) -> dict[str, Any]:
+    """The deal facts a conditioned correction is judged against.
+
+    Today that is who is on the deal: a rule the PM wrote for "when Chase is
+    assigned" needs to know whether Chase is assigned. Read from the atoms'
+    own owner/stakeholder fields so no new plumbing is needed.
+    """
+    people: list[str] = []
+    for a in atoms or []:
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            continue
+        for key in ("owner", "author", "name", "assigned_to"):
+            val = v.get(key)
+            if isinstance(val, str) and 2 < len(val) <= 60 and val not in people:
+                people.append(val)
+    return {"owner": people[:40]}
+
+
 def build_pm_dashboard(
     *,
     atoms: list[EvidenceAtom],
@@ -327,11 +347,17 @@ def build_pm_dashboard(
         # A standing PM judgment stops the ask being minted, not just hidden.
         from app.core.question_screen import drop_learned_bad_questions
 
+        _deal = str(getattr(atoms[0], "project_id", "") if atoms else "")
         gap_questions, _dropped_gaps = drop_learned_bad_questions(
-            gap_questions,
-            text_key="summary",
-            deal_id=str(getattr(atoms[0], "project_id", "") if atoms else ""),
+            gap_questions, text_key="summary", deal_id=_deal,
         )
+        # A question we compose is ours to word; the PM's house style applies.
+        from app.core.decide import get_store
+        from app.core.terminology import apply_to_authored_rows, preferred_terms
+
+        _terms = preferred_terms(get_store(), deal_id=_deal, facts=_pm_facts(atoms))
+        if _terms:
+            apply_to_authored_rows(gap_questions, _terms, keys=("summary",))
     except Exception:
         gap_questions = []
     for gq in gap_questions:

@@ -45,6 +45,11 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     "router":    HeadSpec("service_routing", "deal",   "Workstream / domain"),
     "facet":     HeadSpec("facet",           "atom",   "Brief section"),
     "image":     HeadSpec("pdf_image_kind",  "atom",   "Image kind"),
+    # A house style is a judgment like any other: "SLO, not SLA, because we
+    # guarantee objectives". The verdict IS the preferred wording, so this is
+    # an extract head — nothing chooses between a closed set, something is
+    # rewritten. Applied only to text WE author; never to quoted evidence.
+    "terminology": HeadSpec("preferred_term", "deal", "Preferred wording", mode="extract"),
 }
 
 # Deal-scoped PM corrections fire readily WITHIN that deal (the PM explicitly fixed
@@ -88,6 +93,12 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
       pm:        str   who corrected (optional)
       context:   str   optional neighbor/section context (improves the prototype)
       relations: dict  optional structured grounding (e.g. {"authoritative":"a"})
+      rationale: str   optional WHY, recorded on the correction but kept OUT of
+                       the exemplar. A reason describes the judgment, not the
+                       thing judged: appending "because our NOC hosts it" to
+                       "who provides the customer bridge" moved the prototype
+                       far enough that the question it was meant to catch
+                       missed by 0.08 cosine.
     """
     head = payload["head"]
     spec = HEAD_REGISTRY.get(head)
@@ -112,7 +123,16 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
         exemplars=[exemplar],
         threshold=(_THRESHOLD_GLOBAL if scope == SCOPE_GLOBAL else _THRESHOLD_DEAL),
         relations={**dict(payload.get("relations") or {}), _DEALS_KEY: [deal_id] if deal_id else []},
-        instruction=f"PM {spec.label}: {payload.get('oldValue','?')} → {new_value}",
+        # The PM's own reason rides with the correction, so wherever it fires
+        # the brief can say whose judgment this was and why they made it.
+        instruction=(
+            f"PM {spec.label}: {payload.get('oldValue','?')} → {new_value}"
+            + (
+                f" — {str(payload.get('rationale') or payload.get('context') or '').strip()}"
+                if (payload.get("rationale") or payload.get("context"))
+                else ""
+            )
+        ),
         complaint_id=target_id or None,
         created_by=str(payload.get("pm") or "pm"),
         created_at=now,

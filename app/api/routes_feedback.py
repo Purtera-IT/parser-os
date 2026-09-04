@@ -351,6 +351,59 @@ def feedback_correction_chip(project_id: str, req: CorrectionRequest) -> Feedbac
     )
 
 
+class NoteRequest(BaseModel):
+    """One free-text note from a PM, with the deal facts to judge it against."""
+
+    note: str
+    deal_id: str = ""
+    pm: str = ""
+    facts: dict[str, Any] = Field(default_factory=dict)
+    #: The question cards the PM was looking at. A note is written about one of
+    #: them, and learning from the card beats learning from the paraphrase.
+    questions: list[str] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+@router.post("/{project_id}/feedback/note")
+def feedback_note(project_id: str, req: NoteRequest) -> dict[str, Any]:
+    """A note in, structured lessons out, routed to every head it corrects.
+
+    This is the general form of every other feedback endpoint. The PM does not
+    pick a head, a scope or a verdict: they write what they mean, including the
+    circumstance ("when Chase is assigned") and the reason ("because we
+    guarantee objectives"), and the router works out which heads that touches.
+
+    ``dry_run`` returns the routing without committing, so a UI can show the PM
+    what it understood before anything is learned.
+    """
+    from app.core.pm_note_router import apply_note, route_note
+
+    note = (req.note or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="note is required")
+    deal_id = (req.deal_id or project_id).strip()
+    store = get_store()
+
+    if req.dry_run or store is None:
+        routing = route_note(
+            note, deal_id=deal_id, facts=req.facts, store=store, questions=req.questions
+        )
+        return {
+            "deal_id": deal_id,
+            "committed": [],
+            "dry_run": True,
+            "store_active": store is not None,
+            **routing.as_dict(),
+        }
+
+    result = apply_note(
+        note, store=store, deal_id=deal_id, pm=req.pm, facts=req.facts, questions=req.questions
+    )
+    result["deal_id"] = deal_id
+    result["store_active"] = True
+    return result
+
+
 class QuestionScreenItem(BaseModel):
     """One candidate question the brief is about to show."""
 
@@ -363,6 +416,7 @@ class QuestionScreenItem(BaseModel):
 class QuestionScreenRequest(BaseModel):
     questions: list[QuestionScreenItem] = Field(default_factory=list)
     deal_id: str = ""
+    facts: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/{project_id}/feedback/questions/screen")
@@ -383,7 +437,7 @@ def feedback_questions_screen(project_id: str, req: QuestionScreenRequest) -> di
 
     deal_id = (req.deal_id or project_id).strip()
     rows = [q.model_dump() for q in req.questions]
-    results = screen_questions(rows, deal_id=deal_id)
+    results = screen_questions(rows, deal_id=deal_id, facts=req.facts)
     dropped = [r for r in results if r.get("verdict") == "invalid"]
     return {
         "deal_id": deal_id,

@@ -707,6 +707,21 @@ def build_orbitbrief_envelope(
     # cut corpus from a full one. `applied` is the discriminator: a null cutoff
     # on a full run and a null cutoff because nobody recorded one look the same
     # otherwise, which is the failure this field exists to end.
+    # House style the PM has taught, published so whoever writes the SOW and
+    # the questions downstream honours it too. Read-only here: parser-os
+    # applies preferences to the text IT authors and never to quoted evidence.
+    try:
+        from app.core.decide import get_store
+        from app.core.orbitbrief_core import _pm_facts
+        from app.core.terminology import preferred_terms
+
+        _prefs = preferred_terms(
+            get_store(), deal_id=str(compile_result.project_id or ""), facts=_pm_facts(atoms)
+        )
+        if _prefs:
+            envelope["pm_preferences"] = {"terms": _prefs}
+    except Exception:
+        pass
     _run_cutoff = _load_manifest_run_cutoff(project_dir)
     envelope["run_scope"] = {
         "as_of": _run_cutoff,

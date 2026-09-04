@@ -346,6 +346,11 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "router": "service_routing",
     "facet": "facet",
     "image": "pdf_image_kind",
+    # House wording, taught by a PM note ("prefer SLO instead of SLA because
+    # we guarantee objectives"). An extract head: the verdict IS the preferred
+    # term. Applied only to text this system authors, never to quoted
+    # evidence, so a receipt still matches its source word for word.
+    "terminology": "preferred_term",
 }
 
 
@@ -373,6 +378,9 @@ def test_registry_matches_frontend_head_corrections():
     assert spec.relation == "pdf_image_kind"
     assert spec.kind == "atom"
     assert spec.mode == "classify"
+    term = pm_registry["terminology"]
+    assert term.relation == "preferred_term"
+    assert term.mode == "extract", "the verdict is the wording, not a class"
 
 
 def test_image_head_is_valid_on_both_correction_endpoints():

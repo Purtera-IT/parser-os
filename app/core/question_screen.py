@@ -54,12 +54,24 @@ def _scope(deal_id: str) -> Any:
     return DecisionScope(deal_id=str(deal_id or ""))
 
 
+def _why_for(store: Any, correction_id: str) -> str:
+    """The reason the PM gave, read back off the correction that fired."""
+    if not store or not correction_id:
+        return ""
+    try:
+        corr = store.get(correction_id)
+    except Exception:
+        return ""
+    return str(getattr(corr, "instruction", "") or "") if corr is not None else ""
+
+
 def screen_question(
     text: str,
     *,
     deal_id: str = "",
     context: str = "",
     store: Any = None,
+    facts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One question → ``{verdict, correction_id, confidence}``.
 
@@ -67,7 +79,7 @@ def screen_question(
     ``"valid"`` when a PM explicitly kept one like it, and ``None`` when
     nothing in the store speaks to it.
     """
-    out: dict[str, Any] = {"verdict": None, "correction_id": "", "confidence": 0.0}
+    out: dict[str, Any] = {"verdict": None, "correction_id": "", "confidence": 0.0, "why": ""}
     probe = " ".join(str(text or "").split())
     if not probe:
         return out
@@ -83,6 +95,10 @@ def screen_question(
             scope=_scope(deal_id),
             instruction="",
             relations=None,
+            # "when Chase is assigned" is a judgment about a circumstance, so
+            # it needs the circumstance. Without facts a conditional lesson
+            # stays silent rather than firing on everybody's deals.
+            facts=facts,
         )
     except Exception:
         return out
@@ -90,6 +106,9 @@ def screen_question(
         return out
     out["verdict"] = hit.verdict
     out["correction_id"] = str(getattr(hit, "correction_id", "") or "")
+    # Whose judgment this was and why they made it. A suppressed question the
+    # PM cannot see the reason for is indistinguishable from a lost one.
+    out["why"] = _why_for(st, out["correction_id"]) or str(getattr(hit, "rationale", "") or "")
     try:
         out["confidence"] = round(float(getattr(hit, "confidence", 0.0) or 0.0), 4)
     except (TypeError, ValueError):
@@ -102,6 +121,7 @@ def screen_questions(
     *,
     deal_id: str = "",
     store: Any = None,
+    facts: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Screen many. Each item needs ``text``; ``id`` and ``rule_id`` ride along.
 
@@ -123,6 +143,7 @@ def screen_questions(
                 deal_id=deal_id or str(q.get("deal_id") or ""),
                 context=str(q.get("context") or ""),
                 store=st,
+                facts=facts,
             )
         )
         results.append(row)
@@ -144,6 +165,7 @@ def drop_learned_bad_questions(
     text_key: str = "summary",
     deal_id: str = "",
     store: Any = None,
+    facts: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Partition generated questions into (asked, suppressed).
 
@@ -160,7 +182,7 @@ def drop_learned_bad_questions(
     dropped: list[dict[str, Any]] = []
     for q in questions:
         text = str((q or {}).get(text_key) or "")
-        verdict = screen_question(text, deal_id=deal_id, store=st).get("verdict")
+        verdict = screen_question(text, deal_id=deal_id, store=st, facts=facts).get("verdict")
         if verdict == VERDICT_INVALID:
             dropped.append(q)
         else:

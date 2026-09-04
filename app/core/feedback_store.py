@@ -29,6 +29,8 @@ Design contract (mirrors :mod:`app.core.semantic_role`):
 
 from __future__ import annotations
 
+import re
+
 import json
 import os
 import sqlite3
@@ -48,6 +50,54 @@ SCOPE_PACK = "pack"
 SCOPE_GLOBAL = "global"
 
 _DEFAULT_THRESHOLD = 0.82  # cosine; per-correction tunable (Phase 5 calibrates)
+
+
+def _norm_fact(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def condition_holds(relations: dict | None, facts: dict | None) -> bool:
+    """Does this correction's precondition hold for the deal in hand?
+
+    A PM's judgment often comes with a circumstance: "when Chase is assigned
+    we bill the blended rate". That is neither scope nor meaning — it is a
+    predicate on the deal — so a correction carrying one stays silent unless
+    the caller supplies facts that satisfy it. Silence is the safe default:
+    firing a conditional rule on a deal whose facts we were never given would
+    apply one person's way of working to everybody's deals.
+
+    ``relations["when"]`` is ``{"field": "owner", "equals": "chase"}`` or
+    ``{"field": "owner", "in": ["chase", "dan"]}``. No condition means always.
+    """
+    cond = (relations or {}).get("when") or {}
+    if not isinstance(cond, dict) or not cond:
+        return True
+    field_name = str(cond.get("field") or "").strip()
+    if not field_name:
+        return True
+    if not facts:
+        return False
+    actual = facts.get(field_name)
+    if actual is None and field_name.endswith("s"):
+        actual = facts.get(field_name[:-1])
+    if actual is None:
+        return False
+    actual_set = (
+        {_norm_fact(a) for a in actual}
+        if isinstance(actual, (list, tuple, set))
+        else {_norm_fact(actual)}
+    )
+    # A full name satisfies a first-name condition and the other way round.
+    expanded = set(actual_set)
+    for a in actual_set:
+        expanded.update(a.split("_"))
+    if "equals" in cond:
+        want = _norm_fact(cond["equals"])
+        return bool(want) and (want in expanded or any(want in a.split("_") for a in actual_set))
+    if "in" in cond and isinstance(cond["in"], (list, tuple, set)):
+        wants = {_norm_fact(w) for w in cond["in"]}
+        return bool(wants & expanded)
+    return True
 
 
 @dataclass
@@ -521,6 +571,7 @@ class FeedbackStore:
         scope: DecisionScope,
         instruction: str,
         relations: dict | None,
+        facts: dict | None = None,
     ) -> Decision | None:
         """Return a Decision on a confident, in-candidate-set hit; else None.
 
@@ -537,7 +588,9 @@ class FeedbackStore:
             allowed = set(candidates)
             corrs = [
                 c for c in self.all_corrections(active_only=True)
-                if c.relation == relation and c.verdict in allowed
+                if c.relation == relation
+                and c.verdict in allowed
+                and condition_holds(c.relations, facts)
             ]
             if not corrs:
                 return None
