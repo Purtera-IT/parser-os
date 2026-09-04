@@ -1423,6 +1423,11 @@ def _weak_label_prose_line_items(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
         if not (_has_money and _has_count):
             try:
                 a.atom_type = AtomType.pricing_assumption
+                # The label is no longer weak once the type is right: the
+                # sentence is verbatim, receipted, and should not sit in the
+                # review queue for a guess the typer no longer makes (live
+                # 010300 round 29: 21 fee sentences queued as "weak_label").
+                a.review_flags = [f for f in (getattr(a, "review_flags", None) or []) if f != "weak_label"]
             except Exception:  # pragma: no cover
                 pass
         try:

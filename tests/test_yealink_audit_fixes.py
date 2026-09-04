@@ -1459,3 +1459,15 @@ def test_an_ocr_header_line_with_company_words_is_not_a_person():
     person = _atom(AtomType.stakeholder, "Carl Painter | carlpai@cdw.com", kind="person", name="Carl Painter", email="carlpai@cdw.com")
     kept, dropped = drop_contextless_stakeholders([org, person])
     assert dropped == [org] and kept == [person]
+
+
+def test_fee_prose_retyped_to_pricing_assumption_loses_the_weak_label():
+    from app.parsers.orbitbrief_pdf import _weak_label_prose_line_items
+
+    a = _atom(AtomType.vendor_line_item, "Services Fees will be calculated on a TIME AND MATERIALS basis.", kind="paragraph")
+    a.review_flags = []
+    row = _atom(AtomType.vendor_line_item, "Additional Onsite Hours – Per Hour $115.00 | 1 $115.00", kind="paragraph")
+    row.review_flags = []
+    _weak_label_prose_line_items([a, row])
+    assert a.atom_type == AtomType.pricing_assumption and "weak_label" not in a.review_flags
+    assert row.atom_type == AtomType.vendor_line_item and "weak_label" in row.review_flags
