@@ -552,7 +552,8 @@ def build_orbitbrief_envelope(
             if _entry is None:
                 continue
             for _attr in ("address", "mdf_idf", "access_window", "escort", "users", "rooms", "notes",
-                          "facility_name", "street_address", "escort_owner", "contact", "phone", "email"):
+                          "facility_name", "street_address", "escort_owner", "contact", "phone", "email",
+                          "city", "state", "zip"):
                 _v = _val.get(_attr)
                 if _v and not _entry.get(_attr):
                     _entry[_attr] = _v
@@ -1402,11 +1403,20 @@ def _scrub_unbacked_stakeholder_keys(atoms: list[Any]) -> int:
         for k in keys:
             if str(k).startswith("stakeholder:"):
                 slug = str(k)[len("stakeholder:"):]
-                if slug not in backed and not any(b.startswith(slug + "_") or slug.startswith(b + "_") for b in backed):
-                    removed += 1
-                    continue
+                if slug not in backed:
+                    # "carl_painter_jr" for the record "carl_painter": one
+                    # person, one key — rewrite rather than keep a twin.
+                    twin = next((b for b in sorted(backed, key=len, reverse=True) if slug.startswith(b + "_") or b.startswith(slug + "_")), None)
+                    if twin:
+                        k = f"stakeholder:{twin}"
+                        if k in kept:
+                            removed += 1
+                            continue
+                    else:
+                        removed += 1
+                        continue
             kept.append(k)
-        if len(kept) != len(keys):
+        if kept != keys:
             try:
                 a.entity_keys = kept
             except Exception:

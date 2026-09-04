@@ -1365,7 +1365,8 @@ def test_stakeholder_keys_without_a_person_are_scrubbed():
     sentence.entity_keys = ["stakeholder:carl_painter_jr", "stakeholder:account_executive", "stakeholder:site_assessment", "site:hq"]
     removed = _scrub_unbacked_stakeholder_keys([carl, sentence])
     assert removed == 2
-    assert sentence.entity_keys == ["stakeholder:carl_painter_jr", "site:hq"]
+    # the suffix variant is rewritten to the record's own key, not kept as a twin
+    assert sentence.entity_keys == ["stakeholder:carl_painter", "site:hq"]
     assert carl.entity_keys == ["stakeholder:carl_painter"]
 
 
@@ -1391,3 +1392,61 @@ def test_project_vitals_cannot_outrank_open_blockers():
     clear = {"readiness_score": 0.95, "blocked": False, "blocker_count": 0}
     v2 = build_project_vitals(atoms=[], edges=[], packets=[], scorecard=clear, checklist={"coverage": 0.9}, site_readiness={"avg_readiness": 0.9}, stakeholder_load={"bottlenecks": []}, scope_truth={"contested_count": 0})
     assert v2["score_100"] > 69.0 and v2["capped_by_blockers"] is False
+
+
+def test_a_capitalised_phrase_of_common_words_is_not_a_person():
+    from app.core.atom_substance_gate import drop_contextless_stakeholders
+
+    phrase = _atom(AtomType.stakeholder, "perform a Site Assessment Survey", kind="person", name="Site Assessment", role=None)
+    phrase2 = _atom(AtomType.stakeholder, "Site Assessments", kind="person", name="Site Assessments")
+    person = _atom(AtomType.stakeholder, "Rhonda Sharp Professional Services Manager", kind="person", name="Rhonda Sharp", role="Professional Services Manager")
+    wordy_person = _atom(AtomType.stakeholder, "Bill Rose | bill.rose@x.com", kind="person", name="Bill Rose", email="bill.rose@x.com")
+    kept, dropped = drop_contextless_stakeholders([phrase, phrase2, person, wordy_person])
+    assert dropped == [phrase, phrase2]
+    assert kept == [person, wordy_person]
+
+
+def test_variant_stakeholder_keys_are_rewritten_to_the_record():
+    from app.core.orbitbrief_envelope import _scrub_unbacked_stakeholder_keys
+
+    carl = _atom(AtomType.stakeholder, "Carl Painter | carlpai@cdw.com", kind="person", name="Carl Painter", email="carlpai@cdw.com")
+    carl.entity_keys = ["stakeholder:carl_painter"]
+    s = _atom(AtomType.scope_item, "Carl Painter Jr asked for the survey.", kind="bullet")
+    s.entity_keys = ["stakeholder:carl_painter_jr", "site:hq"]
+    _scrub_unbacked_stakeholder_keys([carl, s])
+    assert s.entity_keys == ["stakeholder:carl_painter", "site:hq"]
+
+
+def test_owner_slug_needs_a_person_shaped_owner():
+    from app.core.orbitbrief_core import _owner_slug_from_atom
+
+    a = _atom(AtomType.customer_instruction, "Customer and Seller will jointly manage this project.", kind="paragraph", owner="Customer and Seller")
+    a.entity_keys = []
+    assert _owner_slug_from_atom(a, "Customer and Seller") is None
+    assert _owner_slug_from_atom(a, "Carl Painter") == "carl_painter"
+
+
+def test_two_sentences_sharing_an_opener_do_not_collapse():
+    """'This quote does not include any permits.' and 'This quote does not
+    include union labor or electrical work.' shared a 32-character key and
+    the permits clause was merged away (live 010300 round 28)."""
+    from app.core.semantic_dedup import semantic_dedup_atoms
+
+    a = _atom(AtomType.pricing_assumption, "This quote does not include any permits.", kind="bullet", domain="commercial", statement="This quote does not include any permits.")
+    b = _atom(AtomType.pricing_assumption, "This quote does not include union labor or electrical work.", kind="bullet", domain="commercial", statement="This quote does not include union labor or electrical work.")
+    c = _atom(AtomType.pricing_assumption, "This quote does not include any permits.", kind="bullet", domain="commercial", statement="This quote does not include any permits.")
+    c.artifact_id = "d2"
+    out = semantic_dedup_atoms([a, b, c])
+    texts = sorted(x.raw_text for x in out)
+    assert texts == ["This quote does not include any permits.", "This quote does not include union labor or electrical work."], texts
+
+
+def test_bom_line_without_device_key_still_counts_by_its_model():
+    from app.core.orbitbrief_core import build_scope_truth
+
+    a = _atom(AtomType.bom_line, "MP38-WHE2- TEAMS", kind="bom_line", model="MP38-WHE2- TEAMS")
+    a.entity_keys = ["part_number:mp38_whe2"]
+    b = _atom(AtomType.bom_line, "MPAs", kind="bom_line", model="MPAs")
+    b.entity_keys = []
+    truth = build_scope_truth(atoms=[a, b], edges=[])
+    assert truth["device_count"] == 2, truth

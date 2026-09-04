@@ -2189,6 +2189,7 @@ def atoms_from_structured_doc(
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
         sections = page.get("sections", []) or []
+        _is_ocr_page = bool(page.get("ocr_text"))
         for _atom in _atoms_for_sections(
             sections=sections,
             section_path=[],
@@ -2198,7 +2199,18 @@ def atoms_from_structured_doc(
             filename=filename,
             parser_version=parser_version,
         ):
-            yield _root_atom(_atom)
+            _atom = _root_atom(_atom)
+            if _is_ocr_page:
+                # The words are the OCR engine's reading of a scan, so a
+                # text-layer copy of the same clause outranks this one in
+                # dedup and a downstream reader knows the spelling may be
+                # the scanner's, not the author's.
+                try:
+                    if isinstance(_atom.value, dict):
+                        _atom.value["ocr_page"] = True
+                except Exception:
+                    pass
+            yield _atom
         # Metadata-fallback path: when the structured extractor was
         # unable to assemble any sections from the page (heading
         # classifier misfired on short-paragraph PDFs, weak heading

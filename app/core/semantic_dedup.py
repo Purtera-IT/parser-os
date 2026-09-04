@@ -1148,7 +1148,10 @@ def _value_key(atom: Any) -> tuple | None:
                 if k and len(k) >= 8:
                     base = k[:32]
                     sig = _scalar_signature(val, frozenset(fields))
-                    return f"{base}#{sig}" if sig else base
+                    # Tagged "~": a description-derived (fuzzy) key, so the
+                    # collapse pass may ask whether two atoms' words agree
+                    # before merging them; a stable id never carries it.
+                    return "~" + (f"{base}#{sig}" if sig else base)
         return ""
 
     if atype == "milestone_phase":
@@ -1367,10 +1370,16 @@ def _value_key(atom: Any) -> tuple | None:
             key = _first_trunc("rate_or_threshold", "condition", "description")
         return (atype, key) if key else None
     if atype == "pricing_assumption":
-        key = _first("domain")
+        # Never key on ``domain`` alone: every assumption in one domain
+        # ("commercial") collapsed to a single survivor and the rest — "no
+        # permits", "no union labor", "valid thirty days" — were merged away
+        # (live 010300 round 28: both copies of the permits clause dropped).
+        # The statement is the identity; the domain only sharpens it.
+        key = _first_trunc("statement", "assumption", "description", "text")
         if not key:
-            key = _first_trunc("statement", "assumption", "description")
-        return (atype, key) if key else None
+            return None
+        domain = _first("domain")
+        return (atype, f"{domain}|{key}" if domain else key)
 
     return None
 
@@ -1394,6 +1403,15 @@ def _readability_score(atom: Any) -> float:
         return 0.0
 
 
+def _texts_alike(a: Any, b: Any, *, threshold: float = 0.6) -> bool:
+    """Do two atoms say the same thing? Word-set overlap of their texts."""
+    ta = {w for w in re.findall(r"[a-z0-9]{3,}", str(getattr(a, "raw_text", "") or "").lower())}
+    tb = {w for w in re.findall(r"[a-z0-9]{3,}", str(getattr(b, "raw_text", "") or "").lower())}
+    if not ta or not tb:
+        return True  # nothing to compare: keep the old behaviour
+    return len(ta & tb) / len(ta | tb) >= threshold
+
+
 def _rank(atom: Any) -> tuple[float, float]:
     """Winner order among duplicates: confidence to the nearest tenth first,
     then the cleaner text. A 0.88 OCR copy and a 0.80 text-layer copy of the
@@ -1401,7 +1419,12 @@ def _rank(atom: Any) -> tuple[float, float]:
     are words should survive (live 010300: "does mot include any permits")."""
     import math
 
-    return (math.floor(_confidence(atom) * 10 + 1e-9) / 10.0, _readability_score(atom))
+    v = getattr(atom, "value", None)
+    from_text_layer = 0.0 if (isinstance(v, dict) and v.get("ocr_page")) else 1.0
+    # A copy read from a text layer outranks a copy read off a scan of the
+    # same clause: same fact, but the scan's spelling is the engine's, not
+    # the author's ("does mot include any permits").
+    return (from_text_layer, math.floor(_confidence(atom) * 10 + 1e-9) / 10.0, _readability_score(atom))
 
 
 def _merge_values(winner: Any, loser: Any) -> None:
@@ -1721,15 +1744,38 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
         return key
 
     # Pick the highest-confidence winner per key (scan confidence-desc).
+    # A description-derived key is a 32-character prefix, so "This quote
+    # does not include any permits." and "This quote does not include union
+    # labor or electrical work." shared one key and the permits clause was
+    # merged away (live 010300 round 28). Two atoms share a group only when
+    # their words mostly agree; otherwise the key gets a sub-slot.
     winners: dict[tuple, Any] = {}
+    slot_of: dict[int, tuple] = {}
+
+    def _fuzzy(key: tuple) -> bool:
+        return any(isinstance(p, str) and ("~" in p) for p in key)
+
+    def _slot_for(atom: Any, key: tuple) -> tuple:
+        if not _fuzzy(key):
+            return key  # a stable id is authoritative whatever the wording
+        n = 0
+        while True:
+            k = key if n == 0 else (*key, f"~{n}")
+            w = winners.get(k)
+            if w is None or _texts_alike(w, atom):
+                return k
+            n += 1
+
     for atom in sorted(atoms, key=_rank, reverse=True):
         key = _key_for_generic_pass(atom)
         if key is None:
             continue
-        if key not in winners:
-            winners[key] = atom
+        slot = _slot_for(atom, key)
+        slot_of[id(atom)] = slot
+        if slot not in winners:
+            winners[slot] = atom
         else:
-            _merge_values(winners[key], atom)
+            _merge_values(winners[slot], atom)
 
     # Rebuild in original document order at first-occurrence positions.
     seen: set[tuple] = set()
@@ -1739,10 +1785,11 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
         if key is None:
             ordered.append(atom)
             continue
-        if key in seen:
+        slot = slot_of.get(id(atom), key)
+        if slot in seen:
             continue
-        ordered.append(winners[key])
-        seen.add(key)
+        ordered.append(winners[slot])
+        seen.add(slot)
 
     return _drop_generic_site_entity_atoms(_dedupe_physical_site_atoms(ordered))
 

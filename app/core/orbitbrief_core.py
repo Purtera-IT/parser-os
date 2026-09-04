@@ -1072,6 +1072,11 @@ def _owner_slug_from_atom(atom: EvidenceAtom, owner_raw: str) -> str | None:
             return k[len("stakeholder:"):]
     if owner_raw and isinstance(owner_raw, str):
         import re as _re
+        # An owner is a person or a named team, not a clause's grammatical
+        # subject ("Customer and Seller" — live 010300 — became a workload
+        # row). Two to four capitalised words with no linker word.
+        if not _re.fullmatch(r"\s*[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+){1,3}\s*", owner_raw):
+            return None
         slug = _re.sub(r"[^a-z0-9]+", "_", owner_raw.lower()).strip("_")
         if slug and slug not in {"owner", "tbd", "unknown"}:
             return slug
@@ -1131,6 +1136,16 @@ def build_scope_truth(
         if atom_type not in ("quantity", "scope_item", "vendor_line_item", "constraint", "site_roster", "bom_line"):
             continue
         devices = {k for k in (atom.entity_keys or []) if k.startswith("device:") and k != "device:unknown"}
+        if atom_type == "bom_line" and not devices:
+            # A model number IS the device when no device key survived
+            # entity hygiene ("part_number:mp38_whe2" on a bom_line).
+            devices = {"device:" + k.split(":", 1)[1] for k in (atom.entity_keys or []) if k.startswith("part_number:")}
+            if not devices:
+                _bv = atom.value if isinstance(atom.value, dict) else {}
+                _model = str(_bv.get("model") or "").strip()
+                if _model:
+                    import re as _re_m
+                    devices = {"device:" + _re_m.sub(r"[^a-z0-9]+", "_", _model.lower()).strip("_")}
         sites = {k for k in (atom.entity_keys or []) if k.startswith("site:")}
         if not devices:
             continue

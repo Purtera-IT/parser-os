@@ -370,6 +370,20 @@ _CORP_SUFFIX_RE = re.compile(
 )
 
 
+def _all_common_words(name: str) -> bool:
+    """True when every token of ``name`` (two or more tokens, four or more
+    letters each) is an English dictionary word. Given names and surnames
+    are mostly not words; capitalised phrases are."""
+    toks = [t for t in re.split(r"[^A-Za-z]+", name or "") if t]
+    if len(toks) < 2 or any(len(t) < 4 for t in toks):
+        return False
+    try:
+        from app.core.text_quality import _is_word
+    except Exception:
+        return False
+    return all(_is_word(t.lower()) for t in toks)
+
+
 def _retype_sentence(atom: Any, text: str) -> bool:
     """A stakeholder-typed atom whose text is a sentence (eight or more words,
     ends like a sentence, no contact fields) is mislabelled content, not a
@@ -468,6 +482,14 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         if not (value.get("email") or value.get("phone")):
             _nm = str(value.get("name") or "").strip()
             _first = _nm.split()[0].lower() if _nm else ""
+            # A "name" whose every word is an ordinary dictionary word ("Site
+            # Assessment", "Account Executive", "Customer Contact Person") is
+            # a phrase the sentence capitalised, not a person, when nothing
+            # else (an address, a phone) says otherwise. Live 010300 round
+            # 28: "Site Assessments" appeared in the stakeholder table.
+            if _nm and _all_common_words(_nm):
+                dropped.append(atom)
+                continue
             # No name in the record AND no name shape in the text: a role
             # with nobody in it ("Step 5: Appoint a contact person for each
             # party"). A record whose name only lives in its text is kept.
