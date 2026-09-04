@@ -1765,8 +1765,17 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
         if not isinstance(v, dict):
             return {}
         out: dict[str, str] = {}
-        em = str(v.get("email") or "").strip().lower()
-        ph = re.sub(r"\D", "", str(v.get("phone") or ""))
+        # Identity by SHAPE, not by which key a reader put it under: live
+        # 010215 carried "404-918-0783" in the email field of a job-title row,
+        # which then contradicted the real email and blocked the fold.
+        raw_em = str(v.get("email") or "").strip()
+        raw_ph = str(v.get("phone") or "").strip()
+        em, ph = "", ""
+        for cand in (raw_em, raw_ph):
+            if "@" in cand and not em:
+                em = cand.lower()
+            elif len(re.sub(r"\D", "", cand)) >= 10 and not ph:
+                ph = re.sub(r"\D", "", cand)
         # A record whose contact detail sits only in its text ("Job Title |
         # Sr. CSDA | Phone Number | 404-918-0783", live 010215) still has an
         # identity: read the email / phone shapes off the text.

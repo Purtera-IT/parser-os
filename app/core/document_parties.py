@@ -75,8 +75,7 @@ def parties_for_document(atoms: list[dict[str, Any]]) -> dict[str, Any]:
                 p = str(rec.get("party") or "").strip()
                 if p and p not in signers:
                     signers.append(p)
-        if a.get("atom_type") not in ("deal_metadata", "stakeholder", "scope_item", "contract_term"):
-            continue
+        # Any atom type: an OCR'd header line lands wherever the typer put it.
         for m in _ROLE_LABEL_RE.finditer(t):
             role = m.group("role").lower()
             raw_val = m.group("val")
@@ -92,7 +91,26 @@ def parties_for_document(atoms: list[dict[str, Any]]) -> dict[str, Any]:
     return {"roles": roles, "signers": signers}
 
 
-def annotate_document_parties(documents: list[dict[str, Any]], envelope: dict[str, Any]) -> int:
+def parties_from_page_text(text: str) -> dict[str, str]:
+    """Roles -> party names read line by line off a document's first page,
+    for a scanned header whose cells never became atoms
+    ("|ProviderName:|NewBold LLC FKA NewBold Corporation")."""
+    roles: dict[str, str] = {}
+    for line in str(text or "").splitlines()[:40]:
+        for m in _ROLE_LABEL_RE.finditer(line):
+            role = m.group("role").lower()
+            raw_val = m.group("val") or line[m.end():].lstrip(" |")
+            val = _clean_party(raw_val)
+            if 2 <= len(val) and len(val.split()) <= 8:
+                roles.setdefault(role, val)
+    return roles
+
+
+def annotate_document_parties(
+    documents: list[dict[str, Any]],
+    envelope: dict[str, Any],
+    page_text_by_doc: dict[str, str] | None = None,
+) -> int:
     """Stamp ``parties``, ``our_role`` and ``terms_owner`` on documents and
     ``decision_provenance.terms_owner`` on their atoms. Returns documents stamped."""
     atoms = envelope.get("atoms") or []
@@ -105,6 +123,8 @@ def annotate_document_parties(documents: list[dict[str, Any]], envelope: dict[st
         aid = str(d.get("artifact_id"))
         found = parties_for_document(by_doc.get(aid, []))
         roles, signers = found["roles"], found["signers"]
+        if not roles and page_text_by_doc and page_text_by_doc.get(aid):
+            roles = parties_from_page_text(page_text_by_doc[aid])
         if not roles and not signers:
             continue
         names = list(roles.values()) + signers

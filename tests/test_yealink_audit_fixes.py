@@ -347,6 +347,32 @@ def test_a_sow_between_other_parties_is_third_party_terms():
     assert env["summary"]["third_party_terms"][0]["provider"].startswith("NewBold")
 
 
+def test_scanned_header_parties_come_from_page_text_and_org_names_are_not_people():
+    from app.core.document_parties import annotate_document_parties, parties_from_page_text
+    page = "D4C Teams Phone Implementation Onsite Support | Seller Representative:\nProject\nName:\nCarl Painter\nDENTISTRY FOR CHILDREN\n|ProviderName:|NewBold LLC FKA NewBold Corporation\ncarlpai@edw.com\nCDW Technologies LLC\n"
+    assert parties_from_page_text(page)["provider"].startswith("NewBold")
+    docs = [{"artifact_id": "scan", "filename": "NEWBOLD scanned.pdf"}]
+    env = {"summary": {}, "atoms": [{"artifact_id": "scan", "atom_type": "assumption", "text": "Provider assumes the phones are plug and play."}]}
+    assert annotate_document_parties(docs, env, {"scan": page}) == 1
+    assert docs[0]["third_party_terms"] is True
+    from app.core.entity_extraction import _emit_stakeholders
+    assert "stakeholder:newbold" not in _emit_stakeholders("Provider: NewBold")
+    assert "stakeholder:sves_engagement_advisor" not in _emit_stakeholders("Coo Title: Sves Engagement Advisor Tithe: Mar 6, 2025")
+
+
+def test_phone_in_the_email_field_still_identifies_the_person():
+    from app.core.semantic_dedup import dedupe_stakeholder_atoms
+    def mk(aid, name, **v):
+        a = _atom(AtomType.stakeholder, name or "Job Title | Sr. CSDA | Phone Number | 404-918-0783", kind="person" if name else "table_row", name=name, **v)
+        a.artifact_id = aid
+        return a
+    out = dedupe_stakeholder_atoms([
+        mk("s1", "Bernard Donnelly", email="bernie.donnelly@sodexo.com", phone="404-918-0783"),
+        mk("s2", None, role="Sr. CSDA", email="404-918-0783"),  # live shape: the phone landed in the email field
+    ])
+    assert [a.value.get("name") for a in out] == ["Bernard Donnelly"] and out[0].value.get("title") == "Sr. CSDA"
+
+
 def test_email_prose_without_a_scope_object_is_context():
     from app.core.atom_substance_gate import _has_scope_object
     assert not _has_scope_object("TT - clean up aisle Purtera.", [])

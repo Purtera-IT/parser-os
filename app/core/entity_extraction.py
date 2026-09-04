@@ -3407,6 +3407,17 @@ def _emit_stakeholders(text: str) -> set[str]:
                 sentence = " ; ".join(values)
                 if not sentence:
                     continue
+        # A value whose own label says it is a title or a party is not a
+        # person: "Title: Svcs Engagement Advisor", "Provider: NewBold". The
+        # label is the document's word for what the value is; believe it.
+        sentence = re.sub(
+            r"\b(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)\s*:\s*[^:;,|\n]{1,60}",
+            " ",
+            sentence,
+            flags=re.I,
+        ).strip()
+        if not sentence:
+            continue
         # Skip sentences without a role cue — saves work
         if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
             continue
@@ -4796,6 +4807,17 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
             _nm = str(value.get("name") or "").strip().lower()
             if _nm and any(_nm in c.lower() for c in _labels) and not any(_nm in c.lower() for c in _values):
                 return
+            # A value whose own label says it is a title or a party ("Title:
+            # Svcs Engagement Advisor", "Provider: NewBold") is not a person.
+            for _lab, _val in zip(_labels, _values):
+                if _nm and _nm in _val.lower() and re.search(r"(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)\s*:?\s*$", _lab.strip(), re.I):
+                    return
+        # Same rule for a "Label: value" written inline without cells.
+        _nm2 = str(value.get("name") or "").strip()
+        if _nm2 and not (value.get("email") or value.get("phone")) and re.search(
+            r"(?:title|role|position|provider|seller|buyer|customer|vendor|company|organi[sz]ation)\s*:\s*" + re.escape(_nm2), raw, re.I
+        ):
+            return
         _sp = slug.split("_")
         if len(_sp) > 2 and "_".join(_sp[:2]) in _covered_slugs and not (value.get("email") or value.get("phone")):
             return

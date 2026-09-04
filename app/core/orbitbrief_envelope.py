@@ -653,7 +653,12 @@ def build_orbitbrief_envelope(
     _link_caption_notes(documents, envelope, stage_timeline)
     try:
         from app.core.document_parties import annotate_document_parties
-        annotate_document_parties(documents, envelope)
+        _page_texts = {
+            str(d.get("artifact_id")): _page_one_text(project_dir, str(d.get("filename") or ""))
+            for d in documents
+            if str(d.get("filename") or "").lower().endswith(".pdf")
+        }
+        annotate_document_parties(documents, envelope, _page_texts)
     except Exception as _exc:  # pragma: no cover - never fail the envelope
         envelope.setdefault("warnings", []).append(f"document_parties failed: {type(_exc).__name__}: {_exc}")
     # Last, so it gates the corrected picture: a customer document that stopped
