@@ -1337,6 +1337,25 @@ def compile_project(
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # Two documents, one clause template, different figures ($500 vs $300
+    # cancellation fee, two weeks vs five business days, ZIP 30641 vs 30341 —
+    # live 010300's two NewBold PSOWs). Dedup rightly keeps both atoms; the
+    # disagreement itself becomes an open_question naming both sources. Runs
+    # after dedup so agreeing copies are already one atom.
+    with telemetry.stage("cross_document_conflicts", input_count=len(atoms)) as stage:
+        _xdoc_n = 0
+        try:
+            from app.core.cross_document_conflicts import find_cross_document_conflicts
+
+            _xdoc = find_cross_document_conflicts(atoms, project_id=resolved_project_id)
+            if _xdoc:
+                atoms = atoms + _xdoc
+                _xdoc_n = len(_xdoc)
+                warnings.append(f"INFO: cross_document_conflicts raised {_xdoc_n} open question(s) on clauses that differ between documents")
+        except Exception as exc:
+            warnings.append(f"WARNING: cross_document_conflicts failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=_xdoc_n)
+
     # A per-site document speaks for its own rows. The name-mention linker only
     # joins an atom to a site when the site's NAME is in the atom's own text,
     # which a per-site SOW says exactly once -- in the row that becomes the site

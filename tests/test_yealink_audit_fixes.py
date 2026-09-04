@@ -1098,3 +1098,35 @@ def test_signature_rows_merge_by_shape_whatever_the_typer_called_them():
     texts = [a.raw_text for a in atoms]
     assert not any(t == "Shelly Lewis" or t.startswith("Name: Mike Murphy Name:") for t in texts)
     assert any(t.startswith("Provider will use") for t in texts) and any(t.startswith("Customer will provide") for t in texts)
+
+
+def test_same_clause_different_figures_across_documents_is_an_open_question():
+    """Both NewBold PSOWs share the clause template; the signed one says $500 /
+    two (2) weeks / ZIP 30641, the draft says $300 / five (5) business days /
+    ZIP 30341. Nothing raised it. Same words, different figures = a conflict."""
+    from app.core.cross_document_conflicts import find_cross_document_conflicts
+
+    def _a(doc, atom_type, text):
+        a = _atom(atom_type, text, kind="bullet")
+        a.artifact_id = doc
+        a.source_refs = [SourceRef(id=f"s{doc}{abs(hash(text))}", artifact_id=doc, artifact_type="pdf", filename=f"{doc}.pdf", locator={"page": 2}, extraction_method="t", parser_version="t")]
+        return a
+
+    atoms = [
+        _a("signed", AtomType.change_order_rule, "If work is cancelled with less than 48 hours’ notice, Seller will be responsible 100% of the associated fee."),
+        _a("scan", AtomType.change_order_rule, "If work is cancelled with less than 48 hours notice, Seller will be responsible 100% of the associated fee."),
+        _a("signed", AtomType.vendor_line_item, "48 Hour Cancellation or Turnaway Fee – Per Item $500.00 | 1 $500.00"),
+        _a("scan", AtomType.vendor_line_item, "48 Hour Cancellation or Turnaway Fee – Per Item $300.00 | 1 $300.00"),
+        _a("signed", AtomType.dependency, "Provider to own scheduling rights and requires a minimum of two (2) weeks’ notice for implementation work."),
+        _a("scan", AtomType.dependency, "Provider to own scheduling rights and requires a minimum of five (5) business days for implementation work."),
+        _a("signed", AtomType.pricing_assumption, "This quote is valid for thirty days."),
+        _a("scan", AtomType.pricing_assumption, "This quote is valid for thirty days."),
+        _a("signed", AtomType.scope_item, "Customer has approximately 169 locations (network closets) listed in Exhibit A."),
+    ]
+    qs = find_cross_document_conflicts(atoms, project_id="p")
+    texts = [q.raw_text for q in qs]
+    assert len(qs) == 1, texts  # fee $500 vs $300; the 48-hour clause agrees, the notice clause differs in wording too
+    assert "$500" in texts[0] and "$300" in texts[0]
+    assert qs[0].atom_type == AtomType.open_question and qs[0].review_status == ReviewStatus.needs_review
+    assert sorted(qs[0].value["artifact_ids"]) == ["scan", "signed"]
+    assert len(qs[0].source_refs) == 2
