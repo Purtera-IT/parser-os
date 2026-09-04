@@ -1069,3 +1069,32 @@ def test_inline_labelled_note_becomes_one_atom_per_field(tmp_path):
     items = [a.raw_text for a in by_type[AtomType.scope_item] if a.value.get("kind") == "note_field_item"]
     assert "rack positioning" in items and "structured cabling" in items and "daily reporting with photographic documentation" in items
     assert not any("&amp;" in a.raw_text for a in atoms)
+
+
+def test_signature_rows_merge_by_shape_whatever_the_typer_called_them():
+    """Local 010300: the typer filed the signature table as scope_item /
+    deal_metadata and no signer record formed. The row's shape is the evidence."""
+    from app.core.atom_type_sanity import merge_signature_rows
+
+    def _row(atom_type, text):
+        a = _atom(atom_type, text, kind="table_row")
+        a.source_refs = [SourceRef(id=f"s{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 6}, extraction_method="t", parser_version="t")]
+        return a
+
+    atoms = [
+        _row(AtomType.scope_item, "CDW Technologies LLC: By: Mike Murphy (Mar 26, 2025 10:24 EDT) | NewBold LLC: By: Shelly Lewis (Mar 25, 2025 11:49 EDT)"),
+        _row(AtomType.scope_item, "CDW Technologies LLC: Name: Mike Murphy | NewBold LLC: Name: Shelly Lewis"),
+        _row(AtomType.deal_metadata, "CDW Technologies LLC: Title: Professional Services Manager | NewBold LLC: Title: EVP & COO"),
+        _row(AtomType.deal_metadata, "Name: Mike Murphy Name: | Shelly Lewis"),
+        _row(AtomType.deal_metadata, "Shelly Lewis"),
+        _row(AtomType.scope_item, "Provider will use the following subcontractor(s) to perform Services under this SOW: Not Applicable"),
+        _row(AtomType.scope_item, "Customer will provide the address for both facilities, and any access credentials required. Provider assumes technicians will be granted access. Seller will notify Provider."),
+    ]
+    merge_signature_rows(atoms)
+    sig = [a for a in atoms if a.atom_type == AtomType.signatory]
+    assert len(sig) == 1, [(a.atom_type, a.raw_text[:40]) for a in atoms]
+    assert [s["name"] for s in sig[0].value["signers"]] == ["Mike Murphy", "Shelly Lewis"]
+    assert sig[0].value["signers"][1]["title"] == "EVP & COO"
+    texts = [a.raw_text for a in atoms]
+    assert not any(t == "Shelly Lewis" or t.startswith("Name: Mike Murphy Name:") for t in texts)
+    assert any(t.startswith("Provider will use") for t in texts) and any(t.startswith("Customer will provide") for t in texts)

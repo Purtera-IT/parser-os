@@ -1406,6 +1406,23 @@ _SIG_DATE_RE = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|no
 _SIG_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
 
 
+_SIG_ROW_LABEL_RE = re.compile(r"\b(?:By|Name|Title|Date|Signature)\s*:", re.I)
+
+
+def _looks_like_signature_row(text: str) -> bool:
+    """A signature-table row: a signature label ("By:", "Name:", "Title:",
+    "Date:") with a person's name or a party prefix beside it, and no running
+    sentence (at most one full stop that is not part of a date)."""
+    t = " ".join((text or "").split())
+    if not t or len(t) > 300 or not _SIG_ROW_LABEL_RE.search(t):
+        return False
+    if len(re.findall(r"[a-z]\.\s+[A-Z]", t)) >= 2:
+        return False  # prose with sentences, not a form row
+    has_name = bool(re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z]\.)?\s+[A-Z][a-zA-Z'-]+\b", t))
+    has_party = bool(re.match(r"^\s*[^:|]{2,60}?\s*:\s*(?:By|Name|Title|Date|Signature)\s*:", t, re.I))
+    return has_name or has_party
+
+
 def merge_signature_rows(atoms: list[Any]) -> int:
     """One signatory record per PARTY instead of one per table row.
 
@@ -1420,7 +1437,16 @@ def merge_signature_rows(atoms: list[Any]) -> int:
     """
     by_doc: dict[tuple[str, Any], list[Any]] = {}
     for a in atoms:
-        if _atom_type_str(a) == "signatory":
+        # By SHAPE, not by what the typer called the row: the same signature
+        # table arrives as signatory on one run and as scope_item /
+        # deal_metadata on another (local 010300: "CDW Technologies LLC: By:
+        # Mike Murphy (Mar 26, 2025 ...)" typed scope_item, no signer record
+        # at all). A row with a signature label and a name or party is a
+        # signature row whatever its label.
+        if _atom_type_str(a) == "signatory" or (
+            _atom_type_str(a) in ("scope_item", "deal_metadata", "stakeholder", "entity")
+            and _looks_like_signature_row(_atom_text(a))
+        ):
             by_doc.setdefault((str(getattr(a, "artifact_id", "")), _atom_page(a)), []).append(a)
     folded = 0
     for key, rows in by_doc.items():
@@ -1531,6 +1557,12 @@ def merge_signature_rows(atoms: list[Any]) -> int:
             for r in merged
         )
         _set_text(keep, text)
+        try:
+            from app.core.schemas import AtomType as _AT
+
+            keep.atom_type = _AT.signatory
+        except Exception:
+            pass
         v = getattr(keep, "value", None)
         if isinstance(v, dict):
             v["kind"] = "signature_block"
