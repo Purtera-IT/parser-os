@@ -411,7 +411,10 @@ def recalibrate_confidence(
         # auto_accepted atom becomes a "check this" verdict. Flip status +
         # add the flag atomically (validators require the flag iff needs_review);
         # never downgrade rejected/approved/needs_review.
-        if final < abstain_threshold:
+        # The worker may pass no threshold at all; None is "no gate", not a
+        # number to compare (live 010300 rounds 21-23: TypeError here took the
+        # whole stage down, and the acceptance step with it).
+        if abstain_threshold is not None and final < float(abstain_threshold):
             rs = getattr(atom, "review_status", None)
             rs_val = rs.value if hasattr(rs, "value") else rs
             if rs_val == "auto_accepted":

@@ -1155,3 +1155,41 @@ def test_ocr_noise_does_not_hide_a_cross_document_conflict():
     texts = " || ".join(q.raw_text for q in qs)
     assert len(qs) == 2, texts
     assert "$115" in texts and "$150" in texts and "2" in texts and "5" in texts
+
+
+def test_party_address_is_vetoed_by_signature_text_across_page_bases():
+    """Table rows count pages from 0 and paragraphs from 1, so the mailing
+    address minted from the signature paragraph carried a different page than
+    the merged signature block. The street inside the signature block's own
+    words is the evidence, not the page number."""
+    from app.core.party_address_veto import veto_party_page_sites
+
+    def _p(atom_type, text, page, **value):
+        a = _atom(atom_type, text, **value)
+        a.source_refs = [SourceRef(id=f"s_{page}_{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": page}, extraction_method="t", parser_version="t")]
+        return a
+
+    sig = _p(AtomType.signatory, "CDW Technologies LLC: Mike Murphy, Professional Services Manager, Mar 26, 2025 | NewBold LLC: Shelly Lewis", 6, kind="signature_block", signers=[{"party": "CDW Technologies LLC", "name": "Mike Murphy"}])
+    chrome = _p(AtomType.deal_metadata, "Mailing Address: 200 N. Milwaukee Ave. Vernon Hills, IL 60061", 6, kind="signature_chrome")
+    party_site = _p(AtomType.physical_site, "Vernon Hills Office | 200 N. Milwaukee Ave", 7, kind="physical_site", name="Vernon Hills Office", street_address="200 N. Milwaukee Ave", city="Vernon Hills", state="IL", zip="60061")
+    party_site.entity_keys = ["site:vernon_hills_il_60061"]
+    hq = _p(AtomType.physical_site, "facility: HQ | address: 2970 Brandywine Rd, STE 200", 4, kind="physical_site", name="HQ", street_address="2970 Brandywine Rd", city="Atlanta", state="GA", zip="30641")
+    hq.entity_keys = ["site:hq"]
+    assert veto_party_page_sites([sig, chrome, party_site, hq]) >= 1
+    assert party_site.atom_type == AtomType.deal_metadata and party_site.value["kind"] == "party_address" and party_site.entity_keys == []
+    assert hq.atom_type == AtomType.physical_site and hq.entity_keys == ["site:hq"]
+
+
+def test_recalibration_survives_a_missing_abstain_threshold():
+    """The worker passes abstain_threshold=None; comparing a float to None
+    raised inside the stage and the review-queue acceptance never ran live."""
+    from app.core.confidence_recalibration import recalibrate_confidence
+    from app.core.schemas import EvidenceReceipt
+
+    a = _atom(AtomType.scope_item, "Provider will create a Set Up Runbook during a pilot installation.", kind="bullet")
+    a.review_status = ReviewStatus.auto_accepted
+    a.receipts = [EvidenceReceipt(atom_id=a.id, artifact_id="d1", filename="x.pdf", source_ref_id="s1", replay_status="verified", reason="", verifier_version="t")]
+    n = recalibrate_confidence([a], artifact_authority={}, edges=[], abstain_threshold=None)
+    assert isinstance(n, int)
+    assert a.calibrated_confidence is not None
+    assert a.review_status == ReviewStatus.auto_accepted

@@ -362,6 +362,12 @@ _SENTENCE_END_RE = re.compile(r"[.!?;:]\s*[\"”’')\]]*\s*$")
 #: ("DENTISTRY FOR CHILDREN", "BOARD OF EDUCATION", "SMITH & SONS") and never
 #: appear inside a person's name.
 _ORG_LINK_WORDS = frozenset({"for", "of", "and", "&", "the", "de", "du", "des", "la", "le"})
+#: Legal-form suffixes: a closed class of company designators, not a vocabulary
+#: of companies.
+_CORP_SUFFIX_RE = re.compile(
+    r"\b(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Ltd\.?|Limited|LLP|L\.P\.|LP|PLC|GmbH|AG|S\.A\.|SA|SAS|SARL|B\.V\.|BV|N\.V\.|NV|Pty|Co\.|Company|Group|Holdings)\s*$",
+    re.I,
+)
 
 
 def _retype_sentence(atom: Any, text: str) -> bool:
@@ -438,6 +444,16 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         # with no email or phone to stand on, is a role mention, not a record.
         # Live 010300: "None | approver", "The Buyer | approver".
         _nm_any = str(value.get("name") or "").strip()
+        # A name that ends in a corporate suffix ("CDW Technologies LLC") is an
+        # organisation; a name the document itself defines in quotes
+        # ('("Customer Contact Person")') is a defined term. Neither is a
+        # person, whatever role the typer attached (live 010300 round 23).
+        if _nm_any and (
+            _CORP_SUFFIX_RE.search(_nm_any)
+            or re.search(r"[“\"']\s*" + re.escape(_nm_any) + r"\s*[”\"']", text)
+        ):
+            dropped.append(atom)
+            continue
         # An ALL-CAPS phrase built around a function word ("DENTISTRY FOR
         # CHILDREN", "BOARD OF EDUCATION") is an organisation's printed name,
         # not a person, whatever contact detail sits beside it (live 010300:

@@ -27,20 +27,58 @@ def _page_of(atom: Any) -> Any:
     return loc.get("page") if isinstance(loc, dict) else None
 
 
+def _norm(text: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+
+
+def _street_of(atom: Any) -> str:
+    """The street line of a site ("200 N. Milwaukee Ave"), normalised; at
+    least a number and a word so a bare city can never match."""
+    import re
+
+    v = getattr(atom, "value", None)
+    cand = ""
+    if isinstance(v, dict):
+        cand = str(v.get("street_address") or v.get("address") or "")
+    if not cand:
+        cand = str(getattr(atom, "raw_text", None) or "")
+    cand = cand.split(",")[0]
+    s = _norm(cand)
+    return s if re.search(r"\d", s) and len(s.split()) >= 2 else ""
+
+
 def veto_party_page_sites(atoms: list[Any]) -> int:
     """Retype physical_site atoms that sit on a signature page. Returns count."""
     signature_pages: set[tuple[str, Any]] = set()
+    # The signature block's own words, per document: a site whose street sits
+    # inside them is the party's mailing address even when its page index was
+    # stamped by another extractor (table rows count pages from 0, paragraphs
+    # from 1 — live 010300 round 23: "Vernon Hills Office, 200 N. Milwaukee
+    # Ave" came back as the deal's second site).
+    signature_text: dict[str, str] = {}
     for a in atoms:
-        if _type_str(a) == "signatory":
+        v = getattr(a, "value", None)
+        kind = str((v or {}).get("kind") or "") if isinstance(v, dict) else ""
+        if _type_str(a) == "signatory" or kind in ("signature_block", "signature_chrome"):
+            art = str(getattr(a, "artifact_id", ""))
             page = _page_of(a)
             if page is not None:
-                signature_pages.add((str(getattr(a, "artifact_id", "")), page))
-    if not signature_pages:
+                signature_pages.add((art, page))
+            signature_text[art] = signature_text.get(art, "") + " " + _norm(str(getattr(a, "raw_text", None) or getattr(a, "text", None) or ""))
+    if not signature_pages and not signature_text:
         return 0
     n = 0
     for a in atoms:
-        key = (str(getattr(a, "artifact_id", "")), _page_of(a))
-        if key not in signature_pages:
+        art = str(getattr(a, "artifact_id", ""))
+        key = (art, _page_of(a))
+        on_signature_page = key in signature_pages
+        in_signature_text = False
+        if not on_signature_page and _type_str(a) == "physical_site":
+            street = _street_of(a)
+            in_signature_text = bool(street) and street in signature_text.get(art, "")
+        if not (on_signature_page or in_signature_text):
             continue
         # Nothing on a signature page is a site fact. Strip site keys from
         # every atom there, so no later stage can promote the signatures

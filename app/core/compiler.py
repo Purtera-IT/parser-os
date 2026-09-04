@@ -65,6 +65,21 @@ from app.parsers.parser_router import choose_parser
 LOW_CONFIDENCE_FLOOR = 0.50
 
 
+def _dropped_atom_notes(stage: str, dropped: list[Any], *, cap: int = 60) -> list[str]:
+    """One trace line per atom a stage removed, so a live compile explains
+    what it threw away (live 010300: two scanned clauses vanished with no
+    stage owning the loss; the suppression ledger is never persisted)."""
+    notes: list[str] = []
+    for a in list(dropped or [])[:cap]:
+        t = getattr(a, "atom_type", None)
+        t = str(getattr(t, "value", t) or "")
+        text = " ".join(str(getattr(a, "raw_text", None) or getattr(a, "normalized_text", None) or "").split())
+        notes.append(f"INFO: dropped[{stage}] {t}: {text[:140]}")
+    if len(dropped or []) > cap:
+        notes.append(f"INFO: dropped[{stage}] ... {len(dropped) - cap} more")
+    return notes
+
+
 def _is_provenance_record(atom: Any) -> bool:
     """A record the parser wrote about the document's own plumbing — a quoted
     message header ("From: X | Sent: Y"), an image / attachment / binary-region
@@ -1325,6 +1340,7 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
         dropped_sem = before_sem - len(atoms)
+        _sem_notes: list[str] = []
         if dropped_sem > 0:
             merge_suppressed(
                 suppressed_atoms,
@@ -1335,7 +1351,9 @@ def compile_project(
                 ),
             )
             warnings.append(f"INFO: semantic_dedup collapsed {dropped_sem} duplicate-by-key atoms")
-        telemetry.end_stage(stage, output_count=len(atoms))
+            _kept_ids = {id(a) for a in atoms}
+            _sem_notes = _dropped_atom_notes("semantic_dedup", [a for a in before_sem_atoms if id(a) not in _kept_ids])
+        telemetry.end_stage(stage, output_count=len(atoms), warnings=_sem_notes)
 
     # Two documents, one clause template, different figures ($500 vs $300
     # cancellation fee, two weeks vs five business days, ZIP 30641 vs 30341 —
@@ -1597,6 +1615,7 @@ def compile_project(
     # caught. Lossless: dropped atoms go to the suppression ledger.
     with telemetry.stage("substance_gate", input_count=len(atoms)) as stage:
         gate_dropped = 0
+        _gate_notes: list[str] = []
         try:
             from app.core.atom_substance_gate import apply_substance_gate
 
@@ -1617,9 +1636,10 @@ def compile_project(
                     f"INFO: substance_gate diverted {gate_dropped} context-free "
                     f"fragment(s) (bare-name stakeholders / backchannel filler)"
                 )
+                _gate_notes = _dropped_atom_notes("substance_gate", dropped_gate)
         except Exception as exc:
             warnings.append(f"WARNING: substance_gate failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=gate_dropped)
+        telemetry.end_stage(stage, output_count=gate_dropped, warnings=_gate_notes)
 
     # v53 SMART CONFIDENCE — recalibrate every atom from hardcoded
     # provenance defaults (0.82/0.85) to content-aware scoring:
@@ -1651,26 +1671,30 @@ def compile_project(
                 atoms, artifact_authority=_artifact_tier, edges=[],
                 abstain_threshold=abstain_threshold,
             )
-            # Review is a signal only when scarce: a verbatim atom with every
-            # receipt verified and high confidence has nothing left to review.
-            try:
-                from app.core.confidence_recalibration import (
-                    LAST_ACCEPT_STATS,
-                    accept_verified_high_confidence,
-                )
-                _accepted = accept_verified_high_confidence(atoms)
-                _stage_notes.append(
-                    "INFO: review-queue acceptance "
-                    + ", ".join(f"{k}={v}" for k, v in LAST_ACCEPT_STATS.items())
-                )
-                if _accepted:
-                    warnings.append(f"INFO: accepted {_accepted} verified high-confidence atom(s) out of the review queue")
-            except Exception as exc:
-                _stage_notes.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
-                warnings.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             _stage_notes.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
             warnings.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
+        # Review is a signal only when scarce: a verbatim atom with every
+        # receipt verified and high confidence has nothing left to review.
+        # Independent of recalibration: live 010300 rounds 21-23 the
+        # recalibrator raised (a None confidence on a vision atom) and this
+        # step, nested inside its try, silently never ran -- 137 of 168
+        # atoms queued with nothing to doubt.
+        try:
+            from app.core.confidence_recalibration import (
+                LAST_ACCEPT_STATS,
+                accept_verified_high_confidence,
+            )
+            _accepted = accept_verified_high_confidence(atoms)
+            _stage_notes.append(
+                "INFO: review-queue acceptance "
+                + ", ".join(f"{k}={v}" for k, v in LAST_ACCEPT_STATS.items())
+            )
+            if _accepted:
+                warnings.append(f"INFO: accepted {_accepted} verified high-confidence atom(s) out of the review queue")
+        except Exception as exc:
+            _stage_notes.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
+            warnings.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
         if recal_count:
             warnings.append(f"INFO: recalibrated confidence on {recal_count} atoms")
         telemetry.end_stage(stage, output_count=recal_count, warnings=_stage_notes)

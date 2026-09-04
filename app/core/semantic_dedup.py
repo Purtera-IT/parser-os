@@ -1382,6 +1382,23 @@ def _confidence(atom: Any) -> float:
         return 0.0
 
 
+def _readability_score(atom: Any) -> float:
+    """How much of the text is real words. Live 010300: the text layer's "This
+    quote does not include any permits." and the scan's "This quote does mot
+    include any permits." tied on confidence, and the OCR copy survived."""
+    try:
+        from app.core.text_quality import readability
+
+        return float(readability(str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")))
+    except Exception:
+        return 0.0
+
+
+def _rank(atom: Any) -> tuple[float, float]:
+    """Winner order among duplicates: confidence first, then the cleaner text."""
+    return (_confidence(atom), _readability_score(atom))
+
+
 def _merge_values(winner: Any, loser: Any) -> None:
     """Best-effort merge: take longest non-empty value per field from
     loser into winner. Doesn't override populated winner fields.
@@ -1566,7 +1583,7 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
             # Single atom, or all one type — not a cross-type duplicate; keep all.
             survivors.update(id(m) for m in members)
             continue
-        winner = max(members, key=lambda a: (_cross_type_priority(a), _confidence(a)))
+        winner = max(members, key=lambda a: (_cross_type_priority(a), _rank(a)))
         for loser in members:
             if loser is winner:
                 continue
@@ -1700,7 +1717,7 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
 
     # Pick the highest-confidence winner per key (scan confidence-desc).
     winners: dict[tuple, Any] = {}
-    for atom in sorted(atoms, key=_confidence, reverse=True):
+    for atom in sorted(atoms, key=_rank, reverse=True):
         key = _key_for_generic_pass(atom)
         if key is None:
             continue
@@ -1755,7 +1772,7 @@ def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
         return atoms
 
     winners: dict[tuple, Any] = {}
-    for atom in sorted(atoms, key=_confidence, reverse=True):
+    for atom in sorted(atoms, key=_rank, reverse=True):
         if _atom_type_value(atom) not in _DEFERRED_IDENTITY_TYPES:
             continue
         key = _value_key(atom)
