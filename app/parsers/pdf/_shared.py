@@ -203,6 +203,17 @@ def _page_is_form(raw: list[str]) -> bool:
             return False
     except Exception:
         pass
+    # Layout veto before the meaning judge: a form is a page of SHORT lines
+    # (labels, questions, one-word answers). A page whose lines are mostly
+    # full sentences is flowing prose whatever the embedder makes of its
+    # words — the semantic rule fired on an OCR'd SOW scope page (live
+    # 010300, zero '?'), and the regrouper then blank-lined every sentence
+    # into its own paragraph and lost three of them. Two or more literal
+    # question lines still count as a form on their own.
+    if sum(1 for l in nonblank if l.endswith("?")) < 2:
+        short = sum(1 for l in nonblank if len(l.split()) <= 12)
+        if short < 0.5 * len(nonblank):
+            return False
     rep = "  ".join(nonblank[:40])[:800]
     try:
         return _form_page_rule().fires(rep)

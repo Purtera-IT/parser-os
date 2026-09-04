@@ -1535,13 +1535,50 @@ def merge_signature_rows(atoms: list[Any]) -> int:
         if isinstance(v, dict):
             v["kind"] = "signature_block"
             v["signers"] = merged
+            # The top-level fields must describe a signer, not echo the row's
+            # label cell: live 010300 shipped name="Shelly Lewis",
+            # role="CDW Technologies LLC" — the other party's NAME in the role
+            # slot, and Mike Murphy nowhere but the text. First signer on
+            # top, every signer in ``signers``, parties listed as parties.
+            first = merged[0]
+            v["parties"] = [r["party"] for r in merged]
+            v["party"] = first.get("party")
+            v["name"] = first.get("name")
+            v["title"] = first.get("title")
+            v["role"] = first.get("title")
+            v["signed_at"] = first.get("signed_at")
         for a in rows[1:]:
             try:
                 atoms.remove(a)
                 folded += 1
             except ValueError:
                 pass
+        # The same signature cells reach the page a second time through the
+        # unlabelled copy of the table ("Name: Mike Murphy Name: | Shelly
+        # Lewis", "Mar 26, 2025 | Mar 25, 2025", "Shelly Lewis") and the
+        # typer files them as deal_metadata, so they escape the group above
+        # and sit in the review queue as debris (live 010300: seven rows).
+        # A row on this page whose every word is already a signer's name,
+        # title, date, party or a form label carries nothing new.
+        covered: set[str] = set(_LABELS) | {"mailing", "address", "signature"}
+        for rec in merged:
+            for fld in ("party", "name", "title", "signed_at"):
+                covered.update(_sig_tokens(str(rec.get(fld) or "")))
+        art_id, page = key
+        for a in list(atoms):
+            if a is keep or str(getattr(a, "artifact_id", "")) != art_id or _atom_page(a) != page:
+                continue
+            if _atom_type_str(a) not in ("deal_metadata", "signatory", "scope_item"):
+                continue
+            toks = _sig_tokens(_atom_text(a))
+            if toks and all(t in covered for t in toks):
+                atoms.remove(a)
+                folded += 1
     return folded
+
+
+def _sig_tokens(text: str) -> set[str]:
+    return {t.lower() for t in re.findall(r"[A-Za-z0-9&']{2,}", text or "")}
 
 
 def enrich_vendor_line_items(atoms: list[Any]) -> int:

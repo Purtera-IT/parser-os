@@ -1742,6 +1742,21 @@ class EmailParser(BaseParser):
                     )
             except Exception:
                 pass
+        # Every participant the routing lines NAME is a contact: a "Display
+        # Name <address>" pair in any From/To/Cc line, top-level or quoted.
+        # Shape, not vocabulary — the angle-bracket address form is how every
+        # mail client writes a named recipient. Live 010300: Charlie Magee's
+        # own message had a bare From address, but three quoted "Cc:" lines
+        # spelled his name next to it; he never became a stakeholder.
+        try:
+            atoms.extend(
+                self._header_display_name_people(
+                    project_id=project_id, artifact_id=artifact_id,
+                    filename=path.name, text=text, existing=atoms,
+                )
+            )
+        except Exception:
+            pass
         # Every quoted message's own routing line, so the chain survives
         # whatever body hygiene removes.
         atoms.extend(
@@ -1820,6 +1835,76 @@ class EmailParser(BaseParser):
             parser_version=self.parser_version,
             source_refs=[src],
         )
+
+    _NAMED_ADDRESS_RE = re.compile(
+        r"(?<![\w@.])([A-Z][\w'’.-]+(?:\s+[A-Z][\w'’.-]+){1,3})\s*<\s*([^<>\s@]+@[^<>\s]+)\s*>"
+    )
+
+    def _header_display_name_people(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        text: str,
+        existing: list[EvidenceAtom],
+    ) -> list[EvidenceAtom]:
+        """One stakeholder per distinct address written as ``Display Name <addr>``
+        anywhere in the message (top-level or quoted routing lines), when no
+        stakeholder already carries that address. Name = 2-4 capitalised
+        words with no digits; the shape is the evidence, the words are not."""
+        known = {
+            str(a.value.get("email") or "").lower()
+            for a in existing
+            if str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))) == "stakeholder"
+            and isinstance(getattr(a, "value", None), dict)
+        }
+        out: list[EvidenceAtom] = []
+        seen: set[str] = set()
+        for m in self._NAMED_ADDRESS_RE.finditer(text or ""):
+            name = re.sub(r"\s+", " ", m.group(1)).strip().strip('"')
+            addr = m.group(2).strip().lower().rstrip(".,;")
+            if not name or "@" not in addr or addr in known or addr in seen:
+                continue
+            if any(ch.isdigit() for ch in name) or len(name.split()) < 2:
+                continue
+            # The local part must not BE the display name (a bare address
+            # echoed as its own label: "rhonda.sharp@cdw.com <rhonda.sharp@cdw.com>").
+            if name.lower().replace(" ", "") in addr:
+                continue
+            seen.add(addr)
+            slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+            src = SourceRef(
+                id=stable_id("src", artifact_id, "header_display_name", addr),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.email,
+                filename=filename,
+                locator={"kind": "email_header_display_name", "email": addr},
+                extraction_method="email_headers",
+                parser_version=self.parser_version,
+            )
+            out.append(
+                EvidenceAtom(
+                    id=stable_id("atm", project_id, artifact_id, "header_person", addr),
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.stakeholder,
+                    raw_text=f"{name} | {addr}",
+                    normalized_text=normalize_text(name),
+                    value={
+                        "kind": "person", "name": name, "email": addr,
+                        "source": "email_header_display_name", "quoted": True,
+                    },
+                    entity_keys=[f"stakeholder:{slug}"],
+                    source_refs=[src],
+                    authority_class=AuthorityClass.machine_extractor,
+                    confidence=0.75,
+                    review_status=ReviewStatus.auto_accepted,
+                    review_flags=[],
+                    parser_version=self.parser_version,
+                )
+            )
+        return out
 
     def _quoted_chain_atoms(
         self, *, project_id: str, artifact_id: str, filename: str, blocks: list[dict]
@@ -3071,6 +3156,13 @@ class EmailParser(BaseParser):
         for _a in atoms:
             _v = getattr(_a, "value", None)
             if isinstance(_v, dict):
+                # A banner is the mail gateway's chrome, not the sender's
+                # words: live 010300 credited Trent with "This Message Is
+                # From an External Sender" (Proofpoint's insert on CDW's
+                # copy of his reply). Chrome has no author.
+                if str(_v.get("kind") or "") == "email_banner":
+                    _v.setdefault("quoted", bool(block.get("quoted")))
+                    continue
                 if _author and not _v.get("author"):
                     _v["author"] = _author
                 if _authored_at and not _v.get("authored_at"):

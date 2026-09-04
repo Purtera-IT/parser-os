@@ -628,3 +628,309 @@ def test_email_parser_reads_signature_people_and_skips_chrome(tmp_path):
     assert not any("safelinks" in t for t in texts), texts
     quoted = [a for a in atoms if "170+" in a.raw_text]
     assert quoted and quoted[0].value.get("author", "").lower().endswith("carlpai@cdw.com>") or "carlpai@cdw.com" in str(quoted[0].value.get("author", "")).lower()
+
+
+# ───────────────────────── round 22: wrapped bullet tails ─────────────────────
+
+
+def test_wrapped_bullet_tail_joins_whatever_letter_it_opens_with():
+    """Live 010300 signed PSOW: 'Each location will have different needs, ...
+    communicated by Customer and' | 'Seller, and Provider will be made notified
+    ...' — the PDF wrapped the clause and the tail opened with a capital, so it
+    became its own (mistyped) paragraph. A full-width line without terminal
+    punctuation continues on the next line regardless of case."""
+    from app.parsers.orbitbrief_pdf import _text_rich_sections
+
+    txt = (
+        "SITE VISIT 1:\n"
+        "    2.   Each location will have different needs, and what exactly is to be installed will be communicated by Customer and\n"
+        "         Seller, and Provider will be made notified prior to any work being scheduled. Seller will have all hardware to be\n"
+        "         installed already shipped to site.\n"
+        "    3.   For some sites where a redundancy solution is being installed, new cabling will be required to be added.\n"
+    )
+    items = [
+        it.get("text") or ""
+        for s in _text_rich_sections(txt)
+        for b in s.get("blocks", [])
+        if b.get("kind") == "bullet_list"
+        for it in b.get("items", [])
+    ]
+    assert len(items) == 2, items
+    assert items[0].startswith("Each location will have different needs")
+    assert "Seller, and Provider will be made notified" in items[0]
+    assert items[0].endswith("shipped to site.")
+
+
+def test_wrapped_tail_needs_layout_evidence_not_just_a_capital():
+    from app.parsers.orbitbrief_pdf import _is_wrapped_tail
+
+    full = "Customer is responsible for providing a Sign Off List of all items to be confirmed by Technician prior to leaving an"
+    lines = [full, "Implementation Site Visit which will be shared via a report to Customer and Seller.", "Next item here."]
+    assert _is_wrapped_tail(lines, 1)
+    # Previous line ended a sentence: no wrap.
+    assert not _is_wrapped_tail([full + ".", lines[1]], 1)
+    # Previous line is short (a list item that just ends without a period).
+    assert not _is_wrapped_tail(["Switch", "Access Point (Indoor Only)", full], 1)
+    # An ALLCAPS heading is never a tail.
+    assert not _is_wrapped_tail([full, "ASSUMPTIONS"], 1)
+    assert not _is_wrapped_tail(lines, 0)
+
+
+def test_ocr_bullet_glyph_class_reads_as_list_marker():
+    """Scanned PSOW 156648: tesseract rendered bullets as '©', '¢', '«'. One
+    non-word symbol + space + text is a list marker; content openers are not."""
+    from app.parsers.orbitbrief_pdf import _BULLET_LINE_RE
+
+    def item(line):
+        m = _BULLET_LINE_RE.match(line)
+        return m.group(2) if m else None
+
+    assert item("© Solution and Technical Architecture Review and planning") == "Solution and Technical Architecture Review and planning"
+    assert item("¢ External Project Meeting") == "External Project Meeting"
+    assert item("• Status meetings and reporting") == "Status meetings and reporting"
+    assert item("$500 fee applies") is None
+    assert item("(a) something") is None
+    assert item("“Quoted” start of a sentence") is None
+    # tesseract also renders a bullet as "=" ("= Internal Project Technical
+    # Planning"); no sentence opens with "= ".
+    assert item("= Internal Project Technical Planning") == "Internal Project Technical Planning"
+    assert item("Normal sentence here.") is None
+
+
+def test_confidence_floor_skips_provenance_records():
+    """Quoted-message headers are emitted auto_accepted at 0.45 and the floor
+    (0.50) flipped every one of them into the review queue — six per thread
+    on live 010300. A record about the document's plumbing is not a claim."""
+    from types import SimpleNamespace
+    from app.core.compiler import _is_provenance_record
+
+    hdr = SimpleNamespace(value={"kind": "quoted_message_header", "sender": "Carl Painter Jr"})
+    marker = SimpleNamespace(value={"kind": "image_marker"})
+    claim = SimpleNamespace(value={"kind": "paragraph"})
+    assert _is_provenance_record(hdr)
+    assert _is_provenance_record(marker)
+    assert not _is_provenance_record(claim)
+    assert not _is_provenance_record(SimpleNamespace(value=None))
+
+
+def test_multi_sentence_colon_paragraph_is_not_promoted_to_heading():
+    """Scanned PSOW: the seven-line scope paragraph ending '...The equipment in
+    scope for this project is:' was lifted wholesale into a sub-section heading
+    and vanished from the atom stream. Only a one-line intro is a heading."""
+    from app.parsers.orbitbrief_pdf import _text_rich_sections
+
+    txt = (
+        "SCOPE OF SERVICES\n"
+        "Customer has approximately 169 locations listed in Exhibit A where Provider will be asked to schedule and dispatch a\n"
+        "technician to a location. Technician will then box up the old phone. The equipment in scope for this project is:\n"
+        "\n"
+        "* MP58-WH-E2-TEAMS\n"
+        "* MP56-E2-TEAMS\n"
+        "\n"
+        "Milestone billing schedule:\n"
+        "* 50% on signature\n"
+        "* 50% on completion\n"
+    )
+    secs = _text_rich_sections(txt)
+    paras = [b["text"] for s in secs for b in s.get("blocks", []) if b.get("kind") == "paragraph"]
+    assert any(p.startswith("Customer has approximately 169 locations") and p.endswith("project is:") for p in paras), paras
+    heads = [sub["heading"] for s in secs for sub in s.get("subsections", [])]
+    assert "Milestone billing schedule" in heads
+    assert not any("169 locations" in h for h in heads)
+
+
+def test_blank_line_before_wrapped_tail_does_not_break_the_paragraph():
+    """Tesseract opens a blank line before a hanging-indent tail
+    ('...infrastructure for' / '' / 'installation.'); the blank is layout, not
+    a paragraph break, when the line above ran full-width unpunctuated."""
+    from app.parsers.orbitbrief_pdf import _text_rich_sections
+
+    txt = (
+        "ASSUMPTIONS\n"
+        "Provider assumes the new Teams IP Phones are plug and play and require no new cabling or infrastructure for\n"
+        "\n"
+        "installation.\n"
+        "\n"
+        "Cabling is not included in this quote.\n"
+    )
+    paras = [b["text"] for s in _text_rich_sections(txt) for b in s.get("blocks", []) if b.get("kind") == "paragraph"]
+    assert paras == [
+        "Provider assumes the new Teams IP Phones are plug and play and require no new cabling or infrastructure for installation.",
+        "Cabling is not included in this quote.",
+    ], paras
+
+
+def test_header_display_names_become_stakeholders(tmp_path):
+    """Charlie Magee's own message carried a bare From address; three quoted
+    'Cc:' lines wrote 'Charlie Magee <charlie.magee@cdw.com>'. The shape is
+    the evidence."""
+    from app.parsers.email_parser import EmailParser
+
+    eml = tmp_path / "t.eml"
+    eml.write_text(
+        "From: charlie.magee@cdw.com\nTo: t@purtera-it.com\nSubject: Re: swap\nDate: Thu, 03 Sep 2026 17:37:05 +0000\n\n"
+        "TT - clean up aisle Purtera.\n\n"
+        "From: Trent Torrence <t@purtera-it.com>\nSent: Thursday, September 3, 2026 1:09 PM\n"
+        "To: Patrick Kelly <patrick@purtera-it.com>; Carl Painter Jr <carlpai@cdw.com>\n"
+        "Cc: Rhonda Sharp <rhonda.sharp@cdw.com>; Charlie Magee <charlie.magee@cdw.com>; rhonda.sharp@cdw.com <rhonda.sharp@cdw.com>\n"
+        "Subject: Re: swap\n\nThank you for the opportunity!\n",
+        encoding="utf-8",
+    )
+    atoms = EmailParser().parse_artifact("p", "a", eml)
+    people = {a.value.get("email"): a.value.get("name") for a in atoms if str(getattr(a.atom_type, "value", a.atom_type)) == "stakeholder"}
+    assert people.get("charlie.magee@cdw.com") == "Charlie Magee"
+    assert people.get("carlpai@cdw.com") == "Carl Painter Jr"
+    assert people.get("rhonda.sharp@cdw.com") == "Rhonda Sharp"
+    # one record per address
+    assert sum(1 for a in atoms if str(getattr(a.atom_type, "value", a.atom_type)) == "stakeholder" and a.value.get("email") == "rhonda.sharp@cdw.com") == 1
+
+
+def test_ocr_prefers_page_level_tesseract(monkeypatch):
+    """Same engine, different layout: PyMuPDF's textpage re-orders words into
+    its own blocks and shreds paragraphs; page-level tesseract keeps lines
+    whole. The chain tries the page-level pass first and falls back."""
+    import types, sys as _sys
+    from app.parsers import _ocr_chain
+
+    class _Pix:
+        def tobytes(self, fmt):
+            import io
+            from PIL import Image
+            buf = io.BytesIO(); Image.new("RGB", (20, 20), "white").save(buf, format="PNG"); return buf.getvalue()
+
+    class _Page:
+        def get_pixmap(self, dpi=200, alpha=False):
+            return _Pix()
+        def get_textpage_ocr(self, **kw):
+            raise AssertionError("page-level tesseract must run first")
+
+    fake = types.SimpleNamespace(image_to_string=lambda img, config="": "Customer has approximately 169 locations\nlisted in Exhibit A.\n\nNext paragraph.")
+    monkeypatch.setitem(_sys.modules, "pytesseract", fake)
+    out = _ocr_chain.ocr_pdf_page(_Page())
+    assert out["backend"] == "tesseract_page"
+    assert out["text"].startswith("Customer has approximately 169 locations")
+
+
+def test_gateway_banner_carries_no_author(tmp_path):
+    """Proofpoint inserts 'This Message Is From an External Sender' above the
+    quoted reply on the recipient's copy; the block stamp made Trent its
+    author. Chrome is unauthored; the real sentence keeps its author."""
+    from app.parsers.email_parser import EmailParser
+
+    eml = tmp_path / "b.eml"
+    eml.write_text(
+        "From: charlie.magee@cdw.com\nTo: t@purtera-it.com\nSubject: Re: swap\nDate: Thu, 03 Sep 2026 17:37:05 +0000\n\n"
+        "TT - clean up aisle Purtera.\n\n"
+        "From: Trent Torrence <t@purtera-it.com>\nDate: Thursday, September 3, 2026 at 1:09 PM\n"
+        "To: Patrick Kelly <patrick@purtera-it.com>\nSubject: Re: swap\n"
+        "This Message Is From an External Sender\n"
+        "This message came from outside your organization.\n"
+        "Report Suspicious<https://us-phishalarm-ewt.proofpoint.com/EWT/v1/abc>\n"
+        "Thank you for the opportunity!\n",
+        encoding="utf-8",
+    )
+    atoms = EmailParser().parse_artifact("p", "a", eml)
+    banners = [a for a in atoms if isinstance(a.value, dict) and a.value.get("kind") == "email_banner"]
+    assert banners, [a.raw_text for a in atoms]
+    assert all(not a.value.get("author") for a in banners)
+    thanks = [a for a in atoms if "Thank you for the opportunity" in a.raw_text]
+    assert thanks and all("t@purtera-it.com" in str(a.value.get("author") or "") for a in thanks)
+
+
+def test_hyphenated_compound_is_not_debris():
+    """'Customer-Designated' (19 letters) tripped the 18-letter-debris rule and
+    the Services Fees clause was dropped as unreadable."""
+    from app.core.text_quality import is_unreadable, readability
+
+    clause = (
+        "Services Fees will be calculated on a TIME AND MATERIALS basis. Any non-Hourly Units will be "
+        "measured in one (1) unit increments when Services are performed remotely or at any "
+        "Customer-Designated Location(s) (as defined below). Any Hourly Units will be measured in one (1) "
+        "hour increments with a minimum of one (1) hour billed each day Services are performed remotely."
+    )
+    assert readability(clause) > 0.85
+    assert not is_unreadable(clause)
+    assert is_unreadable("Tes aks wilenur tht projetcompen xxqzvbnmklpoiuytrewq asdfghjklzxcvbnmq")
+
+
+def test_nameless_stakeholder_sentence_is_retyped_not_dropped():
+    from app.core.atom_substance_gate import drop_contextless_stakeholders
+
+    clause = _atom(
+        AtomType.stakeholder,
+        "Each Party will appoint a person to act as that Party’s point of contact (“Contact Person”) as the time for performance nears and will communicate that person’s name and information to the other Party’s Contact Person.",
+        kind="person", name=None, role="contact person",
+    )
+    clause.entity_keys = ["stakeholder:contact_person"]
+    fragment = _atom(AtomType.stakeholder, "Step 5: Appoint a contact person", kind="person", name=None, role="contact person")
+    kept, dropped = drop_contextless_stakeholders([clause, fragment])
+    assert dropped == [fragment]
+    assert kept == [clause]
+    assert clause.atom_type == AtomType.contract_term
+    assert "stakeholder_sentence_retyped" in clause.review_flags
+    assert clause.entity_keys == []
+
+
+def test_provenance_markers_leave_the_review_queue():
+    from app.core.confidence_recalibration import accept_verified_high_confidence
+
+    marker = _atom(AtomType.deal_metadata, "[binary region 3 of page 6 not recovered]", kind="binary_region_marker")
+    marker.review_status = ReviewStatus.needs_review
+    marker.confidence = 0.75
+    hdr = _atom(AtomType.deal_metadata, "From: Carl Painter Jr | Sent: Thursday", kind="quoted_message_header")
+    hdr.review_status = ReviewStatus.needs_review
+    hdr.confidence = 0.45
+    assert accept_verified_high_confidence([marker, hdr]) == 2
+    assert marker.review_status == ReviewStatus.auto_accepted and hdr.review_status == ReviewStatus.auto_accepted
+
+
+def test_bookkeeping_flags_are_not_doubt_but_doubt_flags_are():
+    from app.core.confidence_recalibration import accept_verified_high_confidence
+    from app.core.schemas import EvidenceReceipt
+
+    def _verified(text, flags):
+        a = _atom(AtomType.scope_item, text, kind="bullet")
+        a.review_status = ReviewStatus.needs_review
+        a.confidence = 0.88
+        a.receipts = [EvidenceReceipt(atom_id=a.id, artifact_id="d1", filename="x.pdf", source_ref_id="s1", replay_status="verified", reason="", verifier_version="t")]
+        a.review_flags = flags
+        return a
+
+    ok = _verified("Overseeing administration, financials, and team management.", ["unearned_contract_authority_demoted", "conversation_meta", "head_exclude", "unsupported_name_stripped", "task_tier_child", "quote_context:survey_design"])
+    doubtful = _verified("Camera", ["calibration_abstain"])
+    weak = _verified("Taxes: Excluded", ["weak_label"])
+    assert accept_verified_high_confidence([ok, doubtful, weak]) == 1
+    assert ok.review_status == ReviewStatus.auto_accepted
+    assert doubtful.review_status == ReviewStatus.needs_review and weak.review_status == ReviewStatus.needs_review
+
+
+def test_signature_cells_repeated_without_party_labels_are_swept():
+    """The signature table reaches the page twice (labelled and unlabelled
+    copies); the typer files the second copy as deal_metadata and it sits in
+    the review queue as debris. Words already in the signer records = nothing new."""
+    from app.core.atom_type_sanity import merge_signature_rows
+
+    def _row(atom_type, text):
+        a = _atom(atom_type, text, kind="table_row")
+        a.source_refs = [SourceRef(id=f"s{abs(hash(text))}", artifact_id="d1", artifact_type="pdf", filename="x.pdf", locator={"page": 6}, extraction_method="t", parser_version="t")]
+        return a
+
+    rows = [
+        _row(AtomType.signatory, "CDW Technologies LLC: By: Mike Murphy (Mar 26, 2025 10:24 EDT) | NewBold LLC: By: Shelly Lewis (Mar 25, 2025 11:49 EDT)"),
+        _row(AtomType.signatory, "CDW Technologies LLC: Title: Professional Services Manager | NewBold LLC: Title: EVP & COO"),
+        _row(AtomType.deal_metadata, "Name: Mike Murphy Name: | Shelly Lewis"),
+        _row(AtomType.deal_metadata, "Mar 26, 2025 | Mar 25, 2025"),
+        _row(AtomType.deal_metadata, "Shelly Lewis"),
+        _row(AtomType.deal_metadata, "CDW Technologies LLC: Date: | NewBold LLC: Date:"),
+        _row(AtomType.deal_metadata, "Provider will use the following subcontractor(s) to perform Services under this SOW: Not Applicable"),
+    ]
+    atoms = list(rows)
+    merge_signature_rows(atoms)
+    texts = [a.raw_text for a in atoms]
+    assert len(atoms) == 2, texts
+    sig = atoms[0]
+    assert sig.value["name"] == "Mike Murphy" and sig.value["title"] == "Professional Services Manager"
+    assert sig.value["role"] == "Professional Services Manager"
+    assert [s["name"] for s in sig.value["signers"]] == ["Mike Murphy", "Shelly Lewis"]
+    assert sig.value["parties"] == ["CDW Technologies LLC", "NewBold LLC"]
+    assert texts[1].startswith("Provider will use the following subcontractor")

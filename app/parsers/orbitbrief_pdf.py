@@ -3524,8 +3524,15 @@ def _md_cell(value: Any) -> str:
 
 
 _BULLET_LINE_RE = re.compile(
-    r"^\s*([-*•·\u2022]|\d+[.)]|[a-z][.)]|[ivx]{1,4}[.)])\s+(.+?)\s*$"
+    r"^\s*([-*•·•]|[^\w\s\"'“”‘’(\[{$#%&@/\\<>|,.:;!?+~^-]|\d+[.)]|[a-z][.)]|[ivx]{1,4}[.)])\s+(.+?)\s*$"
 )  # bullets, numbered, AND lettered/roman sub-items ("a. main office", "iv) ...").
+# The second alternative is the marker CLASS, not a glyph list: OCR renders a
+# bullet as whatever symbol looks nearest ("©", "¢", "«", "°", "®") — live
+# 010300 scanned PSOW: "© Solution and Technical Architecture Review",
+# "¢ External Project Meeting", "«Internal Project Technical Planning" — and
+# one non-word symbol followed by a space and text is a list marker in any
+# alphabet. Word characters, quotes, brackets, currency/number signs and
+# sentence punctuation are excluded because they open real content.
 # A bullet GLYPH alone on its own line — common in slide / docx->PDF exports,
 # where the marker and its text render on separate lines ('•\n74 x FG-30Gs').
 # The next content line is the bullet's text. True bullet glyphs only (not 'o'/'-',
@@ -4820,7 +4827,19 @@ def _promote_list_intros_to_subsections(sections: list[dict[str, Any]]) -> None:
         i = 0
         while i < len(blocks):
             b = blocks[i]
-            if b.get("kind") == "paragraph" and _is_list_intro(b.get("text") or ""):
+            # Only a one-line intro becomes a heading. A multi-sentence
+            # paragraph that happens to end in ":" ("...Technician will then
+            # box up the old phone... The equipment in scope for this project
+            # is:") is content; promoting it to a heading deleted the whole
+            # scope paragraph from the atom stream (live 010300 scanned PSOW,
+            # 7 lines gone). Such a paragraph stays a block and the list
+            # simply follows it in the same section.
+            if (
+                b.get("kind") == "paragraph"
+                and _is_list_intro(b.get("text") or "")
+                and len([x for x in (b.get("lines") or [b.get("text")]) if str(x or "").strip()]) <= 1
+                and not re.search(r"[.!?]['\"”’)]*\s+[A-Z(]", (b.get("text") or "").strip())
+            ):
                 grouped: list[dict[str, Any]] = []
                 count = 0
                 j = i + 1
@@ -4948,6 +4967,16 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             continue
         line = raw.rstrip()
         if not line.strip():
+            # Tesseract separates paragraphs with a blank line but also opens
+            # one before a wrapped tail whose hanging indent it read as a new
+            # paragraph ("...require no new cabling or infrastructure for" /
+            # "" / "installation."). A blank line is not a paragraph break
+            # when the line before it ran full-width without terminal
+            # punctuation and the next content line is its tail.
+            if paragraph_lines or bullet_buffer:
+                nxt = next((k for k in range(idx + 1, len(lines)) if lines[k].strip()), None)
+                if nxt is not None and _is_wrapped_tail(lines, nxt, prev_index=idx - 1):
+                    continue
             flush_paragraph()
             flush_bullets()
             continue
@@ -5112,8 +5141,17 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
 
         # A lowercase line right after a bullet is that bullet wrapped across
         # lines (the PDF broke a long item) — append it to the last bullet
-        # instead of orphaning it as a separate fragment paragraph.
-        if bullet_buffer and not paragraph_lines and stripped[:1].islower():
+        # instead of orphaning it as a separate fragment paragraph. The wrap
+        # is a layout fact, not a spelling one: a full-width line that stops
+        # without terminal punctuation continues on the next line whatever
+        # letter that line opens with (live 010300: "...communicated by
+        # Customer and" | "Seller, and Provider will be made notified...",
+        # "...prior to leaving an" | "Implementation Site Visit...", "...It
+        # is" | "Seller's assumption...", "...in the SOW. All" | "Work
+        # Product..." — four clauses cut in half, the tails mistyped).
+        if bullet_buffer and not paragraph_lines and (
+            stripped[:1].islower() or _is_wrapped_tail(lines, idx)
+        ):
             bullet_buffer[-1] = f"{bullet_buffer[-1]} {stripped}".strip()
             continue
 
@@ -5129,6 +5167,43 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     # Drop empty sections that may have been created by trailing
     # whitespace.
     return [s for s in sections if s.get("blocks") or s.get("heading") or s.get("subsections")]
+
+
+_TERMINAL_PUNCT_RE = re.compile(r"[.!?:;]\s*[\"”’')\]]*\s*$")
+
+
+def _is_wrapped_tail(
+    lines: list[str], idx: int, *, fill: float = 0.75, prev_index: int | None = None
+) -> bool:
+    """True when ``lines[idx]`` is the wrapped continuation of the line before it
+    (``lines[prev_index]`` when given — the last content line above a blank).
+
+    Layout evidence only: the previous line ran to (near) the full measure of
+    the page — at least ``fill`` of the longest line — and stopped without
+    terminal punctuation, so the sentence had nowhere to go but the next line.
+    Case of the first letter is irrelevant ("Seller, and Provider..." is a
+    tail as much as "and Provider..." is). A line that itself opens a list
+    item or heading is never a tail.
+    """
+    if idx <= 0 or idx >= len(lines):
+        return False
+    p = idx - 1 if prev_index is None else prev_index
+    if p < 0 or p >= idx:
+        return False
+    prev = (lines[p] or "").rstrip()
+    cur = (lines[idx] or "").strip()
+    if not prev or not cur or _TERMINAL_PUNCT_RE.search(prev):
+        return False
+    if cur.isupper():
+        return False
+    if _BULLET_LINE_RE.match(cur) or _BARE_BULLET_RE.match(cur) or _BARE_ENUM_RE.match(cur):
+        return False
+    if _numbered_heading(cur) or _looks_like_section_heading(cur):
+        return False
+    full = max((len((l or "").rstrip()) for l in lines), default=0)
+    if full < 40:
+        return False
+    return len(prev) >= fill * full
 
 
 def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int) -> None:

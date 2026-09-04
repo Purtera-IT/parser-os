@@ -122,6 +122,15 @@ def readability(text: str) -> float:
     return good / total if total else 1.0
 
 
+def _compound_of_words(token: str) -> bool:
+    """"Customer-Designated", "Buyer-formatted", "time-and-materials": a token
+    joined by hyphens or apostrophes is as readable as its parts. Live 010300:
+    the 19-letter "Customer-Designated" tripped the 18-letter-debris rule and
+    the whole Services Fees clause was dropped as unreadable."""
+    parts = [p for p in re.split(r"[-'’]", token) if p]
+    return len(parts) >= 2 and all(len(p) <= 2 or _is_word(p) for p in parts)
+
+
 def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) -> bool:
     """True when the lowercase words of the text are mostly not words.
 
@@ -131,7 +140,7 @@ def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) ->
     toks = _judged(text)
     # One very long lowercase non-word ("tonmnuinunvionetenatucnnihnapusstsnse")
     # is debris on its own: no language has an 18-letter word that is not one.
-    if any(len(t.strip("'’-")) >= 18 and not _is_word(t) for t in toks):
+    if any(len(t.strip("'’-")) >= 18 and not _is_word(t) and not _compound_of_words(t) for t in toks):
         return True
     # Whole-line view: when fewer than a third of ALL alphabetic tokens are
     # words -- capitalised or not, abbreviations included -- the line is

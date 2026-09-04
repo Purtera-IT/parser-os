@@ -191,7 +191,7 @@ import re as _re
 _DERIVED_EXTRACTION_RE = _re.compile(r"vision|ocr|marker|backfill|llm|paraphrase|summary", _re.I)
 
 
-def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float = 0.85) -> int:
+def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float = 0.80) -> int:
     """Flip ``needs_review`` to ``auto_accepted`` where nothing is in doubt.
 
     Most parsers emit every atom as ``needs_review`` by default, so a PM's
@@ -220,11 +220,29 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
             return False
         if f.endswith(("_demoted", "_retyped", "_promoted", "_tag")):
             return False
-        return True
+        # A flag is doubt when it SAYS so. Every pass stamps what it did
+        # (head_exclude, conversation_meta, unsupported_name_stripped,
+        # task_tier_child, quote_context:*, note_provenance_v2 ...) and an
+        # allowlist of those can never keep up: the local 010300 compile
+        # carried 25 distinct flags on queued atoms and accepted none. The
+        # doubt vocabulary is small and stable — low confidence, abstention,
+        # weak label, unsupported receipt, truncation, contradiction,
+        # mismatch, unresolved, missing information.
+        return bool(_DOUBT_FLAG_RE.search(f))
 
     n = 0
     for atom in atoms:
         if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
+            continue
+        # A provenance record (an unrecovered-region / image / attachment
+        # marker, a quoted-message header) asserts nothing a PM can confirm
+        # or reject; its facts live in coverage and the timeline. Fifteen
+        # binary_region_markers sat in the local 010300 queue at 0.75 forever.
+        _v = getattr(atom, "value", None)
+        _kind = str((_v or {}).get("kind") or "") if isinstance(_v, dict) else ""
+        if _kind.endswith(("_marker", "_header")):
+            atom.review_status = ReviewStatus.auto_accepted
+            n += 1
             continue
         if any(_is_doubt(f) for f in (getattr(atom, "review_flags", None) or [])):
             continue
@@ -254,6 +272,13 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
         n += 1
     return n
 
+
+_DOUBT_FLAG_RE = _re.compile(
+    r"low_confidence|abstain|weak|unsupported_receipt|truncat|contradict|mismatch|unverified"
+    r"|conflict|requires_confirmation|needs_review|missing_info|unclassified|not_fully_extracted"
+    r"|unresolved|without_negation|floor",
+    _re.I,
+)
 
 _BOOKKEEPING_FLAGS = frozenset({
     "unearned_contract_authority_demoted", "accepted_verified_receipt", "task", "conv",

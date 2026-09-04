@@ -357,6 +357,39 @@ _FUNCTION_WORDS = frozenset({
 })
 
 
+_SENTENCE_END_RE = re.compile(r"[.!?;:]\s*[\"”’')\]]*\s*$")
+
+
+def _retype_sentence(atom: Any, text: str) -> bool:
+    """A stakeholder-typed atom whose text is a sentence (eight or more words,
+    ends like a sentence, no contact fields) is mislabelled content, not a
+    person record. Retype it to ``contract_term`` — what a nameless "Party
+    will appoint / is responsible / shall provide" clause is in any document —
+    and say so on the atom. Returns True when retyped."""
+    words = [w for w in re.split(r"\s+", (text or "").strip()) if w]
+    if len(words) < 8 or not _SENTENCE_END_RE.search(text or ""):
+        return False
+    try:
+        from app.core.schemas import AtomType
+
+        atom.atom_type = AtomType.contract_term
+    except Exception:
+        return False
+    try:
+        value = atom.value if isinstance(getattr(atom, "value", None), dict) else None
+        if value is not None:
+            value.pop("name", None)
+            value.pop("role", None)
+            value["kind"] = "clause"
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if "stakeholder_sentence_retyped" not in flags:
+            atom.review_flags = flags + ["stakeholder_sentence_retyped"]
+        atom.entity_keys = [k for k in (getattr(atom, "entity_keys", None) or []) if not str(k).startswith("stakeholder:")]
+    except Exception:
+        pass
+    return True
+
+
 def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Partition into (kept, dropped). A ``stakeholder`` atom with no
     role/affiliation/contact context AND a bare-name shape is dropped — it is a
@@ -403,9 +436,21 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             _shape = re.search(r"\b(?P<first>[A-Z][a-z]+)(?:\s+[A-Z]\.)?\s+[A-Z][a-z]+\b", text)
             _shape_is_person = bool(_shape) and _shape.group("first").lower() not in _FUNCTION_WORDS
             if not _nm and (kind == "person" or not _shape_is_person):
-                dropped.append(atom)  # "Each Party will appoint a person…" names nobody, whatever its kind
+                # A full sentence that names nobody is CONTENT the typer
+                # mislabelled as a person ("Each Party will appoint a person
+                # to act as that Party's point of contact ... and will
+                # communicate that person's name ..."): live 010300 lost the
+                # whole Contact Persons clause this way. Retype and keep; only
+                # a fragment (a salutation, a role label) is dropped.
+                if _retype_sentence(atom, text):
+                    kept.append(atom)
+                    continue
+                dropped.append(atom)  # "Step 5: Appoint a contact person…" names nobody, whatever its kind
                 continue
             if _first in _FUNCTION_WORDS:
+                if _retype_sentence(atom, text):
+                    kept.append(atom)
+                    continue
                 dropped.append(atom)  # "both parties | contact person": a phrase, not a person
                 continue
         if _has_role_context(text, value, entity_keys):

@@ -2620,6 +2620,10 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         # the calibrated value apart from the pre-calibration heuristic.
         "calibrated_confidence": atom.calibrated_confidence,
         "review_status": atom.review_status.value if hasattr(atom.review_status, "value") else atom.review_status,
+        # Why an atom sits in the queue must be auditable from the envelope
+        # alone; the flags were never serialised (live 010300: 117 queued
+        # atoms, "flags []", cause invisible).
+        "review_flags": list(getattr(atom, "review_flags", None) or []),
         "confidence_raw": getattr(atom, "confidence_raw", None),
     }
     # HOW a decision was made, when something recorded it. Emitted only when

@@ -64,6 +64,15 @@ from app.parsers.parser_router import choose_parser
 # active packets unchallenged.
 LOW_CONFIDENCE_FLOOR = 0.50
 
+
+def _is_provenance_record(atom: Any) -> bool:
+    """A record the parser wrote about the document's own plumbing — a quoted
+    message header ("From: X | Sent: Y"), an image / attachment / binary-region
+    marker. It carries no claim for a PM to doubt, so confidence gates skip it."""
+    value = getattr(atom, "value", None)
+    kind = str((value or {}).get("kind") or "") if isinstance(value, dict) else ""
+    return kind.endswith(("_header", "_marker"))
+
 _DERIVED_DIR_SUFFIXES = (".derived",)
 
 # Directory names that should never be walked for input artifacts.
@@ -798,6 +807,12 @@ def compile_project(
         from app.core.schemas import ReviewStatus  # local import keeps top of file tidy
         for atom in atoms:
             if atom.confidence < LOW_CONFIDENCE_FLOOR:
+                # The floor is doubt about a CLAIM. A provenance record the
+                # parser wrote itself (a quoted-message header "From: X |
+                # Sent: Y", an image/attachment marker) asserts nothing a PM
+                # can review; live 010300 queued six such headers per thread.
+                if _is_provenance_record(atom):
+                    continue
                 if atom.review_status != ReviewStatus.needs_review:
                     atom.review_status = ReviewStatus.needs_review
                 if "low_confidence_floor" not in atom.review_flags:

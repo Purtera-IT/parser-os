@@ -85,13 +85,46 @@ def ocr_pdf_page(page) -> dict[str, Any]:
     if _ocr_disabled():
         return _empty(["OCR disabled via PARSER_OS_OCR_DISABLE"])
 
+    dpi = int(os.environ.get("PARSER_OS_OCR_DPI", "200"))
+
+    # 0) Page-level Tesseract (pytesseract, page segmentation mode 3 = fully
+    #    automatic). PyMuPDF's textpage path below runs the same engine but
+    #    re-orders the recognised words by geometry into ITS blocks and lines,
+    #    which shreds a scanned paragraph: live 010300 scanned PSOW came out
+    #    as "‘Customer" / "has approximately 169 locations…", every bullet
+    #    glyph on its own line, "…either two (2) hours" / "of onsite support
+    #    or four (4) hours from" — and each shard became an atom. Tesseract's
+    #    own page layout keeps lines whole and separates paragraphs with a
+    #    blank line, which is exactly what the section builder reads. Same
+    #    binary, same words, same readability (0.889 vs 0.887 measured); only
+    #    the layout differs. Falls through when pytesseract is unavailable.
+    try:
+        import pytesseract  # type: ignore
+        from PIL import Image  # type: ignore
+
+        pix = page.get_pixmap(dpi=dpi, alpha=False)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        text = pytesseract.image_to_string(
+            img, config=f"--psm 3 --oem 3 -l {_ocr_language()}"
+        ) or ""
+        if text.strip():
+            return {
+                "text": text,
+                "backend": "tesseract_page",
+                "confidence": 0.85,
+                "notes": notes,
+            }
+        notes.append("tesseract_page returned no text")
+    except Exception as exc:
+        notes.append(f"tesseract_page unavailable: {type(exc).__name__}")
+
     # 1) PyMuPDF built-in OCR
     try:
         # At the default 72 dpi a scanned SOW reads as debris ("Tes aks
         # wilenur tht projetcompen…", readability 0.55); at 200 dpi the same
         # page reads at 0.9 (live 010300, measured). Resolution is the fix,
         # not a better model.
-        tp = page.get_textpage_ocr(language=_ocr_language(), full=True, dpi=int(os.environ.get("PARSER_OS_OCR_DPI", "200")))
+        tp = page.get_textpage_ocr(language=_ocr_language(), full=True, dpi=dpi)
         text = page.get_text("text", textpage=tp) or ""
         if text.strip():
             return {
