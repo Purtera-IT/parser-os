@@ -358,6 +358,10 @@ _FUNCTION_WORDS = frozenset({
 
 
 _SENTENCE_END_RE = re.compile(r"[.!?;:]\s*[\"”’')\]]*\s*$")
+#: Closed-class linkers that join the words of an organisation's name
+#: ("DENTISTRY FOR CHILDREN", "BOARD OF EDUCATION", "SMITH & SONS") and never
+#: appear inside a person's name.
+_ORG_LINK_WORDS = frozenset({"for", "of", "and", "&", "the", "de", "du", "des", "la", "le"})
 
 
 def _retype_sentence(atom: Any, text: str) -> bool:
@@ -433,6 +437,18 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
         # a noun phrase headed by a function word ("The Buyer", "Each Party"),
         # with no email or phone to stand on, is a role mention, not a record.
         # Live 010300: "None | approver", "The Buyer | approver".
+        _nm_any = str(value.get("name") or "").strip()
+        # An ALL-CAPS phrase built around a function word ("DENTISTRY FOR
+        # CHILDREN", "BOARD OF EDUCATION") is an organisation's printed name,
+        # not a person, whatever contact detail sits beside it (live 010300:
+        # the scan's header put Carl's phone next to the customer's name).
+        if (
+            len(_nm_any.split()) >= 2
+            and _nm_any.isupper()
+            and any(t.lower() in _ORG_LINK_WORDS or t.lower() in _FUNCTION_WORDS for t in _nm_any.split())
+        ):
+            dropped.append(atom)
+            continue
         if not (value.get("email") or value.get("phone")):
             _nm = str(value.get("name") or "").strip()
             _first = _nm.split()[0].lower() if _nm else ""

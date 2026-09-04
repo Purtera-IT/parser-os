@@ -350,6 +350,50 @@ def _merge_atom_metadata(winner: Any, loser: Any) -> None:
         pass
 
 
+_PERSON_FIELDS = ("name", "role", "title", "email", "phone", "company", "organisation", "organization")
+
+
+def _union_person_fields(winner: Any, loser: Any) -> None:
+    """A folded person record hands its fields to the survivor: the list line
+    "Rhonda Sharp Professional Services Manager" knew the title, the routing
+    line "Rhonda Sharp <rhonda.sharp@cdw.com>" knew the address; one record
+    should know both (live 010300 kept the address and lost the title)."""
+    vw = getattr(winner, "value", None)
+    vl = getattr(loser, "value", None)
+    if not isinstance(vw, dict) or not isinstance(vl, dict):
+        return
+    for k in _PERSON_FIELDS:
+        if not vw.get(k) and vl.get(k):
+            vw[k] = vl[k]
+    if not vw.get("role") and vw.get("title"):
+        vw["role"] = vw["title"]
+
+
+def _near_surname(a: str, b: str) -> bool:
+    """One typo apart (a transposition, a swapped/missing/extra letter) on a
+    surname of five or more letters: "Ngyuen" / "Nguyen" (live 010300, a
+    colleague's typo in a Cc list). Names of four letters or fewer must match."""
+    if a == b:
+        return True
+    if min(len(a), len(b)) < 5 or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        # Two adjacent letters swapped is a typing slip at any length
+        # ("Ngyuen"/"Nguyen"); one letter replaced is a different name
+        # unless the name is long ("Sharp"/"Shark" stay apart).
+        if len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]]:
+            return True
+        return len(diff) == 1 and len(a) >= 7
+    if min(len(a), len(b)) < 7:
+        return False
+    s, l = (a, b) if len(a) < len(b) else (b, a)
+    for i in range(len(l)):
+        if l[:i] + l[i + 1:] == s:
+            return True
+    return False
+
+
 def _strip_location_label_prefix(text: str) -> str:
     """Remove SOW boilerplate like ``Location: Mobis..., 12575 Oakland Park Blvd``.
 
@@ -1824,8 +1868,9 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
                 continue
             same_doc = str(getattr(b, "artifact_id", "")) == str(getattr(a, "artifact_id", ""))
             fb, lb = _parts(b)
-            if same_doc and la == lb and (fa[:3] == fb[:3]) and _subsumed(a, b):
+            if same_doc and _near_surname(la, lb) and (fa[:3] == fb[:3]) and _subsumed(a, b):
                 _merge_atom_metadata(b, a)
+                _union_person_fields(b, a)
                 drop.add(id(a))
                 break
             # Across documents the bar is higher: the SAME full name and no
@@ -1833,6 +1878,7 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             # signatures (one with a phone, one with an email) were two records.
             if (not same_doc) and _full_name(a) and _full_name(a) == _full_name(b) and _agree(a, b) and _richness(a) <= _richness(b):
                 _merge_atom_metadata(b, a)
+                _union_person_fields(b, a)
                 drop.add(id(a))
                 break
     # A record with NO name but a phone or email that another record of the

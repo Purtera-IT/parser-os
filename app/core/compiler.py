@@ -1610,6 +1610,7 @@ def compile_project(
     # actually correlates with truth.
     with telemetry.stage("confidence_recalibration", input_count=len(atoms)) as stage:
         recal_count = 0
+        _stage_notes: list[str] = []
         try:
             from app.core.confidence_recalibration import recalibrate_confidence
             from app.core.authority import classify_artifact_authority
@@ -1634,17 +1635,26 @@ def compile_project(
             # Review is a signal only when scarce: a verbatim atom with every
             # receipt verified and high confidence has nothing left to review.
             try:
-                from app.core.confidence_recalibration import accept_verified_high_confidence
+                from app.core.confidence_recalibration import (
+                    LAST_ACCEPT_STATS,
+                    accept_verified_high_confidence,
+                )
                 _accepted = accept_verified_high_confidence(atoms)
+                _stage_notes.append(
+                    "INFO: review-queue acceptance "
+                    + ", ".join(f"{k}={v}" for k, v in LAST_ACCEPT_STATS.items())
+                )
                 if _accepted:
                     warnings.append(f"INFO: accepted {_accepted} verified high-confidence atom(s) out of the review queue")
             except Exception as exc:
+                _stage_notes.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
                 warnings.append(f"WARNING: accept_verified_high_confidence failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
+            _stage_notes.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
             warnings.append(f"WARNING: confidence_recalibration failed: {type(exc).__name__}: {exc}")
         if recal_count:
             warnings.append(f"INFO: recalibrated confidence on {recal_count} atoms")
-        telemetry.end_stage(stage, output_count=recal_count)
+        telemetry.end_stage(stage, output_count=recal_count, warnings=_stage_notes)
 
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(

@@ -231,9 +231,14 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
         return bool(_DOUBT_FLAG_RE.search(f))
 
     n = 0
+    stats: dict[str, int] = {"queued": 0, "provenance": 0, "doubt": 0, "confidence": 0,
+                             "receipts": 0, "quoted": 0, "derived": 0, "accepted": 0}
+    LAST_ACCEPT_STATS.clear()
     for atom in atoms:
-        if getattr(atom, "review_status", None) != ReviewStatus.needs_review:
+        _rs = getattr(atom, "review_status", None)
+        if str(getattr(_rs, "value", _rs) or "") != "needs_review":
             continue
+        stats["queued"] += 1
         # A provenance record (an unrecovered-region / image / attachment
         # marker, a quoted-message header) asserts nothing a PM can confirm
         # or reject; its facts live in coverage and the timeline. Fifteen
@@ -243,34 +248,49 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
         if _kind.endswith(("_marker", "_header")):
             atom.review_status = ReviewStatus.auto_accepted
             n += 1
+            stats["provenance"] += 1
             continue
         if any(_is_doubt(f) for f in (getattr(atom, "review_flags", None) or [])):
+            stats["doubt"] += 1
             continue
         # calibrated_confidence defaults to 0.0 on atoms recalibration never
         # touched (live 010300: 110 of 116 queued atoms) -- that is "not
         # calibrated", not "zero confidence"; fall back to the parser's own.
         conf = getattr(atom, "calibrated_confidence", None) or getattr(atom, "confidence", None)
         if conf is None or float(conf) < min_confidence:
+            stats["confidence"] += 1
             continue
         receipts = list(getattr(atom, "receipts", None) or [])
-        if not receipts or any(getattr(r, "replay_status", None) != "verified" for r in receipts):
+        if not receipts or any(
+            str(getattr(getattr(r, "replay_status", None), "value", getattr(r, "replay_status", None)) or "") != "verified"
+            for r in receipts
+        ):
+            stats["receipts"] += 1
             continue
-        if getattr(atom, "authority_class", None) == AuthorityClass.quoted_old_email:
+        _ac = getattr(atom, "authority_class", None)
+        if str(getattr(_ac, "value", _ac) or "") == "quoted_old_email":
+            stats["quoted"] += 1
             continue
         refs = getattr(atom, "source_refs", None) or []
         method = str(getattr(refs[0], "extraction_method", "") or "") if refs else ""
         if _DERIVED_EXTRACTION_RE.search(method):
+            stats["derived"] += 1
             continue
-        v = getattr(atom, "value", None)
-        if isinstance(v, dict) and str(v.get("kind") or "").endswith("_marker"):
-            continue
+        stats["accepted"] += 1
         atom.review_status = ReviewStatus.auto_accepted
         try:
             atom.review_flags = list(getattr(atom, "review_flags", None) or []) + ["accepted_verified_receipt"]
         except Exception:
             pass
         n += 1
+    LAST_ACCEPT_STATS.update(stats)
     return n
+
+
+#: Why the last acceptance pass kept each queued atom queued -- surfaced into
+#: the compile trace so a live run that accepts nothing explains itself
+#: (live 010300 round 22: 0 accepted, 114 locally, no visible reason).
+LAST_ACCEPT_STATS: dict[str, int] = {}
 
 
 _DOUBT_FLAG_RE = _re.compile(

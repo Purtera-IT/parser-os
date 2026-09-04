@@ -1640,6 +1640,108 @@ def enrich_vendor_line_items(atoms: list[Any]) -> int:
     return n
 
 
+_ADDRESS_TAIL_RE = re.compile(r"\b[A-Z]{2}\s+\d{4,5}(?:-\d{4})?\s*$|\b(?:Ave|Avenue|St|Street|Rd|Road|Blvd|Dr|Drive|Ln|Lane|Suite|Ste)\.?\b", re.I)
+_SIG_LABEL_ONLY_RE = re.compile(r"^\s*(?:(?:By|Name|Title|Date|Signature|Mailing Address)\s*:?\s*)+$", re.I)
+
+
+def demote_signatory_chrome(atoms: list[Any]) -> int:
+    """A signatory record names a person. A ``signatory`` atom whose text is a
+    date, a street address, a bare label row, or carries no name shape at all
+    is furniture from the signature page (live 010300 scanned PSOW: "Vernon
+    Hills, IL 6001", "200 N. Milwaukee Ave.", "Mar 6, 2025" each shipped as a
+    signer with that text as its name). Such atoms become deal_metadata
+    ``signature_chrome`` and leave the review queue; a merged signature block
+    (``signers`` present) is never touched. Returns the count retyped."""
+    changed = 0
+    for a in atoms:
+        if _atom_type_str(a) != "signatory":
+            continue
+        v = getattr(a, "value", None)
+        if isinstance(v, dict) and v.get("signers"):
+            continue
+        text = _atom_text(a).strip()
+        nm = str((v or {}).get("name") or "").strip() if isinstance(v, dict) else ""
+        has_name_shape = bool(_SIG_NAME_RE.match(nm)) or bool(
+            re.search(r"\b(?:Name|By)\s*:\s*[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}", text)
+        ) or bool(re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z]\.)?\s+[A-Z][a-z]+\s*\((?:Mar|Jan|Feb|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", text))
+        is_date = bool(_SIG_DATE_RE.fullmatch(text)) or bool(re.fullmatch(r"[\s|]*(?:%s)[\s|]*" % _SIG_DATE_RE.pattern, text, re.I))
+        is_address = bool(_ADDRESS_TAIL_RE.search(text)) and not has_name_shape
+        is_label = bool(_SIG_LABEL_ONLY_RE.match(text))
+        if not (is_date or is_address or is_label or not has_name_shape):
+            continue
+        try:
+            from app.core.schemas import AtomType, ReviewStatus
+
+            a.atom_type = AtomType.deal_metadata
+            a.review_status = ReviewStatus.auto_accepted
+        except Exception:
+            continue
+        if isinstance(v, dict):
+            v["kind"] = "signature_chrome"
+            v.pop("name", None)
+            v.pop("role", None)
+        try:
+            flags = list(getattr(a, "review_flags", None) or [])
+            if "signature_chrome_retyped" not in flags:
+                a.review_flags = flags + ["signature_chrome_retyped"]
+            a.entity_keys = [k for k in (getattr(a, "entity_keys", None) or []) if not str(k).startswith("stakeholder:")]
+        except Exception:
+            pass
+        changed += 1
+    return changed
+
+
+_PRODUCT_CODE_RE = re.compile(r"^(?=.*\d)(?=.*[A-Z])[A-Z0-9][A-Z0-9/.+-]*(?:[\s-]+[A-Z0-9][A-Z0-9/.+-]*){0,3}\s*$")
+
+
+def retype_product_codes(atoms: list[Any]) -> int:
+    """A short line that is only an alphanumeric code — letters AND digits,
+    hyphens, no lowercase words — is a product / model designation, wherever
+    the typer filed it ("MP58-WH-E2-TEAMS", "C9300-48P", live 010300: four
+    Yealink models shipped as deal_metadata and the BOM said zero devices).
+    Shape only: no catalogue. Retypes scope_item / deal_metadata /
+    deliverable / task atoms to ``bom_line`` with ``model`` set."""
+    changed = 0
+    for a in atoms:
+        if _atom_type_str(a) not in ("scope_item", "deal_metadata", "deliverable", "task", "entity"):
+            continue
+        text = re.sub(r"\s+", " ", _atom_text(a)).strip().strip("*•·-– ")
+        if not (4 <= len(text) <= 40) or not _PRODUCT_CODE_RE.match(text):
+            continue
+        # A date, a phone number, a ZIP or a "SOW 158279" is a word beside a
+        # number; a product code fuses letters and digits INSIDE a token
+        # ("MP58", "C9300", "E2") and carries at least two letters overall.
+        tokens = [t for t in re.split(r"[\s-]+", text) if t]
+        fused = any(re.search(r"[A-Z]", t) and re.search(r"\d", t) for t in tokens)
+        if not fused or len(re.findall(r"[A-Z]", text)) < 2 or len(re.findall(r"\d", text)) > 8:
+            continue
+        v = getattr(a, "value", None)
+        if isinstance(v, dict) and v.get("kind") in ("quoted_message_header", "image_marker", "binary_region_marker", "signature_chrome"):
+            continue
+        try:
+            from app.core.schemas import AtomType
+
+            a.atom_type = AtomType.bom_line
+        except Exception:
+            continue
+        if isinstance(v, dict):
+            v["kind"] = "bom_line"
+            v.setdefault("model", text)
+            v.setdefault("description", text)
+        try:
+            flags = list(getattr(a, "review_flags", None) or [])
+            if "product_code_retyped" not in flags:
+                a.review_flags = flags + ["product_code_retyped"]
+            slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+            keys = list(getattr(a, "entity_keys", None) or [])
+            if slug and f"device:{slug}" not in keys:
+                a.entity_keys = keys + [f"device:{slug}"]
+        except Exception:
+            pass
+        changed += 1
+    return changed
+
+
 def apply_type_sanity(
     atoms: list[Any],
     *,
@@ -1661,6 +1763,8 @@ def apply_type_sanity(
     demoted = demote_nondeliverable_quantities(atoms)
     demoted += strip_document_chrome(atoms)
     demoted += merge_signature_rows(atoms)
+    demoted += demote_signatory_chrome(atoms)
+    demoted += retype_product_codes(atoms)
     demoted += enrich_vendor_line_items(atoms)
     demoted += demote_exclusions_without_negation(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)

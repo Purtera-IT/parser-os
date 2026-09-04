@@ -952,3 +952,120 @@ def test_a_sentence_of_necessity_is_not_banter():
     banter = _line("It was good talking with you today.")
     kept, dropped = drop_email_non_scope([need, banter])
     assert kept == [need] and dropped == [banter]
+
+
+# ───────────────────── round 23: fresh-envelope residuals ─────────────────────
+
+
+def test_signature_page_furniture_is_not_a_signer():
+    """Scanned PSOW: 'Vernon Hills, IL 6001', '200 N. Milwaukee Ave.', 'Mar 6, 2025'
+    each shipped as a signatory with that text as its name."""
+    from app.core.atom_type_sanity import demote_signatory_chrome
+
+    rows = [
+        _atom(AtomType.signatory, "Vernon Hills, IL 6001", kind="paragraph", name="Vernon Hills, IL 6001"),
+        _atom(AtomType.signatory, "200 N. Milwaukee Ave.", kind="paragraph", name="200 N. Milwaukee Ave."),
+        _atom(AtomType.signatory, "Mar 6, 2025", kind="paragraph", name="Mar 6, 2025"),
+        _atom(AtomType.signatory, "Name: Samantha Ojeda", kind="paragraph", name="Samantha Ojeda", role="Authorized Representative"),
+        _atom(AtomType.signatory, "CDW Technologies LLC: Mike Murphy, Professional Services Manager", kind="signature_block", name="Mike Murphy", signers=[{"party": "CDW Technologies LLC", "name": "Mike Murphy"}]),
+    ]
+    assert demote_signatory_chrome(rows) == 3
+    assert [a.atom_type for a in rows[:3]] == [AtomType.deal_metadata] * 3
+    assert all(a.review_status == ReviewStatus.auto_accepted and a.value["kind"] == "signature_chrome" for a in rows[:3])
+    assert rows[3].atom_type == AtomType.signatory and rows[4].atom_type == AtomType.signatory
+
+
+def test_product_codes_become_bom_lines():
+    """Four Yealink models parsed as bullets and were filed as deal_metadata;
+    the BOM said zero devices. Letters + digits + hyphens, no words: a model."""
+    from app.core.atom_type_sanity import retype_product_codes
+
+    rows = [
+        _atom(AtomType.deal_metadata, "MP58-WH-E2-TEAMS", kind="bullet"),
+        _atom(AtomType.scope_item, "MPS6-E2-TEAMS", kind="bullet"),
+        _atom(AtomType.deliverable, "C9300-48P", kind="bullet"),
+        _atom(AtomType.scope_item, "Switch", kind="bullet"),
+        _atom(AtomType.deal_metadata, "Mar 26, 2025", kind="paragraph"),
+        _atom(AtomType.deal_metadata, "SOW 158279", kind="paragraph"),
+        _atom(AtomType.scope_item, "Install 24 access points", kind="bullet"),
+    ]
+    assert retype_product_codes(rows) == 3
+    assert [a.atom_type for a in rows[:3]] == [AtomType.bom_line] * 3
+    assert rows[0].value["model"] == "MP58-WH-E2-TEAMS" and "device:mp58_wh_e2_teams" in rows[0].entity_keys
+    assert [a.atom_type for a in rows[3:]] == [AtomType.scope_item, AtomType.deal_metadata, AtomType.deal_metadata, AtomType.scope_item]
+
+
+def test_all_caps_organisation_is_not_a_person():
+    from app.core.atom_substance_gate import drop_contextless_stakeholders
+
+    org = _atom(AtomType.stakeholder, "DENTISTRY FOR CHILDREN +1 (847) 9689740", kind="person", name="DENTISTRY FOR CHILDREN", role="Customer", phone="+1 (847) 9689740")
+    person = _atom(AtomType.stakeholder, "Carl Painter | Sr. Account Manager | carlpai@cdw.com", kind="person", name="Carl Painter", role="Sr. Account Manager", email="carlpai@cdw.com")
+    caps_person = _atom(AtomType.stakeholder, "JOHN SMITH | Project Manager | js@x.com", kind="person", name="JOHN SMITH", role="Project Manager", email="js@x.com")
+    kept, dropped = drop_contextless_stakeholders([org, person, caps_person])
+    assert dropped == [org]
+    assert kept == [person, caps_person]
+
+
+def test_same_person_two_records_one_typo_fold_and_keep_every_field():
+    """'Nisha Ngyuen Project Manager Networking' (a colleague's typo, has the
+    title) and 'Nisha Nguyen <nisha.nguyen@cdw.com>' (has the address) are one
+    person; the survivor must carry both the title and the address."""
+    from app.core.semantic_dedup import _fold_bare_name_variants, _near_surname
+
+    assert _near_surname("ngyuen", "nguyen") and _near_surname("donnelly", "donnely") and not _near_surname("sharp", "shark") and not _near_surname("lee", "leo")
+    a = _atom(AtomType.stakeholder, "Nisha Ngyuen Project Manager Networking", kind="person", name="Nisha Ngyuen", role="Project Manager Networking")
+    b = _atom(AtomType.stakeholder, "Nisha Nguyen | nisha.nguyen@cdw.com", kind="person", name="Nisha Nguyen", email="nisha.nguyen@cdw.com")
+    c = _atom(AtomType.stakeholder, "Rhonda Sharp Professional Services Manager", kind="person", name="Rhonda Sharp", role="Professional Services Manager")
+    d = _atom(AtomType.stakeholder, "Rhonda Sharp | rhonda.sharp@cdw.com", kind="person", name="Rhonda Sharp", email="rhonda.sharp@cdw.com")
+    out = _fold_bare_name_variants([a, b, c, d])
+    people = {x.value["name"]: x.value for x in out}
+    assert set(people) == {"Nisha Nguyen", "Rhonda Sharp"}, list(people)
+    assert people["Nisha Nguyen"]["email"] == "nisha.nguyen@cdw.com" and people["Nisha Nguyen"]["role"] == "Project Manager Networking"
+    assert people["Rhonda Sharp"]["email"] == "rhonda.sharp@cdw.com" and people["Rhonda Sharp"]["role"] == "Professional Services Manager"
+
+
+def test_parties_from_defined_terms_in_the_opening_clause():
+    from app.core.document_parties import parties_from_page_text
+
+    text = (
+        "STATEMENT OF WORK\n"
+        "This statement of work is made and entered into by and between the undersigned, CDW Technologies LLC (“Buyer”) and NewBold\n"
+        "LLC (“Provider”, “Seller” and “we”). Services performed by Provider hereunder may benefit DENTISTRY FOR\n"
+        "CHILDREN (“Customer”), a customer of Buyer or of Buyer's Affiliate.\n"
+    )
+    roles = parties_from_page_text(text)
+    assert roles == {"buyer": "CDW Technologies LLC", "provider": "NewBold LLC", "customer": "DENTISTRY FOR CHILDREN"}, roles
+    # A header cell that runs into the next column loses the contact tail.
+    hdr = "Customer Name:                 DENTISTRY FOR CHILDREN                           +1 (847) 9689740\nProvider Name:                 NewBold LLC FKA NewBold Corporation              carlpai@cdw.com\n"
+    r2 = parties_from_page_text(hdr)
+    assert r2["customer"] == "DENTISTRY FOR CHILDREN" and r2["provider"] == "NewBold LLC FKA NewBold Corporation"
+
+
+def test_inline_labelled_note_becomes_one_atom_per_field(tmp_path):
+    """Live 010297: the whole note ('Address: … Duration: … Scope of work: …')
+    was one physical_site whose address was the entire text."""
+    from app.parsers.hubspot_note_parser import HubspotNoteParser
+
+    p = tmp_path / "010298-hs-note-1-Address_.txt"
+    p.write_text(
+        "HubSpot Note: Address:\nHubSpot Note ID: 1\nDate: 2026-09-03T12:19:53.957Z\nAuthor: Trent Torrence\nAuthor-Email: t@purtera-it.com\n\n"
+        "Address: 5 6 7 &amp; 8 FLR RMZ Eco World SEZ Campus 4A/4B, Sarjapur Marathahalli, Outer Ring Road Shell Business Operations-Bangalore "
+        "Date | Time: When you can accommodate Duration: Approximately 1 week Tech/Engineer: 1 Implementation Specialist "
+        "Scope of work: Verification of equipment, rack positioning, leveling, and grounding, installation of PDUs and pre-configured devices, structured cabling, power-up, and daily reporting with photographic documentation.\n",
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("p", "a", p)
+    by_type = {}
+    for a in atoms:
+        by_type.setdefault(a.atom_type, []).append(a)
+    site = by_type[AtomType.physical_site][0]
+    assert site.value["address"].startswith("5 6 7 & 8 FLR RMZ Eco World SEZ Campus")
+    # The facility is a capitalised run inside the address, never the floor
+    # numbers and never a neighbouring field.
+    assert site.value["name"] in ("RMZ Eco World SEZ Campus", "Outer Ring Road Shell Business Operations-Bangalore")
+    assert "Duration" not in site.value["address"]
+    assert any(a.value.get("field_name") == "Duration" for a in by_type[AtomType.constraint])
+    assert any(a.value.get("field_name") == "Tech/Engineer" for a in by_type[AtomType.requirement])
+    items = [a.raw_text for a in by_type[AtomType.scope_item] if a.value.get("kind") == "note_field_item"]
+    assert "rack positioning" in items and "structured cabling" in items and "daily reporting with photographic documentation" in items
+    assert not any("&amp;" in a.raw_text for a in atoms)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from app.core.textio import read_text
 
+import html as _html
 import re
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,74 @@ _INSTRUCTION_RE = re.compile(
 )
 
 
+#: A field label inside running text: one to four capitalised words (a
+#: "|"-joined pair like "Date | Time" or a slash pair like "Tech/Engineer"
+#: counts as one), followed by a colon and a space. The shape, not the words.
+_INLINE_LABEL_RE = re.compile(
+    r"(?:(?<=^)|(?<=[\s.;]))(?P<label>[A-Z][A-Za-z/&]*(?:\s*\|\s*[A-Z][A-Za-z/&]*)?(?:\s+[A-Za-z][A-Za-z/&]*){0,2})\s*:\s+(?=\S)"
+)
+_TIME_UNIT_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|days?|weeks?|wks?|months?|minutes?|mins?)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|a|an)\s+(?:hour|day|week|month)s?\b", re.I)
+_COUNT_ROLE_RE = re.compile(r"^\s*\d+\s+[A-Z][A-Za-z]+(?:\s+[A-Za-z]+){0,3}\s*$")
+
+
+def _split_inline_fields(body: str) -> list[tuple[str, str]]:
+    """'Address: X Date | Time: Y Duration: Z' -> [(Address, X), (Date | Time, Y), (Duration, Z)].
+    Requires two or more labels; otherwise the body is prose and is left alone."""
+    text = " ".join(str(body or "").split())
+    marks = list(_INLINE_LABEL_RE.finditer(text))
+    if len(marks) < 2:
+        return []
+    out: list[tuple[str, str]] = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        label = " ".join(m.group("label").split())
+        value = text[m.end():end].strip(" ;,")
+        out.append((label, value))
+    return out
+
+
+def _split_list_value(value: str) -> list[str]:
+    parts = [p.strip(" .;") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+(?=[a-z])", value) if p.strip(" .;")]
+    return [p for p in parts if len(re.sub(r"[^A-Za-z0-9]", "", p)) >= 3]
+
+
+def _field_value_shape(value: str) -> str:
+    v = value.strip()
+    if v.endswith("?"):
+        return "question"
+    if re.search(r"\b\d{1,5}[A-Za-z]?(?:/\d+[A-Za-z]?)?\b", v) and re.search(r"\b(?:[A-Z]{2,}|[A-Z][a-z]+)\b.*\b(?:[A-Z][a-z]+|[A-Z]{2,})\b", v) and (
+        re.search(r"\b(?:FLR|Floor|Suite|Ste|Campus|Road|Rd|Street|St|Avenue|Ave|Park|Tower|Building|Bldg|Plaza|Drive|Dr|Lane|Ln|Blvd|Highway|Hwy)\b", v, re.I)
+        or re.search(r"\b[A-Z]{2}\s+\d{5}\b", v)
+        or v.count(",") >= 2 and len(v.split()) >= 6 and not re.search(r"\b(?:of|and|the|with|for)\b", v.split(",")[0], re.I)
+    ):
+        return "address"
+    if _COUNT_ROLE_RE.match(v):
+        return "staffing"
+    if _TIME_UNIT_RE.search(v) and len(v.split()) <= 8:
+        return "duration"
+    if len(_split_list_value(v)) >= 3:
+        return "list"
+    return "other"
+
+
+def _address_facility(value: str) -> str:
+    """The named place inside an address: the comma segment with the most
+    capitalised words that is not the street number line."""
+    best = ""
+    for seg in value.split(","):
+        run: list[str] = []
+        for w in seg.split():
+            if w[:1].isupper() and re.fullmatch(r"[A-Za-z&'.-]+", w):
+                run.append(w)
+            else:
+                if len(" ".join(run)) > len(best):
+                    best = " ".join(run)
+                run = []
+        if len(" ".join(run)) > len(best):
+            best = " ".join(run)
+    return best[:80]
+
+
 def is_hubspot_note_path(path: Path, sample_text: str | None = None) -> bool:
     name = path.name.lower()
     if _HS_NOTE_FILENAME_RE.search(name):
@@ -102,6 +171,9 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
     header-less shape up front and treat the content directly as the body,
     keeping the first line as the title.
     """
+    # HubSpot exports notes with HTML entities ("5 6 7 &amp; 8 FLR", live
+    # 010297); the text is what the author typed, not its encoding.
+    raw = _html.unescape(raw or "")
     lines = [ln.rstrip() for ln in (raw or "").splitlines()]
     if not _HS_NOTE_HEADER_RE.search(raw or ""):
         non_empty = [ln.strip() for ln in lines if ln.strip()]
@@ -342,6 +414,74 @@ class HubspotNoteParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    def _atoms_for_note_field(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        label: str,
+        value: str,
+        note_id: str,
+        title: str,
+        author: str,
+        author_email: str,
+        affiliation: str,
+        source_ref: SourceRef,
+    ) -> list[EvidenceAtom]:
+        """One field of an inline-labelled note -> atoms typed by the VALUE's
+        shape (never by the label's words): an address shape is a site, a
+        number with a time unit is a duration constraint, a count with a
+        capitalised role is staffing, a comma list of three or more phrases is
+        scope (one item each, plus the whole), anything else a labelled fact."""
+        out: list[EvidenceAtom] = []
+        base = {
+            "kind": "note_field", "field_name": label, "hubspot_note_id": note_id,
+            "title": title, "source": "hubspot_note", "author": author,
+            "author_email": author_email, "author_affiliation": affiliation,
+        }
+        text = f"{label}: {value}"
+        shape = _field_value_shape(value)
+        if shape == "address":
+            slug = re.sub(r"[^a-z0-9]+", "_", _address_facility(value).lower()).strip("_") or re.sub(r"[^a-z0-9]+", "_", value.lower())[:40].strip("_")
+            out.append(self._mint_atom(
+                project_id=project_id, artifact_id=artifact_id, filename=filename,
+                atom_type=AtomType.physical_site, text=text,
+                value={**base, "kind": "physical_site", "id": slug, "site_id": slug,
+                       "name": _address_facility(value), "facility_name": _address_facility(value),
+                       "address": value, "street_address": value, "inferred": False},
+                source_ref=source_ref, confidence=0.86, entity_keys=[f"site:{slug}"],
+                review_flags=["hubspot_note_physical_site"], author_affiliation=affiliation,
+            ))
+            return out
+        if shape == "list":
+            out.append(self._mint_atom(
+                project_id=project_id, artifact_id=artifact_id, filename=filename,
+                atom_type=AtomType.scope_item, text=text, value={**base, "items": _split_list_value(value)},
+                source_ref=source_ref, confidence=0.84, review_flags=["hubspot_note_training_row"],
+                author_affiliation=affiliation,
+            ))
+            for item in _split_list_value(value):
+                out.append(self._mint_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=filename,
+                    atom_type=AtomType.scope_item, text=item,
+                    value={**base, "kind": "note_field_item", "parent_field": label},
+                    source_ref=source_ref, confidence=0.82, author_affiliation=affiliation,
+                ))
+            return out
+        atom_type = {
+            "duration": AtomType.constraint,
+            "staffing": AtomType.requirement,
+            "question": AtomType.open_question,
+        }.get(shape, AtomType.deal_metadata)
+        out.append(self._mint_atom(
+            project_id=project_id, artifact_id=artifact_id, filename=filename,
+            atom_type=atom_type, text=text, value={**base, "shape": shape, "value": value},
+            source_ref=source_ref, confidence=0.84 if shape != "other" else 0.8,
+            author_affiliation=affiliation,
+        ))
+        return out
+
     def _atoms_from_note(
         self,
         *,
@@ -396,6 +536,28 @@ class HubspotNoteParser(BaseParser):
                     author_affiliation=affiliation,
                 )
             )
+
+        # A note typed as a run of "Label: value" fields on one line ("Address:
+        # ... Date | Time: ... Duration: ... Tech/Engineer: ... Scope of work:
+        # ...", live 010297) is a form, not a sentence: one atom per field, or
+        # the whole note becomes a single "site" whose address is the entire
+        # text and the scope inside it is never seen.
+        fields = _split_inline_fields(body) if body else []
+        if len(fields) >= 2:
+            for f_label, f_value in fields:
+                if not f_value:
+                    continue
+                atoms.extend(
+                    self._atoms_for_note_field(
+                        project_id=project_id, artifact_id=artifact_id, filename=filename,
+                        label=f_label, value=f_value, note_id=note_id, title=title,
+                        author=author, author_email=author_email, affiliation=affiliation,
+                        source_ref=source_ref,
+                    )
+                )
+            if train_rows:
+                log_rows(train_rows)
+            return atoms
 
         if (
             body and title

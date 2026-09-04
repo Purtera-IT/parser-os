@@ -33,6 +33,37 @@ _ROLE_LABEL_RE = re.compile(
     r"(?:^|\|)\s*(?:col_\d+:\s*)?(?:[A-Za-z ]{0,20}\s)?(?P<role>" + "|".join(_ROLES) + r")(?:\s*name)?\s*:\s*(?P<val>[^|]*)",
     re.I,
 )
+# The defined-term shape every contract opens with: 'CDW Technologies LLC
+# ("Buyer") and NewBold LLC ("Provider", "Seller" and "we")'. The party is the
+# capitalised run just before the bracket; the role is the quoted term inside
+# it. Live 010300 scanned PSOW: the header table's labels did not survive OCR,
+# but this sentence did, and it names all three parties.
+_DEFINED_TERM_RE = re.compile(
+    r"(?P<val>[A-Z][A-Za-z0-9&.'\-]*(?:[ ,]+[A-Z][A-Za-z0-9&.'\-]*){0,6})\s*\(\s*(?:the\s+)?[“\"']\s*"
+    r"(?P<role>(?i:" + "|".join(_ROLES) + r"))\s*[”\"']",
+)
+_CONTACT_TAIL_RE = re.compile(r"\s*(?:\+?\d[\d\s().-]{6,}\d|\S+@\S+|\+\d+)\s*$")
+
+
+def _defined_term_roles(text: str) -> dict[str, str]:
+    """Roles -> party names from '<Party> ("Role"' definitions in running text.
+    Lines are unwrapped first: the party and its bracket often straddle a
+    line break ('... and NewBold' / 'LLC ("Provider", ...')."""
+    flat = " ".join(str(text or "").split())
+    roles: dict[str, str] = {}
+    for m in _DEFINED_TERM_RE.finditer(flat):
+        role = m.group("role").lower()
+        val = m.group("val").strip(" ,")
+        # The run may start earlier than the name ("the undersigned, CDW ..."):
+        # keep the part after the last comma-separated lowercase lead-in.
+        if not val or not val[:1].isupper():
+            continue
+        if len(val) < 2 or len(val.split()) > 8:
+            continue
+        roles.setdefault(role, val)
+    return roles
+
+
 _PROVIDER_LIKE = {"provider", "seller", "vendor", "contractor", "subcontractor", "supplier", "reseller"}
 _CUSTOMER_LIKE = {"customer", "client", "buyer"}
 
@@ -60,6 +91,14 @@ def _clean_party(val: str) -> str:
         v = v.rsplit(":", 1)[1].strip()
     # "NewBold c." / "D4C a. The Customer-designated…" -> first clause
     v = re.split(r"\s+[a-z][.)]\s|\s+\(|\.\s", v)[0].strip()
+    # A header cell often runs into the next column ("DENTISTRY FOR CHILDREN
+    # +1 (847) 9689740", "NewBold LLC FKA NewBold Corporation carlpai@cdw.com"):
+    # a party name never ends in a phone number or an address.
+    for _ in range(2):
+        v2 = _CONTACT_TAIL_RE.sub("", v).strip(" ,;")
+        if v2 == v:
+            break
+        v = v2
     return v[:80]
 
 
@@ -88,6 +127,8 @@ def parties_for_document(atoms: list[dict[str, Any]]) -> dict[str, Any]:
             if len(val) < 2 or len(val.split()) > 8:
                 continue
             roles.setdefault(role, val)
+        for role, val in _defined_term_roles(t).items():
+            roles.setdefault(role, val)
     return {"roles": roles, "signers": signers}
 
 
@@ -103,6 +144,8 @@ def parties_from_page_text(text: str) -> dict[str, str]:
             val = _clean_party(raw_val)
             if 2 <= len(val) and len(val.split()) <= 8:
                 roles.setdefault(role, val)
+    for role, val in _defined_term_roles(" ".join(str(text or "").splitlines()[:60])).items():
+        roles.setdefault(role, val)
     return roles
 
 
