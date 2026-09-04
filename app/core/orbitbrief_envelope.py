@@ -625,6 +625,27 @@ def build_orbitbrief_envelope(
     except Exception:
         pass
 
+    # The site ENTITY is what the Files page prints ("2970 brandywine rd ste
+    # 200" — the slug, lower-cased). Name it the way the row above does:
+    # facility, street, city/state/ZIP, with the facility and street as its
+    # aliases. Same site, readable label.
+    try:
+        _rows_by_key = {r.get("site"): r for r in ((envelope.get("site_readiness") or {}).get("sites") or []) if r.get("site")}
+        for _ent in envelope.get("entities") or []:
+            if not isinstance(_ent, dict) or str(_ent.get("entity_type") or "") not in ("site", "physical_site"):
+                continue
+            _row = _rows_by_key.get(_ent.get("canonical_key"))
+            if not _row or not _row.get("display_name"):
+                continue
+            _ent["canonical_name"] = _row["display_name"]
+            _al = [x for x in (str(_row.get("facility_name") or "").strip(), str(_row.get("street_address") or _row.get("address") or "").strip()) if x]
+            for _x in (_ent.get("aliases") or []):
+                if _x and _x not in _al and not str(_x).startswith("site:"):
+                    _al.append(_x)
+            _ent["aliases"] = _al[:3]
+    except Exception:
+        pass
+
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
 
     # Deal header / financials / BOM — PM-facing assembly of the
