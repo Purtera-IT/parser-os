@@ -137,6 +137,7 @@ ASSUMPTION_PATTERNS = [r"\bassum(?:e|ption|ing)\b"]
 
 def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, Any]:
     from app.core.address_parse import enrich_location_fields
+    from app.parsers.site_roster_extractor import source_row_binding
 
     # ``site_row.city`` / ``.state`` already carry the GUESS-FREE split of any
     # combined City/State cell (see site_roster_extractor). Re-feeding the raw
@@ -173,6 +174,12 @@ def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, A
         "zip": loc["zip"] or site_row.zip,
         "notes": site_row.notes,
         "extras": dict(site_row.extra_fields),
+        # The row this atom was minted from, capped and in column order, so a
+        # provenance claim about the atom is decidable from the atom alone.
+        # ``raw_cells``/``row_index`` are the keys semantic_dedup whitelists
+        # for physical_site values; anything else is stripped before the
+        # envelope.
+        **source_row_binding(site_row),
     }
 
 

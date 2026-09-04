@@ -50,6 +50,7 @@ from app.core.schemas import (
     EvidencePacket,
     SourceRef,
 )
+from app.parsers.site_roster_extractor import capped_source_row
 from app.parsers.structured_projection import (
     DERIVED_DIR_SUFFIX,
     STRUCTURED_FILENAME,
@@ -2592,6 +2593,27 @@ def _build_indexes(
     }
 
 
+def _compact_structured(value: Any) -> dict[str, Any]:
+    """The atom's structured value as it ships, with the source row bounded.
+
+    A tabular atom carries the row it was minted from under ``raw_cells`` so
+    a provenance claim about it — "does this display name appear in its own
+    source?" — is decidable from the envelope alone rather than only by
+    re-reading the artifact. That row is capped at the minter, but a value
+    can also arrive here after ``semantic_dedup`` merged two atoms, which
+    concatenates list fields; this re-applies the SAME cap at serialization
+    so no merge path can grow the envelope without bound. Everything else on
+    the value is passed through untouched.
+    """
+    if not value:
+        return {}
+    out = dict(value)
+    raw_cells = out.get("raw_cells")
+    if isinstance(raw_cells, (list, tuple)) and raw_cells:
+        out["raw_cells"] = capped_source_row(raw_cells)
+    return out
+
+
 def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
     primary_ref = atom.source_refs[0] if atom.source_refs else None
     projected: dict[str, Any] = {
@@ -2612,7 +2634,7 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
         # regex over raw_text. Same data unlocks B2 (risk register),
         # B6 (per-site pricing rollup), etc.
         "entity_keys": list(atom.entity_keys),
-        "structured": dict(atom.value) if atom.value else {},
+        "structured": _compact_structured(atom.value),
         # Per-atom trust signal: the calibrated probability + the accept/
         # needs_review verdict. Previously dropped on projection, so every
         # consumer (PM-chip "unsure" gate, truth_gate, auto-accept) read null
