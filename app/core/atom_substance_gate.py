@@ -367,7 +367,13 @@ def _retype_sentence(atom: Any, text: str) -> bool:
     will appoint / is responsible / shall provide" clause is in any document —
     and say so on the atom. Returns True when retyped."""
     words = [w for w in re.split(r"\s+", (text or "").strip()) if w]
-    if len(words) < 8 or not _SENTENCE_END_RE.search(text or ""):
+    if len(words) < 8:
+        return False
+    # A short text must end like a sentence; a long one is content whether or
+    # not its tail survived (the live 010300 clause reached the gate cut at
+    # 498 characters, "...shall be authorized to", and was dropped for the
+    # missing full stop).
+    if len(words) < 15 and not _SENTENCE_END_RE.search(text or ""):
         return False
     try:
         from app.core.schemas import AtomType
