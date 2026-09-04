@@ -535,6 +535,9 @@ def test_document_header_date_is_read_from_a_date_label_on_page_one():
     page = "STATEMENT OF WORK\nProject Name: D4C Site Assessment\nCustomer Name: DENTISTRY FOR CHILDREN\nDate:                          March 21, 2025\nThis statement of work ... dated the 15th day of October, 2024."
     assert _document_header_date([], page) == "2025-03-21"
     assert _document_header_date([], "Drafted By: Sasha Beard\nMSA dated the 15th day of October, 2024.") is None
+    # a scanned header whose "Date:" label OCR'd as "foe:" but whose value stands alone on its header line
+    scanned = "D4C Teams Phone Implementation Onsite Support | Seller Representative:\nProject\nName:\nv2\nCarl Painter\nDENTISTRY FOR CHILDREN\n+1 (847) 9689740\n|ProviderName:|NewBold LLC FKA NewBold Corporation\ncarlpai@edw.com\nCDW Technologies LLC\nDrafted By:\nfoe:\nMarch 05, 2025\nRyan Adamski\nThis statement of work (\"Statement of Work\" or \"SOW\") is made and entered into on the date this SOW is signed by both\nparties (the \"SOW Effective Date\") ... dated the 15th day of October, 2024."
+    assert _document_header_date([], scanned) == "2025-03-05"
 
 
 # --- Y-01/Y-03/Y-05 end to end through the email parser ----------------------

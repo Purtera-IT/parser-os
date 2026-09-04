@@ -908,6 +908,14 @@ def _page_one_text(project_dir: Any, filename: str) -> str:
                 with fitz.open(str(cand)) as doc:
                     if len(doc):
                         text = doc[0].get_text() or ""
+                        if len(text.strip()) < 40:
+                            # No text layer (a scanned PSOW): read the page the
+                            # way the parser does, at OCR resolution.
+                            try:
+                                from app.parsers._ocr_chain import ocr_pdf_page
+                                text = str((ocr_pdf_page(doc[0]) or {}).get("text") or "")
+                            except Exception:
+                                pass
     except Exception:
         text = ""
     _PAGE_ONE_TEXT_CACHE[key] = text
@@ -942,6 +950,20 @@ def _document_header_date(artifact_atoms: list[Any], page_text: str | None = Non
                 iso = dt.strftime("%Y-%m-%d")
                 if best is None or iso < best:
                     best = iso
+        if best is None:
+            # No readable label (OCR turned "Date:" into "foe:" on a scanned
+            # PSOW) but the header BLOCK -- the first lines, before the body
+            # prose -- holds exactly one full date standing on its own line.
+            # A header field's value is the date the document states.
+            head_lines = [ln.strip() for ln in page_text.splitlines()[:24]]
+            own = [ln for ln in head_lines if _DATE_VALUE_RE.fullmatch(ln)]
+            if len(own) == 1:
+                try:
+                    dt = _dp.parse(own[0], fuzzy=True, default=datetime(1900, 1, 1))
+                    if 1990 <= dt.year <= 2100:
+                        best = dt.strftime("%Y-%m-%d")
+                except Exception:
+                    pass
     for a in artifact_atoms or []:
         refs = getattr(a, "source_refs", None) or []
         loc = getattr(refs[0], "locator", None) if refs else None
