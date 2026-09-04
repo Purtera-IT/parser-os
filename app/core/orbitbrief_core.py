@@ -1126,7 +1126,9 @@ def build_scope_truth(
     by_key: dict[tuple[str, str], list[EvidenceAtom]] = defaultdict(list)
     for atom in atoms:
         atom_type = _atom_type_str(atom)
-        if atom_type not in ("quantity", "scope_item", "vendor_line_item", "constraint", "site_roster"):
+        # A bom_line IS a device claim (live 010300: three Yealink models as
+        # bom_line atoms and "0 device categories" on the SOW draft).
+        if atom_type not in ("quantity", "scope_item", "vendor_line_item", "constraint", "site_roster", "bom_line"):
             continue
         devices = {k for k in (atom.entity_keys or []) if k.startswith("device:") and k != "device:unknown"}
         sites = {k for k in (atom.entity_keys or []) if k.startswith("site:")}
@@ -1159,6 +1161,14 @@ def build_scope_truth(
                         qty = int(list(atom_qtys)[0].split(":", 1)[1])
                     except (ValueError, IndexError):
                         qty = None
+            if qty is None and _atom_type_str(atom) == "bom_line":
+                # A listed model with no count is at least one unit; the
+                # BOM's own quantity field wins when it carries one.
+                _bv = atom.value if isinstance(atom.value, dict) else {}
+                try:
+                    qty = int(_bv.get("quantity") or _bv.get("qty") or 1)
+                except (TypeError, ValueError):
+                    qty = 1
             if qty is None:
                 continue
             ac = atom.authority_class
@@ -1901,6 +1911,17 @@ def build_project_vitals(
 
     total = sum(c["contribution"] for c in components)
     score_100 = round(total * 100, 1)
+    # A deal with an open blocker (the site list for 169 locations missing,
+    # two PSOWs disagreeing on a fee) is not "minor gaps" whatever the
+    # weighted average says. Live 010300 read 79.7 / yellow with two
+    # blockers on the scorecard; the header must not outrank its own
+    # blockers.
+    _blockers = int((scorecard or {}).get("blocker_count") or 0)
+    _blocked = bool((scorecard or {}).get("blocked")) or _blockers > 0
+    capped_by_blockers = False
+    if _blocked and score_100 > 69.0:
+        score_100 = 69.0
+        capped_by_blockers = True
     if score_100 >= 90:
         band = "green"
     elif score_100 >= 75:
@@ -1923,6 +1944,8 @@ def build_project_vitals(
         "components": components,
         "top_drivers": top_drivers,
         "top_detractors": top_detractors,
+        "blocker_count": _blockers,
+        "capped_by_blockers": capped_by_blockers,
     }
 
 

@@ -2646,7 +2646,12 @@ class EmailParser(BaseParser):
         authority: AuthorityClass,
     ) -> list[EvidenceAtom]:
         atoms: list[EvidenceAtom] = []
-        confidence = 0.45 if authority == AuthorityClass.quoted_old_email else 0.86
+        # A quoted message is verbatim text with a verified receipt like any
+        # other; 0.45 put every sentence the customer wrote under the 0.50
+        # floor (live 010300: Carl's requirements flagged "low confidence"
+        # while NewBold's boilerplate sat at 0.88). Quoted authority still
+        # keeps them out of automatic acceptance.
+        confidence = 0.72 if authority == AuthorityClass.quoted_old_email else 0.86
 
         # People, read from the block's SIGNATURE clusters by shape (a name line
         # with an email/phone line near it), before the body lines are typed.

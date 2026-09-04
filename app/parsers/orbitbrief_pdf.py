@@ -1675,6 +1675,12 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             page_texts[page_index] = ocr_result["text"]
             page_text_lengths[page_index] = len(ocr_result["text"].strip())
             page_dict = _build_text_rich_page(page_index)
+            # The OCR text itself travels with the page so a live compile's
+            # reading of a scan can be diffed against the file (live 010300:
+            # one clause absent from an envelope with no way to see what the
+            # worker's tesseract had read).
+            page_dict["ocr_text"] = ocr_result["text"]
+            page_dict["ocr_backend"] = str(ocr_result.get("backend") or "")
             page_dict.setdefault("metadata", []).insert(
                 0,
                 f"[OCR-recovered via {ocr_result.get('backend','')} — "
@@ -2392,6 +2398,36 @@ def _atoms_for_sections(
         )
 
 
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])[\"”’)]*\s+(?=[A-Z(“\"])")
+_ABBREV_TAIL_RE = re.compile(r"\b(?:e\.g|i\.e|etc|vs|No|St|Ave|Rd|Dr|Mr|Mrs|Ms|Inc|Ltd|Corp|a\.m|p\.m)\.$", re.I)
+
+
+def _split_long_paragraph(text: str, *, min_chars: int = 600, min_sentences: int = 4) -> list[str]:
+    """Sentences of a paragraph long enough to hold several facts, or [] when
+    the paragraph should stay one atom. A split point is sentence-ending
+    punctuation followed by a capital; a decimal ("$93,583.25"), an
+    abbreviation ("a.m.", "No.") or a lowercase continuation never splits."""
+    t = " ".join((text or "").split())
+    if len(t) < min_chars:
+        return []
+    parts: list[str] = []
+    buf = ""
+    for piece in _SENTENCE_SPLIT_RE.split(t):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if buf and _ABBREV_TAIL_RE.search(buf):
+            buf = f"{buf} {piece}"
+            continue
+        if buf:
+            parts.append(buf)
+        buf = piece
+    if buf:
+        parts.append(buf)
+    parts = [p for p in parts if len(p) >= 12]
+    return parts if len(parts) >= min_sentences else []
+
+
 def _atoms_for_block(
     *,
     block: dict[str, Any],
@@ -2610,6 +2646,30 @@ def _atoms_for_block(
                 locator={**base_locator, "lead_in": (base_locator.get("lead_in") or []) + [it_title]},
                 value={"kind": "paragraph", "item_title": it_title},
             )
+            return
+        # A long paragraph is several facts, one per sentence. The Services
+        # Fees clause of live 010300 (2,000 characters: time-and-materials
+        # basis, the $93,583.25 estimate, 173 billable units, 150% and 200%
+        # multipliers, 4-hour and 8-hour minimums, a six-month rate hold) was
+        # one atom, so none of those figures existed downstream. Sentences
+        # keep the paragraph's locator plus their index; the split is by
+        # sentence boundary, not by any word.
+        sentences = _split_long_paragraph(text)
+        if sentences:
+            for s_idx, sent in enumerate(sentences):
+                s_type, s_auth = _classify_text_block(text=sent, section_path=section_path, kind="paragraph")
+                yield _make_atom(
+                    text=sent,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=s_type,
+                    authority_class=s_auth,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={**base_locator, "sentence_index": s_idx, "sentence_count": len(sentences)},
+                    value={"kind": "paragraph", "sentence_split": True},
+                )
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="paragraph")
         yield _make_atom(

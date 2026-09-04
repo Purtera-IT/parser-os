@@ -1310,3 +1310,84 @@ def test_a_sentence_typed_signatory_is_not_folded_into_the_signature_block():
     assert clause.atom_type == AtomType.contract_term and preamble.atom_type == AtomType.contract_term
     sig = [a for a in atoms if a.atom_type == AtomType.signatory]
     assert len(sig) == 1 and [s["name"] for s in sig[0].value["signers"]] == ["Mike Murphy", "Shelly Lewis"]
+
+
+# ───────────────────── round 28: pertinent facts and mistaken claims ─────────────────────
+
+
+def test_long_fee_paragraph_becomes_one_atom_per_sentence():
+    from app.parsers.orbitbrief_pdf import _split_long_paragraph
+
+    para = (
+        "Services Fees will be calculated on a TIME AND MATERIALS basis. The invoiced amount of Services Fees will equal the rate "
+        "applicable for a unit of a service or resource (“Unit Rate”) multiplied by the number of units being provided (“Billable Units”) "
+        "for each unit type provided by Seller (see Table below). Services Fees of $93,583.25 is merely an estimate and does not represent "
+        "a fixed fee. Neither the Billable Units of 173 nor the Services Fees are intended to limit the bounds of what may be requested or "
+        "required for performance of the Services. The rates presented in the table below apply to scheduled Services that are performed "
+        "during Standard Business Hours (meaning 8:00 a.m. to 5:00 p.m. local time, Monday through Friday, excluding holidays). When Provider "
+        "invoices for scheduled Services that are not performed during Standard Business Hours, Services Fees will be calculated at 150% of "
+        "the Unit Rates. For any unscheduled (i.e., emergency) Services performed at any time of the day, Services Fees will be calculated at "
+        "200% of the Unit Rates. Any Hourly Units will be measured in one (1) hour increments with a minimum of one (1) hour billed each day."
+    )
+    parts = _split_long_paragraph(para)
+    assert len(parts) >= 7, parts
+    assert parts[0] == "Services Fees will be calculated on a TIME AND MATERIALS basis."
+    assert any(p.startswith("Services Fees of $93,583.25") for p in parts)
+    assert any("150% of the Unit Rates" in p for p in parts) and any("200% of the Unit Rates" in p for p in parts)
+    # "8:00 a.m. to 5:00 p.m." and "(i.e., emergency)" never split a sentence
+    assert not any(p.endswith("a.m.") or p.startswith("m. to") or p.startswith("e., emergency") for p in parts)
+    assert _split_long_paragraph("Short paragraph. Two sentences.") == []
+
+
+def test_same_street_different_zip_across_documents_is_a_conflict():
+    from app.core.cross_document_conflicts import find_cross_document_conflicts
+
+    def _site(doc, zip_):
+        a = _atom(AtomType.physical_site, f"facility: HQ | address: 2970 Brandywine Rd, STE 200", kind="physical_site", name="HQ", street_address="2970 Brandywine Rd, STE 200", city="Atlanta", state="GA", zip=zip_)
+        a.artifact_id = doc
+        a.source_refs = [SourceRef(id=f"s{doc}", artifact_id=doc, artifact_type="pdf", filename=f"{doc}.pdf", locator={"page": 5}, extraction_method="t", parser_version="t")]
+        return a
+
+    qs = find_cross_document_conflicts([_site("signed", "30641"), _site("scan", "30341")], project_id="p")
+    assert len(qs) == 1 and "30641" in qs[0].raw_text and "30341" in qs[0].raw_text and "Brandywine" in qs[0].raw_text
+    assert find_cross_document_conflicts([_site("signed", "30641"), _site("scan", "30641")], project_id="p") == []
+
+
+def test_stakeholder_keys_without_a_person_are_scrubbed():
+    """'13 named stakeholders' for seven people: keys minted from titles and
+    phrases (account_executive, site_assessment) and a suffix variant
+    (carl_painter_jr) counted as people. A key must stand for a record."""
+    from app.core.orbitbrief_envelope import _scrub_unbacked_stakeholder_keys
+
+    carl = _atom(AtomType.stakeholder, "Carl Painter | Sr. Account Manager | carlpai@cdw.com", kind="person", name="Carl Painter", email="carlpai@cdw.com")
+    carl.entity_keys = ["stakeholder:carl_painter"]
+    sentence = _atom(AtomType.scope_item, "Carl Painter Jr, our Account Executive, will run the site assessment.", kind="bullet")
+    sentence.entity_keys = ["stakeholder:carl_painter_jr", "stakeholder:account_executive", "stakeholder:site_assessment", "site:hq"]
+    removed = _scrub_unbacked_stakeholder_keys([carl, sentence])
+    assert removed == 2
+    assert sentence.entity_keys == ["stakeholder:carl_painter_jr", "site:hq"]
+    assert carl.entity_keys == ["stakeholder:carl_painter"]
+
+
+def test_bom_lines_count_as_device_claims_in_scope_truth():
+    from app.core.orbitbrief_core import build_scope_truth
+
+    a = _atom(AtomType.bom_line, "MP58-WH-E2-TEAMS", kind="bom_line", model="MP58-WH-E2-TEAMS")
+    a.entity_keys = ["device:mp58_wh_e2_teams", "site:hq"]
+    b = _atom(AtomType.bom_line, "MP56-E2-TEAMS", kind="bom_line", model="MP56-E2-TEAMS", quantity=40)
+    b.entity_keys = ["device:mp56_e2_teams"]
+    truth = build_scope_truth(atoms=[a, b], edges=[])
+    devs = {d["device"]: d["canonical_quantity"] for d in truth["devices"]}
+    assert devs == {"device:mp58_wh_e2_teams": 1, "device:mp56_e2_teams": 40}, truth
+    assert truth["device_count"] == 2
+
+
+def test_project_vitals_cannot_outrank_open_blockers():
+    from app.core.orbitbrief_core import build_project_vitals
+
+    good = {"readiness_score": 0.95, "blocked": True, "blocker_count": 2}
+    v = build_project_vitals(atoms=[], edges=[], packets=[], scorecard=good, checklist={"coverage": 0.9}, site_readiness={"avg_readiness": 0.9}, stakeholder_load={"bottlenecks": []}, scope_truth={"contested_count": 0})
+    assert v["score_100"] <= 69.0 and v["band"] == "orange" and v["capped_by_blockers"] is True
+    clear = {"readiness_score": 0.95, "blocked": False, "blocker_count": 0}
+    v2 = build_project_vitals(atoms=[], edges=[], packets=[], scorecard=clear, checklist={"coverage": 0.9}, site_readiness={"avg_readiness": 0.9}, stakeholder_load={"bottlenecks": []}, scope_truth={"contested_count": 0})
+    assert v2["score_100"] > 69.0 and v2["capped_by_blockers"] is False

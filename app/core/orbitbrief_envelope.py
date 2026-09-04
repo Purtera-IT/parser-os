@@ -319,6 +319,18 @@ def build_orbitbrief_envelope(
     crm = _load_manifest_crm(project_dir)
     if crm:
         summary["crm"] = crm
+        # The deal is called what the CRM calls it. File-name prefixes
+        # ("010301-hs-email-…") and the Purpulse project id ("010298") are
+        # not the deal number (live 010300 was described as "deal 010301";
+        # 010297 as "Deal 010298").
+        _deal_name = str(crm.get("deal_name") or "").strip()
+        if _deal_name:
+            summary["deal_label"] = _deal_name
+            import re as _re_dn
+
+            _m = _re_dn.match(r"\s*(\d{4,8})\s*[-–—]", _deal_name)
+            if _m:
+                summary["deal_number"] = _m.group(1)
     foreign = _foreign_artifacts(crm=crm, documents=documents)
     if foreign:
         summary["foreign_artifacts"] = foreign
@@ -374,6 +386,13 @@ def build_orbitbrief_envelope(
     # the downstream LLM synthesis layer (and the PM cockpit) can render
     # the Monday-morning view, the SOW-readiness scorecard, and the
     # required-fields checklist directly without re-scanning atoms.
+    # A stakeholder KEY must stand for a stakeholder RECORD. The sentence-level
+    # key emitter mints keys from titles and phrases ("stakeholder:account_executive",
+    # "stakeholder:site_assessment", "stakeholder:carl_painter_jr" beside
+    # "carl_painter"), and every roll-up below counted them as people (live
+    # 010300: "13 named stakeholders" for 7). Keys with no person behind them
+    # are removed before anything is counted.
+    _scrubbed_keys = _scrub_unbacked_stakeholder_keys(atoms)
     envelope["pm_dashboard"] = build_pm_dashboard(
         atoms=atoms, packets=packets, edges=edges, entities=entities,
     )
@@ -583,6 +602,28 @@ def build_orbitbrief_envelope(
             "site display-name recovery failed: %s", _naming_exc
         )
 
+    # One readable label per site: the facility, then its street and
+    # city/state/ZIP. Consumers that glue slug and street together render
+    # "2970 Brandywine RD STE 200 - 2970 Brandywine Rd" (live 010300); the
+    # envelope now says "HQ — 2970 Brandywine Rd, STE 200, Atlanta, GA 30641".
+    try:
+        for _row in ((envelope.get("site_readiness") or {}).get("sites") or []):
+            _fac = str(_row.get("facility_name") or "").strip()
+            _street = str(_row.get("street_address") or _row.get("address") or "").strip()
+            _loc = ", ".join(p for p in (
+                str(_row.get("city") or "").strip(),
+                " ".join(q for q in (str(_row.get("state") or "").strip(), str(_row.get("zip") or "").strip()) if q),
+            ) if p)
+            _place = ", ".join(p for p in (_street, _loc) if p)
+            if _fac and _place and _fac.lower() not in _place.lower():
+                _row["display_name"] = f"{_fac} — {_place}"
+            elif _place:
+                _row["display_name"] = _place
+            elif _fac:
+                _row["display_name"] = _fac
+    except Exception:
+        pass
+
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
 
     # Deal header / financials / BOM — PM-facing assembly of the
@@ -659,6 +700,20 @@ def build_orbitbrief_envelope(
             if str(d.get("filename") or "").lower().endswith(".pdf")
         }
         annotate_document_parties(documents, envelope, _page_texts)
+        # Money read from a third party's document is that party's estimate,
+        # not this deal's price. Live 010300: the SOW draft headlined "$97,533
+        # deal" from NewBold's $93,583.25 estimate plus its rate rows; no
+        # Purtera figure exists in the folder. The financials say whose the
+        # figures are so a consumer cannot present them as ours.
+        _third_docs = [d for d in documents if d.get("third_party_terms")]
+        _fin = envelope.get("deal_financials")
+        if isinstance(_fin, dict) and _third_docs:
+            _owners = sorted({str(d.get("terms_owner") or "") for d in _third_docs if d.get("terms_owner")})
+            _all_third = all(d.get("third_party_terms") for d in documents if str(d.get("artifact_type") or "") in ("pdf", "docx", "xlsx"))
+            _fin["third_party_estimate"] = bool(_all_third)
+            _fin["terms_owners"] = _owners
+            if _all_third:
+                _fin["headline"] = f"{_owners[0] if _owners else 'a third party'}'s estimate, not our price"
     except Exception as _exc:  # pragma: no cover - never fail the envelope
         envelope.setdefault("warnings", []).append(f"document_parties failed: {type(_exc).__name__}: {_exc}")
     # Last, so it gates the corrected picture: a customer document that stopped
@@ -1304,6 +1359,59 @@ def _link_caption_notes(
                         lifecycle["admissible_for"] = adm
         n += 1
     return n
+
+
+def _person_slugs(name: str, email: str = "") -> set[str]:
+    """Every key slug a person record legitimately answers to: the full name,
+    the given+surname stem ("carl_painter" for "Carl Painter Jr"), the
+    surname+given order, and the address local part."""
+    import re as _re
+
+    out: set[str] = set()
+    toks = [t for t in _re.split(r"[^a-z0-9]+", str(name or "").lower()) if t]
+    if toks:
+        out.add("_".join(toks))
+        if len(toks) >= 2:
+            out.add(f"{toks[0]}_{toks[1]}")
+            out.add(f"{toks[1]}_{toks[0]}")
+            out.add(f"{toks[0]}_{toks[-1]}")
+    local = str(email or "").split("@")[0].lower()
+    if local:
+        out.add(_re.sub(r"[^a-z0-9]+", "_", local).strip("_"))
+    return {s for s in out if s}
+
+
+def _scrub_unbacked_stakeholder_keys(atoms: list[Any]) -> int:
+    """Remove ``stakeholder:<slug>`` entity keys that no stakeholder atom backs.
+    Returns the number of keys removed."""
+    backed: set[str] = set()
+    for a in atoms:
+        t = getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))
+        if str(t or "") != "stakeholder":
+            continue
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            continue
+        backed |= _person_slugs(str(v.get("name") or ""), str(v.get("email") or ""))
+    removed = 0
+    for a in atoms:
+        keys = list(getattr(a, "entity_keys", None) or [])
+        if not keys:
+            continue
+        kept = []
+        for k in keys:
+            if str(k).startswith("stakeholder:"):
+                slug = str(k)[len("stakeholder:"):]
+                if slug not in backed and not any(b.startswith(slug + "_") or slug.startswith(b + "_") for b in backed):
+                    removed += 1
+                    continue
+            kept.append(k)
+        if len(kept) != len(keys):
+            try:
+                a.entity_keys = kept
+            except Exception:
+                pass
+    return removed
 
 
 def _annotate_reader_scope(

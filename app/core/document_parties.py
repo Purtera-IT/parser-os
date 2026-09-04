@@ -149,6 +149,45 @@ def parties_from_page_text(text: str) -> dict[str, str]:
     return roles
 
 
+def _edit_distance_small(a: str, b: str, *, limit: int = 2) -> bool:
+    """True when two strings are within ``limit`` single-character edits."""
+    a, b = a.lower(), b.lower()
+    if abs(len(a) - len(b)) > limit:
+        return False
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+        if min(prev) > limit:
+            return False
+    return prev[-1] <= limit
+
+
+def _reconcile_party_spellings(per_doc_roles: dict[str, dict[str, str]], all_text: str) -> None:
+    """Rewrite near-identical party names to the spelling that occurs most
+    often across the deal's atom texts. Mutates ``per_doc_roles`` in place."""
+    names = sorted({v for roles in per_doc_roles.values() for v in roles.values() if v})
+    if len(names) < 2:
+        return
+    canon: dict[str, str] = {}
+    for nm in names:
+        if nm in canon:
+            continue
+        cluster = [nm] + [o for o in names if o != nm and o not in canon and len(o) >= 6 and _edit_distance_small(nm, o)]
+        if len(cluster) == 1:
+            canon[nm] = nm
+            continue
+        best = max(cluster, key=lambda s: (all_text.count(s.lower()), -len(s)))
+        for member in cluster:
+            canon[member] = best
+    for roles in per_doc_roles.values():
+        for role, val in list(roles.items()):
+            if val in canon and canon[val] != val:
+                roles[role] = canon[val]
+
+
 def annotate_document_parties(
     documents: list[dict[str, Any]],
     envelope: dict[str, Any],
@@ -162,12 +201,26 @@ def annotate_document_parties(
         by_doc.setdefault(str(a.get("artifact_id")), []).append(a)
     n = 0
     third: list[dict[str, Any]] = []
+    # First pass: every document's roles. Second pass: one spelling per party
+    # across the deal -- an OCR'd copy reads "COW Technologies LLC" where the
+    # text layer reads "CDW Technologies LLC" (live 010300, and the executive
+    # summary printed the OCR spelling). For names within a letter or two of
+    # each other, the spelling that occurs most across every atom's text wins.
+    all_text = "\n".join(str(a.get("text") or "") for a in atoms).lower()
+    per_doc_roles: dict[str, dict[str, str]] = {}
+    per_doc_signers: dict[str, list[str]] = {}
     for d in documents or []:
         aid = str(d.get("artifact_id"))
         found = parties_for_document(by_doc.get(aid, []))
         roles, signers = found["roles"], found["signers"]
         if not roles and page_text_by_doc and page_text_by_doc.get(aid):
             roles = parties_from_page_text(page_text_by_doc[aid])
+        per_doc_roles[aid] = roles
+        per_doc_signers[aid] = signers
+    _reconcile_party_spellings(per_doc_roles, all_text)
+    for d in documents or []:
+        aid = str(d.get("artifact_id"))
+        roles, signers = per_doc_roles.get(aid, {}), per_doc_signers.get(aid, [])
         if not roles and not signers:
             continue
         names = list(roles.values()) + signers

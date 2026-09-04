@@ -125,6 +125,60 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
         merged_groups.setdefault(_root(k), []).extend(groups[k])
 
     out: list[EvidenceAtom] = []
+    # The same street in two documents with different ZIP / city: one place,
+    # two spellings of where it is (live 010300: HQ at 2970 Brandywine Rd,
+    # "30641" in the signed PSOW and "30341" in the draft).
+    sites_by_street: dict[str, dict[str, Any]] = {}
+    for atom in atoms:
+        if _atom_type(atom) != "physical_site":
+            continue
+        v = getattr(atom, "value", None)
+        if not isinstance(v, dict):
+            continue
+        street = re.sub(r"[^a-z0-9]+", " ", str(v.get("street_address") or v.get("address") or "").split(",")[0].lower()).strip()
+        if not street or not re.search(r"\d", street):
+            continue
+        loc = " ".join(str(v.get(k) or "").strip().lower() for k in ("city", "state", "zip") if v.get(k))
+        if not loc:
+            continue
+        sites_by_street.setdefault(street, {}).setdefault(str(getattr(atom, "artifact_id", "")), (loc, atom))
+    for street, per_doc in sites_by_street.items():
+        locs = {loc for loc, _ in per_doc.values()}
+        if len(per_doc) < 2 or len(locs) < 2:
+            continue
+        reps = [a for _, a in per_doc.values()]
+        text = (
+            f"Documents disagree on where {street.title()} is: " + " vs ".join(sorted(locs))
+            + " -- confirm the address before dispatch."
+        )
+        refs: list[Any] = []
+        for a in reps:
+            for r in (getattr(a, "source_refs", None) or []):
+                if r not in refs:
+                    refs.append(r)
+        if not refs:
+            continue
+        out.append(
+            EvidenceAtom(
+                id=stable_id("xdoc_conflict", f"{project_id}:site:{street}"),
+                project_id=project_id,
+                artifact_id=str(getattr(reps[0], "artifact_id", "")),
+                atom_type=AtomType.open_question,
+                raw_text=text,
+                normalized_text=text.lower(),
+                value={"kind": "cross_document_conflict", "text": text, "template": f"site:{street}",
+                       "values": [{"figures": loc, "atom_id": str(getattr(a, "id", "")), "artifact_id": str(getattr(a, "artifact_id", ""))} for loc, a in per_doc.values()],
+                       "atom_ids": [str(getattr(a, "id", "")) for a in reps],
+                       "artifact_ids": sorted(per_doc.keys())},
+                entity_keys=[],
+                source_refs=refs,
+                authority_class=AuthorityClass.machine_extractor,
+                confidence=0.7,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["cross_document_conflict"],
+                parser_version=str(getattr(reps[0], "parser_version", "") or "cross_document_conflicts_v1"),
+            )
+        )
     for tpl, members in merged_groups.items():
         by_doc: dict[str, Any] = {}
         for a in members:
