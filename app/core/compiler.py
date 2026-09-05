@@ -487,6 +487,10 @@ def compile_project(
     with telemetry.stage("parse_artifacts", input_count=len(artifacts)) as stage:
         for artifact in artifacts:
             relative_name = str(artifact.relative_to(project_dir)).replace("\\", "/")
+            # Name the file in the heartbeat. Without it a wedge on ONE artifact
+            # is indistinguishable from a slow stage — 35 files, six hours, and
+            # the log could not say which one had stopped.
+            telemetry.set_stage_item(relative_name)
             artifact_id = stable_id("art", resolved_project_id, relative_name)
             artifact_paths[artifact_id] = artifact
             parsed_atoms = []
@@ -661,6 +665,8 @@ def compile_project(
                 )
             )
         warnings.extend(parse_warnings)
+        # The loop is done; later stages are not per-file, so stop naming one.
+        telemetry.set_stage_item("")
         telemetry.end_stage(
             stage,
             output_count=len(atoms),
