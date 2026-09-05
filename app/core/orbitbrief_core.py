@@ -348,8 +348,14 @@ def build_pm_dashboard(
         from app.core.question_screen import drop_learned_bad_questions
 
         _deal = str(getattr(atoms[0], "project_id", "") if atoms else "")
+        # The facts a conditioned lesson is judged against. `condition_holds`
+        # is deliberately closed by default — no facts, no fire — so omitting
+        # these did not weaken the gate, it silenced it: a note written as
+        # "when Chase owns the deal, stop asking who stages the hardware"
+        # stored a lesson that could never fire at compile time, while the
+        # terminology call one line below was already passing them.
         gap_questions, _dropped_gaps = drop_learned_bad_questions(
-            gap_questions, text_key="summary", deal_id=_deal,
+            gap_questions, text_key="summary", deal_id=_deal, facts=_pm_facts(atoms),
         )
         # A question we compose is ours to word; the PM's house style applies.
         from app.core.decide import get_store
