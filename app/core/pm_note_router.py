@@ -356,6 +356,53 @@ def _content_words(text: str) -> set[str]:
     }
 
 
+#: Where a PM's sentence can break between what they are judging and why.
+#: Punctuation, not vocabulary — the split has to survive a note that never says
+#: "because". Distinct from `_CLAUSE_SPLIT_RE`, which separates SENTENCES: this
+#: one cuts inside one sentence, and redefining that name here silently made
+#: every clause split on commas and truncated five rationales.
+_SUBJECT_REASON_SPLIT_RE = re.compile(r"\s*[—–\-:;,]\s+|\s+[—–]\s*")
+
+
+def split_subject_and_reason(clause: str, questions: list[str], *, floor: float = 0.6) -> tuple[str, str]:
+    """Split a clause into the part that names a card and the part that gives a why.
+
+    `extract_rationale` only sees a reason after an explicit connective, so a
+    note written with a dash keeps its reason glued to the subject — and then
+    fails to ground, because the extra words are not in the card:
+
+        "Stop asking who the onsite contact is — Carl Painter meets the tech
+         at the door every time."
+
+        exemplar -> "Who the onsite contact is — Carl Painter meets the tech
+                     at the door every time?"        grounded: False
+
+    Two failures, one cause. The fix is not a longer list of connectives, which
+    would still be guessing which half is the reason. The CARD decides: the run
+    of segments that actually matches a question on the PM's screen is the
+    subject, and whatever is left over is their reason, returned verbatim.
+
+    Returns ``(subject, reason)``; ``reason`` is "" when every segment belongs
+    to the subject or nothing grounds at all.
+    """
+    parts = [p.strip() for p in _SUBJECT_REASON_SPLIT_RE.split(clause or "") if p and p.strip()]
+    if len(parts) < 2 or not questions:
+        return (clause or "").strip(), ""
+    # Longest leading run that still names a card. Leading, because a PM says
+    # what they are judging before they say why — and a trailing subject would
+    # make the reason the thing we learn from.
+    best_n = 0
+    for n in range(len(parts) - 1, 0, -1):
+        if ground_in_questions(" ".join(parts[:n]), questions, floor=floor):
+            best_n = n
+            break
+    if not best_n:
+        return (clause or "").strip(), ""
+    subject = " ".join(parts[:best_n]).strip()
+    reason = " ".join(parts[best_n:]).strip(" .")
+    return subject, (reason if len(reason) >= 8 else "")
+
+
 def ground_in_questions(subject: str, questions: list[str], *, floor: float = 0.6) -> str:
     """The question on the PM's screen that this note is about, if any.
 
@@ -753,6 +800,11 @@ def route_note(
         # after it: a greedy read attached "because we commit to objectives"
         # to two later lessons it had nothing to do with.
         rationale = extract_rationale(clause)
+        if not rationale and questions:
+            # No connective, so the card decides where the reason starts. Both
+            # halves matter: without the split the reason stays glued to the
+            # subject and the lesson fails to ground at all.
+            clause, rationale = split_subject_and_reason(clause, questions)
         condition = extract_condition(clause, facts) or note_condition
         found = _pattern_lessons(clause, condition, rationale, default_scope, questions)
         if not found:

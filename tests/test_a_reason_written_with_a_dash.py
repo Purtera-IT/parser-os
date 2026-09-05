@@ -73,3 +73,81 @@ def test_the_connective_reader_takes_precedence_over_the_model() -> None:
 
     src = inspect.getsource(m._llm_lessons)
     assert "rationale or _verbatim_reason(" in src
+
+
+# ── the same defect on the pattern path, which is the common one ────────────
+#
+# The live smoke test on 2026-09-05 showed the model-pointed reason was not
+# enough: the lesson came back `source: "pattern"`, so `_verbatim_reason` was
+# never consulted. And because the reason was never separated, it stayed glued
+# to the subject:
+#
+#   exemplar: "Who the onsite contact is — Carl Painter meets the tech at the
+#              door every time?"                              grounded: False
+#
+# Two failures, one cause. A longer list of connectives would still be guessing
+# which half is the reason. The CARD decides instead.
+
+from app.core.pm_note_router import split_subject_and_reason
+
+CARD = (
+    "Who is the day-of onsite contact for 2970 brandywine rd ste 200, "
+    "and how do we reach them — Yealink phones?"
+)
+
+
+def test_the_card_decides_where_the_reason_starts() -> None:
+    subject, reason = split_subject_and_reason(
+        "Stop asking who the onsite contact is — Carl Painter meets the tech at the door every time",
+        [CARD],
+    )
+    assert subject == "Stop asking who the onsite contact is"
+    assert reason == "Carl Painter meets the tech at the door every time"
+
+
+def test_a_note_with_no_reason_keeps_its_whole_subject() -> None:
+    subject, reason = split_subject_and_reason("Stop asking who the onsite contact is", [CARD])
+    assert subject == "Stop asking who the onsite contact is"
+    assert reason == ""
+
+
+def test_a_note_that_matches_no_card_is_left_alone() -> None:
+    """Never split on punctuation alone. With nothing to ground against there
+    is no evidence which half is the reason, and inventing one is the failure
+    this whole design exists to avoid."""
+    subject, reason = split_subject_and_reason(
+        "Say SLO not SLA — our contracts are written in service objectives", [CARD]
+    )
+    assert reason == ""
+    assert subject.startswith("Say SLO not SLA")
+
+
+def test_the_subject_is_the_leading_run_not_the_trailing_one() -> None:
+    """A PM says what they are judging before they say why. Taking the trailing
+    match would make the reason the thing we learn from."""
+    subject, reason = split_subject_and_reason(
+        "Stop asking who the onsite contact is — the day-of onsite contact never changes",
+        [CARD],
+    )
+    assert subject.startswith("Stop asking")
+    assert "never changes" in reason
+
+
+def test_a_one_part_clause_is_untouched() -> None:
+    assert split_subject_and_reason("Stop asking about badging", [CARD]) == (
+        "Stop asking about badging", ""
+    )
+
+
+def test_no_questions_means_no_split() -> None:
+    assert split_subject_and_reason("a — b", []) == ("a — b", "")
+
+
+def test_the_pattern_path_uses_it() -> None:
+    import inspect
+
+    from app.core import pm_note_router as m
+
+    src = inspect.getsource(m.route_note)
+    assert "split_subject_and_reason(clause, questions)" in src
+    assert "if not rationale and questions:" in src, "an explicit because still wins"
