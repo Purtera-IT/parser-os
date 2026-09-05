@@ -39,6 +39,25 @@ from app.core.schemas import (
 # wrong, and leaving headroom keeps calibration honest.
 PM_ANSWER_CONFIDENCE = 0.95
 
+#: Ledger actions that state deal truth, and the ``kind`` each becomes.
+#:
+#: ``note_fact`` is written when a PM's note was GROUNDED in a specific question
+#: and carried a reason. The questions the brief asks exist to get information
+#: about the deal, so information that arrives by note is the same evidence as
+#: information that arrives by answer — the only thing that ever separated them
+#: was provenance, and grounding supplies it.
+#:
+#: It is a distinct action, not "answered", so the judgment paths skip it by
+#: construction: `judgmentIsTeachable` sees neither a rejection nor an answer
+#: and returns `not_a_judgment`. That matters, because the note it came from
+#: already taught the gap head the OPPOSITE verdict — "stop asking this" — and
+#: replaying it as an answer would teach `valid` over the top of the PM's own
+#: `invalid`.
+_EVIDENCE_ACTIONS: dict[str, str] = {
+    "answered": "pm_answer",
+    "note_fact": "pm_note",
+}
+
 PARSER_NAME = "pm_answer"
 PARSER_VERSION = "pm_answer_v1"
 
@@ -139,8 +158,17 @@ def pm_answer_to_atom(
     answered_at: str = "",
     actor: str = "",
     artifact_id: str = "",
+    kind: str = "pm_answer",
 ) -> EvidenceAtom | None:
-    """One answered question → one atom, or ``None`` if it carries no facts."""
+    """One answered question → one atom, or ``None`` if it carries no facts.
+
+    ``kind`` records HOW the PM said it. A note carries deal truth exactly as an
+    answer does — "stop asking who stages the hardware because we stage it
+    ourselves from the depot" states the same fact as answering the card — and
+    once a note is grounded in a specific question it has the same provenance an
+    answer has: a card it is about. Recorded so the atom can be walked back to
+    the right surface, not because the evidence is worth any less.
+    """
     if not is_substantive_answer(answer):
         return None
     answer_n = _norm(answer)
@@ -160,6 +188,7 @@ def pm_answer_to_atom(
             "question": _norm(question),
             "answered_at": answered_at,
             "actor": actor,
+            "kind": kind,
         },
         extraction_method="pm_answer",
         parser_version=PARSER_VERSION,
@@ -181,7 +210,7 @@ def pm_answer_to_atom(
             "question": _norm(question),
             "answer": answer_n,
             "rule_id": rule_id,
-            "kind": "pm_answer",
+            "kind": kind,
         },
         source_refs=[source],
         # A PM's answer is evidence like any other, so it has to carry the same
@@ -216,7 +245,8 @@ def pm_answers_to_atoms(
     by_key: dict[str, EvidenceAtom] = {}
     for ev in events:
         get = ev.get if isinstance(ev, dict) else lambda k, d=None: getattr(ev, k, d)
-        if str(get("action", "") or "") != "answered":
+        action = str(get("action", "") or "")
+        if action not in _EVIDENCE_ACTIONS:
             continue
         answer = str(get("edited_text", "") or "")
         question = str(get("question_text", "") or "")
@@ -229,6 +259,7 @@ def pm_answers_to_atoms(
             deal_id=str(get("deal_id", "") or ""),
             answered_at=str(get("created_at", "") or ""),
             actor=str(get("actor", "") or ""),
+            kind=_EVIDENCE_ACTIONS[action],
         )
         if atom is None:
             continue
