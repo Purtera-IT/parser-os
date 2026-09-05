@@ -538,12 +538,18 @@ Rules:
 - "scope" is "deal" when the judgment is about this deal's circumstances and
   "global" when it is about how we work in general.
 - Never invent a head or a verdict outside the lists above.
+- "reason" is the PM's OWN WORDS saying why, copied from the note character for
+  character, or "" when they gave none. Never write a reason of your own and
+  never rephrase theirs: it is shown back to them wherever the lesson fires,
+  and a sentence they did not write reads as the system inventing their
+  judgment. A reason is often the half of a sentence after a dash or a colon,
+  not only after the word "because".
 
 Note:
 {note}
 
 Output ONLY a JSON object: {{"lessons": [{{"head": ..., "exemplar": ..., \
-"new_value": ..., "old_value": "", "scope": "deal"}}]}}
+"new_value": ..., "old_value": "", "scope": "deal", "reason": ""}}]}}
 
 JSON:"""
 
@@ -604,6 +610,28 @@ def _grounded_in(text: str, source: str, *, floor: float = 0.6) -> bool:
     return bool(have) and len(want & have) / len(want) >= floor
 
 
+def _verbatim_reason(candidate: Any, note: str) -> str:
+    """The model's pick for the PM's reason — only if the PM actually wrote it.
+
+    `extract_rationale` reads a reason only after an explicit connective, so a
+    why written with a dash or a colon is dropped, and the lesson later fires
+    with nothing to show for itself. Widening that pattern would mean guessing
+    which half of a sentence is the reason, which is the one thing this must
+    never do: the reason is shown back to the PM wherever the lesson fires, and
+    a sentence they did not write reads as the system inventing their judgment.
+
+    So the model may POINT at the reason and never author one. Its answer is
+    accepted only when it appears in the note character for character (ignoring
+    case and whitespace), which is a claim that can be checked rather than
+    trusted.
+    """
+    text = " ".join(str(candidate or "").split()).strip(" .")
+    if len(text) < 8:
+        return ""
+    haystack = " ".join(str(note or "").split()).lower()
+    return text if text.lower() in haystack else ""
+
+
 def _llm_lessons(
     note: str,
     condition: dict,
@@ -650,7 +678,7 @@ def _llm_lessons(
                 old_value=str(row.get("old_value") or "").strip(),
                 scope=row_scope if row_scope in ("deal", "pack", "global") else scope,
                 condition=condition,
-                rationale=rationale,
+                rationale=rationale or _verbatim_reason(row.get("reason"), note),
                 source="llm",
                 confidence=0.7,
             )

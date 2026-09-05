@@ -37,6 +37,21 @@ _HB_LOCK = threading.Lock()
 _HB_STACK: list[tuple[int, str, float, str, str, object]] = []
 _HB_THREAD: threading.Thread | None = None
 
+# What the current stage is working ON, when it can say.
+#
+# A stage that loops over files is invisible between its start and end logs, so
+# a wedge on ONE file looks exactly like a slow stage: `parse_artifacts` at a
+# climbing elapsed_s and nothing else. Deal 5bd32822 sat there for 6.8 hours on
+# 2026-09-05 and the logs could not name which of its 35 artifacts had stopped.
+# A loop that sets this makes its own heartbeat say so, so the tail of the log
+# is enough to find the file — no exec, no py-spy, no repro.
+_HB_ITEM: list[str] = [""]
+
+
+def set_stage_item(item: str) -> None:
+    """Name what the current stage is working on; "" when between items."""
+    _HB_ITEM[0] = str(item or "")[:200]
+
 
 def _heartbeat_interval() -> float:
     try:
@@ -57,6 +72,7 @@ def _heartbeat_loop() -> None:  # pragma: no cover - timing/daemon thread
                 continue
             _tid, stage, start_perf, cid, pid, stream = _HB_STACK[-1]
             elapsed = perf_counter() - start_perf
+            item = _HB_ITEM[0]
         try:
             print(
                 json.dumps(
@@ -66,6 +82,7 @@ def _heartbeat_loop() -> None:  # pragma: no cover - timing/daemon thread
                         "project_id": pid,
                         "stage": stage,
                         "elapsed_s": round(elapsed, 1),
+                        **({"item": item} if item else {}),
                     },
                     ensure_ascii=True,
                 ),
@@ -242,6 +259,16 @@ class CompileTelemetry:
                 # Never let a progress callback failure crash the compile.
                 pass
         return stage
+
+    def set_stage_item(self, item: str) -> None:
+        """Name what this stage is working on, for the heartbeat.
+
+        A method as well as a module function because every caller holds the
+        instance, not the module — `telemetry.set_stage_item(...)` inside the
+        compiler is this, and reaching for the module-level function there
+        would raise AttributeError on the first artifact of every compile.
+        """
+        set_stage_item(item)
 
     @contextmanager
     def stage(
