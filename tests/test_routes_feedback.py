@@ -25,6 +25,7 @@ import app.api.routes_feedback as rf
 import app.core.plain_rule_compiler as prc
 from app.core.decide import set_store
 from app.core.feedback_store import FeedbackStore
+from app.core.pm_feedback import HEAD_REGISTRY
 from app.core.schemas import CompileResult
 
 _D = 64
@@ -283,15 +284,18 @@ def _teach(client, *, new_value: str, context: str = "", old_value: str = "valid
             "new_value": new_value,
             "scope": "deal",
             "context": context,
-            # Mirrors HEAD_CORRECTIONS.gap.options in headCorrections.ts.
-            "candidates": ["valid", "answered", "not_relevant"],
+            # The head's own vocabulary, HEAD_REGISTRY["gap"].candidates —
+            # not the browser's idea of it. These read
+            # ["valid", "answered", "not_relevant"] until 2026-09-05, which is
+            # where the live store's 5 unfireable `not_relevant` rows came from.
+            "candidates": list(HEAD_REGISTRY["gap"].candidates),
         },
     )
     assert r.status_code == 200, r.text
     return r.json()
 
 
-@pytest.mark.parametrize("verdict", ["not_relevant", "answered", "valid"])
+@pytest.mark.parametrize("verdict", ["valid", "invalid"])
 def test_review_queue_teach_lands_as_a_gap_correction(verdict):
     """Every Review Queue teach action maps onto a verdict the gap head learns."""
     set_store(_store())
@@ -304,7 +308,7 @@ def test_review_queue_teach_fires_instantly_on_the_same_ask():
     """Instant learning: the fix is honored on the next identical ask without a
     retrain. This is what makes teaching feel immediate rather than overnight."""
     set_store(_store())
-    body = _teach(_client(), new_value="not_relevant")
+    body = _teach(_client(), new_value="invalid")
     assert body["fired_instantly"] is True
 
 
@@ -314,9 +318,29 @@ def test_review_queue_teach_is_idempotent():
     the training signal for one ask."""
     set_store(_store())
     client = _client()
-    first = _teach(client, new_value="not_relevant")
-    second = _teach(client, new_value="not_relevant")
+    first = _teach(client, new_value="invalid")
+    second = _teach(client, new_value="invalid")
     assert first["correction_id"] == second["correction_id"]
+
+
+def test_a_verdict_the_head_has_no_class_for_is_refused():
+    """The cross-repo contract is the vocabulary too, not just the field names.
+    A client that invents a verdict poisons the fitted boundary and gets
+    filtered out at decision time, so it teaches nothing and costs accuracy."""
+    set_store(_store())
+    r = _client().post(
+        "/projects/p1/feedback/correction",
+        json={
+            "head": "gap",
+            "deal_id": "p1",
+            "target_id": "mode.av_install.drywall_ownership",
+            "text": "Who owns drywall patching after cable conceal?",
+            "new_value": "not_relevant",
+            "scope": "deal",
+        },
+    )
+    assert r.status_code == 422
+    assert "invalid" in r.json()["detail"]
 
 
 def test_unknown_head_is_refused_not_silently_dropped():
