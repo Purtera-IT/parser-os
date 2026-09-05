@@ -426,6 +426,7 @@ def feedback_note(project_id: str, req: NoteRequest) -> dict[str, Any]:
             **routing.as_dict(),
         }
 
+
     result = apply_note(
         note, store=store, deal_id=deal_id, pm=req.pm, facts=req.facts, questions=req.questions
     )
@@ -562,6 +563,25 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
     spec = PM_HEAD_REGISTRY.get(req.head)
     if spec is None:
         raise HTTPException(status_code=422, detail=f"unknown head {req.head!r}")
+    # A verdict the head has no class for is not a lesson, it is contamination.
+    # `_relation_head` deliberately fits over EVERY stored verdict for a relation
+    # ("the head learns the full boundary"), while consumers filter to the
+    # declared set at decision time — so an out-of-vocabulary verdict shapes the
+    # boundary and is then thrown away, splitting one concept across two labels.
+    #
+    # Found live 2026-09-05: the gap head held 5 corrections reading
+    # `not_relevant` against a declared set of ("valid", "invalid"), so every
+    # dismissal a PM had made was absent from the vocabulary that decides, and
+    # the fitted boundary had been pulled by a class nothing could act on.
+    # Refuse it here, once, rather than in each client that might send it.
+    if spec.candidates and req.new_value not in spec.candidates:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"head {req.head!r} learns one of {list(spec.candidates)}; "
+                f"got {req.new_value!r}"
+            ),
+        )
     payload = {
         "head": req.head, "dealId": req.deal_id or project_id, "compileId": req.compile_id,
         "targetId": req.target_id, "text": req.text, "oldValue": req.old_value,
