@@ -110,6 +110,19 @@ class Correction:
     scope: str = SCOPE_GLOBAL  # "global" | "pack" | "deal"
     scope_key: str = ""  # pack id or deal id when scope != global
     exemplars: list[str] = field(default_factory=list)
+    #: The closed set this relation's verdict must come from, when it has one.
+    #:
+    #: Carried on the correction because the vocabulary cannot live only in a
+    #: static registry: `plain_rule_compiler` mints relations at runtime
+    #: (`sgate_*`, `physical_site`, `*_noise_admission` …), so the live store
+    #: holds 15 relations against 10 declared heads, and 8 of them can never be
+    #: in the table. Empty means open — an extract head, or a relation whose
+    #: author did not fix a vocabulary.
+    #:
+    #: This is what makes a verdict checkable everywhere. `not_relevant` reached
+    #: the gap head for weeks because the only declared candidate sets were
+    #: `gap` and `admission`; every other relation had nothing to check against.
+    candidates: list[str] = field(default_factory=list)
     threshold: float = _DEFAULT_THRESHOLD
     relations: dict = field(default_factory=dict)  # structured grounding
     instruction: str = ""
@@ -129,6 +142,7 @@ class Correction:
         d = dict(self.__dict__)
         d["exemplars"] = json.dumps(self.exemplars)
         d["relations"] = json.dumps(self.relations)
+        d["candidates"] = json.dumps(self.candidates)
         return d
 
     @classmethod
@@ -136,6 +150,7 @@ class Correction:
         d = dict(row)
         d["exemplars"] = json.loads(d.get("exemplars") or "[]")
         d["relations"] = json.loads(d.get("relations") or "{}")
+        d["candidates"] = json.loads(d.get("candidates") or "[]")
         return cls(**d)
 
 
@@ -147,6 +162,7 @@ CREATE TABLE IF NOT EXISTS corrections (
     scope TEXT NOT NULL DEFAULT 'global',
     scope_key TEXT NOT NULL DEFAULT '',
     exemplars TEXT NOT NULL DEFAULT '[]',
+    candidates TEXT NOT NULL DEFAULT '[]',
     threshold REAL NOT NULL DEFAULT 0.82,
     relations TEXT NOT NULL DEFAULT '{}',
     instruction TEXT NOT NULL DEFAULT '',
@@ -165,7 +181,7 @@ CREATE TABLE IF NOT EXISTS corrections (
 
 _COLUMNS = [
     "id", "relation", "verdict", "scope", "scope_key", "exemplars",
-    "threshold", "relations", "instruction", "complaint_id", "created_by",
+    "candidates", "threshold", "relations", "instruction", "complaint_id", "created_by",
     "created_at", "updated_at", "status", "supersedes", "confidence_floor",
     "hit_count", "last_fired", "wrongful_override_count",
 ]
@@ -200,6 +216,16 @@ class FeedbackStore:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        # `CREATE TABLE IF NOT EXISTS` does not add a column to a table that
+        # already exists, and these DBs outlive deploys — the dev store carries
+        # corrections taught in July. Without this, every INSERT against an
+        # older file fails on the new column.
+        have = {r[1] for r in self._conn.execute("PRAGMA table_info(corrections)")}
+        if "candidates" not in have:
+            self._conn.execute(
+                "ALTER TABLE corrections ADD COLUMN candidates TEXT NOT NULL DEFAULT '[]'"
+            )
+            self._conn.commit()
         self._embed_fn = embed_fn
         self._reachable_fn = reachable_fn
         # Lazily-built, in-memory prototype cache: id -> normalized vector.

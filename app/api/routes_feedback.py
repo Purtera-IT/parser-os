@@ -632,13 +632,13 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
     # dismissal a PM had made was absent from the vocabulary that decides, and
     # the fitted boundary had been pulled by a class nothing could act on.
     # Refuse it here, once, rather than in each client that might send it.
-    if spec.candidates and req.new_value not in spec.candidates:
+    # The caller's own closed set wins over the head's, because a rule
+    # synthesised at runtime knows a vocabulary the registry cannot.
+    allowed = [str(c) for c in (req.candidates or spec.candidates or []) if str(c).strip()]
+    if allowed and req.new_value not in allowed:
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"head {req.head!r} learns one of {list(spec.candidates)}; "
-                f"got {req.new_value!r}"
-            ),
+            detail=f"head {req.head!r} learns one of {allowed}; got {req.new_value!r}",
         )
     payload = {
         "head": req.head, "dealId": req.deal_id or project_id, "compileId": req.compile_id,
@@ -647,6 +647,9 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
         "rationale": req.rationale,
         # Attribution, not a placeholder: a deal id in `created_by` says nobody.
         "relations": req.relations, "pm": req.pm or "pm",
+        # Recorded on the correction so the vocabulary is checkable next time
+        # from the data itself, not from a table that must be kept in sync.
+        "candidates": allowed,
     }
     try:
         cid = apply_pm_correction(store, payload)
