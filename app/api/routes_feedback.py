@@ -435,6 +435,64 @@ def feedback_note(project_id: str, req: NoteRequest) -> dict[str, Any]:
     return result
 
 
+class RetireCorrectionRequest(BaseModel):
+    """Take a learned correction out of service, without losing the record."""
+
+    #: "disabled" retires it; "active" puts it back. Never a delete: a lesson a
+    #: PM once taught is part of how the head got where it is, and a store you
+    #: cannot audit backwards is a store you cannot trust forwards.
+    status: str = "disabled"
+    reason: str = ""
+
+
+@router.post("/{project_id}/feedback/corrections/{correction_id}/status")
+def feedback_correction_status(
+    project_id: str, correction_id: str, req: RetireCorrectionRequest
+) -> dict:
+    """Retire (or restore) one correction.
+
+    There was no way to withdraw a lesson. That mattered on 2026-09-05: five
+    `gap_valid` corrections carried the verdict `not_relevant`, a class the head
+    has no room for, written by a browser that had invented its own vocabulary.
+    `_relation_head` fits over EVERY stored verdict, so they were shaping a
+    boundary toward a class the consumers filter out — 5 of the gap head's 11
+    exemplars, teaching nothing and costing accuracy.
+
+    Retire rather than relabel: all five carried an empty rationale, and the
+    rule elsewhere in this system is that a dismissal without a why is
+    bookkeeping, because learning from it generalizes a judgment nobody made.
+    Relabelling them would have activated five lessons that were never
+    admissible.
+    """
+    if req.status not in ("active", "disabled", "superseded"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be active|disabled|superseded; got {req.status!r}",
+        )
+    store = _require_store()
+    before = {c.id: c for c in store.all_corrections(active_only=False)}
+    if correction_id not in before:
+        raise HTTPException(status_code=404, detail=f"unknown correction {correction_id!r}")
+    store.set_status(correction_id, req.status)
+    # The blob mirror is what repopulates a restarted store, so a retirement
+    # that lives only in this process comes back on the next cold start.
+    mirrored = False
+    try:
+        from app.core import feedback_blob
+
+        after = {c.id: c for c in store.all_corrections(active_only=False)}
+        mirrored = bool(feedback_blob.upload_correction(after[correction_id]))
+    except Exception:
+        mirrored = False
+    return {
+        "correction_id": correction_id,
+        "status": req.status,
+        "mirrored": mirrored,
+        "relation": before[correction_id].relation,
+        "verdict": before[correction_id].verdict,
+    }
+
+
 class QuestionScreenItem(BaseModel):
     """One candidate question the brief is about to show."""
 

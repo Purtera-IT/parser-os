@@ -149,5 +149,5 @@ def test_the_pattern_path_uses_it() -> None:
     from app.core import pm_note_router as m
 
     src = inspect.getsource(m.route_note)
-    assert "split_subject_and_reason(clause, questions)" in src
+    assert "split_clause(clause, questions)" in src
     assert "if not rationale and questions:" in src, "an explicit because still wins"
