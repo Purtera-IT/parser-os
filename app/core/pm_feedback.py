@@ -151,6 +151,15 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
         scope=scope,
         scope_key=("" if scope == SCOPE_GLOBAL else deal_id),
         exemplars=[exemplar],
+        # The vocabulary travels with the correction. A static registry cannot
+        # cover the relations `plain_rule_compiler` mints at runtime, so a
+        # verdict was only checkable for the two heads that happened to declare
+        # a candidate set — which is how `not_relevant` lived in the gap head
+        # for weeks. Prefer the caller's list (a rule synthesis knows its own
+        # closed set) and fall back to the head's declaration.
+        candidates=[
+            str(c) for c in (payload.get("candidates") or spec.candidates or []) if str(c).strip()
+        ],
         threshold=_threshold_for(head, scope),
         relations={**dict(payload.get("relations") or {}), _DEALS_KEY: [deal_id] if deal_id else []},
         # The PM's own reason rides with the correction, so wherever it fires
