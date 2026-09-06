@@ -430,6 +430,110 @@ def ground_in_questions(subject: str, questions: list[str], *, floor: float = 0.
     return best if best_score >= floor else ""
 
 
+def split_clause(clause: str, questions: list[str], *, floor: float = 0.6) -> tuple[str, str, str]:
+    """One clause -> (subject, reason, proposed ask).
+
+    Done in a single pass over the segments, because the three parts are only
+    separable while the punctuation is still there. The first cut split subject
+    from remainder, joined the remainder with spaces, and then tried to find the
+    proposal inside it — by which point every boundary had been erased and the
+    proposal was filed away as part of the reason.
+
+    The card decides where the subject ends; grammar decides where the reason
+    ends and the proposed question begins.
+    """
+    parts = [p.strip() for p in _SUBJECT_REASON_SPLIT_RE.split(clause or "") if p and p.strip()]
+    if len(parts) < 2 or not questions:
+        return (clause or "").strip(), "", ""
+    # SHORTEST leading run that names a card, not the longest. Containment is
+    # generous, so a longer prefix keeps on grounding — and a greedy read
+    # swallowed the PM's proposed replacement into the subject, leaving the
+    # note looking like a rejection with no replacement at all. The subject is
+    # the minimal span that identifies what they are judging; everything past
+    # it is theirs to explain with.
+    best_n = 0
+    for n in range(1, len(parts)):
+        if ground_in_questions(" ".join(parts[:n]), questions, floor=floor):
+            best_n = n
+            break
+    if not best_n:
+        return (clause or "").strip(), "", ""
+    subject = " ".join(parts[:best_n]).strip()
+    tail = parts[best_n:]
+    for i, part in enumerate(tail):
+        if _INTERROGATIVE_RE.match(part[:1].upper() + part[1:]):
+            reason = " ".join(tail[:i]).strip(" .,")
+            return subject, (reason if len(reason) >= 8 else ""), " ".join(tail[i:]).strip()
+    reason = " ".join(tail).strip(" .,")
+    return subject, (reason if len(reason) >= 8 else ""), ""
+
+
+def split_reason_and_proposal(remainder: str) -> tuple[str, str]:
+    """Separate "why" from "ask this instead" inside what follows the subject.
+
+    A PM writes both in one breath:
+
+        "… — the site POC is the same person who will sign, so these are
+         redundant: who's the site POC who will do access, escort and sign-off?"
+
+    The first half is the reason, the second is a question they want asked. The
+    first cut tested the WHOLE remainder for interrogative shape, saw "the site
+    POC…" at the front, and filed the proposal away as part of the reason — so
+    the replacement was still never created.
+
+    Grammar decides, per segment: the first interrogative segment starts the
+    proposal, everything before it is the reason.
+    """
+    parts = [p.strip() for p in _SUBJECT_REASON_SPLIT_RE.split(remainder or "") if p and p.strip()]
+    if not parts:
+        return "", ""
+    for i, part in enumerate(parts):
+        head = part[:1].upper() + part[1:]
+        if _INTERROGATIVE_RE.match(head):
+            return " ".join(parts[:i]).strip(" .,"), " ".join(parts[i:]).strip()
+    return " ".join(parts).strip(" .,"), ""
+
+
+def _proposed_ask_lessons(
+    proposed: str,
+    condition: dict,
+    rationale: str,
+    scope: str,
+    questions: list[str] | None,
+) -> list[Lesson]:
+    """The question a PM wrote as the replacement for the one they rejected.
+
+    Taught as ``gap`` / ``valid`` — always ask this. Where it lands depends on
+    whether it already exists:
+
+    * it grounds to a card on their screen -> that card is the survivor, and the
+      lesson reinforces the one that absorbs the other. Nothing new is authored,
+      because authoring a duplicate of a live ask is how a shortlist doubles.
+    * it grounds to nothing -> it is a new ask, learned on the PM's own wording.
+      The caller turns that into an authored question; here it is a lesson like
+      any other.
+    """
+    text = _as_question(proposed)
+    if len(text) < 12:
+        return []
+    grounded = ground_in_questions(text, questions or [])
+    return [
+        Lesson(
+            head="gap",
+            exemplar=grounded or text,
+            new_value="valid",
+            old_value="",
+            scope=scope,
+            condition=condition,
+            rationale=rationale,
+            # Says which of the two cases this was, so the caller knows whether
+            # the ask still has to be created.
+            source="proposal" if not grounded else "proposal_existing",
+            confidence=0.9,
+        )
+    ]
+
+
 def _pattern_lessons(
     clause: str,
     condition: dict,
@@ -800,13 +904,25 @@ def route_note(
         # after it: a greedy read attached "because we commit to objectives"
         # to two later lessons it had nothing to do with.
         rationale = extract_rationale(clause)
+        proposed = ""
         if not rationale and questions:
             # No connective, so the card decides where the reason starts. Both
             # halves matter: without the split the reason stays glued to the
             # subject and the lesson fails to ground at all.
-            clause, rationale = split_subject_and_reason(clause, questions)
+            clause, rationale, proposed = split_clause(clause, questions)
+            # A PM who says what to ask INSTEAD is not giving a reason, they are
+            # writing a question. "these are redundant, just wrap them in one:
+            # who's site POC who will do X Y and Z" says both "stop asking that"
+            # and "ask this". Learning only the first deletes an ask and puts
+            # nothing in its place — the PM watches their own replacement never
+            # appear. They usually write both at once, so the remainder holds
+            # the reason AND the proposal; grammar separates them.
         condition = extract_condition(clause, facts) or note_condition
         found = _pattern_lessons(clause, condition, rationale, default_scope, questions)
+        if proposed:
+            found = found + _proposed_ask_lessons(
+                proposed, condition, rationale, default_scope, questions
+            )
         if not found:
             head = _store_head(clause, deal_id=deal_id, store=store)
             if head:
