@@ -28,6 +28,24 @@ Design invariants (match the rest of the system):
     that upgrade the ``needs_extractor`` markers; never removes or rewrites
     existing atoms (the only touch is RECORDING the triage verdict on skipped
     image markers — ``value['gate_verdict']`` — so a skip stays traceable).
+
+Wall clock: the VLM calls dominate a compile (tens of seconds per image, a 90s
+per-image timeout, up to 25 images), so ``process_image_markers`` runs them
+through a small bounded pool. The stage is split into three phases so that
+buys speed and nothing else:
+
+  1. SELECT (serial, no VLM) — ``_build_work_list`` walks the markers in order
+     and applies dedup, the min-bytes filter and the ``max_images`` cap. All the
+     state that would race lives here, where there is only one thread.
+  2. WORK (parallel) — ``_process_one`` per image, ``SOWSMITH_PDF_IMAGE_CONCURRENCY``
+     wide. Results are written into the work item, committed by nobody.
+  3. COMMIT (serial, work-list order) — ``_drain_deferred`` writes the training
+     rows and spends the thumbnail budget, then atoms are concatenated in
+     work-list order.
+
+Output is therefore byte-identical at any concurrency: atom ids are derived from
+CONTENT (``stable_id(... region_ref, fact_kind, text)``), never from sequence,
+and nothing downstream of the pool ever sees completion order.
 """
 from __future__ import annotations
 
@@ -36,7 +54,11 @@ import json
 import logging
 import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +113,30 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+# How many images may be in flight at once (``SOWSMITH_PDF_IMAGE_CONCURRENCY``).
+#
+# WHY 4: the VLM behind this stage is a SHARED Ollama proxy fleet, not a private
+# GPU. Ollama serves a model with a small fixed number of parallel slots
+# (OLLAMA_NUM_PARALLEL, 4 by default) and queues everything beyond them, so
+# width past the slot count buys no throughput — it just deepens a queue that
+# other tenants of the same fleet are also waiting in, and pushes individual
+# calls toward the 90s per-image timeout that would then LOSE that image's
+# atoms. 4 saturates the default slot count without thrashing it. Each in-flight
+# image also pins its crop bytes plus a page-text envelope in memory, which is
+# another reason not to open this up.
+#
+# Clamped to [1, 16]: 1 is the exact sequential behaviour (a real setting — it
+# is the control arm of the invariance test), and no deployment has a reason to
+# fan a shared fleet wider than 16.
+_DEFAULT_CONCURRENCY = 4
+_MAX_CONCURRENCY = 16
+
+
+def _concurrency() -> int:
+    return max(1, min(_MAX_CONCURRENCY,
+                      _int_env("SOWSMITH_PDF_IMAGE_CONCURRENCY", _DEFAULT_CONCURRENCY)))
+
+
 def _gate_model() -> str | None:
     """Cheap triage model (default: the configured vision model). A small VLM
     like qwen2.5vl:7b is plenty to decide meaningful-vs-noise + kind."""
@@ -120,6 +166,58 @@ def _vision_model(name: str | None):
             os.environ.pop("OLLAMA_VISION_MODEL", None)
         else:
             os.environ["OLLAMA_VISION_MODEL"] = prev
+
+
+# ── deferred side effects (what makes the parallel phase deterministic) ─
+#
+# Two side effects inside ``_process_one`` are ORDER-SENSITIVE, so neither may
+# run while several images are in flight:
+#
+#   1. TrainingLog writes (silver / shadow / veto rows). The log is one SQLite
+#      connection opened ``check_same_thread=False`` with no lock of its own, so
+#      concurrent ``with conn:`` blocks can collide mid-transaction — and this
+#      module swallows every logging exception, so a collision would drop a row
+#      SILENTLY. That is precisely the loss the repo forbids.
+#   2. The per-compile thumbnail budget (``_thumb_budget``), a read-then-
+#      increment against ``_thumb_max()``. Racy on its own, but worse than that:
+#      even perfectly locked, *which* images win the budget would become
+#      completion order, so the same deal could stamp ``crop_thumb`` on
+#      different markers run to run.
+#
+# So both are COLLECTED per work item during the pool and REPLAYED afterwards in
+# work-list order (see ``_drain_deferred``) — chosen over a lock because a lock
+# fixes only the corruption, not the ordering. Serialising the replay is a free
+# side benefit; determinism is the point.
+#
+# Outside a pool (direct helper calls, and every existing caller) the sinks are
+# unset and both effects fire inline exactly as before.
+
+_deferred = threading.local()
+
+
+@contextmanager
+def _deferring(rows: list[Any], thumbs: list[tuple[dict[str, Any], bytes]]):
+    """Route this thread's training rows / thumbnail requests into ``rows`` and
+    ``thumbs`` instead of committing them."""
+    prev_rows = getattr(_deferred, "rows", None)
+    prev_thumbs = getattr(_deferred, "thumbs", None)
+    _deferred.rows = rows
+    _deferred.thumbs = thumbs
+    try:
+        yield
+    finally:
+        _deferred.rows = prev_rows
+        _deferred.thumbs = prev_thumbs
+
+
+def _emit_training_rows(rows: list[Any]) -> None:
+    """Write training rows, or park them for the deterministic replay."""
+    sink = getattr(_deferred, "rows", None)
+    if sink is not None:
+        sink.extend(rows)
+        return
+    from app.core.training_log import log_rows
+    log_rows(rows)
 
 
 # ── small helpers ───────────────────────────────────────────────────
@@ -353,14 +451,28 @@ def _position_label(page_index: int, page_count: int) -> str:
 # ── VLM calls (gate / describe / transcribe) ────────────────────────
 
 
+# ``_vision_model`` selects the model by mutating a PROCESS-GLOBAL env var, so
+# two overlapping calls could swap it out from under each other. Guarded below.
+_VLM_ENV_LOCK = threading.Lock()
+
+
 def _vlm(image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int) -> str:
     if _use_ollama_for_pdf_images():
-        with _vision_model(model):
-            return _ollama_vision_direct(
-                image_bytes, prompt, model=model, max_tokens=max_tokens,
-            ) or ""
+        # No env swap on this path: ``_ollama_vision_direct`` takes the model
+        # explicitly and only falls back to OLLAMA_VISION_MODEL when ``model``
+        # is None — the exact case where ``_vision_model`` is already a no-op.
+        # The wrapper was therefore never load-bearing here, and dropping it is
+        # what lets the default (forced-Ollama) path run genuinely in parallel.
+        return _ollama_vision_direct(
+            image_bytes, prompt, model=model, max_tokens=max_tokens,
+        ) or ""
     from app.core.vision_extraction import call_vision_llm
-    with _vision_model(model):
+    if not model:
+        return call_vision_llm(image_bytes, prompt, max_tokens=max_tokens) or ""
+    # Teacher path: ``call_vision_llm`` reads the model from the env, so the
+    # swap IS load-bearing and must not overlap. These calls serialise — correct
+    # over fast; the default path above is the one that parallelises.
+    with _VLM_ENV_LOCK, _vision_model(model):
         return call_vision_llm(image_bytes, prompt, max_tokens=max_tokens) or ""
 
 
@@ -493,7 +605,6 @@ def _log_gate_silver(
             TEACHER_LLM,
             TEACHER_STORE,
             TrainingRow,
-            log_rows,
         )
         label = "skip" if image_kind in _SKIP_KINDS else image_kind
         feat = gate_feature_text(caption, ocr)
@@ -508,7 +619,7 @@ def _log_gate_silver(
             f"pdf_image_kind|{label}|{feat}|{pdf_name}|{region_ref}|{image_sha16}"
             .encode("utf-8")
         ).hexdigest()[:16]
-        log_rows([TrainingRow(
+        _emit_training_rows([TrainingRow(
             id=row_id,
             relation="pdf_image_kind",
             label=label,
@@ -549,7 +660,7 @@ def _log_gate_shadow(
     """
     try:
         from app.core.pdf_image_gate import gate_feature_text
-        from app.core.training_log import TrainingRow, log_rows
+        from app.core.training_log import TrainingRow
 
         _cpu_meaningful, cpu_kind, cpu_conf = cpu_shadow
         teacher_label = "skip" if teacher_kind in _SKIP_KINDS else (teacher_kind or "skip")
@@ -567,7 +678,7 @@ def _log_gate_shadow(
             f"pdf_image_gate_shadow|{cpu_label}|{teacher_label}|{feat}|{pdf_name}|{region_ref}|{image_sha16}"
             .encode("utf-8")
         ).hexdigest()[:16]
-        log_rows([TrainingRow(
+        _emit_training_rows([TrainingRow(
             id=row_id,
             relation="pdf_image_gate_shadow",
             label=teacher_label,
@@ -834,6 +945,27 @@ def _maybe_thumb(crop: bytes) -> tuple[str | None, str | None]:
         return None, type(exc).__name__
 
 
+def _apply_thumb(gv: dict[str, Any], crop: bytes) -> None:
+    """Spend budget on one hard-veto crop and stamp the result (or its receipt)
+    onto an already-built ``gate_verdict``."""
+    thumb, thumb_err = _maybe_thumb(crop)
+    if thumb:
+        gv["crop_thumb"] = thumb
+    elif thumb_err:
+        gv["crop_thumb_error"] = thumb_err
+
+
+def _request_thumb(gv: dict[str, Any], crop: bytes) -> None:
+    """Ask for a thumbnail. Inside the pool this only RECORDS the request — the
+    budget is spent later, in work-list order, so which images win it never
+    depends on which VLM call happened to return first."""
+    sink = getattr(_deferred, "thumbs", None)
+    if sink is not None:
+        sink.append((gv, crop))
+        return
+    _apply_thumb(gv, crop)
+
+
 def _log_veto_row(
     caption: str, ocr: str, kind: str, *, via: str, prob: float,
     attribution: dict[str, Any] | None,
@@ -863,7 +995,7 @@ def _log_veto_row(
     """
     try:
         from app.core.pdf_image_gate import gate_feature_text
-        from app.core.training_log import TrainingRow, log_rows
+        from app.core.training_log import TrainingRow
         feat = gate_feature_text(caption, ocr)
         if not feat.strip() or feat == "no context":
             return
@@ -889,7 +1021,7 @@ def _log_veto_row(
         }
         if crop_ref:
             provenance["crop_ref"] = crop_ref
-        log_rows([TrainingRow(
+        _emit_training_rows([TrainingRow(
             id=row_id,
             relation="pdf_image_veto",
             label="meaningful",
@@ -966,11 +1098,7 @@ def _maybe_veto_skip(
                 gv["veto"] = {"meaningful_prob": prob, "model": "pdf_image_veto"}
                 # Card-worthy: carry the pixels inline so the PM sees the image
                 # without going looking. Hard band only — see the budget block.
-                thumb, thumb_err = _maybe_thumb(crop)
-                if thumb:
-                    gv["crop_thumb"] = thumb
-                elif thumb_err:
-                    gv["crop_thumb_error"] = thumb_err
+                _request_thumb(gv, crop)
             else:
                 gv["veto_soft"] = {"meaningful_prob": prob}
             if crop_ref:
@@ -1103,8 +1231,120 @@ def _emit_atom(
 # ── main entry ──────────────────────────────────────────────────────
 
 
+@dataclass
+class _ImageWork:
+    """One image selected for VLM work, plus everywhere its results land.
+
+    Selection (which images, in what order) is decided SEQUENTIALLY before any
+    VLM call; only ``_process_one`` fans out. The result slots are per-item, so
+    two workers never touch the same object.
+    """
+    marker: Any
+    pdf_name: str
+    page_index: int
+    region_ref: str
+    saved_path: str
+    caption: str
+    crop: bytes
+    crop_hash: str
+    atoms: list[EvidenceAtom] = field(default_factory=list)
+    rows: list[Any] = field(default_factory=list)
+    thumbs: list[tuple[dict[str, Any], bytes]] = field(default_factory=list)
+
+
+def _build_work_list(
+    atoms: list[Any], *, max_images: int, min_bytes: int,
+) -> list[_ImageWork]:
+    """Phase 1 — pick the images, sequentially and with NO VLM calls.
+
+    Dedup (identical crops by ``sha256[:16]``), the min-bytes filter and the
+    ``max_images`` cap all live here, walking ``_iter_image_markers`` in its
+    natural order. Keeping this phase serial is what makes the parallel phase
+    safe to reason about: the cap and the dedup set are the two pieces of shared
+    state that would otherwise race, and here they cannot — the same deal picks
+    the same images in the same order at any concurrency.
+    """
+    work: list[_ImageWork] = []
+    seen_hashes: set[str] = set()
+    for marker, pdf_name, page_index, region_ref, saved_path, caption in _iter_image_markers(atoms):
+        if len(work) >= max_images:
+            break
+        crop = _load_crop(saved_path)
+        if len(crop) < min_bytes:
+            continue
+        crop_hash = hashlib.sha256(crop).hexdigest()[:16]
+        if crop_hash in seen_hashes:
+            continue
+        seen_hashes.add(crop_hash)
+        work.append(_ImageWork(
+            marker=marker, pdf_name=pdf_name, page_index=page_index,
+            region_ref=region_ref, saved_path=saved_path, caption=caption,
+            crop=crop, crop_hash=crop_hash,
+        ))
+    return work
+
+
+def _run_work_item(w: _ImageWork, cfg: dict[str, Any]) -> None:
+    """Phase 2 body — the expensive part, run once per image, possibly in
+    parallel. Writes ONLY into ``w``; commits nothing. A failure here is
+    contained to this one image (abstain), exactly as before."""
+    try:
+        with _deferring(w.rows, w.thumbs):
+            w.atoms = _process_one(
+                marker=w.marker, pdf_name=w.pdf_name, page_index=w.page_index,
+                region_ref=w.region_ref, saved_path=w.saved_path,
+                caption=w.caption, crop=w.crop, crop_hash=w.crop_hash,
+                neighbor_chars=cfg["neighbor_chars"],
+                max_page_chars=cfg["max_page_chars"],
+                guard_min=cfg["guard_min"], caption_min=cfg["caption_min"],
+            )
+    except Exception as exc:  # one bad image never breaks the compile
+        logger.warning("pdf_image_vision: %s %s failed: %s", w.pdf_name, w.region_ref, exc)
+        w.atoms = []
+        # w.rows / w.thumbs keep whatever was collected before the failure, so a
+        # half-processed image still receipts what it learned (never a silent
+        # zero); the surviving images are untouched.
+
+
+def _drain_deferred(work: list[_ImageWork]) -> None:
+    """Phase 3 — replay the collected side effects in WORK-LIST order.
+
+    Single-threaded by construction, so the SQLite writes cannot collide, and
+    the thumbnail budget is spent by the same images it would have been spent by
+    sequentially. Each item is isolated: a bad row never costs the next one.
+    """
+    # ``TrainingLog.rows()`` reads back ``ORDER BY created_at``, and a row's
+    # created_at is stamped when the TrainingRow is CONSTRUCTED — inside the
+    # worker. Left alone, the log would read back in completion order, which is
+    # a real (if quiet) regression: today it reads back in image order. Restamp
+    # at commit time, strictly increasing, so created_at means what it meant
+    # sequentially — when the row was written. The 1us spacing is not cosmetic:
+    # time.time() ties easily across a tight loop, and ties make the ORDER BY
+    # arbitrary again. Nothing else in the repo reads this field's value.
+    stamp = time.time()
+    for w in work:
+        if w.rows:
+            try:
+                from app.core.training_log import log_rows
+                for row in w.rows:
+                    row.created_at = stamp
+                    stamp += 1e-6
+                log_rows(w.rows)
+            except Exception:
+                pass
+        for gv, crop in w.thumbs:
+            _apply_thumb(gv, crop)
+
+
 def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     """Describe / transcribe embedded PDF images into NEW atoms.
+
+    Three phases (see ``_build_work_list`` / ``_run_work_item`` /
+    ``_drain_deferred``): pick the images serially, do the VLM work with a small
+    bounded pool, then commit the order-sensitive side effects in the order the
+    images were picked. Output is byte-identical at any concurrency — atom ids
+    are content-derived, and ``out`` is assembled from the work list, never from
+    completion order.
 
     Returns [] when disabled, no vision endpoint, or nothing qualifies. Never
     raises and never removes or rewrites input atoms — the only mutation is
@@ -1122,40 +1362,37 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
 
     max_images = _int_env("SOWSMITH_PDF_IMAGE_MAX", 40)
     min_bytes = _int_env("SOWSMITH_PDF_IMAGE_MIN_BYTES", 3000)
-    neighbor_chars = _int_env("SOWSMITH_PDF_IMAGE_NEIGHBOR_CHARS", 600)
-    max_page_chars = _int_env("SOWSMITH_PDF_IMAGE_PAGE_CHARS", 4000)
-    guard_min = _float_env("SOWSMITH_PDF_IMAGE_GUARD_MIN", 0.25)
-    caption_min = _float_env("SOWSMITH_PDF_IMAGE_CAPTION_MIN", 0.2)
+    cfg = {
+        "neighbor_chars": _int_env("SOWSMITH_PDF_IMAGE_NEIGHBOR_CHARS", 600),
+        "max_page_chars": _int_env("SOWSMITH_PDF_IMAGE_PAGE_CHARS", 4000),
+        "guard_min": _float_env("SOWSMITH_PDF_IMAGE_GUARD_MIN", 0.25),
+        "caption_min": _float_env("SOWSMITH_PDF_IMAGE_CAPTION_MIN", 0.2),
+    }
+
+    work = _build_work_list(atoms, max_images=max_images, min_bytes=min_bytes)
+    if not work:
+        return []
+
+    width = min(_concurrency(), len(work))
+    if width <= 1:
+        for w in work:
+            _run_work_item(w, cfg)
+    else:
+        with ThreadPoolExecutor(
+            max_workers=width, thread_name_prefix="pdf_image_vision",
+        ) as pool:
+            # list() drains the map so every image is done before we commit.
+            list(pool.map(lambda w: _run_work_item(w, cfg), work))
+
+    _drain_deferred(work)
 
     out: list[EvidenceAtom] = []
-    processed = 0
-    seen_hashes: set[str] = set()
-    for marker, pdf_name, page_index, region_ref, saved_path, caption in _iter_image_markers(atoms):
-        if processed >= max_images:
-            break
-        crop = _load_crop(saved_path)
-        if len(crop) < min_bytes:
-            continue
-        crop_hash = hashlib.sha256(crop).hexdigest()[:16]
-        if crop_hash in seen_hashes:
-            continue
-        seen_hashes.add(crop_hash)
-        processed += 1
-        try:
-            new_atoms = _process_one(
-                marker=marker, pdf_name=pdf_name, page_index=page_index,
-                region_ref=region_ref, saved_path=saved_path, caption=caption,
-                crop=crop, crop_hash=crop_hash, neighbor_chars=neighbor_chars,
-                max_page_chars=max_page_chars, guard_min=guard_min,
-                caption_min=caption_min,
-            )
-            out.extend(new_atoms)
-        except Exception as exc:  # one bad image never breaks the compile
-            logger.warning("pdf_image_vision: %s %s failed: %s", pdf_name, region_ref, exc)
-            continue
+    for w in work:  # work-list order, NEVER completion order
+        out.extend(w.atoms)
     if out:
         logger.info(
-            "pdf_image_vision: %d atoms from %d images", len(out), processed,
+            "pdf_image_vision: %d atoms from %d images (concurrency %d)",
+            len(out), len(work), width,
         )
     return out
 
