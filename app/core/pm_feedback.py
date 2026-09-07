@@ -56,6 +56,25 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # an extract head — nothing chooses between a closed set, something is
     # rewritten. Applied only to text WE author; never to quoted evidence.
     "terminology": HeadSpec("preferred_term", "deal", "Preferred wording", mode="extract"),
+    # What a worksheet IS. The classifier decides this from a word list today,
+    # and measured across 165 real sheets it reaches SCOPE by fallthrough — the
+    # `default_scope` branch, meaning nothing recognised it — on 45% of them.
+    # An SSRS customer export landed there and contributed 48,321 scope_item
+    # atoms to a deal, because its columns say "Customer Code" and "Order Date"
+    # rather than "site" or "device".
+    #
+    # A word list only ever knows the words somebody already wrote down. A head
+    # learns the KIND of sheet from a PM's judgment and recognises the next one
+    # by meaning, whatever its columns are called — and abstains when it has
+    # never seen anything like it, instead of defaulting to the most
+    # consequential bucket available.
+    "sheet": HeadSpec(
+        "sheet_role", "sheet", "Sheet role",
+        candidates=(
+            "scope", "reference", "rate_card", "catalog",
+            "financial_summary", "instructions", "empty",
+        ),
+    ),
 }
 
 # Deal-scoped PM corrections fire readily WITHIN that deal (the PM explicitly fixed

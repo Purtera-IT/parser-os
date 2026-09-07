@@ -391,6 +391,11 @@ class NoteRequest(BaseModel):
     #: The question cards the PM was looking at. A note is written about one of
     #: them, and learning from the card beats learning from the paraphrase.
     questions: list[str] = Field(default_factory=list)
+    #: The worksheets on the deal, as "tab name | header columns". A note about
+    #: a SOURCE ("that reporting file is a customer dump") has to be learned
+    #: from the sheet's own identity, which is what recurs across deals — the
+    #: rows beneath it are different data every month.
+    sheets: list[str] = Field(default_factory=list)
     dry_run: bool = False
 
 
@@ -416,7 +421,8 @@ def feedback_note(project_id: str, req: NoteRequest) -> dict[str, Any]:
 
     if req.dry_run or store is None:
         routing = route_note(
-            note, deal_id=deal_id, facts=req.facts, store=store, questions=req.questions
+            note, deal_id=deal_id, facts=req.facts, store=store,
+            questions=req.questions, sheets=req.sheets,
         )
         return {
             "deal_id": deal_id,
@@ -428,7 +434,8 @@ def feedback_note(project_id: str, req: NoteRequest) -> dict[str, Any]:
 
 
     result = apply_note(
-        note, store=store, deal_id=deal_id, pm=req.pm, facts=req.facts, questions=req.questions
+        note, store=store, deal_id=deal_id, pm=req.pm, facts=req.facts,
+        questions=req.questions, sheets=req.sheets,
     )
     result["deal_id"] = deal_id
     result["store_active"] = True
