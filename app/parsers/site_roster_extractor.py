@@ -808,8 +808,10 @@ def extract_site_roster(
             confidence = 0.5  # address-anchored only
 
         from app.core.address_parse import (
+            city_only_cell,
             enrich_location_fields,
             split_city_state_strict,
+            state_code,
         )
 
         # A combined "City/State" cell is split here, GUESS-FREE, before
@@ -821,6 +823,18 @@ def extract_site_roster(
         # ``enrich_location_fields``' lenient fallback out of this path —
         # roster columns abstain where prose may guess.)
         cs_city, cs_state = split_city_state_strict(cells.get("city_state"))
+        # A "City/State" cell naming only a city abstains above — right, when
+        # that column is the table's only geography. But this shape is common::
+        #
+        #   | Facility | Address | City/State | Zip | ST |
+        #   | Newberg… | 1001 …  | Newberg    | …   | OR |
+        #
+        # Here a separate column already carries a validated state, so the pair
+        # is complete and document-backed, not guessed. Without this the city
+        # was dropped on every row of every roster written this way, while
+        # sitting in plain sight in its own column.
+        if not cs_city and not cs_state and state_code(cells.get("state")):
+            cs_city = city_only_cell(cells.get("city_state"))
 
         loc = enrich_location_fields(
             street_address=cells.get("street_address"),

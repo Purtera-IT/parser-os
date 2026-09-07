@@ -207,6 +207,19 @@ def _city_looks_valid(city: str) -> bool:
     tokens = [t.rstrip(".,") for t in city.split()]
     if not tokens:
         return False
+    # "St" is a street suffix in "Broad St" and the abbreviation for Saint in
+    # "St. Louis". No rule about the token can separate those, and every
+    # attempt to write one is a word list that needs another word list next
+    # week. Ask the gazetteer whether a real place has this name instead.
+    from app.core.geo_reference import is_known_place
+
+    if is_known_place(city) is True:
+        return True
+
+    # Not a place we know of, or no reference data loaded. Fall back to the
+    # syntactic rule: a street suffix anywhere means this is street debris.
+    # Deliberately strict — it is what lets the caller trim leading tokens off
+    # "Park BLvd. Highland Park" until the remainder reads as a city.
     for t in tokens:
         bare = t.lower().rstrip(".")
         if bare in _STREET_SUFFIXES:
@@ -378,6 +391,48 @@ def split_city_state_strict(city_state: str | None) -> tuple[str | None, str | N
     return _clean(city_raw), state
 
 
+def city_only_cell(city_state: str | None) -> str | None:
+    """The city from a combined cell that names a city and nothing else.
+
+    :func:`split_city_state_strict` abstains on a bare ``"Newberg"``, and it is
+    right to: a ``City/State`` column that says only ``"Nashville"`` has given a
+    city *label*, not a verified pair.
+
+    But a roster often carries ``City/State`` **and** a separate state column::
+
+        | Facility               | Address            | City/State | Zip   | ST |
+        | Newberg Medical Center | 1001 Providence Dr | Newberg    | 97132 | OR |
+
+    Here the other half is already in hand from a different column, so the pair
+    is complete and document-backed rather than guessed. This is how a caller
+    that holds a validated state gets the city half. Live rosters lost the city
+    on every row of this shape.
+
+    Returns ``None`` for anything ambiguous: more than one component
+    (``"Springfield, Springfield"``), a street fragment, a bare state, or a
+    short all-caps token that reads as an internal code (``"TEN"``) rather than
+    a place. Callers must only use this when they have a validated state for
+    the same row.
+    """
+    s = _clean(city_state)
+    if not s:
+        return None
+    if state_code(s):
+        return None  # a bare state names no city
+    parts = [p.strip() for p in re.split(r"\s*[,/]\s*", s)]
+    if len(parts) != 1:
+        return None  # two components and no state -> tells us nothing
+    city = parts[0]
+    if not _city_looks_valid(city):
+        return None
+    if city.isupper() and len(city) <= 4:
+        return None  # "TEN" / "SCA" are territory codes, not places
+    if any(ch.isdigit() for ch in city):
+        return None  # "Suite 400" is a unit, not a place
+    return _clean(city)
+
+
+
 def enrich_location_fields(
     *,
     street_address: str | None = None,
@@ -446,6 +501,20 @@ def enrich_location_fields(
                 out_zip = out_zip or parsed.zip
                 if parsed.street_address:
                     street = parsed.street_address
+
+    # Last: the reference data closes gaps the text simply never stated. A ZIP
+    # determines its city and state outright, and a city that exists in exactly
+    # one state names that state. A roster with a Zip column and no state used
+    # to ship a site nobody could route to, while the answer sat in five digits
+    # we had already parsed. Fills blanks only — the document always wins.
+    if not (out_city and out_state):
+        from app.core.geo_reference import resolve as _geo_resolve
+
+        ref_city, ref_state = _geo_resolve(
+            city=out_city, state=out_state, postal_code=out_zip
+        )
+        out_city = out_city or ref_city
+        out_state = out_state or ref_state
 
     return {
         "street_address": street,
