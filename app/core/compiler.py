@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -361,6 +362,15 @@ def _maybe_wire_feedback_store() -> None:
         pass
 
 
+#: Most atoms one artifact may contribute before it is treated as a data export
+#: rather than deal evidence. 0 disables the cap.
+#:
+#: A real deal document lands in the hundreds; the largest legitimate scope
+#: workbook measured across the corpus is far under this. 94,047 from a single
+#: customer report is what this exists to catch.
+_MAX_ATOMS_PER_ARTIFACT = int(os.environ.get("SOWSMITH_MAX_ATOMS_PER_ARTIFACT", "12000"))
+
+
 @functools.lru_cache(maxsize=1)
 def _parser_code_fingerprint() -> str:
     """SHA of the parser package source, folded into the artifact cache key so
@@ -605,6 +615,43 @@ def compile_project(
                         _materialize_derived_files(artifact, parsed_derived_files)
                     if parser_routing:
                         parser_routing[-1]["cache_hit"] = cache_hit
+
+                    # One artifact must not be able to take the whole compile.
+                    #
+                    # Deal 5bd32822 carried an SSRS customer report —
+                    # `SSRS-SL-CUS001-CustomerOut`, 15,253 rows x 43 columns —
+                    # that parsed to 94,047 atoms, 48,321 of them `scope_item`,
+                    # and serialised to a 319 MB cache payload. The compile ran
+                    # 6.8 hours and blocked every deploy behind it, because the
+                    # drain will not roll over a running compile.
+                    #
+                    # Dropped, not truncated: keeping the first N atoms of a
+                    # 94,000-atom file is a silent, arbitrary sample of somebody
+                    # else's data presented as this deal's evidence. Skipping it
+                    # loudly is honest, and the routing row says exactly what
+                    # happened so a real oversized scope file is visible rather
+                    # than mysterious.
+                    if _MAX_ATOMS_PER_ARTIFACT and len(parsed_atoms) > _MAX_ATOMS_PER_ARTIFACT:
+                        warning = (
+                            f"WARNING: {relative_name} produced {len(parsed_atoms):,} atoms "
+                            f"(cap {_MAX_ATOMS_PER_ARTIFACT:,}); skipping the file. A document "
+                            f"this dense is a data export, not deal evidence — raise "
+                            f"SOWSMITH_MAX_ATOMS_PER_ARTIFACT if it really is scope."
+                        )
+                        parse_warnings.append(warning)
+                        if parser_routing:
+                            parser_routing[-1]["outcome"] = {
+                                "status": "skipped_oversized",
+                                "reason": (
+                                    f"{len(parsed_atoms)} atoms exceeds the per-artifact cap "
+                                    f"of {_MAX_ATOMS_PER_ARTIFACT}"
+                                ),
+                                "atom_count": 0,
+                                "atoms_discarded": len(parsed_atoms),
+                                "warning_count": len(per_artifact_warnings) + 1,
+                            }
+                        continue
+
                     candidates.extend(parsed_candidates)
                     parse_warnings.extend(per_artifact_warnings)
                     atoms.extend(parsed_atoms)
