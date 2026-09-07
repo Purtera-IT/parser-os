@@ -91,6 +91,11 @@ app = [
   # and nothing failed -- the envelope carried `lifecycle: null` on all 65
   # documents of a deal whose 21 documents were all in the table.
   "core/document_lifecycle/data/*.json",
+  # US postal gazetteer for app/core/geo_reference.py. Same lesson as the two
+  # above, learned again: the package installed without it, every ZIP lookup
+  # returned None, and nothing failed -- sites shipped with a ZIP and no state
+  # while five digits named the state outright.
+  "data/*.tsv.gz",
 ]
 orbitbrief_page_os = [
   "segmentation/core_runtime/chunks/*",
