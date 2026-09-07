@@ -75,3 +75,48 @@ def test_names_extend_aliases_without_duplicating() -> None:
     atoms = [_atom(["site:a"], {"id": "a", "names": ["HQ", "Headquarters"]})]
     apply_site_attributes(rows, atoms)
     assert rows[0]["aliases"] == ["HQ", "Headquarters"]
+
+
+def test_roster_with_a_separate_state_column_keeps_its_city() -> None:
+    """The live shape that lost the city on every row.
+
+        | Facility | Address | City/State | Zip   | ST |
+        | Newberg… | 1001 …  | Newberg    | 97132 | OR |
+
+    "Newberg" alone abstains in `split_city_state_strict` — right, when that
+    column is the only geography. With a validated state beside it, the pair
+    is complete and document-backed.
+    """
+    from app.parsers.site_roster_extractor import extract_site_roster
+
+    rows = extract_site_roster(
+        columns=["Facility", "Address", "City/State", "Zip", "ST"],
+        rows=[["Newberg Medical Center", "1001 Providence Dr", "Newberg", "97132", "OR"]],
+    )
+    assert len(rows) == 1
+    value = rows[0].as_dict()
+    assert (value["city"], value["state"], value["zip"]) == ("Newberg", "OR", "97132")
+
+
+def test_roster_without_a_state_column_still_abstains() -> None:
+    """The guarantee the abstention exists for, unchanged."""
+    from app.parsers.site_roster_extractor import extract_site_roster
+
+    rows = extract_site_roster(
+        columns=["Facility", "Address", "City/State"],
+        rows=[["Newberg Medical Center", "1001 Providence Dr", "Newberg"]],
+    )
+    assert rows
+    assert rows[0].as_dict()["state"] is None
+
+
+def test_territory_codes_never_become_cities() -> None:
+    """Clayton's Region column reads "TEN" / "SCA" — codes, not places."""
+    from app.parsers.site_roster_extractor import extract_site_roster
+
+    rows = extract_site_roster(
+        columns=["Facility", "Address", "City/State", "Zip", "ST"],
+        rows=[["Clayton 118", "427 Hartford Road", "TEN", "37013", "TN"]],
+    )
+    assert rows
+    assert rows[0].as_dict()["city"] != "TEN"
