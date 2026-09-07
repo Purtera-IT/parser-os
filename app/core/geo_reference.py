@@ -28,6 +28,7 @@ every real address.
 from __future__ import annotations
 
 import gzip
+import logging
 import re
 import threading
 from pathlib import Path
@@ -95,8 +96,22 @@ def _load() -> None:
                     for key in _keys_for(city):
                         places.setdefault(key, set()).add(state)
         except FileNotFoundError:
-            pass
+            # Degrading open is right — a missing asset must not reject every
+            # address — but it must not be SILENT. This file ships only because
+            # pyproject declares it as package-data, and an undeclared data
+            # file is how two earlier datasets shipped as "installed but
+            # empty": every lookup returned None and nothing failed.
+            logging.getLogger(__name__).warning(
+                "geo_reference: %s is missing, so every ZIP and city lookup "
+                "will abstain. Check [tool.setuptools.package-data] in "
+                "pyproject.toml if this is an installed package.",
+                _DATA,
+            )
         except Exception:  # a corrupt asset must not fail a compile
+            logging.getLogger(__name__).warning(
+                "geo_reference: could not read %s; lookups will abstain", _DATA,
+                exc_info=True,
+            )
             zips, places = {}, {}
         _zip_index = zips
         _place_index = {k: frozenset(v) for k, v in places.items()}
