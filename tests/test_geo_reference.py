@@ -69,3 +69,49 @@ def test_city_only_cell_needs_a_real_place() -> None:
     assert city_only_cell("1001 Providence Dr") is None
     assert city_only_cell("TEN") is None
     assert city_only_cell("OR") is None
+
+
+def test_enrich_site_geo_fills_every_extractor_path() -> None:
+    """The docx schema registry does not enrich its own rows; this does.
+
+    Live case: "Willamette Falls Medical Center", city "Oregon City",
+    ZIP 97045, state None — while those five digits name Oregon outright.
+    """
+    from app.core.site_geo_fallback import enrich_site_geo
+
+    class _Atom:
+        atom_type = "physical_site"
+        raw_text = "Willamette Falls Medical Center | 1500 Division St"
+
+        def __init__(self, value):
+            self.value = value
+            self.text = self.raw_text
+
+    atom = _Atom({
+        "id": "WILLAMETTE-FALLS",
+        "facility_name": "Willamette Falls Medical Center",
+        "street_address": "1500 Division St",
+        "city": "Oregon City",
+        "state": None,
+        "zip": "97045",
+    })
+    assert enrich_site_geo([atom]) >= 1
+    assert atom.value["state"] == "OR"
+    assert atom.value["city"] == "Oregon City"
+
+
+def test_enrich_site_geo_never_overwrites_the_document() -> None:
+    from app.core.site_geo_fallback import enrich_site_geo
+
+    class _Atom:
+        atom_type = "physical_site"
+        raw_text = "Somewhere"
+
+        def __init__(self, value):
+            self.value = value
+            self.text = self.raw_text
+
+    # ZIP says Newberg, OR; the document says Dundee. The document wins.
+    atom = _Atom({"id": "X", "city": "Dundee", "state": "OR", "zip": "97132"})
+    enrich_site_geo([atom])
+    assert atom.value["city"] == "Dundee"
