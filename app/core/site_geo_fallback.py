@@ -406,6 +406,40 @@ def enrich_site_geo(atoms: list[Any]) -> int:
             continue
         if _fill(next(iter(matched.values())), text):
             filled += 1
+
+    # Pass 3 — the reference data closes what the text never stated.
+    #
+    # This runs over EVERY physical_site atom regardless of which extractor
+    # made it, and that is the point: the roster extractor enriches its own
+    # rows, but the docx schema registry (``table_schema_v49``) does not, so a
+    # site landed with city "Oregon City" and ZIP 97045 and no state — while
+    # those five digits name Oregon outright. Enriching per-extractor means
+    # doing it again for the next extractor; this is the one choke point they
+    # all pass through.
+    #
+    # Fills blanks only, and only from a ZIP or from a city that exists in
+    # exactly one state. Never overwrites what a document said.
+    from app.core.geo_reference import resolve as _geo_resolve
+
+    for site in sites:
+        val = getattr(site, "value", None)
+        if not isinstance(val, dict):
+            continue
+        if val.get("city") and val.get("state"):
+            continue
+        ref_city, ref_state = _geo_resolve(
+            city=val.get("city"), state=val.get("state"), postal_code=val.get("zip")
+        )
+        changed = False
+        if ref_city and not val.get("city"):
+            val["city"] = ref_city
+            changed = True
+        if ref_state and not val.get("state"):
+            val["state"] = ref_state
+            changed = True
+        if changed:
+            filled += 1
+
     return filled
 
 
