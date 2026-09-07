@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from app.core.document_lifecycle.dataset import lookup as _lifecycle_lookup
 from app.core.document_lifecycle import timeline as _timeline
@@ -63,6 +63,88 @@ PARSER_MANIFEST_SIDECAR = ".parser_manifest.json"
 
 
 # ────────────────────────── public API ───────────────────────────────────
+
+
+
+#: Structured site attributes carried from a ``physical_site`` atom onto the
+#: ``site_readiness`` row it anchors. Geography leads: the tier panel and the
+#: brief both answer "where is this" from these three.
+SITE_PASSTHROUGH_ATTRS = (
+    "city", "state", "zip", "address", "street_address",
+    "mdf_idf", "access_window", "escort", "users", "rooms", "notes",
+    "facility_name", "escort_owner", "contact", "phone", "email",
+)
+
+
+def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, int]:
+    """Copy structured attributes from ``physical_site`` atoms onto roster rows.
+
+    Returns ``(matched, unmatched)`` atom counts so a join that lands on
+    nothing is visible instead of silently reporting success.
+
+    The join must use ``entity_keys``. ``build_site_readiness`` keys each row
+    from the atom's entity keys — falling back to an address-derived slug like
+    ``site:address_1180_peachtree_st_...`` — so matching only on
+    ``slugify(value["id"])``, as this did originally, misses every site whose
+    id is a facility code. Measured on a 140-envelope sample (2026-09-07):
+    city was present on 72% of physical_site atoms but only 4.7% of roster
+    rows carried city+state. Fills blanks only; never overwrites.
+    """
+    by_slug: dict[str, dict] = {}
+    for entry in rows or []:
+        if isinstance(entry, dict):
+            key = entry.get("site") or entry.get("site_key") or ""
+            if key:
+                by_slug[key] = entry
+
+    matched = unmatched = 0
+    for atom in atoms or []:
+        atom_type = getattr(atom, "atom_type", None)
+        if isinstance(atom, dict):
+            atom_type = atom.get("atom_type")
+        type_str = atom_type.value if hasattr(atom_type, "value") else str(atom_type or "")
+        if type_str != "physical_site":
+            continue
+        # In-process atoms carry the payload on ``value``; the serialised
+        # envelope writes the same payload as ``structured``. Accept both so
+        # this function means the same thing against a live compile and
+        # against an envelope read back from blob.
+        if isinstance(atom, dict):
+            value = atom.get("value") or atom.get("structured")
+        else:
+            value = getattr(atom, "value", None) or getattr(atom, "structured", None)
+        value = value or {}
+        if not isinstance(value, dict):
+            continue
+
+        keys = atom.get("entity_keys") if isinstance(atom, dict) else getattr(atom, "entity_keys", None)
+        candidates: list[str] = [
+            k for k in (keys or [])
+            if isinstance(k, str) and k.startswith("site:")
+        ]
+        site_id = value.get("id") or value.get("site_id") or ""
+        if site_id:
+            slug = "site:" + re.sub(r"[^a-z0-9]+", "_", str(site_id).lower()).strip("_")
+            if slug not in candidates:
+                candidates.append(slug)
+
+        targets = [by_slug[c] for c in candidates if c in by_slug]
+        if not targets:
+            unmatched += 1
+            continue
+        matched += 1
+        for entry in targets:
+            for attr in SITE_PASSTHROUGH_ATTRS:
+                val = value.get(attr)
+                if val and not entry.get(attr):
+                    entry[attr] = val
+            names = value.get("names") or []
+            if names:
+                aliases = entry.setdefault("aliases", [])
+                for name in names:
+                    if name and name not in aliases:
+                        aliases.append(name)
+    return matched, unmatched
 
 
 def build_orbitbrief_envelope(
@@ -529,44 +611,15 @@ def build_orbitbrief_envelope(
     # roster extractor and v49 docx schema registry and are the single
     # source of truth for site metadata.
     try:
-        import re as _re_v49
-        def _atom_type_str(_a) -> str:
-            _at = getattr(_a, "atom_type", None)
-            return _at.value if hasattr(_at, "value") else str(_at or "")
         _sr = envelope.get("site_readiness") or {}
         _sites_list = _sr.get("sites") or []
-        # site_readiness.sites is a LIST of dicts keyed by "site" field
-        _by_slug: dict[str, dict] = {}
-        for _entry in _sites_list:
-            if isinstance(_entry, dict):
-                _k = _entry.get("site") or _entry.get("site_key") or ""
-                if _k:
-                    _by_slug[_k] = _entry
-        for _atom in atoms:
-            if _atom_type_str(_atom) != "physical_site":
-                continue
-            _val = getattr(_atom, "value", None) or {}
-            if not isinstance(_val, dict):
-                continue
-            _sid = _val.get("id") or _val.get("site_id") or ""
-            if not _sid:
-                continue
-            _slug = f"site:{_re_v49.sub(r'[^a-z0-9]+', '_', _sid.lower()).strip('_')}"
-            _entry = _by_slug.get(_slug)
-            if _entry is None:
-                continue
-            for _attr in ("address", "mdf_idf", "access_window", "escort", "users", "rooms", "notes",
-                          "facility_name", "street_address", "escort_owner", "contact", "phone", "email",
-                          "city", "state", "zip"):
-                _v = _val.get(_attr)
-                if _v and not _entry.get(_attr):
-                    _entry[_attr] = _v
-            _names = _val.get("names") or []
-            if _names:
-                _aliases = _entry.setdefault("aliases", [])
-                for _n in _names:
-                    if _n and _n not in _aliases:
-                        _aliases.append(_n)
+        _matched, _unmatched = apply_site_attributes(_sites_list, atoms)
+        if _unmatched:
+            import logging as _lg_v49_join
+            _lg_v49_join.getLogger(__name__).info(
+                "site attribute passthrough: %d physical_site atom(s) matched a "
+                "roster row, %d did not", _matched, _unmatched,
+            )
     except Exception as _v49_exc:
         import logging as _lg_v49
         _lg_v49.getLogger(__name__).warning("v49 site attribute passthrough failed: %s", _v49_exc)
