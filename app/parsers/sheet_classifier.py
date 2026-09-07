@@ -279,6 +279,77 @@ def _looks_like_country_rate_card(rows: list[list[Any]]) -> bool:
     return frac >= 0.35 and nb >= 5
 
 
+def sheet_exemplar(sheet_name: str, rows: list[list[Any]]) -> str:
+    """What the `sheet` head learns a worksheet's identity from.
+
+    The tab name plus its header row. That pair is what makes a kind of sheet
+    recognisable ACROSS deals — "SSRS-SL-CUS001-CustomerOut | Customer Code |
+    Customer Description | Order Date" is the same report next month under a
+    different deal id, while the rows beneath it are entirely different data.
+
+    Deliberately not the row content: a prototype built from 15,000 customer
+    records would match any sheet mentioning those customers, which is a
+    coincidence, not a kind.
+    """
+    header: list[str] = []
+    widths = [sum(1 for c in row if c not in (None, "")) for row in rows]
+    if widths:
+        modal = max(widths) if max(widths) else 0
+        # The first row that is at least 60% as wide as the widest — the real
+        # header, even when a report preamble sits above it (the live case had
+        # its header on row 11 behind a title block).
+        for row in rows:
+            filled = [str(c).strip() for c in row if c not in (None, "")]
+            if modal and len(filled) >= max(3, int(modal * 0.6)):
+                header = filled[:14]
+                break
+    name = " ".join(str(sheet_name or "").split())
+    return " | ".join([name, *header])[:600] if header else name
+
+
+def learned_sheet_role(sheet_name: str, rows: list[list[Any]], *, store: Any = None) -> Any:
+    """A PM's standing judgment about this KIND of sheet, if they have made one.
+
+    Consulted only where the classifier would otherwise fall through to
+    `default_scope` — the branch that recognises nothing and routes to the most
+    consequential bucket anyway. So this can add knowledge and never removes
+    any: a sheet the rules DO recognise is not reconsidered here.
+
+    Degrades open. No store, no embedder, no judgment, anything raised at all —
+    the caller keeps its existing default. A classifier that fails closed on an
+    unreachable store would silently stop mining every spreadsheet.
+    """
+    try:
+        from app.core.decide import get_store
+        from app.core.pm_feedback import HEAD_REGISTRY
+
+        st = store if store is not None else get_store()
+        if st is None:
+            return None
+        spec = HEAD_REGISTRY.get("sheet")
+        if spec is None:
+            return None
+        text = sheet_exemplar(sheet_name, rows)
+        if not text:
+            return None
+        from app.core.decide import DecisionScope
+
+        decision = st.resolve(
+            relation=spec.relation,
+            text=text,
+            candidates=list(spec.candidates),
+            context="",
+            scope=DecisionScope(),
+            instruction="",
+            relations=None,
+        )
+        if decision is None or not getattr(decision, "verdict", ""):
+            return None
+        return decision
+    except Exception:
+        return None
+
+
 def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassification:
     """Classify a worksheet by role for atom-emission gating.
 
@@ -440,6 +511,25 @@ def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassificatio
             signals={"nonblank_rows": nb_rows, "max_row_width": max_row_width},
         )
 
+    # Nothing matched. Before defaulting, ask whether a PM has ever judged this
+    # KIND of sheet — 45% of real sheets reach this branch, so the default is
+    # doing most of the classifying, and it defaults to the bucket that feeds
+    # the SOW.
+    learned = learned_sheet_role(sheet_name, rows)
+    if learned is not None:
+        try:
+            role = SheetRole(str(learned.verdict))
+        except ValueError:
+            role = None
+        if role is not None:
+            return SheetClassification(
+                role=role,
+                suppress=_ROLE_DESTINATION.get(role) is SheetDestination.DROP,
+                reason=f"learned_sheet_role:{getattr(learned, 'correction_id', '') or 'pm'}",
+                confidence=float(getattr(learned, "confidence", 0.0) or 0.8),
+                signals={"has_data_header": has_data_header, "learned": True},
+            )
+
     # Default: treat as a real scope/BOM/asset table.
     return SheetClassification(
         role=SheetRole.SCOPE, suppress=False, reason="default_scope",
@@ -448,6 +538,8 @@ def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassificatio
 
 
 __all__ = [
+    "sheet_exemplar",
+    "learned_sheet_role",
     "SheetRole",
     "SheetDestination",
     "SheetClassification",

@@ -358,6 +358,12 @@ def test_unknown_head_is_refused_not_silently_dropped():
 # mirror (purpulse-frontend src/lib/orbitbrief/headCorrections.ts
 # HEAD_CORRECTIONS) must stay in lockstep — _FE_HEAD_CORRECTIONS below is that
 # mirror, hardcoded, so a drift on either side fails loudly here.
+#
+# Hardcoded is the weakness as well as the point: this guards a COPY of the
+# frontend table, not the table. `terminology` sat in this dict and in
+# HEAD_REGISTRY for weeks while headCorrections.ts had no such entry, and
+# nothing here could see it. Adding a head means editing three places, and only
+# two of them are checked.
 
 # head → decide() relation, exactly as headCorrections.ts declares it.
 _FE_HEAD_CORRECTIONS: dict[str, str] = {
@@ -375,6 +381,11 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # term. Applied only to text this system authors, never to quoted
     # evidence, so a receipt still matches its source word for word.
     "terminology": "preferred_term",
+    # What a worksheet IS. 45% of real sheets reach parser-os's `default_scope`
+    # branch — nothing recognised them — and that branch routes to SCOPE, which
+    # feeds the SOW. A word list only knows the words somebody wrote down; a
+    # head learns the KIND from one judgment and recognises the next by meaning.
+    "sheet": "sheet_role",
 }
 
 

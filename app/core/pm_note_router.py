@@ -674,6 +674,11 @@ What the PM is doing, in their words -> which head and which verdict:
 - correcting a figure, a rate or a quantity -> head "norm", verdict is the
   correct value
 - saying what kind of work the deal IS -> head "router"
+- saying what a WORKSHEET is — that a tab is a data export, a lookup table, a
+  rate card, a price book, internal financials, or real scope — head "sheet",
+  verdict is the role. "that Chipotle reporting file is just a customer dump,
+  don't mine it" is a sheet lesson, not a gap one: it judges the SOURCE, not
+  an ask.
 
 Polarity is the whole point of a gap lesson: "invalid" means never ask this,
 "valid" means always ask it. Getting it backwards teaches the opposite of what
@@ -869,6 +874,7 @@ def route_note(
     synthesize: Callable[[str], dict] | None = None,
     default_scope: str = "deal",
     questions: list[str] | None = None,
+    sheets: list[str] | None = None,
 ) -> NoteRouting:
     """A PM's note → the lessons it contains, each aimed at one head.
 
@@ -964,6 +970,21 @@ def route_note(
         elif not reachable["ok"]:
             routing.model_unavailable = True
 
+    # A sheet lesson must be learned from the SHEET, not from the PM's sentence.
+    #
+    # Same reason a gap lesson is grounded in its card: "that Chipotle reporting
+    # file is a customer dump" embedded as prose matches nothing next month,
+    # while the sheet's own identity — its tab name and header row — is what
+    # recurs across deals. Without this the head stores a paraphrase and never
+    # fires, exactly as gap lessons did before grounding.
+    if sheets:
+        for lesson in routing.lessons:
+            if lesson.head != "sheet":
+                continue
+            grounded = ground_in_questions(lesson.exemplar, list(sheets))
+            if grounded:
+                lesson.exemplar = grounded
+
     routing.lessons = _dedupe(routing.lessons)
     routing.unrouted = unrouted
     return routing
@@ -978,12 +999,14 @@ def apply_note(
     facts: dict[str, Any] | None = None,
     synthesize: Callable[[str], dict] | None = None,
     questions: list[str] | None = None,
+    sheets: list[str] | None = None,
 ) -> dict[str, Any]:
     """Route a note and commit every lesson in it. Returns what was learned."""
     from app.core.pm_feedback import apply_pm_correction
 
     routing = route_note(
-        note, deal_id=deal_id, facts=facts, store=store, synthesize=synthesize, questions=questions
+        note, deal_id=deal_id, facts=facts, store=store, synthesize=synthesize,
+        questions=questions, sheets=sheets,
     )
     committed: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
