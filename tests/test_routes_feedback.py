@@ -381,6 +381,10 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # term. Applied only to text this system authors, never to quoted
     # evidence, so a receipt still matches its source word for word.
     "terminology": "preferred_term",
+    # One rubric dimension of the Project Tier, scored 1-3. OrbitBrief proposes
+    # only what the documents evidence; this head learns the judgements from
+    # what a PM decides.
+    "tier": "project_tier",
     # What a worksheet IS. 45% of real sheets reach parser-os's `default_scope`
     # branch — nothing recognised them — and that branch routes to SCOPE, which
     # feeds the SOW. A word list only knows the words somebody wrote down; a

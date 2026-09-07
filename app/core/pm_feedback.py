@@ -68,6 +68,25 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # by meaning, whatever its columns are called — and abstains when it has
     # never seen anything like it, instead of defaulting to the most
     # consequential bucket available.
+    # How complex a PROJECT is, one rubric dimension at a time.
+    #
+    # OrbitBrief proposes only the dimensions the documents evidence — a site
+    # count, a span of states — and abstains on the seven that are judgements.
+    # This head learns the judgements from what a PM actually decides, so the
+    # proposal reaches further next time without anyone writing a rule.
+    #
+    # One relation for all ten dimensions, not ten heads: the exemplar carries
+    # the dimension and the evidence ("Geographic spread — 7 states across 61
+    # sites"), so the embedding separates them the way it separates any other
+    # two unlike things. Adding a dimension then needs no new head.
+    #
+    # Candidates are the rubric's three levels, as strings — `TierDimension`
+    # options are positional (index 0 -> 1 point), and the score is what a
+    # correction has to carry.
+    "tier": HeadSpec(
+        "project_tier", "deal", "Project tier",
+        candidates=("1", "2", "3"),
+    ),
     "sheet": HeadSpec(
         "sheet_role", "sheet", "Sheet role",
         candidates=(
