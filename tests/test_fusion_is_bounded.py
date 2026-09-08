@@ -79,7 +79,8 @@ def test_a_large_deal_still_asks_about_a_real_duplicate(asked) -> None:
     }
     semantic_site_fusion_groups(set(rows), rows)
     texts = [k.get("text", "") for k in asked]
-    assert any("Hillview" in t for t in texts), texts[:3]
+    # Casefolded — the exemplar is an embedding key, not display text.
+    assert any("hillview" in t for t in texts), texts[:3]
 
 
 def test_the_llm_can_be_locked_out_entirely(asked, monkeypatch) -> None:

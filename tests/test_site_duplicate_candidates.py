@@ -39,10 +39,12 @@ def test_the_symphony_pair_is_proposed() -> None:
 def test_the_exemplar_carries_the_evidence_the_judgement_turns_on() -> None:
     """The slug alone ("palo alto ca 94304") hides the address, which is the
     only reason anyone would think these are the same place."""
+    # Casefolded: the exemplar is an embedding key, not display text, so it
+    # is the same string however either side described the site.
     ex = pair_exemplar(PALO_ALTO, HILLVIEW)
-    assert "3300 Hillview Ave" in ex
-    assert "Palo Alto, CA" in ex
-    assert "Symphony Ai Hillview Office" in ex
+    assert "3300 hillview ave" in ex
+    assert "palo alto, ca" in ex
+    assert "symphony ai hillview office" in ex
 
 
 def test_the_exemplar_does_not_depend_on_argument_order() -> None:

@@ -68,7 +68,25 @@ def pair_exemplar(a: dict[str, Any], b: dict[str, Any]) -> str:
     two lessons about one judgement.
     """
     first, second = sorted((a, b), key=lambda r: str(r.get("site") or ""))
-    return f"{_row_phrase(first)} || {_row_phrase(second)}"
+    return _normalise_exemplar(f"{_row_phrase(first)} || {_row_phrase(second)}")
+
+
+def _normalise_exemplar(text: str) -> str:
+    """Casefold and collapse whitespace.
+
+    This string is an embedding KEY, not display text: it only has to be the
+    same string on both sides of the loop. It was not, five separate times —
+    the last was one site described as "Symphony AI Hillview office" by the
+    panel (from the readiness row's facility name) and "symphony ai hillview
+    office" by the fusion pass (from the slug, because no atom carried that
+    key). One character of case, and a taught answer could not be retrieved.
+
+    Normalising ends that class of drift rather than aligning one more pair of
+    call sites: whatever either side sources its description from, the key
+    agrees. Punctuation is deliberately kept — "3300 Hillview Ave" is evidence,
+    and stripping it would blur two addresses on the same street.
+    """
+    return " ".join(str(text or "").split()).casefold()
 
 
 def _is_located(row: dict[str, Any]) -> bool:
