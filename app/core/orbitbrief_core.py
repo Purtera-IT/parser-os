@@ -1419,6 +1419,7 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
         except Exception:  # a fusion failure must never break the roster
             alias_groups = []
     out: dict[str, str] = {}
+    _n_groups = len(list(alias_groups or []))
     for group in alias_groups or []:
         keys = sorted(
             k for k in group
@@ -1429,6 +1430,15 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
         canon = keys[0]
         for k in keys:
             out[k] = canon
+    # The other half of the same question: the roster saw N groups and
+    # collapsed M keys. A group formed upstream and lost here looks identical
+    # to a group that never formed.
+    import logging as _lg
+
+    _lg.getLogger(__name__).info(
+        "site_readiness: %d alias group(s) in, %d key(s) canonicalised %s",
+        _n_groups, len(out), sorted(set(out.values())) if out else "",
+    )
     return out
 
 
