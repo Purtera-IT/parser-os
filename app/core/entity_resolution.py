@@ -719,6 +719,12 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     return _coalesce_alias_groups(all_groups)
 
 
+#: Above this many sites, stop enumerating every pair and ask only about the
+#: shortlist. 30 sites is 435 pairs, which is a sweep worth doing; 135 sites is
+#: 9,045 and a 437-site rollout is 95,266, which is not.
+_EXHAUSTIVE_PAIR_CEILING = 30
+
+
 def semantic_site_fusion_groups(
     site_keys: set[str],
     rows_by_key: dict[str, dict[str, Any]] | None = None,
@@ -773,15 +779,35 @@ def semantic_site_fusion_groups(
         return dict(row) if isinstance(row, dict) else {"site": k, "facility_name": phrase(k)}
 
     # Enumerate the candidate pairs and their decision texts once.
+    #
+    # Every pair is O(n^2) with no upper bound on n: a 135-site deal is 9,045
+    # pairs and a 437-site rollout is 95,266. Past a ceiling, ask only about
+    # the pairs a PERSON would be asked about — an unlocated site and the one
+    # located site whose address carries a word from its name. A handful per
+    # deal instead of tens of thousands, and the same shortlist the panel
+    # shows, so the pass and the question agree on what is even a candidate.
+    #
+    # Below the ceiling the exhaustive sweep stays, because it catches the pair
+    # the shortlist cannot: a site CODE and its FRIENDLY NAME ("atl_air_03" /
+    # "atlanta_air_office") share no token with any address.
     pairs: list[tuple[str, str, str]] = []  # (key_a, key_b, pair_text)
-    for i in range(len(keys)):
-        for j in range(i + 1, len(keys)):
-            pa, pb = phrase(keys[i]), phrase(keys[j])
-            if pa and pb:
-                # ONE exemplar builder, shared with the shortlist a PM
-                # answers. This was slug-only, which hid the address the
-                # judgment turns on AND differed from the string the answer
-                # was taught on — so an answer could never be retrieved here.
+    if len(keys) > _EXHAUSTIVE_PAIR_CEILING:
+        from app.core.site_duplicate_candidates import site_duplicate_candidates
+
+        known = set(keys)
+        for cand in site_duplicate_candidates([describe(k) for k in keys]):
+            a, b = str(cand.get("unlocated") or ""), str(cand.get("located") or "")
+            if a in known and b in known:
+                pairs.append((a, b, str(cand.get("exemplar") or "")))
+    else:
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                if not (phrase(keys[i]) and phrase(keys[j])):
+                    continue
+                # ONE exemplar builder, shared with the shortlist a PM answers.
+                # This was slug-only, which hid the address the judgment turns
+                # on AND differed from the string the answer was taught on — so
+                # an answer could never be retrieved here.
                 pairs.append((
                     keys[i], keys[j],
                     pair_exemplar(describe(keys[i]), describe(keys[j])),
