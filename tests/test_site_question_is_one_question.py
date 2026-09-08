@@ -74,9 +74,49 @@ def test_the_fusion_pass_asks_with_the_exemplar_the_answer_is_taught_on() -> Non
     assert asked, "the fusion pass asked nothing"
     assert taught in asked, f"asked {asked!r}, taught {taught!r}"
     # And the address is in it, because that is what the judgement turns on.
-    assert "3300 Hillview Ave" in taught
+    assert "3300 hillview ave" in taught
 
 
 def test_the_shortlist_and_the_fusion_pass_agree_on_a_real_pair() -> None:
     candidate = site_duplicate_candidates([PALO_ALTO, HILLVIEW])[0]
     assert candidate["exemplar"] == pair_exemplar(PALO_ALTO, HILLVIEW)
+
+
+def test_the_exemplar_survives_two_descriptions_of_one_site() -> None:
+    """The fifth instance of one bug, ended by normalisation rather than by
+    aligning one more pair of call sites.
+
+    The panel described a site from the readiness row ("Symphony AI Hillview
+    office"); the fusion pass described the same site from its slug, because
+    no atom carried that key ("symphony ai hillview office"). One character of
+    case, and a taught answer could not be retrieved.
+    """
+    anchor = {
+        "site": "site:palo_alto_ca_94304", "facility_name": "Palo Alto",
+        "street_address": "3300 Hillview Ave", "city": "Palo Alto", "state": "CA",
+    }
+    from_readiness = {
+        "site": "site:symphony_ai_hillview_office",
+        "facility_name": "Symphony AI Hillview office",
+    }
+    from_slug = {
+        "site": "site:symphony_ai_hillview_office",
+        "facility_name": "symphony ai hillview office",
+    }
+    assert pair_exemplar(anchor, from_readiness) == pair_exemplar(anchor, from_slug)
+
+
+def test_whitespace_does_not_change_the_key() -> None:
+    a = {"site": "site:a", "facility_name": "Palo  Alto", "street_address": "3300 Hillview Ave"}
+    b = {"site": "site:a", "facility_name": "Palo Alto", "street_address": "3300 Hillview Ave"}
+    other = {"site": "site:b", "facility_name": "Hillview"}
+    assert pair_exemplar(a, other) == pair_exemplar(b, other)
+
+
+def test_the_address_is_still_distinguishing() -> None:
+    """Punctuation is kept on purpose — two addresses on one street must not
+    collapse into the same key."""
+    other = {"site": "site:z", "facility_name": "Hillview"}
+    a = {"site": "site:a", "facility_name": "Office", "street_address": "3300 Hillview Ave"}
+    b = {"site": "site:a", "facility_name": "Office", "street_address": "3400 Hillview Ave"}
+    assert pair_exemplar(a, other) != pair_exemplar(b, other)
