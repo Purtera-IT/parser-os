@@ -275,3 +275,81 @@ def test_seed_is_idempotent():
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ── Store wiring survives an unopenable configured DB ────────────────────────
+# Regression: SOWSMITH_FEEDBACK_STORE_DB pointed at a SQLite file on an Azure
+# Files (SMB) mount. The file predated the `candidates` column, so every open
+# ran the ALTER TABLE migration -- an exclusive write SMB would not grant --
+# and raised "database is locked". The compiler swallowed it and ran with NO
+# store, so decide() never reached resolve() and every taught correction was
+# silently ignored. It failed on 100% of compiles for weeks while site fusion
+# logged "fallback:None" with the matching correction sitting in blob.
+#
+# Blob is the durable master (feedback_blob.sync_into_store rehydrates right
+# after wiring), so a process-local DB is a fully functional store. Wiring must
+# fall back to local disk rather than leaving the compile with nothing.
+
+def test_wire_falls_back_to_local_disk_when_configured_db_unopenable(
+    tmp_path, monkeypatch, caplog
+):
+    import logging as _logging
+
+    from app.core import compiler as _compiler
+    from app.core import decide as _decide
+
+    # A path under a file (not a directory) -- sqlite cannot open it.
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")
+    unopenable = blocker / "_feedback.db"
+
+    monkeypatch.setattr(_compiler, "_FEEDBACK_STORE_WIRED", False)
+    monkeypatch.setenv("SOWSMITH_FEEDBACK_STORE_DB", str(unopenable))
+    monkeypatch.setattr(_decide, "_STORE", None, raising=False)
+    _decide.set_store(None)
+
+    fallback_dir = tmp_path / "localdisk"
+    fallback_dir.mkdir()
+    monkeypatch.setattr(
+        _compiler.tempfile if hasattr(_compiler, "tempfile") else __import__("tempfile"),
+        "gettempdir",
+        lambda: str(fallback_dir),
+    )
+
+    with caplog.at_level(_logging.INFO):
+        _compiler._maybe_wire_feedback_store()
+
+    store = _decide.get_store()
+    assert store is not None, "a store must be wired even when the configured DB fails"
+    assert (fallback_dir / "_feedback.db").exists()
+    # The seeded globals are present, so resolve() has something to consult.
+    assert len(store.all_corrections(active_only=True)) > 0
+    _decide.set_store(None)
+
+
+def test_wire_reports_unavailable_when_configured_db_is_already_local(
+    tmp_path, monkeypatch, caplog
+):
+    """No silent second chance: if the failing path IS the fallback, say so."""
+    import logging as _logging
+
+    from app.core import compiler as _compiler
+    from app.core import decide as _decide
+
+    blocker = tmp_path / "blocked"
+    blocker.write_text("x")
+    unopenable = blocker / "_feedback.db"
+
+    monkeypatch.setattr(_compiler, "_FEEDBACK_STORE_WIRED", False)
+    monkeypatch.setenv("SOWSMITH_FEEDBACK_STORE_DB", str(unopenable))
+    _decide.set_store(None)
+    monkeypatch.setattr(__import__("tempfile"), "gettempdir", lambda: str(blocker))
+
+    with caplog.at_level(_logging.INFO):
+        _compiler._maybe_wire_feedback_store()
+
+    assert _decide.get_store() is None
+    assert any(
+        "every correction will be ignored" in r.getMessage() for r in caplog.records
+    ), "an unusable store must say so loudly"
+    _decide.set_store(None)
