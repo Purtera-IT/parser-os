@@ -337,44 +337,83 @@ def project_census(project_dir: Path | str, atoms):
 _FEEDBACK_STORE_WIRED = False
 
 
+def _open_feedback_store(db_path: str):
+    """Open + seed a FeedbackStore at ``db_path``. Raises on failure."""
+    from app.core.feedback_store import FeedbackStore, seed_default_corrections
+
+    store = FeedbackStore(db_path)
+    seed_default_corrections(store)
+    return store
+
+
 def _maybe_wire_feedback_store() -> None:
     global _FEEDBACK_STORE_WIRED
     if _FEEDBACK_STORE_WIRED:
         return
     import os as _os
+    import tempfile as _tempfile
 
     db_path = _os.environ.get("SOWSMITH_FEEDBACK_STORE_DB", "").strip()
     if not db_path:
         return
     _FEEDBACK_STORE_WIRED = True  # one attempt per process, success or not
+    _log = logging.getLogger(__name__)
     try:
         from app.core.decide import get_store, set_store
-        from app.core.feedback_store import (
-            FeedbackStore,
-            seed_default_corrections,
-        )
 
         if get_store() is not None:  # already wired (e.g. by a test/host)
             return
-        store = FeedbackStore(db_path)
-        seed_default_corrections(store)
-        set_store(store)
-        logging.getLogger(__name__).info(
-            "feedback store wired from %s (%d correction(s))",
-            db_path, len(store.all_corrections(active_only=True)),
+    except Exception:
+        _log.warning("feedback store: decide module unavailable", exc_info=True)
+        return
+
+    try:
+        store = _open_feedback_store(db_path)
+    except Exception:
+        # A store that won't load must never break a compile -- but it must not
+        # fail INVISIBLY either. With no store, decide() returns its fallback
+        # without ever reaching resolve, so every taught correction behaves as
+        # though it was never taught and the abstention log points inside
+        # resolve never fire. That is the shape this hid: site fusion asking one
+        # pair and getting "fallback:None" while the matching correction sat in
+        # the store, with nothing anywhere saying the store had failed to load.
+        #
+        # The observed cause was SQLite on an Azure Files (SMB) mount: the file
+        # predated the `candidates` column, so every open attempted the ALTER
+        # TABLE migration -- an exclusive write -- and SMB would not grant the
+        # lock. It failed on 100% of compiles for weeks.
+        #
+        # Blob is the durable master for corrections (feedback_blob.sync_into_store
+        # runs right after this and rehydrates from it), so a PROCESS-LOCAL db is
+        # a fully functional store, not a degraded one. Falling back to local disk
+        # turns a total learning outage into a working compile.
+        _log.warning(
+            "feedback store NOT wired from %s — falling back to local disk",
+            db_path, exc_info=True,
         )
-    except Exception:  # store must never break a compile
-        # But it must not fail INVISIBLY either. With no store, decide()
-        # returns its fallback without ever reaching resolve — so every taught
-        # correction behaves as though it was never taught, and the three
-        # abstention log points inside resolve never fire because resolve is
-        # never called. That is the shape this hid: site fusion asking one pair
-        # and getting "fallback:None" while the matching correction sat in the
-        # store, with nothing anywhere saying the store had failed to load.
-        logging.getLogger(__name__).warning(
-            "feedback store NOT wired from %s — every correction will be "
-            "ignored for this compile", db_path, exc_info=True,
-        )
+        fallback = _os.path.join(_tempfile.gettempdir(), "_feedback.db")
+        if _os.path.abspath(fallback) == _os.path.abspath(db_path):
+            _log.error(
+                "feedback store unavailable: %s is already local — every "
+                "correction will be ignored for this compile", db_path,
+            )
+            return
+        try:
+            store = _open_feedback_store(fallback)
+        except Exception:
+            _log.error(
+                "feedback store unavailable: local fallback %s failed too — "
+                "every correction will be ignored for this compile",
+                fallback, exc_info=True,
+            )
+            return
+        db_path = fallback
+
+    set_store(store)
+    _log.info(
+        "feedback store wired from %s (%d correction(s))",
+        db_path, len(store.all_corrections(active_only=True)),
+    )
 
 
 #: Most atoms one artifact may contribute before it is treated as a data export
