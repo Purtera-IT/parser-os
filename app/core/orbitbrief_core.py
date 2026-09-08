@@ -1394,10 +1394,49 @@ def build_change_order_timeline(
 _SITE_ANCHOR_FLOOR = 0.15
 
 
+def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
+    """Map every site key to the one key its group is filed under.
+
+    `fuse_alias_groups` collapses ENTITY RECORDS using these groups, and folds
+    the other keys into that record's aliases. It does not rewrite an atom's
+    `entity_keys` — and `build_site_readiness` reads exactly those. So a merge
+    could be judged, agreed and applied to the entity roster while the site
+    COUNT never moved, which is what a PM answering "these are one site" was
+    looking at.
+
+    Canonical key is the alphabetically-first in the group, matching
+    `fuse_alias_groups`, so the roster and the entity records agree on which
+    key survived.
+
+    Groups are recomputed here when not supplied: the caller that has them is
+    the compiler, and the envelope builds this from atoms alone.
+    """
+    if alias_groups is None:
+        try:
+            from app.core.entity_resolution import collect_site_alias_groups
+
+            alias_groups = collect_site_alias_groups(atoms)
+        except Exception:  # a fusion failure must never break the roster
+            alias_groups = []
+    out: dict[str, str] = {}
+    for group in alias_groups or []:
+        keys = sorted(
+            k for k in group
+            if isinstance(k, str) and k.startswith("site:") and len(k) > len("site:")
+        )
+        if len(keys) < 2:
+            continue
+        canon = keys[0]
+        for k in keys:
+            out[k] = canon
+    return out
+
+
 def build_site_readiness(
     *,
     atoms: list[EvidenceAtom],
     edges: list[EvidenceEdge],
+    alias_groups: Any = None,
 ) -> dict[str, Any]:
     """Return a per-site rollup of completeness signals.
 
@@ -1423,6 +1462,7 @@ def build_site_readiness(
     # this to grade "located, details pending" (amber) apart from
     # "unscoped" (red), instead of both collapsing to readiness 0.0.
     anchored_set: set[str] = set()
+    _canon_site = _site_canonical_map(atoms, alias_groups)
 
     for atom in atoms:
         atom_type = _atom_type_str(atom)
@@ -1477,6 +1517,9 @@ def build_site_readiness(
             ):
                 continue
             site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
+        # Two surface forms of one place become one row. Without this the
+        # entity roster merges and the site COUNT does not.
+        site_keys = [_canon_site.get(k, k) for k in site_keys]
         if not site_keys:
             continue
         for sk in site_keys:
