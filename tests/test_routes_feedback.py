@@ -371,7 +371,7 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "admission": "admission",
     "gap": "gap_valid",
     "conflict": "edge_relation",
-    "site": "same_site",
+    "site": "same_physical_site",
     "norm": "value_norm",
     "router": "service_routing",
     "facet": "facet",

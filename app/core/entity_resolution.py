@@ -482,6 +482,22 @@ def complete_truncated_site_values(site_objects: list[dict]) -> list[dict]:
     return site_objects
 
 
+from app.core.site_duplicate_candidates import (
+    SAME_SITE,
+    SITE_PAIR_CANDIDATES,
+    SITE_PAIR_RELATION,
+    pair_exemplar,
+)
+
+
+def _atom_type_of(atom: Any) -> str:
+    """An atom's type, whether it is an object or a serialised dict."""
+    value = getattr(atom, "atom_type", None)
+    if value is None and isinstance(atom, dict):
+        value = atom.get("atom_type")
+    return value.value if hasattr(value, "value") else str(value or "")
+
+
 def _normalize_for_evidence(text: Any) -> str:
     """Casing- and punctuation-blind form, for asking "is this string in the
     documents at all". Mirrors the normalisation base-health uses to judge a
@@ -634,7 +650,29 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     universe: set[str] = set(all_site_keys)
     for g in all_groups:
         universe |= {k for k in g if isinstance(k, str) and k.startswith("site:")}
-    all_groups.extend(semantic_site_fusion_groups(universe))
+    # Hand the fusion pass the rows, not just the keys. Without them it
+    # compares "palo alto ca 94304" against "symphonyai hillview office" and
+    # cannot see that 3300 Hillview Ave is the first one's address — the single
+    # fact the judgment turns on.
+    site_rows: dict[str, dict[str, Any]] = {}
+    for atom in atoms or []:
+        if _atom_type_of(atom) != "physical_site":
+            continue
+        value = getattr(atom, "value", None)
+        if value is None and isinstance(atom, dict):
+            value = atom.get("value") or atom.get("structured")
+        if not isinstance(value, dict):
+            continue
+        for key in (getattr(atom, "entity_keys", None) or (atom.get("entity_keys") if isinstance(atom, dict) else None) or []):
+            if isinstance(key, str) and key.startswith("site:") and key not in site_rows:
+                site_rows[key] = {
+                    "site": key,
+                    "facility_name": value.get("facility_name") or value.get("name"),
+                    "street_address": value.get("street_address") or value.get("address"),
+                    "city": value.get("city"),
+                    "state": value.get("state"),
+                }
+    all_groups.extend(semantic_site_fusion_groups(universe, site_rows))
 
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
     # Drop any site:* key that fails hygiene before grouping is
@@ -681,7 +719,10 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     return _coalesce_alias_groups(all_groups)
 
 
-def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
+def semantic_site_fusion_groups(
+    site_keys: set[str],
+    rows_by_key: dict[str, dict[str, Any]] | None = None,
+) -> list[set[str]]:
     """Merge physical-site keys that name the same place but slug-equality misses.
 
     The deterministic passes in :func:`collect_site_alias_groups` merge two
@@ -726,13 +767,25 @@ def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
     def phrase(k: str) -> str:
         return k[len("site:"):].replace("_", " ").strip()
 
+    def describe(k: str) -> dict[str, Any]:
+        """The row this key names, or a stand-in built from the key itself."""
+        row = (rows_by_key or {}).get(k)
+        return dict(row) if isinstance(row, dict) else {"site": k, "facility_name": phrase(k)}
+
     # Enumerate the candidate pairs and their decision texts once.
     pairs: list[tuple[str, str, str]] = []  # (key_a, key_b, pair_text)
     for i in range(len(keys)):
         for j in range(i + 1, len(keys)):
             pa, pb = phrase(keys[i]), phrase(keys[j])
             if pa and pb:
-                pairs.append((keys[i], keys[j], f"{pa} || {pb}"))
+                # ONE exemplar builder, shared with the shortlist a PM
+                # answers. This was slug-only, which hid the address the
+                # judgment turns on AND differed from the string the answer
+                # was taught on — so an answer could never be retrieved here.
+                pairs.append((
+                    keys[i], keys[j],
+                    pair_exemplar(describe(keys[i]), describe(keys[j])),
+                ))
     if not pairs:
         return []
 
@@ -778,9 +831,9 @@ def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
             continue  # already merged transitively — skip the round-trip
         pa, pb = phrase(a), phrase(b)
         d = decide(
-            relation="same_physical_site",
+            relation=SITE_PAIR_RELATION,
             text=pair_text,
-            candidates=["same_site", "distinct_site"],
+            candidates=list(SITE_PAIR_CANDIDATES),
             instruction=(
                 "Two site names from one deal, separated by '||'. Decide if "
                 "they name the SAME physical location (e.g. a site code and "
@@ -796,7 +849,7 @@ def semantic_site_fusion_groups(site_keys: set[str]) -> list[set[str]]:
         )
         if d.source == "llm":
             llm_budget -= 1
-        if d.verdict == "same_site":
+        if d.verdict == SAME_SITE:
             union(a, b)
 
     groups: dict[str, set[str]] = {}

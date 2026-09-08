@@ -46,7 +46,13 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     "admission": HeadSpec("admission",       "atom",   "Keep / drop", candidates=("keep", "drop")),
     "gap":       HeadSpec("gap_valid",       "gap",    "Gap", candidates=("valid", "invalid")),
     "conflict":  HeadSpec("edge_relation",   "edge",   "Cross-doc conflict"),
-    "site":      HeadSpec("same_site",       "entity", "Site identity"),
+    # The relation and verdicts a PM's answer is stored under have to be the
+    # ones that DECIDE. `semantic_site_fusion_groups` asks decide() for
+    # `same_physical_site` between "same_site" and "distinct_site"; this head
+    # stored answers under `same_site` with no declared vocabulary, so every
+    # answer a PM ever gave was banked where nothing looks it up.
+    "site":      HeadSpec("same_physical_site", "entity", "Site identity",
+                          candidates=("same_site", "distinct_site")),
     "norm":      HeadSpec("value_norm",      "atom",   "Value / amount", mode="extract"),
     "router":    HeadSpec("service_routing", "deal",   "Workstream / domain"),
     "facet":     HeadSpec("facet",           "atom",   "Brief section"),
