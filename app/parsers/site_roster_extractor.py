@@ -481,6 +481,46 @@ def map_columns_to_fields(
     return out
 
 
+#: How many distinct places a headerless-identity table must list before it
+#: reads as a roster rather than a letterhead. Two addresses is a "remit to"
+#: and a "ship to"; three or more is a list of sites.
+_DISTINCT_PLACE_FLOOR = 3
+
+
+def _has_many_distinct_places(
+    columns: Sequence[str],
+    rows: Sequence[Any],
+    col_map: dict[int, str],
+) -> bool:
+    """Does this table name several different places, one per row?
+
+    A letterhead or remittance stub carries one address. A roster identified
+    by address carries a different one on every row, so counting DISTINCT
+    values in the city / street column separates them without knowing a single
+    header word.
+    """
+    place_cols = [i for i, f in col_map.items() if f in ("city", "street_address", "city_state")]
+    if not place_cols:
+        return False
+    # Distinct PLACES, one tuple per row — not distinct strings. Pooling the
+    # street and city columns let a two-row remit-to/ship-to block reach three
+    # values and pass as a roster.
+    seen: set[tuple[str, ...]] = set()
+    for row in rows or []:
+        cells = row if isinstance(row, (list, tuple)) else getattr(row, "cells", None)
+        if not isinstance(cells, (list, tuple)):
+            continue
+        place = tuple(
+            str(cells[i] or "").strip().lower() if i < len(cells) else ""
+            for i in place_cols
+        )
+        if any(place):
+            seen.add(place)
+        if len(seen) >= _DISTINCT_PLACE_FLOOR:
+            return True
+    return len(seen) >= _DISTINCT_PLACE_FLOOR
+
+
 def looks_like_site_roster(
     *,
     columns: Sequence[str],
@@ -528,8 +568,21 @@ def looks_like_site_roster(
             continue
         # A roster must identify a SITE, not just a place. Address+city alone
         # describes every letterhead ever printed.
+        #
+        # But a letterhead has ONE address. A table carrying a different city
+        # on row after row is a site list whose sites are identified BY their
+        # address, which is how plenty of real rosters are written:
+        #
+        #   | Address Line 1 | City | State | Zip Code | Cable Drop Count |
+        #
+        # Rejecting those sent them to a generic row extractor that kept the
+        # city as the site's name and dropped the address, the state and the
+        # ZIP sitting in the next three columns. Count the distinct places
+        # instead — that is the difference between a letterhead and a roster,
+        # and it needs no header vocabulary.
         if not (fields_present & _SITE_IDENTITY_FIELDS):
-            continue
+            if not _has_many_distinct_places(columns, rows, col_map):
+                continue
         return True
 
     # Signal 3: row-shape — count rows whose leftmost non-empty cell

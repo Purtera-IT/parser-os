@@ -68,6 +68,27 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # by meaning, whatever its columns are called — and abstains when it has
     # never seen anything like it, instead of defaulting to the most
     # consequential bucket available.
+    # What a site is CALLED on the brief.
+    #
+    # `site_facility_head.decide_site_facility_label` already asks the registry
+    # for a `site_facility_label` champion and falls back to a rule when there
+    # is none. There never was one: the relation was missing from this table,
+    # so no PM could correct it, so no correction was ever stored, so no head
+    # was ever trained, so the rule ran every time. The rule marks itself
+    # `route_trainable=True` — it was always meant to be replaced.
+    #
+    # The rule composes "<City> Office" when a site's own name reads like a
+    # street. That name appears nowhere in the source text, which is what the
+    # base-health `fabricated_names` invariant counts: measured on a
+    # 140-envelope sample (2026-09-07), 95 of 474 site atoms are named
+    # "<City> Office" — 20%, across 66 deals — and site names account for 74%
+    # of every fabricated name in the corpus.
+    #
+    # Candidates are SiteFacilityDecision's labels in site_facility_head.py.
+    "facility": HeadSpec(
+        "site_facility_label", "entity", "Site name",
+        candidates=("city_office", "keep_facility", "keep_name"),
+    ),
     # How complex a PROJECT is, one rubric dimension at a time.
     #
     # OrbitBrief proposes only the dimensions the documents evidence — a site

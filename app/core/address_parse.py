@@ -391,6 +391,38 @@ def split_city_state_strict(city_state: str | None) -> tuple[str | None, str | N
     return _clean(city_raw), state
 
 
+def looks_like_street_address(text: str | None) -> bool:
+    """Does this read as a street line, or as a sentence with numbers in it?
+
+    Shape heuristics that only look for "a digit and some capitals and a comma"
+    call prose an address, and prose is full of all three. Live examples that
+    passed one and became `physical_site` atoms:
+
+        "4 Stands) Let me know if you need anything else! My best"
+        "10 minutes per device The process is straightforward"
+        "Estimated 20-30 hours per week, mostly planned work on weekends, ..."
+
+    A street line has a grammar: a house number, then a street name carrying a
+    street-type token ("Rd", "Avenue"). Prose with digits has the number and
+    stops. Where there is no house number at all, a "City, ST ZIP" still
+    settles it — that is a place even without a street.
+
+    Length matters too: an address line is not three hundred characters. One
+    site shipped with an entire meeting transcript in its address field.
+    """
+    s = _clean(text) or ""
+    if not s or len(s) > 160:
+        return False
+    house = re.match(r"^\d{1,6}[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?\s+\S", s)
+    if not house:
+        # No house number. Only a named place settles it.
+        return bool(_CITY_STATE_ZIP_RE.search(s))
+    tokens = [t.lower().strip(".,") for t in s.split()[1:]]
+    if any(t in _STREET_SUFFIXES for t in tokens):
+        return True
+    return bool(_CITY_STATE_ZIP_RE.search(s))
+
+
 def city_only_cell(city_state: str | None) -> str | None:
     """The city from a combined cell that names a city and nothing else.
 

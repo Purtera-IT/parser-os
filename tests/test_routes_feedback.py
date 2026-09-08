@@ -385,6 +385,11 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # only what the documents evidence; this head learns the judgements from
     # what a PM decides.
     "tier": "project_tier",
+    # What a site is CALLED. The rule that composes "<City> Office" produces a
+    # name absent from the source text, which is 74% of the corpus's
+    # fabricated names. The head was consulted in code and missing from here,
+    # so it could never be trained.
+    "facility": "site_facility_label",
     # What a worksheet IS. 45% of real sheets reach parser-os's `default_scope`
     # branch — nothing recognised them — and that branch routes to SCOPE, which
     # feeds the SOW. A word list only knows the words somebody wrote down; a
