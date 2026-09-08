@@ -619,6 +619,68 @@ class PMCorrectionRequest(BaseModel):
     pm: str = ""
 
 
+class PMPredictRequest(BaseModel):
+    """Ask a head what it would say, without teaching it anything."""
+
+    head: str = Field(..., description="HEAD_REGISTRY key.")
+    deal_id: str = ""
+    #: One exemplar per question. The SAME string the correction for this
+    #: question would carry — a head can only recognise what it was taught on.
+    texts: list[str] = Field(default_factory=list, max_length=64)
+    scope: str = SCOPE_GLOBAL
+    context: str = ""
+
+
+@router.post("/{project_id}/feedback/predict")
+def feedback_predict(project_id: str, req: PMPredictRequest) -> dict:
+    """What would this head say about these exemplars?
+
+    The read-only counterpart to `/feedback/correction`. Every head is
+    consulted the same way a correction is checked for instant fire — through
+    `store.resolve` — so a head answers here exactly as it will in the
+    pipeline, or abstains here exactly as it will there.
+
+    Abstention is a real answer and is returned as one: `verdict: null`. A head
+    with no corrections yet abstains on everything, which is correct and is why
+    a caller must render an abstention as unanswered rather than as a guess.
+    """
+    store = _require_store()
+    spec = PM_HEAD_REGISTRY.get(req.head)
+    if spec is None:
+        raise HTTPException(status_code=422, detail=f"unknown head {req.head!r}")
+    candidates = [str(c) for c in (spec.candidates or []) if str(c).strip()]
+    if spec.mode != "classify" or not candidates:
+        raise HTTPException(
+            status_code=422,
+            detail=f"head {req.head!r} is not a classifier with a closed candidate set",
+        )
+
+    scope = _scope_obj(req.scope, req.deal_id or project_id)
+    out: list[dict] = []
+    for text in req.texts:
+        exemplar = str(text or "").strip()
+        if not exemplar:
+            out.append({"text": text, "verdict": None, "confidence": 0.0})
+            continue
+        try:
+            decision = store.resolve(
+                relation=spec.relation, text=exemplar, candidates=candidates,
+                context=req.context, scope=scope, instruction="", relations=None,
+            )
+        except Exception:
+            # A head that cannot be consulted has no opinion. Never fatal: the
+            # caller renders the question unanswered, which is what it would
+            # have done anyway.
+            decision = None
+        verdict = getattr(decision, "verdict", None) if decision else None
+        out.append({
+            "text": exemplar,
+            "verdict": verdict if verdict in candidates else None,
+            "confidence": float(getattr(decision, "confidence", 0.0) or 0.0) if decision else 0.0,
+        })
+    return {"relation": spec.relation, "candidates": candidates, "predictions": out}
+
+
 @router.post("/{project_id}/feedback/correction")
 def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
     """One endpoint for every head. Maps the PM's in-brief fix → a Correction in
