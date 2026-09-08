@@ -51,6 +51,15 @@ def _row_phrase(row: dict[str, Any]) -> str:
     return " — ".join(p for p in (name, street, locality) if p)
 
 
+#: The verdicts the fusion pass decides between. Declared here because this is
+#: also what a PM's answer must say — a question asked in one vocabulary and
+#: answered in another is two conversations.
+SAME_SITE = "same_site"
+DISTINCT_SITE = "distinct_site"
+SITE_PAIR_RELATION = "same_physical_site"
+SITE_PAIR_CANDIDATES = (SAME_SITE, DISTINCT_SITE)
+
+
 def pair_exemplar(a: dict[str, Any], b: dict[str, Any]) -> str:
     """The one string this pair is asked and taught with.
 
