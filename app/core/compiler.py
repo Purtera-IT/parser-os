@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import os
 import re
 from collections import Counter
@@ -358,8 +359,22 @@ def _maybe_wire_feedback_store() -> None:
         store = FeedbackStore(db_path)
         seed_default_corrections(store)
         set_store(store)
-    except Exception:  # pragma: no cover - store must never break a compile
-        pass
+        logging.getLogger(__name__).info(
+            "feedback store wired from %s (%d correction(s))",
+            db_path, len(store.all_corrections(active_only=True)),
+        )
+    except Exception:  # store must never break a compile
+        # But it must not fail INVISIBLY either. With no store, decide()
+        # returns its fallback without ever reaching resolve — so every taught
+        # correction behaves as though it was never taught, and the three
+        # abstention log points inside resolve never fire because resolve is
+        # never called. That is the shape this hid: site fusion asking one pair
+        # and getting "fallback:None" while the matching correction sat in the
+        # store, with nothing anywhere saying the store had failed to load.
+        logging.getLogger(__name__).warning(
+            "feedback store NOT wired from %s — every correction will be "
+            "ignored for this compile", db_path, exc_info=True,
+        )
 
 
 #: Most atoms one artifact may contribute before it is treated as a data export
