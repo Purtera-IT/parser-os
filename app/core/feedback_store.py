@@ -729,7 +729,17 @@ class FeedbackStore:
                         rationale=f"matched correction {c.id} ({metric} {score:.3f})",
                     )
             return None
-        except Exception:  # pragma: no cover - never break decide()
+        except Exception:  # never break decide()
+            # Swallowing this is correct — a store fault must not fail a
+            # compile — but swallowing it SILENTLY made every fault look
+            # like "nothing was taught". Site fusion asked one pair and got
+            # no answer while the matching correction sat in the store, and
+            # none of the three abstention log points fired, which leaves
+            # only this path. An exception nobody can see is the most
+            # expensive kind.
+            _log.warning(
+                "store.resolve(%s) raised; abstaining", relation, exc_info=True,
+            )
             return None
 
     def learn_from_teacher(
