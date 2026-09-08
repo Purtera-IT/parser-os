@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from difflib import SequenceMatcher
@@ -861,6 +862,7 @@ def semantic_site_fusion_groups(
     except ValueError:
         llm_budget = 80
 
+    verdicts: dict[str, int] = {}
     # Union-find over the candidate site keys; each confident "same" verdict
     # unions two keys, so a code that matches several surface forms collapses
     # them all into one cluster transitively.
@@ -900,13 +902,27 @@ def semantic_site_fusion_groups(
         )
         if d.source == "llm":
             llm_budget -= 1
+        verdicts[f"{d.source}:{d.verdict}"] = verdicts.get(f"{d.source}:{d.verdict}", 0) + 1
         if d.verdict == SAME_SITE:
             union(a, b)
 
     groups: dict[str, set[str]] = {}
     for k in keys:
         groups.setdefault(find(k), set()).add(k)
-    return [g for g in groups.values() if len(g) >= 2]
+    merged = [g for g in groups.values() if len(g) >= 2]
+
+    # Say what was asked and what came back.
+    #
+    # A merge that does not happen is indistinguishable, from outside, from a
+    # pass that never ran — which is how six separate fixes were shipped
+    # against a symptom nobody could see the cause of. One line closes that:
+    # pairs asked, what decide() said, and whether anything actually merged.
+    logging.getLogger(__name__).info(
+        "site_fusion: %d site keys, %d pairs asked, verdicts=%s, merged %d group(s) %s",
+        len(keys), len(pairs), verdicts or "{}", len(merged),
+        [sorted(g) for g in merged] or "",
+    )
+    return merged
 
 
 def semantic_site_role_drops(site_keys: set[str]) -> set[str]:
