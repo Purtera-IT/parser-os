@@ -709,13 +709,39 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
             status_code=422,
             detail=f"head {req.head!r} learns one of {allowed}; got {req.new_value!r}",
         )
+    # The WHY can carry a circumstance, and a circumstance is the nuance.
+    #
+    # "Customer paper, because this customer always insists on their own MSA"
+    # is a blanket rule. "…because Chase negotiated this one" is not — it holds
+    # when Chase owns the deal and nowhere else. `condition_holds` already
+    # gates a correction on exactly that, so a reason naming a person becomes a
+    # predicate rather than a footnote.
+    #
+    # The reason is deliberately NOT added to the exemplar. The exemplar has to
+    # match the NEXT deal of this shape; a reason describes THIS judgment, and
+    # embedding it drags the prototype off the thing it has to recognise. The
+    # nuance belongs in when a lesson fires, not in what it looks like.
+    relations = dict(req.relations or {})
+    if req.rationale and not relations.get("when"):
+        try:
+            from app.core.pm_note_router import extract_condition
+
+            condition = extract_condition(req.rationale)
+            if condition:
+                relations["when"] = condition
+        except Exception:
+            # A reason we cannot parse is still a reason worth recording; it
+            # simply carries no condition, which means the lesson is
+            # unconditional — the behaviour before this existed.
+            pass
+
     payload = {
         "head": req.head, "dealId": req.deal_id or project_id, "compileId": req.compile_id,
         "targetId": req.target_id, "text": req.text, "oldValue": req.old_value,
         "newValue": req.new_value, "scope": req.scope, "context": req.context,
         "rationale": req.rationale,
         # Attribution, not a placeholder: a deal id in `created_by` says nobody.
-        "relations": req.relations, "pm": req.pm or "pm",
+        "relations": relations, "pm": req.pm or "pm",
         # Recorded on the correction so the vocabulary is checkable next time
         # from the data itself, not from a table that must be kept in sync.
         "candidates": allowed,
