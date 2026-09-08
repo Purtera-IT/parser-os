@@ -96,9 +96,19 @@ _CONDITION_RE = re.compile(
 )
 
 #: "Chase quoted this" — the same fact stated the other way round.
+#:
+#: The verb used to be a list (quoted|priced|scoped|built|owns|owned|runs|ran),
+#: which only ever knew the words somebody had already written down: "Chase
+#: negotiated this one" carried exactly the same fact and was invisible. The
+#: shape is what identifies it — a named person, a verb, and THIS DEAL as the
+#: object — so match the shape and let the verb be any verb.
+#:
+#: The object anchor is what keeps it honest. "Acme insisted on this" does not
+#: match, because "on" breaks the verb-object adjacency, and a sentence that
+#: never names the deal is not a statement about who owns it.
 _ACTOR_DID_RE = re.compile(
     r"\b(?P<who>[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)?)\s+"
-    r"(?:quoted|priced|scoped|built|owns|owned|runs|ran)\s+(?:this|it|the\s+deal)\b"
+    r"(?:[a-z]+(?:ed|s))\s+(?:this|it|the\s+deal)\b"
 )
 
 #: The reason half of a note. Kept verbatim; never parsed for meaning.
