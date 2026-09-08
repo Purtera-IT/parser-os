@@ -1440,9 +1440,30 @@ def build_site_readiness(
             if not sid:
                 # No explicit site code → skip. Don't pollute site_readiness.
                 continue
-            import re as _re_sid
-            site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
-            site_keys = [f"site:{site_slug}"] if site_slug else []
+            # The atom's OWN entity key is the one the rest of the system uses.
+            #
+            # Re-deriving a slug from `value["id"]` invents a second key for one
+            # site whenever the two normalisers disagree. Live deal 010302:
+            # the atom graph, the entity records and every join use
+            # `site:symphony_ai_hillview_office`, while this produced
+            # `site:symphonyai_hillview_office` from the id "SymphonyAI-…".
+            #
+            # A row under a key nothing else knows is orphaned: the attribute
+            # passthrough joins on entity_keys and misses it, so it has no
+            # address, no city and no anchor; and the fusion pass works on the
+            # atom graph, so a PM's "these are one site" can never reach it.
+            # Every one of those symptoms is this one line.
+            #
+            # The id-derived slug stays as the fallback for an atom that
+            # carries no site entity key at all.
+            site_keys = [
+                k for k in (getattr(atom, "entity_keys", None) or [])
+                if isinstance(k, str) and k.startswith("site:")
+            ]
+            if not site_keys:
+                import re as _re_sid
+                site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+                site_keys = [f"site:{site_slug}"] if site_slug else []
         else:
             # v49.1: skip v49 schema atom types entirely — they're
             # already structured. Their raw_text contains snippets
@@ -1531,6 +1552,17 @@ def build_site_readiness(
                 continue
             canonical_set.add(_canon_slug)
             anchored_set.add(_canon_slug)
+            # The atom's own entity key is canonical too.
+            #
+            # This set is a STRICT final gate — anything not in it is dropped —
+            # and it was built only from `slugify(value["id"])`. Rows keyed by
+            # the atom's entity key (which is what the rest of the system uses)
+            # therefore failed the gate and vanished. Both spellings name the
+            # same site, so both are canonical and both anchor it.
+            for _ek in (getattr(_a, "entity_keys", None) or []):
+                if isinstance(_ek, str) and _ek.startswith("site:") and len(_ek) > len("site:"):
+                    canonical_set.add(_ek)
+                    anchored_set.add(_ek)
             # Map physical_site's name + alternative names to this canonical.
             for _name_field in ("name", "names", "aliases", "alternative_names"):
                 _nv = _val.get(_name_field)
