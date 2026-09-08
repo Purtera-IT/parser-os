@@ -482,6 +482,40 @@ def complete_truncated_site_values(site_objects: list[dict]) -> list[dict]:
     return site_objects
 
 
+def _normalize_for_evidence(text: Any) -> str:
+    """Casing- and punctuation-blind form, for asking "is this string in the
+    documents at all". Mirrors the normalisation base-health uses to judge a
+    display name against its own source text."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+
+
+def _deal_evidence_text(atoms: Any) -> str:
+    """Every atom's text, normalised and joined. Built once per compile."""
+    parts: list[str] = []
+    for atom in atoms or []:
+        text = getattr(atom, "text", None)
+        if text is None and isinstance(atom, dict):
+            text = atom.get("text")
+        if text:
+            parts.append(_normalize_for_evidence(text))
+    return " || ".join(parts)
+
+
+def _name_appears_in_evidence(name: str, evidence: str) -> bool:
+    """Is this name anywhere in the deal's own evidence?
+
+    Degrades OPEN: with no evidence text collected we cannot prove a name was
+    invented, and refusing every alias on that basis would be worse than the
+    problem. Absence of proof is not proof of absence.
+    """
+    if not evidence:
+        return True
+    probe = _normalize_for_evidence(name)
+    if not probe:
+        return False
+    return probe in evidence
+
+
 def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]:
     """Scan every atom's raw_text for site-alias co-mention patterns
     and return the union of all discovered alias groups.
@@ -554,11 +588,26 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
     except Exception:
         llm_clusters = []
     if llm_clusters:
+        # An alias has to be IN the documents.
+        #
+        # The boilerplate check below is a word list, and a word list only
+        # knows the words somebody already wrote down. The universal test is
+        # provenance: a name the deal's own evidence never contains was
+        # invented by the model, whatever it looks like. Measured on a
+        # 140-envelope sample (2026-09-07), 84 of 242 alias names attached to
+        # site atoms appear NOWHERE in their deal — "rpdu 230 sites",
+        # "backup modem 284 sites" — 35% of the alias fabrications.
+        #
+        # Built once per deal; a name absent here cannot be a surface form of
+        # anything, so it can neither be an alias nor merge two sites.
+        evidence = _deal_evidence_text(atoms)
         for cluster in llm_clusters:
             aliases = cluster.get("aliases") or []
             site_keys = set()
             for alias in aliases:
                 if isinstance(alias, str) and alias.strip():
+                    if not _name_appears_in_evidence(alias, evidence):
+                        continue
                     slug = _re.sub(r"[^a-z0-9]+", "_", alias.lower()).strip("_")
                     # The LLM's cluster aliases went in unchecked, which is how
                     # a pricing unit became an alias of a real office.
