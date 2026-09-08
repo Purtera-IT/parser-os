@@ -679,6 +679,22 @@ def build_orbitbrief_envelope(
                 _row["display_name"] = _place
             elif _fac:
                 _row["display_name"] = _fac
+
+        # Pairs that look like one place, for a person to judge.
+        #
+        # Computed HERE and not in `build_site_readiness` because the rows only
+        # carry an address by this point — and the address is the whole
+        # evidence. Decides nothing: three attempts to merge sites
+        # automatically have been wrong often enough to matter, and merging
+        # deletes a location and moves the project tier. A PM answers once and
+        # `same_site` learns the shape.
+        from app.core.site_duplicate_candidates import site_duplicate_candidates
+
+        _sr_block = envelope.get("site_readiness")
+        if isinstance(_sr_block, dict):
+            _sr_block["duplicate_candidates"] = site_duplicate_candidates(
+                [r for r in (_sr_block.get("sites") or []) if isinstance(r, dict)]
+            )
     except Exception:
         pass
 
