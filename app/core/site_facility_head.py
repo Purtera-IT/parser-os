@@ -91,9 +91,23 @@ def _rule_facility_label(atom: Any) -> SiteFacilityDecision:
         return SiteFacilityDecision(KEEP_FACILITY, raw_name, "deterministic_fallback", 0.82)
 
     if city:
+        # The city VERBATIM, not "<City> Office".
+        #
+        # Composing the word "Office" invents a name that appears in no
+        # document: "Chicago Office" on an atom whose text reads
+        # "625 W. Adams St |, Chicago, IL 60661". That is precisely what the
+        # base-health `fabricated_names` invariant counts, and it is 371 of
+        # the 858 fabricated names in a 140-envelope sample (2026-09-07) —
+        # 43%. For 367 of those 371, the bare city IS in the source text, so
+        # dropping the composed suffix makes the name verbatim.
+        #
+        # `city_office` remains a candidate the HEAD can predict: a PM who
+        # wants "Chicago Office" corrects it once and the head learns it.
+        # A name a person chose is a judgement; a name this rule invented is
+        # a fabrication, and only the second one is this function's to make.
         return SiteFacilityDecision(
-            CITY_OFFICE,
-            f"{city} Office",
+            KEEP_NAME,
+            city,
             "deterministic_fallback",
             0.78,
             route_trainable=True,

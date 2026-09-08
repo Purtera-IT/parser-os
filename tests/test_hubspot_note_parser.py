@@ -90,7 +90,9 @@ def test_hubspot_note_parser_extracts_physical_site_with_city(tmp_path: Path) ->
     from app.core.site_facility_head import decide_site_facility_label
 
     decision = decide_site_facility_label(site)
-    assert decision.facility_name == "Pittsburgh Office"
+    # The city verbatim; the rule no longer composes "<City> Office", which
+    # invented a name absent from every document. See test_deal_kit_heads.
+    assert decision.facility_name == "Pittsburgh"
 
 
 def test_parse_hubspot_note_text_splits_headers() -> None:
