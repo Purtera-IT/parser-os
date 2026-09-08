@@ -250,6 +250,11 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
         "author": author,
         "author_email": author_email,
         "body": body,
+        # The flattened ``body`` above is what every prose consumer wants, but
+        # joining on spaces destroys a pasted TABLE: a roster's rows and columns
+        # become one run of words. Carry the lines too, so a delimited table can
+        # still be recovered. Additive -- ``body`` is unchanged.
+        "body_lines": list(body_lines),
     }
 
 
@@ -378,6 +383,105 @@ class HubspotNoteParser(BaseParser):
             extraction_method="hubspot_note_parser",
             parser_version=self.parser_version,
         )
+
+    def _atoms_from_pasted_roster(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        parsed: dict[str, Any],
+        source_ref: SourceRef,
+        affiliation: str = "unknown",
+    ) -> list[EvidenceAtom]:
+        """``physical_site`` atoms for a site roster pasted into the note.
+
+        Returns [] when the note holds no delimited table, or when the table is
+        not a roster by ``looks_like_site_roster``'s own judgment. The identity
+        of each site comes from the roster's OWN columns -- the name the PM
+        wrote down -- never from geography reassembled afterwards.
+        """
+        try:
+            from app.parsers.note_site_roster import (
+                site_entity_key,
+                site_roster_from_note_lines,
+            )
+        except Exception:  # pragma: no cover - never break a note parse
+            return []
+
+        lines = parsed.get("body_lines") or []
+        if not lines:
+            return []
+        title = str(parsed.get("title") or "")
+        try:
+            roster_rows, columns, rows = site_roster_from_note_lines(
+                lines, surrounding_text=title
+            )
+        except Exception:  # pragma: no cover
+            return []
+        if not roster_rows:
+            return []
+
+        out: list[EvidenceAtom] = []
+        for site_row in roster_rows:
+            key = site_entity_key(site_row)
+            if not key:
+                continue
+            canon = (
+                (getattr(site_row, "site_id", "") or "")
+                or (getattr(site_row, "facility_name", "") or "")
+                or (getattr(site_row, "street_address", "") or "")
+            )
+            text_parts = []
+            for label, val in (
+                ("facility", getattr(site_row, "facility_name", "")),
+                ("address", getattr(site_row, "street_address", "")),
+                ("city", getattr(site_row, "city", "")),
+                ("state", getattr(site_row, "state", "")),
+                ("zip", getattr(site_row, "zip", "")),
+            ):
+                if val:
+                    text_parts.append(f"{label}: {val}")
+            row_text = " | ".join(text_parts) or canon
+            idx = getattr(site_row, "row_index", None)
+            cells = {}
+            if isinstance(idx, int) and 0 <= idx < len(rows):
+                cells = {c: v for c, v in zip(columns, rows[idx])}
+            out.append(
+                self._mint_atom(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    atom_type=AtomType.physical_site,
+                    text=row_text,
+                    value={
+                        "kind": "physical_site",
+                        "id": canon,
+                        "site_id": getattr(site_row, "site_id", "") or canon,
+                        "name": getattr(site_row, "facility_name", "") or canon,
+                        "facility_name": getattr(site_row, "facility_name", ""),
+                        "address": getattr(site_row, "street_address", ""),
+                        "street_address": getattr(site_row, "street_address", ""),
+                        "city": getattr(site_row, "city", ""),
+                        "state": getattr(site_row, "state", ""),
+                        "city_state": getattr(site_row, "city_state", ""),
+                        "zip": getattr(site_row, "zip", ""),
+                        "contact": getattr(site_row, "contact", ""),
+                        "phone": getattr(site_row, "phone", ""),
+                        "email": getattr(site_row, "email", ""),
+                        "notes": getattr(site_row, "notes", ""),
+                        # Every column survives, not just the canonical ones.
+                        "cells": cells,
+                        "source": "hubspot_note_pasted_roster",
+                    },
+                    source_ref=source_ref,
+                    confidence=0.86,
+                    entity_keys=[key],
+                    review_flags=["note_site_roster_v1"],
+                    author_affiliation=affiliation,
+                )
+            )
+        return out
 
     def _mint_atom(
         self,
@@ -546,6 +650,23 @@ class HubspotNoteParser(BaseParser):
                     author_affiliation=affiliation,
                 )
             )
+
+        # A pasted TABLE is a roster, not prose. When the note body carries a
+        # delimited table, hand it to the same gate + extractor the spreadsheet
+        # path uses, so a site roster is read the same way whichever door it
+        # came in through. Deal 010310 is why: a five-column site table reached
+        # this parser as one line and published four sites for three rows, with
+        # the site named "Malport" -- the only name not also a city -- lost.
+        roster_atoms = self._atoms_from_pasted_roster(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            filename=filename,
+            parsed=parsed,
+            source_ref=source_ref,
+            affiliation=affiliation,
+        )
+        if roster_atoms:
+            atoms.extend(roster_atoms)
 
         # A note typed as a run of "Label: value" fields on one line ("Address:
         # ... Date | Time: ... Duration: ... Tech/Engineer: ... Scope of work:
