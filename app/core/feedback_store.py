@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -54,6 +55,9 @@ _DEFAULT_THRESHOLD = 0.82  # cosine; per-correction tunable (Phase 5 calibrates)
 
 def _norm_fact(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+_log = logging.getLogger(__name__)
 
 
 def condition_holds(relations: dict | None, facts: dict | None) -> bool:
@@ -610,6 +614,12 @@ class FeedbackStore:
             if not text or not candidates:
                 return None
             if not self._reachable():
+                # The embedder is how this store compares anything. Unreachable
+                # means every lookup abstains, which from outside is identical
+                # to "nothing was ever taught".
+                _log.info(
+                    "store.resolve(%s): embedder unreachable, abstaining", relation,
+                )
                 return None
             allowed = set(candidates)
             corrs = [
@@ -619,6 +629,11 @@ class FeedbackStore:
                 and condition_holds(c.relations, facts)
             ]
             if not corrs:
+                _log.info(
+                    "store.resolve(%s): 0 of %d stored correction(s) survived "
+                    "relation/verdict/condition filtering (candidates=%s)",
+                    relation, len(self.all_corrections(active_only=True)), sorted(allowed),
+                )
                 return None
             self._ensure_protos(corrs)
 
@@ -688,6 +703,20 @@ class FeedbackStore:
                     score = self._correction_score(c.id, qv)
                     if score >= c.threshold and (best is None or score > best[0]):
                         best = (score, c)
+                if best is None and tier_corrs:
+                    near = max(
+                        (self._correction_score(c.id, qv), c.threshold, c.id)
+                        for c in tier_corrs
+                        if c.id in self._proto or c.id in self._proto_ex
+                    ) if any(
+                        c.id in self._proto or c.id in self._proto_ex for c in tier_corrs
+                    ) else None
+                    if near:
+                        _log.info(
+                            "store.resolve(%s): %d correction(s) in scope %s, best "
+                            "score %.3f vs threshold %.3f (%s) — no hit",
+                            relation, len(tier_corrs), tier, near[0], near[1], near[2],
+                        )
                 if best is not None:
                     score, c = best
                     self._record_hit(c.id)
