@@ -118,7 +118,17 @@ def _field_value_shape(value: str) -> str:
         or re.search(r"\b[A-Z]{2}\s+\d{5}\b", v)
         or v.count(",") >= 2 and len(v.split()) >= 6 and not re.search(r"\b(?:of|and|the|with|for)\b", v.split(",")[0], re.I)
     ):
-        return "address"
+        # The shape test above accepts "a digit, two capitals, and a comma",
+        # which is most of English prose. A CRM note is prose, so it minted
+        # sites named "Job Tasks Console Access Provisioning Connect" whose
+        # address was the whole scope narrative, and "Se Atlanta Office" whose
+        # address was an email sign-off. Confirm the value actually has the
+        # grammar of a street line before calling it one.
+        from app.core.address_parse import looks_like_street_address
+
+        if looks_like_street_address(v):
+            return "address"
+        return "other"
     if _COUNT_ROLE_RE.match(v):
         return "staffing"
     if _TIME_UNIT_RE.search(v) and len(v.split()) <= 8:

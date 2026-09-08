@@ -37,13 +37,22 @@ def test_site_facility_head_uses_city_office_for_address_backed_site() -> None:
             "aliases": ["gecko robotics pittsburgh office workshop"],
         }
     )
+    # The CITY, verbatim — not "Pittsburgh Office".
+    #
+    # This test used to pin the composed form. Composing the word "Office"
+    # invents a name that is in no document, which is what the base-health
+    # `fabricated_names` invariant counts ("Zero, permanently"): 371 of 858
+    # fabricated names in a 140-envelope sample, and for 367 of them the bare
+    # city IS in the source text. `city_office` is still a verdict the HEAD may
+    # predict once a PM teaches it — a name a person chose is a judgement; a
+    # name this rule invented is a fabrication.
     decision = decide_site_facility_label(atom)
-    assert decision.facility_name == "Pittsburgh Office"
+    assert decision.facility_name == "Pittsburgh"
     atoms, n = annotate_site_facility_labels([atom], project_id="deal-1")
     assert n == 1
-    assert atoms[0].value["facility_name"] == "Pittsburgh Office"
-    assert atoms[0].value["name"] == "Pittsburgh Office"
-    assert atoms[0].value["display_name"] == "Pittsburgh Office"
+    assert atoms[0].value["facility_name"] == "Pittsburgh"
+    assert atoms[0].value["name"] == "Pittsburgh"
+    assert atoms[0].value["display_name"] == "Pittsburgh"
 
 
 def test_quote_line_head_merges_config_install_email_lines() -> None:
