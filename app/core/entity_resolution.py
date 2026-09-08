@@ -586,6 +586,31 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                 group.add(bare)
             all_groups.append(group)
 
+    # Separators are not identity.
+    #
+    # A customer spells their own name both ways inside one deal — live 010302
+    # writes "SymphonyAI" three times and "Symphony AI" twice — and the
+    # extractor slugs whichever spelling it saw. One office becomes:
+    #
+    #     site:symphonyai_hillview_office
+    #     site:symphony_ai_hillview_office
+    #
+    # Nothing joined them, so the deal carried two sites, whichever key won a
+    # given compile became the row (which read as a site "renaming itself"
+    # between runs), and no lesson taught about one could ever match the other.
+    #
+    # Two keys whose letters and digits are identical in order are the same
+    # words with the separators moved. That is a spelling difference, not two
+    # places — "atl_hq_01" and "atlhq01" cannot be different sites.
+    letters_map: dict[str, set[str]] = {}
+    for k in all_site_keys:
+        bare_letters = _re.sub(r"[^a-z0-9]+", "", k[len("site:"):].lower())
+        if bare_letters:
+            letters_map.setdefault(bare_letters, set()).add(k)
+    for group in letters_map.values():
+        if len(group) >= 2:
+            all_groups.append(set(group))
+
     # ─── LLM SITE-CLUSTER FUSION (v35) ───
     # Pick up the LLM's site_clusters output from the session cache
     # (stashed by extract_all_entities_with_llm during enrich_atoms).
