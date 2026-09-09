@@ -96,6 +96,75 @@ def _is_located(row: dict[str, Any]) -> bool:
     )
 
 
+#: A street with no postcode is not identity -- "Main St" is in every town --
+#: and a postcode alone covers many buildings. Together they identify one.
+#:
+#: This mirrors ``entity_resolution._address_identity``, which the deterministic
+#: merge uses. The two MUST agree: this module decides what a person is asked
+#: about, that one decides what is merged without asking, and a pair the merge
+#: would collapse but this never surfaces is a duplicate nobody can act on.
+#: ``test_address_identity_matches_the_merge_rule`` pins them together.
+def _address_identity(row: dict[str, Any]) -> str:
+    """``street|postcode`` for a row, or "" when it is not identifying."""
+    from app.core.address_parse import _street_for_dedup
+
+    street = _street_for_dedup(
+        str(row.get("street_address") or row.get("address") or "")
+    )
+    code = re.sub(r"\s+", "", str(row.get("zip") or row.get("postal_code") or "")).upper()
+    if not street or not code:
+        return ""
+    return f"{street}|{code}"
+
+
+def _same_address_pairs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows that give the SAME street and postcode, worth asking about first.
+
+    The shortlist below looks for an UNLOCATED row -- a name that matched
+    nothing -- and pairs it with a located one on a shared token. That misses
+    the plainest duplicate of all: two rows that both know where they are, and
+    say the same place.
+
+    Deal 02557291 published 2205 Gregg St twice, as ``site:2205_gregg_st`` and
+    ``site:site_1``. Both anchored, both addressed, so neither was ever
+    "unlocated" and the deal asked nothing while showing the same building
+    under two names.
+
+    This is stronger evidence than a shared token -- a matching street AND
+    postcode is not a coincidence to rule out -- so these lead the list.
+    """
+    by_address: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ident = _address_identity(row)
+        if ident:
+            by_address.setdefault(ident, []).append(row)
+
+    out: list[dict[str, Any]] = []
+    for ident, group in by_address.items():
+        if len(group) < 2:
+            continue
+        # Ordered by site key so the same two rows always produce the same
+        # pair, and the same exemplar, however they were enumerated.
+        group = sorted(group, key=lambda r: str(r.get("site") or ""))
+        first = group[0]
+        for other in group[1:]:
+            street = ident.split("|", 1)[0]
+            out.append({
+                "unlocated": str(other.get("site") or ""),
+                "located": str(first.get("site") or ""),
+                "exemplar": pair_exemplar(other, first),
+                "shared_token": street,
+                "same_address": True,
+                "why": (
+                    f"{_row_phrase(other)!r} and {_row_phrase(first)!r} give the "
+                    f"same street and postcode. Two rows, one address."
+                ),
+            })
+    return out
+
+
 def site_duplicate_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pairs worth asking a person about, best evidence first.
 
@@ -105,13 +174,18 @@ def site_duplicate_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     what keeps it a question rather than a guess: a name that could belong to
     three sites is not evidence of anything.
     """
+    # Two rows at one address lead the list: a matching street AND postcode is
+    # evidence, not a coincidence to rule out. These are invisible to the
+    # token rule below, which only ever looks at rows with no address at all.
+    same_address = _same_address_pairs(rows)
+
     located = [r for r in rows if isinstance(r, dict) and _is_located(r)]
     unlocated = [
         r for r in rows
         if isinstance(r, dict) and not _is_located(r) and not r.get("anchored")
     ]
     if not located or not unlocated:
-        return []
+        return same_address[:_MAX_CANDIDATES]
 
     # A token is distinctive when exactly one located row's address carries it.
     owners: dict[str, list[dict[str, Any]]] = {}
@@ -145,4 +219,8 @@ def site_duplicate_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     # Most evidence first: a longer shared token is a stronger coincidence to
     # rule out than a short one.
     out.sort(key=lambda c: (-len(c["shared_token"]), c["unlocated"]))
-    return out[:_MAX_CANDIDATES]
+    # Same-address pairs first, then the token shortlist, with no pair asked
+    # about twice.
+    seen = {(c["unlocated"], c["located"]) for c in same_address}
+    merged = same_address + [c for c in out if (c["unlocated"], c["located"]) not in seen]
+    return merged[:_MAX_CANDIDATES]
