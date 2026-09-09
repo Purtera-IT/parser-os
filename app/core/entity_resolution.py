@@ -690,23 +690,35 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
         if not isinstance(value, dict):
             continue
         for key in (getattr(atom, "entity_keys", None) or (atom.get("entity_keys") if isinstance(atom, dict) else None) or []):
-            if isinstance(key, str) and key.startswith("site:") and key not in site_rows:
-                site_rows[key] = {
-                    "site": key,
-                    "facility_name": value.get("facility_name") or value.get("name"),
-                    "street_address": value.get("street_address") or value.get("address"),
-                    "city": value.get("city"),
-                    "state": value.get("state"),
-                    # The postcode is what makes a street address identifying.
-                    # Without it these rows could not be compared on address at
-                    # all, so the same building published two and three times.
-                    "zip": value.get("zip") or value.get("postal_code"),
-                }
-    # Deterministic first, and NOT behind the neural flag: two rows carrying the
-    # same street and the same postcode are the same building, which is what an
-    # address means rather than something to be judged. Running it here also
-    # spares the learned pass from being asked about pairs that are not in
-    # question.
+            if not (isinstance(key, str) and key.startswith("site:")):
+                continue
+            # FILL, don't first-win.
+            #
+            # Several physical_site atoms can name one key, and they do not all
+            # carry the same fields: one holds the address, another only a name.
+            # Taking the first and discarding the rest made the row depend on
+            # ATOM ORDER -- and order differs between the mid-pipeline list this
+            # runs on and the finished envelope. Deal 02557291 grouped its three
+            # 2205 Gregg St keys when replayed against the envelope and only two
+            # of them live, because an address-less atom reached `site:site_1`
+            # first and shadowed the one that knew the street.
+            #
+            # A field is filled once, by the first atom that actually has it, so
+            # the result no longer depends on which atom arrives first.
+            row = site_rows.setdefault(key, {"site": key})
+            for field, candidate in (
+                ("facility_name", value.get("facility_name") or value.get("name")),
+                ("street_address", value.get("street_address") or value.get("address")),
+                ("city", value.get("city")),
+                ("state", value.get("state")),
+                # The postcode is what makes a street address identifying.
+                # Without it these rows could not be compared on address at
+                # all, so the same building published two and three times.
+                ("zip", value.get("zip") or value.get("postal_code")),
+            ):
+                if candidate and not row.get(field):
+                    row[field] = candidate
+
     all_groups.extend(address_identity_groups(universe, site_rows))
     all_groups.extend(semantic_site_fusion_groups(universe, site_rows))
 
