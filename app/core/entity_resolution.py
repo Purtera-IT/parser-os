@@ -697,7 +697,17 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                     "street_address": value.get("street_address") or value.get("address"),
                     "city": value.get("city"),
                     "state": value.get("state"),
+                    # The postcode is what makes a street address identifying.
+                    # Without it these rows could not be compared on address at
+                    # all, so the same building published two and three times.
+                    "zip": value.get("zip") or value.get("postal_code"),
                 }
+    # Deterministic first, and NOT behind the neural flag: two rows carrying the
+    # same street and the same postcode are the same building, which is what an
+    # address means rather than something to be judged. Running it here also
+    # spares the learned pass from being asked about pairs that are not in
+    # question.
+    all_groups.extend(address_identity_groups(universe, site_rows))
     all_groups.extend(semantic_site_fusion_groups(universe, site_rows))
 
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
@@ -749,6 +759,72 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
 #: shortlist. 30 sites is 435 pairs, which is a sweep worth doing; 135 sites is
 #: 9,045 and a 437-site rollout is 95,266, which is not.
 _EXHAUSTIVE_PAIR_CEILING = 30
+
+
+def _address_identity(row: dict[str, Any]) -> str:
+    """``street|postcode`` for a row, or "" when it is not identifying.
+
+    Street ALONE is not identity -- "Main St" exists in every town. A postcode
+    alone is not either; it covers many buildings. Together they are, which is
+    why a postal address is written that way.
+
+    The city is deliberately not part of this. It is the field most often wrong
+    or missing (deal 02557291 published one row whose city read "Gregg St", a
+    fragment of its own street), and it carries no information the postcode
+    does not already carry.
+    """
+    from app.core.address_parse import _street_for_dedup
+
+    street = _street_for_dedup(
+        str(row.get("street_address") or row.get("address") or "")
+    )
+    code = re.sub(r"\s+", "", str(row.get("zip") or row.get("postal_code") or "")).upper()
+    if not street or not code:
+        return ""
+    return f"{street}|{code}"
+
+
+def address_identity_groups(
+    site_keys: set[str],
+    rows_by_key: dict[str, dict[str, Any]] | None = None,
+) -> list[set[str]]:
+    """Group site keys that carry the SAME street address and postcode.
+
+    Deal 02557291 published 2205 Gregg St three times -- once from the note's
+    roster (``site:2205_gregg_st``), once from the entity backfill
+    (``site:loc_2205_gregg_st``, whose city read "Gregg St"), and once as
+    ``site:site_1``. Three extractors, three keys, one building. The learned
+    fusion pass asked about all six pairs and returned ``fallback:None`` for
+    every one, because nothing had been taught about them and the LLM tier is
+    budgeted off -- so a duplicate this obvious survived to the roster.
+
+    It should never have been a question. Two rows with the same street and the
+    same postcode are the same place; that is what an address IS. Asking a
+    model to confirm it is both slower and less reliable than reading it.
+
+    Unlike the learned pass this is not gated on ``SOWSMITH_NEURAL_SITE_FUSION``
+    -- there is nothing neural about it -- and it abstains completely when
+    either row lacks a street or a postcode, which is the common case for a
+    site known only by name.
+    """
+    keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
+    if len(keys) < 2:
+        return []
+    by_address: dict[str, set[str]] = {}
+    for key in keys:
+        row = (rows_by_key or {}).get(key)
+        if not isinstance(row, dict):
+            continue
+        ident = _address_identity(row)
+        if ident:
+            by_address.setdefault(ident, set()).add(key)
+    groups = [g for g in by_address.values() if len(g) >= 2]
+    if groups:
+        logging.getLogger(__name__).info(
+            "address_identity: %d site key(s) share %d address(es) -> merged %s",
+            sum(len(g) for g in groups), len(groups), [sorted(g) for g in groups],
+        )
+    return groups
 
 
 def semantic_site_fusion_groups(
