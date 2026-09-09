@@ -1417,6 +1417,18 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
 
             alias_groups = collect_site_alias_groups(atoms)
         except Exception:  # a fusion failure must never break the roster
+            # ...but it must not fail INVISIBLY either. This swallow turns any
+            # error in grouping into "there was nothing to merge", which reads
+            # downstream as a deal that genuinely has N distinct sites. Deal
+            # 02557291 logged "0 alias group(s) in" while the same call on the
+            # same atoms produced a group when replayed by hand -- and there was
+            # no way to tell a real zero from a caught exception.
+            import logging as _lg_grp
+
+            _lg_grp.getLogger(__name__).warning(
+                "site alias grouping failed; the roster will not merge anything "
+                "for this compile", exc_info=True,
+            )
             alias_groups = []
     out: dict[str, str] = {}
     _n_groups = len(list(alias_groups or []))
