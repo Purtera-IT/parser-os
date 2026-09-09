@@ -53,6 +53,14 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # answer a PM ever gave was banked where nothing looks it up.
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
+    # A table of addresses is not automatically a table of SITES: a contact
+    # list, a shipping list and a letterhead all carry addresses. The
+    # structural gate answers from headers and row shape alone and is
+    # deliberately strict, so this head is where a PM settles the cases it
+    # cannot see -- "the customer has two locations, addresses below" reads as
+    # a roster to a person and as nothing to a regex.
+    "roster":    HeadSpec("site_roster_table", "entity", "Is this table a site list?",
+                          candidates=("site_roster", "not_site_roster")),
     "norm":      HeadSpec("value_norm",      "atom",   "Value / amount", mode="extract"),
     "router":    HeadSpec("service_routing", "deal",   "Workstream / domain"),
     "facet":     HeadSpec("facet",           "atom",   "Brief section"),

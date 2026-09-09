@@ -526,6 +526,7 @@ def looks_like_site_roster(
     columns: Sequence[str],
     rows: Sequence[Any],
     surrounding_text: str = "",
+    declared: bool = False,
 ) -> bool:
     """Heuristic gate: is this table block a site roster?
 
@@ -549,8 +550,11 @@ def looks_like_site_roster(
             if not _roster_evidence_is_dominant(columns):
                 return False
 
-    # Signal 1: explicit declaration
-    if _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text):
+    # Signal 1: explicit declaration. ``declared`` is the same door opened by a
+    # judgment rather than a literal token -- a caller that ASKED whether this
+    # table is a roster (and was told yes) is as explicit as one that found
+    # ``kind=physical_site`` in the prose.
+    if declared or _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text):
         return True
 
     # Negative evidence: an account / billing header block carries an address
@@ -713,6 +717,7 @@ def extract_site_roster(
     columns: Sequence[str],
     rows: Sequence[Any],
     surrounding_text: str = "",
+    declared: bool = False,
 ) -> list[SiteRosterRow]:
     """Pull every physical_site row out of a roster table.
 
@@ -723,11 +728,13 @@ def extract_site_roster(
     unconditionally.
     """
     if not looks_like_site_roster(
-        columns=columns, rows=rows, surrounding_text=surrounding_text
+        columns=columns, rows=rows, surrounding_text=surrounding_text, declared=declared
     ):
         return []
 
-    explicit_decl = bool(_KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text or ""))
+    explicit_decl = declared or bool(
+        _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text or "")
+    )
     field_map = map_columns_to_fields(columns, explicit_declaration=explicit_decl)
     # If we have no column->field mapping (rare; happens when the
     # roster is shipped without headers), build a positional one:

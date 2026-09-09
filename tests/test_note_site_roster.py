@@ -299,3 +299,108 @@ def test_prose_that_merely_mentions_an_address_yields_no_site():
 
     assert find_stacked_table(lines) is None
     assert site_roster_from_note_lines(lines)[0] == []
+
+
+# ── Ask, don't assert: the gate is a default, not a ceiling ──────────────────
+# A table of addresses is not automatically a table of SITES -- a contact list,
+# a shipping list and a letterhead all carry addresses. The structural gate
+# answers from headers and row shape alone and is deliberately strict. What it
+# cannot see is a note that SAYS what its table is for: deal 02557291 opens
+# "The customer has two locations, addresses below" above an
+# Address/City/State/Zip table, and no amount of header vocabulary reads that.
+#
+# So when the gate declines, the table goes to decide() -- STORE -> LLM ->
+# undecided -- with the surrounding prose as evidence. A PM's answer is then
+# enforced forever and for free, and an undecided answer changes nothing.
+
+import app.parsers.note_site_roster as nsr
+
+
+def _decision(verdict):
+    class _D:
+        pass
+
+    d = _D()
+    d.verdict = verdict
+    return d
+
+
+def test_a_declined_table_is_asked_about_with_the_prose_as_evidence(monkeypatch):
+    seen = {}
+
+    def fake_decide(relation, text, candidates, **kw):
+        seen["relation"] = relation
+        seen["candidates"] = candidates
+        seen["context"] = kw.get("context") or ""
+        seen["text"] = text
+        return _decision("site_roster")
+
+    import app.core.decide as _decide_mod
+
+    monkeypatch.setattr(_decide_mod, "decide", fake_decide)
+
+    rows, _c, _r = nsr.site_roster_from_note_lines(AFTER_PROSE, deal_id="deal-1")
+
+    assert seen["relation"] == "site_roster_table"
+    assert sorted(seen["candidates"]) == ["not_site_roster", "site_roster"]
+    # The evidence the judgment turns on must actually reach it.
+    assert "two locations" in seen["context"]
+    assert "Address | City | State | Zip | APs" in seen["text"]
+    # And a "yes" opens the same door an explicit declaration opens.
+    assert len(rows) == 2
+    assert [r.street_address for r in rows] == ["2205 Gregg St", "3501 Merrill Pl"]
+    assert [r.city for r in rows] == ["Columbia", "Mt Pleasant"]
+
+
+def test_a_no_leaves_the_table_out(monkeypatch):
+    import app.core.decide as _decide_mod
+
+    monkeypatch.setattr(_decide_mod, "decide", lambda *a, **k: _decision("not_site_roster"))
+    rows, _c, _r = nsr.site_roster_from_note_lines(AFTER_PROSE, deal_id="deal-1")
+    assert rows == []
+
+
+def test_undecided_changes_nothing(monkeypatch):
+    """The fallback contract: never act on a guess."""
+    import app.core.decide as _decide_mod
+
+    monkeypatch.setattr(_decide_mod, "decide", lambda *a, **k: _decision(None))
+    rows, _c, _r = nsr.site_roster_from_note_lines(AFTER_PROSE, deal_id="deal-1")
+    assert rows == []
+
+
+def test_a_table_the_gate_already_accepts_is_never_asked_about(monkeypatch):
+    """No LLM round-trip for a roster that declares itself -- 010310 has a
+    Site Name column and passes structurally."""
+    called = []
+
+    import app.core.decide as _decide_mod
+
+    def _spy(*a, **k):
+        called.append(1)
+        return _decision(None)
+
+    monkeypatch.setattr(_decide_mod, "decide", _spy)
+    rows, _c, _r = nsr.site_roster_from_note_lines(STACKED_LINES)
+    assert len(rows) == 3
+    assert called == [], "the gate already said yes; asking again is wasted spend"
+
+
+def test_a_judgment_failure_never_breaks_the_parse(monkeypatch):
+    import app.core.decide as _decide_mod
+
+    def _boom(*a, **k):
+        raise RuntimeError("model unreachable")
+
+    monkeypatch.setattr(_decide_mod, "decide", _boom)
+    rows, _c, _r = nsr.site_roster_from_note_lines(AFTER_PROSE)
+    assert rows == []
+
+
+def test_the_head_is_teachable():
+    """One line in HEAD_REGISTRY is what makes a PM's answer stick."""
+    from app.core.pm_feedback import HEAD_REGISTRY
+
+    spec = HEAD_REGISTRY["roster"]
+    assert spec.relation == nsr.SITE_ROSTER_RELATION
+    assert set(spec.candidates) == set(nsr.SITE_ROSTER_CANDIDATES)
