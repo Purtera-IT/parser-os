@@ -161,3 +161,74 @@ def test_site_entity_key_abstains_when_nothing_names_the_row():
         street_address = ""
 
     assert site_entity_key(_Empty()) == ""
+
+
+# ── The shape HubSpot actually produced ──────────────────────────────────────
+# HubSpot does not always store a pasted table as <table><tr><td>. For deal
+# 010310 it wrapped every CELL in its own block element, so the HTML carried no
+# distinction between "end of cell" and "end of row" -- both are just block
+# ends. No amount of care in the HTML->text step can recover rows from that;
+# the information is absent from the source. It survives only in the header:
+# the count of leading lines that name a roster column IS the column count.
+
+STACKED_LINES = [
+    "Site Name", "Address", "City", "Province", "Postal Code",
+    "Brampton", "55 Devon rd", "Brampton", "ON", "L6T 5B6",
+    "Malport", "7675 Torbram Rd", "Mississauga", "ON", "L4T 3L8",
+    "Mississauga", "7505 Bramalea Rd", "Mississauga", "ON", "L5S 1C4",
+    "Just need a quick quote for 5 tanks per site, UTM-Huba RLS install in Canada.",
+    "https://www.youtube.com/watch?v=FxGemUcb89U",
+]
+
+
+def test_stacked_cells_refold_into_rows():
+    from app.parsers.note_site_roster import find_stacked_table
+
+    columns, rows, _hi = find_stacked_table(STACKED_LINES)
+    assert columns == ["Site Name", "Address", "City", "Province", "Postal Code"]
+    assert rows == [
+        ["Brampton", "55 Devon rd", "Brampton", "ON", "L6T 5B6"],
+        ["Malport", "7675 Torbram Rd", "Mississauga", "ON", "L4T 3L8"],
+        ["Mississauga", "7505 Bramalea Rd", "Mississauga", "ON", "L5S 1C4"],
+    ]
+
+
+def test_prose_after_a_stacked_table_is_not_a_row():
+    """The sentence and the URL that follow must not become a fourth site."""
+    from app.parsers.note_site_roster import find_stacked_table
+
+    _cols, rows, _hi = find_stacked_table(STACKED_LINES)
+    assert len(rows) == 3
+    flat = [c for r in rows for c in r]
+    assert not any("quick quote" in c for c in flat)
+    assert not any("youtube" in c for c in flat)
+
+
+def test_stacked_roster_end_to_end():
+    out = _parse(STACKED_LINES)
+    sites = _sites(out)
+    assert len(sites) == 3
+    keys = sorted(k for a in sites for k in a.entity_keys)
+    assert keys == ["site:brampton", "site:malport", "site:mississauga"]
+    for a in sites:
+        v = a.value
+        assert v.get("address") and v.get("city") and v.get("state") and v.get("zip")
+
+
+def test_stacked_needs_a_real_header_run():
+    """Lines that name no roster column are not a header, so not a table."""
+    from app.parsers.note_site_roster import find_stacked_table
+
+    assert find_stacked_table(["alpha", "beta", "one", "two", "three", "four"]) is None
+
+
+def test_a_single_header_line_is_not_a_table():
+    from app.parsers.note_site_roster import find_stacked_table
+
+    assert find_stacked_table(["Address", "55 Devon rd", "7675 Torbram Rd"]) is None
+
+
+def test_stacked_table_needs_at_least_two_rows():
+    from app.parsers.note_site_roster import find_stacked_table
+
+    assert find_stacked_table(["Site Name", "Address", "Brampton", "55 Devon rd"]) is None

@@ -87,6 +87,80 @@ def find_delimited_table(
     return best
 
 
+#: A table cell is a value, not a sentence. Used only to tell where the table
+#: ENDS when the markup gave no row boundaries -- the prose that follows a
+#: roster is the first thing that stops being cell-shaped. Shape, not
+#: vocabulary: no word is special, only length is.
+_MAX_CELL_WORDS = 12
+_MAX_CELL_CHARS = 80
+
+
+def _looks_like_cell(value: str) -> bool:
+    """Could this line be one cell of a table row?"""
+    v = str(value or "").strip()
+    if not v:
+        return True  # a blank cell is still a cell
+    if len(v) > _MAX_CELL_CHARS:
+        return False
+    return len(v.split()) <= _MAX_CELL_WORDS
+
+
+def find_stacked_table(
+    lines: Sequence[str],
+) -> tuple[list[str], list[list[str]], int] | None:
+    """Return ``(columns, rows, header_index)`` for a table whose every cell
+    landed on its OWN line, or None.
+
+    HubSpot does not always store a pasted table as ``<table><tr><td>``. When
+    each cell is wrapped in a block element instead, the markup carries no
+    distinction between "end of cell" and "end of row" -- both are just block
+    ends -- so the HTML->text step cannot recover rows no matter how careful it
+    is. The information is genuinely absent from the source.
+
+    It survives in exactly one place: the HEADER. The count of leading lines
+    that name a roster column IS the column count, and the cells that follow are
+    that table in row-major order. So read the header run, then re-fold.
+
+    Deal 010310 arrived exactly this way -- 'Site Name' / 'Address' / 'City' /
+    'Province' / 'Postal Code' on five lines, then fifteen cells.
+    """
+    try:
+        from app.parsers.site_roster_extractor import map_columns_to_fields
+    except Exception:  # pragma: no cover
+        return None
+
+    # The header is the longest run of leading lines that EVERY map to a
+    # distinct roster field. The first line that does not is the first datum.
+    header: list[str] = []
+    for line in lines:
+        candidate = header + [str(line or "").strip()]
+        try:
+            mapped = map_columns_to_fields(candidate)
+        except Exception:  # pragma: no cover
+            break
+        if len(mapped) != len(candidate):
+            break
+        header = candidate
+    width = len(header)
+    if width < _MIN_COLUMNS:
+        return None
+
+    body = [str(l or "").strip() for l in lines[width:]]
+    rows: list[list[str]] = []
+    i = 0
+    while i + width <= len(body):
+        group = body[i : i + width]
+        # A table is contiguous: the first group that stops looking like cells
+        # is the prose after it, not a row with odd values.
+        if not all(_looks_like_cell(c) for c in group):
+            break
+        rows.append(group)
+        i += width
+    if len(rows) < _MIN_DATA_ROWS:
+        return None
+    return header, rows, 0
+
+
 def site_roster_from_note_lines(
     lines: Sequence[str],
     *,
@@ -97,7 +171,9 @@ def site_roster_from_note_lines(
     Returns empty lists when the note holds no delimited table, or when the
     table is not a site roster by ``looks_like_site_roster``'s own judgment.
     """
-    found = find_delimited_table(lines)
+    # A real <table> gives tab-delimited rows; block-wrapped cells give one cell
+    # per line. Both are the same table.
+    found = find_delimited_table(lines) or find_stacked_table(lines)
     if not found:
         return [], [], []
     columns, rows, _header_index = found
