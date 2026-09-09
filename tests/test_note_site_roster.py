@@ -404,3 +404,29 @@ def test_the_head_is_teachable():
     spec = HEAD_REGISTRY["roster"]
     assert spec.relation == nsr.SITE_ROSTER_RELATION
     assert set(spec.candidates) == set(nsr.SITE_ROSTER_CANDIDATES)
+
+
+def test_declaring_a_roster_does_not_license_guessing_unnamed_columns(monkeypatch):
+    """Two different claims, and conflating them cost real accuracy.
+
+    `declared` says "this table lists sites" -- the gate's question.
+    `explicit_declaration` says something much stronger: "trust POSITIONAL
+    semantics for columns nobody named", which makes the leftmost unmapped
+    column a site_id.
+
+    02557291's leftover column is "APs" -- a count of access points. Licensing
+    the table also licensed that guess, so the AP counts became site IDs and the
+    deal published a site called "39". A judgment that a table is a roster says
+    nothing about what its unnamed columns MEAN.
+    """
+    import app.core.decide as _decide_mod
+
+    monkeypatch.setattr(_decide_mod, "decide", lambda *a, **k: _decision("site_roster"))
+    rows, _c, _r = nsr.site_roster_from_note_lines(AFTER_PROSE, deal_id="d")
+
+    assert len(rows) == 2
+    assert [r.site_id for r in rows] == [None, None], "an AP count is not a site id"
+    keys = sorted(nsr.site_entity_key(r) for r in rows)
+    assert keys == ["site:2205_gregg_st", "site:3501_merrill_pl"]
+    # The counts stay data, not identity.
+    assert not any((nsr.site_entity_key(r) or "").endswith(("39", "62")) for r in rows)

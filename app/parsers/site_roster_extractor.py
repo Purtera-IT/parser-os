@@ -732,7 +732,17 @@ def extract_site_roster(
     ):
         return []
 
-    explicit_decl = declared or bool(
+    # NOT `declared or ...`. These are two different claims, and conflating them
+    # cost real accuracy. `declared` says "this table lists sites" -- the gate's
+    # question. `explicit_declaration` says something much stronger: "trust
+    # POSITIONAL semantics for columns nobody named", which makes the leftmost
+    # unmapped column a site_id.
+    #
+    # On deal 02557291 the leftover column is "APs" -- a count of access points.
+    # Licensing the table also licensed that guess, so the AP counts became site
+    # IDs and the deal published a site called "39". A judgment that a table is
+    # a roster says nothing about what its unnamed columns MEAN.
+    explicit_decl = bool(
         _KIND_PHYSICAL_SITE_DECLARATION.search(surrounding_text or "")
     )
     field_map = map_columns_to_fields(columns, explicit_declaration=explicit_decl)
