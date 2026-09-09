@@ -248,6 +248,7 @@ def site_roster_from_note_lines(
     lines: Sequence[str],
     *,
     surrounding_text: str = "",
+    deal_id: str = "",
 ) -> tuple[list[Any], list[str], list[list[str]]]:
     """``(roster_rows, columns, rows)`` for a site roster in the note body.
 
@@ -259,7 +260,7 @@ def site_roster_from_note_lines(
     found = find_delimited_table(lines) or find_stacked_table(lines)
     if not found:
         return [], [], []
-    columns, rows, _header_index = found
+    columns, rows, header_index = found
     try:
         from app.parsers.site_roster_extractor import extract_site_roster
     except Exception:  # pragma: no cover - extractor must never break a parse
@@ -270,9 +271,124 @@ def site_roster_from_note_lines(
         )
     except Exception:  # pragma: no cover
         return [], [], []
+
+    if not roster_rows:
+        # The structural gate declined. It answers from headers and row shape
+        # alone, so it cannot see a note that SAYS what its table is for. Ask.
+        # A "yes" opens the same door an explicit declaration opens; anything
+        # else leaves the gate's answer exactly as it was.
+        prose = _surrounding_prose(lines, header_index, len(columns), len(rows))
+        if surrounding_text:
+            prose = (surrounding_text + " " + prose).strip()[:_EVIDENCE_CONTEXT]
+        if table_is_a_site_roster(
+            columns, rows, surrounding_text=prose, deal_id=deal_id
+        ):
+            try:
+                roster_rows = extract_site_roster(
+                    columns=columns,
+                    rows=rows,
+                    surrounding_text=surrounding_text,
+                    declared=True,
+                )
+            except Exception:  # pragma: no cover
+                roster_rows = []
+
     if not roster_rows:
         return [], columns, rows
     return list(roster_rows), columns, rows
+
+
+#: The decision family for "is this table a roster of SITES?". Grounded on its
+#: own relation so a PM's answer only ever applies to this question.
+SITE_ROSTER_RELATION = "site_roster_table"
+SITE_ROSTER_CANDIDATES = ("site_roster", "not_site_roster")
+
+#: What the decision actually turns on, in one neutral line. The distinction is
+#: not "does this contain addresses" -- a contact list, a shipping list and a
+#: letterhead all contain addresses. It is whether the rows are PLACES THE WORK
+#: HAPPENS.
+SITE_ROSTER_INSTRUCTION = (
+    "Decide whether this table lists physical sites where work will be "
+    "performed, or lists something else that merely carries addresses "
+    "(people, companies, shipping destinations, a letterhead, an asset "
+    "inventory). Use the surrounding text as evidence of what the table is for."
+)
+
+#: How many rows of the table to show the judge. Enough to see the pattern,
+#: few enough that a 400-row roster does not become the prompt.
+_EVIDENCE_ROWS = 4
+
+#: How much surrounding prose to carry as evidence, in characters.
+_EVIDENCE_CONTEXT = 1200
+
+
+def _table_evidence(columns: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    out = [" | ".join(str(c) for c in columns)]
+    for row in list(rows)[:_EVIDENCE_ROWS]:
+        out.append(" | ".join(str(c) for c in row))
+    if len(rows) > _EVIDENCE_ROWS:
+        out.append(f"... {len(rows) - _EVIDENCE_ROWS} more row(s)")
+    return "\n".join(out)
+
+
+def _surrounding_prose(
+    lines: Sequence[str], header_at: int, width: int, row_count: int
+) -> str:
+    """The note either side of the table -- the evidence for what it is for.
+
+    "The customer has two locations, addresses below" and "please ship the kit
+    to our office at" produce identical-looking address tables. Only this text
+    tells them apart, so it is the whole point of asking.
+    """
+    before = [str(l or "").strip() for l in lines[:header_at]]
+    after = [str(l or "").strip() for l in lines[header_at + width + width * row_count :]]
+    prose = " ".join(x for x in (before + after) if x)
+    return prose[:_EVIDENCE_CONTEXT]
+
+
+def table_is_a_site_roster(
+    columns: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    *,
+    surrounding_text: str = "",
+    deal_id: str = "",
+) -> bool | None:
+    """Ask whether this table lists sites. True / False / None (undecided).
+
+    The structural gate in ``site_roster_extractor`` answers this from headers
+    and row shape alone, and it is deliberately strict: without a name or ID
+    column it wants enough distinct places that the table cannot be a
+    letterhead. That strictness is right in the abstract and wrong in cases
+    where the note SAYS what the table is -- deal 02557291 opens "The customer
+    has two locations, addresses below" above an Address/City/State/Zip table,
+    and the gate cannot read it.
+
+    So when the gate declines, ask instead of asserting. ``decide()`` resolves
+    STORE -> LLM -> undecided, which means a PM's answer is enforced forever and
+    for free after the first time, and an undecided answer changes nothing.
+    """
+    try:
+        from app.core.decide import DecisionScope, decide
+    except Exception:  # pragma: no cover - a judgment must never break a parse
+        return None
+    try:
+        d = decide(
+            SITE_ROSTER_RELATION,
+            _table_evidence(columns, rows),
+            list(SITE_ROSTER_CANDIDATES),
+            instruction=SITE_ROSTER_INSTRUCTION,
+            context=surrounding_text,
+            scope=DecisionScope(deal_id=str(deal_id or "")),
+            relations={"columns": list(columns), "row_count": len(rows)},
+        )
+    except Exception:  # pragma: no cover
+        return None
+    verdict = getattr(d, "verdict", None)
+    if verdict == "site_roster":
+        return True
+    if verdict == "not_site_roster":
+        return False
+    return None  # undecided -> the caller keeps whatever it already had
 
 
 def site_entity_key(site_row: Any) -> str:

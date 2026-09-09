@@ -415,7 +415,7 @@ class HubspotNoteParser(BaseParser):
         title = str(parsed.get("title") or "")
         try:
             roster_rows, columns, rows = site_roster_from_note_lines(
-                lines, surrounding_text=title
+                lines, surrounding_text=title, deal_id=project_id
             )
         except Exception:  # pragma: no cover
             return []
