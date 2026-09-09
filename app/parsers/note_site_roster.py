@@ -105,6 +105,69 @@ def _looks_like_cell(value: str) -> bool:
     return len(v.split()) <= _MAX_CELL_WORDS
 
 
+#: A column header is a LABEL. "Address" is; "The customer has two locations,
+#: addresses below, where they want assistance..." is not -- but the synonym
+#: table matches long synonyms as substrings, so that sentence maps to
+#: street_address and, unguarded, becomes a header that shifts every column by
+#: one. Shape decides what may be a header; the synonym table decides what it
+#: means.
+_MAX_HEADER_WORDS = 5
+_MAX_HEADER_CHARS = 40
+
+#: How far past the recognised headers to look for further columns. A roster
+#: carries columns nobody named canonically -- "APs", "Users", "Notes" -- and
+#: stopping at the last RECOGNISED header would cut the row short and shift
+#: every value left.
+_EXTRA_COLUMN_SEARCH = 7
+
+#: A column whose values disagree in shape is not a column. Half is a low bar
+#: deliberately: a real roster usually scores 1.0, and the wrong width usually
+#: scores near 0, so this only has to separate those two.
+_MIN_COLUMN_COHERENCE = 0.5
+
+
+def _header_shaped(value: str) -> bool:
+    """Could this line be a column LABEL rather than a sentence?"""
+    v = str(value or "").strip()
+    return bool(v) and len(v) <= _MAX_HEADER_CHARS and len(v.split()) <= _MAX_HEADER_WORDS
+
+
+def _shape(value: str) -> str:
+    """A coarse class for a cell, used only to test whether a column agrees
+    with itself. Never used to decide what a value MEANS."""
+    v = str(value or "").strip()
+    if not v:
+        return "empty"
+    if re.fullmatch(r"\d+", v):
+        return "int"
+    if re.fullmatch(r"\d{5}(?:-\d{4})?", v):
+        return "zip5"
+    if re.fullmatch(r"[A-Za-z]\d[A-Za-z]\s*\d[A-Za-z]\d", v):
+        return "postal_ca"
+    if re.fullmatch(r"[A-Za-z]{2}", v):
+        return "code2"
+    if re.search(r"\d", v):
+        return "alnum"
+    return "alpha"
+
+
+def _column_coherence(rows: list[list[str]], width: int) -> float:
+    """Fraction of columns whose every value shares one shape.
+
+    This is what tells the right column count from the wrong one. At the wrong
+    width the rows are cut mid-record, so a column holds a street address in
+    one row and a postcode in the next; at the right width each column is one
+    kind of thing all the way down.
+    """
+    if not rows or width <= 0:
+        return 0.0
+    agreed = 0
+    for c in range(width):
+        if len({_shape(r[c]) for r in rows}) == 1:
+            agreed += 1
+    return agreed / width
+
+
 def find_stacked_table(
     lines: Sequence[str],
 ) -> tuple[list[str], list[list[str]], int] | None:
@@ -117,48 +180,68 @@ def find_stacked_table(
     ends -- so the HTML->text step cannot recover rows no matter how careful it
     is. The information is genuinely absent from the source.
 
-    It survives in exactly one place: the HEADER. The count of leading lines
-    that name a roster column IS the column count, and the cells that follow are
-    that table in row-major order. So read the header run, then re-fold.
-
-    Deal 010310 arrived exactly this way -- 'Site Name' / 'Address' / 'City' /
-    'Province' / 'Postal Code' on five lines, then fifteen cells.
+    It survives in the HEADER and in the SHAPE OF THE COLUMNS. Recognised
+    headers give a lower bound on the width; the true width is the one at which
+    every column agrees with itself all the way down. Deal 010310 arrived as
+    five headers then fifteen cells; deal 02557291 as a paragraph, then five
+    headers -- one of them ("APs") not a roster field at all -- then ten.
     """
     try:
         from app.parsers.site_roster_extractor import map_columns_to_fields
     except Exception:  # pragma: no cover
         return None
 
-    # The header is the longest run of leading lines that EVERY map to a
-    # distinct roster field. The first line that does not is the first datum.
-    header: list[str] = []
-    for line in lines:
-        candidate = header + [str(line or "").strip()]
-        try:
-            mapped = map_columns_to_fields(candidate)
-        except Exception:  # pragma: no cover
-            break
-        if len(mapped) != len(candidate):
-            break
-        header = candidate
-    width = len(header)
-    if width < _MIN_COLUMNS:
-        return None
+    cells = [str(l or "").strip() for l in lines]
+    n = len(cells)
+    best: tuple[tuple[float, int], list[str], list[list[str]], int] | None = None
 
-    body = [str(l or "").strip() for l in lines[width:]]
-    rows: list[list[str]] = []
-    i = 0
-    while i + width <= len(body):
-        group = body[i : i + width]
-        # A table is contiguous: the first group that stops looking like cells
-        # is the prose after it, not a row with odd values.
-        if not all(_looks_like_cell(c) for c in group):
-            break
-        rows.append(group)
-        i += width
-    if len(rows) < _MIN_DATA_ROWS:
+    for start in range(n):
+        # The recognised run: consecutive header-SHAPED lines that each map to a
+        # distinct roster field. Header-shaped is checked first, so a paragraph
+        # mentioning "address" can never open a table.
+        recognised: list[str] = []
+        for cell in cells[start:]:
+            if not _header_shaped(cell):
+                break
+            candidate = recognised + [cell]
+            try:
+                mapped = map_columns_to_fields(candidate)
+            except Exception:  # pragma: no cover
+                break
+            if len(mapped) != len(candidate):
+                break
+            recognised = candidate
+        if len(recognised) < _MIN_COLUMNS:
+            continue
+
+        # The real table may be wider than the part we recognise.
+        for width in range(len(recognised), len(recognised) + _EXTRA_COLUMN_SEARCH + 1):
+            if start + width > n:
+                break
+            header = cells[start : start + width]
+            if not all(_header_shaped(h) for h in header):
+                break
+            body = cells[start + width :]
+            rows: list[list[str]] = []
+            i = 0
+            while i + width <= len(body):
+                group = body[i : i + width]
+                # A table is contiguous: the first group that stops looking like
+                # cells is the prose after it, not a row with odd values.
+                if not all(_looks_like_cell(c) for c in group):
+                    break
+                rows.append(group)
+                i += width
+            if len(rows) < _MIN_DATA_ROWS:
+                continue
+            score = (_column_coherence(rows, width), len(rows))
+            if best is None or score > best[0]:
+                best = (score, header, rows, start)
+
+    if best is None or best[0][0] < _MIN_COLUMN_COHERENCE:
         return None
-    return header, rows, 0
+    _score, header, rows, at = best
+    return header, rows, at
 
 
 def site_roster_from_note_lines(
