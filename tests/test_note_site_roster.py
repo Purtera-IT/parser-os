@@ -232,3 +232,70 @@ def test_stacked_table_needs_at_least_two_rows():
     from app.parsers.note_site_roster import find_stacked_table
 
     assert find_stacked_table(["Site Name", "Address", "Brampton", "55 Devon rd"]) is None
+
+
+# ── A table that follows prose, and columns nobody named canonically ─────────
+# Deal 02557291: a paragraph, then Address / City / State / Zip / APs, then two
+# rows. Two separate bugs surfaced here.
+
+AFTER_PROSE = [
+    "Hey Trent, Happy Friday! Got another opportunity that it would be great to get a quote for.",
+    "The customer has two locations, addresses below, where they want assistance "
+    "with swapping out a total of 101 APs.",
+    "Address", "City", "State", "Zip", "APs",
+    "2205 Gregg St", "Columbia", "SC", "29201", "62",
+    "3501 Merrill Pl", "Mt Pleasant", "SC", "29466", "39",
+    "101",
+]
+
+
+def test_a_sentence_mentioning_an_address_is_not_a_header():
+    """The synonym table matches long synonyms as SUBSTRINGS, so the sentence
+    '...two locations, addresses below...' maps to street_address. Unguarded it
+    became the first header and shifted every column by one, yielding sites
+    named 'APs' and '62'. Shape decides what may be a header; the synonym table
+    decides only what it means."""
+    from app.parsers.note_site_roster import find_stacked_table
+
+    columns, _rows, header_at = find_stacked_table(AFTER_PROSE)
+    assert header_at == 2, "the table starts at the header, not in the paragraph"
+    assert columns[0] == "Address"
+
+
+def test_a_column_nobody_named_canonically_still_counts_to_the_width():
+    """'APs' is a real column and not a roster field. Stopping the width at the
+    last RECOGNISED header cut each row short and shifted every value left."""
+    from app.parsers.note_site_roster import find_stacked_table
+
+    columns, rows, _at = find_stacked_table(AFTER_PROSE)
+    assert columns == ["Address", "City", "State", "Zip", "APs"]
+    assert rows == [
+        ["2205 Gregg St", "Columbia", "SC", "29201", "62"],
+        ["3501 Merrill Pl", "Mt Pleasant", "SC", "29466", "39"],
+    ]
+
+
+def test_the_width_is_the_one_where_columns_agree_with_themselves():
+    """What separates the right column count from the wrong one: at the wrong
+    width rows are cut mid-record, so a column holds a street address in one row
+    and a postcode in the next."""
+    from app.parsers.note_site_roster import _column_coherence
+
+    right = [["2205 Gregg St", "Columbia", "SC", "29201", "62"],
+             ["3501 Merrill Pl", "Mt Pleasant", "SC", "29466", "39"]]
+    wrong = [["APs", "2205 Gregg St", "Columbia", "SC"],
+             ["29201", "62", "3501 Merrill Pl", "Mt Pleasant"]]
+    assert _column_coherence(right, 5) > _column_coherence(wrong, 4)
+
+
+def test_prose_that_merely_mentions_an_address_yields_no_site():
+    """An address is not a site. Only a TABLE that declares places is."""
+    lines = [
+        "Please ship the kit to our office at 1200 Market St, Philadelphia PA 19107.",
+        "Let me know when it arrives.",
+        "Thanks!",
+    ]
+    from app.parsers.note_site_roster import find_stacked_table
+
+    assert find_stacked_table(lines) is None
+    assert site_roster_from_note_lines(lines)[0] == []
