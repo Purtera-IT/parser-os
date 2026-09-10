@@ -1234,3 +1234,161 @@ def _scan_pdf_for_extras(
                     )
                 )
     return out
+
+
+# ── Vector figures ──────────────────────────────────────────────────────
+# A diagram drawn with vector operations is not an embedded image, so
+# ``page.get_images()`` cannot see it and the whole image pipeline never learns
+# it exists. That is not a gate declining to read something; it is the pipeline
+# being blind.
+#
+# The Anova install guide is the case that surfaced it: page 1 carries 4
+# embedded images (all tiny icons) and 1,657 drawing operations, page 2 carries
+# 5 and 3,373. The components diagram (Sensor Interface Box / HDP Sensor /
+# UTM), both venting options with the flapper-valve part number, and every step
+# illustration are vector line art. Measured across the dev corpus, 46 of 305
+# PDFs (15%) over 31 deals are vector-heavy, and 17 of them have NO raster the
+# vision pass can see at all -- floor plans, rack elevations, low-voltage
+# layouts, where the drawing IS the content.
+#
+# So render them. A cluster of drawing operations that sit together is one
+# figure; rasterising that rectangle produces exactly the picture a person
+# sees, and it then flows through the existing marker -> gate -> describe
+# pipeline with no special case anywhere downstream.
+
+#: Operations closer than this belong to the same figure. Measured on the Anova
+#: guide: at 8pt the components diagram, the venting diagrams and the step
+#: illustrations fuse into one block; at 6pt they separate into figures.
+_VECTOR_CLUSTER_GAP = 6.0
+
+#: A figure smaller than this is an icon, a rule, or a box corner.
+_VECTOR_MIN_SIDE = 60.0
+
+#: One rectangle is a border, not a drawing. A figure is made of strokes.
+_VECTOR_MIN_OPS = 8
+
+#: Rendering DPI. 140 keeps a 600pt-wide figure legible for a vision model
+#: without producing a megabyte per region.
+_VECTOR_DPI = 140
+
+#: Never rasterise the page furniture: a rect covering nearly the whole page is
+#: a background, and a "figure" that big is just the page again.
+_VECTOR_PAGE_FRACTION = 0.95
+
+
+def _cluster_rects(rects: list[tuple[float, float, float, float]], gap: float) -> list[list[float]]:
+    """Union rectangles that sit within ``gap`` of one another."""
+    boxes = [list(r) for r in rects]
+    changed = True
+    while changed:
+        changed = False
+        merged: list[list[float]] = []
+        for b in boxes:
+            hit = False
+            for o in merged:
+                if (b[0] <= o[2] + gap and o[0] <= b[2] + gap
+                        and b[1] <= o[3] + gap and o[1] <= b[3] + gap):
+                    o[0] = min(o[0], b[0]); o[1] = min(o[1], b[1])
+                    o[2] = max(o[2], b[2]); o[3] = max(o[3], b[3])
+                    hit = True
+                    changed = True
+                    break
+            if not hit:
+                merged.append(b[:])
+        boxes = merged
+    return boxes
+
+
+def _pdf_vector_region_markers(
+    *,
+    path: Path,
+    project_id: str,
+    artifact_id: str,
+    parser_version: str,
+) -> list[EvidenceAtom]:
+    """Emit one marker per VECTOR figure, rasterised so it can be read.
+
+    Mirrors :func:`_pdf_image_markers` exactly -- same marker shape, same saved
+    sidecar, a ``page{n}/vector{k}`` region_ref -- so the vision pass, the gate
+    and every consumer treat a drawn figure the same as a photographed one.
+    """
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover — env-specific
+        return []
+    try:
+        doc = fitz.open(str(path))
+    except Exception:  # pragma: no cover — unreadable PDF
+        return []
+
+    import os as _os
+    img_root = Path(_os.environ.get("SOWSMITH_IMAGE_DIR", "_extracted_images")) / _safe_stem(path.stem)
+    out: list[EvidenceAtom] = []
+    try:
+        for page_index, page in enumerate(doc):
+            try:
+                drawings = page.get_drawings() or []
+            except Exception:
+                continue
+            if len(drawings) < _VECTOR_MIN_OPS:
+                continue
+            pw, ph = float(page.rect.width or 1.0), float(page.rect.height or 1.0)
+            rects: list[tuple[float, float, float, float]] = []
+            for d in drawings:
+                r = d.get("rect")
+                if r is None or r.width <= 0 or r.height <= 0:
+                    continue
+                if r.width >= pw * _VECTOR_PAGE_FRACTION and r.height >= ph * _VECTOR_PAGE_FRACTION:
+                    continue  # page background
+                rects.append((float(r.x0), float(r.y0), float(r.x1), float(r.y1)))
+            if len(rects) < _VECTOR_MIN_OPS:
+                continue
+            for k, box in enumerate(sorted(_cluster_rects(rects, _VECTOR_CLUSTER_GAP),
+                                           key=lambda b: (b[1], b[0]))):
+                w, h = box[2] - box[0], box[3] - box[1]
+                if w < _VECTOR_MIN_SIDE or h < _VECTOR_MIN_SIDE:
+                    continue
+                if w >= pw * _VECTOR_PAGE_FRACTION and h >= ph * _VECTOR_PAGE_FRACTION:
+                    continue
+                # How many operations actually fall in this box: a lone
+                # rectangle is a border, and rasterising it teaches nothing.
+                inside = sum(
+                    1 for r in rects
+                    if r[0] >= box[0] - 1 and r[2] <= box[2] + 1
+                    and r[1] >= box[1] - 1 and r[3] <= box[3] + 1
+                )
+                if inside < _VECTOR_MIN_OPS:
+                    continue
+                region_ref = f"page{page_index}/vector{k}"
+                saved_path, size = None, 0
+                try:
+                    clip = fitz.Rect(*box) & page.rect
+                    pix = page.get_pixmap(clip=clip, dpi=_VECTOR_DPI)
+                    data = pix.tobytes("png")
+                    if data:
+                        img_root.mkdir(parents=True, exist_ok=True)
+                        fn = img_root / f"page{page_index}_vector{k}.png"
+                        with open(fn, "wb") as fh:
+                            fh.write(data)
+                        saved_path = str(fn).replace("\\", "/")
+                        size = len(data)
+                except Exception:
+                    saved_path, size = None, 0  # degrade to a plain marker
+                out.append(
+                    region_marker(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        artifact_type=ArtifactType.pdf,
+                        parser_version=parser_version,
+                        region_ref=region_ref,
+                        size=size,
+                        saved_path=saved_path,
+                    )
+                )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
