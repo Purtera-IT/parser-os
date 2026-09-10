@@ -109,24 +109,43 @@ def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[A
         for ci, cell in enumerate(getattr(row, "cells", []) or []):
             if cell is None or ci >= len(rows[ri]):
                 continue
-            current = " ".join(str(rows[ri][ci] or "").split())
-            if not current:
+            raw_cell = str(rows[ri][ci] or "")
+            if not raw_cell.strip():
                 continue
             try:
                 cx0, cy0, _cx1, cy1 = float(cell[0]), float(cell[1]), float(cell[2]), float(cell[3])
             except Exception:
                 continue
-            best: str | None = None
-            for ly0, ly1, lx0, text in lines:
-                # The line must sit in this cell's band and start to its left.
-                if ly1 <= cy0 or ly0 >= cy1 or lx0 >= cx0:
+            # A cell can hold SEVERAL lines, and the clip cuts each of them
+            # independently. Normalising the whole cell to one string meant no
+            # page line could ever match it, so only a single-line cell was ever
+            # repaired. On the Anova guide the cell reads
+            #     "Anova UTM(R) INSTALLATION GUIDE plus HDP SENSOR
+            #      lcome you to coordinate the time and place of your installs"
+            # and the second line kept its truncation.
+            out_lines: list[str] = []
+            changed = False
+            for piece in raw_cell.split("\n"):
+                current = " ".join(piece.split())
+                if not current:
+                    out_lines.append(piece)
                     continue
-                if len(text) <= len(current) or not text.endswith(current):
-                    continue
-                if best is None or len(text) > len(best):
-                    best = text
-            if best is not None:
-                rows[ri][ci] = best
+                best: str | None = None
+                for ly0, ly1, lx0, text in lines:
+                    # The line must sit in this cell's band and start to its left.
+                    if ly1 <= cy0 or ly0 >= cy1 or lx0 >= cx0:
+                        continue
+                    if len(text) <= len(current) or not text.endswith(current):
+                        continue
+                    if best is None or len(text) > len(best):
+                        best = text
+                if best is not None:
+                    out_lines.append(best)
+                    changed = True
+                else:
+                    out_lines.append(piece)
+            if changed:
+                rows[ri][ci] = "\n".join(out_lines)
 
 _FORM_INTERROG_RE = re.compile(
     r"^(?:did|is|are|was|were|have|has|had|do|does|can|could|will|would|should|"

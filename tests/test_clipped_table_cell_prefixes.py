@@ -110,3 +110,53 @@ def test_the_repair_only_ever_adds_back_a_prefix():
     restored = rows[0][0]
     assert restored.endswith("t stick level of product")
     assert restored == "Current stick level of product"
+
+
+class _MultiLinePage:
+    """Two lines in one cell's band, each starting left of the cell."""
+
+    def __init__(self, lines, y0, y1):
+        blocks = []
+        step = (y1 - y0) / max(1, len(lines))
+        for i, (text, x0) in enumerate(lines):
+            ly0 = y0 + i * step
+            blocks.append({"lines": [{"bbox": [x0, ly0, x0 + 400.0, ly0 + step],
+                                      "spans": [{"text": text}]}]})
+        self._d = {"blocks": blocks}
+
+    def get_text(self, _kind):
+        return self._d
+
+
+def test_every_line_in_a_cell_is_repaired_not_just_the_first():
+    """A cell can hold several lines and the clip cuts each independently.
+
+    Normalising the whole cell to one string meant no page line could match it,
+    so only a single-line cell was ever repaired. The Anova guide's footer cell
+    held a title plus a sentence, and the sentence kept its truncation:
+
+        "Anova UTM INSTALLATION GUIDE plus HDP SENSOR
+         lcome you to coordinate the time and place ..."
+    """
+    page = _MultiLinePage(
+        [("Anova UTM INSTALLATION GUIDE plus HDP SENSOR", 60.0),
+         ("We welcome you to coordinate the time and place", 50.0)],
+        491.0, 520.0,
+    )
+    rows = [["Anova UTM INSTALLATION GUIDE plus HDP SENSOR\nlcome you to coordinate the time and place"]]
+    cell_rows = [_Row([(81.0, 491.1, 576.2, 519.0)])]
+    _restore_clipped_prefixes(page, cell_rows, rows)
+    assert rows[0][0].split("\n")[1] == "We welcome you to coordinate the time and place"
+
+
+def test_a_line_that_needs_no_repair_keeps_its_own_text():
+    page = _MultiLinePage(
+        [("Already complete", 100.0), ("Device serial number", 50.0)],
+        491.0, 520.0,
+    )
+    rows = [["Already complete\nevice serial number"]]
+    cell_rows = [_Row([(81.0, 491.1, 576.2, 519.0)])]
+    _restore_clipped_prefixes(page, cell_rows, rows)
+    got = rows[0][0].split("\n")
+    assert got[0] == "Already complete"
+    assert got[1] == "Device serial number"
