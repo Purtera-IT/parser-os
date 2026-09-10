@@ -966,8 +966,13 @@ def test_thumb_never_enters_the_training_row(monkeypatch, tmp_path):
 
 
 def test_thumb_does_not_change_routing_or_atoms(monkeypatch, tmp_path):
-    """A meaningful image routes and emits identically — thumbnails touch only
-    the skip receipt."""
+    """A meaningful image routes and emits identically.
+
+    The skip-receipt budget is still untouched by a described image: a
+    described image now carries its own pixels, but on a SEPARATE allowance,
+    so a picture-heavy document can never spend the budget a disputed image
+    needs for the person grading it.
+    """
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
     _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
@@ -979,4 +984,7 @@ def test_thumb_does_not_change_routing_or_atoms(monkeypatch, tmp_path):
     out = piv.process_image_markers([m])
     assert [a.value["fact_kind"] for a in out] == ["image_description"]
     assert "gate_verdict" not in m.value
-    assert piv._thumb_budget["used"] == 0
+    assert piv._thumb_budget["used"] == 0, "the skip-receipt budget is not for descriptions"
+    # ...and the description kept the pixels it is about, on its own budget.
+    assert out[0].value.get("thumb", "").startswith("data:image/jpeg")
+    assert piv._described_thumb_budget["used"] == 1

@@ -803,6 +803,30 @@ _DEFAULT_THUMB_MAX = 20
 
 _thumb_budget: dict[str, int] = {"used": 0}
 
+#: Described images carry their pixels on a budget of their OWN. Sharing the
+#: skip-receipt budget let a picture-heavy document spend it all on
+#: descriptions, leaving a genuinely disputed image with no thumbnail for the
+#: person grading it -- the two would starve each other. Separate counters keep
+#: each purpose whole and bound total envelope growth by their sum.
+_described_thumb_budget: dict[str, int] = {"used": 0}
+
+
+def _described_thumb_max() -> int:
+    return _int_env("SOWSMITH_PDF_IMAGE_DESCRIBED_THUMB_MAX", 8)
+
+
+def _maybe_described_thumb(crop: bytes) -> tuple[str | None, str | None]:
+    """``(data_uri, error)`` for one described image, on its own budget."""
+    try:
+        if _described_thumb_budget["used"] >= _described_thumb_max():
+            return None, "budget_exhausted"
+        uri, err = crop_thumbnail.make_thumb_data_uri_receipted(crop)
+        if uri:
+            _described_thumb_budget["used"] += 1
+        return uri, err
+    except Exception as exc:
+        return None, type(exc).__name__
+
 
 def _thumb_max() -> int:
     """Thumbnails embeddable in ONE compile (``SOWSMITH_PDF_IMAGE_THUMB_MAX``).
@@ -813,6 +837,7 @@ def _thumb_max() -> int:
 def _reset_thumb_budget() -> None:
     """Called once per compile at the top of :func:`process_image_markers`."""
     _thumb_budget["used"] = 0
+    _described_thumb_budget["used"] = 0
 
 
 def _maybe_thumb(crop: bytes) -> tuple[str | None, str | None]:
@@ -1254,6 +1279,29 @@ def _describe(
         fact_kind="image_description", confidence=conf,
     )
     if head:
+        # Keep the PIXELS of an image we bothered to describe.
+        #
+        # Until now a crop's bytes survived only when the image was DISPUTED —
+        # persisted so a human grading the queue could see what the gate
+        # skipped. An image the pipeline read successfully had its description
+        # kept and its pixels thrown away, so nothing downstream could ever
+        # show the thing the description is about. On deal 51318992 that is two
+        # described diagrams and 153 blobs, not one of them an image.
+        #
+        # A question about a component is far easier to answer next to the
+        # component. The data URI rides the channel the atom already travels
+        # (envelope -> Core -> UI), needs no route that serves blobs by path,
+        # and spends the SAME per-compile budget the disputed-crop thumbnails
+        # spend — one cap over everything that puts pixels in an envelope, so
+        # the envelope cannot grow twice.
+        #
+        # One thumbnail per IMAGE (the description atom), never per fact: a
+        # diagram yielding eight facts must not embed itself eight times.
+        thumb, thumb_err = _maybe_described_thumb(crop)
+        if thumb:
+            head.value["thumb"] = thumb
+        elif thumb_err:
+            head.value["thumb_error"] = thumb_err
         atoms.append(head)
     facts = obj.get("facts") or []
     if isinstance(facts, list):
