@@ -159,6 +159,7 @@ from app.parsers.pdf.images import (  # noqa: E402
     _horizontal_workflow_atoms_from_text,
     _ocr_fallback_atoms,
     _pdf_image_markers,
+    _pdf_vector_region_markers,
     _safe_stem,
     _scan_pdf_for_extras,
     _split_form_grid_line,
@@ -850,6 +851,22 @@ class OrbitBriefPdfParser(BaseParser):
         try:
             atoms.extend(
                 _pdf_image_markers(
+                    path=path,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    parser_version=self.parser_version,
+                )
+            )
+        except Exception:  # pragma: no cover — never fail the parse
+            pass
+
+        # A diagram DRAWN in vector operations is not an embedded image, so the
+        # marker pass above cannot see it and the whole image pipeline never
+        # learns it exists. Rasterise each figure so a drawn picture reaches the
+        # gate and the describer exactly like a photographed one.
+        try:
+            atoms.extend(
+                _pdf_vector_region_markers(
                     path=path,
                     project_id=project_id,
                     artifact_id=artifact_id,
