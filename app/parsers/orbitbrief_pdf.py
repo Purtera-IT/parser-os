@@ -3833,8 +3833,24 @@ def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[A
             # CENTER sits inside a table bbox removes exactly the table region and
             # nothing else.
             data = page.get_text("dict") or {}
-            kept: list[tuple[float, float, str]] = []
+            # Lines were flattened across EVERY block and sorted by (y, x), which
+            # reads a page as if it were one column. Two text boxes side by side
+            # then interleave line by line.
+            #
+            # M980 Copper Rack Elevations page 1 has a legend box beside a
+            # port-count box, offset by 7.2pt. Sorting by y alone produced
+            #     "Items in RED are new and need be / installed. Items in BLACK
+            #      should / MDF - port count 47 / already be in the new MDF. The /
+            #      12 data drops = 36 Cat6 / items in GREEN need to be moved"
+            # welding a quote input into the middle of a sentence about colour.
+            # The Anova install guide sheared "STEP 1" into "P 1" the same way.
+            #
+            # A block IS the box. Keep each block's lines together and order the
+            # BLOCKS by position: identical output for a single-column page,
+            # correct column order for a page that has columns.
+            kept_blocks: list[tuple[float, float, list[tuple[float, float, str]]]] = []
             for blk in data.get("blocks", []) or []:
+                blk_lines: list[tuple[float, float, str]] = []
                 for ln in blk.get("lines", []) or []:
                     spans = ln.get("spans", []) or []
                     text = "".join(s.get("text", "") for s in spans)
@@ -3852,9 +3868,16 @@ def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[A
                         except Exception:
                             continue
                     if not in_table:
-                        kept.append((round(lb[1], 1), lb[0], text))
-            kept.sort(key=lambda t: (t[0], t[1]))
-            return "\n".join(t for _, _, t in kept)
+                        blk_lines.append((round(lb[1], 1), lb[0], text))
+                if blk_lines:
+                    bb = blk.get("bbox") or [0.0, 0.0, 0.0, 0.0]
+                    kept_blocks.append((round(float(bb[1]), 1), float(bb[0]), blk_lines))
+            kept_blocks.sort(key=lambda b: (b[0], b[1]))
+            out_lines: list[str] = []
+            for _by, _bx, blk_lines in kept_blocks:
+                blk_lines.sort(key=lambda t: (t[0], t[1]))
+                out_lines.extend(t for _, _, t in blk_lines)
+            return "\n".join(out_lines)
     except Exception:
         return None
 

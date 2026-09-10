@@ -285,6 +285,24 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
     GAP_MIN = max(38.0, 0.055 * page_w)   # a real column river, not inter-word space
     ALIGN_TOL = 10.0                       # how tightly stacked boundaries must agree
 
+    # Cells in one ROW of a real table are typeset on the same line, so their
+    # baselines agree to within a rounding error. Two independent text flows
+    # that merely sit side by side do not: they run on their own leading, and
+    # the y-band above (0.6 * line height) is wide enough to sweep a word from
+    # each into the same "row".
+    #
+    # M980 Copper Rack Elevations page 1 is the case: a legend box and a
+    # port-count box, offset by a CONSTANT 7.2pt against a 14.4pt line height.
+    # Every band paired a line of one with a line of the other, and the table
+    # emitter then wrote rows like
+    #     col_0="MDF - port count 47"  col_1="installed. Items in BLACK should"
+    # welding a quote input ("12 data drops = 36 Cat6") into the middle of a
+    # sentence about colour.
+    #
+    # Requiring the two cells to share a baseline is what separates a row from
+    # a coincidence of vertical position.
+    BASELINE_TOL = max(2.0, 0.25 * line_h)
+
     def _gap_boundary(ws: list[Any]) -> float | None:
         """Left edge of the RIGHT column across the widest inter-word gap, or None.
         The right column's left edge is the STABLE rail (a left cell of varying
@@ -292,7 +310,13 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
         best = None  # (gap_size, right_col_x0)
         for a, b in zip(ws, ws[1:]):
             gap = b[0] - a[2]
-            if gap > GAP_MIN and (best is None or gap > best[0]):
+            if gap <= GAP_MIN:
+                continue
+            # The word closing the left cell and the word opening the right one
+            # must sit on the same line, or these are two flows, not one row.
+            if abs(float(b[1]) - float(a[1])) > BASELINE_TOL:
+                continue
+            if best is None or gap > best[0]:
                 best = (gap, b[0])
         return None if best is None else best[1]
 
