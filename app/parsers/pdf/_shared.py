@@ -64,7 +64,69 @@ def _table_rows_repaired(page: Any, table: Any) -> list[list[Any]]:
                 continue
             if sorted(a.replace(" ", "")) == sorted(b.replace(" ", "")):
                 rows[ri][ci] = b
+    _restore_clipped_prefixes(page, cell_rows, rows)
     return rows
+
+
+def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
+    """Give back the leading characters a narrow table bbox clipped off.
+
+    ``find_tables()`` reports the bounds of the RULING, and a cell's text can
+    start left of it. Extraction clips to the cell, so those first characters
+    are silently dropped -- and what is left still reads like words, which is
+    the dangerous part. On the Anova install guide (table bbox x0=81.0, text
+    line x0=50.8) every row of the tank checklist lost its opening:
+
+        "IMPORTANT INFORMATION - ..."  ->  "TANT INFORMATION - ..."
+        "Device serial number"         ->  "evice serial number"
+        "Style and dimensions"         ->  "tyle and dimensions"
+
+    A cell is repaired only when the extracted text is a strict SUFFIX of a
+    page line that overlaps it vertically and begins further left. A suffix is
+    provably a left-truncation of that line, so the repair can only give back
+    characters that were already there -- it can never add, drop or change one,
+    the same standard the transposition repair holds itself to.
+    """
+    try:
+        data = page.get_text("dict") or {}
+    except Exception:  # pragma: no cover - unreadable page
+        return
+    lines: list[tuple[float, float, float, str]] = []  # (y0, y1, x0, text)
+    for blk in data.get("blocks", []) or []:
+        for ln in blk.get("lines", []) or []:
+            text = " ".join(
+                "".join(sp.get("text", "") for sp in (ln.get("spans") or [])).split()
+            )
+            if not text:
+                continue
+            bb = ln.get("bbox") or [0.0, 0.0, 0.0, 0.0]
+            lines.append((float(bb[1]), float(bb[3]), float(bb[0]), text))
+    if not lines:
+        return
+    for ri, row in enumerate(cell_rows):
+        if ri >= len(rows):
+            break
+        for ci, cell in enumerate(getattr(row, "cells", []) or []):
+            if cell is None or ci >= len(rows[ri]):
+                continue
+            current = " ".join(str(rows[ri][ci] or "").split())
+            if not current:
+                continue
+            try:
+                cx0, cy0, _cx1, cy1 = float(cell[0]), float(cell[1]), float(cell[2]), float(cell[3])
+            except Exception:
+                continue
+            best: str | None = None
+            for ly0, ly1, lx0, text in lines:
+                # The line must sit in this cell's band and start to its left.
+                if ly1 <= cy0 or ly0 >= cy1 or lx0 >= cx0:
+                    continue
+                if len(text) <= len(current) or not text.endswith(current):
+                    continue
+                if best is None or len(text) > len(best):
+                    best = text
+            if best is not None:
+                rows[ri][ci] = best
 
 _FORM_INTERROG_RE = re.compile(
     r"^(?:did|is|are|was|were|have|has|had|do|does|can|could|will|would|should|"
