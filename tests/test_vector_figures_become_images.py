@@ -107,3 +107,41 @@ def test_clustering_unions_what_sits_together():
 def test_clustering_keeps_apart_what_is_far_apart():
     boxes = _cluster_rects([(0, 0, 10, 10), (400, 400, 410, 410)], 6.0)
     assert len(boxes) == 2
+
+
+def test_a_tint_behind_text_does_not_bridge_two_figures(tmp_path, monkeypatch):
+    """A callout panel is page furniture, not a drawing.
+
+    On the Anova guide two grey panels (#F2F2F2, 395x82 and 395x43) sat between
+    the components diagram, the venting diagrams and the step illustrations and
+    welded all three into one 603x318 region. A panel seeds no figure of its
+    own; excluding it as a cluster seed tightens each figure to the drawing it
+    actually is.
+    """
+    p = tmp_path / "panel.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    for (x0, y0, x1, y1) in _figure(80, 80):
+        page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=(0, 0, 0), width=1)
+    # a light unstroked tint spanning the gap to the second figure
+    page.draw_rect(fitz.Rect(60, 250, 550, 330), color=None, fill=(0.95, 0.95, 0.95))
+    for (x0, y0, x1, y1) in _figure(80, 380):
+        page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=(0, 0, 0), width=1)
+    doc.save(str(p))
+    doc.close()
+
+    out = _markers(p, tmp_path, monkeypatch)
+    assert len(out) == 2, "the tint must not weld the two figures into one"
+
+
+def test_a_dark_filled_shape_is_still_a_drawing(tmp_path, monkeypatch):
+    """Only a LIGHT tint is furniture. A filled dark shape is part of the art."""
+    from app.parsers.pdf.images import _is_text_panel
+
+    class _R:
+        width = 400.0
+        height = 80.0
+
+    assert _is_text_panel({"fill": (0.95, 0.95, 0.95), "color": None}, _R()) is True
+    assert _is_text_panel({"fill": (0.1, 0.1, 0.1), "color": None}, _R()) is False
+    assert _is_text_panel({"fill": (0.95, 0.95, 0.95), "color": (0, 0, 0)}, _R()) is False

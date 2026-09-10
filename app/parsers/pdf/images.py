@@ -1275,6 +1275,35 @@ _VECTOR_DPI = 140
 #: a background, and a "figure" that big is just the page again.
 _VECTOR_PAGE_FRACTION = 0.95
 
+#: A large, light, unstroked fill is a CALLOUT PANEL -- the tint behind a block
+#: of text -- not a drawing. It seeds no figure of its own, and worse, it
+#: bridges figures that are otherwise separate: on the Anova guide two grey
+#: panels (#F2F2F2, 395x82 and 395x43) welded the components diagram, the
+#: venting diagrams and the step illustrations into one 603x318 region.
+#: Excluding them as cluster SEEDS tightens each figure to the drawing it
+#: actually is; a panel inside a figure's bounds is still rendered with it.
+_PANEL_MIN_AREA = 5000.0
+_PANEL_MIN_LUMINANCE = 0.85
+
+
+def _fill_luminance(fill: Any) -> float:
+    """Perceived brightness of a fill colour, or 0.0 when it has none."""
+    try:
+        r, g, b = float(fill[0]), float(fill[1]), float(fill[2])
+    except Exception:
+        return 0.0
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _is_text_panel(op: dict, rect: Any) -> bool:
+    """A tint behind text: filled, unstroked, large and light."""
+    fill = op.get("fill")
+    if fill is None or op.get("color") is not None:
+        return False
+    if rect.width * rect.height < _PANEL_MIN_AREA:
+        return False
+    return _fill_luminance(fill) >= _PANEL_MIN_LUMINANCE
+
 
 def _cluster_rects(rects: list[tuple[float, float, float, float]], gap: float) -> list[list[float]]:
     """Union rectangles that sit within ``gap`` of one another."""
@@ -1340,6 +1369,8 @@ def _pdf_vector_region_markers(
                     continue
                 if r.width >= pw * _VECTOR_PAGE_FRACTION and r.height >= ph * _VECTOR_PAGE_FRACTION:
                     continue  # page background
+                if _is_text_panel(d, r):
+                    continue  # a tint behind text bridges unrelated figures
                 rects.append((float(r.x0), float(r.y0), float(r.x1), float(r.y1)))
             if len(rects) < _VECTOR_MIN_OPS:
                 continue
