@@ -40,3 +40,17 @@ def test_never_overwrites_an_established_city():
     site = _atom("physical_site", "x", {"name": "highland park office", "city": "Detroit", "state": "MI"})
     enrich_site_geo([site, _atom("deal_metadata", "Highland Park, MI")])
     assert site.value["city"] == "Detroit"
+
+
+def test_a_usps_state_code_is_trusted_when_the_reference_is_unavailable(monkeypatch):
+    """An installed package without its gazetteer answers None, not False; a
+    'City, ST' the author wrote must still place the site."""
+    from app.core import site_geo_fallback as sg
+    import app.core.geo_reference as geo
+    monkeypatch.setattr(geo, "is_known_place", lambda city, state=None: None)
+    site = _atom("physical_site", "office", {"name": "highland park warehouse office"})
+    email = _atom("deal_metadata", "the details you sent over about Highland Park, MI.")
+    spelled = _atom("raw_utterance", "an office in Highland Park, Michigan, and they.")
+    assert sg.enrich_site_geo([site, spelled]) == 0, "a spelled-out state is not trusted unchecked"
+    assert sg.enrich_site_geo([site, email]) == 1
+    assert (site.value["city"], site.value["state"]) == ("Highland Park", "MI")
