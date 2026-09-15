@@ -1908,6 +1908,25 @@ def compile_project(
                     f"INFO: site_atom_backfill minted {backfill_n} physical_site atom(s) "
                     f"from site entities (roster was empty after dedup)"
                 )
+                # A site minted here was not there when site_geo_fallback ran,
+                # so the place the document names for it was never filled in.
+                # Live 000061 (compile 9a6aacfc): "highland park warehouse
+                # office", minted from the call, reached the brief with no
+                # city or state while the transcript said "Highland Park,
+                # Michigan" in the next breath. Same pass, same rules, on the
+                # sites that exist now -- before the dedup below, so two
+                # mentions of one place can be seen to be one place.
+                try:
+                    from app.core.site_geo_fallback import enrich_site_geo as _enrich_late
+
+                    late_geo = _enrich_late(atoms)
+                    if late_geo:
+                        warnings.append(
+                            f"INFO: site_geo_fallback enriched {late_geo} late-minted "
+                            f"physical_site atom(s) with city/state/ZIP recovered from the document"
+                        )
+                except Exception as exc:
+                    warnings.append(f"WARNING: late site_geo enrichment failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             warnings.append(f"WARNING: site_atom_backfill failed: {type(exc).__name__}: {exc}")
         try:
