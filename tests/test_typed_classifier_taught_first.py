@@ -44,6 +44,7 @@ def test_taught_types_apply_with_the_model_switched_off(store, monkeypatch):
 
 def test_taught_keep_leaves_the_type(store, monkeypatch):
     monkeypatch.setenv("SOWSMITH_DISABLE_LLM", "1")
+    monkeypatch.setenv("SOWSMITH_ATOM_TYPE_DEFLECT", "1")
     store({"Project: Consolidate the 1518 location tech": "_keep"})
     atoms = [_atom("Project: Consolidate the 1518 location tech")]
     assert tac.classify_atoms(atoms) == 0

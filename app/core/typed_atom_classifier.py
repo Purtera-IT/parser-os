@@ -477,6 +477,12 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
             )
             if d is None or d.source != "store" or not d.verdict:
                 continue
+            # A taught `_keep` only short-circuits the model when store
+            # deflection is on -- that is the existing, opt-in optimisation
+            # (SOWSMITH_ATOM_TYPE_DEFLECT). A taught TYPE always applies: it is
+            # a judgment, not a shortcut.
+            if d.verdict == "_keep" and not _atom_type_deflect_enabled():
+                continue
             if d.verdict != "_keep":
                 try:
                     a.atom_type = AtomType(d.verdict)

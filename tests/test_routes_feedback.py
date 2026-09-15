@@ -396,6 +396,8 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # feeds the SOW. A word list only knows the words somebody wrote down; a
     # head learns the KIND from one judgment and recognises the next by meaning.
     "sheet": "sheet_role",
+    # Whether an address is a job site or somebody's office / signature.
+    "site_role": "physical_site",
 }
 
 
