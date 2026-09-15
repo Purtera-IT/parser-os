@@ -703,6 +703,11 @@ _CITY_STATE_NOCOMMA_RE = re.compile(
 _MENTION_SKIP_TYPES = frozenset({"stakeholder", "physical_site", "deal_metadata"})
 
 
+import logging as _logging
+
+_mention_log = _logging.getLogger(__name__)
+
+
 def _mention_max() -> int:
     try:
         return max(0, int(os.environ.get("SOWSMITH_GEO_MENTION_MAX", "40")))
@@ -964,6 +969,10 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
             continue
         list_verdict[doc] = (getattr(d, "verdict", None), float(getattr(d, "confidence", 0.0) or 0.0),
                              str(getattr(d, "source", "") or ""), getattr(d, "correction_id", None))
+        try:
+            _mention_log.info("site_geo_mention list %s -> %s (%s %.2f)", label, list_verdict[doc][0], list_verdict[doc][2], list_verdict[doc][1])
+        except Exception:
+            pass
         if trace is not None:
             trace.append({"label": label, "verdict": list_verdict[doc][0], "confidence": round(list_verdict[doc][1], 3),
                           "source": list_verdict[doc][2], "mentions": len(labels), "context": context[:400]})
@@ -993,6 +1002,11 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
         if trace is not None and d is not None:
             trace.append({"label": label, "verdict": verdict, "confidence": round(conf, 3), "source": source,
                           "mentions": len(entry["mentions"]), "context": context[:400]})
+        try:  # the console trace ops reads (Log Analytics); the compile note is the PM's
+            _mention_log.info("site_geo_mention %s -> %s (%s %.2f, %s) x%d", label, verdict, source, conf,
+                              "list" if (lv and lv[0] is not None) else "place", len(entry["mentions"]))
+        except Exception:
+            pass
         if verdict != "job_site" or not (source == "store" or conf >= _MENTION_MIN_CONF):
             continue
         atom = atoms[i]
