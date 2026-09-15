@@ -174,6 +174,10 @@ RECOVERABLE_ATOM_TYPES: tuple = (
     "deliverable", "dependency", "change_order_rule", "payment_term",
     "site_access_window", "pricing_assumption",
     "bom_line", "material", "expense", "pmo", "license_subscription", "service_line",
+    # A unit of work someone has to do. Taught, not listed: the store re-types a
+    # retained line to ``task`` only on a confident match to a correction a PM
+    # (or a finished Deal Kit) made, so no verb list decides what work is.
+    "task",
 )
 
 
@@ -192,10 +196,17 @@ def readmit_atom_types(
     ``atom.atom_type`` in place; returns the count re-typed. The compiler stage
     is flag-gated (``SOWSMITH_SPAN_ADMISSION``) so it is a no-op until enabled.
     """
+    # Taught corrections first, trained heads for the rest. With a head registry
+    # present the store was never consulted, so a correction returned 200 and
+    # fired nowhere: on dev (registry at /tmp/ml/_admission_heads) nothing a PM
+    # taught about a line's type could ever change a compile. A correction is
+    # the more specific judgment -- it was made about text like this one -- and
+    # an atom the store re-types is no longer weak, so the heads skip it.
+    n = _readmit_via_store(atoms, weak, list(candidates), scope)
     heads = _load_admission_heads()
     if heads:
-        return _readmit_via_heads(atoms, heads, weak)
-    return _readmit_via_store(atoms, weak, list(candidates), scope)
+        n += _readmit_via_heads(atoms, heads, weak)
+    return n
 
 
 def _load_admission_heads():
