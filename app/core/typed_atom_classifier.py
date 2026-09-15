@@ -139,7 +139,13 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
         "fields": ["phase_id", "name", "start", "end", "owner", "exit_criteria"],
     },
     "task": {
-        "desc": "A row from a detailed-task table: task_id + site + phase + description + owner + dates + dependency + status.",
+        # A Deal Kit prices units of work, and most deals state theirs in a
+        # sentence, not a table: "install and setup a Lantronix (or 2)",
+        # "3 Verkada cameras install", "Reset Ubiquiti gateway and switch for
+        # the new subnet". Described as a table row only, the model never
+        # returned task for a request written in prose (holdout 010095,
+        # 2026-09-15), so nothing reached the Deal Kit.
+        "desc": "A unit of work we are asked to perform or will perform on the job: a customer's request line ('install and set up two devices at the site'), a scope bullet describing work, or a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Not a fact about the site, a quantity alone, a schedule statement, or the customer's own responsibilities.",
         "fields": ["task_id", "site", "phase", "name", "owner", "start", "due", "dependency", "status"],
     },
     "deliverable": {

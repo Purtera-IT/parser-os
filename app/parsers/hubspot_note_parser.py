@@ -847,12 +847,17 @@ class HubspotNoteParser(BaseParser):
             # the paragraph travels on each as context.
             from app.core.sentences import split_sentences
 
-            sentences = [s.strip() for s in split_sentences(prose or "") if s.strip()]
+            # The author's own line breaks come first: "Hi Trent," on its own
+            # line is a greeting, not the start of the request beneath it
+            # (010095), and no sentence segmenter splits after a comma.
+            sentences: list[str] = []
+            for line in str(prose or "").splitlines() or [str(prose or "")]:
+                sentences.extend(s.strip() for s in split_sentences(line) if s.strip())
             if len(sentences) > 1:
                 for sentence in sentences:
-                    _mint_prose_one(sentence, paragraph=prose)
+                    _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()))
                 return
-            _mint_prose_one(prose, paragraph=None)
+            _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
 
         def _mint_prose_one(prose: str, paragraph: str | None) -> None:
             if (
@@ -1024,7 +1029,7 @@ class HubspotNoteParser(BaseParser):
                 log_rows(train_rows)
             return atoms
 
-        _mint_prose(body)
+        _mint_prose(body_text if body_text.strip() else body)
 
         # Physical sites from address-bearing notes. A note's title is its
         # first line, so prepending it repeats that line: on 010043 the site
