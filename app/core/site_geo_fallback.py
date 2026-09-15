@@ -444,12 +444,18 @@ def enrich_site_geo(atoms: list[Any]) -> int:
                 st = _state_code(m.group(2))
                 if not st:
                     continue
+                usps_code = m.group(2).strip().isupper() and len(m.group(2).strip()) == 2
                 words = m.group(1).split()
                 # The capitalised run before the comma can carry lead-in words
                 # ("Office In Highland Park"); the place is its longest real tail.
                 for k in range(len(words)):
                     cand = " ".join(words[k:])
-                    if _known_place(cand, st):
+                    known = _known_place(cand, st)
+                    # None means the reference could not be read (an installed
+                    # package without its data file). That must not reject a
+                    # place the author wrote with a USPS state code; a spelled
+                    # out state ("Michigan") is only trusted when checked.
+                    if known or (known is None and usps_code and k == 0):
                         mentions.add((cand, st))
                         break
         for s in wanting:
