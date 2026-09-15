@@ -458,6 +458,18 @@ def enrich_site_geo(atoms: list[Any]) -> int:
                     if known or (known is None and usps_code and k == 0):
                         mentions.add((cand, st))
                         break
+        # What this pass saw, in the compile log: which sites wanted a place,
+        # which "City, ST" mentions the deal carried, and whether the gazetteer
+        # answered. 000061 (2026-09-15) placed locally and not on the worker,
+        # and nothing said why.
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "site_geo mention pass: %d site(s) wanting a place %s; mentions %s; gazetteer %s",
+            len(wanting),
+            [str(s.value.get("name") or s.value.get("site_id") or "")[:40] for s in wanting][:6],
+            sorted(mentions)[:6],
+            "available" if _known_place("Springfield", "IL") is not None else "unavailable",
+        )
         for s in wanting:
             val = s.value
             names = [_slug(str(a)) for a in (val.get("name"), val.get("facility_name"),
