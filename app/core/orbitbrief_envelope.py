@@ -514,6 +514,7 @@ def build_orbitbrief_envelope(
         documents,
         deal_id=compile_result.project_id,
         project_id=compile_result.project_id,
+        deal_name=str((_crm_ctx or {}).get("deal_name") or "") if isinstance(_crm_ctx, dict) else "",
         base=None,
         base_observed=False,
     )
