@@ -160,3 +160,12 @@ def test_a_canadian_site_is_placed_and_a_province_needs_no_gazetteer(monkeypatch
     out = sg.geo_mention_sites([site, _a("scope_item", "tanks at the Brampton, ON yard and the Toronto, Ontario depot")], project_id="d")
     assert sorted(s.value["name"] for s in out) == ["Brampton, ON", "Toronto, ON"]
     assert all(s.value["state"] == "ON" for s in out)
+
+
+def test_dedup_keeps_where_an_inferred_site_came_from():
+    from app.core.semantic_dedup import _clean_physical_site_value
+    v = _clean_physical_site_value({"kind": "physical_site", "name": "Huntsville, AL", "city": "Huntsville", "state": "AL", "inferred": True,
+                                    "geo_mention_source": "llm", "geo_mention_confidence": 0.95, "geo_mention_judged_as": "place", "mention": "Huntsville, Alabama",
+                                    "mentions": 5, "source_context": "for the Huntsville, Alabama facility only", "junk_field": "x"})
+    assert v["inferred"] is True and v["geo_mention_source"] == "llm" and v["geo_mention_confidence"] == 0.95 and v["mentions"] == 5
+    assert "junk_field" not in v
