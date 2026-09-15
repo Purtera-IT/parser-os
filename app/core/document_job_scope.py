@@ -183,7 +183,7 @@ def bundle_documents(
         return b
 
     for key, doc_atoms in by_doc.items():
-        filename = str(getattr(doc_atoms[0], "source_filename", "") or key)
+        filename = _doc_filename(doc_atoms[0], key)
         info = index.get(filename) or {}
         subject = _subject_of(doc_atoms, info)
         if subject:
@@ -239,6 +239,29 @@ def deal_name_from_manifest(project_dir: Path | str | None) -> str:
         return str((crm or {}).get("deal_name") or "").strip()
     except (OSError, ValueError, AttributeError):
         return ""
+
+
+def _doc_filename(atom: Any, fallback: str = "") -> str:
+    """The file an atom came from. EvidenceAtom carries it on its source ref,
+    not as an attribute -- ``source_filename`` exists only in the serialized
+    atoms.json. Live 010162 run 7 (compile 752dbfbd, 2026-09-15): looked up by
+    attribute, every manifest lookup missed, the kiosk packing list never
+    joined the message it arrived with and was judged alone as this deal, and
+    every non-email document was titled by its artifact id."""
+    v = getattr(atom, "source_filename", None)
+    if v:
+        return str(v)
+    try:
+        for ref in getattr(atom, "source_refs", None) or []:
+            fn = getattr(ref, "filename", None) or (ref.get("filename") if isinstance(ref, dict) else None)
+            if fn:
+                return str(fn)
+    except Exception:
+        pass
+    val = getattr(atom, "value", None)
+    if isinstance(val, dict) and val.get("source_filename"):
+        return str(val["source_filename"])
+    return fallback
 
 
 def _atom_type(atom: Any) -> str:
@@ -392,9 +415,9 @@ def judge_documents(
     for b in bundles.values():
         keys = list(b["docs"])
         # In the order they were written, so the opener's lines lead.
-        keys.sort(key=lambda k: _when(str((idx.get(str(getattr(by_doc[k][0], "source_filename", "") or k)) or {}).get("authored_at") or "")) or datetime.max.replace(tzinfo=timezone.utc))
+        keys.sort(key=lambda k: _when(str((idx.get(_doc_filename(by_doc[k][0], k)) or {}).get("authored_at") or "")) or datetime.max.replace(tzinfo=timezone.utc))
         docs = [by_doc[k] for k in keys]
-        filenames = [str(getattr(d[0], "source_filename", "") or k) for d, k in zip(docs, keys)]
+        filenames = [_doc_filename(d[0], k) for d, k in zip(docs, keys)]
         # The model reads TEXT (first 600 chars) and Context (first 1200): the
         # deal and the conversation's subject go in the text -- that is what a
         # taught verdict is matched on -- and the conversation's lines go in

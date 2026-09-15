@@ -277,3 +277,27 @@ def test_the_judge_asks_for_judgments_only_and_reads_documents_in_written_order(
     assert seen["exclude_created_by"] == ("teacher",)
     assert seen["context"].startswith("- We will be setting just 1 Square register")
     assert seen["text"] == "DEAL: 010198 - Square POS Install Bridgewave\nDOCUMENT: Re: POS Installation 8/2"
+
+
+def test_a_real_atom_names_its_file_on_the_source_ref(no_llm, monkeypatch):
+    """EvidenceAtom has no source_filename attribute; the file is on the source ref."""
+    asked = _judge_recording(monkeypatch, {"Smart Hands": ("other_job", 0.9)})
+
+    def _real(doc, text, filename, subject=None):
+        a = SimpleNamespace(source_artifact_id=doc, raw_text=text, value={}, review_flags=[], atom_type="scope_item",
+                            source_refs=[SimpleNamespace(filename=filename, locator={})])
+        if subject:
+            a.value["email_thread"] = {"subject": subject}
+        return a
+
+    mail = _real("art_mail", "Confirm ladder availability with Delta", "010162-hs-email-113968718225.eml", "RE: CDW Smart Hands SOW Delta Admin 70598001")
+    packing = _real("art_pdf", "Count: 5 | EvD Kiosk Counter", "Delta Close Down.pdf")
+    index = {
+        "010162-hs-email-113968718225.eml": {"subject": "RE: CDW Smart Hands SOW Delta Admin 70598001", "attachment_ids": ["1"],
+                                             "external_id": "hs-email:113968718225", "authored_at": "2026-07-30T16:16:40Z", "source": "email"},
+        "Delta Close Down.pdf": {"subject": "", "attachment_ids": [], "external_id": "", "authored_at": "2026-07-30T16:17:16.895Z", "source": "hubspot"},
+    }
+    kept, dropped, verdicts = judge_documents([mail, packing], deal_name=DEAL, index=index)
+    assert len(asked) == 1  # one conversation: the message and the file that arrived with it
+    assert verdicts[0]["links"] == {"010162-hs-email-113968718225.eml": "thread", "Delta Close Down.pdf": "arrived_with"}
+    assert {a.source_artifact_id for a in dropped} == {"art_mail", "art_pdf"} and kept == []
