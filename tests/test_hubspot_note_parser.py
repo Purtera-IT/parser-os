@@ -363,3 +363,29 @@ def test_request_before_labels_and_signature_after_address_line_broken(tmp_path:
 def test_request_before_labels_and_signature_after_address_flattened(tmp_path: Path) -> None:
     # The same note as mirrored flattened onto one line.
     _assert_sf(_sf_atoms(tmp_path, " ".join([_SF_ASK] + _SF_ADDRESS_AND_SIGNATURE)))
+
+
+def test_label_whose_line_is_a_full_statement_does_not_swallow_the_recap(tmp_path: Path) -> None:
+    # 000061 MBrany meeting recap: "Label: sentence." lines, then the whole
+    # recap body under the last one.
+    p = tmp_path / "000061-hs-note-108983476067-APs Relocation.txt"
+    p.write_text(
+        "HubSpot Note: APs Relocation\nHubSpot Note ID: 108983476067\nDate: 2026-04-30T18:30:00Z\nAuthor: HubSpot user\n\n"
+        + "\n".join([
+            "APs Relocation: Plan to lower 5-10 APs to enhance signal coverage in a 35ft ceiling office; site survey needed.",
+            "aj@purtera-it.com",
+            "Site Survey Details: Expected four-hour survey will confirm AP count, cabling types, and verify obstacles for installations.",
+            "Next Steps: Client to provide floor plans; survey will finalize scope and enable quick quote delivery after that.",
+            "Project Scope and Site Preparation",
+            "The existing APs are mounted too high, causing signal inefficiency for users below",
+            "The office's network closet is about 150 feet from the AP area, impacting cable runs",
+        ]),
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("deal-1", "art_recap", p)
+    items_of_next_steps = " ".join(a.raw_text for a in atoms if (a.value or {}).get("parent_field") == "Next Steps")
+    assert "mounted too high" not in items_of_next_steps and "150 feet" not in items_of_next_steps
+    prose = [a.raw_text for a in atoms if a.atom_type == AtomType.scope_item and (a.value or {}).get("kind") == "hubspot_note_body"]
+    assert any("mounted too high" in t for t in prose)
+    assert any("150 feet from the AP area" in t for t in prose)
+    assert any(a.raw_text == "aj@purtera-it.com" and a.atom_type == AtomType.deal_metadata for a in atoms)

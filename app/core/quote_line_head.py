@@ -273,6 +273,26 @@ def consolidate_quote_line_tasks(atoms: list[Any], *, project_id: str = "") -> t
             changed += 1
             continue
 
+        # Only a TRAINED head may rename or merge a quote line. The rule
+        # fallback picks from a fixed menu ("Wireless site survey", "Ubiquiti
+        # configuration / install support", ...): on 000061 MBrany it renamed
+        # twenty different recap sentences to "Wireless site survey", and those
+        # canned names were also logged as judgments, so the head was being
+        # taught the menu. Without a head the work keeps the words its source
+        # used, one line each, and nothing is logged as a label.
+        if decision.source == "deterministic_fallback":
+            val = dict(_atom_value(atom))
+            val["quote_line"] = {
+                "label": text,
+                "technician_skill": "",
+                "source": decision.source,
+                "confidence": decision.confidence,
+                "original_text": text,
+            }
+            atom.value = val
+            kept.append(atom)
+            continue
+
         if decision.route_trainable and text:
             log_rows([
                 TrainingRow(
