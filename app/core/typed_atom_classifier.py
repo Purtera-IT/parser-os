@@ -357,6 +357,22 @@ def _atom_type_candidates() -> list[str]:
     return list(_TAXONOMY) + ["_keep"]
 
 
+def _taught_type_candidates() -> list[str]:
+    """Every type a person or a Deal Kit can teach, not only what the model
+    may promote to. The taxonomy names what the model can make of a scope
+    line; a teacher also says what a line IS when the model should leave it --
+    "this is a scope_item, not a task", "this is speech". Resolved against the
+    model's candidates alone, those verdicts could never fire (000061,
+    2026-09-15: "Expected four-hour survey will confirm AP count" taught
+    scope_item from the first quote, re-promoted to task on every compile)."""
+    try:
+        from app.core.schemas import AtomType
+        base = [t.value for t in AtomType if t.value not in _TAXONOMY]
+    except Exception:  # pragma: no cover
+        base = ["scope_item", "entity", "customer_instruction", "raw_utterance"]
+    return list(_TAXONOMY) + base + ["_keep"]
+
+
 def _atom_row_view(atom: Any) -> tuple[list[str], list[Any]] | None:
     """(headers, values) for a per-row table atom, handling both emitted shapes
     (``value._columns``/``value._row`` and ``value.cells``); else ``None``."""
@@ -492,7 +508,7 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
 
         if get_store() is None:
             return decided
-        cands = _atom_type_candidates()
+        cands = _taught_type_candidates()
         for a in atoms:
             text = str(getattr(a, "raw_text", "") or "").strip()
             if not text:
@@ -520,6 +536,8 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
                     a.atom_type = AtomType(d.verdict)
                 except ValueError:
                     continue
+            # Taught as what it already is: a judgment that the model should
+            # leave it, recorded so the line never reaches the batch below.
             decided[id(a)] = d.verdict
     except Exception:
         return decided
