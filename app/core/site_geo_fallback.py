@@ -675,6 +675,9 @@ _CITY_PROVINCE_POSTAL_RE = re.compile(
     r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,?\s+(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)\b"
 )
 _MENTION_MIN_CONF = 0.8
+#: A place named only in prose needs more than a listed one: live, two travel
+#: mentions minted at 0.8 that the same judge rejected offline.
+_PROSE_MIN_CONF = 0.85
 _MENTION_CONTEXT_NEIGHBOURS = 3
 #: A document naming this many places is judged once, as a list.
 _LIST_MIN = 3
@@ -893,8 +896,15 @@ def _mention_context(atoms: list[Any], i: int, *, mentions: list[tuple[int, str]
     if siblings:
         head += f"other places this document names: {'; '.join(siblings[:12])}\n"
     if mentions and len(mentions) > 1:
-        head += f"named {len(mentions)} times, e.g.:\n" + "\n".join(
-            "  * " + _text_of(atoms[j])[:200] for j, _w in mentions[1:4] if 0 <= j < len(atoms)) + "\n"
+        # Every line that names the place, with equal weight: live, the first
+        # mention of Longview was a question in a transcript and the judge
+        # never weighed the note that excludes it from scope.
+        seen: list[str] = []
+        for j, _w in mentions[:6]:
+            t = _text_of(atoms[j])[:220] if 0 <= j < len(atoms) else ""
+            if t and t not in seen:
+                seen.append(t)
+        return head + f"every line that names it ({len(mentions)}):\n" + "\n".join("  * " + t for t in seen)
     return head + "lines around it:\n" + "\n".join(lines)
 
 
@@ -986,6 +996,19 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
         doc = _artifact_of(atoms[i])
         siblings = [x for x in by_doc.get(doc, []) if x != label and x != (f"{city}, {state}" if state else city)]
         context = _mention_context(atoms, i, mentions=entry["mentions"], siblings=siblings)
+        # What the roster gates already know, store-only: "MDF" in a Location
+        # column is a network closet, not a site (seeded site_candidate_role).
+        try:
+            from app.core.site_role_seed import ROLE_CANDIDATES as _RC, ROLE_RELATION as _RR
+            r0 = decide(_RR, city if state else label, list(_RC), instruction="A value pulled from a site list. Its role.",
+                        context="Deciding whether this value is itself a site.", scope=scope, llm=False)
+            if getattr(r0, "verdict", None) in ("site_attribute", "not_a_site"):
+                if trace is not None:
+                    trace.append({"label": label, "verdict": f"role:{r0.verdict}", "confidence": round(float(getattr(r0, "confidence", 0) or 0), 3),
+                                  "source": "store", "mentions": len(entry["mentions"]), "context": ""})
+                continue
+        except Exception:
+            pass
         lv = list_verdict.get(doc)
         if lv and lv[0] is not None:
             verdict, conf, source, corr = lv
@@ -1007,7 +1030,8 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
                               "list" if (lv and lv[0] is not None) else "place", len(entry["mentions"]))
         except Exception:
             pass
-        if verdict != "job_site" or not (source == "store" or conf >= _MENTION_MIN_CONF):
+        bar = _MENTION_MIN_CONF if (lv and lv[0] is not None) else _PROSE_MIN_CONF
+        if verdict != "job_site" or not (source == "store" or conf >= bar):
             continue
         atom = atoms[i]
         artifact_id = _artifact_of(atom)
