@@ -1026,8 +1026,12 @@ class HubspotNoteParser(BaseParser):
 
         _mint_prose(body)
 
-        # Physical sites from address-bearing notes.
-        corpus = f"{title}\n{body}"
+        # Physical sites from address-bearing notes. A note's title is its
+        # first line, so prepending it repeats that line: on 010043 the site
+        # came out as "3 Verkada cameras intsall. 3 Verkada cameras intsall.
+        # North Carolina office: 6125 Tyvola Centre Drive ...".
+        _t = " ".join((title or "").split())
+        corpus = body if _t and " ".join(body.split()).startswith(_t) else f"{title}\n{body}"
         for parsed_addr in find_us_addresses_in_text(corpus):
             if (
                 not parsed_addr.city
