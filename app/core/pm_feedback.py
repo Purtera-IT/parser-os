@@ -108,6 +108,10 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # head: the verdict carries the hours ("hours=3;per=cable drop"); see
     # app.core.task_hours.
     "hours":     HeadSpec("task_hours", "atom", "Task hours", mode="extract"),
+    # Whether a task line is a unit of work a quote prices (parent) or a step
+    # inside one (child). task_tier_classifier asks this before its word list.
+    "task_tier": HeadSpec("task_tier", "atom", "Quote line or step",
+                          candidates=("parent", "child")),
     "site_role": HeadSpec("physical_site", "entity", "Site role",
                           candidates=("job_site", "vendor_or_billing_address")),
     "facility": HeadSpec(

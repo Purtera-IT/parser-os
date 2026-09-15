@@ -73,6 +73,28 @@ def _bullet_depth(atom: Any, val: dict[str, Any]) -> int | None:
     return None
 
 
+TASK_TIER_RELATION = "task_tier"
+
+
+def _taught_tier(label: str) -> str | None:
+    """``parent`` / ``child`` from the feedback store, or None (abstain / no store)."""
+    try:
+        from app.core.decide import decide, get_store
+
+        if get_store() is None:
+            return None
+        d = decide(
+            TASK_TIER_RELATION, label[:600], ["parent", "child"],
+            instruction="Is this line a unit of work a quote prices (parent) or a step inside one (child)?",
+            llm=False,
+        )
+    except Exception:
+        return None
+    if d is None or d.source != "store" or d.verdict not in ("parent", "child"):
+        return None
+    return d.verdict
+
+
 def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None) -> tuple[str, bool]:
     """Return ``(task_tier, is_quote_line)`` for a task-shaped label."""
     structured = structured or {}
@@ -86,6 +108,16 @@ def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None) -> t
         if is_quote is None:
             is_quote = explicit == "parent"
         return explicit, bool(is_quote)
+
+    # Taught first. Whether a line is a quote line or a step inside one is a
+    # judgment finished Deal Kits already made: 000020 Binghamton priced
+    # "Confirm QS1 connectivity between workstations and host" as its own
+    # task, and the word list below (a leading "confirm") called it a child
+    # step, so Deal Kit never proposed it. A confident taught answer wins; the
+    # heuristics are the cold start for everything nobody taught yet.
+    taught = _taught_tier(label)
+    if taught is not None:
+        return taught, taught == "parent"
 
     kind = str(structured.get("kind") or "")
     depth = structured.get("depth")
