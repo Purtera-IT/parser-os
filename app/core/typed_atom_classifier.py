@@ -471,9 +471,15 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
             text = str(getattr(a, "raw_text", "") or "").strip()
             if not text:
                 continue
+            # Judgments only: what a person or a finished Deal Kit taught. The
+            # model's own self-taught rows (created_by="teacher") are a cache
+            # for the deflect layer below, never a ruling -- applied here they
+            # carried one deal's LLM noise into the next (000061, 2026-09-15:
+            # 58 recap lines typed "task" from another deal's verdicts).
             d = decide(
                 _ATOM_TYPE_RELATION, text[:600], cands,
                 instruction=_ATOM_TYPE_INSTRUCTION, llm=False,
+                exclude_created_by=("teacher",),
             )
             if d is None or d.source != "store" or not d.verdict:
                 continue
@@ -1029,12 +1035,15 @@ def classify_atoms(atoms: list[Any]) -> int:
                     a = by_id.get(atom_id)
                     if a is None:
                         continue
+                    # Deal-scoped, as learn_from_teacher documents: a verdict
+                    # the model reached on this deal's wording deflects THIS
+                    # deal's re-runs. Global, it reached every other deal.
                     store.learn_from_teacher(
                         relation=_ATOM_TYPE_RELATION,
                         text=_atom_decide_text(a),
                         verdict=verdict,
                         confidence=0.9,
-                        scope=DecisionScope(),
+                        scope=DecisionScope(deal_id=str(getattr(a, "project_id", "") or "")),
                         instruction=_ATOM_TYPE_INSTRUCTION,
                     )
         except Exception:

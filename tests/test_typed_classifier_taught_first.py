@@ -12,8 +12,10 @@ from app.core.schemas import AtomType
 class _Store:
     def __init__(self, taught):
         self.taught = taught
+        self.calls = []
 
-    def resolve(self, *, relation, text, candidates, **_):
+    def resolve(self, *, relation, text, candidates, **kw):
+        self.calls.append(kw)
         v = self.taught.get(text) if relation == "atom_type" else None
         return Decision(verdict=v, confidence=0.9, source="store") if v in candidates else None
 
@@ -72,3 +74,14 @@ def test_no_store_changes_nothing(monkeypatch):
         assert atoms[0].atom_type == AtomType.scope_item
     finally:
         decide_mod.set_store(prev)
+
+
+def test_taught_first_asks_for_judgments_not_the_models_own_cache(store, monkeypatch):
+    """The store-first pass must ignore teacher rows: on 000061 they carried one
+    deal's LLM verdicts into the next deal's typing (58 recap lines -> task)."""
+    monkeypatch.setenv("SOWSMITH_DISABLE_LLM", "1")
+    s = _Store({"Reset Ubiquiti gateway and switch for the new subnet": "task"})
+    decide_mod.set_store(s)
+    atoms = [_atom("Reset Ubiquiti gateway and switch for the new subnet")]
+    assert tac.classify_atoms(atoms) == 1
+    assert s.calls and all(c.get("exclude_created_by") == ("teacher",) for c in s.calls)
