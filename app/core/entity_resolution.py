@@ -550,6 +550,8 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
          form just adds a row-number suffix. Same for ``atl_west``
          and ``atl_west_02``.
     """
+    # The deal these atoms belong to, for the store's deal-first search.
+    deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms if getattr(a, "project_id", None)), "")
     if not atoms:
         return []
     all_groups: list[set[str]] = []
@@ -720,7 +722,7 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                     row[field] = candidate
 
     all_groups.extend(address_identity_groups(universe, site_rows))
-    all_groups.extend(semantic_site_fusion_groups(universe, site_rows, deal_id=project_id))
+    all_groups.extend(semantic_site_fusion_groups(universe, site_rows, deal_id=deal_id))
 
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
     # Drop any site:* key that fails hygiene before grouping is
@@ -739,7 +741,7 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
         universe_keys: set[str] = set()
         for group in all_groups:
             universe_keys |= {k for k in group if isinstance(k, str)}
-        role_drops = semantic_site_role_drops(universe_keys, deal_id=project_id)
+        role_drops = semantic_site_role_drops(universe_keys, deal_id=deal_id)
     except Exception:  # pragma: no cover - gate must never break resolution
         role_drops = set()
 
