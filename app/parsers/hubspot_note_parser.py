@@ -816,6 +816,13 @@ class HubspotNoteParser(BaseParser):
                     atom_type=AtomType.deal_metadata,
                     text=meta_text,
                     value={
+                        # Who wrote the note and when -- about the note, never
+                        # about the deal. Marked so no downstream re-typer can
+                        # promote it: on dev (000020, compile e2718776) span
+                        # admission re-typed this very atom to `task` and Deal
+                        # Kit would have proposed "note_id=... author=...".
+                        "kind": "hubspot_note_meta",
+                        "non_deal": True,
                         "field_name": "hubspot_note_meta",
                         "hubspot_note_id": note_id,
                         "author": author,

@@ -389,3 +389,14 @@ def test_label_whose_line_is_a_full_statement_does_not_swallow_the_recap(tmp_pat
     assert any("mounted too high" in t for t in prose)
     assert any("150 feet from the AP area" in t for t in prose)
     assert any(a.raw_text == "aj@purtera-it.com" and a.atom_type == AtomType.deal_metadata for a in atoms)
+
+
+def test_note_metadata_atom_is_marked_non_deal(tmp_path: Path) -> None:
+    from app.core.span_admission import _is_protected_email_atom
+
+    p = tmp_path / "000020-hs-note-1-meta.txt"
+    p.write_text("HubSpot Note: X\nHubSpot Note ID: 1\nDate: 2026-04-03T11:21:02Z\nAuthor: Trent Torrence\n\nReset the gateway after hours.", encoding="utf-8")
+    atoms = HubspotNoteParser().parse_artifact("deal-1", "art_meta", p)
+    meta = [a for a in atoms if (a.value or {}).get("field_name") == "hubspot_note_meta"]
+    assert len(meta) == 1 and meta[0].value["non_deal"] is True
+    assert _is_protected_email_atom(meta[0])
