@@ -1397,6 +1397,7 @@ def parse_email_thread_headers(path: Path) -> dict[str, Any]:
 #: Short fragments ("Hi.", "Thanks.") and anything table- or header-shaped are
 #: left whole, so the common case is byte-identical to the previous behaviour.
 _MIN_SENTENCE_CHARS = 12
+_SENTENCE_END_RE = re.compile(r"[.?!](?=\s|$)")
 
 
 def _expand_lines_to_sentences(
@@ -1415,19 +1416,28 @@ def _expand_lines_to_sentences(
     for line_idx, line in enumerate(lines):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
-        # Table rows, header lines and quoted-only markers are not prose.
-        if not stripped or "|" in stripped or stripped.count(".") < 2:
+        # Table rows, header lines and quoted-only markers are not prose; and a
+        # line with fewer than two sentence endings holds one sentence. A
+        # sentence ends with a period, a question mark or an exclamation mark:
+        # live 010198's request -- "We will be setting just 1 Square register
+        # and 1 kitchen printer. I would also like to add a Ubiquiti router
+        # with cellular backup - is that something you can help with?" -- has
+        # one period and two sentences, and counted as one line it was typed
+        # as the question and the work in it was never a task.
+        if not stripped or "|" in stripped or len(_SENTENCE_END_RE.findall(stripped)) < 2:
             out.append((line_num, line))
             continue
+        # The quote marker is the line's, not the first sentence's: split the
+        # words and put the marker back on every piece.
+        prefix = line[: len(line) - len(line.lstrip("> "))]
         try:
-            pieces = [p.strip() for p in split_sentences(stripped) if p.strip()]
+            pieces = [p.strip() for p in split_sentences(stripped.lstrip("> ")) if p.strip()]
         except Exception:  # pragma: no cover - never fail a parse over this
             out.append((line_num, line))
             continue
         if len(pieces) < 2 or any(len(p) < _MIN_SENTENCE_CHARS for p in pieces):
             out.append((line_num, line))
             continue
-        prefix = line[: len(line) - len(line.lstrip("> "))]
         for piece in pieces:
             out.append((line_num, prefix + piece))
     return out
