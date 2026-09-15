@@ -475,6 +475,38 @@ def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
     return mentions
 
 
+_NUMBER_THEN_WORD_RE = re.compile(r"(?<![\w.])(\d{1,6})(?![\w.])\s+([A-Za-z][A-Za-z'-]*)")
+
+
+def _is_plural_word(word: str) -> bool:
+    w = word.lower().strip("'")
+    return len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is"))
+
+
+def identifier_numbers(texts: list[str]) -> set[int]:
+    """Numbers that NAME something in this deal rather than count it.
+
+    A count of two or more takes a plural ("21 APs", "2 techs"). A number that
+    sits in front of two or more different words and never in front of a
+    plural is a name: 000020 Binghamton writes "the 1518 SonicWall", "1518
+    Ubiquiti router", "the 1518 location", "1518 Wi-Fi" -- store 1518 -- and
+    headline surfacing minted "1518 routers" quantity atoms from it. Decided
+    from the deal's own text, not a list of which numbers look like IDs."""
+    following: dict[int, set[str]] = {}
+    plural: set[int] = set()
+    for text in texts:
+        for m in _NUMBER_THEN_WORD_RE.finditer(text or ""):
+            try:
+                n = int(m.group(1))
+            except ValueError:
+                continue
+            word = m.group(2).lower()
+            following.setdefault(n, set()).add(word)
+            if _is_plural_word(word):
+                plural.add(n)
+    return {n for n, words in following.items() if n >= 2 and len(words) >= 2 and n not in plural}
+
+
 def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[Any]:
     """Emit a ``quantity`` atom for a strong ``<N> <deliverable>`` count
     stated in prose that no existing quantity atom captures.
@@ -495,6 +527,7 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
     )
 
     have = _existing_quantity_counts(atoms)
+    names = identifier_numbers([_atom_text(a) for a in atoms])
     emitted_counts: set[tuple[int, str]] = set()
     out: list[Any] = []
     train_rows: list[Any] = []
@@ -504,7 +537,7 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
         text = _atom_text(atom)
         for n, noun, metadata in _iter_quantity_mentions(text):
             emitted_key = (n, noun.lower())
-            if n in have or emitted_key in emitted_counts:
+            if n in have or n in names or emitted_key in emitted_counts:
                 continue
             emitted_counts.add(emitted_key)
             artifact_id = getattr(atom, "artifact_id", "") or ""
