@@ -261,11 +261,18 @@ class FeedbackStore:
         # scorer: instead of cosine-to-mean (which blurs a correction whose
         # exemplars are heterogeneous — e.g. site codes + names + addresses), the
         # query scores against its single NEAREST exemplar (ColBERT-style late
-        # interaction, lite). Off by default → byte-identical to the mean path.
+        # interaction, lite). ON by default; SOWSMITH_NEURAL_MAXSIM=0 restores the
+        # mean. A correction merges every repeat of a judgment into one row, so
+        # its exemplars are different texts by construction, and their mean is
+        # near none of them. Measured on dev corrections taught from 000020
+        # Binghamton's Deal Kit (11 work lines -> `task`, 5 remote-team lines ->
+        # `dependency`): the mean re-typed 0 of Binghamton's 12 retained lines,
+        # max-sim 10 of 12, all correct; both re-typed 0 of 3,612 lines on six
+        # other won deals. Identical to the mean for single-exemplar corrections.
         self._proto_ex: dict[str, np.ndarray] = {}
         self._enable_maxsim = os.getenv(
-            "SOWSMITH_NEURAL_MAXSIM", ""
-        ).strip().lower() in ("1", "true", "yes", "on")
+            "SOWSMITH_NEURAL_MAXSIM", "1"
+        ).strip().lower() not in ("0", "false", "no", "off")
         # Cross-encoder reranker (retrieve-then-rerank). The bi-encoder above is
         # stage-1 recall; an optional cross-encoder is stage-2 precision. Off by
         # default → byte-identical to the bi-encoder-only path. ``rerank_fn`` is
@@ -507,7 +514,11 @@ class FeedbackStore:
         return np.vstack([self._ex_vec[t] for t in texts]) if texts else np.zeros((0, 1), np.float32)
 
     def _relation_head(
-        self, relation: str, allowed: set[str], scope: DecisionScope
+        self,
+        relation: str,
+        allowed: set[str],
+        scope: DecisionScope,
+        exclude_created_by: tuple[str, ...] = (),
     ) -> NeuralHead | None:
         """Fit (or reuse) the neural head for this relation, over the
         corrections visible at ``scope`` (global + matching pack + matching
@@ -523,7 +534,9 @@ class FeedbackStore:
         try:
             from app.learning.head_registry import get_head_registry
 
-            registry = get_head_registry()
+            # A registry champion is fit over every row, teacher rows included,
+            # so a judgment-only lookup must fit its own head.
+            registry = get_head_registry() if not exclude_created_by else None
             if registry is not None:
                 champ = registry.champion(relation)
                 if champ is not None:
@@ -537,8 +550,11 @@ class FeedbackStore:
         # vendor, even if the caller's candidate set is a subset; classify()
         # restricts to candidates at decision time).
         visible: list[Correction] = []
+        excluded = set(exclude_created_by or ())
         for c in self.all_corrections(active_only=True):
             if c.relation != relation or not c.exemplars:
+                continue
+            if excluded and (c.created_by or "") in excluded:
                 continue
             if c.scope == SCOPE_GLOBAL:
                 visible.append(c)
@@ -560,7 +576,7 @@ class FeedbackStore:
                 instr = (c.instruction or "").strip()
                 if instr:
                     pairs.append((instr, c.verdict))
-        sig = f"{relation}|{scope.deal_id}|{scope.pack}|nl={int(self._enable_nl)}|" + "␟".join(
+        sig = f"{relation}|{scope.deal_id}|{scope.pack}|nl={int(self._enable_nl)}|x={','.join(sorted(excluded))}|" + "␟".join(
             sorted(f"{v}␞{t}" for t, v in pairs)
         )
         cached = self._heads.get(sig)
@@ -602,8 +618,18 @@ class FeedbackStore:
         instruction: str,
         relations: dict | None,
         facts: dict | None = None,
+        exclude_created_by: tuple[str, ...] = (),
+        neural_head: bool = True,
     ) -> Decision | None:
         """Return a Decision on a confident, in-candidate-set hit; else None.
+
+        ``neural_head=False`` asks for exemplar similarity only: the caller
+        wants what was taught about text like THIS, not the head's
+        generalisation. The head is fit over every class of the relation and
+        merely restricted to the candidates at decision time, so a caller that
+        widens its candidates also widens what the head may answer -- on
+        000020 (compile 014103ef, 2026-09-15) offering it the base types let a
+        six-exemplar scope_item class absorb eleven exact-match task lines.
 
         Narrowest scope wins: deal corrections are searched first, then pack,
         then global. A correction only fires if (a) its relation matches, (b)
@@ -622,11 +648,21 @@ class FeedbackStore:
                 )
                 return None
             allowed = set(candidates)
+            # ``exclude_created_by`` lets a caller ask for a JUDGMENT: what a
+            # person (or a finished Deal Kit) taught, never what the model
+            # taught itself. Teacher rows (created_by="teacher") are the LLM's
+            # own confident verdicts, persisted so it is not consulted again on
+            # the same shape -- a cache, not a ruling. Measured 2026-09-15 on
+            # deal 000061: one compile's LLM verdicts, self-taught as global
+            # rows, re-typed 58 recap lines of the NEXT deal as "task" through
+            # the head, before the model ever saw them.
+            excluded = set(exclude_created_by or ())
             corrs = [
                 c for c in self.all_corrections(active_only=True)
                 if c.relation == relation
                 and c.verdict in allowed
                 and condition_holds(c.relations, facts)
+                and (not excluded or (c.created_by or "") not in excluded)
             ]
             if not corrs:
                 _log.info(
@@ -650,7 +686,10 @@ class FeedbackStore:
             #    uncertain/novel ones. Abstain → fall through to the cosine path,
             #    then (in decide()) to the LLM. This is what keeps the LLM for
             #    genuinely hard decisions only.
-            head = self._relation_head(relation, allowed, scope)
+            head = (
+                self._relation_head(relation, allowed, scope, exclude_created_by=exclude_created_by)
+                if neural_head else None
+            )
             if head is not None:
                 hd = head.classify(qv, candidates)
                 if hd.verdict is not None and not hd.route_llm:

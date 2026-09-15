@@ -1212,6 +1212,43 @@ def compile_project(
             warnings.append(f"WARNING: pre_classify_dedup failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # Is each document about THIS deal's job? A programme customer's deal
+    # carries other jobs' mail and packing lists (010162: a kiosk close-down
+    # beside the SD-WAN scope). Judged per document through decide() -- a PM's
+    # correction first, then the model -- and only a confident "other job" sets
+    # a document aside. Lossless: its atoms go to the suppression ledger.
+    with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
+        _djs_dropped = 0
+        _djs_notes: list[str] = []
+        try:
+            from app.core import document_job_scope as _djs
+
+            if _djs.enabled():
+                _deal_name = _djs.deal_name_from_manifest(project_dir)
+                _before_djs = list(atoms)
+                atoms, _dropped_djs, _djs_verdicts = _djs.judge_documents(
+                    atoms, deal_name=_deal_name, project_id=resolved_project_id,
+                    project_dir=project_dir,
+                )
+                # Every conversation's verdict goes to the trace, kept or not,
+                # so a brief built from the wrong job can be read back to the
+                # judgement that let it in.
+                _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
+                if _dropped_djs:
+                    merge_suppressed(
+                        suppressed_atoms,
+                        capture_suppressed(
+                            _before_djs, atoms,
+                            stage="document_job_scope",
+                            reason="document describes another job for this customer, not the work this deal is named for",
+                        ),
+                    )
+                    _djs_dropped = len(_dropped_djs)
+                warnings.extend(_djs_notes)
+        except Exception as exc:
+            warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
+
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
     # commercial_total, payment_term, requirement, acceptance_criterion,
@@ -1271,6 +1308,27 @@ def compile_project(
     # untouched). This makes RECALL text-ruleable: a PM teaches the system to
     # catch a missed class by adding a correction, no code change. Flag-gated so
     # it is a no-op in production until enabled AND a feedback store is wired.
+    # Who supplies each hardware line -- us, or the customer? A kit's
+    # materials are what we buy; a hardware list in the documents is often
+    # the customer's own (010095: four SHI-supplied lines became BOM rows).
+    # Judged per line through decide(); only a store hit or a confident model
+    # verdict stamps value.supplied_by. Nothing is dropped.
+    with telemetry.stage("bom_owner", input_count=len(atoms)) as stage:
+        _bo_stamped = 0
+        _bo_notes: list[str] = []
+        try:
+            from app.core import bom_owner as _bo
+
+            if _bo.enabled():
+                _bo_stamped, _bo_verdicts = _bo.stamp_bom_owners(atoms, project_id=resolved_project_id)
+                for _v in _bo_verdicts:
+                    if _v["verdict"]:
+                        _bo_notes.append(f"INFO: bom_owner {_v['verdict']} ({_v['source']} {_v['confidence']:.2f}): {_v['text'][:80]}")
+                warnings.extend(_bo_notes)
+        except Exception as exc:
+            warnings.append(f"WARNING: bom_owner failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=_bo_stamped, warnings=_bo_notes)
+
     with telemetry.stage("span_admission", input_count=len(atoms)) as stage:
         readmitted = 0
         import os as _os_sa
@@ -1365,6 +1423,26 @@ def compile_project(
                         f"INFO: site_geo_fallback inferred {added_geo} physical_site atom(s) "
                         f"from City/State/ZIP (no confirmed site found)"
                     )
+                # 1b) A place the documents name that no site carries yet -- a
+                #    "City, ST" on a list, a facility in prose, a Location column
+                #    -- judged with the lines around it (relation
+                #    geo_mention_role: store first, model when it abstains).
+                try:
+                    from app.core.site_geo_fallback import geo_mention_sites as _geo_mentions
+
+                    mention_atoms = _geo_mentions(atoms, project_id=resolved_project_id)
+                except Exception as _exc:  # pragma: no cover - never break the stage
+                    mention_atoms = []
+                    warnings.append(f"WARNING: site_geo_mention failed: {type(_exc).__name__}: {_exc}")
+                if mention_atoms:
+                    atoms.extend(mention_atoms)
+                    added_geo += len(mention_atoms)
+                    for _m in mention_atoms:
+                        _mv = getattr(_m, "value", {}) or {}
+                        warnings.append(
+                            f"INFO: site_geo_mention {_mv.get('name')} ({_mv.get('geo_mention_source')} "
+                            f"{float(_mv.get('geo_mention_confidence') or 0):.2f}): {str(_mv.get('mention') or '')[:60]}"
+                        )
                 # 2) Demote any physical_site that is actually the vendor's own
                 #    letterhead / billing address (semantic role gate, LLM-backed;
                 #    a no-op when the LLM is unreachable, only one site exists, or
@@ -1619,6 +1697,14 @@ def compile_project(
                     f"INFO: task_tier_classification stamped {tier_stamped} task atom(s) "
                     f"with parent/child quote-line tiers"
                 )
+            from app.core.task_tier_classifier import fold_task_mentions
+
+            folded = fold_task_mentions(atoms)
+            if folded:
+                warnings.append(
+                    f"INFO: task_tier_classification folded {folded} repeated mention(s) of "
+                    f"a unit of work into its fullest statement"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: task_tier_classification failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=tier_stamped)
@@ -1659,6 +1745,35 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: quote_line_head failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=quote_line_n)
+
+    # Learned hours per unit of work, taught from finished Deal Kits
+    # (relation task_hours). Store-only, guess-free: a task nobody taught
+    # anything like keeps no estimate.
+    with telemetry.stage("task_hours", input_count=len(atoms)) as stage:
+        task_hours_n = 0
+        try:
+            from app.core.task_hours import estimate_task_hours
+
+            task_hours_n = estimate_task_hours(atoms)
+            if task_hours_n:
+                warnings.append(f"INFO: task_hours stamped learned hours on {task_hours_n} task atom(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: task_hours failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=task_hours_n)
+
+    # The commercial shape finished kits gave this kind of request (billing
+    # type, PM/PC hours, travel days; relation commercial_terms). Store-only.
+    with telemetry.stage("commercial_terms", input_count=len(atoms)) as stage:
+        commercial_n = 0
+        try:
+            from app.core.commercial_terms import stamp_commercial_terms
+
+            commercial_n = stamp_commercial_terms(atoms)
+            if commercial_n:
+                warnings.append(f"INFO: commercial_terms stamped a learned kit shape on {commercial_n} task atom(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: commercial_terms failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=commercial_n)
 
     with telemetry.stage("hardware_evidence_backfill", input_count=len(atoms)) as stage:
         hardware_bom_n = 0
@@ -1856,6 +1971,25 @@ def compile_project(
                     f"INFO: site_atom_backfill minted {backfill_n} physical_site atom(s) "
                     f"from site entities (roster was empty after dedup)"
                 )
+                # A site minted here was not there when site_geo_fallback ran,
+                # so the place the document names for it was never filled in.
+                # Live 000061 (compile 9a6aacfc): "highland park warehouse
+                # office", minted from the call, reached the brief with no
+                # city or state while the transcript said "Highland Park,
+                # Michigan" in the next breath. Same pass, same rules, on the
+                # sites that exist now -- before the dedup below, so two
+                # mentions of one place can be seen to be one place.
+                try:
+                    from app.core.site_geo_fallback import enrich_site_geo as _enrich_late
+
+                    late_geo = _enrich_late(atoms)
+                    if late_geo:
+                        warnings.append(
+                            f"INFO: site_geo_fallback enriched {late_geo} late-minted "
+                            f"physical_site atom(s) with city/state/ZIP recovered from the document"
+                        )
+                except Exception as exc:
+                    warnings.append(f"WARNING: late site_geo enrichment failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             warnings.append(f"WARNING: site_atom_backfill failed: {type(exc).__name__}: {exc}")
         try:

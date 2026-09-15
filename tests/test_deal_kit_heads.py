@@ -55,65 +55,74 @@ def test_site_facility_head_uses_city_office_for_address_backed_site() -> None:
     assert atoms[0].value["display_name"] == "Pittsburgh"
 
 
-def test_quote_line_head_merges_config_install_email_lines() -> None:
+class _QuoteTask:
+    def __init__(self, text, site="site:pittsburgh_pa_15212"):
+        self.atom_type = type("T", (), {"value": "task"})()
+        self.value = {
+            "text": text,
+            "task_tier": "parent",
+            "is_quote_line": True,
+            "quote_context": {"delivery_model": "config_only"},
+        }
+        self.entity_keys = [site]
+        self.raw_text = text
+
+
+_CONFIG_LINES = [
+    "Camera configuration / setup",
+    "Badge reader configuration",
+    "Okta integration",
+    "UID Enterprise setup",
+    "Knowledge transfer / walking him through the setup",
+]
+
+
+def _task_names(out):
+    return sorted(a.value["text"] for a in out if getattr(getattr(a, "atom_type", None), "value", "") == "task")
+
+
+def test_quote_lines_keep_their_own_words_without_a_trained_head() -> None:
+    """No head: the rule menu must not rename or merge work. 000061 MBrany had
+    twenty recap sentences renamed "Wireless site survey"."""
     from app.core.quote_line_head import CONFIG_UMBRELLA, consolidate_quote_line_tasks
 
-    class _Task:
-        def __init__(self, text, site="site:pittsburgh_pa_15212"):
-            self.atom_type = type("T", (), {"value": "task"})()
-            self.value = {
-                "text": text,
-                "task_tier": "parent",
-                "is_quote_line": True,
-                "quote_context": {"delivery_model": "config_only"},
-            }
-            self.entity_keys = [site]
-            self.raw_text = text
-
-    atoms = [
-        _Task("Camera configuration / setup"),
-        _Task("Badge reader configuration"),
-        _Task("Okta integration"),
-        _Task("UID Enterprise setup"),
-        _Task("Knowledge transfer / walking him through the setup"),
-    ]
-    out, changed = consolidate_quote_line_tasks(atoms, project_id="deal-1")
-    task_atoms = [a for a in out if getattr(getattr(a, "atom_type", None), "value", "") == "task"]
-    names = sorted(a.value["text"] for a in task_atoms)
-    assert changed >= 4
-    assert names == sorted([CONFIG_UMBRELLA, "Knowledge transfer / walking him through the setup"])
-    assert len(task_atoms) == 2
-    config_task = next(a for a in task_atoms if a.value["text"] == CONFIG_UMBRELLA)
-    assert config_task.value["technician_skill"] == "Network / Wireless L2"
-    originals = config_task.value["quote_line"]["original_text"]
-    assert "Camera configuration" in originals
-    assert "Okta integration" in originals
-    assert "guided handoff" not in " ".join(names)
-
-
-def test_quote_line_head_collapses_ubiquiti_micro_tasks() -> None:
-    from app.core.quote_line_head import CONFIG_UMBRELLA, consolidate_quote_line_tasks
-
-    class _Task:
-        def __init__(self, text, site="site:pittsburgh_pa_15212"):
-            self.atom_type = type("T", (), {"value": "task"})()
-            self.value = {
-                "text": text,
-                "task_tier": "parent",
-                "is_quote_line": True,
-                "quote_context": {"delivery_model": "config_only"},
-            }
-            self.entity_keys = [site]
-            self.raw_text = text
-
-    atoms = [
-        _Task("Ubiquiti VLAN configuration / setup"),
-        _Task("UDM Beast integration support"),
-    ]
+    atoms = [_QuoteTask(t) for t in _CONFIG_LINES]
     out, _ = consolidate_quote_line_tasks(atoms, project_id="deal-1")
-    task_atoms = [a for a in out if getattr(getattr(a, "atom_type", None), "value", "") == "task"]
-    names = [a.value["text"] for a in task_atoms]
-    assert names == [CONFIG_UMBRELLA]
+    assert _task_names(out) == sorted(_CONFIG_LINES)
+    assert CONFIG_UMBRELLA not in _task_names(out)
+    assert all(a.value["quote_line"]["source"] == "deterministic_fallback" for a in out)
+    assert all(not a.value["quote_line"]["technician_skill"] for a in out)
+
+
+def test_quote_line_head_merges_config_install_lines_when_a_head_decides(monkeypatch) -> None:
+    from app.core import quote_line_head as qlh
+
+    def _head(relation, text, candidates):
+        if relation == qlh.TASK_TECHNICIAN_SKILL_RELATION:
+            return "Network / Wireless L2", 0.9, "neural_head"
+        if "knowledge transfer" in text.lower():
+            return None, 0.0, "head_miss"
+        return qlh.CONFIG_UMBRELLA, 0.9, "neural_head"
+
+    monkeypatch.setattr(qlh, "_head_classify", _head)
+    atoms = [_QuoteTask(t) for t in _CONFIG_LINES]
+    out, changed = qlh.consolidate_quote_line_tasks(atoms, project_id="deal-1")
+    names = _task_names(out)
+    assert names == sorted([qlh.CONFIG_UMBRELLA, "Knowledge transfer / walking him through the setup"])
+    config_task = next(a for a in out if a.value["text"] == qlh.CONFIG_UMBRELLA)
+    assert config_task.value["technician_skill"] == "Network / Wireless L2"
+    assert "Okta integration" in config_task.value["quote_line"]["original_text"]
+
+
+def test_quote_line_head_collapses_ubiquiti_micro_tasks_when_a_head_decides(monkeypatch) -> None:
+    from app.core import quote_line_head as qlh
+
+    monkeypatch.setattr(qlh, "_head_classify", lambda relation, text, c: (
+        ("Network / Wireless L2", 0.9, "neural_head") if relation == qlh.TASK_TECHNICIAN_SKILL_RELATION
+        else (qlh.CONFIG_UMBRELLA, 0.9, "neural_head")))
+    atoms = [_QuoteTask("Ubiquiti VLAN configuration / setup"), _QuoteTask("UDM Beast integration support")]
+    out, _ = qlh.consolidate_quote_line_tasks(atoms, project_id="deal-1")
+    assert _task_names(out) == [qlh.CONFIG_UMBRELLA]
 
 
 def test_hardware_evidence_backfill_mints_bom_lines() -> None:

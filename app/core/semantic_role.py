@@ -59,16 +59,28 @@ def _llm_disabled() -> bool:
     }
 
 
+# A caller that names a local model this way wants THAT model, hosted teacher
+# or not: a hard discrimination the teacher gets wrong (document_job_scope
+# measured gpt-4.1-mini against qwen3:32b) is routed to the box that gets it
+# right. Its failures never latch ``_llm_unreachable``: one slow 32B answer
+# must not switch every cheap 3B judgement in the compile off.
+LOCAL_MODEL_PREFIX = "ollama:"
+
+
 def _post_generate(prompt: str, *, timeout: int, model: str | None = None) -> str:
     # Hosted-teacher route (default-off): TEACHER_API_BASE → OpenAI-compatible
     # client; otherwise the local Ollama below. The local role-model name is
-    # intentionally NOT forwarded — the API uses its configured teacher model.
+    # intentionally NOT forwarded — the API uses its configured teacher model —
+    # unless the caller named a local model explicitly (``ollama:<name>``).
     from app.core import llm_client
-    if llm_client.teacher_api_enabled():
+    explicit_local = bool(model and str(model).startswith(LOCAL_MODEL_PREFIX))
+    if explicit_local:
+        model = str(model)[len(LOCAL_MODEL_PREFIX):]
+    elif llm_client.teacher_api_enabled():
         return llm_client.complete(prompt, max_tokens=64, timeout=timeout)
     host = ollama_host.resolve_host(DEFAULT_HOST)
     model = model or os.environ.get("OLLAMA_ROLE_MODEL") or DEFAULT_ROLE_MODEL
-    if not ollama_host.generation_ready(host, model):
+    if not ollama_host.generation_ready(host, model, timeout=timeout if explicit_local else None):
         return ""
     payload = {
         "model": model,
@@ -149,8 +161,11 @@ def classify_role(
     try:
         raw = _post_generate(prompt, timeout=t, model=model)
     except Exception:
-        # First failure latches: don't retry the timeout on every atom.
-        _llm_unreachable = True
+        # First failure latches: don't retry the timeout on every atom. A
+        # model the caller named explicitly is its own route; its failure
+        # says nothing about the default one.
+        if not (model and str(model).startswith(LOCAL_MODEL_PREFIX)):
+            _llm_unreachable = True
         result = (None, 0.0)
         _cache[key] = result
         return result

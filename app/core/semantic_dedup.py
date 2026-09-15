@@ -57,7 +57,7 @@ import re
 from typing import Any
 
 from app.core.site_evidence_conflict import normalize_address
-from app.core.address_parse import normalized_address_key
+from app.core.address_parse import _street_for_dedup, normalized_address_key
 
 
 def _norm_key(s: Any) -> str:
@@ -147,6 +147,11 @@ _PHYSICAL_SITE_ALLOWED_FIELDS: frozenset[str] = frozenset({
     # merge step in entity_extraction._entities_to_atoms. Without
     # this, _clean_physical_site_value silently drops them.
     "names", "aliases",
+    # Where an inferred site came from and how sure the judge was: the geo
+    # fallback and the geo-mention head stamp these so the PM (and the grade)
+    # can see the site is inferred; the cleaner must not silently drop them.
+    "inferred", "source_context", "mention", "mentions",
+    "geo_mention_source", "geo_mention_confidence", "geo_mention_judged_as", "geo_mention_correction_id",
 })
 
 _NON_SITE_CODE_HEADS: frozenset[str] = frozenset({
@@ -645,6 +650,12 @@ def _zip_from_site_id_slug(site_id: str) -> str:
     return m.group(1) if m else ""
 
 
+from app.core.address_parse import US_STATE_NAMES as _US_STATE_NAMES
+
+_STATE_NAME_OF: dict[str, str] = {code: name for name, code in _US_STATE_NAMES.items()}
+_FUNCTION_WORDS = frozenset({"a", "an", "the", "in", "at", "of", "on", "for", "and", "to"})
+
+
 def _site_location_buckets(val: dict[str, Any], site_id: str = "") -> set[str]:
     """Location keys for merging same-place variants (city-only vs street+ city)."""
     buckets: set[str] = set()
@@ -656,6 +667,22 @@ def _site_location_buckets(val: dict[str, Any], site_id: str = "") -> set[str]:
     zipc = str(val.get("zip") or val.get("zip_code") or "").strip()
     if city and state and zipc:
         buckets.add(f"{city}|{state}|{zipc}")
+    # A street in a city is a place whether or not the ZIP agrees. 010043
+    # carried "6125 Tyvola Centre Drive, Charlotte, NC" twice: a note said
+    # 28217, an OCR'd floor plan said 28202, and the ZIP-keyed buckets never
+    # met, so the Deal Kit saw two Charlotte sites for one building. The
+    # different-streets veto still keeps two facilities in one town apart.
+    street_norm = _street_for_dedup(str(val.get("street_address") or val.get("address") or ""))
+    if street_norm and city and state:
+        buckets.add(f"{street_norm}|{city}|{state}")
+    # A site that knows only its town can only be keyed by its town. Two such
+    # sites meet on this bucket and the name veto below decides whether they
+    # are one place (000061: "highland park warehouse office" and "office in
+    # Highland Park Michigan", both minted from the call) or two facilities in
+    # one town. A site with a street or a ZIP never carries this key, so the
+    # Marion SC schools cannot meet on it.
+    if not street_norm and not zipc and city and state:
+        buckets.add(f"town:{city}|{state}")
     ak = normalized_address_key(val)
     if ak:
         buckets.add(ak)
@@ -756,9 +783,16 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
             raw = str(val.get("street_address") or val.get("address") or "").strip()
             if not raw:
                 continue
-            norm = normalize_address(raw)
-            if norm:
-                streets.add(norm)
+            # One field can list several streets: an order confirmation's
+            # bill-to and ship-to columns land as "90 FIELDSTONE CT; 6125
+            # TYVOLA CENTRE DR" (010043). Each street is its own identity
+            # evidence, so the site shares a street with any group that names
+            # either of them.
+            parts = [p for p in re.split(r"\s*[;|]\s*", raw) if p.strip()]
+            for part in parts if len(parts) > 1 else [raw]:
+                norm = normalize_address(part)
+                if norm:
+                    streets.add(norm)
         if streets:
             street_keys[canon] = streets
 
@@ -778,14 +812,47 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
         if toks:
             name_tokens[canon] = frozenset(toks)
 
+    # What a name says beyond the town it sits in. "office in Highland Park
+    # Michigan" minus Highland Park, Michigan and the function words is
+    # "office"; "highland park warehouse office" is "warehouse office". One is
+    # inside the other, so they are one place; "Highland Park office" and
+    # "Highland Park warehouse" are not, and stay two. No name vocabulary --
+    # the tokens removed are the site's own city and state, and grammar words.
+    place_tokens: dict[str, frozenset[str]] = {}
+    for canon, group in grouped.items():
+        toks: set[str] = set()
+        for atom in group:
+            val = getattr(atom, "value", None) or {}
+            if not isinstance(val, dict):
+                continue
+            city = str(val.get("city") or "").lower()
+            state = str(val.get("state") or "").upper()
+            toks |= {t for t in re.split(r"[^a-z0-9]+", city) if t}
+            if state:
+                toks.add(state.lower())
+                toks |= {t for t in re.split(r"[^a-z0-9]+", _STATE_NAME_OF.get(state, "")) if t}
+        place_tokens[canon] = frozenset(toks)
+
+    def _identity(canon: str) -> frozenset[str]:
+        return name_tokens.get(canon, frozenset()) - place_tokens.get(canon, frozenset()) - _FUNCTION_WORDS
+
     keyed = [c for c in canons if c in canon_buckets]
     for i, c1 in enumerate(keyed):
         for c2 in keyed[i + 1 :]:
-            if not (canon_buckets[c1] & canon_buckets[c2]):
+            shared = canon_buckets[c1] & canon_buckets[c2]
+            if not shared:
                 continue
             s1, s2 = street_keys.get(c1), street_keys.get(c2)
             if s1 and s2 and not (s1 & s2):
                 # Both know their street, and the streets differ.
+                continue
+            same_street = bool(s1 and s2 and (s1 & s2))
+            if all(b.startswith("town:") for b in shared):
+                # Only the town is shared: the names alone must say one place.
+                i1, i2 = _identity(c1), _identity(c2)
+                if not (i1 <= i2 or i2 <= i1):
+                    continue
+                _union(c1, c2)
                 continue
             # A name is identity evidence exactly as a street is. Two of these
             # ten SOWs carry the address of the school in the PRECEDING SOW --
@@ -797,7 +864,12 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
             # output when two customer documents disagree.
             n1, n2 = name_tokens.get(c1), name_tokens.get(c2)
             if n1 and n2 and not (n1 <= n2 or n2 <= n1):
-                continue
+                # Two labels for one known street that still share a word
+                # ("Charlotte (NC)" / "Charlotte (LANE)", 010043) are one
+                # place; two names that share nothing at one street are the
+                # copy-pasted-address case above, and stay apart.
+                if not (same_street and (n1 & n2)):
+                    continue
             _union(c1, c2)
 
     clusters: dict[str, list[str]] = {}

@@ -51,6 +51,17 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # `same_physical_site` between "same_site" and "distinct_site"; this head
     # stored answers under `same_site` with no declared vocabulary, so every
     # answer a PM ever gave was banked where nothing looks it up.
+    # Whether a document is about the job this deal is named for, or another
+    # engagement for the same customer. document_job_scope asks per document.
+    "document_job": HeadSpec("document_job", "deal", "Document belongs to this job",
+                             candidates=("this_deal", "other_job")),
+    # Who supplies a hardware line. A kit's materials are what we buy; a
+    # hardware list in the documents is often the customer's own (010095:
+    # four SHI-supplied lines reached the prefill as BOM rows). bom_owner
+    # asks per bom_line; the prefill keeps customer-furnished lines out of
+    # the BOM.
+    "bom_owner":  HeadSpec("bom_owner", "atom", "Who supplies this line",
+                           candidates=("we_supply", "customer_furnished")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact
@@ -99,6 +110,29 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # of every fabricated name in the corpus.
     #
     # Candidates are SiteFacilityDecision's labels in site_facility_head.py.
+    # Whether an address is a place where work happens.
+    # site_geo_fallback.suppress_vendor_sites asks decide("physical_site") for
+    # job_site vs vendor_or_billing_address, but no head reached that relation,
+    # so only the seeded PurTera address could ever be taught. 000036 San Fran
+    # TV mount published the CDW rep's email-signature address as a second site.
+    # How long a unit of work takes, taught from a finished Deal Kit. Extract
+    # head: the verdict carries the hours ("hours=3;per=cable drop"); see
+    # app.core.task_hours.
+    "hours":     HeadSpec("task_hours", "atom", "Task hours", mode="extract"),
+    # The shape of the kit a request got: billing type, PM/PC hours, travel
+    # days. Taught by finished kits on the request line; nothing in the deal's
+    # documents states it (commercial_terms).
+    "commercial": HeadSpec("commercial_terms", "atom", "Commercial shape (billing, PM, travel)", mode="extract"),
+    # A place the documents name: a job site, or only a mention (travel, a
+    # signature, a reference customer). site_geo_fallback.geo_mention_sites.
+    "geo_mention": HeadSpec("geo_mention_role", "atom", "Named place: job site or mention",
+                            candidates=("job_site", "mention_only")),
+    # Whether a task line is a unit of work a quote prices (parent) or a step
+    # inside one (child). task_tier_classifier asks this before its word list.
+    "task_tier": HeadSpec("task_tier", "atom", "Quote line or step",
+                          candidates=("parent", "child")),
+    "site_role": HeadSpec("physical_site", "entity", "Site role",
+                          candidates=("job_site", "vendor_or_billing_address")),
     "facility": HeadSpec(
         "site_facility_label", "entity", "Site name",
         candidates=("city_office", "keep_facility", "keep_name"),
@@ -164,7 +198,13 @@ def _threshold_for(head: str, scope: str) -> float:
 #: A repeated judgment is stronger evidence than a single one, so the same
 #: correction made again widens rather than replaces. Never below the bar a
 #: single in-deal correction already clears.
-_EXEMPLAR_CAP = 12
+#: Exemplars kept per correction. A merged correction is scored by its NEAREST
+#: exemplar (feedback_store max-sim), so more exemplars widen what it recognises
+#: without blurring it; at 12, every global `task` lesson after the twelfth work
+#: line taught from a Deal Kit was silently discarded (dev, 000036 was the 12th).
+_EXEMPLAR_CAP = 400
+#: Distinct deals remembered per correction (the evidence count).
+_DEALS_CAP = 200
 _THRESHOLD_STEP = 0.02
 _THRESHOLD_FLOOR = _THRESHOLD_DEAL
 #: Which deals this judgment has been reached on, carried inside `relations`.
@@ -292,9 +332,12 @@ def _merge_with_existing(store, corr: Correction) -> Correction:
         if d and d not in deals:
             deals.append(d)
     rel.update(dict(getattr(corr, "relations", None) or {}))
-    rel[_DEALS_KEY] = deals[:_EXEMPLAR_CAP]
+    rel[_DEALS_KEY] = deals[:_DEALS_CAP]
 
-    evidence = max(len(seen), len(deals))
+    # Deals, as the comment above says -- not exemplars. Eleven different work
+    # lines taught from ONE Deal Kit are one deal's judgment, and counting them
+    # as eleven took the global `task` correction from 0.82 to the 0.74 floor.
+    evidence = max(1, len(deals))
     base = float(getattr(corr, "threshold", _THRESHOLD_DEAL))
     # Never below the bar THIS head trusts for a single in-deal correction.
     floor = _HEAD_THRESHOLDS.get(_head_of(corr), (_THRESHOLD_FLOOR, _THRESHOLD_FLOOR))[0]

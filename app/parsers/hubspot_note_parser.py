@@ -88,6 +88,118 @@ _TIME_UNIT_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|days?|weeks?|wks?|
 _COUNT_ROLE_RE = re.compile(r"^\s*\d+\s+[A-Z][A-Za-z]+(?:\s+[A-Za-z]+){0,3}\s*$")
 
 
+#: A label that owns its own line: "Address:", "Onsite work at 1517:",
+#: "Here's the scope:", or "Project: <value>". Judged by shape -- a short run of
+#: words starting with a capital, no sentence punctuation, then a colon -- so a
+#: store number or an apostrophe inside the label does not hide it.
+_LINE_LABEL_RE = re.compile(r"^(?P<label>[A-Z][^:.?!]{0,58}?)\s*:\s*(?P<rest>.*)$")
+_SENTENCE_END_RE = re.compile(r"[.!?]\s*$")
+
+
+def _line_label(line: str) -> tuple[str, str] | None:
+    m = _LINE_LABEL_RE.match(line.strip())
+    if not m or re.match(r"\s*//", m.group("rest")):
+        return None
+    label = " ".join(m.group("label").split())
+    if len(label.split()) > 6:
+        return None
+    return label, m.group("rest").strip()
+
+
+def _split_line_fields(body: str) -> list[tuple[str, str]]:
+    """Fields of a note typed one label per line, values on the lines below.
+
+    000020 Binghamton is the shape: "Address:" then two address lines, then
+    "Onsite work at 1517:" then eleven one-line tasks. The inline splitter joined
+    every line into one string first, so the label with a store number in it was
+    never seen, and each task list was cut at its commas ("label it", "store as
+    a backup Reset Ubiquiti gateway"). When the author gave us lines, the line
+    is the item. Values keep their line breaks; ``_split_list_value`` splits on
+    them. Needs two or more label lines, otherwise this is not a form."""
+    lines = [ln.strip() for ln in str(body or "").splitlines()]
+    marks = [(i, _line_label(ln)) for i, ln in enumerate(lines)]
+    marks = [(i, lab) for i, lab in marks if lab]
+    if len(marks) < 2:
+        return []
+    fields, _free = _split_line_fields_and_free_lines(body)
+    return fields
+
+
+def _split_line_fields_and_free_lines(body: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """``(fields, free lines)`` for a one-label-per-line note.
+
+    A label whose own line already carries a complete statement ("Next Steps:
+    Client to provide floor plans; survey will finalize scope ...") is closed by
+    it; the lines under it are not its items. 000061 MBrany's meeting recap is
+    the shape: one "Next Steps:" line followed by the whole recap -- dozens of
+    sentences and section headings -- which all became items of "Next Steps".
+    A short inline value ("Adress: CHECKOUT SAN FRANCISCO") still continues on
+    the lines below, which is how an address is typed. Lines that belong to no
+    field come back as free lines for the ordinary prose path."""
+    lines = [ln.strip() for ln in str(body or "").splitlines()]
+    marks = [(i, _line_label(ln)) for i, ln in enumerate(lines)]
+    marks = [(i, lab) for i, lab in marks if lab]
+    if len(marks) < 2:
+        return [], []
+    out: list[tuple[str, str]] = []
+    free: list[str] = [ln for ln in lines[: marks[0][0]] if ln]
+    for k, (i, (label, rest)) in enumerate(marks):
+        end = marks[k + 1][0] if k + 1 < len(marks) else len(lines)
+        below = [ln for ln in lines[i + 1:end] if ln]
+        closed = bool(rest) and (len(rest.split()) >= 6 or bool(_SENTENCE_END_RE.search(rest)) or rest.endswith("\u2026"))
+        if closed:
+            out.append((label, rest))
+            free.extend(below)
+        else:
+            out.append((label, "\n".join(([rest] if rest else []) + below)))
+    return out, free
+
+
+def _form_preamble(body_text: str, flat_body: str, by_lines: bool) -> str:
+    """The prose an author wrote BEFORE the first field label.
+
+    000036 San Fran TV mount: "Hi Trent, ... My customer, Checkout LLC, is
+    renovating their office ... looking for a service partner to install their
+    new Samsung 65' display." then "Adress:", then a signature with "Direct:".
+    Both splitters started at the first label, so the request itself -- the
+    only statement of the work -- produced no atom at all."""
+    if by_lines:
+        lines = [ln.strip() for ln in str(body_text or "").splitlines()]
+        head: list[str] = []
+        for ln in lines:
+            if _line_label(ln):
+                break
+            if ln:
+                head.append(ln)
+        return " ".join(head).strip()
+    text = " ".join(str(flat_body or "").split())
+    marks = list(_INLINE_LABEL_RE.finditer(text))
+    return text[: marks[0].start()].strip() if marks else ""
+
+
+def _split_trailing_prose(value: str) -> tuple[str, str]:
+    """(list part, trailing sentences) for a multi-line value.
+
+    The last lines of a pasted work order are often sign-off prose ("The tech
+    will have to work with the A1 engineer throughout the WO." / "If you have
+    any questions, feel free to reach out.") under the final list. Items in the
+    list do not end in a full stop; trailing lines that do are a note, not two
+    more tasks. Only split when most of the list lines lack terminal punctuation,
+    so a list whose every line is a sentence stays whole."""
+    lines = [ln for ln in value.split("\n") if ln.strip()]
+    if len(lines) < 3:
+        return value, ""
+    cut = len(lines)
+    while cut > 0 and _SENTENCE_END_RE.search(lines[cut - 1]):
+        cut -= 1
+    head = lines[:cut]
+    if cut == len(lines) or len(head) < 2:
+        return value, ""
+    if sum(1 for ln in head if _SENTENCE_END_RE.search(ln)) * 2 >= len(head):
+        return value, ""
+    return "\n".join(head), " ".join(lines[cut:])
+
+
 def _split_inline_fields(body: str) -> list[tuple[str, str]]:
     """'Address: X Date | Time: Y Duration: Z' -> [(Address, X), (Date | Time, Y), (Duration, Z)].
     Requires two or more labels; otherwise the body is prose and is left alone."""
@@ -105,12 +217,16 @@ def _split_inline_fields(body: str) -> list[tuple[str, str]]:
 
 
 def _split_list_value(value: str) -> list[str]:
+    if "\n" in value:
+        lines = [ln.strip(" .;") for ln in value.split("\n") if ln.strip(" .;")]
+        return [ln for ln in lines if len(re.sub(r"[^A-Za-z0-9]", "", ln)) >= 3]
     parts = [p.strip(" .;") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+(?=[a-z])", value) if p.strip(" .;")]
     return [p for p in parts if len(re.sub(r"[^A-Za-z0-9]", "", p)) >= 3]
 
 
 def _field_value_shape(value: str) -> str:
-    v = value.strip()
+    lines = [ln.strip() for ln in value.strip().split("\n") if ln.strip()]
+    v = ", ".join(lines)
     if v.endswith("?"):
         return "question"
     if re.search(r"\b\d{1,5}[A-Za-z]?(?:/\d+[A-Za-z]?)?\b", v) and re.search(r"\b(?:[A-Z]{2,}|[A-Z][a-z]+)\b.*\b(?:[A-Z][a-z]+|[A-Z]{2,})\b", v) and (
@@ -128,12 +244,15 @@ def _field_value_shape(value: str) -> str:
 
         if looks_like_street_address(v):
             return "address"
-        return "other"
+        if len(lines) < 2:
+            return "other"
+        # Several lines that are not a street address are a list the author
+        # typed one per line (000020's "Hardware involved:" block), not prose.
     if _COUNT_ROLE_RE.match(v):
         return "staffing"
     if _TIME_UNIT_RE.search(v) and len(v.split()) <= 8:
         return "duration"
-    if len(_split_list_value(v)) >= 3:
+    if len(lines) >= 2 or len(_split_list_value(v)) >= 3:
         return "list"
     return "other"
 
@@ -554,27 +673,88 @@ class HubspotNoteParser(BaseParser):
             "title": title, "source": "hubspot_note", "author": author,
             "author_email": author_email, "author_affiliation": affiliation,
         }
-        text = f"{label}: {value}"
+        remainder = ""
+        # An address value runs until the next label, which in a pasted email
+        # is often the sender's signature ("SAN FRANCISCO, CA 94111-2201 Sarah
+        # Halpern Account Manager | CDW 72 Madison Avenue | New York, NY 10016",
+        # 000036). The address ends at its first City, ST ZIP; what follows is
+        # something else, and read as part of the address it published a second
+        # site in New York.
+        from app.core.address_parse import _CITY_STATE_ZIP_RE, looks_like_street_address as _is_street
+
+        flat = ", ".join(ln.strip() for ln in value.split("\n") if ln.strip())
+        _m = _CITY_STATE_ZIP_RE.search(flat)
+        if _m and flat[_m.end():].strip(" ,|") and _is_street(flat[: _m.end()]):
+            value, remainder = flat[: _m.end()].strip(" ,"), flat[_m.end():].strip(" ,|")
         shape = _field_value_shape(value)
+        trailer = ""
+        if shape == "list" and "\n" in value:
+            value, trailer = _split_trailing_prose(value)
+        if shape == "address":
+            value = ", ".join(ln.strip() for ln in value.split("\n") if ln.strip())
+        text = f"{label}: {value}"
+        if trailer:
+            out.append(self._mint_atom(
+                project_id=project_id, artifact_id=artifact_id, filename=filename,
+                # A condition on the work ("the tech will have to work with the
+                # A1 engineer throughout"), not a task: typed so the learned
+                # typer does not promote the sign-off into the labor roster.
+                atom_type=AtomType.constraint, text=trailer,
+                value={**base, "kind": "note_field_trailer", "parent_field": label},
+                source_ref=source_ref, confidence=0.8, author_affiliation=affiliation,
+            ))
         if shape == "address":
             slug = re.sub(r"[^a-z0-9]+", "_", _address_facility(value).lower()).strip("_") or re.sub(r"[^a-z0-9]+", "_", value.lower())[:40].strip("_")
+            # A street line with no ZIP ("1179 Vestal Ave, Suite 1, Binghamton, NY")
+            # never matched the City, ST ZIP anchor, so the site published with no
+            # city or state. The last two comma segments are where they live.
+            from app.core.address_parse import split_city_state_strict
+
+            from app.core.address_parse import _CITY_STATE_ZIP_RE, _parsed_from_city_state_zip_match
+
+            segs = [s.strip() for s in value.split(",") if s.strip()]
+            locality: dict[str, Any] = {}
+            zm = _CITY_STATE_ZIP_RE.search(value)
+            parsed_zip = _parsed_from_city_state_zip_match(value, zm) if zm else None
+            if parsed_zip and parsed_zip.city and parsed_zip.state:
+                locality = {k: v for k, v in (("city", parsed_zip.city), ("state", parsed_zip.state), ("zip", parsed_zip.zip)) if v}
+                street_line = value[: zm.start(1)].strip(" ,")
+            else:
+                city, state = split_city_state_strict(", ".join(segs[-2:])) if len(segs) >= 2 else (None, None)
+                if city and state:
+                    locality = {"city": city, "state": state}
+                street_line = ", ".join(segs[:-2])
             out.append(self._mint_atom(
                 project_id=project_id, artifact_id=artifact_id, filename=filename,
                 atom_type=AtomType.physical_site, text=text,
                 value={**base, "kind": "physical_site", "id": slug, "site_id": slug,
                        "name": _address_facility(value), "facility_name": _address_facility(value),
-                       "address": value, "street_address": value, "inferred": False},
+                       "address": value, "street_address": street_line if locality and street_line else value,
+                       "inferred": False, **locality},
                 source_ref=source_ref, confidence=0.86, entity_keys=[f"site:{slug}"],
                 review_flags=["hubspot_note_physical_site"], author_affiliation=affiliation,
             ))
+            if remainder:
+                out.append(self._mint_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=filename,
+                    atom_type=AtomType.deal_metadata, text=remainder,
+                    value={**base, "kind": "note_field_remainder", "parent_field": label},
+                    source_ref=source_ref, confidence=0.7, author_affiliation=affiliation,
+                ))
             return out
         if shape == "list":
-            out.append(self._mint_atom(
-                project_id=project_id, artifact_id=artifact_id, filename=filename,
-                atom_type=AtomType.scope_item, text=text, value={**base, "items": _split_list_value(value)},
-                source_ref=source_ref, confidence=0.84, review_flags=["hubspot_note_training_row"],
-                author_affiliation=affiliation,
-            ))
+            # A one-line list keeps its whole-field atom (the items are cut from
+            # it). A list the author typed one item per line does not: that
+            # atom is every line again, and the typer promoted it to a task
+            # that duplicated all eleven of 000020's onsite tasks. Each item
+            # carries ``parent_field``, so the section is not lost.
+            if "\n" not in value:
+                out.append(self._mint_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=filename,
+                    atom_type=AtomType.scope_item, text=text, value={**base, "items": _split_list_value(value)},
+                    source_ref=source_ref, confidence=0.84, review_flags=["hubspot_note_training_row"],
+                    author_affiliation=affiliation,
+                ))
             for item in _split_list_value(value):
                 out.append(self._mint_atom(
                     project_id=project_id, artifact_id=artifact_id, filename=filename,
@@ -636,6 +816,13 @@ class HubspotNoteParser(BaseParser):
                     atom_type=AtomType.deal_metadata,
                     text=meta_text,
                     value={
+                        # Who wrote the note and when -- about the note, never
+                        # about the deal. Marked so no downstream re-typer can
+                        # promote it: on dev (000020, compile e2718776) span
+                        # admission re-typed this very atom to `task` and Deal
+                        # Kit would have proposed "note_id=... author=...".
+                        "kind": "hubspot_note_meta",
+                        "non_deal": True,
                         "field_name": "hubspot_note_meta",
                         "hubspot_note_id": note_id,
                         "author": author,
@@ -650,6 +837,117 @@ class HubspotNoteParser(BaseParser):
                     author_affiliation=affiliation,
                 )
             )
+
+        def _mint_prose(prose: str) -> None:
+            # A paragraph is several statements. Minting it whole made 000036's
+            # request one atom whose text began "Hope all is well!", so the Deal
+            # Kit task was named by the greeting and every head judged the
+            # greeting, the context and the ask together. Each sentence is its
+            # own evidence, the way email and transcript lines already are;
+            # the paragraph travels on each as context.
+            from app.core.sentences import split_sentences
+
+            # The author's own line breaks come first: "Hi Trent," on its own
+            # line is a greeting, not the start of the request beneath it
+            # (010095), and no sentence segmenter splits after a comma.
+            sentences: list[str] = []
+            for line in str(prose or "").splitlines() or [str(prose or "")]:
+                sentences.extend(s.strip() for s in split_sentences(line) if s.strip())
+            if len(sentences) > 1:
+                for sentence in sentences:
+                    _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()))
+                return
+            _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
+
+        def _mint_prose_one(prose: str, paragraph: str | None) -> None:
+            if (
+                prose and title
+                and " ".join(prose.lower().split()) == " ".join(title.lower().split())
+                and len(prose.split()) <= 8
+                and not re.search(r"\d|\$", prose)
+            ):
+                # The note's prose IS its title: a caption on an upload ("SOW",
+                # "psow from current partner"), not scope. Live 010300: three such
+                # notes each became a scope_item.
+                atom_types = [AtomType.deal_metadata]
+            elif prose:
+                atom_types: list[AtomType] = [AtomType.scope_item]
+                if _INSTRUCTION_RE.search(prose):
+                    atom_types.append(AtomType.customer_instruction)
+                if _ROM_RE.search(prose):
+                    atom_types.append(AtomType.commercial_total)
+                if prose.endswith("?"):
+                    atom_types.append(AtomType.open_question)
+                # No word list decides that prose is a constraint. "remote" and
+                # "onsite" appear in almost every request for work, so 000036's
+                # "Most of their IT team is remote ... install their new Samsung
+                # 65' display" was typed a constraint and deduped out of scope.
+                # What a sentence is gets learned downstream (typed classifier,
+                # taught corrections), not matched here.
+
+                deduped: list[AtomType] = []
+                for at in atom_types:
+                    if at not in deduped:
+                        deduped.append(at)
+
+                for at in deduped:
+                    val: dict[str, Any] = {
+                        "text": prose,
+                        "kind": "hubspot_note_body",
+                        "hubspot_note_id": note_id,
+                        "title": title,
+                        "source": "hubspot_note",
+                        "author": author,
+                        "author_email": author_email,
+                        "author_affiliation": affiliation,
+                    }
+                    if paragraph:
+                        val["paragraph"] = paragraph
+                    if at == AtomType.commercial_total:
+                        amounts = re.findall(r"\$\s*(\d[\d,]*(?:\.\d{2})?)", prose)
+                        k_amounts = re.findall(r"\b(\d{1,3}(?:,\d{3})*)\s*[kK]\b", prose)
+                        val.update(
+                            {
+                                "category": "ROM",
+                                "currency": "USD",
+                                "amounts": amounts,
+                                "k_amounts": k_amounts,
+                                "rom_text": prose,
+                            }
+                        )
+                    atoms.append(
+                        self._mint_atom(
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            filename=filename,
+                            atom_type=at,
+                            text=prose,
+                            value=val,
+                            source_ref=source_ref,
+                            confidence=0.84 if at == AtomType.scope_item else 0.8,
+                            review_flags=["hubspot_note_training_row"] if at == AtomType.scope_item else [],
+                            author_affiliation=affiliation,
+                        )
+                    )
+
+                train_rows.append(
+                    TrainingRow(
+                        relation=HUBSPOT_NOTE_RELATION,
+                        label="scope_item",
+                        raw_text=prose[:4000],
+                        label_kind="judgment",
+                        teacher=TEACHER_STORE,
+                        confidence=0.84,
+                        deal_id=project_id,
+                        project_id=project_id,
+                        provenance={
+                            "note_id": note_id,
+                            "title": title,
+                            "source": "hubspot_note_parser",
+                            "author_affiliation": affiliation,
+                        },
+                    )
+                )
 
         # A pasted TABLE is a roster, not prose. When the note body carries a
         # delimited table, hand it to the same gate + extractor the spreadsheet
@@ -673,8 +971,49 @@ class HubspotNoteParser(BaseParser):
         # ...", live 010297) is a form, not a sentence: one atom per field, or
         # the whole note becomes a single "site" whose address is the entire
         # text and the scope inside it is never seen.
-        fields = _split_inline_fields(body) if body else []
+        # ``body`` is the note flattened to one line; ``body_lines`` keeps the
+        # author's line breaks, which are the only record of where one task
+        # ends and the next begins.
+        body_text = "\n".join(str(ln) for ln in (parsed.get("body_lines") or []))
+        line_fields, free_lines = _split_line_fields_and_free_lines(body_text) if body else ([], [])
+        fields = line_fields or (_split_inline_fields(body) if body else [])
         if len(fields) >= 2:
+            if line_fields:
+                # Prose the author wrote outside any field: before the first
+                # label, or under a label its own line already closed.
+                from app.parsers.value_shapes import classify_value
+
+                block: list[str] = []
+
+                def _flush() -> None:
+                    text = " ".join(block).strip()
+                    block.clear()
+                    if len(text.split()) >= 4:
+                        _mint_prose(text)
+
+                for ln in free_lines:
+                    if classify_value(ln) in ("email", "phone", "postal", "state"):
+                        _flush()
+                        atoms.append(self._mint_atom(
+                            project_id=project_id, artifact_id=artifact_id, filename=filename,
+                            atom_type=AtomType.deal_metadata, text=ln,
+                            value={"kind": "note_line_metadata", "hubspot_note_id": note_id, "title": title,
+                                   "source": "hubspot_note", "shape": classify_value(ln)},
+                            source_ref=source_ref, confidence=0.7, author_affiliation=affiliation,
+                        ))
+                        continue
+                    if _SENTENCE_END_RE.search(ln) or len(ln.split()) >= 6:
+                        block.append(ln)
+                        _flush()
+                    else:
+                        _flush()
+                        if len(ln.split()) >= 4:
+                            _mint_prose(ln)
+                _flush()
+            else:
+                preamble = _form_preamble(body_text, body, by_lines=False)
+                if len(preamble.split()) >= 4:
+                    _mint_prose(preamble)
             for f_label, f_value in fields:
                 if not f_value:
                     continue
@@ -690,91 +1029,14 @@ class HubspotNoteParser(BaseParser):
                 log_rows(train_rows)
             return atoms
 
-        if (
-            body and title
-            and " ".join(body.lower().split()) == " ".join(title.lower().split())
-            and len(body.split()) <= 8
-            and not re.search(r"\d|\$", body)
-        ):
-            # The note's body IS its title: a caption on an upload ("SOW",
-            # "psow from current partner"), not scope. Live 010300: three such
-            # notes each became a scope_item.
-            atom_types = [AtomType.deal_metadata]
-        elif body:
-            atom_types: list[AtomType] = [AtomType.scope_item]
-            if _INSTRUCTION_RE.search(body):
-                atom_types.append(AtomType.customer_instruction)
-            if _ROM_RE.search(body):
-                atom_types.append(AtomType.commercial_total)
-            if body.endswith("?"):
-                atom_types.append(AtomType.open_question)
-            if re.search(r"\b(remote|onsite|white\s+glove|bandwidth|vlan)\b", body, re.I):
-                atom_types.append(AtomType.constraint)
+        _mint_prose(body_text if body_text.strip() else body)
 
-            deduped: list[AtomType] = []
-            for at in atom_types:
-                if at not in deduped:
-                    deduped.append(at)
-
-            for at in deduped:
-                val: dict[str, Any] = {
-                    "text": body,
-                    "kind": "hubspot_note_body",
-                    "hubspot_note_id": note_id,
-                    "title": title,
-                    "source": "hubspot_note",
-                    "author": author,
-                    "author_email": author_email,
-                    "author_affiliation": affiliation,
-                }
-                if at == AtomType.commercial_total:
-                    amounts = re.findall(r"\$\s*(\d[\d,]*(?:\.\d{2})?)", body)
-                    k_amounts = re.findall(r"\b(\d{1,3}(?:,\d{3})*)\s*[kK]\b", body)
-                    val.update(
-                        {
-                            "category": "ROM",
-                            "currency": "USD",
-                            "amounts": amounts,
-                            "k_amounts": k_amounts,
-                            "rom_text": body,
-                        }
-                    )
-                atoms.append(
-                    self._mint_atom(
-                        project_id=project_id,
-                        artifact_id=artifact_id,
-                        filename=filename,
-                        atom_type=at,
-                        text=body,
-                        value=val,
-                        source_ref=source_ref,
-                        confidence=0.84 if at == AtomType.scope_item else 0.8,
-                        review_flags=["hubspot_note_training_row"] if at == AtomType.scope_item else [],
-                        author_affiliation=affiliation,
-                    )
-                )
-
-            train_rows.append(
-                TrainingRow(
-                    relation=HUBSPOT_NOTE_RELATION,
-                    label="scope_item",
-                    raw_text=body[:4000],
-                    label_kind="judgment",
-                    teacher=TEACHER_STORE,
-                    confidence=0.84,
-                    deal_id=project_id,
-                    project_id=project_id,
-                    provenance={
-                        "note_id": note_id,
-                        "title": title,
-                        "source": "hubspot_note_parser",
-                        "author_affiliation": affiliation,
-                    },
-                )
-            )
-
-        # Physical sites from address-bearing notes.
-        corpus = f"{title}\n{body}"
+        # Physical sites from address-bearing notes. A note's title is its
+        # first line, so prepending it repeats that line: on 010043 the site
+        # came out as "3 Verkada cameras intsall. 3 Verkada cameras intsall.
+        # North Carolina office: 6125 Tyvola Centre Drive ...".
+        _t = " ".join((title or "").split())
+        corpus = body if _t and " ".join(body.split()).startswith(_t) else f"{title}\n{body}"
         for parsed_addr in find_us_addresses_in_text(corpus):
             if (
                 not parsed_addr.city

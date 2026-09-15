@@ -139,7 +139,33 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
         "fields": ["phase_id", "name", "start", "end", "owner", "exit_criteria"],
     },
     "task": {
-        "desc": "A row from a detailed-task table: task_id + site + phase + description + owner + dates + dependency + status.",
+        # A Deal Kit prices billable units of work, and most deals state
+        # theirs in a sentence, not a table: "install and setup a Lantronix
+        # (or 2)", "3 Verkada cameras install", "please quote a technician
+        # onsite for 2-3 hours". Described as a table row only, the model
+        # never returned task for a request written in prose (holdout 010095,
+        # 2026-09-15). Described as "a scope bullet describing work" it
+        # returned task for anything near the work -- on 000061 the
+        # classifier typed 29 recap bullets and call remarks as tasks beside
+        # the one survey line the kit priced (compile 9a6aacfc). Measured on
+        # the seven training deals (type_harness.py, gpt-4.1-mini): this
+        # wording keeps every kit line, and cuts 000061 to 17, 010043 to 1,
+        # 010162 to 5; the rest of the boundary is the store's and the
+        # provenance rule below (speech is not a task).
+        "desc": (
+            "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. "
+            "It is written as the customer's request for our work or for a technician's time ('install "
+            "and set up two devices at the site', 'looking for a partner to install their new display', "
+            "'please quote a technician onsite for 2-3 hours to get the register and printer running'), "
+            "as a statement of what will be set up or installed on the job ('we will be setting 1 register "
+            "and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the "
+            "site survey'), or as a row from a detailed-task table (task_id + site + phase + description + "
+            "owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, "
+            "onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party "
+            "will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to "
+            "check something, a question about the site, a call summary of what was agreed, a description of "
+            "the site as it is, or a quantity or date alone is not a task: _keep."
+        ),
         "fields": ["task_id", "site", "phase", "name", "owner", "start", "due", "dependency", "status"],
     },
     "deliverable": {
@@ -331,6 +357,29 @@ def _atom_type_candidates() -> list[str]:
     return list(_TAXONOMY) + ["_keep"]
 
 
+def _taught_base_candidates() -> list[str]:
+    """The types a teacher names that the model never promotes to: what a
+    line IS when the model should leave it -- "this is a scope_item, not a
+    task", "this is speech". Resolved against the model's candidates alone,
+    those verdicts could never fire (000061, 2026-09-15: "Expected four-hour
+    survey will confirm AP count" taught scope_item from the first quote,
+    re-promoted to task on every compile). They are resolved in a second
+    pass, by exemplar similarity only: the relation's neural head is fit over
+    every class and merely restricted to the candidates at decision time, so
+    offering it these classes let a six-exemplar scope_item class absorb
+    000020's eleven exact-match task lines (compile 014103ef)."""
+    try:
+        from app.core.schemas import AtomType
+        return [t.value for t in AtomType if t.value not in _TAXONOMY]
+    except Exception:  # pragma: no cover
+        return ["scope_item", "entity", "customer_instruction", "raw_utterance"]
+
+
+def _taught_type_candidates() -> list[str]:
+    """Every type a person or a Deal Kit can teach, plus _keep."""
+    return list(_TAXONOMY) + _taught_base_candidates() + ["_keep"]
+
+
 def _atom_row_view(atom: Any) -> tuple[list[str], list[Any]] | None:
     """(headers, values) for a per-row table atom, handling both emitted shapes
     (``value._columns``/``value._row`` and ``value.cells``); else ``None``."""
@@ -453,6 +502,88 @@ def _atom_decide_text(atom: Any) -> str:
     return text
 
 
+def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
+    """Re-type atoms the feedback store confidently recognises.
+
+    Returns ``{id(atom): verdict}`` for every atom the store decided, ``_keep``
+    included (that leaves the type as it is). Never raises; no store -> ``{}``.
+    """
+    decided: dict[int, str] = {}
+    try:
+        from app.core.decide import DecisionScope, decide, get_store
+        from app.core.schemas import AtomType
+
+        if get_store() is None:
+            return decided
+        cands = _atom_type_candidates()
+        base = _taught_base_candidates()
+        for a in atoms:
+            text = str(getattr(a, "raw_text", "") or "").strip()
+            if not text:
+                continue
+            # The deal the atom belongs to. Without it the store searches its
+            # global tier only, and a lesson taught for THIS deal -- "on
+            # 000061 this recap line is scope, not a task" -- never fires
+            # (2026-09-15: nine deal-scoped lessons, none applied, while the
+            # two global ones did).
+            scope = DecisionScope(deal_id=str(getattr(a, "project_id", "") or ""))
+            # Judgments only: what a person or a finished Deal Kit taught. The
+            # model's own self-taught rows (created_by="teacher") are a cache
+            # for the deflect layer below, never a ruling -- applied here they
+            # carried one deal's LLM noise into the next (000061, 2026-09-15:
+            # 58 recap lines typed "task" from another deal's verdicts).
+            d = decide(
+                _ATOM_TYPE_RELATION, text[:600], cands,
+                instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
+                exclude_created_by=("teacher",),
+            )
+            if d is None or d.source != "store" or not d.verdict:
+                # Second pass, base types, exemplar similarity only: what was
+                # taught about text like this, never the head's generalisation.
+                d = decide(
+                    _ATOM_TYPE_RELATION, text[:600], base,
+                    instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
+                    exclude_created_by=("teacher",), neural_head=False,
+                )
+            if d is None or d.source != "store" or not d.verdict:
+                continue
+            # A taught `_keep` only short-circuits the model when store
+            # deflection is on -- that is the existing, opt-in optimisation
+            # (SOWSMITH_ATOM_TYPE_DEFLECT). A taught TYPE always applies: it is
+            # a judgment, not a shortcut.
+            if d.verdict == "_keep" and not _atom_type_deflect_enabled():
+                continue
+            if d.verdict != "_keep":
+                try:
+                    a.atom_type = AtomType(d.verdict)
+                except ValueError:
+                    continue
+            # Taught as what it already is: a judgment that the model should
+            # leave it, recorded so the line never reaches the batch below.
+            decided[id(a)] = d.verdict
+    except Exception:
+        return decided
+    return decided
+
+
+def _is_speech(atom: Any) -> bool:
+    """Was this atom minted from something somebody SAID -- a transcript
+    utterance -- rather than something somebody wrote? The transcript parser
+    stamps every utterance's locator with its speaker and utterance index and
+    keeps the speaker on the value; no other parser does."""
+    val = getattr(atom, "value", None)
+    if isinstance(val, dict) and val.get("speaker"):
+        return True
+    try:
+        for ref in getattr(atom, "source_refs", None) or []:
+            loc = getattr(ref, "locator", None) or {}
+            if isinstance(loc, dict) and ("utterance_index" in loc or loc.get("speaker")):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def classify_atoms(atoms: list[Any]) -> int:
     """Promote atoms from the v47 taxonomy where confident.
 
@@ -467,16 +598,29 @@ def classify_atoms(atoms: list[Any]) -> int:
         return 0
     if os.environ.get("SOWSMITH_TYPED_CLASSIFIER_DISABLE"):
         return 0
-    # Honour the global LLM kill-switch: this stage drives promotion via an
-    # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
-    # previously ignored the flag and spent ~46s/compile hitting a reachable
-    # but slow remote model even in "no-LLM" runs).
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
-        return 0
 
     promotable = [a for a in atoms if _atom_type_str(a) in _PROMOTABLE_FROM]
     if not promotable:
         return 0
+
+    # Taught corrections first. A PM correction (or a finished Deal Kit's
+    # answer) about text like this outranks any head or model guess -- the same
+    # precedence decide() gives the store. Without this the LLM typed atoms
+    # before any correction was read: on 000020 Binghamton (dev, compile
+    # e029470d) it promoted 20 of 21 lines, three of them to `task` although
+    # they were taught as `dependency` (the customer's remote team's work), and
+    # span admission only sees what the LLM left untyped. Store-only, no LLM;
+    # abstain leaves the atom alone; runs even with the LLM switched off.
+    taught = _apply_taught_types(promotable)
+    taught_promoted = sum(1 for v in taught.values() if v != "_keep")
+    promotable = [a for a in promotable if id(a) not in taught]
+
+    # Honour the global LLM kill-switch: this stage drives promotion via an
+    # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
+    # previously ignored the flag and spent ~46s/compile hitting a reachable
+    # but slow remote model even in "no-LLM" runs).
+    if os.environ.get("SOWSMITH_DISABLE_LLM") or not promotable:
+        return taught_promoted
 
     # Deterministic deflect: a table_row already readable as a contact by
     # contact_property_block does not need the LLM to guess at it.
@@ -569,7 +713,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # deflection and the LLM. This emits one structured event per call so a
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
-    _dfl = {"store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
+    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
             "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected,
             "marker": marker_deflected, "bare_identity": identity_deflected}
     _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
@@ -616,7 +760,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     if deflect:
         _t = _lap()
         try:
-            from app.core.decide import decide
+            from app.core.decide import DecisionScope, decide
             kept_by_store = 0
             survivors: list[Any] = []
             cands = _atom_type_candidates()
@@ -627,6 +771,9 @@ def classify_atoms(atoms: list[Any]) -> int:
                     cands,
                     instruction=_ATOM_TYPE_INSTRUCTION,
                     llm=False,
+                    # The teacher's own cache rows are deal-scoped; without the
+                    # deal they could never deflect.
+                    scope=DecisionScope(deal_id=str(getattr(a, "project_id", "") or "")),
                 )
                 if d.source == "store" and d.verdict == "_keep":
                     kept_by_store += 1
@@ -903,6 +1050,18 @@ def classify_atoms(atoms: list[Any]) -> int:
             if _is_hallucinated_physical_site(atom, new_value):
                 applied_verdict[atom_id] = "_keep"  # we kept the type
                 continue
+        # A task is written scope -- a request, a scope line, a task row. What
+        # somebody SAID on a call is evidence of intent, not a unit of work the
+        # Deal Kit prices: the written recap or request carries that. Live
+        # 000061 (2026-09-15): eight utterances -- "But I can check that during
+        # the site survey as well too", "I'll also include a site survey as
+        # well too" -- became tasks beside the one survey line the kit priced.
+        # Judged by provenance, not by wording; a PM's taught verdict on a
+        # spoken line still applies, because the store decides before this.
+        if new_type == "task" and _is_speech(atom):
+            _dfl["speech_not_task"] += 1
+            applied_verdict[atom_id] = "_keep"
+            continue
         try:
             from app.core.schemas import AtomType
             atom.atom_type = AtomType(new_type)
@@ -975,12 +1134,15 @@ def classify_atoms(atoms: list[Any]) -> int:
                     a = by_id.get(atom_id)
                     if a is None:
                         continue
+                    # Deal-scoped, as learn_from_teacher documents: a verdict
+                    # the model reached on this deal's wording deflects THIS
+                    # deal's re-runs. Global, it reached every other deal.
                     store.learn_from_teacher(
                         relation=_ATOM_TYPE_RELATION,
                         text=_atom_decide_text(a),
                         verdict=verdict,
                         confidence=0.9,
-                        scope=DecisionScope(),
+                        scope=DecisionScope(deal_id=str(getattr(a, "project_id", "") or "")),
                         instruction=_ATOM_TYPE_INSTRUCTION,
                     )
         except Exception:

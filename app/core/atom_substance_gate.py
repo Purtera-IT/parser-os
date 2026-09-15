@@ -101,7 +101,10 @@ _RELATION_RE = re.compile(
 )
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
-_PHONE_RE = re.compile(r"\b(?:\+?\d[\d().\-\s]{7,}\d)\b")
+# A dotted IPv4 address is not a phone number. Live 000020: the hardware
+# list "Medicine Shoppe 1517 SonicWall (192.168.133.50) firewall" matched this
+# pattern and was dropped as contact chrome.
+_PHONE_RE = re.compile(r"(?<![\d.])(?!\d{1,3}(?:\.\d{1,3}){3}(?!\d))\+?\d[\d().\-\s]{7,}\d\b")
 
 # a leading "Speaker Name [mm:ss]" transcript label to strip before the
 # substance test, so "Alex Rivera [03:05] Yeah." is judged on "Yeah.".

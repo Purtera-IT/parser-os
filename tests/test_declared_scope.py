@@ -135,6 +135,26 @@ class TestSiteCountGap:
                        "Work happens at one location downtown.")]
         assert declared_scope_questions(project_id="proj_1", atoms=atoms) == []
 
+    @pytest.mark.parametrize("text", [
+        # 000020 Binghamton: store numbers in front of a singular noun.
+        "Project: Consolidate the 1518 location tech into the existing 1517 subnet",
+        "Onsite work at the 4402 store before the 4403 site opens.",
+    ])
+    def test_number_before_singular_noun_is_a_name_not_a_count(self, text):
+        atoms = [_atom("s1", AtomType.deal_metadata,
+                       AuthorityClass.customer_current_authored, text)]
+        atoms.append(_site("p1", "vestal_ave"))
+        assert [q for q in declared_scope_questions(project_id="proj_1", atoms=atoms)
+                if q.value["declared_scope"]["kind"] == "site_count_gap"] == []
+
+    def test_plural_count_still_raises_beside_an_identifier(self):
+        atoms = [_atom("s1", AtomType.scope_item,
+                       AuthorityClass.customer_current_authored,
+                       "Store 1518 is first; the rollout covers 12 stores.")]
+        gap = [q for q in declared_scope_questions(project_id="proj_1", atoms=atoms)
+               if q.value["declared_scope"]["kind"] == "site_count_gap"]
+        assert len(gap) == 1 and "declare 12 locations" in gap[0].raw_text
+
     def test_word_and_digit_declarations_agree(self):
         base = _atom("d1", AtomType.deal_metadata,
                      AuthorityClass.quoted_old_email, _QUOTED_DECL)

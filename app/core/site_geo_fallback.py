@@ -25,6 +25,7 @@ from typing import Any
 
 from app.core.address_parse import (
     _CITY_STATE_ZIP_RE,
+    US_STATE_NAMES,
     US_STATES,
     US_STATES as _US_STATES,
     find_us_addresses_in_text,
@@ -41,6 +42,11 @@ from app.core.schemas import (
 )
 
 _MAX_FALLBACK_SITES = 8
+
+#: "Highland Park, MI" / "Highland Park, Michigan": a capitalised run, a comma, a state.
+_CITY_STATE_MENTION_RE = re.compile(
+    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,\s*([A-Z]{2}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b"
+)
 
 
 def _atom_type_str(atom: Any) -> str:
@@ -365,11 +371,17 @@ def enrich_site_geo(atoms: list[Any]) -> int:
         if val.get("city") and val.get("state") and val.get("zip"):
             return False
         m = _CITY_STATE_ZIP_RE.search(str(text))
-        if not m:
-            return False
-        city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
-        if state not in _US_STATES:
-            return False
+        if m:
+            city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
+            if state not in _US_STATES:
+                return False
+        else:
+            # "395A Pendant DR, Mississauga ON L5T 2W9": a Canadian site is a
+            # site nobody could route to until its province was read.
+            mc = _CITY_PROVINCE_POSTAL_RE.search(str(text))
+            if not mc:
+                return False
+            city, state, zipc = mc.group(1).strip(), mc.group(2).upper(), mc.group(3).upper()
         before = (val.get("city"), val.get("state"), val.get("zip"))
         val.setdefault("city", city)
         val.setdefault("state", state)
@@ -406,6 +418,84 @@ def enrich_site_geo(atoms: list[Any]) -> int:
             continue
         if _fill(next(iter(matched.values())), text):
             filled += 1
+
+    # Pass 2b — a "City, ST" / "City, State" mention anywhere in the deal whose
+    # city the site's own name already carries. Live 000061: the site was named
+    # "highland park warehouse office" and the email said "Highland Park, MI",
+    # but with no ZIP neither pass above could place it, so the Deal Kit got a
+    # site with no city or state. The place must exist in the reference data
+    # for that state, and the site must be named by exactly one such place.
+    wanting = [s for s in sites
+               if isinstance(getattr(s, "value", None), dict)
+               and not (s.value.get("city") and s.value.get("state"))]
+    if wanting:
+        from app.core.geo_reference import is_known_place as _known_place
+        from app.core.address_parse import state_code as _state_code
+
+        wanting_aliases = [
+            (_slug(str(alias)), id(s))
+            for s in wanting
+            for alias in (s.value.get("site_id"), s.value.get("id"), s.value.get("name"),
+                          s.value.get("facility_name"))
+            if alias and len(str(alias)) >= 4
+        ]
+        mentions: set[tuple[str, str]] = set()
+        for atom in atoms:
+            text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+            # Same rule as pass 2: a line that names two of the sites says
+            # nothing about which one the place belongs to.
+            hay = _slug(text)
+            if len({sid for alias, sid in wanting_aliases if alias and alias in hay}) >= 2:
+                continue
+            for m in _CITY_STATE_MENTION_RE.finditer(text):
+                st = _state_code(m.group(2))
+                if not st:
+                    continue
+                usps_code = m.group(2).strip().isupper() and len(m.group(2).strip()) == 2
+                words = m.group(1).split()
+                # The capitalised run before the comma can carry lead-in words
+                # ("Office In Highland Park"); the place is its longest real tail.
+                for k in range(len(words)):
+                    cand = " ".join(words[k:])
+                    known = _known_place(cand, st)
+                    # None means the reference could not be read (an installed
+                    # package without its data file). That must not reject a
+                    # place the author wrote with a USPS state code; a spelled
+                    # out state ("Michigan") is only trusted when checked.
+                    if known or (known is None and usps_code and k == 0):
+                        mentions.add((cand, st))
+                        break
+        # What this pass saw, in the compile log: which sites wanted a place,
+        # which "City, ST" mentions the deal carried, and whether the gazetteer
+        # answered. 000061 (2026-09-15) placed locally and not on the worker,
+        # and nothing said why.
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "site_geo mention pass: %d site(s) wanting a place %s; mentions %s; gazetteer %s",
+            len(wanting),
+            [str(s.value.get("name") or s.value.get("site_id") or "")[:40] for s in wanting][:6],
+            sorted(mentions)[:6],
+            "available" if _known_place("Springfield", "IL") is not None else "unavailable",
+        )
+        for s in wanting:
+            val = s.value
+            names = [_slug(str(a)) for a in (val.get("name"), val.get("facility_name"),
+                                              val.get("display_name"), val.get("site_id"))
+                     if a]
+            names += [_slug(str(a)) for a in (val.get("names") or []) if a]
+            hits = {(c, st) for c, st in mentions
+                    if _slug(c) and any(re.search(rf"(?:^|_){re.escape(_slug(c))}(?:_|$)", n) for n in names)}
+            places = {(_slug(c), st) for c, st in hits}
+            if len(places) != 1:
+                continue
+            city, st = sorted(hits)[0]
+            before = (val.get("city"), val.get("state"))
+            if not val.get("city"):
+                val["city"] = city
+            if not val.get("state"):
+                val["state"] = st
+            if (val.get("city"), val.get("state")) != before:
+                filled += 1
 
     # Pass 3 — the reference data closes what the text never stated.
     #
@@ -540,4 +630,465 @@ def geo_fallback_sites(
     return out
 
 
-__all__ = ["enrich_site_geo", "geo_fallback_sites", "suppress_vendor_sites"]
+# ── A place named in the documents is a site candidate ──────────────────────
+#
+# The extractors above mint sites from street addresses, site codes and
+# "X Building"-shaped names, and the ZIP fallback from "City, ST ZIP". A deal
+# whose sites are named only as "El Segundo, CA" in a list, "the Huntsville,
+# Alabama facility" in prose, or a Location column in a spreadsheet got none of
+# them (2026-09-15, untaught pool: 010283 named nine cities and got two,
+# 010270 named its one facility four times and got none, 010307 listed
+# thirteen locations in an inventory sheet and got none).
+#
+# Whether a named place is a job site is a judgment the lines around it
+# settle -- "Locations / Cities / El Segundo, CA" is a site list; "Heading to
+# Dallas, Texas" is travel; a signature's "Austin, TX" is a party's address.
+# So each candidate goes through decide() on relation `geo_mention_role`
+# (store first: what PMs and finished kits taught, deal then global; the
+# model only when the store abstains), and a confident job_site is minted as
+# an inferred, needs_review physical_site the PM can confirm.
+
+_MENTION_RELATION = "geo_mention_role"
+_MENTION_CANDIDATES = ["job_site", "mention_only"]
+_MENTION_INSTRUCTION = (
+    "A place named in a deal's documents, shown with the lines around it. Decide whether it is a "
+    "job site -- somewhere our technicians will work on this deal: a location on a list of sites, "
+    "the facility or office the work is for, the origin or destination equipment moves between -- "
+    "or only a mention: where someone is travelling, a party's address in a signature or "
+    "letterhead, a reference customer's city, a vendor's or reseller's office, a region named in "
+    "passing, or a place the documents say is out of scope, covered by someone else, or not part of "
+    "this work. If the lines do not say, answer unknown."
+)
+#: An inferred site is flagged needs_review; 0.8 from the model is enough to
+#: put it in front of the PM (the ZIP fallback mints at 0.5 with no judge).
+#: Canadian provinces and territories: a closed set, like the states. The US
+#: gazetteer knows nothing of them, so a "City, ON" is trusted on its code and
+#: a "City ON L5T 2W9" on its postal code.
+CA_PROVINCES: frozenset[str] = frozenset({"ON", "QC", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE", "YT", "NT", "NU"})
+CA_PROVINCE_NAMES: dict[str, str] = {
+    "ontario": "ON", "quebec": "QC", "québec": "QC", "british columbia": "BC", "alberta": "AB", "manitoba": "MB",
+    "saskatchewan": "SK", "nova scotia": "NS", "new brunswick": "NB", "newfoundland and labrador": "NL",
+    "newfoundland": "NL", "prince edward island": "PE", "yukon": "YT", "northwest territories": "NT", "nunavut": "NU",
+}
+#: "Mississauga ON L5T 2W9" / "Mississauga, ON L5T 2W9": city, province, postal code.
+_CITY_PROVINCE_POSTAL_RE = re.compile(
+    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,?\s+(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)\b"
+)
+_MENTION_MIN_CONF = 0.8
+#: A place named only in prose needs more than a listed one: live, two travel
+#: mentions minted at 0.8 that the same judge rejected offline.
+_PROSE_MIN_CONF = 0.85
+_MENTION_CONTEXT_NEIGHBOURS = 3
+#: A document naming this many places is judged once, as a list.
+_LIST_MIN = 3
+_LIST_INSTRUCTION = (
+    "A deal's document names several places, listed here with the lines around them. Decide "
+    "whether these are job sites -- a list of locations where our technicians will work on this "
+    "deal (a site list, a location column, the facilities in scope) -- or only mentions: cities "
+    "in a travel story, reference customers, a vendor's offices, regions named in passing. If the "
+    "list mixes both or the lines do not say, answer unknown."
+)
+#: "5200 Lankershim Blvd Ste 200 North Hollywood, CA": a street address with its
+#: city and state but no ZIP (the address parser wants the ZIP).
+_STREET_CITY_STATE_RE = re.compile(
+    r"\b(\d{1,6}\s+[A-Z][A-Za-z0-9.'\-]*(?:\s+[A-Z][A-Za-z0-9.'\-]*){0,4}?\s+"
+    r"(?:St|Street|Ave|Avenue|Blvd|Boulevard|Rd|Road|Dr|Drive|Pkwy|Parkway|Hwy|Highway|Way|Ln|Lane|Ct|Court|Pl|Place|Trl|Trail|Cir|Circle)\.?"
+    r"(?:\s+(?:Ste|Suite|Unit|Bldg|Building|Fl|Floor|#)\.?\s*[A-Za-z0-9\-]+)?)"
+    r"\s*,?\s+([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,\s*([A-Z]{2})\b"
+)
+
+#: "Los Angeles CA" / "Kent WA": a capitalised run and a state code with no comma.
+#: Only trusted when the gazetteer knows the place -- "Meraki MS" is a switch.
+_CITY_STATE_NOCOMMA_RE = re.compile(
+    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s+([A-Z]{2})\b(?![\-\d])"
+)
+#: Atom kinds whose text names a party, not a place of work.
+_MENTION_SKIP_TYPES = frozenset({"stakeholder", "physical_site", "deal_metadata"})
+
+
+import logging as _logging
+
+_mention_log = _logging.getLogger(__name__)
+
+
+def _mention_max() -> int:
+    try:
+        return max(0, int(os.environ.get("SOWSMITH_GEO_MENTION_MAX", "40")))
+    except Exception:
+        return 40
+
+
+def _mention_llm_budget() -> int:
+    try:
+        return max(0, int(os.environ.get("SOWSMITH_GEO_MENTION_LLM_MAX", "40")))
+    except Exception:
+        return 40
+
+
+def _state_code(token: str) -> str | None:
+    t = str(token or "").strip()
+    if len(t) == 2:
+        u = t.upper()
+        return u if (u in _US_STATES or u in CA_PROVINCES) else None
+    return US_STATE_NAMES.get(t.lower()) or CA_PROVINCE_NAMES.get(t.lower())
+
+
+def _artifact_of(atom: Any) -> str:
+    v = getattr(atom, "artifact_id", None) or getattr(atom, "source_artifact_id", None)
+    if v:
+        return str(v)
+    for ref in getattr(atom, "source_refs", None) or []:
+        a = getattr(ref, "artifact_id", None) or (ref.get("artifact_id") if isinstance(ref, dict) else None)
+        if a:
+            return str(a)
+    return ""
+
+
+def _text_of(atom: Any) -> str:
+    return " ".join(str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "").split())
+
+
+def _mention_candidates(atoms: list[Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """Distinct places named in the documents that no site carries yet.
+
+    Key (city, state) -- or (street address, state) for an address whose city
+    already has a site, since a move has an origin and a destination in one
+    town. Value: city, state, street, and every mention (atom index, as written)."""
+    try:
+        from app.core.geo_reference import is_known_place
+    except Exception:  # pragma: no cover
+        def is_known_place(city, state=None):  # type: ignore[misc]
+            return None
+    existing: set[tuple[str, str]] = set()
+    for a in _physical_site_atoms(atoms):
+        v = getattr(a, "value", None) or {}
+        if isinstance(v, dict):
+            c, st = str(v.get("city") or "").strip().lower(), str(v.get("state") or "").strip().upper()
+            if c:
+                existing.add((c, st))
+            for nm in [v.get("name"), v.get("facility_name"), v.get("site_id")] + list(v.get("names") or []):
+                if nm:
+                    existing.add((str(nm).strip().lower(), ""))
+    def _street_key(street: str) -> str:
+        m = re.match(r"\s*(\d{1,6})\s+([A-Za-z0-9.'\-]+)", str(street or ""))
+        return f"{m.group(1)}{m.group(2).lower()}" if m else ""
+
+    existing_streets = set()
+    for a in _physical_site_atoms(atoms):
+        v = getattr(a, "value", None) or {}
+        if isinstance(v, dict):
+            for field in ("street_address", "address", "name", "source_context"):
+                for m in re.finditer(r"\d{1,6}\s+[A-Za-z0-9.'\-]+", str(v.get(field) or "")):
+                    existing_streets.add(_street_key(m.group(0)))
+            for nm in v.get("names") or []:
+                existing_streets.add(_street_key(str(nm)))
+        for m in re.finditer(r"\d{1,6}\s+[A-Za-z0-9.'\-]+", _text_of(a)):
+            existing_streets.add(_street_key(m.group(0)))
+    existing_streets.discard("")
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _offer(i: int, city: str, state: str, written: str, street: str = "") -> None:
+        label = (f"{city}, {state}" if state else city).lower()
+        key = (street.lower(), state) if street else (city.lower(), state)
+        if not street and ((city.lower(), state) in existing or (city.lower(), "") in existing or (label, "") in existing):
+            return
+        if street and _street_key(street) in existing_streets:
+            return
+        entry = found.setdefault(key, {"city": city, "state": state, "street": street, "mentions": []})
+        if len(entry["mentions"]) < 6:
+            entry["mentions"].append((i, written))
+
+    for i, atom in enumerate(atoms):
+        kind = _atom_type_str(atom)
+        if kind in _MENTION_SKIP_TYPES:
+            continue
+        text = _text_of(atom)
+        if not text:
+            continue
+        val = getattr(atom, "value", None) or {}
+        # A spreadsheet column the parser already typed as a location.
+        if kind == "entity" and isinstance(val, dict) and str(val.get("entity_type") or "") == "location":
+            name = str(val.get("name") or "").strip()
+            if name and not name.isdigit():
+                _offer(i, name, "", text)
+            continue
+        # A street address in a city that already has a site is a second site
+        # there (010294: origin 5161 Lankershim, destination 5200 Lankershim).
+        try:
+            for parsed in find_us_addresses_in_text(text):
+                if parsed.street_address and parsed.city and parsed.state in _US_STATES:
+                    _offer(i, parsed.city, parsed.state, f"{parsed.street_address}, {parsed.city}, {parsed.state}", street=parsed.street_address)
+        except Exception:
+            pass
+        for m in _STREET_CITY_STATE_RE.finditer(text):
+            street, city, st = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+            state = _state_code(st)
+            if not state or is_known_place(city, state) is False:
+                continue
+            _offer(i, city, state, m.group(0), street=street)
+        for m in _CITY_PROVINCE_POSTAL_RE.finditer(text):
+            _offer(i, m.group(1).strip(), m.group(2).strip().upper(), m.group(0))
+        for m in _CITY_STATE_MENTION_RE.finditer(text):
+            city, st = m.group(1).strip(), m.group(2).strip()
+            state = _state_code(st)
+            if not state:
+                continue
+            if state in CA_PROVINCES:
+                if len(st) == 2 or st.lower() in CA_PROVINCE_NAMES:
+                    _offer(i, city, state, m.group(0))
+                continue
+            known = is_known_place(city, state)
+            if known is False or (known is None and len(st) != 2):
+                continue
+            _offer(i, city, state, m.group(0))
+        for m in _CITY_STATE_NOCOMMA_RE.finditer(text):
+            city, st = m.group(1).strip(), m.group(2).strip()
+            state = _state_code(st)
+            if not state or state in CA_PROVINCES or is_known_place(city, state) is not True:
+                continue
+            _offer(i, city, state, m.group(0))
+    return found
+
+
+def _mention_context(atoms: list[Any], i: int, *, mentions: list[tuple[int, str]] | None = None,
+                     siblings: list[str] | None = None) -> str:
+    """What the judge reads: the document, every line that names the place,
+    the other places the same document names (a list of nine cities is a site
+    list), and the lines around the first mention (a heading, a row)."""
+    here = atoms[i]
+    art = _artifact_of(here)
+    fn = ""
+    for ref in getattr(here, "source_refs", None) or []:
+        fn = str(getattr(ref, "filename", None) or (ref.get("filename") if isinstance(ref, dict) else "") or "")
+        if fn:
+            break
+    fn = fn or str(getattr(here, "source_filename", "") or "")
+    lines: list[str] = []
+    lo, hi = max(0, i - _MENTION_CONTEXT_NEIGHBOURS), min(len(atoms), i + _MENTION_CONTEXT_NEIGHBOURS + 1)
+    for j in range(lo, hi):
+        a = atoms[j]
+        if j != i and art and _artifact_of(a) != art:
+            continue
+        t = _text_of(a)
+        if t:
+            lines.append(("> " if j == i else "  ") + t[:200])
+    head = f"document: {fn[:100]}\n" if fn else ""
+    # The table a row came from: its column header says what the rows are.
+    cols = None
+    for j in range(max(0, i - 40), min(len(atoms), i + 40)):
+        a = atoms[j]
+        if art and _artifact_of(a) != art:
+            continue
+        v = getattr(a, "value", None) or {}
+        if isinstance(v, dict) and isinstance(v.get("_columns"), list) and v["_columns"]:
+            cols = [str(c) for c in v["_columns"] if str(c).strip()][:10]
+            break
+    if cols:
+        head += "table columns: " + " | ".join(cols) + "\n"
+    # The document's headings and the lines that speak of sites, wherever they sit.
+    doc_lines = [_text_of(a) for a in atoms if art and _artifact_of(a) == art]
+    headings = [t for t in doc_lines if t and len(t.split()) <= 4 and not _CITY_STATE_MENTION_RE.search(t)][:8]
+    about = [t for t in doc_lines if re.search(r"\b(site|sites|location|locations|facility|facilities)\b", t, re.I) and len(t) > 20][:4]
+    if headings:
+        head += "headings in this document: " + " / ".join(h[:40] for h in headings) + "\n"
+    if about:
+        head += "the document says: " + " | ".join(t[:160] for t in about) + "\n"
+    if siblings:
+        head += f"other places this document names: {'; '.join(siblings[:12])}\n"
+    if mentions and len(mentions) > 1:
+        # Every line that names the place, with equal weight: live, the first
+        # mention of Longview was a question in a transcript and the judge
+        # never weighed the note that excludes it from scope.
+        seen: list[str] = []
+        for j, _w in mentions[:6]:
+            t = _text_of(atoms[j])[:220] if 0 <= j < len(atoms) else ""
+            if t and t not in seen:
+                seen.append(t)
+        return head + f"every line that names it ({len(mentions)}):\n" + "\n".join("  * " + t for t in seen)
+    return head + "lines around it:\n" + "\n".join(lines)
+
+
+def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str, Any]] | None = None) -> list[EvidenceAtom]:
+    """Mint inferred ``physical_site`` atoms for places the documents name
+    that no site carries yet, when the store or the model calls them job
+    sites. Never raises; returns the new atoms (not yet appended)."""
+    if not atoms:
+        return []
+    cands = _mention_candidates(atoms)
+    if not cands:
+        return []
+    try:
+        from app.core.decide import DecisionScope, decide
+    except Exception:  # pragma: no cover
+        return []
+    scope = DecisionScope(deal_id=str(project_id or ""))
+    llm_budget = _mention_llm_budget()
+    cap = _mention_max()
+    out: list[EvidenceAtom] = []
+    # Which places each document names, so a list reads as a list.
+    by_doc: dict[str, list[str]] = {}
+    for entry in cands.values():
+        for j, _w in entry["mentions"]:
+            lab = f"{entry['city']}, {entry['state']}" if entry["state"] else entry["city"]
+            lst = by_doc.setdefault(_artifact_of(atoms[j]), [])
+            if lab not in lst:
+                lst.append(lab)
+    def _ask(label: str, instruction: str, context: str):
+        nonlocal llm_budget
+        d = decide(_MENTION_RELATION, label, list(_MENTION_CANDIDATES), instruction=instruction,
+                   context=context[:1200], scope=scope, exclude_created_by=("teacher",), llm=False)
+        if getattr(d, "verdict", None) is None and llm_budget > 0:
+            llm_budget -= 1
+            d = decide(_MENTION_RELATION, label, list(_MENTION_CANDIDATES), instruction=instruction,
+                       context=context[:1200], scope=scope, exclude_created_by=("teacher",))
+        return d
+
+    # A document that names several places is judged once, as the list it
+    # is: nine cities under "Locations / Cities" are a site list, and twelve
+    # rows of a Location column are the sites the inventory covers. Judged one
+    # by one the same list came back job_site 0.80, abstain, job_site 0.80 ...
+    def _list_shaped(doc: str) -> bool:
+        """Places on their own short lines, or in rows of a table: a list.
+        Three places inside the sentences of a recap are three stories."""
+        short = total = 0
+        for entry in cands.values():
+            for j, _w in entry["mentions"]:
+                if _artifact_of(atoms[j]) != doc:
+                    continue
+                total += 1
+                a = atoms[j]
+                kind = _atom_type_str(a)
+                v = getattr(a, "value", None) or {}
+                if kind in ("entity", "raw_table_row") or (isinstance(v, dict) and "_columns" in v) or len(_text_of(a).split()) <= 6:
+                    short += 1
+        return total > 0 and short * 3 >= total * 2
+
+    list_verdict: dict[str, tuple[str | None, float, str, str | None]] = {}
+    for doc, labels in by_doc.items():
+        if len(labels) < _LIST_MIN or not _list_shaped(doc):
+            continue
+        first = next((e for e in cands.values() if _artifact_of(atoms[e["mentions"][0][0]]) == doc), None)
+        if first is None:
+            continue
+        i0 = first["mentions"][0][0]
+        context = _mention_context(atoms, i0, mentions=None, siblings=labels)
+        label = f"{len(labels)} places: " + "; ".join(labels[:12])
+        try:
+            d = _ask(label, _LIST_INSTRUCTION, context)
+        except Exception:
+            continue
+        list_verdict[doc] = (getattr(d, "verdict", None), float(getattr(d, "confidence", 0.0) or 0.0),
+                             str(getattr(d, "source", "") or ""), getattr(d, "correction_id", None))
+        try:
+            _mention_log.info("site_geo_mention list %s -> %s (%s %.2f)", label, list_verdict[doc][0], list_verdict[doc][2], list_verdict[doc][1])
+        except Exception:
+            pass
+        if trace is not None:
+            trace.append({"label": label, "verdict": list_verdict[doc][0], "confidence": round(list_verdict[doc][1], 3),
+                          "source": list_verdict[doc][2], "mentions": len(labels), "context": context[:400]})
+
+    for key, entry in cands.items():
+        if len(out) >= cap:
+            break
+        city, state, street = entry["city"], entry["state"], entry["street"]
+        i, written = entry["mentions"][0]
+        label = (f"{street}, {city}, {state}" if street else f"{city}, {state}") if state else city
+        doc = _artifact_of(atoms[i])
+        siblings = [x for x in by_doc.get(doc, []) if x != label and x != (f"{city}, {state}" if state else city)]
+        context = _mention_context(atoms, i, mentions=entry["mentions"], siblings=siblings)
+        # What the roster gates already know, store-only: "MDF" in a Location
+        # column is a network closet, not a site (seeded site_candidate_role).
+        try:
+            from app.core.site_role_seed import ROLE_CANDIDATES as _RC, ROLE_RELATION as _RR
+            r0 = decide(_RR, city if state else label, list(_RC), instruction="A value pulled from a site list. Its role.",
+                        context="Deciding whether this value is itself a site.", scope=scope, llm=False)
+            if getattr(r0, "verdict", None) in ("site_attribute", "not_a_site"):
+                if trace is not None:
+                    trace.append({"label": label, "verdict": f"role:{r0.verdict}", "confidence": round(float(getattr(r0, "confidence", 0) or 0), 3),
+                                  "source": "store", "mentions": len(entry["mentions"]), "context": ""})
+                continue
+        except Exception:
+            pass
+        lv = list_verdict.get(doc)
+        if lv and lv[0] is not None:
+            verdict, conf, source, corr = lv
+            d = None
+        else:
+            try:
+                d = _ask(label, _MENTION_INSTRUCTION, context)
+            except Exception:
+                continue
+            verdict = getattr(d, "verdict", None)
+            conf = float(getattr(d, "confidence", 0.0) or 0.0)
+            source = str(getattr(d, "source", "") or "")
+            corr = getattr(d, "correction_id", None)
+        if trace is not None and d is not None:
+            trace.append({"label": label, "verdict": verdict, "confidence": round(conf, 3), "source": source,
+                          "mentions": len(entry["mentions"]), "context": context[:400]})
+        try:  # the console trace ops reads (Log Analytics); the compile note is the PM's
+            _mention_log.info("site_geo_mention %s -> %s (%s %.2f, %s) x%d", label, verdict, source, conf,
+                              "list" if (lv and lv[0] is not None) else "place", len(entry["mentions"]))
+        except Exception:
+            pass
+        bar = _MENTION_MIN_CONF if (lv and lv[0] is not None) else _PROSE_MIN_CONF
+        if verdict != "job_site" or not (source == "store" or conf >= bar):
+            continue
+        atom = atoms[i]
+        artifact_id = _artifact_of(atom)
+        slug = _slug(f"{street}_{city}_{state}" if street else (f"{city}_{state}" if state else city))
+        atom_id = stable_id("atm", artifact_id, "physical_site", f"mention_{slug}")
+        src_refs = list(getattr(atom, "source_refs", None) or []) or [
+            SourceRef(
+                id=stable_id("src", atom_id),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.txt,
+                filename=artifact_id or "geo_mention",
+                locator={"extraction": "site_geo_mention"},
+                extraction_method="site_geo_mention",
+                parser_version="site_geo_mention_v1",
+            )
+        ]
+        out.append(
+            EvidenceAtom(
+                id=atom_id,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.physical_site,
+                raw_text=label,
+                normalized_text=label.lower(),
+                value={
+                    "kind": "physical_site",
+                    "id": slug,
+                    "site_id": slug,
+                    "name": label,
+                    "names": [label, city],
+                    "street_address": street or None,
+                    "address": street or None,
+                    "city": city,
+                    "state": state or None,
+                    "zip": None,
+                    "inferred": True,
+                    "source_context": _text_of(atom)[:600],
+                    "mention": written,
+                    "mentions": len(entry["mentions"]),
+                    "geo_mention_source": source,
+                    "geo_mention_confidence": round(conf, 3),
+                    "geo_mention_correction_id": corr,
+                    "geo_mention_judged_as": "list" if (lv and lv[0] is not None) else "place",
+                },
+                entity_keys=[f"site:{slug}"],
+                source_refs=src_refs,
+                receipts=[],
+                authority_class=AuthorityClass.machine_extractor,
+                confidence=0.5,
+                confidence_raw=0.5,
+                calibrated_confidence=0.5,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["geo_mention_site"],
+                parser_version="site_geo_mention_v1",
+            )
+        )
+    return out
+
+
+__all__ = ["enrich_site_geo", "geo_fallback_sites", "geo_mention_sites", "suppress_vendor_sites"]

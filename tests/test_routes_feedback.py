@@ -396,6 +396,19 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # feeds the SOW. A word list only knows the words somebody wrote down; a
     # head learns the KIND from one judgment and recognises the next by meaning.
     "sheet": "sheet_role",
+    # Whether an address is a job site or somebody's office / signature.
+    "site_role": "physical_site",
+    # How long a unit of work takes, taught from a finished Deal Kit.
+    "hours": "task_hours",
+    # Quote line (parent) or a step inside one (child).
+    "task_tier": "task_tier",
+    # Whether a document is about the job this deal is named for.
+    "document_job": "document_job",
+    "bom_owner": "bom_owner",
+    # The commercial shape finished kits gave a request like this one.
+    "commercial": "commercial_terms",
+    # A place the documents name: a job site, or only a mention.
+    "geo_mention": "geo_mention_role",
 }
 
 

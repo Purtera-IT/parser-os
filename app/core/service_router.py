@@ -31,7 +31,7 @@ import re
 import zlib
 from typing import Any
 
-SCOPE_SUMMARY_VERSION = 2  # bump when the head-facing representation changes
+SCOPE_SUMMARY_VERSION = 3  # bump when the head-facing representation changes
 
 _CAP = 40  # atoms sampled for the scope summary — matches _label_service_types._scope_summary
 
@@ -114,7 +114,7 @@ def _load_head():
     return _HEAD
 
 
-def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
+def _scope_summary(atoms: list[Any], documents: list[dict], deal_name: str = "") -> str:
     """Rebuild the scope-summary representation the head is scored on.
 
     FILES line + a consistent 40-atom sample of the scope bodies.
@@ -158,6 +158,14 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
     scope_atoms = [a for a in atoms if _atype(a) not in _NOISE_TYPES]
     if len(scope_atoms) < 5:  # guard: thin scope -> fall back to all atoms
         scope_atoms = list(atoms)
+    # v3: a transcript utterance is a line of conversation, not a description of
+    # the work. On 010162 (490 of 960 atoms) the sample led with "How you doing,
+    # buddy?" and "Amen." while the call's own recap note sat beside it. Keep
+    # utterances only when the deal has too little other scope to describe it.
+    spoken = [a for a in scope_atoms if _atype(a) == "raw_utterance"]
+    written = [a for a in scope_atoms if _atype(a) != "raw_utterance"]
+    if spoken and len(written) >= _CAP // 2:
+        scope_atoms = written
     bodies = [t for a in scope_atoms if (t := _text(a))]
     if len(bodies) > _CAP:
         # Consistent sampling: keep the _CAP atoms with the smallest stable
@@ -189,7 +197,12 @@ def _scope_summary(atoms: list[Any], documents: list[dict]) -> str:
             key=lambda i: (zlib.crc32(bodies[i].encode("utf-8", "replace")), i),
         )
         bodies = [bodies[i] for i in sorted(keyed[:_CAP])]
-    return f"FILES: {names}\nSCOPE ATOMS:\n" + "\n".join(f"- {b[:160]}" for b in bodies)
+    # v3: the deal's own name leads. It is the seller's one-line statement of
+    # the work ("CDW- Sodexo SD-WAN Program"), and on a deal whose documents
+    # carry a second, separate job it is the one input that says which job the
+    # deal is for.
+    deal_line = f"DEAL: {str(deal_name).strip()[:200]}\n" if str(deal_name or "").strip() else ""
+    return f"{deal_line}FILES: {names}\nSCOPE ATOMS:\n" + "\n".join(f"- {b[:160]}" for b in bodies)
 
 
 def _conf_ceiling() -> float:
@@ -285,7 +298,7 @@ def _shadow(
 
         if summary is None:
             try:
-                summary = _scope_summary(atoms, documents)
+                summary = _scope_summary(atoms, documents, deal_name=deal_name)
             except Exception:
                 summary = ""
         record = router_shadow.record(
@@ -336,6 +349,7 @@ def build_service_routing(
     base_observed: bool = True,
     deal_id: str = "",
     project_id: str = "",
+    deal_name: str = "",
 ) -> dict[str, Any]:
     """Classify the deal scope into its primary service pack, or abstain.
 
@@ -358,7 +372,7 @@ def build_service_routing(
         # Omitting it here would mean every correction a PM ever taps arrives
         # with no input attached.
         try:
-            summary = _scope_summary(atoms, documents)
+            summary = _scope_summary(atoms, documents, deal_name=deal_name)
         except Exception:  # noqa: BLE001
             summary = ""
         shadow = _shadow(atoms, documents, base=base, deal_id=deal_id,
@@ -381,7 +395,7 @@ def build_service_routing(
     # is unobservable and no accuracy number means anything. Bounded by
     # construction: _CAP atoms x 160 chars + a 200-char FILES line, ~6.6 KB.
     try:
-        summary = _scope_summary(atoms, documents)
+        summary = _scope_summary(atoms, documents, deal_name=deal_name)
     except Exception:
         summary = ""
     prov = {

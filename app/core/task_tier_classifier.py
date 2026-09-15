@@ -73,7 +73,34 @@ def _bullet_depth(atom: Any, val: dict[str, Any]) -> int | None:
     return None
 
 
-def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None) -> tuple[str, bool]:
+TASK_TIER_RELATION = "task_tier"
+
+
+def _taught_tier(label: str, deal_id: str = "") -> str | None:
+    """``parent`` / ``child`` from the feedback store, or None (abstain / no store).
+
+    ``deal_id`` is the deal the line belongs to: the store searches that
+    deal's lessons first, then pack, then global. Without it only global
+    lessons could ever fire (the missing-scope bug of 2026-09-15, PR #139).
+    """
+    try:
+        from app.core.decide import DecisionScope, decide, get_store
+
+        if get_store() is None:
+            return None
+        d = decide(
+            TASK_TIER_RELATION, label[:600], ["parent", "child"],
+            instruction="Is this line a unit of work a quote prices (parent) or a step inside one (child)?",
+            llm=False, scope=DecisionScope(deal_id=str(deal_id or "")),
+        )
+    except Exception:
+        return None
+    if d is None or d.source != "store" or d.verdict not in ("parent", "child"):
+        return None
+    return d.verdict
+
+
+def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None, deal_id: str = "") -> tuple[str, bool]:
     """Return ``(task_tier, is_quote_line)`` for a task-shaped label."""
     structured = structured or {}
     label = (text or "").strip()
@@ -86,6 +113,16 @@ def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None) -> t
         if is_quote is None:
             is_quote = explicit == "parent"
         return explicit, bool(is_quote)
+
+    # Taught first. Whether a line is a quote line or a step inside one is a
+    # judgment finished Deal Kits already made: 000020 Binghamton priced
+    # "Confirm QS1 connectivity between workstations and host" as its own
+    # task, and the word list below (a leading "confirm") called it a child
+    # step, so Deal Kit never proposed it. A confident taught answer wins; the
+    # heuristics are the cold start for everything nobody taught yet.
+    taught = _taught_tier(label, deal_id)
+    if taught is not None:
+        return taught, taught == "parent"
 
     kind = str(structured.get("kind") or "")
     depth = structured.get("depth")
@@ -135,7 +172,7 @@ def _bullet_depth_from_structured(structured: dict[str, Any]) -> int | None:
 
 def infer_task_tier_for_atom(atom: Any) -> tuple[str, bool]:
     val = dict(getattr(atom, "value", None) or {})
-    return infer_task_tier(text=_atom_text(atom), structured=val)
+    return infer_task_tier(text=_atom_text(atom), structured=val, deal_id=str(getattr(atom, "project_id", "") or ""))
 
 
 def _step_parent_label(text: str) -> str | None:
@@ -158,7 +195,7 @@ def classify_task_tiers(atoms: list[Any]) -> tuple[list[Any], int]:
 
         text = _atom_text(atom)
         val = dict(getattr(atom, "value", None) or {})
-        tier, is_quote = infer_task_tier(text=text, structured=val)
+        tier, is_quote = infer_task_tier(text=text, structured=val, deal_id=str(getattr(atom, "project_id", "") or ""))
 
         if tier == "parent":
             last_parent_id = str(getattr(atom, "id", "") or "")
@@ -183,7 +220,128 @@ def classify_task_tiers(atoms: list[Any]) -> tuple[list[Any], int]:
         if prev_tier != tier or prev_quote != is_quote:
             changed += 1
 
+    # A child needs a parent. A document whose task lines are all children
+    # proposes nothing: 010283's note listed five service lines ("Cable /
+    # device deinstallation", "Site surveys", ...) under a heading, the tier
+    # pass read them as steps, and the Deal Kit got no work at all. When a
+    # document has two or more task lines and not one parent, the lines at
+    # its shallowest depth are the units of work it names.
+    changed += promote_orphan_children(atoms)
     return atoms, changed
+
+
+def _artifact_key(atom: Any) -> str:
+    v = getattr(atom, "artifact_id", None) or getattr(atom, "source_artifact_id", None)
+    if v:
+        return str(v)
+    for ref in getattr(atom, "source_refs", None) or []:
+        a = getattr(ref, "artifact_id", None) or (ref.get("artifact_id") if isinstance(ref, dict) else None)
+        if a:
+            return str(a)
+    return ""
+
+
+def promote_orphan_children(atoms: list[Any]) -> int:
+    """Promote the shallowest child task lines of a document that has no
+    parent task line at all (and at least two lines). Returns how many."""
+    by_doc: dict[str, list[Any]] = {}
+    for atom in atoms:
+        if _atom_type_str(atom) not in _TIER_TYPES:
+            continue
+        val = getattr(atom, "value", None) or {}
+        if isinstance(val, dict) and val.get("folded_into"):
+            continue
+        by_doc.setdefault(_artifact_key(atom), []).append(atom)
+    promoted = 0
+    for doc, lines in by_doc.items():
+        if not doc or len(lines) < 2:
+            continue
+        tiers = [str((getattr(a, "value", None) or {}).get("task_tier") or "") for a in lines]
+        if any(t == "parent" for t in tiers):
+            continue
+        depths = [_bullet_depth(a, getattr(a, "value", None) or {}) for a in lines]
+        known = [d for d in depths if d is not None]
+        shallowest = min(known) if known else None
+        for a, d in zip(lines, depths):
+            if shallowest is not None and d is not None and d != shallowest:
+                continue
+            val = dict(getattr(a, "value", None) or {})
+            val["task_tier"] = "parent"
+            val["is_quote_line"] = True
+            val["tier_promoted"] = "orphan"
+            val.pop("parent_task_id", None)
+            val.pop("parent_task_hint", None)
+            a.value = val
+            flags = [f for f in (getattr(a, "review_flags", None) or []) if f != "task_tier_child"]
+            if "task_tier_parent" not in flags:
+                flags.append("task_tier_parent")
+            a.review_flags = flags
+            promoted += 1
+    return promoted
+
+
+_FUNCTION_WORDS = frozenset({"a", "an", "the", "of", "for", "to", "and", "in", "at", "on", "with", "is", "are", "be"})
+
+
+def _identity_tokens(text: str) -> frozenset[str]:
+    return frozenset(t for t in re.split(r"[^a-z0-9]+", text.lower()) if t and t not in _FUNCTION_WORDS)
+
+
+def fold_task_mentions(atoms: list[Any]) -> int:
+    """One unit of work stated more than once is one quote line.
+
+    Live 010043 (compile fc2db7e, 2026-09-15): "3 Verkada cameras" in the
+    email, "3 cameras-Verkada" in a note, "3 Verkada cameras intsall." in the
+    note's title -- three parent tasks, two of them priced from the learned
+    5.33 h per camera, so the Deal Kit was offered 32 hours for 16 hours of
+    work. The three name the same thing: the words of one are the words of
+    another, with at most a word added. That is the whole test -- token sets
+    in a subset relation after grammar words are dropped -- so "Update QS1 Host
+    PC static IP for the 1517 subnet" and "Update any hardcoded printer IPs
+    from 1518 to the 1517 subnet" stay two tasks, and a survey mentioned five
+    different ways stays five (that is the store's to teach).
+
+    The fullest mention stays the parent; the others become its children,
+    linked by ``parent_task_id`` and marked ``folded_into``, and are no longer
+    quote lines, so hours are learned once. Returns how many were folded.
+    """
+    parents = [
+        a for a in atoms
+        if _atom_type_str(a) == "task"
+        and (getattr(a, "value", None) or {}).get("task_tier") == "parent"
+    ]
+    toks = {id(a): _identity_tokens(_atom_text(a)) for a in parents}
+    # Fullest first, so a shorter mention folds into the richest statement.
+    ordered = sorted(parents, key=lambda a: (-len(toks[id(a)]), str(getattr(a, "id", ""))))
+    folded = 0
+    kept: list[Any] = []
+    for a in ordered:
+        t = toks[id(a)]
+        if len(t) < 2:
+            kept.append(a)
+            continue
+        into = next((k for k in kept if len(toks[id(k)]) >= 2 and (t <= toks[id(k)] or toks[id(k)] <= t)), None)
+        if into is None:
+            kept.append(a)
+            continue
+        val = dict(getattr(a, "value", None) or {})
+        val["task_tier"] = "child"
+        val["is_quote_line"] = False
+        val["parent_task_id"] = str(getattr(into, "id", "") or "")
+        val["parent_task_hint"] = _atom_text(into)
+        val["folded_into"] = str(getattr(into, "id", "") or "")
+        a.value = val
+        flags = [f for f in (getattr(a, "review_flags", None) or []) if f != "task_tier_parent"]
+        if "task_tier_child" not in flags:
+            flags.append("task_tier_child")
+        if "task_mention_folded" not in flags:
+            flags.append("task_mention_folded")
+        try:
+            a.review_flags = flags
+        except Exception:
+            pass
+        folded += 1
+    return folded
 
 
 def is_quote_line_task_atom(atom: Any) -> bool:
@@ -199,6 +357,7 @@ def is_quote_line_task_atom(atom: Any) -> bool:
 
 __all__ = [
     "classify_task_tiers",
+    "fold_task_mentions",
     "infer_task_tier",
     "infer_task_tier_for_atom",
     "is_quote_line_task_atom",

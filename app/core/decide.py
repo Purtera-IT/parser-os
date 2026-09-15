@@ -189,6 +189,8 @@ def decide(
     model: str | None = None,
     timeout: int | None = None,
     llm: bool = True,
+    exclude_created_by: tuple[str, ...] = (),
+    neural_head: bool = True,
 ) -> Decision:
     """Resolve the role/type of ``text`` from ``candidates``.
 
@@ -208,6 +210,12 @@ def decide(
         relations: structured grounding signals (e.g. ``{"owner": ...}``).
         model: optional LLM override for a hard discrimination.
         timeout: optional per-call LLM timeout.
+        exclude_created_by: creators whose corrections may NOT decide here.
+            ``("teacher",)`` asks for a judgment -- what a person or a finished
+            Deal Kit taught -- and ignores the model's self-taught cache rows.
+        neural_head: ``False`` resolves by exemplar similarity only, never by
+            the relation's neural head -- for a caller asking what was taught
+            about text like this, not what the head generalises.
         llm: when ``False``, skip the LLM tier entirely — only a confident store
             hit can decide, otherwise return the safe fallback (``verdict=None``).
             This is the store-fronts-regex seam: a caller that already owns a
@@ -232,6 +240,9 @@ def decide(
     store = _STORE
     if store is not None:
         try:
+            kwargs = {"exclude_created_by": tuple(exclude_created_by)} if exclude_created_by else {}
+            if not neural_head:
+                kwargs["neural_head"] = False
             hit = store.resolve(
                 relation=relation,
                 text=text,
@@ -240,6 +251,7 @@ def decide(
                 scope=scope,
                 instruction=instruction,
                 relations=relations,
+                **kwargs,
             )
         except Exception:  # pragma: no cover - store must never break decide()
             hit = None

@@ -61,7 +61,17 @@ _NUM = r"(?:[0-9]{1,4}|" + "|".join(_WORD_NUMBERS) + r")"
 #: "the ten locations", "10 sites", "across 12 schools", "all five branches".
 _DECLARED_SITES_RE = re.compile(
     r"\b(?:the|all|across|at|for(?:\s+each\s+of(?:\s+the)?)?)?\s*"
-    r"(" + _NUM + r")\s+(?:" + _SITE_NOUNS + r")\b",
+    r"(" + _NUM + r")\s+(" + _SITE_NOUNS + r")\b",
+    re.IGNORECASE,
+)
+
+#: A count of two or more takes a plural noun: "10 locations", "twelve schools".
+#: A number in front of a SINGULAR noun is a name, not a count -- "consolidate
+#: the 1518 location tech into the existing 1517 subnet" is store 1518, and
+#: 000020 Binghamton asked the PM for a list of 1,518 site addresses because of
+#: it. Grammatical number, not a list of which numbers look like IDs.
+_PLURAL_SITE_NOUN_RE = re.compile(
+    r"(?:locations|sites|schools|stores|branches|buildings|facilities|campuses|offices)$",
     re.IGNORECASE,
 )
 
@@ -102,6 +112,8 @@ def _declared_site_count(
         for m in _DECLARED_SITES_RE.finditer(text):
             n = _as_int(m.group(1))
             if n is None or n < 2:
+                continue
+            if not _PLURAL_SITE_NOUN_RE.search(m.group(2)):
                 continue
             confirmed = 1 if atom.authority_class in _CONFIRMED_AUTHORITIES else 0
             cand = (confirmed, n, -idx, atom)
