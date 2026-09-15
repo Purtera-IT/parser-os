@@ -99,6 +99,13 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # of every fabricated name in the corpus.
     #
     # Candidates are SiteFacilityDecision's labels in site_facility_head.py.
+    # Whether an address is a place where work happens.
+    # site_geo_fallback.suppress_vendor_sites asks decide("physical_site") for
+    # job_site vs vendor_or_billing_address, but no head reached that relation,
+    # so only the seeded PurTera address could ever be taught. 000036 San Fran
+    # TV mount published the CDW rep's email-signature address as a second site.
+    "site_role": HeadSpec("physical_site", "entity", "Site role",
+                          candidates=("job_site", "vendor_or_billing_address")),
     "facility": HeadSpec(
         "site_facility_label", "entity", "Site name",
         candidates=("city_office", "keep_facility", "keep_name"),

@@ -319,3 +319,47 @@ def test_one_line_form_note_still_splits_inline_fields(tmp_path: Path) -> None:
     atoms = HubspotNoteParser().parse_artifact("deal-1", "art_form", p)
     fields = {(a.value or {}).get("field_name") for a in atoms if (a.value or {}).get("kind") == "note_field"}
     assert {"Duration", "Scope of work"} <= fields
+
+
+_SF_ASK = (
+    "Hi Trent, Hope all is well! My customer, Checkout LLC, is renovating their office in San Fransico. "
+    "Most of their IT team is remote, so they are looking for a service partner to install their new "
+    "Samsung 65' display. Would PurTeraIT be able to do this?"
+)
+_SF_ADDRESS_AND_SIGNATURE = [
+    "Adress: CHECKOUT SAN FRANCISCO",
+    "30 HOTALING PL FL 3",
+    "SAN FRANCISCO, CA 94111-2201",
+    "Sarah Halpern",
+    "Account Manager | NYC Financial Services | CDW",
+    "72 Madison Avenue | New York, NY 10016",
+    "Direct: 212.894.0736 | Toll Free Number: 877.842.7372",
+]
+_SF_HEADERS = "HubSpot Note: Hi Trent,\nHubSpot Note ID: 108135392133\nDate: 2026-04-16T18:12:09.247Z\nAuthor: Trent Torrence\n\n"
+
+
+def _sf_atoms(tmp_path: Path, body: str):
+    p = tmp_path / "000036-hs-note-108135392133-Hi Trent_.txt"
+    p.write_text(_SF_HEADERS + body, encoding="utf-8")
+    return HubspotNoteParser().parse_artifact("deal-1", "art_sf", p)
+
+
+def _assert_sf(atoms) -> None:
+    # The request before the first label is the only statement of the work; it must survive.
+    assert any("install their new Samsung 65' display" in a.raw_text
+               and a.atom_type == AtomType.scope_item for a in atoms)
+    sites = [a for a in atoms if a.atom_type == AtomType.physical_site]
+    assert len(sites) == 1
+    v = sites[0].value
+    assert (v["city"].upper(), v["state"], v["zip"]) == ("SAN FRANCISCO", "CA", "94111")
+    assert "Halpern" not in sites[0].raw_text and "New York" not in sites[0].raw_text
+
+
+def test_request_before_labels_and_signature_after_address_line_broken(tmp_path: Path) -> None:
+    # 000036 San Fran TV mount, the copy with the author's line breaks.
+    _assert_sf(_sf_atoms(tmp_path, "\n".join(["Hi Trent,", _SF_ASK.removeprefix("Hi Trent, ")] + _SF_ADDRESS_AND_SIGNATURE)))
+
+
+def test_request_before_labels_and_signature_after_address_flattened(tmp_path: Path) -> None:
+    # The same note as mirrored flattened onto one line.
+    _assert_sf(_sf_atoms(tmp_path, " ".join([_SF_ASK] + _SF_ADDRESS_AND_SIGNATURE)))
