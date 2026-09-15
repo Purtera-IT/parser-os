@@ -8,6 +8,7 @@ the work line and whose verdict carries the hours:
 
     hours=0.75                          fixed hours for that piece of work
     hours=3;per=cable drop              hours per unit; scaled by the quantity
+    hours=16;per=camera;qty=3           the kit's own numbers: 16 h for 3 cameras
     hours=4;role=L1 EUC                 optionally the role that did it
 
 At compile time every task atom asks the store (nearest taught exemplar,
@@ -17,6 +18,11 @@ a number written next to the taught unit ("39 AP locations" for "per AP
 location"), matched on the unit's own words -- the unit comes from the kit, so
 there is no list of nouns here. A per-unit match with no quantity in the text
 records the rate and no total, rather than guessing a count.
+
+A per-unit lesson carries the kit's numbers, not a rounded rate. 010043's kit
+priced 16 h for 3 cameras; taught as ``hours=5.33;per=camera`` the compile
+stamped 15.99 h on the same three cameras. Taught as ``hours=16;per=camera;
+qty=3`` the rate is 16/3 at full precision and the total is the kit's 16.
 """
 
 from __future__ import annotations
@@ -30,10 +36,12 @@ _NUM_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])")
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 
-def encode_hours_verdict(hours: float, *, per: str = "", role: str = "") -> str:
+def encode_hours_verdict(hours: float, *, per: str = "", qty: float | None = None, role: str = "") -> str:
     parts = [f"hours={float(hours):g}"]
     if per.strip():
         parts.append(f"per={per.strip()}")
+        if qty is not None and float(qty) > 0:
+            parts.append(f"qty={float(qty):g}")
     if role.strip():
         parts.append(f"role={role.strip()}")
     return ";".join(parts)
@@ -51,6 +59,15 @@ def parse_hours_verdict(verdict: str) -> dict[str, Any] | None:
         return None
     if out["hours"] < 0:
         return None
+    # The quantity the taught hours covered; only meaningful with a unit.
+    try:
+        qty = float(out.get("qty", ""))
+    except ValueError:
+        qty = 0.0
+    if qty > 0 and out.get("per"):
+        out["qty"] = qty
+    else:
+        out.pop("qty", None)
     return out
 
 
@@ -84,6 +101,14 @@ def quantity_for_unit(text: str, unit: str) -> float | None:
             except ValueError:
                 return None
     return None
+
+
+def _plural(unit: str, n: float) -> str:
+    """The unit as it reads after a count: "3 cameras", "1 cable drop"."""
+    u = unit.strip()
+    if n == 1 or not u or u.endswith("s"):
+        return u
+    return u + "s"
 
 
 def _atom_type(atom: Any) -> str:
@@ -140,11 +165,17 @@ def estimate_task_hours(atoms: list[Any], *, store: Any = None) -> int:
         per = str(parsed.get("per") or "")
         rate = parsed["hours"]
         if per:
+            taught_qty = parsed.get("qty")
+            # The kit's numbers divide at full precision; only the display rounds.
+            if taught_qty:
+                rate = parsed["hours"] / float(taught_qty)
             qty = quantity_for_unit(text, per)
-            value["hours_per_unit"] = rate
+            value["hours_per_unit"] = round(rate, 4)
             value["hours_unit"] = per
             value["estimated_hours"] = round(rate * qty, 2) if qty is not None else None
-            value["hours_basis"] = f"{rate:g} h per {per}" + (f" x {qty:g}" if qty is not None else " (quantity not stated)")
+            taught = f"{parsed['hours']:g} h for {taught_qty:g} {_plural(per, taught_qty)} = " if taught_qty else ""
+            shown = f"{rate:.4g}" if taught_qty else f"{rate:g}"
+            value["hours_basis"] = taught + f"{shown} h per {per}" + (f" x {qty:g}" if qty is not None else " (quantity not stated)")
         else:
             value["estimated_hours"] = rate
             value["hours_basis"] = f"{rate:g} h"

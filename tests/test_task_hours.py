@@ -93,3 +93,22 @@ def test_no_store_no_op():
         assert estimate_task_hours([_task("Install 39 new CAT6 drops")]) == 0
     finally:
         decide_mod.set_store(prev)
+
+
+def test_a_per_unit_lesson_carries_the_kits_numbers_not_a_rounded_rate(store):
+    """010043: 16 h for 3 cameras. Taught as 5.33/camera the compile said 15.99."""
+    assert encode_hours_verdict(16, per="camera", qty=3) == "hours=16;per=camera;qty=3"
+    assert parse_hours_verdict("hours=16;per=camera;qty=3") == {"hours": 16.0, "per": "camera", "qty": 3.0}
+    store({"3 Verkada cameras install": "hours=16;per=camera;qty=3"})
+    atoms = [_task("3 Verkada cameras install")]
+    assert estimate_task_hours(atoms) == 1
+    assert atoms[0].value["estimated_hours"] == 16.0
+    assert atoms[0].value["hours_per_unit"] == 5.3333
+    assert atoms[0].value["hours_basis"] == "16 h for 3 cameras = 5.333 h per camera x 3"
+
+
+def test_a_quantity_without_a_unit_or_below_one_is_ignored():
+    assert parse_hours_verdict("hours=16;qty=3") == {"hours": 16.0}
+    assert parse_hours_verdict("hours=16;per=camera;qty=0") == {"hours": 16.0, "per": "camera"}
+    assert parse_hours_verdict("hours=16;per=camera;qty=x") == {"hours": 16.0, "per": "camera"}
+    assert encode_hours_verdict(16, per="camera", qty=0) == "hours=16;per=camera"
