@@ -398,6 +398,8 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "sheet": "sheet_role",
     # Whether an address is a job site or somebody's office / signature.
     "site_role": "physical_site",
+    # Quote line (parent) or a step inside one (child).
+    "task_tier": "task_tier",
 }
 
 

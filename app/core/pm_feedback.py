@@ -104,6 +104,10 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # job_site vs vendor_or_billing_address, but no head reached that relation,
     # so only the seeded PurTera address could ever be taught. 000036 San Fran
     # TV mount published the CDW rep's email-signature address as a second site.
+    # Whether a task line is a unit of work a quote prices (parent) or a step
+    # inside one (child). task_tier_classifier asks this before its word list.
+    "task_tier": HeadSpec("task_tier", "atom", "Quote line or step",
+                          candidates=("parent", "child")),
     "site_role": HeadSpec("physical_site", "entity", "Site role",
                           candidates=("job_site", "vendor_or_billing_address")),
     "facility": HeadSpec(
