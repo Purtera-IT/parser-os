@@ -58,7 +58,9 @@ def _context(atom: Any) -> str:
                 bits.append(f"{k}: {str(x)[:200]}")
         if v.get("author_affiliation"):
             bits.append(f"written by: {v['author_affiliation']}")
-    fn = str(getattr(atom, "source_filename", "") or "")
+    from app.core.document_job_scope import _doc_filename
+
+    fn = _doc_filename(atom, "")  # the file is on the source ref, not an attribute
     if fn:
         bits.append(f"document: {fn[:120]}")
     return "\n".join(bits)
