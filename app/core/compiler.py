@@ -1423,6 +1423,26 @@ def compile_project(
                         f"INFO: site_geo_fallback inferred {added_geo} physical_site atom(s) "
                         f"from City/State/ZIP (no confirmed site found)"
                     )
+                # 1b) A place the documents name that no site carries yet -- a
+                #    "City, ST" on a list, a facility in prose, a Location column
+                #    -- judged with the lines around it (relation
+                #    geo_mention_role: store first, model when it abstains).
+                try:
+                    from app.core.site_geo_fallback import geo_mention_sites as _geo_mentions
+
+                    mention_atoms = _geo_mentions(atoms, project_id=resolved_project_id)
+                except Exception as _exc:  # pragma: no cover - never break the stage
+                    mention_atoms = []
+                    warnings.append(f"WARNING: site_geo_mention failed: {type(_exc).__name__}: {_exc}")
+                if mention_atoms:
+                    atoms.extend(mention_atoms)
+                    added_geo += len(mention_atoms)
+                    for _m in mention_atoms:
+                        _mv = getattr(_m, "value", {}) or {}
+                        warnings.append(
+                            f"INFO: site_geo_mention {_mv.get('name')} ({_mv.get('geo_mention_source')} "
+                            f"{float(_mv.get('geo_mention_confidence') or 0):.2f}): {str(_mv.get('mention') or '')[:60]}"
+                        )
                 # 2) Demote any physical_site that is actually the vendor's own
                 #    letterhead / billing address (semantic role gate, LLM-backed;
                 #    a no-op when the LLM is unreachable, only one site exists, or

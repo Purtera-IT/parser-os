@@ -123,6 +123,10 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # days. Taught by finished kits on the request line; nothing in the deal's
     # documents states it (commercial_terms).
     "commercial": HeadSpec("commercial_terms", "atom", "Commercial shape (billing, PM, travel)", mode="extract"),
+    # A place the documents name: a job site, or only a mention (travel, a
+    # signature, a reference customer). site_geo_fallback.geo_mention_sites.
+    "geo_mention": HeadSpec("geo_mention_role", "atom", "Named place: job site or mention",
+                            candidates=("job_site", "mention_only")),
     # Whether a task line is a unit of work a quote prices (parent) or a step
     # inside one (child). task_tier_classifier asks this before its word list.
     "task_tier": HeadSpec("task_tier", "atom", "Quote line or step",
