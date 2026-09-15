@@ -317,13 +317,22 @@ def _first_lines(atoms: list[Any], skip: set[str], limit: int) -> list[str]:
     return lines
 
 
-def bundle_text(title: str, docs: list[list[Any]], common: set[str] | None = None) -> str:
-    """The conversation as the judge reads it: its subject and its first lines,
-    taken in turn from each document in it so a long message does not crowd out
-    the file that arrived with it."""
+_OPENER_LINES = 4
+
+
+def bundle_lines(docs: list[list[Any]], common: set[str] | None = None) -> list[str]:
+    """The conversation's first lines: the opening document's first few, since
+    a thread's opener carries the ask (000061: the customer's "we have
+    identified a need for wireless access point height adjustments"), then one
+    line from each document in turn so a long message does not crowd out the
+    file that arrived with it. ``docs`` are in the order they were written."""
     skip = common or set()
     per_doc = [_first_lines(d, skip, _LINES) for d in docs]
     lines: list[str] = []
+    if per_doc:
+        for l in per_doc[0][:_OPENER_LINES]:
+            if l not in lines:
+                lines.append(l)
     i = 0
     while len(lines) < _LINES and any(i < len(p) for p in per_doc):
         for p in per_doc:
@@ -332,7 +341,12 @@ def bundle_text(title: str, docs: list[list[Any]], common: set[str] | None = Non
                 if len(lines) >= _LINES:
                     break
         i += 1
-    return f"DOCUMENT: {title}\n" + "\n".join(f"- {l}" for l in lines)
+    return lines
+
+
+def bundle_text(title: str, docs: list[list[Any]], common: set[str] | None = None) -> str:
+    """The conversation as the judge reads it: its subject and its first lines."""
+    return f"DOCUMENT: {title}\n" + "\n".join(f"- {l}" for l in bundle_lines(docs, common))
 
 
 def document_text(atoms: list[Any], filename: str, common: set[str] | None = None) -> str:
@@ -371,15 +385,30 @@ def judge_documents(
     dropped_ids: set[int] = set()
     verdicts: list[dict[str, Any]] = []
     common = common_lines(atoms)
-    bundles = bundle_documents(by_doc, index if index is not None else manifest_index(project_dir))
+    index = index if index is not None else manifest_index(project_dir)
+    bundles = bundle_documents(by_doc, index)
     model, timeout, floor = judge_model(), judge_timeout(), min_confidence()
+    idx = index if index is not None else manifest_index(project_dir)
     for b in bundles.values():
-        docs = [by_doc[k] for k in b["docs"]]
-        filenames = [str(getattr(d[0], "source_filename", "") or k) for d, k in zip(docs, b["docs"])]
-        text = f"DEAL: {deal_name.strip()}\n{bundle_text(b['title'], docs, common)}"
+        keys = list(b["docs"])
+        # In the order they were written, so the opener's lines lead.
+        keys.sort(key=lambda k: _when(str((idx.get(str(getattr(by_doc[k][0], "source_filename", "") or k)) or {}).get("authored_at") or "")) or datetime.max.replace(tzinfo=timezone.utc))
+        docs = [by_doc[k] for k in keys]
+        filenames = [str(getattr(d[0], "source_filename", "") or k) for d, k in zip(docs, keys)]
+        # The model reads TEXT (first 600 chars) and Context (first 1200): the
+        # deal and the conversation's subject go in the text -- that is what a
+        # taught verdict is matched on -- and the conversation's lines go in
+        # the context. Live 000061 (compile 3f79093a): with everything in the
+        # text, the judge saw the subject and four greetings and set the
+        # customer's own quote-consultation thread aside as another job.
+        text = f"DEAL: {deal_name.strip()}\nDOCUMENT: {b['title']}"
+        context = "\n".join(f"- {l}" for l in bundle_lines(docs, common))
         try:
-            d = decide(RELATION, text[:4000], CANDIDATES, instruction=INSTRUCTION, scope=scope,
-                       model=model, timeout=timeout)
+            # Judgments only: a person's or a Deal Kit's verdict decides; the
+            # model's own cached verdicts never do, since one wrong other_job
+            # would then remove a whole thread on every later compile.
+            d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                       scope=scope, model=model, timeout=timeout, exclude_created_by=("teacher",))
         except Exception:
             d = None
         verdict = getattr(d, "verdict", None) or "this_deal"
@@ -420,5 +449,5 @@ def verdict_note(v: dict[str, Any]) -> str:
 
 
 __all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines",
-           "thread_key", "manifest_index", "bundle_documents", "bundle_text", "document_text",
+           "thread_key", "manifest_index", "bundle_documents", "bundle_lines", "bundle_text", "document_text",
            "judge_documents", "verdict_note", "judge_model", "judge_timeout", "min_confidence"]

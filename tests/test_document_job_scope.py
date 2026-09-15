@@ -135,7 +135,7 @@ def _judge_recording(monkeypatch, verdict_for):
     asked: list[dict] = []
 
     def _clf(text, candidates, *, instruction, context="", timeout=None, model=None):
-        asked.append({"text": text, "model": model, "timeout": timeout})
+        asked.append({"text": text, "context": context, "model": model, "timeout": timeout})
         for needle, (verdict, conf) in verdict_for.items():
             if needle in text:
                 return (verdict, conf)
@@ -166,7 +166,10 @@ def test_one_thread_is_judged_once_whatever_number_someone_typed_in_front(no_llm
     assert len(asked) == 1 and len(verdicts) == 1
     assert sorted(verdicts[0]["filenames"]) == ["art_a.eml", "art_b.eml", "art_c.eml"]
     assert "DOCUMENT: 010198 Fw: POS Installation 8/2" in asked[0]["text"]
-    assert "Yes, we can hit that date!" in asked[0]["text"] and "kitchen printer" in asked[0]["text"]
+    # The model reads the conversation's lines as context; the text it is
+    # asked about -- and a taught verdict is matched on -- is the deal and the subject.
+    assert "Yes, we can hit that date!" in asked[0]["context"] and "kitchen printer" in asked[0]["context"]
+    assert "kitchen printer" not in asked[0]["text"]
     assert dropped == [] and len(kept) == 3
 
 
@@ -187,7 +190,7 @@ def test_a_file_joins_the_message_that_carried_it_and_shares_its_verdict(no_llm,
     assert len(asked) == 2  # the SD-WAN mail, and the smart-hands conversation with its file
     v = next(v for v in verdicts if v["verdict"] == "other_job")
     assert v["links"] == {"010162-hs-email-113968718225.eml": "thread", "Delta Close Down.pdf": "attachment"}
-    assert "EvD Kiosk Counter" in next(a["text"] for a in asked if "Smart Hands" in a["text"])
+    assert "EvD Kiosk Counter" in next(a["context"] for a in asked if "Smart Hands" in a["text"])
     assert {a.source_artifact_id for a in dropped} == {"art_mail", "art_pdf"}
     assert [a.source_artifact_id for a in kept] == ["art_sdwan", "art_sdwan"]
 
@@ -213,13 +216,15 @@ def test_a_mirrored_file_beside_one_message_with_attachments_arrived_with_it():
     assert bundle_documents(by_doc, index)["art_pdf"]["links"] == {"art_pdf": "alone"}
 
 
-def test_the_conversation_text_takes_lines_from_each_document_in_turn():
+def test_the_conversation_text_leads_with_the_opener_then_takes_each_document_in_turn():
     mail = _doc("m", *[f"message line {i}" for i in range(20)], filename="m.eml", subject="RE: Smart Hands")
     pdf = _doc("p", "Count: 5 | EvD Kiosk Counter", "Count: 2 | Digi Scales", filename="p.pdf")
     text = bundle_text("RE: Smart Hands", [mail, pdf])
     lines = text.split("\n")[1:]
-    assert lines[0] == "- message line 0" and lines[1] == "- Count: 5 | EvD Kiosk Counter"
-    assert lines[2] == "- message line 1" and lines[3] == "- Count: 2 | Digi Scales"
+    # The opener's first four lines carry the ask; then one line per document in turn.
+    assert lines[:4] == [f"- message line {i}" for i in range(4)]
+    assert lines[4] == "- Count: 5 | EvD Kiosk Counter" and lines[5] == "- Count: 2 | Digi Scales"
+    assert lines[6] == "- message line 4"
     assert len(lines) == 14
 
 
@@ -252,3 +257,23 @@ def test_the_floor_is_a_setting_and_a_taught_verdict_ignores_it(no_llm, monkeypa
     monkeypatch.setenv("SOWSMITH_DOCUMENT_JOB_MIN_CONF", "0.8")
     kept, dropped, verdicts = judge_documents(SDWAN + KIOSK, deal_name=DEAL)
     assert len(dropped) == 2
+
+
+def test_the_judge_asks_for_judgments_only_and_reads_documents_in_written_order(no_llm, monkeypatch):
+    seen = {}
+
+    def _decide(relation, text, candidates, **kw):
+        seen.update(kw); seen["text"] = text
+        return None
+
+    import app.core.decide as decide_mod_
+    monkeypatch.setattr(decide_mod_, "decide", _decide)
+    later = _doc("art_b", "Yes, we can hit that date!", filename="b.eml", subject="Re: POS Installation 8/2")
+    opener = _doc("art_a", "We will be setting just 1 Square register and 1 kitchen printer.",
+                  filename="a.eml", subject="POS Installation 8/2")
+    index = {"b.eml": {"subject": "Re: POS Installation 8/2", "attachment_ids": [], "external_id": "", "authored_at": "2026-08-07T16:33:23Z", "source": "email"},
+             "a.eml": {"subject": "POS Installation 8/2", "attachment_ids": [], "external_id": "", "authored_at": "2026-08-06T15:49:00Z", "source": "email"}}
+    judge_documents(later + opener, deal_name="010198 - Square POS Install Bridgewave", index=index)
+    assert seen["exclude_created_by"] == ("teacher",)
+    assert seen["context"].startswith("- We will be setting just 1 Square register")
+    assert seen["text"] == "DEAL: 010198 - Square POS Install Bridgewave\nDOCUMENT: Re: POS Installation 8/2"
