@@ -58,3 +58,24 @@ def test_a_longer_spelling_of_the_same_name_still_merges():
         "loc_601_gurley_st_johnakin_b": [_site("Johnakin Middle School", "601 Gurley St")],
     }
     assert len(_merge_grouped_by_location_buckets(grouped)) == 1
+
+
+def test_a_field_listing_two_streets_shares_either_street():
+    """010043: the CDW order confirmation's bill-to and ship-to columns landed in
+    one address field, "90 FIELDSTONE CT; 6125 TYVOLA CENTRE DR". The joined
+    string matched neither street, so the street veto kept it apart from the
+    note's "6125 Tyvola Centre Drive" and the brief showed two Charlotte sites
+    for one building."""
+    grouped = {
+        "charlotte_nc_28217": [_site("Charlotte (NC)", "6125 Tyvola Centre Drive", "Charlotte", "NC", "28217")],
+        "6125_tyvola_centre_dr": [_site("Charlotte", "90 FIELDSTONE CT; 6125 TYVOLA CENTRE DR", "Charlotte", "NC", "28217")],
+    }
+    assert len(_merge_grouped_by_location_buckets(grouped)) == 1
+
+
+def test_a_two_street_field_does_not_merge_sites_on_neither_street():
+    grouped = {
+        "loc_601_gurley_st_johnakin": [_site("Johnakin Middle School", "601 Gurley St")],
+        "loc_joined": [_site("Johnakin", "10 Other Rd; 22 Elsewhere Ave")],
+    }
+    assert len(_merge_grouped_by_location_buckets(grouped)) == 2

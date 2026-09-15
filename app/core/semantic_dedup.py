@@ -756,9 +756,16 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
             raw = str(val.get("street_address") or val.get("address") or "").strip()
             if not raw:
                 continue
-            norm = normalize_address(raw)
-            if norm:
-                streets.add(norm)
+            # One field can list several streets: an order confirmation's
+            # bill-to and ship-to columns land as "90 FIELDSTONE CT; 6125
+            # TYVOLA CENTRE DR" (010043). Each street is its own identity
+            # evidence, so the site shares a street with any group that names
+            # either of them.
+            parts = [p for p in re.split(r"\s*[;|]\s*", raw) if p.strip()]
+            for part in parts if len(parts) > 1 else [raw]:
+                norm = normalize_address(part)
+                if norm:
+                    streets.add(norm)
         if streets:
             street_keys[canon] = streets
 
