@@ -139,13 +139,33 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
         "fields": ["phase_id", "name", "start", "end", "owner", "exit_criteria"],
     },
     "task": {
-        # A Deal Kit prices units of work, and most deals state theirs in a
-        # sentence, not a table: "install and setup a Lantronix (or 2)",
-        # "3 Verkada cameras install", "Reset Ubiquiti gateway and switch for
-        # the new subnet". Described as a table row only, the model never
-        # returned task for a request written in prose (holdout 010095,
-        # 2026-09-15), so nothing reached the Deal Kit.
-        "desc": "A unit of work we are asked to perform or will perform on the job: a customer's request line ('install and set up two devices at the site'), a scope bullet describing work, or a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Not a fact about the site, a quantity alone, a schedule statement, or the customer's own responsibilities.",
+        # A Deal Kit prices billable units of work, and most deals state
+        # theirs in a sentence, not a table: "install and setup a Lantronix
+        # (or 2)", "3 Verkada cameras install", "please quote a technician
+        # onsite for 2-3 hours". Described as a table row only, the model
+        # never returned task for a request written in prose (holdout 010095,
+        # 2026-09-15). Described as "a scope bullet describing work" it
+        # returned task for anything near the work -- on 000061 the
+        # classifier typed 29 recap bullets and call remarks as tasks beside
+        # the one survey line the kit priced (compile 9a6aacfc). Measured on
+        # the seven training deals (type_harness.py, gpt-4.1-mini): this
+        # wording keeps every kit line, and cuts 000061 to 17, 010043 to 1,
+        # 010162 to 5; the rest of the boundary is the store's and the
+        # provenance rule below (speech is not a task).
+        "desc": (
+            "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. "
+            "It is written as the customer's request for our work or for a technician's time ('install "
+            "and set up two devices at the site', 'looking for a partner to install their new display', "
+            "'please quote a technician onsite for 2-3 hours to get the register and printer running'), "
+            "as a statement of what will be set up or installed on the job ('we will be setting 1 register "
+            "and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the "
+            "site survey'), or as a row from a detailed-task table (task_id + site + phase + description + "
+            "owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, "
+            "onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party "
+            "will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to "
+            "check something, a question about the site, a call summary of what was agreed, a description of "
+            "the site as it is, or a quantity or date alone is not a task: _keep."
+        ),
         "fields": ["task_id", "site", "phase", "name", "owner", "start", "due", "dependency", "status"],
     },
     "deliverable": {
@@ -506,6 +526,24 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
     return decided
 
 
+def _is_speech(atom: Any) -> bool:
+    """Was this atom minted from something somebody SAID -- a transcript
+    utterance -- rather than something somebody wrote? The transcript parser
+    stamps every utterance's locator with its speaker and utterance index and
+    keeps the speaker on the value; no other parser does."""
+    val = getattr(atom, "value", None)
+    if isinstance(val, dict) and val.get("speaker"):
+        return True
+    try:
+        for ref in getattr(atom, "source_refs", None) or []:
+            loc = getattr(ref, "locator", None) or {}
+            if isinstance(loc, dict) and ("utterance_index" in loc or loc.get("speaker")):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def classify_atoms(atoms: list[Any]) -> int:
     """Promote atoms from the v47 taxonomy where confident.
 
@@ -635,7 +673,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # deflection and the LLM. This emits one structured event per call so a
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
-    _dfl = {"store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
+    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
             "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected,
             "marker": marker_deflected, "bare_identity": identity_deflected}
     _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
@@ -969,6 +1007,18 @@ def classify_atoms(atoms: list[Any]) -> int:
             if _is_hallucinated_physical_site(atom, new_value):
                 applied_verdict[atom_id] = "_keep"  # we kept the type
                 continue
+        # A task is written scope -- a request, a scope line, a task row. What
+        # somebody SAID on a call is evidence of intent, not a unit of work the
+        # Deal Kit prices: the written recap or request carries that. Live
+        # 000061 (2026-09-15): eight utterances -- "But I can check that during
+        # the site survey as well too", "I'll also include a site survey as
+        # well too" -- became tasks beside the one survey line the kit priced.
+        # Judged by provenance, not by wording; a PM's taught verdict on a
+        # spoken line still applies, because the store decides before this.
+        if new_type == "task" and _is_speech(atom):
+            _dfl["speech_not_task"] += 1
+            applied_verdict[atom_id] = "_keep"
+            continue
         try:
             from app.core.schemas import AtomType
             atom.atom_type = AtomType(new_type)
