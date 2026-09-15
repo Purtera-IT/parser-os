@@ -1530,3 +1530,19 @@ def test_cover_page_rows_are_chrome_whatever_the_typer_called_them():
     atoms = [_atom(AtomType.scope_item, r) for r in rows] + [_atom(AtomType.scope_item, "Install 4 Yealink handsets at the Atlanta HQ before cutover.")]
     kept, dropped = drop_contact_chrome(atoms)
     assert len(dropped) == 4 and len(kept) == 1
+
+
+def test_work_lines_with_trade_terms_are_readable():
+    """Live 000020 (2026-09-15): onsite work lines were dropped as OCR debris
+    because trade compounds ("subnet", "hardcoded") and abbreviation plurals
+    ("IPs") are not dictionary words, and short function words sat in the
+    whole-line denominator."""
+    from app.core.text_quality import is_unreadable, readability
+
+    for t in [
+        "Reset Ubiquiti gateway and switch for the new subnet",
+        "Update any hardcoded printer IPs from 1518 to the 1517 subnet",
+        "Update/configure settings in SonicWall, Meraki, and/or Ubiquiti (subnet, ISP, mapping, etc.)",
+        "Update QS1 Host PC static IP for the 1517 subnet",
+    ]:
+        assert not is_unreadable(t), (t, readability(t))

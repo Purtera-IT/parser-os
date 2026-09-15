@@ -54,7 +54,7 @@ def _shape_ok(tok: str) -> bool:
     return not (len(tok) >= 6 and vowels / len(tok) > 0.7)
 
 
-def _is_word(tok: str) -> bool:
+def _is_word(tok: str, _compound: bool = True) -> bool:
     core = tok.strip("'’-").lower()
     words = _words()
     if len(core) < 3:
@@ -76,9 +76,23 @@ def _is_word(tok: str) -> bool:
         parts = [p for p in core.split("-") if p]
         if len(parts) > 1 and all(p in words or len(p) < 3 for p in parts):
             return True
+        # A closed compound reads as its halves: "subnet", "hardcoded",
+        # "firewall". Live 000020 (2026-09-15): "Reset Ubiquiti gateway and
+        # switch for the new subnet" and "Update any hardcoded printer IPs from
+        # 1518 to the 1517 subnet" were dropped as OCR debris because the two
+        # compounds are not in the wordlist. Debris does not split cleanly into
+        # two real words of three or more letters, and it is split only once.
+        if _compound and len(core) >= 6:
+            for i in range(3, len(core) - 2):
+                if core[:i] in words and _is_word(core[i:], _compound=False):
+                    return True
         return False
     return _shape_ok(core)
 
+
+_ABBREV_PLURAL_RE = re.compile(r"[A-Z]{2,6}s")
+#: A capital inside a word ("SonicWall", "ServiceNow") is the shape of a product name.
+_CAMEL_RE = re.compile(r"[A-Z][a-z]+(?:[A-Z][a-z]*)+")
 
 _NAME_ALLOWANCE = 2  # capitalised non-words a line may carry as names before they count
 
@@ -99,11 +113,15 @@ def _judged(text: str) -> list[str]:
     for t in _TOKEN_RE.findall(_plain(text)):
         core = t.strip("'’-")
         if len(core) < 3:
+            # A two-letter lowercase token that is not one of the short words
+            # worth believing ("ae", "ot", "ia") is what OCR debris is made of.
+            if len(core) == 2 and core.islower() and core not in _SHORT_WORDS:
+                lower.append(t)
             continue
         if core[0].islower():
             lower.append(t)
-        elif core.isupper():
-            continue  # SOW, PSOW, CDW: abbreviation
+        elif core.isupper() or _ABBREV_PLURAL_RE.fullmatch(core) or _CAMEL_RE.fullmatch(core):
+            continue  # SOW, PSOW, CDW, IPs, SonicWall: abbreviation or product name
         elif not _is_word(t):
             caps_unknown.append(t)
     # One or two capitalised non-words are names; three or more are debris and
@@ -164,8 +182,8 @@ def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) ->
 
         def _known_strict(t: str) -> bool:
             core = t.strip("'’-")
-            if core.isupper() and 2 <= len(core) <= 6:
-                return True  # SOW, PSOW, CDW, TEAMS: abbreviations are language
+            if (core.isupper() and 2 <= len(core) <= 6) or _ABBREV_PLURAL_RE.fullmatch(core):
+                return True  # SOW, PSOW, CDW, TEAMS, IPs: abbreviations are language
             core = core.lower()
             if words:
                 return core in words or (len(core) >= 3 and _is_word(t))
@@ -176,7 +194,11 @@ def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) ->
         # Evidence AGAINST: tokens of three or more letters that are not.
         known = sum(1 for t in all_toks if len(t.strip("'’-")) >= 4 and _known_strict(t))
         unknown = sum(1 for t in all_toks if not _known_strict(t))
-        if unknown >= 2 and known / len(all_toks) < 0.35:
+        # Weigh the evidence for against the evidence against. Short words that
+        # ARE words ("and", "for", "the", "new") prove nothing either way, so
+        # they must not sit in the denominator: counting them made an ordinary
+        # work line with two trade terms score 3/9 and be dropped as debris.
+        if unknown >= 2 and known / (known + unknown) < 0.35:
             return True
     # A line whose capitalised tokens are mostly not words either ("IC Tes Pia
     # a OE SPR Seep a france") has fewer lowercase tokens to judge, but the
