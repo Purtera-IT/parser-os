@@ -121,13 +121,38 @@ def _split_line_fields(body: str) -> list[tuple[str, str]]:
     marks = [(i, lab) for i, lab in marks if lab]
     if len(marks) < 2:
         return []
+    fields, _free = _split_line_fields_and_free_lines(body)
+    return fields
+
+
+def _split_line_fields_and_free_lines(body: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """``(fields, free lines)`` for a one-label-per-line note.
+
+    A label whose own line already carries a complete statement ("Next Steps:
+    Client to provide floor plans; survey will finalize scope ...") is closed by
+    it; the lines under it are not its items. 000061 MBrany's meeting recap is
+    the shape: one "Next Steps:" line followed by the whole recap -- dozens of
+    sentences and section headings -- which all became items of "Next Steps".
+    A short inline value ("Adress: CHECKOUT SAN FRANCISCO") still continues on
+    the lines below, which is how an address is typed. Lines that belong to no
+    field come back as free lines for the ordinary prose path."""
+    lines = [ln.strip() for ln in str(body or "").splitlines()]
+    marks = [(i, _line_label(ln)) for i, ln in enumerate(lines)]
+    marks = [(i, lab) for i, lab in marks if lab]
+    if len(marks) < 2:
+        return [], []
     out: list[tuple[str, str]] = []
+    free: list[str] = [ln for ln in lines[: marks[0][0]] if ln]
     for k, (i, (label, rest)) in enumerate(marks):
         end = marks[k + 1][0] if k + 1 < len(marks) else len(lines)
         below = [ln for ln in lines[i + 1:end] if ln]
-        value_lines = ([rest] if rest else []) + below
-        out.append((label, "\n".join(value_lines)))
-    return out
+        closed = bool(rest) and (len(rest.split()) >= 6 or bool(_SENTENCE_END_RE.search(rest)) or rest.endswith("\u2026"))
+        if closed:
+            out.append((label, rest))
+            free.extend(below)
+        else:
+            out.append((label, "\n".join(([rest] if rest else []) + below)))
+    return out, free
 
 
 def _form_preamble(body_text: str, flat_body: str, by_lines: bool) -> str:
@@ -920,12 +945,45 @@ class HubspotNoteParser(BaseParser):
         # author's line breaks, which are the only record of where one task
         # ends and the next begins.
         body_text = "\n".join(str(ln) for ln in (parsed.get("body_lines") or []))
-        line_fields = _split_line_fields(body_text) if body else []
+        line_fields, free_lines = _split_line_fields_and_free_lines(body_text) if body else ([], [])
         fields = line_fields or (_split_inline_fields(body) if body else [])
         if len(fields) >= 2:
-            preamble = _form_preamble(body_text, body, by_lines=bool(line_fields))
-            if len(preamble.split()) >= 4:
-                _mint_prose(preamble)
+            if line_fields:
+                # Prose the author wrote outside any field: before the first
+                # label, or under a label its own line already closed.
+                from app.parsers.value_shapes import classify_value
+
+                block: list[str] = []
+
+                def _flush() -> None:
+                    text = " ".join(block).strip()
+                    block.clear()
+                    if len(text.split()) >= 4:
+                        _mint_prose(text)
+
+                for ln in free_lines:
+                    if classify_value(ln) in ("email", "phone", "postal", "state"):
+                        _flush()
+                        atoms.append(self._mint_atom(
+                            project_id=project_id, artifact_id=artifact_id, filename=filename,
+                            atom_type=AtomType.deal_metadata, text=ln,
+                            value={"kind": "note_line_metadata", "hubspot_note_id": note_id, "title": title,
+                                   "source": "hubspot_note", "shape": classify_value(ln)},
+                            source_ref=source_ref, confidence=0.7, author_affiliation=affiliation,
+                        ))
+                        continue
+                    if _SENTENCE_END_RE.search(ln) or len(ln.split()) >= 6:
+                        block.append(ln)
+                        _flush()
+                    else:
+                        _flush()
+                        if len(ln.split()) >= 4:
+                            _mint_prose(ln)
+                _flush()
+            else:
+                preamble = _form_preamble(body_text, body, by_lines=False)
+                if len(preamble.split()) >= 4:
+                    _mint_prose(preamble)
             for f_label, f_value in fields:
                 if not f_value:
                     continue
