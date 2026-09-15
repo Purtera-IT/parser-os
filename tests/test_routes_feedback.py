@@ -405,6 +405,10 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # Whether a document is about the job this deal is named for.
     "document_job": "document_job",
     "bom_owner": "bom_owner",
+    # The commercial shape finished kits gave a request like this one.
+    "commercial": "commercial_terms",
+    # A place the documents name: a job site, or only a mention.
+    "geo_mention": "geo_mention_role",
 }
 
 
