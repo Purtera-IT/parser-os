@@ -1660,6 +1660,21 @@ def compile_project(
             warnings.append(f"WARNING: quote_line_head failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=quote_line_n)
 
+    # Learned hours per unit of work, taught from finished Deal Kits
+    # (relation task_hours). Store-only, guess-free: a task nobody taught
+    # anything like keeps no estimate.
+    with telemetry.stage("task_hours", input_count=len(atoms)) as stage:
+        task_hours_n = 0
+        try:
+            from app.core.task_hours import estimate_task_hours
+
+            task_hours_n = estimate_task_hours(atoms)
+            if task_hours_n:
+                warnings.append(f"INFO: task_hours stamped learned hours on {task_hours_n} task atom(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: task_hours failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=task_hours_n)
+
     with telemetry.stage("hardware_evidence_backfill", input_count=len(atoms)) as stage:
         hardware_bom_n = 0
         try:
