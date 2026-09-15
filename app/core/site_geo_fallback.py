@@ -795,7 +795,7 @@ def _mention_candidates(atoms: list[Any]) -> dict[tuple[str, str], dict[str, Any
         if street and _street_key(street) in existing_streets:
             return
         entry = found.setdefault(key, {"city": city, "state": state, "street": street, "mentions": []})
-        if len(entry["mentions"]) < 6:
+        if len(entry["mentions"]) < 12:
             entry["mentions"].append((i, written))
 
     for i, atom in enumerate(atoms):
@@ -899,11 +899,28 @@ def _mention_context(atoms: list[Any], i: int, *, mentions: list[tuple[int, str]
         # Every line that names the place, with equal weight: live, the first
         # mention of Longview was a question in a transcript and the judge
         # never weighed the note that excludes it from scope.
+        # Written lines first (an email, a note, a document), what was said on a
+        # call last, longer before shorter, no duplicates, six at most. Live on
+        # 010270 the judge saw six transcript fragments for Huntsville and
+        # called it a mention, and two for Longview and called it a site; the
+        # offline order gave the opposite. The order must not depend on which
+        # atoms happen to sit first.
+        def _rank(j: int) -> tuple[int, int]:
+            a = atoms[j] if 0 <= j < len(atoms) else None
+            v = getattr(a, "value", None) or {}
+            speech = 1 if (isinstance(v, dict) and v.get("speaker")) or _atom_type_str(a) == "raw_utterance" else 0
+            for ref in getattr(a, "source_refs", None) or []:
+                loc = getattr(ref, "locator", None) or {}
+                if isinstance(loc, dict) and ("utterance_index" in loc or loc.get("speaker")):
+                    speech = 1
+            return (speech, -len(_text_of(a)))
         seen: list[str] = []
-        for j, _w in mentions[:6]:
+        for j, _w in sorted(mentions, key=lambda m: _rank(m[0])):
             t = _text_of(atoms[j])[:220] if 0 <= j < len(atoms) else ""
             if t and t not in seen:
                 seen.append(t)
+            if len(seen) >= 6:
+                break
         return head + f"every line that names it ({len(mentions)}):\n" + "\n".join("  * " + t for t in seen)
     return head + "lines around it:\n" + "\n".join(lines)
 
