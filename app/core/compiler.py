@@ -1741,6 +1741,20 @@ def compile_project(
             warnings.append(f"WARNING: task_hours failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=task_hours_n)
 
+    # The commercial shape finished kits gave this kind of request (billing
+    # type, PM/PC hours, travel days; relation commercial_terms). Store-only.
+    with telemetry.stage("commercial_terms", input_count=len(atoms)) as stage:
+        commercial_n = 0
+        try:
+            from app.core.commercial_terms import stamp_commercial_terms
+
+            commercial_n = stamp_commercial_terms(atoms)
+            if commercial_n:
+                warnings.append(f"INFO: commercial_terms stamped a learned kit shape on {commercial_n} task atom(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: commercial_terms failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=commercial_n)
+
     with telemetry.stage("hardware_evidence_backfill", input_count=len(atoms)) as stage:
         hardware_bom_n = 0
         try:

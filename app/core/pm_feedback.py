@@ -119,6 +119,10 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # head: the verdict carries the hours ("hours=3;per=cable drop"); see
     # app.core.task_hours.
     "hours":     HeadSpec("task_hours", "atom", "Task hours", mode="extract"),
+    # The shape of the kit a request got: billing type, PM/PC hours, travel
+    # days. Taught by finished kits on the request line; nothing in the deal's
+    # documents states it (commercial_terms).
+    "commercial": HeadSpec("commercial_terms", "atom", "Commercial shape (billing, PM, travel)", mode="extract"),
     # Whether a task line is a unit of work a quote prices (parent) or a step
     # inside one (child). task_tier_classifier asks this before its word list.
     "task_tier": HeadSpec("task_tier", "atom", "Quote line or step",
