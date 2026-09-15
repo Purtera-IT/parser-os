@@ -55,6 +55,13 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # engagement for the same customer. document_job_scope asks per document.
     "document_job": HeadSpec("document_job", "deal", "Document belongs to this job",
                              candidates=("this_deal", "other_job")),
+    # Who supplies a hardware line. A kit's materials are what we buy; a
+    # hardware list in the documents is often the customer's own (010095:
+    # four SHI-supplied lines reached the prefill as BOM rows). bom_owner
+    # asks per bom_line; the prefill keeps customer-furnished lines out of
+    # the BOM.
+    "bom_owner":  HeadSpec("bom_owner", "atom", "Who supplies this line",
+                           candidates=("we_supply", "customer_furnished")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact

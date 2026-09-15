@@ -1308,6 +1308,27 @@ def compile_project(
     # untouched). This makes RECALL text-ruleable: a PM teaches the system to
     # catch a missed class by adding a correction, no code change. Flag-gated so
     # it is a no-op in production until enabled AND a feedback store is wired.
+    # Who supplies each hardware line -- us, or the customer? A kit's
+    # materials are what we buy; a hardware list in the documents is often
+    # the customer's own (010095: four SHI-supplied lines became BOM rows).
+    # Judged per line through decide(); only a store hit or a confident model
+    # verdict stamps value.supplied_by. Nothing is dropped.
+    with telemetry.stage("bom_owner", input_count=len(atoms)) as stage:
+        _bo_stamped = 0
+        _bo_notes: list[str] = []
+        try:
+            from app.core import bom_owner as _bo
+
+            if _bo.enabled():
+                _bo_stamped, _bo_verdicts = _bo.stamp_bom_owners(atoms, project_id=resolved_project_id)
+                for _v in _bo_verdicts:
+                    if _v["verdict"]:
+                        _bo_notes.append(f"INFO: bom_owner {_v['verdict']} ({_v['source']} {_v['confidence']:.2f}): {_v['text'][:80]}")
+                warnings.extend(_bo_notes)
+        except Exception as exc:
+            warnings.append(f"WARNING: bom_owner failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=_bo_stamped, warnings=_bo_notes)
+
     with telemetry.stage("span_admission", input_count=len(atoms)) as stage:
         readmitted = 0
         import os as _os_sa
