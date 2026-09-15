@@ -88,6 +88,71 @@ _TIME_UNIT_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|days?|weeks?|wks?|
 _COUNT_ROLE_RE = re.compile(r"^\s*\d+\s+[A-Z][A-Za-z]+(?:\s+[A-Za-z]+){0,3}\s*$")
 
 
+#: A label that owns its own line: "Address:", "Onsite work at 1517:",
+#: "Here's the scope:", or "Project: <value>". Judged by shape -- a short run of
+#: words starting with a capital, no sentence punctuation, then a colon -- so a
+#: store number or an apostrophe inside the label does not hide it.
+_LINE_LABEL_RE = re.compile(r"^(?P<label>[A-Z][^:.?!]{0,58}?)\s*:\s*(?P<rest>.*)$")
+_SENTENCE_END_RE = re.compile(r"[.!?]\s*$")
+
+
+def _line_label(line: str) -> tuple[str, str] | None:
+    m = _LINE_LABEL_RE.match(line.strip())
+    if not m or re.match(r"\s*//", m.group("rest")):
+        return None
+    label = " ".join(m.group("label").split())
+    if len(label.split()) > 6:
+        return None
+    return label, m.group("rest").strip()
+
+
+def _split_line_fields(body: str) -> list[tuple[str, str]]:
+    """Fields of a note typed one label per line, values on the lines below.
+
+    000020 Binghamton is the shape: "Address:" then two address lines, then
+    "Onsite work at 1517:" then eleven one-line tasks. The inline splitter joined
+    every line into one string first, so the label with a store number in it was
+    never seen, and each task list was cut at its commas ("label it", "store as
+    a backup Reset Ubiquiti gateway"). When the author gave us lines, the line
+    is the item. Values keep their line breaks; ``_split_list_value`` splits on
+    them. Needs two or more label lines, otherwise this is not a form."""
+    lines = [ln.strip() for ln in str(body or "").splitlines()]
+    marks = [(i, _line_label(ln)) for i, ln in enumerate(lines)]
+    marks = [(i, lab) for i, lab in marks if lab]
+    if len(marks) < 2:
+        return []
+    out: list[tuple[str, str]] = []
+    for k, (i, (label, rest)) in enumerate(marks):
+        end = marks[k + 1][0] if k + 1 < len(marks) else len(lines)
+        below = [ln for ln in lines[i + 1:end] if ln]
+        value_lines = ([rest] if rest else []) + below
+        out.append((label, "\n".join(value_lines)))
+    return out
+
+
+def _split_trailing_prose(value: str) -> tuple[str, str]:
+    """(list part, trailing sentences) for a multi-line value.
+
+    The last lines of a pasted work order are often sign-off prose ("The tech
+    will have to work with the A1 engineer throughout the WO." / "If you have
+    any questions, feel free to reach out.") under the final list. Items in the
+    list do not end in a full stop; trailing lines that do are a note, not two
+    more tasks. Only split when most of the list lines lack terminal punctuation,
+    so a list whose every line is a sentence stays whole."""
+    lines = [ln for ln in value.split("\n") if ln.strip()]
+    if len(lines) < 3:
+        return value, ""
+    cut = len(lines)
+    while cut > 0 and _SENTENCE_END_RE.search(lines[cut - 1]):
+        cut -= 1
+    head = lines[:cut]
+    if cut == len(lines) or len(head) < 2:
+        return value, ""
+    if sum(1 for ln in head if _SENTENCE_END_RE.search(ln)) * 2 >= len(head):
+        return value, ""
+    return "\n".join(head), " ".join(lines[cut:])
+
+
 def _split_inline_fields(body: str) -> list[tuple[str, str]]:
     """'Address: X Date | Time: Y Duration: Z' -> [(Address, X), (Date | Time, Y), (Duration, Z)].
     Requires two or more labels; otherwise the body is prose and is left alone."""
@@ -105,12 +170,16 @@ def _split_inline_fields(body: str) -> list[tuple[str, str]]:
 
 
 def _split_list_value(value: str) -> list[str]:
+    if "\n" in value:
+        lines = [ln.strip(" .;") for ln in value.split("\n") if ln.strip(" .;")]
+        return [ln for ln in lines if len(re.sub(r"[^A-Za-z0-9]", "", ln)) >= 3]
     parts = [p.strip(" .;") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+(?=[a-z])", value) if p.strip(" .;")]
     return [p for p in parts if len(re.sub(r"[^A-Za-z0-9]", "", p)) >= 3]
 
 
 def _field_value_shape(value: str) -> str:
-    v = value.strip()
+    lines = [ln.strip() for ln in value.strip().split("\n") if ln.strip()]
+    v = ", ".join(lines)
     if v.endswith("?"):
         return "question"
     if re.search(r"\b\d{1,5}[A-Za-z]?(?:/\d+[A-Za-z]?)?\b", v) and re.search(r"\b(?:[A-Z]{2,}|[A-Z][a-z]+)\b.*\b(?:[A-Z][a-z]+|[A-Z]{2,})\b", v) and (
@@ -128,12 +197,15 @@ def _field_value_shape(value: str) -> str:
 
         if looks_like_street_address(v):
             return "address"
-        return "other"
+        if len(lines) < 2:
+            return "other"
+        # Several lines that are not a street address are a list the author
+        # typed one per line (000020's "Hardware involved:" block), not prose.
     if _COUNT_ROLE_RE.match(v):
         return "staffing"
     if _TIME_UNIT_RE.search(v) and len(v.split()) <= 8:
         return "duration"
-    if len(_split_list_value(v)) >= 3:
+    if len(lines) >= 2 or len(_split_list_value(v)) >= 3:
         return "list"
     return "other"
 
@@ -554,27 +626,57 @@ class HubspotNoteParser(BaseParser):
             "title": title, "source": "hubspot_note", "author": author,
             "author_email": author_email, "author_affiliation": affiliation,
         }
-        text = f"{label}: {value}"
         shape = _field_value_shape(value)
+        trailer = ""
+        if shape == "list" and "\n" in value:
+            value, trailer = _split_trailing_prose(value)
+        if shape == "address":
+            value = ", ".join(ln.strip() for ln in value.split("\n") if ln.strip())
+        text = f"{label}: {value}"
+        if trailer:
+            out.append(self._mint_atom(
+                project_id=project_id, artifact_id=artifact_id, filename=filename,
+                # A condition on the work ("the tech will have to work with the
+                # A1 engineer throughout"), not a task: typed so the learned
+                # typer does not promote the sign-off into the labor roster.
+                atom_type=AtomType.constraint, text=trailer,
+                value={**base, "kind": "note_field_trailer", "parent_field": label},
+                source_ref=source_ref, confidence=0.8, author_affiliation=affiliation,
+            ))
         if shape == "address":
             slug = re.sub(r"[^a-z0-9]+", "_", _address_facility(value).lower()).strip("_") or re.sub(r"[^a-z0-9]+", "_", value.lower())[:40].strip("_")
+            # A street line with no ZIP ("1179 Vestal Ave, Suite 1, Binghamton, NY")
+            # never matched the City, ST ZIP anchor, so the site published with no
+            # city or state. The last two comma segments are where they live.
+            from app.core.address_parse import split_city_state_strict
+
+            segs = [s.strip() for s in value.split(",") if s.strip()]
+            city, state = split_city_state_strict(", ".join(segs[-2:])) if len(segs) >= 2 else (None, None)
+            locality = {"city": city, "state": state} if city and state else {}
             out.append(self._mint_atom(
                 project_id=project_id, artifact_id=artifact_id, filename=filename,
                 atom_type=AtomType.physical_site, text=text,
                 value={**base, "kind": "physical_site", "id": slug, "site_id": slug,
                        "name": _address_facility(value), "facility_name": _address_facility(value),
-                       "address": value, "street_address": value, "inferred": False},
+                       "address": value, "street_address": ", ".join(segs[:-2]) if locality else value,
+                       "inferred": False, **locality},
                 source_ref=source_ref, confidence=0.86, entity_keys=[f"site:{slug}"],
                 review_flags=["hubspot_note_physical_site"], author_affiliation=affiliation,
             ))
             return out
         if shape == "list":
-            out.append(self._mint_atom(
-                project_id=project_id, artifact_id=artifact_id, filename=filename,
-                atom_type=AtomType.scope_item, text=text, value={**base, "items": _split_list_value(value)},
-                source_ref=source_ref, confidence=0.84, review_flags=["hubspot_note_training_row"],
-                author_affiliation=affiliation,
-            ))
+            # A one-line list keeps its whole-field atom (the items are cut from
+            # it). A list the author typed one item per line does not: that
+            # atom is every line again, and the typer promoted it to a task
+            # that duplicated all eleven of 000020's onsite tasks. Each item
+            # carries ``parent_field``, so the section is not lost.
+            if "\n" not in value:
+                out.append(self._mint_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=filename,
+                    atom_type=AtomType.scope_item, text=text, value={**base, "items": _split_list_value(value)},
+                    source_ref=source_ref, confidence=0.84, review_flags=["hubspot_note_training_row"],
+                    author_affiliation=affiliation,
+                ))
             for item in _split_list_value(value):
                 out.append(self._mint_atom(
                     project_id=project_id, artifact_id=artifact_id, filename=filename,
@@ -673,7 +775,11 @@ class HubspotNoteParser(BaseParser):
         # ...", live 010297) is a form, not a sentence: one atom per field, or
         # the whole note becomes a single "site" whose address is the entire
         # text and the scope inside it is never seen.
-        fields = _split_inline_fields(body) if body else []
+        # ``body`` is the note flattened to one line; ``body_lines`` keeps the
+        # author's line breaks, which are the only record of where one task
+        # ends and the next begins.
+        body_text = "\n".join(str(ln) for ln in (parsed.get("body_lines") or []))
+        fields = (_split_line_fields(body_text) or _split_inline_fields(body)) if body else []
         if len(fields) >= 2:
             for f_label, f_value in fields:
                 if not f_value:

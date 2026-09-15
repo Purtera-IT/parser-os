@@ -245,3 +245,77 @@ def test_note_provenance_remints_site_when_deal_metadata_remains(tmp_path: Path)
     assert len(sites) == 1
     assert sites[0].value["zip"] == "33602"
     assert "hubspot_note_physical_site" in sites[0].review_flags
+
+
+def test_note_typed_one_label_per_line_keeps_each_line_as_an_item(tmp_path: Path) -> None:
+    # 000020 Binghamton shape: labels on their own lines (one carries a store
+    # number, one an apostrophe), a two-line address with no ZIP, task lines
+    # that contain commas, and sign-off sentences under the last list.
+    p = tmp_path / "000020-hs-note-107431630257-work order.txt"
+    p.write_text(
+        "\n".join(
+            [
+                "HubSpot Note: We have a WO for you",
+                "HubSpot Note ID: 107431630257",
+                "Date: 2026-04-03T11:21:02.144Z",
+                "Author: Trent Torrence",
+                "",
+                "We have a WO for you. Could you let me know the cost?",
+                "Address:",
+                "1179 Vestal Ave, Suite 1",
+                "Binghamton, NY",
+                "Here\u2019s the scope:",
+                "Project: Consolidate the 1518 location tech into the existing 1517 subnet",
+                "Hardware involved:",
+                "Medicine Shoppe 1517 SonicWall (192.168.133.50) firewall",
+                "Medicine Shoppe 1518 Ubiquiti router (192.168.132.120)",
+                "Medicine Shoppe 1517 CCM-1517-BOTTOM Meraki switch",
+                "Onsite work at 1517:",
+                "Coordinate scheduling with the remote team and client",
+                "Remove the 1518 SonicWall from service, label it, and store as a backup",
+                "Reset Ubiquiti gateway and switch for the new subnet",
+                "Remote work:",
+                "Guide onsite tech in bringing devices online in the new subnet",
+                "Update/configure settings in SonicWall, Meraki, and/or Ubiquiti (subnet, ISP, mapping, etc.)",
+                "Test systems with the client and troubleshoot as needed",
+                "The tech will have to work with A1 engineer throughout the WO.",
+                "If you have any questions, feel free to reach out.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("deal-1", "art_wo", p)
+    items = [a.raw_text for a in atoms if (a.value or {}).get("kind") == "note_field_item"]
+    assert "Remove the 1518 SonicWall from service, label it, and store as a backup" in items
+    assert "Update/configure settings in SonicWall, Meraki, and/or Ubiquiti (subnet, ISP, mapping, etc.)" in items
+    onsite = [a for a in atoms if (a.value or {}).get("parent_field") == "Onsite work at 1517"
+              and (a.value or {}).get("kind") == "note_field_item"]
+    assert len(onsite) == 3
+    hardware = [a for a in atoms if (a.value or {}).get("parent_field") == "Hardware involved"]
+    assert len(hardware) == 3 and all(a.atom_type == AtomType.scope_item for a in hardware)
+    for fragment in ("label it", "ISP", "mapping", "feel free to reach out"):
+        assert fragment not in items
+    trailer = [a for a in atoms if (a.value or {}).get("kind") == "note_field_trailer"]
+    assert len(trailer) == 1 and trailer[0].raw_text.startswith("The tech will have to work")
+    assert trailer[0].atom_type == AtomType.constraint
+    # No whole-section atom repeating every line of a one-per-line list.
+    assert not [a for a in atoms if (a.value or {}).get("kind") == "note_field"
+                and (a.value or {}).get("field_name") in ("Onsite work at 1517", "Remote work", "Hardware involved")]
+    sites = [a for a in atoms if a.atom_type == AtomType.physical_site]
+    assert len(sites) == 1
+    assert sites[0].value["city"] == "Binghamton" and sites[0].value["state"] == "NY"
+    assert sites[0].value["street_address"] == "1179 Vestal Ave, Suite 1"
+    assert "scope" not in sites[0].raw_text.lower()
+
+
+def test_one_line_form_note_still_splits_inline_fields(tmp_path: Path) -> None:
+    # The 010297 shape the inline splitter exists for: every field on one line.
+    p = tmp_path / "010297-hs-note-1-form.txt"
+    p.write_text(
+        "HubSpot Note: form\nHubSpot Note ID: 1\nDate: 2026-06-01T00:00:00Z\nAuthor: A\n\n"
+        "Address: 500 Main Street, Springfield, IL 62701 Duration: 4 hours Scope of work: mount displays, run HDMI, test audio",
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("deal-1", "art_form", p)
+    fields = {(a.value or {}).get("field_name") for a in atoms if (a.value or {}).get("kind") == "note_field"}
+    assert {"Duration", "Scope of work"} <= fields
