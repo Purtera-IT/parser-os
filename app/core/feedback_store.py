@@ -619,8 +619,17 @@ class FeedbackStore:
         relations: dict | None,
         facts: dict | None = None,
         exclude_created_by: tuple[str, ...] = (),
+        neural_head: bool = True,
     ) -> Decision | None:
         """Return a Decision on a confident, in-candidate-set hit; else None.
+
+        ``neural_head=False`` asks for exemplar similarity only: the caller
+        wants what was taught about text like THIS, not the head's
+        generalisation. The head is fit over every class of the relation and
+        merely restricted to the candidates at decision time, so a caller that
+        widens its candidates also widens what the head may answer -- on
+        000020 (compile 014103ef, 2026-09-15) offering it the base types let a
+        six-exemplar scope_item class absorb eleven exact-match task lines.
 
         Narrowest scope wins: deal corrections are searched first, then pack,
         then global. A correction only fires if (a) its relation matches, (b)
@@ -677,7 +686,10 @@ class FeedbackStore:
             #    uncertain/novel ones. Abstain → fall through to the cosine path,
             #    then (in decide()) to the LLM. This is what keeps the LLM for
             #    genuinely hard decisions only.
-            head = self._relation_head(relation, allowed, scope, exclude_created_by=exclude_created_by)
+            head = (
+                self._relation_head(relation, allowed, scope, exclude_created_by=exclude_created_by)
+                if neural_head else None
+            )
             if head is not None:
                 hd = head.classify(qv, candidates)
                 if hd.verdict is not None and not hd.route_llm:

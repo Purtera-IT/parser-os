@@ -18,16 +18,19 @@ from app.core.schemas import AtomType
 
 
 class _Store:
-    """Answers with what was taught for a text; records the candidates it was offered."""
+    """Answers with what was taught for a text, only when the verdict is among
+    the candidates offered; records each call's candidates and head setting."""
 
     def __init__(self, taught):
         self.taught = taught
-        self.offered: list[list[str]] = []
+        self.offered: list[tuple[list[str], bool]] = []
 
-    def resolve(self, *, relation, text, candidates, **_):
-        self.offered.append(list(candidates))
+    def resolve(self, *, relation, text, candidates, neural_head=True, **_):
+        self.offered.append((list(candidates), neural_head))
         v = self.taught.get(text)
-        return Decision(verdict=v, confidence=0.97, source="store", correction_id="corr_kit") if v else None
+        if v and v in candidates:
+            return Decision(verdict=v, confidence=0.97, source="store", correction_id="corr_kit")
+        return None
 
     def few_shot(self, **_):
         return []
@@ -68,7 +71,12 @@ def test_a_line_taught_as_scope_stays_scope_and_never_reaches_the_model(monkeypa
     assert survey_note.atom_type == AtomType.scope_item
     assert untaught.atom_type == AtomType.task
     assert [a.id for b in batches for a in b] == ["n2"]
-    assert all("scope_item" in c and "raw_utterance" in c and "_keep" in c for c in store.offered)
+    # First the model's own candidates with the head; then, undecided, the
+    # base types by exemplar similarity only.
+    firsts = [o for o in store.offered if "task" in o[0]]
+    seconds = [o for o in store.offered if "scope_item" in o[0]]
+    assert firsts and all(head for _, head in firsts) and all("scope_item" not in c for c, _ in firsts)
+    assert seconds and all(head is False for _, head in seconds) and all("task" not in c for c, _ in seconds)
 
 
 def test_a_line_taught_as_speech_becomes_speech(monkeypatch):
@@ -88,3 +96,17 @@ def test_the_taught_candidates_cover_every_atom_type():
     cands = tac._taught_type_candidates()
     assert set(t.value for t in AtomType) <= set(cands)
     assert cands[-1] == "_keep"
+    assert not set(tac._taught_base_candidates()) & set(tac._TAXONOMY)
+
+
+def test_a_taught_taxonomy_type_still_goes_through_the_head_path(monkeypatch):
+    line = _atom("n5", "Guide onsite tech in bringing devices online in the new subnet")
+    store = _Store({"Guide onsite tech in bringing devices online in the new subnet": "dependency"})
+    prev = decide_mod.get_store(); decide_mod.set_store(store)
+    try:
+        _past_every_layer(monkeypatch)
+        tac.classify_atoms([line])
+    finally:
+        decide_mod.set_store(prev)
+    assert line.atom_type == AtomType.dependency
+    assert store.offered[0][1] is True and len(store.offered) == 1

@@ -357,20 +357,27 @@ def _atom_type_candidates() -> list[str]:
     return list(_TAXONOMY) + ["_keep"]
 
 
-def _taught_type_candidates() -> list[str]:
-    """Every type a person or a Deal Kit can teach, not only what the model
-    may promote to. The taxonomy names what the model can make of a scope
-    line; a teacher also says what a line IS when the model should leave it --
-    "this is a scope_item, not a task", "this is speech". Resolved against the
-    model's candidates alone, those verdicts could never fire (000061,
-    2026-09-15: "Expected four-hour survey will confirm AP count" taught
-    scope_item from the first quote, re-promoted to task on every compile)."""
+def _taught_base_candidates() -> list[str]:
+    """The types a teacher names that the model never promotes to: what a
+    line IS when the model should leave it -- "this is a scope_item, not a
+    task", "this is speech". Resolved against the model's candidates alone,
+    those verdicts could never fire (000061, 2026-09-15: "Expected four-hour
+    survey will confirm AP count" taught scope_item from the first quote,
+    re-promoted to task on every compile). They are resolved in a second
+    pass, by exemplar similarity only: the relation's neural head is fit over
+    every class and merely restricted to the candidates at decision time, so
+    offering it these classes let a six-exemplar scope_item class absorb
+    000020's eleven exact-match task lines (compile 014103ef)."""
     try:
         from app.core.schemas import AtomType
-        base = [t.value for t in AtomType if t.value not in _TAXONOMY]
+        return [t.value for t in AtomType if t.value not in _TAXONOMY]
     except Exception:  # pragma: no cover
-        base = ["scope_item", "entity", "customer_instruction", "raw_utterance"]
-    return list(_TAXONOMY) + base + ["_keep"]
+        return ["scope_item", "entity", "customer_instruction", "raw_utterance"]
+
+
+def _taught_type_candidates() -> list[str]:
+    """Every type a person or a Deal Kit can teach, plus _keep."""
+    return list(_TAXONOMY) + _taught_base_candidates() + ["_keep"]
 
 
 def _atom_row_view(atom: Any) -> tuple[list[str], list[Any]] | None:
@@ -508,7 +515,8 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
 
         if get_store() is None:
             return decided
-        cands = _taught_type_candidates()
+        cands = _atom_type_candidates()
+        base = _taught_base_candidates()
         for a in atoms:
             text = str(getattr(a, "raw_text", "") or "").strip()
             if not text:
@@ -523,6 +531,14 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
                 instruction=_ATOM_TYPE_INSTRUCTION, llm=False,
                 exclude_created_by=("teacher",),
             )
+            if d is None or d.source != "store" or not d.verdict:
+                # Second pass, base types, exemplar similarity only: what was
+                # taught about text like this, never the head's generalisation.
+                d = decide(
+                    _ATOM_TYPE_RELATION, text[:600], base,
+                    instruction=_ATOM_TYPE_INSTRUCTION, llm=False,
+                    exclude_created_by=("teacher",), neural_head=False,
+                )
             if d is None or d.source != "store" or not d.verdict:
                 continue
             # A taught `_keep` only short-circuits the model when store
