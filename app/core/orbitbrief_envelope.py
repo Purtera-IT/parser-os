@@ -457,17 +457,11 @@ def build_orbitbrief_envelope(
     # everything is evidence) from "never classified" (we have no timeline at
     # all): ``known`` is the difference, and it is the only honest way to read a
     # null ``quote_asof``. Each event carries the sentence it was extracted from.
-    _cut = _timeline.quote_asof(compile_result.project_id)
-    _events = _timeline.events(compile_result.project_id)
-    envelope["deal_timeline"] = {
-        "known": bool(_events) or _cut is not None,
-        "quote_asof": _cut,
-        "events": _events,
-        "documents_after_cut": sum(
-            1 for d in documents
-            if isinstance(d.get("lifecycle"), dict) and d["lifecycle"].get("after_cut")
-        ),
-    }
+    envelope["deal_timeline"] = _deal_timeline_section(
+        compile_result.project_id,
+        documents,
+        run_cutoff=_load_manifest_run_cutoff(project_dir),
+    )
     # OrbitBrief-Core deliverables — deterministic pre-aggregations so
     # the downstream LLM synthesis layer (and the PM cockpit) can render
     # the Monday-morning view, the SOW-readiness scorecard, and the
@@ -1854,6 +1848,44 @@ def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
             "sender_email": md.get("senderEmail"),
         }
     return out
+
+
+def _deal_timeline_section(
+    project_id: str | None,
+    documents: list[dict[str, Any]],
+    *,
+    run_cutoff: str | None = None,
+) -> dict[str, Any]:
+    """The deal's verified state changes, as far as THIS run may know them.
+
+    The table behind ``_timeline`` was extracted offline over each deal's whole
+    history. A run cut to an as-of must not carry what happened after its cut:
+    measured 2026-09-15 on four as-of compiles cut 20 minutes before the quote,
+    the envelope listed 1, 7, 3 and 7 later events -- the quote itself, a
+    revised quote for 39 APs, "Signed SOW received", "Technicians are onsite".
+    With a run cutoff, events after it (and undated ones, which cannot be
+    placed before it) are dropped, and a quote_asof later than the cutoff is
+    not yet known. ``known`` still says whether the deal has a timeline at all.
+    """
+    cut = _timeline.quote_asof(project_id)
+    events = _timeline.events(project_id)
+    known = bool(events) or cut is not None
+    limit = _timeline.parse_ts(run_cutoff) if run_cutoff else None
+    if limit is not None:
+        events = [e for e in events
+                  if isinstance(e, dict) and (ts := _timeline.parse_ts(e.get("date"))) is not None and ts <= limit]
+        cut_ts = _timeline.parse_ts(cut) if cut else None
+        if cut_ts is None or cut_ts > limit:
+            cut = None
+    return {
+        "known": known,
+        "quote_asof": cut,
+        "events": events,
+        "documents_after_cut": sum(
+            1 for d in documents
+            if isinstance(d.get("lifecycle"), dict) and d["lifecycle"].get("after_cut")
+        ),
+    }
 
 
 def _load_manifest_run_cutoff(project_dir: Path) -> str | None:
