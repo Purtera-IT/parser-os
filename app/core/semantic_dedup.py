@@ -57,7 +57,7 @@ import re
 from typing import Any
 
 from app.core.site_evidence_conflict import normalize_address
-from app.core.address_parse import normalized_address_key
+from app.core.address_parse import _street_for_dedup, normalized_address_key
 
 
 def _norm_key(s: Any) -> str:
@@ -656,6 +656,14 @@ def _site_location_buckets(val: dict[str, Any], site_id: str = "") -> set[str]:
     zipc = str(val.get("zip") or val.get("zip_code") or "").strip()
     if city and state and zipc:
         buckets.add(f"{city}|{state}|{zipc}")
+    # A street in a city is a place whether or not the ZIP agrees. 010043
+    # carried "6125 Tyvola Centre Drive, Charlotte, NC" twice: a note said
+    # 28217, an OCR'd floor plan said 28202, and the ZIP-keyed buckets never
+    # met, so the Deal Kit saw two Charlotte sites for one building. The
+    # different-streets veto still keeps two facilities in one town apart.
+    street_norm = _street_for_dedup(str(val.get("street_address") or val.get("address") or ""))
+    if street_norm and city and state:
+        buckets.add(f"{street_norm}|{city}|{state}")
     ak = normalized_address_key(val)
     if ak:
         buckets.add(ak)
@@ -794,6 +802,7 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
             if s1 and s2 and not (s1 & s2):
                 # Both know their street, and the streets differ.
                 continue
+            same_street = bool(s1 and s2 and (s1 & s2))
             # A name is identity evidence exactly as a street is. Two of these
             # ten SOWs carry the address of the school in the PRECEDING SOW --
             # a customer copy-paste -- so Academy of Early Learning and
@@ -804,7 +813,12 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
             # output when two customer documents disagree.
             n1, n2 = name_tokens.get(c1), name_tokens.get(c2)
             if n1 and n2 and not (n1 <= n2 or n2 <= n1):
-                continue
+                # Two labels for one known street that still share a word
+                # ("Charlotte (NC)" / "Charlotte (LANE)", 010043) are one
+                # place; two names that share nothing at one street are the
+                # copy-pasted-address case above, and stay apart.
+                if not (same_street and (n1 & n2)):
+                    continue
             _union(c1, c2)
 
     clusters: dict[str, list[str]] = {}

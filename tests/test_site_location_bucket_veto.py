@@ -79,3 +79,22 @@ def test_a_two_street_field_does_not_merge_sites_on_neither_street():
         "loc_joined": [_site("Johnakin", "10 Other Rd; 22 Elsewhere Ave")],
     }
     assert len(_merge_grouped_by_location_buckets(grouped)) == 2
+
+
+def test_the_same_street_in_the_same_city_merges_when_one_zip_is_wrong():
+    """010043: a note gave 6125 Tyvola Centre Drive, Charlotte NC 28217; an OCR'd
+    floor plan gave the same street with 28202. Two Charlotte sites for one
+    building reached the Deal Kit."""
+    grouped = {
+        "charlotte_nc_28217": [_site("Charlotte (NC)", "6125 Tyvola Centre Drive", "Charlotte", "NC", "28217")],
+        "lane_tyvola_office": [_site("Charlotte (LANE)", "6125 Tyvola Centre Drive", "Charlotte", "NC", "28202")],
+    }
+    assert len(_merge_grouped_by_location_buckets(grouped)) == 1
+
+
+def test_two_streets_in_one_town_stay_apart_whatever_the_zip():
+    grouped = {
+        "a": [_site("Johnakin Middle School", "601 Gurley St", "Marion", "SC", "29571")],
+        "b": [_site("Marion High School", "1205 S Main St", "Marion", "SC", "29572")],
+    }
+    assert len(_merge_grouped_by_location_buckets(grouped)) == 2
