@@ -220,7 +220,64 @@ def classify_task_tiers(atoms: list[Any]) -> tuple[list[Any], int]:
         if prev_tier != tier or prev_quote != is_quote:
             changed += 1
 
+    # A child needs a parent. A document whose task lines are all children
+    # proposes nothing: 010283's note listed five service lines ("Cable /
+    # device deinstallation", "Site surveys", ...) under a heading, the tier
+    # pass read them as steps, and the Deal Kit got no work at all. When a
+    # document has two or more task lines and not one parent, the lines at
+    # its shallowest depth are the units of work it names.
+    changed += promote_orphan_children(atoms)
     return atoms, changed
+
+
+def _artifact_key(atom: Any) -> str:
+    v = getattr(atom, "artifact_id", None) or getattr(atom, "source_artifact_id", None)
+    if v:
+        return str(v)
+    for ref in getattr(atom, "source_refs", None) or []:
+        a = getattr(ref, "artifact_id", None) or (ref.get("artifact_id") if isinstance(ref, dict) else None)
+        if a:
+            return str(a)
+    return ""
+
+
+def promote_orphan_children(atoms: list[Any]) -> int:
+    """Promote the shallowest child task lines of a document that has no
+    parent task line at all (and at least two lines). Returns how many."""
+    by_doc: dict[str, list[Any]] = {}
+    for atom in atoms:
+        if _atom_type_str(atom) not in _TIER_TYPES:
+            continue
+        val = getattr(atom, "value", None) or {}
+        if isinstance(val, dict) and val.get("folded_into"):
+            continue
+        by_doc.setdefault(_artifact_key(atom), []).append(atom)
+    promoted = 0
+    for doc, lines in by_doc.items():
+        if not doc or len(lines) < 2:
+            continue
+        tiers = [str((getattr(a, "value", None) or {}).get("task_tier") or "") for a in lines]
+        if any(t == "parent" for t in tiers):
+            continue
+        depths = [_bullet_depth(a, getattr(a, "value", None) or {}) for a in lines]
+        known = [d for d in depths if d is not None]
+        shallowest = min(known) if known else None
+        for a, d in zip(lines, depths):
+            if shallowest is not None and d is not None and d != shallowest:
+                continue
+            val = dict(getattr(a, "value", None) or {})
+            val["task_tier"] = "parent"
+            val["is_quote_line"] = True
+            val["tier_promoted"] = "orphan"
+            val.pop("parent_task_id", None)
+            val.pop("parent_task_hint", None)
+            a.value = val
+            flags = [f for f in (getattr(a, "review_flags", None) or []) if f != "task_tier_child"]
+            if "task_tier_parent" not in flags:
+                flags.append("task_tier_parent")
+            a.review_flags = flags
+            promoted += 1
+    return promoted
 
 
 _FUNCTION_WORDS = frozenset({"a", "an", "the", "of", "for", "to", "and", "in", "at", "on", "with", "is", "are", "be"})
