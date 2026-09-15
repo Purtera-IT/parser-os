@@ -148,3 +148,15 @@ def test_a_second_address_in_the_same_city_is_its_own_site(monkeypatch):
     assert [s.value["name"] for s in out] == ["5200 Lankershim Blvd Ste 200, North Hollywood, CA"]
     assert out[0].value["street_address"] == "5200 Lankershim Blvd Ste 200" and out[0].value["city"] == "North Hollywood"
     assert calls and calls[0][0] == "5200 Lankershim Blvd Ste 200, North Hollywood, CA"
+
+
+def test_a_canadian_site_is_placed_and_a_province_needs_no_gazetteer(monkeypatch):
+    """010286: 'Address: 395A Pendant DR, Mississauga ON L5T 2W9' had no city; 010309 lists Ontario sites."""
+    site = _a("physical_site", "Address: 395A Pendant DR, Mississauga ON L5T 2W9", {"name": "Mississauga ON", "address": "395A Pendant DR, Mississauga ON L5T 2W9"})
+    assert sg.enrich_site_geo([site]) == 1
+    assert (site.value["city"], site.value["state"], site.value["zip"]) == ("Mississauga", "ON", "L5T 2W9")
+    fake, calls = _judge({"Brampton, ON": ("job_site", 0.9), "Toronto, ON": ("job_site", 0.9)})
+    monkeypatch.setattr(semantic_role, "classify_role", fake)
+    out = sg.geo_mention_sites([site, _a("scope_item", "tanks at the Brampton, ON yard and the Toronto, Ontario depot")], project_id="d")
+    assert sorted(s.value["name"] for s in out) == ["Brampton, ON", "Toronto, ON"]
+    assert all(s.value["state"] == "ON" for s in out)

@@ -371,11 +371,17 @@ def enrich_site_geo(atoms: list[Any]) -> int:
         if val.get("city") and val.get("state") and val.get("zip"):
             return False
         m = _CITY_STATE_ZIP_RE.search(str(text))
-        if not m:
-            return False
-        city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
-        if state not in _US_STATES:
-            return False
+        if m:
+            city, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
+            if state not in _US_STATES:
+                return False
+        else:
+            # "395A Pendant DR, Mississauga ON L5T 2W9": a Canadian site is a
+            # site nobody could route to until its province was read.
+            mc = _CITY_PROVINCE_POSTAL_RE.search(str(text))
+            if not mc:
+                return False
+            city, state, zipc = mc.group(1).strip(), mc.group(2).upper(), mc.group(3).upper()
         before = (val.get("city"), val.get("state"), val.get("zip"))
         val.setdefault("city", city)
         val.setdefault("state", state)
@@ -655,6 +661,19 @@ _MENTION_INSTRUCTION = (
 )
 #: An inferred site is flagged needs_review; 0.8 from the model is enough to
 #: put it in front of the PM (the ZIP fallback mints at 0.5 with no judge).
+#: Canadian provinces and territories: a closed set, like the states. The US
+#: gazetteer knows nothing of them, so a "City, ON" is trusted on its code and
+#: a "City ON L5T 2W9" on its postal code.
+CA_PROVINCES: frozenset[str] = frozenset({"ON", "QC", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE", "YT", "NT", "NU"})
+CA_PROVINCE_NAMES: dict[str, str] = {
+    "ontario": "ON", "quebec": "QC", "québec": "QC", "british columbia": "BC", "alberta": "AB", "manitoba": "MB",
+    "saskatchewan": "SK", "nova scotia": "NS", "new brunswick": "NB", "newfoundland and labrador": "NL",
+    "newfoundland": "NL", "prince edward island": "PE", "yukon": "YT", "northwest territories": "NT", "nunavut": "NU",
+}
+#: "Mississauga ON L5T 2W9" / "Mississauga, ON L5T 2W9": city, province, postal code.
+_CITY_PROVINCE_POSTAL_RE = re.compile(
+    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,?\s+(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)\b"
+)
 _MENTION_MIN_CONF = 0.8
 _MENTION_CONTEXT_NEIGHBOURS = 3
 #: A document naming this many places is judged once, as a list.
@@ -701,8 +720,9 @@ def _mention_llm_budget() -> int:
 def _state_code(token: str) -> str | None:
     t = str(token or "").strip()
     if len(t) == 2:
-        return t.upper() if t.upper() in _US_STATES else None
-    return US_STATE_NAMES.get(t.lower())
+        u = t.upper()
+        return u if (u in _US_STATES or u in CA_PROVINCES) else None
+    return US_STATE_NAMES.get(t.lower()) or CA_PROVINCE_NAMES.get(t.lower())
 
 
 def _artifact_of(atom: Any) -> str:
@@ -798,10 +818,16 @@ def _mention_candidates(atoms: list[Any]) -> dict[tuple[str, str], dict[str, Any
             if not state or is_known_place(city, state) is False:
                 continue
             _offer(i, city, state, m.group(0), street=street)
+        for m in _CITY_PROVINCE_POSTAL_RE.finditer(text):
+            _offer(i, m.group(1).strip(), m.group(2).strip().upper(), m.group(0))
         for m in _CITY_STATE_MENTION_RE.finditer(text):
             city, st = m.group(1).strip(), m.group(2).strip()
             state = _state_code(st)
             if not state:
+                continue
+            if state in CA_PROVINCES:
+                if len(st) == 2 or st.lower() in CA_PROVINCE_NAMES:
+                    _offer(i, city, state, m.group(0))
                 continue
             known = is_known_place(city, state)
             if known is False or (known is None and len(st) != 2):
@@ -810,7 +836,7 @@ def _mention_candidates(atoms: list[Any]) -> dict[tuple[str, str], dict[str, Any
         for m in _CITY_STATE_NOCOMMA_RE.finditer(text):
             city, st = m.group(1).strip(), m.group(2).strip()
             state = _state_code(st)
-            if not state or is_known_place(city, state) is not True:
+            if not state or state in CA_PROVINCES or is_known_place(city, state) is not True:
                 continue
             _offer(i, city, state, m.group(0))
     return found
