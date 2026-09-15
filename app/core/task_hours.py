@@ -152,6 +152,16 @@ def estimate_task_hours(atoms: list[Any], *, store: Any = None) -> int:
             value["hours_role"] = parsed["role"]
         value["hours_correction_id"] = getattr(d, "correction_id", None)
         value["hours_confidence"] = round(float(getattr(d, "confidence", 0.0) or 0.0), 3)
+        # Pedigree: how many taught lines stand behind this rate, so the kit
+        # can say "learned from N kit lines" instead of asking to be believed.
+        try:
+            c = store.get(str(getattr(d, "correction_id", "") or "")) if hasattr(store, "get") else None
+            ex = list(getattr(c, "exemplars", None) or []) if c is not None else []
+            if ex:
+                value["hours_evidence"] = len(ex)
+                value["hours_taught_by"] = str(getattr(c, "created_by", "") or "")
+        except Exception:
+            pass
         stamped += 1
     return stamped
 
