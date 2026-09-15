@@ -207,6 +207,29 @@ def _fitz_generic_table_fallback(
             pass
     return out
 
+
+def _address_columns(rows_lr: list[list[str]]) -> list[str]:
+    """The columns of a two-column region that each read, top to bottom, as one
+    US postal address (a street line and a City, ST ZIP line). Empty unless
+    BOTH columns do: one address beside a label column is a form, not a pair
+    of address blocks."""
+    try:
+        from app.core.address_parse import find_us_addresses_in_text, looks_like_street_address
+    except Exception:  # pragma: no cover
+        return []
+    out: list[str] = []
+    for c in (0, 1):
+        cells = [(r[c] or "").strip() for r in rows_lr if (r[c] or "").strip()]
+        if len(cells) < 2 or not any(looks_like_street_address(x) for x in cells):
+            return []
+        joined = ", ".join(cells)
+        parsed = [a for a in find_us_addresses_in_text(joined) if a.city and a.state and a.street_address]
+        if not parsed:
+            return []
+        out.append(joined)
+    return out
+
+
 def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[str, Any]], list[Any]]:
     """Recover UNRULED column tables on a text-rich page from word geometry.
 
@@ -380,6 +403,25 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
         if len(rows_lr) < 2:
             continue
         if sum(1 for r in rows_lr if r[0]) < 2 or sum(1 for r in rows_lr if r[1]) < 2:
+            continue
+        # 4b. Two address blocks side by side -- an order's bill-to | ship-to.
+        #     Read as a table these became "90 FIELDSTONE CT: 6125 TYVOLA CENTRE
+        #     DR" and "CHESHIRE, CT 06410: CHARLOTTE, NC 28217" (010043), and the
+        #     deal gained a site named for the billing street with the job's
+        #     street as its address. Each column IS one address; emit it whole.
+        addr_cols = _address_columns(rows_lr)
+        if addr_cols:
+            for col_text in addr_cols:
+                blocks.append({"kind": "paragraph", "text": col_text,
+                               "extraction": "address_column_v1"})
+                x0 = min(lines[li]["x0"] for li in region_lis)
+                y0 = min(lines[li]["y0"] for li in region_lis)
+                x1 = max(lines[li]["x1"] for li in region_lis)
+                y1 = max(lines[li]["y1"] for li in region_lis)
+                try:
+                    bboxes.append(fitz.Rect(x0, y0, x1, y1))
+                except Exception:
+                    bboxes.append(None)
             continue
 
         # 5. header detection: a first row whose cells are short, all-alpha
