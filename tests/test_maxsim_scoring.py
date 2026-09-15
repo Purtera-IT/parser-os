@@ -67,10 +67,10 @@ def _resolve(store: FeedbackStore, text: str):
 
 
 def test_mean_path_blurs_heterogeneous_correction(monkeypatch):
-    """Default (mean prototype): an exact exemplar match scores ~1/sqrt(5)
+    """Mean prototype (SOWSMITH_NEURAL_MAXSIM=0): an exact exemplar match scores ~1/sqrt(5)
     ≈ 0.447, below the 0.82 threshold, so the correction does NOT fire even on
     a token it was literally taught. This is the blur the flag fixes."""
-    monkeypatch.delenv("SOWSMITH_NEURAL_MAXSIM", raising=False)
+    monkeypatch.setenv("SOWSMITH_NEURAL_MAXSIM", "0")
     store = _store()
     store.add(Correction(
         id="c_vendor", relation=_REL, verdict="vendor",
@@ -124,8 +124,16 @@ def test_single_exemplar_identical_under_both_paths(monkeypatch):
         assert d is not None and d.verdict == "vendor"
 
 
-def test_flag_off_is_default_mean_behavior(monkeypatch):
+def test_flag_zero_is_mean_behavior(monkeypatch):
     """Sanity: unset flag == mean path (byte-identical default pipeline)."""
-    monkeypatch.delenv("SOWSMITH_NEURAL_MAXSIM", raising=False)
+    monkeypatch.setenv("SOWSMITH_NEURAL_MAXSIM", "0")
     store = _store()
     assert store._enable_maxsim is False
+
+
+def test_default_is_maxsim(monkeypatch):
+    """Unset flag = max-sim: a merged correction's exemplars are different texts
+    by construction, so their mean sits near none of them."""
+    monkeypatch.delenv("SOWSMITH_NEURAL_MAXSIM", raising=False)
+    assert _store()._enable_maxsim is True
+

@@ -261,11 +261,18 @@ class FeedbackStore:
         # scorer: instead of cosine-to-mean (which blurs a correction whose
         # exemplars are heterogeneous — e.g. site codes + names + addresses), the
         # query scores against its single NEAREST exemplar (ColBERT-style late
-        # interaction, lite). Off by default → byte-identical to the mean path.
+        # interaction, lite). ON by default; SOWSMITH_NEURAL_MAXSIM=0 restores the
+        # mean. A correction merges every repeat of a judgment into one row, so
+        # its exemplars are different texts by construction, and their mean is
+        # near none of them. Measured on dev corrections taught from 000020
+        # Binghamton's Deal Kit (11 work lines -> `task`, 5 remote-team lines ->
+        # `dependency`): the mean re-typed 0 of Binghamton's 12 retained lines,
+        # max-sim 10 of 12, all correct; both re-typed 0 of 3,612 lines on six
+        # other won deals. Identical to the mean for single-exemplar corrections.
         self._proto_ex: dict[str, np.ndarray] = {}
         self._enable_maxsim = os.getenv(
-            "SOWSMITH_NEURAL_MAXSIM", ""
-        ).strip().lower() in ("1", "true", "yes", "on")
+            "SOWSMITH_NEURAL_MAXSIM", "1"
+        ).strip().lower() not in ("0", "false", "no", "off")
         # Cross-encoder reranker (retrieve-then-rerank). The bi-encoder above is
         # stage-1 recall; an optional cross-encoder is stage-2 precision. Off by
         # default → byte-identical to the bi-encoder-only path. ``rerank_fn`` is
