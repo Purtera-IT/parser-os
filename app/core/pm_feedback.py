@@ -51,6 +51,10 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # `same_physical_site` between "same_site" and "distinct_site"; this head
     # stored answers under `same_site` with no declared vocabulary, so every
     # answer a PM ever gave was banked where nothing looks it up.
+    # Whether a document is about the job this deal is named for, or another
+    # engagement for the same customer. document_job_scope asks per document.
+    "document_job": HeadSpec("document_job", "deal", "Document belongs to this job",
+                             candidates=("this_deal", "other_job")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact

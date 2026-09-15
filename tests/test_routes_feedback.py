@@ -402,6 +402,8 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "hours": "task_hours",
     # Quote line (parent) or a step inside one (child).
     "task_tier": "task_tier",
+    # Whether a document is about the job this deal is named for.
+    "document_job": "document_job",
 }
 
 

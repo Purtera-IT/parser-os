@@ -1212,6 +1212,44 @@ def compile_project(
             warnings.append(f"WARNING: pre_classify_dedup failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # Is each document about THIS deal's job? A programme customer's deal
+    # carries other jobs' mail and packing lists (010162: a kiosk close-down
+    # beside the SD-WAN scope). Judged per document through decide() -- a PM's
+    # correction first, then the model -- and only a confident "other job" sets
+    # a document aside. Lossless: its atoms go to the suppression ledger.
+    with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
+        _djs_dropped = 0
+        _djs_notes: list[str] = []
+        try:
+            from app.core import document_job_scope as _djs
+
+            if _djs.enabled():
+                _deal_name = _djs.deal_name_from_manifest(project_dir)
+                _before_djs = list(atoms)
+                atoms, _dropped_djs, _djs_verdicts = _djs.judge_documents(
+                    atoms, deal_name=_deal_name, project_id=resolved_project_id,
+                )
+                if _dropped_djs:
+                    merge_suppressed(
+                        suppressed_atoms,
+                        capture_suppressed(
+                            _before_djs, atoms,
+                            stage="document_job_scope",
+                            reason="document describes another job for this customer, not the work this deal is named for",
+                        ),
+                    )
+                    _djs_dropped = len(_dropped_djs)
+                    for _v in _djs_verdicts:
+                        if _v["verdict"] == "other_job":
+                            _djs_notes.append(
+                                f"INFO: document_job_scope set aside {_v['filename']} "
+                                f"({_v['atoms']} atoms; {_v['source']} {_v['confidence']})"
+                            )
+                    warnings.extend(_djs_notes)
+        except Exception as exc:
+            warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
+
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
     # commercial_total, payment_term, requirement, acceptance_criterion,
