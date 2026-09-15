@@ -988,3 +988,62 @@ def test_thumb_does_not_change_routing_or_atoms(monkeypatch, tmp_path):
     # ...and the description kept the pixels it is about, on its own budget.
     assert out[0].value.get("thumb", "").startswith("data:image/jpeg")
     assert piv._described_thumb_budget["used"] == 1
+
+
+# ── the vision host is down: stop asking ─────────────────────────────
+
+
+def test_stops_after_the_host_fails_three_calls_in_a_row(monkeypatch, tmp_path, caplog):
+    """Live 2026-09-15: the Mac proxy timed out on every call and the stage
+    still walked all 40 images, twice each, and the compile hit its 1500 s
+    ceiling. Three failures in a row means the next call will fail too."""
+    import logging
+    import requests
+
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    posts = {"n": 0}
+
+    def _post(*a, **k):
+        posts["n"] += 1
+        raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=120)")
+
+    monkeypatch.setattr(requests, "post", _post)
+    markers = [
+        _marker(tmp_path, region=f"page{i}/image1", saved_name=f"img{i}.png", size=5000 + i)
+        for i in range(8)
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.core.pdf_image_vision"):
+        out = piv.process_image_markers(markers)
+    assert out == []
+    assert posts["n"] == 3, posts
+    assert any("leaving 5 of 8 image(s) undescribed" in r.getMessage() for r in caplog.records)
+
+
+def test_a_success_resets_the_breaker(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    import requests
+
+    seq = iter(["fail", "fail", "ok", "fail", "fail", "ok", "fail", "fail", "ok"])
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"response": '{"image_kind": "logo", "has_text": false, "meaningful": false}'}
+
+    def _post(*a, **k):
+        if next(seq) == "fail":
+            raise requests.exceptions.ConnectionError("proxy reset")
+        return _Resp()
+
+    monkeypatch.setattr(requests, "post", _post)
+    markers = [
+        _marker(tmp_path, region=f"page{i}/image1", saved_name=f"img{i}.png", size=5000 + i)
+        for i in range(9)
+    ]
+    piv.process_image_markers(markers)
+    assert piv._HOST_FAILURES["total"] == 6 and piv._HOST_FAILURES["consecutive"] == 0
