@@ -419,3 +419,36 @@ def test_one_note_cannot_mean_both() -> None:
         }
 
     assert route_note(note, synthesize=hedges).lessons == []
+
+
+def test_many_lines_from_one_deal_are_kept_and_count_as_one_deal() -> None:
+    """A Deal Kit teaches many different work lines at once. All of them must
+    be kept (scoring is by nearest exemplar), and together they are ONE deal's
+    evidence, so the bar does not relax."""
+    from app.core.pm_feedback import _merge_with_existing, pm_correction_to_correction
+
+    class Store:
+        def __init__(self):
+            self.rows = {}
+
+        def get(self, cid):
+            return self.rows.get(cid)
+
+    store = Store()
+    corr = None
+    for i in range(20):
+        corr = pm_correction_to_correction({
+            "head": "type", "dealId": "deal-a", "text": f"work line {i}",
+            "oldValue": "scope_item", "newValue": "task", "scope": "global",
+        })
+        corr = _merge_with_existing(store, corr)
+        store.rows[corr.id] = corr
+    assert len(corr.exemplars) == 20
+    assert corr.threshold == 0.82
+    other = pm_correction_to_correction({
+        "head": "type", "dealId": "deal-b", "text": "work line from another deal",
+        "oldValue": "scope_item", "newValue": "task", "scope": "global",
+    })
+    other = _merge_with_existing(store, other)
+    assert len(other.exemplars) == 21
+    assert other.threshold < 0.82
