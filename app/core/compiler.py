@@ -1656,6 +1656,14 @@ def compile_project(
                     f"INFO: task_tier_classification stamped {tier_stamped} task atom(s) "
                     f"with parent/child quote-line tiers"
                 )
+            from app.core.task_tier_classifier import fold_task_mentions
+
+            folded = fold_task_mentions(atoms)
+            if folded:
+                warnings.append(
+                    f"INFO: task_tier_classification folded {folded} repeated mention(s) of "
+                    f"a unit of work into its fullest statement"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: task_tier_classification failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=tier_stamped)

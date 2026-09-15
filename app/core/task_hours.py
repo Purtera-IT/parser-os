@@ -113,6 +113,12 @@ def estimate_task_hours(atoms: list[Any], *, store: Any = None) -> int:
     for atom in atoms:
         if _atom_type(atom) != "task":
             continue
+        # Hours belong to the quote line. A mention folded into a fuller
+        # statement of the same work (task_tier_classifier.fold_task_mentions)
+        # is not priced again.
+        _val = getattr(atom, "value", None)
+        if isinstance(_val, dict) and _val.get("folded_into"):
+            continue
         text = str(getattr(atom, "raw_text", "") or "").strip()
         if not text:
             continue

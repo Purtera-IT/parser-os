@@ -218,6 +218,70 @@ def classify_task_tiers(atoms: list[Any]) -> tuple[list[Any], int]:
     return atoms, changed
 
 
+_FUNCTION_WORDS = frozenset({"a", "an", "the", "of", "for", "to", "and", "in", "at", "on", "with", "is", "are", "be"})
+
+
+def _identity_tokens(text: str) -> frozenset[str]:
+    return frozenset(t for t in re.split(r"[^a-z0-9]+", text.lower()) if t and t not in _FUNCTION_WORDS)
+
+
+def fold_task_mentions(atoms: list[Any]) -> int:
+    """One unit of work stated more than once is one quote line.
+
+    Live 010043 (compile fc2db7e, 2026-09-15): "3 Verkada cameras" in the
+    email, "3 cameras-Verkada" in a note, "3 Verkada cameras intsall." in the
+    note's title -- three parent tasks, two of them priced from the learned
+    5.33 h per camera, so the Deal Kit was offered 32 hours for 16 hours of
+    work. The three name the same thing: the words of one are the words of
+    another, with at most a word added. That is the whole test -- token sets
+    in a subset relation after grammar words are dropped -- so "Update QS1 Host
+    PC static IP for the 1517 subnet" and "Update any hardcoded printer IPs
+    from 1518 to the 1517 subnet" stay two tasks, and a survey mentioned five
+    different ways stays five (that is the store's to teach).
+
+    The fullest mention stays the parent; the others become its children,
+    linked by ``parent_task_id`` and marked ``folded_into``, and are no longer
+    quote lines, so hours are learned once. Returns how many were folded.
+    """
+    parents = [
+        a for a in atoms
+        if _atom_type_str(a) == "task"
+        and (getattr(a, "value", None) or {}).get("task_tier") == "parent"
+    ]
+    toks = {id(a): _identity_tokens(_atom_text(a)) for a in parents}
+    # Fullest first, so a shorter mention folds into the richest statement.
+    ordered = sorted(parents, key=lambda a: (-len(toks[id(a)]), str(getattr(a, "id", ""))))
+    folded = 0
+    kept: list[Any] = []
+    for a in ordered:
+        t = toks[id(a)]
+        if len(t) < 2:
+            kept.append(a)
+            continue
+        into = next((k for k in kept if len(toks[id(k)]) >= 2 and (t <= toks[id(k)] or toks[id(k)] <= t)), None)
+        if into is None:
+            kept.append(a)
+            continue
+        val = dict(getattr(a, "value", None) or {})
+        val["task_tier"] = "child"
+        val["is_quote_line"] = False
+        val["parent_task_id"] = str(getattr(into, "id", "") or "")
+        val["parent_task_hint"] = _atom_text(into)
+        val["folded_into"] = str(getattr(into, "id", "") or "")
+        a.value = val
+        flags = [f for f in (getattr(a, "review_flags", None) or []) if f != "task_tier_parent"]
+        if "task_tier_child" not in flags:
+            flags.append("task_tier_child")
+        if "task_mention_folded" not in flags:
+            flags.append("task_mention_folded")
+        try:
+            a.review_flags = flags
+        except Exception:
+            pass
+        folded += 1
+    return folded
+
+
 def is_quote_line_task_atom(atom: Any) -> bool:
     """Whether a task atom should surface as a Deal Kit quote line."""
     if _atom_type_str(atom) != "task":
@@ -231,6 +295,7 @@ def is_quote_line_task_atom(atom: Any) -> bool:
 
 __all__ = [
     "classify_task_tiers",
+    "fold_task_mentions",
     "infer_task_tier",
     "infer_task_tier_for_atom",
     "is_quote_line_task_atom",
