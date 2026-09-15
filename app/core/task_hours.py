@@ -94,7 +94,7 @@ def _atom_type(atom: Any) -> str:
 def estimate_task_hours(atoms: list[Any], *, store: Any = None) -> int:
     """Stamp learned hours on task atoms. Returns how many were stamped."""
     try:
-        from app.core.decide import decide, get_store
+        from app.core.decide import DecisionScope, decide, get_store
     except Exception:  # pragma: no cover
         return 0
     store = store if store is not None else get_store()
@@ -122,7 +122,9 @@ def estimate_task_hours(atoms: list[Any], *, store: Any = None) -> int:
         text = str(getattr(atom, "raw_text", "") or "").strip()
         if not text:
             continue
-        d = decide(RELATION, text[:600], verdicts, instruction="Hours for this unit of work, taught from finished Deal Kits.", llm=False)
+        # The deal the atom belongs to, so a lesson taught for this deal is found.
+        scope = DecisionScope(deal_id=str(getattr(atom, "project_id", "") or ""))
+        d = decide(RELATION, text[:600], verdicts, instruction="Hours for this unit of work, taught from finished Deal Kits.", llm=False, scope=scope)
         if d is None or d.source != "store" or not d.verdict:
             continue
         parsed = parse_hours_verdict(d.verdict)

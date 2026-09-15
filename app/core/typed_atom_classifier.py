@@ -510,7 +510,7 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
     """
     decided: dict[int, str] = {}
     try:
-        from app.core.decide import decide, get_store
+        from app.core.decide import DecisionScope, decide, get_store
         from app.core.schemas import AtomType
 
         if get_store() is None:
@@ -521,6 +521,12 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
             text = str(getattr(a, "raw_text", "") or "").strip()
             if not text:
                 continue
+            # The deal the atom belongs to. Without it the store searches its
+            # global tier only, and a lesson taught for THIS deal -- "on
+            # 000061 this recap line is scope, not a task" -- never fires
+            # (2026-09-15: nine deal-scoped lessons, none applied, while the
+            # two global ones did).
+            scope = DecisionScope(deal_id=str(getattr(a, "project_id", "") or ""))
             # Judgments only: what a person or a finished Deal Kit taught. The
             # model's own self-taught rows (created_by="teacher") are a cache
             # for the deflect layer below, never a ruling -- applied here they
@@ -528,7 +534,7 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
             # 58 recap lines typed "task" from another deal's verdicts).
             d = decide(
                 _ATOM_TYPE_RELATION, text[:600], cands,
-                instruction=_ATOM_TYPE_INSTRUCTION, llm=False,
+                instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
                 exclude_created_by=("teacher",),
             )
             if d is None or d.source != "store" or not d.verdict:
@@ -536,7 +542,7 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
                 # taught about text like this, never the head's generalisation.
                 d = decide(
                     _ATOM_TYPE_RELATION, text[:600], base,
-                    instruction=_ATOM_TYPE_INSTRUCTION, llm=False,
+                    instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
                     exclude_created_by=("teacher",), neural_head=False,
                 )
             if d is None or d.source != "store" or not d.verdict:
