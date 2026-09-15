@@ -1228,7 +1228,12 @@ def compile_project(
                 _before_djs = list(atoms)
                 atoms, _dropped_djs, _djs_verdicts = _djs.judge_documents(
                     atoms, deal_name=_deal_name, project_id=resolved_project_id,
+                    project_dir=project_dir,
                 )
+                # Every conversation's verdict goes to the trace, kept or not,
+                # so a brief built from the wrong job can be read back to the
+                # judgement that let it in.
+                _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
                 if _dropped_djs:
                     merge_suppressed(
                         suppressed_atoms,
@@ -1239,13 +1244,7 @@ def compile_project(
                         ),
                     )
                     _djs_dropped = len(_dropped_djs)
-                    for _v in _djs_verdicts:
-                        if _v["verdict"] == "other_job":
-                            _djs_notes.append(
-                                f"INFO: document_job_scope set aside {_v['filename']} "
-                                f"({_v['atoms']} atoms; {_v['source']} {_v['confidence']})"
-                            )
-                    warnings.extend(_djs_notes)
+                warnings.extend(_djs_notes)
         except Exception as exc:
             warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)

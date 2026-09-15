@@ -9,45 +9,221 @@ a deal number, so document scope (document_lifecycle/scope.py) read them as
 this deal's, and the brief came out as a staff-augmentation job about kiosks,
 badges and packing boxes, with its Deal Kit tasks drawn from the close-down.
 
-The question is answered per DOCUMENT, through the decide() chokepoint:
+The question is answered per CONVERSATION, through the decide() chokepoint:
 
     STORE (a PM taught "this thread is a different job")  ->  LLM  ->  this_deal
 
+One conversation is one job. An email thread -- every message under one
+subject, whatever reply marker or reference number someone typed in front of
+it -- and the files that arrived with its messages are judged together, and
+the verdict covers all of them. Measured on 010198 (2026-09-15): judged one
+message at a time, three models called the "010179 POS Installation 8/2"
+replies another job because the number differed from the deal's, when they
+were the same customer confirming the same date; as one thread the same
+models read them as this deal. And 010162's packing list, judged alone, is
+counts and box sizes that say nothing about a job; beside the smart-hands
+thread it arrived with, it is plainly the kiosk close-down.
+
 The judge reads the deal's own name -- the seller's one-line statement of the
-work -- against the document's title and its first lines. Only a confident
-``other_job`` removes anything, and removal is lossless: the atoms go to the
-suppression ledger like every other gate drop, so a PM can see what was set
-aside and teach the opposite. No store and no model means nothing moves.
+work -- against the conversation's subject and its first lines, and is asked
+to compare the WORK, since customer, vendor, people and dates are shared by
+every job the customer has. It is a hard discrimination: gpt-4.1-mini, the
+worker's hosted teacher, called 000036's own request ("install their new
+Samsung 65' display" on "San Fran TV mount") another job and 010162's kiosk
+thread this deal; qwen3:32b on the same prompts was right on all seven deals
+measured. So this decision names its model (``SOWSMITH_DOCUMENT_JOB_MODEL``,
+default the local qwen3:32b) rather than taking the cheap default.
+
+Only a confident ``other_job`` removes anything, and removal is lossless: the
+atoms go to the suppression ledger like every other gate drop, so a PM can see
+what was set aside and teach the opposite. Every verdict, kept or not, is
+written to the compile trace. No store and no model means nothing moves.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 RELATION = "document_job"
 CANDIDATES = ["this_deal", "other_job"]
 INSTRUCTION = (
-    "A deal is one job for one customer; its name states the work. Decide "
-    "whether this document is about THAT job (this_deal) or about a different "
-    "engagement for the same customer, such as another site's work order, a "
-    "separate service call, or an unrelated project (other_job). Documents that "
-    "discuss the deal's work, its pricing, its sites, its schedule or its "
-    "contract are this_deal, even when they also mention other topics. Answer "
-    "other_job only when the document's subject is clearly a different job; "
-    "when in doubt, this_deal."
+    "The DEAL line names one job for one customer. Decide whether the DOCUMENT "
+    "is about that same job (this_deal) or about a different piece of work for "
+    "the same customer -- another work order, service call, site visit or "
+    "project (other_job). Judge by the WORK described -- what is installed, "
+    "removed, moved, serviced or priced -- never by the customer, vendor, "
+    "people or dates, which one customer's jobs share. A document about the "
+    "deal's work, its pricing, sites, schedule or contract is this_deal even if "
+    "it also mentions other things. Answer other_job only when the document's "
+    "work is clearly a different job from the one the DEAL line names; if you "
+    "cannot tell, answer this_deal."
 )
-_MIN_CONF = 0.85
-_LINES = 12
+_DEFAULT_MODEL = "ollama:qwen3:32b"
+_DEFAULT_TIMEOUT = 120
+_DEFAULT_MIN_CONF = 0.8
+_LINES = 14
 _LINE_CHARS = 160
 _META_KINDS = frozenset({"hubspot_note_meta", "email_header", "email_addressee"})
+# A file mirrored from the CRM this close to a message that carried attachments
+# arrived with that message, when the manifest gives no id to prove it.
+_ARRIVED_WITH = timedelta(minutes=2)
+# What people type in front of a subject that is not the subject: reply and
+# forward markers, and reference tokens (a deal or ticket number, a bracketed
+# tag of digits). Letters other than those markers are the subject itself.
+_SUBJECT_PREFIX_RE = re.compile(r"^(?:(?:re|fw|fwd|aw|wg|sv|vs)\s*:\s*|[#\[\]()0-9._/-]+\s+)+")
 
 
 def enabled() -> bool:
     return os.environ.get("SOWSMITH_DOCUMENT_JOB_SCOPE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def judge_model() -> str | None:
+    """The model this discrimination is routed to; '' or 'default' keeps decide()'s own."""
+    raw = os.environ.get("SOWSMITH_DOCUMENT_JOB_MODEL", _DEFAULT_MODEL).strip()
+    return None if raw.lower() in ("", "default") else raw
+
+
+def judge_timeout() -> int:
+    try:
+        return max(5, int(os.environ.get("SOWSMITH_DOCUMENT_JOB_TIMEOUT", str(_DEFAULT_TIMEOUT))))
+    except ValueError:
+        return _DEFAULT_TIMEOUT
+
+
+def min_confidence() -> float:
+    try:
+        return float(os.environ.get("SOWSMITH_DOCUMENT_JOB_MIN_CONF", str(_DEFAULT_MIN_CONF)))
+    except ValueError:
+        return _DEFAULT_MIN_CONF
+
+
+def thread_key(subject: Any) -> str:
+    """The conversation a subject line belongs to. "Re: 010198 Fw: POS
+    Installation 8/2", "Fw: 010179 POS Installation 8/2" and "Re: POS
+    Installation 8/2" are one thread: markers and reference numbers are what
+    people type in front of a subject, not the subject."""
+    s = " ".join(str(subject or "").lower().split())
+    if not s:
+        return ""
+    return _SUBJECT_PREFIX_RE.sub("", s).strip() or s
+
+
+def manifest_index(project_dir: Path | str | None) -> dict[str, dict[str, Any]]:
+    """Per filename, what the manifest knows about where a document came from:
+    the message subject, the attachment ids a message carried, a file's own
+    external id, when it was authored, and its source."""
+    if not project_dir:
+        return {}
+    path = Path(project_dir) / ".parser_manifest.json"
+    if not path.is_file():
+        return {}
+    try:
+        artifacts = json.loads(path.read_text(encoding="utf-8")).get("artifacts") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for a in artifacts:
+        if not isinstance(a, dict) or not a.get("filename"):
+            continue
+        md = a.get("metadata") if isinstance(a.get("metadata"), dict) else {}
+        out[str(a["filename"])] = {
+            "subject": str(md.get("subject") or "").strip(),
+            "attachment_ids": [str(x).strip() for x in (md.get("attachmentIds") or []) if str(x).strip()],
+            "external_id": str(a.get("external_id") or "").strip(),
+            "authored_at": str(md.get("timestamp") or a.get("authored_at") or "").strip(),
+            "source": str(a.get("source") or "").strip().lower(),
+        }
+    return out
+
+
+def _when(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _subject_of(doc_atoms: list[Any], info: dict[str, Any]) -> str:
+    if info.get("subject"):
+        return str(info["subject"])
+    for a in doc_atoms:
+        thread = _value(a).get("email_thread")
+        if isinstance(thread, dict) and thread.get("subject"):
+            return str(thread["subject"]).strip()
+    return ""
+
+
+def bundle_documents(
+    by_doc: "OrderedDict[str, list[Any]]",
+    index: dict[str, dict[str, Any]] | None = None,
+) -> "OrderedDict[str, dict[str, Any]]":
+    """Group documents into conversations. Every message under one thread
+    subject is one bundle; a file joins the bundle of the message that carried
+    it -- by the attachment id the manifest recorded, else by having been
+    mirrored from the CRM within two minutes of exactly one such message.
+    Everything else is a bundle of its own. Each bundle records how each
+    document joined it ("thread", "attachment", "arrived_with", "alone")."""
+    index = index or {}
+    bundles: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+    threads: dict[str, str] = {}
+    pending: list[tuple[str, str, dict[str, Any]]] = []
+
+    def _new(key: str, title: str) -> dict[str, Any]:
+        b = {"title": title, "docs": [], "links": {}, "attachment_ids": set(), "carried_at": []}
+        bundles[key] = b
+        return b
+
+    for key, doc_atoms in by_doc.items():
+        filename = str(getattr(doc_atoms[0], "source_filename", "") or key)
+        info = index.get(filename) or {}
+        subject = _subject_of(doc_atoms, info)
+        if subject:
+            tk = "thread:" + thread_key(subject)
+            b = bundles.get(threads.get(tk, "")) or _new(tk, subject)
+            threads.setdefault(tk, tk)
+            b["docs"].append(key)
+            b["links"][key] = "thread"
+            b["attachment_ids"].update(info.get("attachment_ids") or [])
+            if info.get("attachment_ids"):
+                b["carried_at"].append(_when(str(info.get("authored_at") or "")))
+            continue
+        pending.append((key, filename, info))
+
+    for key, filename, info in pending:
+        joined = None
+        ext = str(info.get("external_id") or "")
+        file_id = ext.split(":", 1)[1] if ":" in ext else ""
+        if file_id:
+            for bk, b in bundles.items():
+                if bk.startswith("thread:") and file_id in b["attachment_ids"]:
+                    joined, how = bk, "attachment"
+                    break
+        if joined is None and info.get("source") == "hubspot":
+            at = _when(str(info.get("authored_at") or ""))
+            near = [
+                bk for bk, b in bundles.items()
+                if bk.startswith("thread:") and at is not None
+                and any(t is not None and abs(at - t) <= _ARRIVED_WITH for t in b["carried_at"])
+            ]
+            if len(near) == 1:
+                joined, how = near[0], "arrived_with"
+        if joined is None:
+            b = _new(key, _title(by_doc[key], filename))
+            b["docs"].append(key)
+            b["links"][key] = "alone"
+        else:
+            bundles[joined]["docs"].append(key)
+            bundles[joined]["links"][key] = how
+    return bundles
 
 
 def deal_name_from_manifest(project_dir: Path | str | None) -> str:
@@ -119,10 +295,8 @@ def _own_words_first(atoms: list[Any]) -> list[Any]:
     return own + rest
 
 
-def document_text(atoms: list[Any], filename: str, common: set[str] | None = None) -> str:
-    """The document as the judge reads it: its title and its first lines."""
+def _first_lines(atoms: list[Any], skip: set[str], limit: int) -> list[str]:
     lines: list[str] = []
-    skip = common or set()
     for a in _own_words_first(atoms):
         v = _value(a)
         if v.get("kind") in _META_KINDS or v.get("field_name") in _META_KINDS or v.get("non_deal") or _atom_type(a) in ("raw_utterance",):
@@ -131,16 +305,39 @@ def document_text(atoms: list[Any], filename: str, common: set[str] | None = Non
         if not t or t in lines or _norm(t)[:80] in skip or t.startswith("[Image extracted"):
             continue
         lines.append(t[:_LINE_CHARS])
-        if len(lines) >= _LINES:
+        if len(lines) >= limit:
             break
     if not lines:  # a transcript is nothing but utterances
         for a in atoms:
             t = " ".join(str(getattr(a, "raw_text", "") or "").split())
             if t and len(t) > 40:
                 lines.append(t[:_LINE_CHARS])
-            if len(lines) >= _LINES:
+            if len(lines) >= limit:
                 break
-    return f"DOCUMENT: {_title(atoms, filename)}\n" + "\n".join(f"- {l}" for l in lines)
+    return lines
+
+
+def bundle_text(title: str, docs: list[list[Any]], common: set[str] | None = None) -> str:
+    """The conversation as the judge reads it: its subject and its first lines,
+    taken in turn from each document in it so a long message does not crowd out
+    the file that arrived with it."""
+    skip = common or set()
+    per_doc = [_first_lines(d, skip, _LINES) for d in docs]
+    lines: list[str] = []
+    i = 0
+    while len(lines) < _LINES and any(i < len(p) for p in per_doc):
+        for p in per_doc:
+            if i < len(p) and p[i] not in lines:
+                lines.append(p[i])
+                if len(lines) >= _LINES:
+                    break
+        i += 1
+    return f"DOCUMENT: {title}\n" + "\n".join(f"- {l}" for l in lines)
+
+
+def document_text(atoms: list[Any], filename: str, common: set[str] | None = None) -> str:
+    """One document as the judge reads it: its title and its first lines."""
+    return bundle_text(_title(atoms, filename), [atoms], common)
 
 
 def judge_documents(
@@ -148,12 +345,15 @@ def judge_documents(
     *,
     deal_name: str,
     project_id: str = "",
+    project_dir: Path | str | None = None,
+    index: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[Any], list[Any], list[dict[str, Any]]]:
     """Partition ``atoms`` into (kept, dropped) and describe each verdict.
 
-    Every document is judged once. A confident ``other_job`` drops the
-    document's atoms; anything else keeps them. Without a deal name there is
-    nothing to compare against, so nothing is judged.
+    Every conversation is judged once and the verdict covers every document
+    in it. A confident ``other_job`` drops their atoms; anything else keeps
+    them. Without a deal name there is nothing to compare against, so nothing
+    is judged.
     """
     if not deal_name or not atoms:
         return list(atoms), [], []
@@ -171,35 +371,54 @@ def judge_documents(
     dropped_ids: set[int] = set()
     verdicts: list[dict[str, Any]] = []
     common = common_lines(atoms)
-    for key, doc_atoms in by_doc.items():
-        filename = str(getattr(doc_atoms[0], "source_filename", "") or key)
-        text = f"DEAL: {deal_name.strip()}\n{document_text(doc_atoms, filename, common)}"
+    bundles = bundle_documents(by_doc, index if index is not None else manifest_index(project_dir))
+    model, timeout, floor = judge_model(), judge_timeout(), min_confidence()
+    for b in bundles.values():
+        docs = [by_doc[k] for k in b["docs"]]
+        filenames = [str(getattr(d[0], "source_filename", "") or k) for d, k in zip(docs, b["docs"])]
+        text = f"DEAL: {deal_name.strip()}\n{bundle_text(b['title'], docs, common)}"
         try:
-            d = decide(RELATION, text[:4000], CANDIDATES, instruction=INSTRUCTION, scope=scope)
+            d = decide(RELATION, text[:4000], CANDIDATES, instruction=INSTRUCTION, scope=scope,
+                       model=model, timeout=timeout)
         except Exception:
             d = None
         verdict = getattr(d, "verdict", None) or "this_deal"
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
-        other = verdict == "other_job" and (source == "store" or conf >= _MIN_CONF)
+        other = verdict == "other_job" and (source == "store" or conf >= floor)
+        n_atoms = sum(len(d_) for d_ in docs)
         verdicts.append({
-            "filename": filename, "verdict": "other_job" if other else "this_deal",
-            "confidence": round(conf, 3), "source": source, "atoms": len(doc_atoms),
+            "bundle": b["title"], "filename": filenames[0], "filenames": filenames,
+            "links": {fn: b["links"][k] for fn, k in zip(filenames, b["docs"])},
+            "verdict": "other_job" if other else "this_deal", "model_verdict": verdict,
+            "confidence": round(conf, 3), "source": source, "atoms": n_atoms,
             "correction_id": getattr(d, "correction_id", None),
         })
         if other:
-            dropped_ids.update(id(a) for a in doc_atoms)
-            for a in doc_atoms:
-                flags = list(getattr(a, "review_flags", None) or [])
-                if "other_job" not in flags:
-                    flags.append("other_job")
-                try:
-                    a.review_flags = flags
-                except Exception:
-                    pass
+            for doc_atoms in docs:
+                dropped_ids.update(id(a) for a in doc_atoms)
+                for a in doc_atoms:
+                    flags = list(getattr(a, "review_flags", None) or [])
+                    if "other_job" not in flags:
+                        flags.append("other_job")
+                    try:
+                        a.review_flags = flags
+                    except Exception:
+                        pass
     kept = [a for a in atoms if id(a) not in dropped_ids]
     dropped = [a for a in atoms if id(a) in dropped_ids]
     return kept, dropped, verdicts
 
 
-__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines", "document_text", "judge_documents"]
+def verdict_note(v: dict[str, Any]) -> str:
+    """One trace line per conversation, kept or set aside."""
+    what = f"{v['bundle'][:80]} ({v['atoms']} atoms, {len(v.get('filenames') or [v['filename']])} document(s))"
+    how = f"{v['model_verdict'] or 'undecided'} {v['confidence']:.2f} {v['source']}"
+    if v["verdict"] == "other_job":
+        return f"INFO: document_job_scope set aside {what}; {how}"
+    return f"INFO: document_job_scope kept {what}; {how}"
+
+
+__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines",
+           "thread_key", "manifest_index", "bundle_documents", "bundle_text", "document_text",
+           "judge_documents", "verdict_note", "judge_model", "judge_timeout", "min_confidence"]
