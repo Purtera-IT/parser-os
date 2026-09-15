@@ -76,17 +76,22 @@ def _bullet_depth(atom: Any, val: dict[str, Any]) -> int | None:
 TASK_TIER_RELATION = "task_tier"
 
 
-def _taught_tier(label: str) -> str | None:
-    """``parent`` / ``child`` from the feedback store, or None (abstain / no store)."""
+def _taught_tier(label: str, deal_id: str = "") -> str | None:
+    """``parent`` / ``child`` from the feedback store, or None (abstain / no store).
+
+    ``deal_id`` is the deal the line belongs to: the store searches that
+    deal's lessons first, then pack, then global. Without it only global
+    lessons could ever fire (the missing-scope bug of 2026-09-15, PR #139).
+    """
     try:
-        from app.core.decide import decide, get_store
+        from app.core.decide import DecisionScope, decide, get_store
 
         if get_store() is None:
             return None
         d = decide(
             TASK_TIER_RELATION, label[:600], ["parent", "child"],
             instruction="Is this line a unit of work a quote prices (parent) or a step inside one (child)?",
-            llm=False,
+            llm=False, scope=DecisionScope(deal_id=str(deal_id or "")),
         )
     except Exception:
         return None
@@ -95,7 +100,7 @@ def _taught_tier(label: str) -> str | None:
     return d.verdict
 
 
-def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None) -> tuple[str, bool]:
+def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None, deal_id: str = "") -> tuple[str, bool]:
     """Return ``(task_tier, is_quote_line)`` for a task-shaped label."""
     structured = structured or {}
     label = (text or "").strip()
@@ -115,7 +120,7 @@ def infer_task_tier(*, text: str, structured: dict[str, Any] | None = None) -> t
     # task, and the word list below (a leading "confirm") called it a child
     # step, so Deal Kit never proposed it. A confident taught answer wins; the
     # heuristics are the cold start for everything nobody taught yet.
-    taught = _taught_tier(label)
+    taught = _taught_tier(label, deal_id)
     if taught is not None:
         return taught, taught == "parent"
 
@@ -167,7 +172,7 @@ def _bullet_depth_from_structured(structured: dict[str, Any]) -> int | None:
 
 def infer_task_tier_for_atom(atom: Any) -> tuple[str, bool]:
     val = dict(getattr(atom, "value", None) or {})
-    return infer_task_tier(text=_atom_text(atom), structured=val)
+    return infer_task_tier(text=_atom_text(atom), structured=val, deal_id=str(getattr(atom, "project_id", "") or ""))
 
 
 def _step_parent_label(text: str) -> str | None:
@@ -190,7 +195,7 @@ def classify_task_tiers(atoms: list[Any]) -> tuple[list[Any], int]:
 
         text = _atom_text(atom)
         val = dict(getattr(atom, "value", None) or {})
-        tier, is_quote = infer_task_tier(text=text, structured=val)
+        tier, is_quote = infer_task_tier(text=text, structured=val, deal_id=str(getattr(atom, "project_id", "") or ""))
 
         if tier == "parent":
             last_parent_id = str(getattr(atom, "id", "") or "")

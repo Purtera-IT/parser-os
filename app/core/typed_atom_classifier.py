@@ -760,7 +760,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     if deflect:
         _t = _lap()
         try:
-            from app.core.decide import decide
+            from app.core.decide import DecisionScope, decide
             kept_by_store = 0
             survivors: list[Any] = []
             cands = _atom_type_candidates()
@@ -771,6 +771,9 @@ def classify_atoms(atoms: list[Any]) -> int:
                     cands,
                     instruction=_ATOM_TYPE_INSTRUCTION,
                     llm=False,
+                    # The teacher's own cache rows are deal-scoped; without the
+                    # deal they could never deflect.
+                    scope=DecisionScope(deal_id=str(getattr(a, "project_id", "") or "")),
                 )
                 if d.source == "store" and d.verdict == "_keep":
                     kept_by_store += 1

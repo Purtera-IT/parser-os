@@ -720,7 +720,7 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                     row[field] = candidate
 
     all_groups.extend(address_identity_groups(universe, site_rows))
-    all_groups.extend(semantic_site_fusion_groups(universe, site_rows))
+    all_groups.extend(semantic_site_fusion_groups(universe, site_rows, deal_id=project_id))
 
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
     # Drop any site:* key that fails hygiene before grouping is
@@ -739,7 +739,7 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
         universe_keys: set[str] = set()
         for group in all_groups:
             universe_keys |= {k for k in group if isinstance(k, str)}
-        role_drops = semantic_site_role_drops(universe_keys)
+        role_drops = semantic_site_role_drops(universe_keys, deal_id=project_id)
     except Exception:  # pragma: no cover - gate must never break resolution
         role_drops = set()
 
@@ -842,6 +842,7 @@ def address_identity_groups(
 def semantic_site_fusion_groups(
     site_keys: set[str],
     rows_by_key: dict[str, dict[str, Any]] | None = None,
+    deal_id: str = "",
 ) -> list[set[str]]:
     """Merge physical-site keys that name the same place but slug-equality misses.
 
@@ -882,7 +883,9 @@ def semantic_site_fusion_groups(
     except Exception:  # pragma: no cover - decide must always import
         return []
 
-    scope = DecisionScope()
+    # The deal these keys belong to: the store searches its lessons first,
+    # then pack, then global. An empty scope searched global only (2026-09-15).
+    scope = DecisionScope(deal_id=str(deal_id or ""))
 
     def phrase(k: str) -> str:
         return k[len("site:"):].replace("_", " ").strip()
@@ -1013,7 +1016,7 @@ def semantic_site_fusion_groups(
     return merged
 
 
-def semantic_site_role_drops(site_keys: set[str]) -> set[str]:
+def semantic_site_role_drops(site_keys: set[str], deal_id: str = "") -> set[str]:
     """Universal ghost-rejection gate for ``site:`` keys via the decide() store.
 
     The deterministic hygiene below uses ``_is_obvious_non_site`` — a ~300-entry
@@ -1082,7 +1085,9 @@ def semantic_site_role_drops(site_keys: set[str]) -> set[str]:
     except Exception:  # pragma: no cover - seed module must always import
         return set()
 
-    scope = DecisionScope()
+    # The deal these keys belong to: the store searches its lessons first,
+    # then pack, then global. An empty scope searched global only (2026-09-15).
+    scope = DecisionScope(deal_id=str(deal_id or ""))
 
     def phrase(k: str) -> str:
         return k[len("site:"):].replace("_", " ").strip()
