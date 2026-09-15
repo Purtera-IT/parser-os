@@ -132,6 +132,59 @@ def _iso_date(value: Any) -> str | None:
     except Exception:
         return None
 
+_EXPORT_FIELD_RE = re.compile(r"^([A-Za-z][A-Za-z -]{0,30}):\s(.*)$")
+
+
+def _looks_like_value(text: str) -> bool:
+    """An id, a timestamp, a URL, a one-word tag: a field, not a sentence."""
+    t = text.strip()
+    return bool(t) and (" " not in t or t.startswith(("http://", "https://")))
+
+
+def peel_export_header(raw_text: str) -> tuple[dict[str, str] | None, str]:
+    """Split an exporter's header block off the top of a plain-text transcript.
+
+    A CRM meeting export opens with a run of ``Label: value`` lines before its
+    first blank line -- the meeting's title, its id, when it ran, where the
+    recording is. Read as speech, every one of those is a "speaker" saying
+    something, and the first became a task on live 010095 ("HubSpot Meeting:
+    010095 Lantronix device installation and setup(with Orcle)" -- the deal's
+    name, offered to the Deal Kit as work nobody asked for).
+
+    The block is recognised by its shape, not its labels: at least three
+    consecutive ``Label: value`` lines from the top, terminated by a blank
+    line, with every label distinct and at least half of the values being
+    fields rather than sentences (an id, a timestamp, a URL, a single word).
+    Speech never looks like that: speakers repeat and utterances are prose.
+
+    Returns ``(fields, body, offset)``: ``fields`` keeps insertion order with
+    the first entry the title line; ``body`` is the text from its first spoken
+    line on; ``offset`` is how many lines were peeled before it, so the caller
+    can give every segment its number in the original file. (The header is not
+    blanked in place because the transcript normaliser strips leading blank
+    lines, which would renumber the body anyway.)
+    """
+    lines = raw_text.splitlines()
+    fields: dict[str, str] = {}
+    end = 0
+    for line in lines:
+        if not line.strip():
+            break
+        m = _EXPORT_FIELD_RE.match(line.strip())
+        if not m or m.group(1).strip() in fields:
+            return None, raw_text, 0
+        fields[m.group(1).strip()] = m.group(2).strip()
+        end += 1
+    if end < 3 or sum(_looks_like_value(v) for v in fields.values()) * 2 < len(fields):
+        return None, raw_text, 0
+    first_body = end
+    while first_body < len(lines) and not lines[first_body].strip():
+        first_body += 1
+    if first_body >= len(lines):
+        return None, raw_text, 0
+    return fields, "\n".join(lines[first_body:]), first_body
+
+
 class TranscriptParser(BaseParser):
     parser_name = "transcript"
     parser_version = "transcript_parser_v1"
@@ -342,9 +395,11 @@ class TranscriptParser(BaseParser):
         domain_pack: DomainPack | None = None,
     ) -> ParserOutput:
         del domain_pack
-        segments = self._segments_from_path(path)
+        segments, export_header = self._segments_and_export_header(path)
         atoms: list[EvidenceAtom] = []
         header = self._call_header_atom(project_id=project_id, artifact_id=artifact_id, path=path)
+        if header is None and export_header:
+            header = self._export_header_atom(project_id=project_id, artifact_id=artifact_id, path=path, fields=export_header)
         if header is not None:
             atoms.append(header)
         for segment in segments:
@@ -361,6 +416,50 @@ class TranscriptParser(BaseParser):
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
+        )
+
+    def _export_header_atom(
+        self, *, project_id: str, artifact_id: str, path: Path, fields: dict[str, str]
+    ) -> EvidenceAtom:
+        """The exporter's header block as one provenance record: the meeting's
+        title (the first field's value), and its date from the first field
+        value that parses as one. Same shape as the JSON call header so the
+        envelope dates the document the same way."""
+        items = list(fields.items())
+        title = " ".join(items[0][1].split()) if items else ""
+        date_iso = next((d for d in (_iso_date(v) for _, v in items[1:]) if d), None)
+        parts = [f"Meeting: {title}"] if title else []
+        if date_iso:
+            parts.append(f"Date: {date_iso}")
+        text = " | ".join(parts) or "Meeting export header"
+        value: dict[str, Any] = {"kind": "meeting_header", "text": text, "title": title or None,
+                                 "fields": {k: v for k, v in items[1:]}}
+        if date_iso:
+            value["document_date"] = date_iso
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, "meeting_header", text),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=text,
+            normalized_text=normalize_text(text),
+            value=value,
+            authority_class=AuthorityClass.meeting_note,
+            confidence=0.95,
+            review_status=ReviewStatus.auto_accepted,
+            entity_keys=[],
+            parser_version=self.parser_version,
+            source_refs=[
+                SourceRef(
+                    id=stable_id("src", artifact_id, "meeting_header"),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.transcript,
+                    filename=path.name,
+                    locator={"line_start": 1, "line_end": len(items)},
+                    extraction_method="transcript_export_header",
+                    parser_version=self.parser_version,
+                )
+            ],
         )
 
     def _call_header_atom(self, *, project_id: str, artifact_id: str, path: Path) -> EvidenceAtom | None:
@@ -507,15 +606,26 @@ class TranscriptParser(BaseParser):
         )
 
     def _segments_from_path(self, path: Path) -> list[dict[str, Any]]:
+        return self._segments_and_export_header(path)[0]
+
+    def _segments_and_export_header(self, path: Path) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+        """The file's speech segments, and the exporter's header block if a
+        plain-text file opened with one (see :func:`peel_export_header`)."""
         suffix = path.suffix.lower()
         raw = read_text(path)
         if suffix == ".json":
-            return self._segments_from_json(raw)
+            return self._segments_from_json(raw), None
         if suffix == ".vtt":
-            return self._segments_from_text(self._clean_vtt(raw))
+            return self._segments_from_text(self._clean_vtt(raw)), None
         if suffix == ".srt":
-            return self._segments_from_text(self._clean_srt(raw))
-        return self._segments_from_text(raw)
+            return self._segments_from_text(self._clean_srt(raw)), None
+        header, body, offset = peel_export_header(raw)
+        segments = self._segments_from_text(body)
+        for seg in segments:
+            for key in ("line_start", "line_end"):
+                if isinstance(seg.get(key), int):
+                    seg[key] += offset
+        return segments, header
 
     def _segments_from_json(self, raw_text: str) -> list[dict[str, Any]]:
         payload = json.loads(raw_text)
