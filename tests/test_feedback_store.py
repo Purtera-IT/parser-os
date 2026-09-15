@@ -353,3 +353,48 @@ def test_wire_reports_unavailable_when_configured_db_is_already_local(
         "every correction will be ignored" in r.getMessage() for r in caplog.records
     ), "an unusable store must say so loudly"
     _decide.set_store(None)
+
+
+# ── judgments vs the model's self-taught cache ──────────────────────────
+
+
+def test_a_teacher_row_never_decides_a_judgment_lookup():
+    """Live 000061 (2026-09-15): the LLM's own verdicts from another deal's
+    compile, persisted as global teacher rows, re-typed 58 recap lines before
+    the model saw them. A judgment lookup ignores what the model taught itself."""
+    s = _store()
+    s.add(_purtera_correction("teacher_abc", verdict="vendor_or_billing_address"))
+    row = s.get("teacher_abc")
+    s._conn.execute("UPDATE corrections SET created_by='teacher' WHERE id=?", ("teacher_abc",))
+    s._conn.commit()
+    assert s.get("teacher_abc").created_by == "teacher"
+    # The cache still fires for an ordinary lookup (the deflect layer's contract).
+    assert _resolve(s, "PurTera, Alpharetta GA").correction_id == "teacher_abc"
+    # A judgment lookup abstains: nobody taught this.
+    judged = s.resolve(
+        relation="physical_site", text="PurTera, Alpharetta GA", candidates=CANDS,
+        context="", scope=DecisionScope(), instruction="", relations=None,
+        exclude_created_by=("teacher",),
+    )
+    assert judged is None
+    # A person's correction still decides a judgment lookup.
+    s.add(_purtera_correction("corr_pm", verdict="vendor_or_billing_address"))
+    judged = s.resolve(
+        relation="physical_site", text="PurTera, Alpharetta GA", candidates=CANDS,
+        context="", scope=DecisionScope(), instruction="", relations=None,
+        exclude_created_by=("teacher",),
+    )
+    assert judged is not None and judged.correction_id == "corr_pm"
+
+
+def test_learn_from_teacher_is_scoped_to_the_deal_it_was_given():
+    s = _store()
+    cid = s.learn_from_teacher(
+        relation="physical_site", text="PurTera letterhead address", verdict="vendor_or_billing_address",
+        confidence=0.9, scope=DecisionScope(deal_id="deal-x"),
+    )
+    c = s.get(cid)
+    assert (c.created_by, c.scope, c.scope_key) == ("teacher", SCOPE_DEAL, "deal-x")
+    # Visible to that deal, invisible to another.
+    assert _resolve(s, "PurTera billing address", scope=DecisionScope(deal_id="deal-x")) is not None
+    assert _resolve(s, "PurTera billing address", scope=DecisionScope(deal_id="deal-y")) is None
