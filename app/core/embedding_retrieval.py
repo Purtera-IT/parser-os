@@ -589,13 +589,52 @@ def get_candidates_for_entity_type(
     return results
 
 
+_REACH_CACHE: dict[str, tuple[bool, float]] = {}
+
+
+def _azure_embed_reachable() -> bool:
+    """Can Azure return a vector right now? One short embedding through the
+    same path ``embed_texts`` uses, cached for ``PARSER_OS_LLM_PREFLIGHT_TTL``
+    seconds like the Ollama preflights, so a compile pays the probe once."""
+    import time as _time
+
+    base, key, _model = _azure_embed_conf()
+    if not base or not key:
+        return False
+    try:
+        ttl = int(os.environ.get("PARSER_OS_LLM_PREFLIGHT_TTL", "300"))
+    except ValueError:
+        ttl = 300
+    now = _time.monotonic()
+    cached = _REACH_CACHE.get(base)
+    if cached is not None and (now - cached[1]) < ttl:
+        return cached[0]
+    try:
+        vecs = _embed_azure(["probe"])
+        ok = bool(vecs and vecs[0])
+    except Exception:
+        ok = False
+    _REACH_CACHE[base] = (ok, now)
+    return ok
+
+
 def embedding_endpoint_reachable() -> bool:
     """Can the endpoint actually embed — not merely list models.
 
     This used to GET /api/tags and call a 200 reachable, the same lie that let
     the generate path hang: a box answers /api/tags in milliseconds while its
     model is unloaded or its proxy is returning 500s. Ask for a vector instead.
+
+    Ask the BACKEND IN USE. With ``SOWSMITH_EMBED_BACKEND=azure`` every vector
+    comes from Azure, yet this probed the tailnet Ollama's embed model -- and
+    the feedback store gates every lookup on it. Live dev worker, 2026-09-15
+    from ~09:00: the Mac Studio was busy serving a 46 GB vision model, the
+    embed probe timed out, and every store lookup abstained ("embedder
+    unreachable") -- taught types, learned hours and judged documents all
+    silently off, while Azure answered in under a second the whole time.
     """
+    if embed_backend() == "azure":
+        return _azure_embed_reachable()
     host = ollama_host.resolve_embed_host(_DEFAULT_HOST)
     model = os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
     return ollama_host.embed_ready(host, model)
