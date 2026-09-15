@@ -104,6 +104,10 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # job_site vs vendor_or_billing_address, but no head reached that relation,
     # so only the seeded PurTera address could ever be taught. 000036 San Fran
     # TV mount published the CDW rep's email-signature address as a second site.
+    # How long a unit of work takes, taught from a finished Deal Kit. Extract
+    # head: the verdict carries the hours ("hours=3;per=cable drop"); see
+    # app.core.task_hours.
+    "hours":     HeadSpec("task_hours", "atom", "Task hours", mode="extract"),
     "site_role": HeadSpec("physical_site", "entity", "Site role",
                           candidates=("job_site", "vendor_or_billing_address")),
     "facility": HeadSpec(
@@ -171,7 +175,13 @@ def _threshold_for(head: str, scope: str) -> float:
 #: A repeated judgment is stronger evidence than a single one, so the same
 #: correction made again widens rather than replaces. Never below the bar a
 #: single in-deal correction already clears.
-_EXEMPLAR_CAP = 12
+#: Exemplars kept per correction. A merged correction is scored by its NEAREST
+#: exemplar (feedback_store max-sim), so more exemplars widen what it recognises
+#: without blurring it; at 12, every global `task` lesson after the twelfth work
+#: line taught from a Deal Kit was silently discarded (dev, 000036 was the 12th).
+_EXEMPLAR_CAP = 400
+#: Distinct deals remembered per correction (the evidence count).
+_DEALS_CAP = 200
 _THRESHOLD_STEP = 0.02
 _THRESHOLD_FLOOR = _THRESHOLD_DEAL
 #: Which deals this judgment has been reached on, carried inside `relations`.
@@ -299,9 +309,12 @@ def _merge_with_existing(store, corr: Correction) -> Correction:
         if d and d not in deals:
             deals.append(d)
     rel.update(dict(getattr(corr, "relations", None) or {}))
-    rel[_DEALS_KEY] = deals[:_EXEMPLAR_CAP]
+    rel[_DEALS_KEY] = deals[:_DEALS_CAP]
 
-    evidence = max(len(seen), len(deals))
+    # Deals, as the comment above says -- not exemplars. Eleven different work
+    # lines taught from ONE Deal Kit are one deal's judgment, and counting them
+    # as eleven took the global `task` correction from 0.82 to the 0.74 floor.
+    evidence = max(1, len(deals))
     base = float(getattr(corr, "threshold", _THRESHOLD_DEAL))
     # Never below the bar THIS head trusts for a single in-deal correction.
     floor = _HEAD_THRESHOLDS.get(_head_of(corr), (_THRESHOLD_FLOOR, _THRESHOLD_FLOOR))[0]

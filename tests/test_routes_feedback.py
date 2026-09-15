@@ -398,6 +398,8 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "sheet": "sheet_role",
     # Whether an address is a job site or somebody's office / signature.
     "site_role": "physical_site",
+    # How long a unit of work takes, taught from a finished Deal Kit.
+    "hours": "task_hours",
 }
 
 

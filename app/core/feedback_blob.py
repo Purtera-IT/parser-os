@@ -77,9 +77,18 @@ def upload_correction(corr: "Correction") -> bool:
 
 
 def sync_into_store(store: "FeedbackStore") -> int:
-    """Load any blob-mirrored corrections NOT already in ``store``. Returns the
-    number newly added. Best-effort; one cheap list call + a download per *new*
-    correction only."""
+    """Bring ``store`` up to date with the blob-mirrored corrections. Returns the
+    number added or refreshed. Best-effort; one list call, plus a download per
+    correction that is new or whose blob copy is newer than the local one.
+
+    New ids alone were not enough. A PM correction that repeats a judgment is
+    MERGED into the existing correction (same id, more exemplars), so the id was
+    already present and the update was skipped: on dev the worker kept the
+    11-exemplar `task` correction it loaded after a roll while blob held 12, and
+    000036's request -- the twelfth, taught from its Deal Kit -- scored 0.28
+    against a copy that did not contain it. A merged or retired correction now
+    reaches every process that already holds an older copy.
+    """
     cc = _container_client()
     if cc is None:
         return 0
@@ -88,26 +97,41 @@ def sync_into_store(store: "FeedbackStore") -> int:
     except Exception:
         return 0
     try:
-        existing = {c.id for c in store.all_corrections(active_only=False)}
+        local = {c.id: float(getattr(c, "updated_at", 0.0) or 0.0)
+                 for c in store.all_corrections(active_only=False)}
     except Exception:
-        existing = set()
-    added = 0
+        local = {}
+    changed = 0
     try:
         for b in cc.list_blobs(name_starts_with=_PREFIX):
             cid = b.name[len(_PREFIX):]
             if cid.endswith(".json"):
                 cid = cid[: -len(".json")]
-            if cid in existing:
-                continue
+            if cid in local:
+                modified = getattr(b, "last_modified", None)
+                try:
+                    blob_ts = modified.timestamp() if modified is not None else None
+                except Exception:
+                    blob_ts = None
+                # Upload happens after updated_at is stamped, so an unchanged
+                # correction's blob is never meaningfully newer than its row.
+                if blob_ts is not None and blob_ts <= local[cid] + 1.0:
+                    continue
             try:
                 raw = cc.download_blob(b.name).readall()
-                store.add(Correction(**json.loads(raw)))
-                added += 1
+                incoming = Correction(**json.loads(raw))
+            except Exception:
+                continue
+            if cid in local and float(getattr(incoming, "updated_at", 0.0) or 0.0) <= local[cid]:
+                continue
+            try:
+                store.add(incoming)
+                changed += 1
             except Exception:
                 continue
     except Exception:
-        return added
-    return added
+        return changed
+    return changed
 
 
 # ── Training rows (gold) ─────────────────────────────────────────────────
