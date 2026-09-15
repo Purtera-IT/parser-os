@@ -98,3 +98,18 @@ def test_the_gate_runs_this_pass():
     kept, dropped = apply_substance_gate([A("t"), A("quinton.james@cdw.com"), A("Install 10 clocks")])
     assert types(kept) == ["Install 10 clocks"]
     assert len(dropped) == 2
+
+
+def test_an_ip_address_is_not_a_phone_number():
+    """Live 000020: hardware inventory lines carrying device IPs were dropped as
+    contact chrome because the phone pattern matched dotted quads."""
+    from app.core.atom_substance_gate import _PHONE_RE
+
+    for t in [
+        "Medicine Shoppe 1517 SonicWall (192.168.133.50) firewall",
+        "Medicine Shoppe 1517 Meraki switch (192.168.133.5)",
+        "Medicine Shoppe 1518 Ubiquiti router (192.168.132.120)",
+    ]:
+        assert not _PHONE_RE.search(t), t
+    for t in ["Phone: (203) 235-3351", "404.771.3490", "+1 212.894.0736", "1.312.547.2106"]:
+        assert _PHONE_RE.search(t), t

@@ -42,6 +42,11 @@ from app.core.schemas import (
 
 _MAX_FALLBACK_SITES = 8
 
+#: "Highland Park, MI" / "Highland Park, Michigan": a capitalised run, a comma, a state.
+_CITY_STATE_MENTION_RE = re.compile(
+    r"\b([A-Z][A-Za-z.'\-]+(?:\s+[A-Z][A-Za-z.'\-]+){0,3})\s*,\s*([A-Z]{2}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b"
+)
+
 
 def _atom_type_str(atom: Any) -> str:
     at = getattr(atom, "atom_type", None)
@@ -406,6 +411,66 @@ def enrich_site_geo(atoms: list[Any]) -> int:
             continue
         if _fill(next(iter(matched.values())), text):
             filled += 1
+
+    # Pass 2b — a "City, ST" / "City, State" mention anywhere in the deal whose
+    # city the site's own name already carries. Live 000061: the site was named
+    # "highland park warehouse office" and the email said "Highland Park, MI",
+    # but with no ZIP neither pass above could place it, so the Deal Kit got a
+    # site with no city or state. The place must exist in the reference data
+    # for that state, and the site must be named by exactly one such place.
+    wanting = [s for s in sites
+               if isinstance(getattr(s, "value", None), dict)
+               and not (s.value.get("city") and s.value.get("state"))]
+    if wanting:
+        from app.core.geo_reference import is_known_place as _known_place
+        from app.core.address_parse import state_code as _state_code
+
+        wanting_aliases = [
+            (_slug(str(alias)), id(s))
+            for s in wanting
+            for alias in (s.value.get("site_id"), s.value.get("id"), s.value.get("name"),
+                          s.value.get("facility_name"))
+            if alias and len(str(alias)) >= 4
+        ]
+        mentions: set[tuple[str, str]] = set()
+        for atom in atoms:
+            text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+            # Same rule as pass 2: a line that names two of the sites says
+            # nothing about which one the place belongs to.
+            hay = _slug(text)
+            if len({sid for alias, sid in wanting_aliases if alias and alias in hay}) >= 2:
+                continue
+            for m in _CITY_STATE_MENTION_RE.finditer(text):
+                st = _state_code(m.group(2))
+                if not st:
+                    continue
+                words = m.group(1).split()
+                # The capitalised run before the comma can carry lead-in words
+                # ("Office In Highland Park"); the place is its longest real tail.
+                for k in range(len(words)):
+                    cand = " ".join(words[k:])
+                    if _known_place(cand, st):
+                        mentions.add((cand, st))
+                        break
+        for s in wanting:
+            val = s.value
+            names = [_slug(str(a)) for a in (val.get("name"), val.get("facility_name"),
+                                              val.get("display_name"), val.get("site_id"))
+                     if a]
+            names += [_slug(str(a)) for a in (val.get("names") or []) if a]
+            hits = {(c, st) for c, st in mentions
+                    if _slug(c) and any(re.search(rf"(?:^|_){re.escape(_slug(c))}(?:_|$)", n) for n in names)}
+            places = {(_slug(c), st) for c, st in hits}
+            if len(places) != 1:
+                continue
+            city, st = sorted(hits)[0]
+            before = (val.get("city"), val.get("state"))
+            if not val.get("city"):
+                val["city"] = city
+            if not val.get("state"):
+                val["state"] = st
+            if (val.get("city"), val.get("state")) != before:
+                filled += 1
 
     # Pass 3 — the reference data closes what the text never stated.
     #

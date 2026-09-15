@@ -839,6 +839,22 @@ class HubspotNoteParser(BaseParser):
             )
 
         def _mint_prose(prose: str) -> None:
+            # A paragraph is several statements. Minting it whole made 000036's
+            # request one atom whose text began "Hope all is well!", so the Deal
+            # Kit task was named by the greeting and every head judged the
+            # greeting, the context and the ask together. Each sentence is its
+            # own evidence, the way email and transcript lines already are;
+            # the paragraph travels on each as context.
+            from app.core.sentences import split_sentences
+
+            sentences = [s.strip() for s in split_sentences(prose or "") if s.strip()]
+            if len(sentences) > 1:
+                for sentence in sentences:
+                    _mint_prose_one(sentence, paragraph=prose)
+                return
+            _mint_prose_one(prose, paragraph=None)
+
+        def _mint_prose_one(prose: str, paragraph: str | None) -> None:
             if (
                 prose and title
                 and " ".join(prose.lower().split()) == " ".join(title.lower().split())
@@ -880,6 +896,8 @@ class HubspotNoteParser(BaseParser):
                         "author_email": author_email,
                         "author_affiliation": affiliation,
                     }
+                    if paragraph:
+                        val["paragraph"] = paragraph
                     if at == AtomType.commercial_total:
                         amounts = re.findall(r"\$\s*(\d[\d,]*(?:\.\d{2})?)", prose)
                         k_amounts = re.findall(r"\b(\d{1,3}(?:,\d{3})*)\s*[kK]\b", prose)
