@@ -400,3 +400,39 @@ def test_note_metadata_atom_is_marked_non_deal(tmp_path: Path) -> None:
     meta = [a for a in atoms if (a.value or {}).get("field_name") == "hubspot_note_meta"]
     assert len(meta) == 1 and meta[0].value["non_deal"] is True
     assert _is_protected_email_atom(meta[0])
+
+
+def test_the_title_is_not_repeated_in_front_of_an_address(tmp_path: Path) -> None:
+    """010043: the note's title is its first line; prepending it doubled the
+    request in the site atom's text and its names."""
+    p = tmp_path / "010043-hs-note-1.txt"
+    p.write_text(
+        "HubSpot Note: 3 Verkada cameras intsall.\nHubSpot Note ID: 1\nDate: 2026-06-18T18:46:32.633Z\n"
+        "Author: Patrick Kelly\nAuthor-Email: patrick@purtera-it.com\n\n"
+        "3 Verkada cameras intsall.\nNorth Carolina office: 6125 Tyvola Centre Drive, Charlotte, NC 28217\n",
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("p", "a", p)
+    sites = [a for a in atoms if a.atom_type == AtomType.physical_site]
+    assert sites, [a.raw_text for a in atoms]
+    assert sites[0].raw_text.count("3 Verkada cameras intsall") <= 1
+    assert sites[0].value["city"] == "Charlotte" and sites[0].value["zip"] == "28217"
+
+
+def test_a_greeting_on_its_own_line_does_not_swallow_the_request(tmp_path: Path) -> None:
+    """010095: 'Hi Trent,' sat on its own line above the request; flattened, the
+    two became one atom that began with the greeting."""
+    p = tmp_path / "010095-hs-note-1.txt"
+    p.write_text(
+        "HubSpot Note: Hi Trent,\nHubSpot Note ID: 1\nDate: 2026-07-09T12:46:40.713Z\n"
+        "Author: Trent Torrence\nAuthor-Email: t@purtera-it.com\n\n"
+        "Hi Trent,\nIHAC looking for some assisting with services to install and setup a Lantonix (or 2 device.) "
+        "The customer does not have any technical hands on site and would need someone to come in to complete the work.\n"
+        "Location for install would be Jamica, NY.\nThanks!\n",
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse_artifact("p", "a", p)
+    prose = [a.raw_text for a in atoms if a.atom_type == AtomType.scope_item]
+    assert any(t.startswith("IHAC looking for some assisting") for t in prose), prose
+    assert not any(t.startswith("Hi Trent, IHAC") for t in prose), prose
+    assert "Location for install would be Jamica, NY." in prose

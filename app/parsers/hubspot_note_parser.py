@@ -839,6 +839,27 @@ class HubspotNoteParser(BaseParser):
             )
 
         def _mint_prose(prose: str) -> None:
+            # A paragraph is several statements. Minting it whole made 000036's
+            # request one atom whose text began "Hope all is well!", so the Deal
+            # Kit task was named by the greeting and every head judged the
+            # greeting, the context and the ask together. Each sentence is its
+            # own evidence, the way email and transcript lines already are;
+            # the paragraph travels on each as context.
+            from app.core.sentences import split_sentences
+
+            # The author's own line breaks come first: "Hi Trent," on its own
+            # line is a greeting, not the start of the request beneath it
+            # (010095), and no sentence segmenter splits after a comma.
+            sentences: list[str] = []
+            for line in str(prose or "").splitlines() or [str(prose or "")]:
+                sentences.extend(s.strip() for s in split_sentences(line) if s.strip())
+            if len(sentences) > 1:
+                for sentence in sentences:
+                    _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()))
+                return
+            _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
+
+        def _mint_prose_one(prose: str, paragraph: str | None) -> None:
             if (
                 prose and title
                 and " ".join(prose.lower().split()) == " ".join(title.lower().split())
@@ -880,6 +901,8 @@ class HubspotNoteParser(BaseParser):
                         "author_email": author_email,
                         "author_affiliation": affiliation,
                     }
+                    if paragraph:
+                        val["paragraph"] = paragraph
                     if at == AtomType.commercial_total:
                         amounts = re.findall(r"\$\s*(\d[\d,]*(?:\.\d{2})?)", prose)
                         k_amounts = re.findall(r"\b(\d{1,3}(?:,\d{3})*)\s*[kK]\b", prose)
@@ -1006,10 +1029,14 @@ class HubspotNoteParser(BaseParser):
                 log_rows(train_rows)
             return atoms
 
-        _mint_prose(body)
+        _mint_prose(body_text if body_text.strip() else body)
 
-        # Physical sites from address-bearing notes.
-        corpus = f"{title}\n{body}"
+        # Physical sites from address-bearing notes. A note's title is its
+        # first line, so prepending it repeats that line: on 010043 the site
+        # came out as "3 Verkada cameras intsall. 3 Verkada cameras intsall.
+        # North Carolina office: 6125 Tyvola Centre Drive ...".
+        _t = " ".join((title or "").split())
+        corpus = body if _t and " ".join(body.split()).startswith(_t) else f"{title}\n{body}"
         for parsed_addr in find_us_addresses_in_text(corpus):
             if (
                 not parsed_addr.city
