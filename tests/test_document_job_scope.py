@@ -83,7 +83,26 @@ def test_nothing_moves_without_a_deal_name_or_any_judge(no_llm):
 
 
 def test_document_text_leads_with_the_threads_subject_and_skips_meta():
-    atoms = KIOSK + [_atom("art_kiosk", "note_id=1 | author=x", kind="hubspot_note_meta")]
+    meta = _atom("art_kiosk", "note_id=1 | author=x"); meta.value["field_name"] = "hubspot_note_meta"
+    atoms = KIOSK + [meta]
     text = document_text(atoms, "art_kiosk.eml")
     assert text.startswith("DOCUMENT: RE: CDW Smart Hands SOW Delta Admin 70598001\n- Send two technician names")
     assert "note_id=1" not in text
+
+
+def test_the_judge_reads_the_documents_own_words_and_skips_deal_wide_chrome():
+    from app.core.document_job_scope import common_lines
+
+    banner = "External sender Check the sender and the content are safe before clicking links or open attachments."
+    a = [_atom("art_a", banner), _atom("art_a", "Quoted: earlier message about SD-WAN pricing"),
+         _atom("art_a", "This is received. Please see below tech information for badge processing", subject="RE: CDW Smart Hands SOW Delta Admin 70598001")]
+    a[1].value["quoted"] = True
+    a[2].value["quoted"] = False
+    b = [_atom("art_b", banner + " | " + banner), _atom("art_b", "Standard SD-WAN Deployment SOW")]
+    common = common_lines(a + b)
+    assert banner.lower()[:80] in common
+    text = document_text(a, "art_a.eml", common)
+    lines = text.split("\n")
+    assert lines[0] == "DOCUMENT: RE: CDW Smart Hands SOW Delta Admin 70598001"
+    assert lines[1].startswith("- This is received"), lines
+    assert "External sender" not in text

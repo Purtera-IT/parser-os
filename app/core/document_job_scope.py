@@ -89,14 +89,46 @@ def _title(atoms: list[Any], filename: str) -> str:
     return filename
 
 
-def document_text(atoms: list[Any], filename: str) -> str:
+def _norm(text: str) -> str:
+    return " ".join(str(text or "").lower().split())
+
+
+def common_lines(atoms: list[Any]) -> set[str]:
+    """Lines that recur across documents of one deal: banners ("External sender
+    Check the sender..."), signatures, disclaimers. They describe no job, so the
+    judge should not read them as the document's opening lines. No vocabulary:
+    a line is chrome because the deal repeats it, whatever it says."""
+    seen: dict[str, set[str]] = {}
+    for a in atoms:
+        # The opening of the line: a banner repeats its opening even when one
+        # copy was joined to itself with a separator.
+        key = _norm(getattr(a, "raw_text", ""))[:80]
+        if len(key) < 12:
+            continue
+        doc = str(getattr(a, "source_artifact_id", None) or getattr(a, "artifact_id", None) or "")
+        seen.setdefault(key, set()).add(doc)
+    return {k for k, docs in seen.items() if len(docs) >= 2}
+
+
+def _own_words_first(atoms: list[Any]) -> list[Any]:
+    """An email's own message before the history it quotes, else document order."""
+    own = [a for a in atoms if _value(a).get("quoted") is False]
+    if not own:
+        return list(atoms)
+    rest = [a for a in atoms if _value(a).get("quoted") is not False]
+    return own + rest
+
+
+def document_text(atoms: list[Any], filename: str, common: set[str] | None = None) -> str:
     """The document as the judge reads it: its title and its first lines."""
     lines: list[str] = []
-    for a in atoms:
-        if _value(a).get("kind") in _META_KINDS or _atom_type(a) in ("raw_utterance",):
+    skip = common or set()
+    for a in _own_words_first(atoms):
+        v = _value(a)
+        if v.get("kind") in _META_KINDS or v.get("field_name") in _META_KINDS or v.get("non_deal") or _atom_type(a) in ("raw_utterance",):
             continue
         t = " ".join(str(getattr(a, "raw_text", "") or "").split())
-        if not t or t in lines:
+        if not t or t in lines or _norm(t)[:80] in skip or t.startswith("[Image extracted"):
             continue
         lines.append(t[:_LINE_CHARS])
         if len(lines) >= _LINES:
@@ -138,9 +170,10 @@ def judge_documents(
     scope = DecisionScope(deal_id=str(project_id or ""))
     dropped_ids: set[int] = set()
     verdicts: list[dict[str, Any]] = []
+    common = common_lines(atoms)
     for key, doc_atoms in by_doc.items():
         filename = str(getattr(doc_atoms[0], "source_filename", "") or key)
-        text = f"DEAL: {deal_name.strip()}\n{document_text(doc_atoms, filename)}"
+        text = f"DEAL: {deal_name.strip()}\n{document_text(doc_atoms, filename, common)}"
         try:
             d = decide(RELATION, text[:4000], CANDIDATES, instruction=INSTRUCTION, scope=scope)
         except Exception:
@@ -169,4 +202,4 @@ def judge_documents(
     return kept, dropped, verdicts
 
 
-__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "document_text", "judge_documents"]
+__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines", "document_text", "judge_documents"]
