@@ -453,6 +453,41 @@ def _atom_decide_text(atom: Any) -> str:
     return text
 
 
+def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
+    """Re-type atoms the feedback store confidently recognises.
+
+    Returns ``{id(atom): verdict}`` for every atom the store decided, ``_keep``
+    included (that leaves the type as it is). Never raises; no store -> ``{}``.
+    """
+    decided: dict[int, str] = {}
+    try:
+        from app.core.decide import decide, get_store
+        from app.core.schemas import AtomType
+
+        if get_store() is None:
+            return decided
+        cands = _atom_type_candidates()
+        for a in atoms:
+            text = str(getattr(a, "raw_text", "") or "").strip()
+            if not text:
+                continue
+            d = decide(
+                _ATOM_TYPE_RELATION, text[:600], cands,
+                instruction=_ATOM_TYPE_INSTRUCTION, llm=False,
+            )
+            if d is None or d.source != "store" or not d.verdict:
+                continue
+            if d.verdict != "_keep":
+                try:
+                    a.atom_type = AtomType(d.verdict)
+                except ValueError:
+                    continue
+            decided[id(a)] = d.verdict
+    except Exception:
+        return decided
+    return decided
+
+
 def classify_atoms(atoms: list[Any]) -> int:
     """Promote atoms from the v47 taxonomy where confident.
 
@@ -467,16 +502,29 @@ def classify_atoms(atoms: list[Any]) -> int:
         return 0
     if os.environ.get("SOWSMITH_TYPED_CLASSIFIER_DISABLE"):
         return 0
-    # Honour the global LLM kill-switch: this stage drives promotion via an
-    # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
-    # previously ignored the flag and spent ~46s/compile hitting a reachable
-    # but slow remote model even in "no-LLM" runs).
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
-        return 0
 
     promotable = [a for a in atoms if _atom_type_str(a) in _PROMOTABLE_FROM]
     if not promotable:
         return 0
+
+    # Taught corrections first. A PM correction (or a finished Deal Kit's
+    # answer) about text like this outranks any head or model guess -- the same
+    # precedence decide() gives the store. Without this the LLM typed atoms
+    # before any correction was read: on 000020 Binghamton (dev, compile
+    # e029470d) it promoted 20 of 21 lines, three of them to `task` although
+    # they were taught as `dependency` (the customer's remote team's work), and
+    # span admission only sees what the LLM left untyped. Store-only, no LLM;
+    # abstain leaves the atom alone; runs even with the LLM switched off.
+    taught = _apply_taught_types(promotable)
+    taught_promoted = sum(1 for v in taught.values() if v != "_keep")
+    promotable = [a for a in promotable if id(a) not in taught]
+
+    # Honour the global LLM kill-switch: this stage drives promotion via an
+    # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
+    # previously ignored the flag and spent ~46s/compile hitting a reachable
+    # but slow remote model even in "no-LLM" runs).
+    if os.environ.get("SOWSMITH_DISABLE_LLM") or not promotable:
+        return taught_promoted
 
     # Deterministic deflect: a table_row already readable as a contact by
     # contact_property_block does not need the LLM to guess at it.
