@@ -650,7 +650,8 @@ _MENTION_INSTRUCTION = (
     "the facility or office the work is for, the origin or destination equipment moves between -- "
     "or only a mention: where someone is travelling, a party's address in a signature or "
     "letterhead, a reference customer's city, a vendor's or reseller's office, a region named in "
-    "passing. If the lines do not say, answer unknown."
+    "passing, or a place the documents say is out of scope, covered by someone else, or not part of "
+    "this work. If the lines do not say, answer unknown."
 )
 #: An inferred site is flagged needs_review; 0.8 from the model is enough to
 #: put it in front of the PM (the ZIP fallback mints at 0.5 with no judge).
