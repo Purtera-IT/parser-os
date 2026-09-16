@@ -187,6 +187,9 @@ _THRESHOLD_GLOBAL = 0.82
 # Repeated judgments still relax it one step per deal.
 _HEAD_THRESHOLDS: dict[str, tuple[float, float]] = {
     "gap": (0.82, 0.88),  # (deal, global)
+    # A document lesson names one thread. Two subjects of one deal can sit at
+    # 0.7 of each other; a lesson must not reach the neighbouring thread.
+    "document_job": (0.90, 0.95),
 }
 
 
@@ -331,8 +334,20 @@ def _merge_with_existing(store, corr: Correction) -> Correction:
     for d in (dict(getattr(corr, "relations", None) or {}).get(_DEALS_KEY) or []):
         if d and d not in deals:
             deals.append(d)
+    prior_when = (dict(getattr(prior, "relations", None) or {})).get("when")
+    new_when = (dict(getattr(corr, "relations", None) or {})).get("when")
     rel.update(dict(getattr(corr, "relations", None) or {}))
     rel[_DEALS_KEY] = deals[:_DEALS_CAP]
+    # One contributor's circumstance is not the merged judgment's. A `when`
+    # on a correction that other deals taught unconditionally silences their
+    # exemplars everywhere: decide() passes no facts, so condition_holds()
+    # answers False for every caller. Live 2026-09-16: `owner == deal_kit`
+    # rode into the global `task` correction on one POST and muted the 51
+    # kit-taught lines it had merged with (000020 Binghamton fell from 11 of
+    # 11 to 4). A merged correction keeps a condition only when every
+    # contributor agreed on it.
+    if prior_when != new_when:
+        rel.pop("when", None)
 
     # Deals, as the comment above says -- not exemplars. Eleven different work
     # lines taught from ONE Deal Kit are one deal's judgment, and counting them
