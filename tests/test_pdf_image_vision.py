@@ -1047,3 +1047,50 @@ def test_a_success_resets_the_breaker(monkeypatch, tmp_path):
     ]
     piv.process_image_markers(markers)
     assert piv._HOST_FAILURES["total"] == 6 and piv._HOST_FAILURES["consecutive"] == 0
+
+
+def test_stage_stops_spending_after_its_time_budget(monkeypatch, tmp_path, caplog):
+    """A slow host is not a failed host: every call answers, each takes long.
+    Once the stage has spent its budget the rest stay undescribed."""
+    import logging
+
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_BUDGET_SEC", "0.001")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    calls = {"n": 0}
+
+    def _vlm(*a, **k):
+        calls["n"] += 1
+        return '{"image_kind": "logo", "has_text": false, "meaningful": false}'
+
+    monkeypatch.setattr(piv, "_vlm", _vlm)
+    markers = [
+        _marker(tmp_path, region=f"page{i}/image1", saved_name=f"img{i}.png", size=5000 + i)
+        for i in range(5)
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.core.pdf_image_vision"):
+        piv.process_image_markers(markers)
+    assert calls["n"] == 1  # the first image is always attempted; the budget is checked before the next
+    assert any("leaving 4 of 5 image(s) undescribed" in r.getMessage() and "budget" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_budget_zero_disables_the_clock(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_BUDGET_SEC", "0")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    calls = {"n": 0}
+
+    def _vlm(*a, **k):
+        calls["n"] += 1
+        return '{"image_kind": "logo", "has_text": false, "meaningful": false}'
+
+    monkeypatch.setattr(piv, "_vlm", _vlm)
+    markers = [
+        _marker(tmp_path, region=f"page{i}/image1", saved_name=f"img{i}.png", size=5000 + i)
+        for i in range(4)
+    ]
+    piv.process_image_markers(markers)
+    assert calls["n"] == 4

@@ -35,6 +35,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import re
 from contextlib import contextmanager
 from pathlib import Path
@@ -1189,6 +1190,16 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     out: list[EvidenceAtom] = []
     processed = 0
     seen_hashes: set[str] = set()
+    # Time budget for the whole stage. Dev volume round 2026-09-16 00:14Z,
+    # eight compiles in flight: the vision host answered every call, but
+    # slowly (up to the 120 s request timeout each, gate then describe, up
+    # to 40 images), and three compiles sat in this stage for more than ten
+    # minutes on the way to the 1500 s compile ceiling. A slow host is not a
+    # failed host, so the breaker above never trips; the budget does. Once
+    # spent, the remaining images are left undescribed and one WARNING says
+    # how many. Default 480 s; 0 disables.
+    budget_s = _float_env("SOWSMITH_PDF_IMAGE_BUDGET_SEC", 480.0)
+    t_stage = time.monotonic()
     markers = list(_iter_image_markers(atoms))
     for idx, (marker, pdf_name, page_index, region_ref, saved_path, caption) in enumerate(markers):
         if processed >= max_images:
@@ -1198,6 +1209,14 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
                 "pdf_image_vision: vision host failed %d call(s) in a row; "
                 "leaving %d of %d image(s) undescribed this compile",
                 _HOST_FAILURES["consecutive"], len(markers) - idx, len(markers),
+            )
+            break
+        spent = time.monotonic() - t_stage
+        if budget_s > 0 and processed > 0 and spent >= budget_s:
+            logger.warning(
+                "pdf_image_vision: stage spent %.0f s of its %.0f s budget; "
+                "leaving %d of %d image(s) undescribed this compile",
+                spent, budget_s, len(markers) - idx, len(markers),
             )
             break
         crop = _load_crop(saved_path)
