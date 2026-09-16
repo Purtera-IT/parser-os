@@ -424,8 +424,16 @@ def judge_documents(
         # the context. Live 000061 (compile 3f79093a): with everything in the
         # text, the judge saw the subject and four greetings and set the
         # customer's own quote-consultation thread aside as another job.
-        text = f"DEAL: {deal_name.strip()}\nDOCUMENT: {b['title']}"
-        context = "\n".join(f"- {l}" for l in bundle_lines(docs, common))
+        # The store compares the TEXT alone, so the text must be the thing a
+        # lesson is about: the document. With the deal name in front, every
+        # bundle of one deal shared most of its embedding, and a single taught
+        # `other_job` matched all of them (dev 2026-09-16 02:47Z, 010162: one
+        # lesson for the Delta close-down thread emptied the whole deal to 12
+        # atoms). The DEAL line the model reads moves into the context; the
+        # subject loses its reply markers so one lesson covers the thread.
+        subject = re.sub(_SUBJECT_PREFIX_RE.pattern, "", str(b["title"]).strip(), flags=re.I).strip() or str(b["title"]).strip()
+        text = f"DOCUMENT: {subject}"
+        context = f"DEAL: {deal_name.strip()}\n" + "\n".join(f"- {l}" for l in bundle_lines(docs, common))
         try:
             # Judgments only: a person's or a Deal Kit's verdict decides; the
             # model's own cached verdicts never do, since one wrong other_job

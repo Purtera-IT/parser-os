@@ -165,7 +165,7 @@ def test_one_thread_is_judged_once_whatever_number_someone_typed_in_front(no_llm
     kept, dropped, verdicts = judge_documents(ours + theirs + plain, deal_name="010198 - Square POS Install Bridgewave")
     assert len(asked) == 1 and len(verdicts) == 1
     assert sorted(verdicts[0]["filenames"]) == ["art_a.eml", "art_b.eml", "art_c.eml"]
-    assert "DOCUMENT: 010198 Fw: POS Installation 8/2" in asked[0]["text"]
+    assert asked[0]["text"] == "DOCUMENT: POS Installation 8/2"  # the thread, not what someone typed in front of it
     # The model reads the conversation's lines as context; the text it is
     # asked about -- and a taught verdict is matched on -- is the deal and the subject.
     assert "Yes, we can hit that date!" in asked[0]["context"] and "kitchen printer" in asked[0]["context"]
@@ -275,8 +275,8 @@ def test_the_judge_asks_for_judgments_only_and_reads_documents_in_written_order(
              "a.eml": {"subject": "POS Installation 8/2", "attachment_ids": [], "external_id": "", "authored_at": "2026-08-06T15:49:00Z", "source": "email"}}
     judge_documents(later + opener, deal_name="010198 - Square POS Install Bridgewave", index=index)
     assert seen["exclude_created_by"] == ("teacher",)
-    assert seen["context"].startswith("- We will be setting just 1 Square register")
-    assert seen["text"] == "DEAL: 010198 - Square POS Install Bridgewave\nDOCUMENT: Re: POS Installation 8/2"
+    assert seen["context"].startswith("DEAL: 010198 - Square POS Install Bridgewave\n- We will be setting just 1 Square register")
+    assert seen["text"] == "DOCUMENT: POS Installation 8/2"
 
 
 def test_a_real_atom_names_its_file_on_the_source_ref(no_llm, monkeypatch):
@@ -301,3 +301,27 @@ def test_a_real_atom_names_its_file_on_the_source_ref(no_llm, monkeypatch):
     assert len(asked) == 1  # one conversation: the message and the file that arrived with it
     assert verdicts[0]["links"] == {"010162-hs-email-113968718225.eml": "thread", "Delta Close Down.pdf": "arrived_with"}
     assert {a.source_artifact_id for a in dropped} == {"art_mail", "art_pdf"} and kept == []
+
+
+def test_a_document_lesson_is_keyed_on_the_document_not_the_deal(no_llm):
+    """Dev 2026-09-16: the judge's text led with the DEAL line, so a deal-scoped
+    `other_job` lesson for the Delta thread matched every bundle of 010162 and
+    the compile kept 12 atoms. The store compares the text alone: the text is
+    the document; the deal the model reads lives in the context."""
+    seen = []
+
+    class _Exact:
+        def resolve(self, *, relation, text, candidates, context="", **_):
+            if relation != "document_job":
+                return None
+            seen.append((text, context))
+            if text == "DOCUMENT: CDW Smart Hands SOW Delta Admin 70598001":
+                return Decision(verdict="other_job", confidence=0.95, source="store", correction_id="corr_pm")
+            return None
+
+    decide_mod.set_store(_Exact())
+    kept, dropped, verdicts = judge_documents(SDWAN + KIOSK, deal_name=DEAL, project_id="deal")
+    assert [a.source_artifact_id for a in dropped] == ["art_kiosk", "art_kiosk"]
+    assert all(a.source_artifact_id == "art_sdwan" for a in kept)
+    assert all(t.startswith("DOCUMENT: ") and not t.startswith("DOCUMENT: RE:") for t, _ in seen)
+    assert all(c.startswith(f"DEAL: {DEAL}\n") for _, c in seen), "the model still reads the deal, from the context"

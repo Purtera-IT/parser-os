@@ -187,6 +187,9 @@ _THRESHOLD_GLOBAL = 0.82
 # Repeated judgments still relax it one step per deal.
 _HEAD_THRESHOLDS: dict[str, tuple[float, float]] = {
     "gap": (0.82, 0.88),  # (deal, global)
+    # A document lesson names one thread. Two subjects of one deal can sit at
+    # 0.7 of each other; a lesson must not reach the neighbouring thread.
+    "document_job": (0.90, 0.95),
 }
 
 
