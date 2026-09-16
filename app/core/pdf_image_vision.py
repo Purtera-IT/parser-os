@@ -387,7 +387,46 @@ def _position_label(page_index: int, page_count: int) -> str:
 # ── VLM calls (gate / describe / transcribe) ────────────────────────
 
 
+def _hosted_vision_enabled() -> bool:
+    """Prefer the hosted (managed) vision endpoint over the self-hosted one.
+
+    Dev, 2026-09-16: PDF image understanding ran against a vision model on a
+    Mac Studio reached over a tailnet proxy. When that host got slow, eight
+    compiles hung until they hit COMPILE_TIMEOUT_SEC=1500 -- the stage sent up
+    to 40 images, gate then describe, each waiting the full request timeout.
+    The hosted teacher already serves a vision-capable model, with its own
+    response cache and image clamping, so route there by default and keep the
+    Ollama path one environment variable away for rollback.
+    """
+    raw = os.environ.get("SOWSMITH_PDF_IMAGE_HOSTED_VISION", "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    try:
+        from app.core import llm_client
+    except Exception:
+        return False
+    if not llm_client.teacher_api_enabled():
+        return False
+    return bool(os.environ.get("TEACHER_VISION_API_BASE") or os.environ.get("TEACHER_API_BASE"))
+
+
 def _vlm(image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int) -> str:
+    if _hosted_vision_enabled():
+        try:
+            import base64
+            from app.core import llm_client
+            reply = llm_client.complete_vision(
+                prompt, base64.b64encode(image_bytes).decode("ascii"),
+                max_tokens=max_tokens,
+            ) or ""
+        except Exception as exc:
+            logger.warning("pdf_image_vision hosted vision call failed: %s", exc)
+            reply = ""
+        if reply:
+            _note_host_success()
+            return reply
+        _note_host_failure()
+        return ""
     if _use_ollama_for_pdf_images():
         with _vision_model(model):
             return _ollama_vision_direct(
