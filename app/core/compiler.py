@@ -1266,6 +1266,48 @@ def compile_project(
             warnings.append(f"INFO: typed-atom classifier promoted {promoted} atoms from scope_item/entity")
         telemetry.end_stage(stage, output_count=promoted)
 
+    # Work-order reassembly: the per-atom classifier answers "is this span a
+    # task?" one sentence at a time, and a job is not stated in one sentence.
+    # This stage judges each DOCUMENT for relevance through decide() (so the
+    # judgement is correctable), reads what survives together, and mints the
+    # resulting work lines as task atoms whose provenance is inherited from the
+    # real atoms they were summarised from. Opt-in: SOWSMITH_WORK_ORDER=1.
+    with telemetry.stage("work_order", input_count=len(atoms)) as stage:
+        _wo_minted = 0
+        try:
+            from app.core import work_order as _wo
+
+            if _wo.enabled():
+                try:
+                    from app.core import document_job_scope as _djs_name
+
+                    _wo_deal = _djs_name.deal_name_from_manifest(project_dir)
+                except Exception:
+                    _wo_deal = ""
+                atoms, _wo_minted, _wo_report = _wo.apply_work_order(
+                    atoms, project_id=resolved_project_id, deal_name=_wo_deal,
+                )
+                if _wo_minted:
+                    warnings.append(
+                        f"INFO: work_order reassembled {len(_wo_report['kept_docs'])} "
+                        f"relevant document(s) into {_wo_minted} work line(s)"
+                    )
+                for _dropped in _wo_report["dropped_docs"]:
+                    warnings.append(f"INFO: work_order set aside {_dropped}")
+                _wo_summary = _wo_report.get("summary") or {}
+                if _wo_summary.get("one_line_summary"):
+                    warnings.append(
+                        f"INFO: work_order reads the job as: "
+                        f"{_wo_summary['one_line_summary']}"
+                    )
+                if _wo_summary.get("site_count"):
+                    warnings.append(
+                        f"INFO: work_order counts {_wo_summary['site_count']} site(s)"
+                    )
+        except Exception as exc:
+            warnings.append(f"WARNING: work_order failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=_wo_minted)
+
     # Geographic fallback: a deal whose only locational anchor is a bare
     # "City, ST ZIP" in a notes file produces zero physical_site atoms,
     # an empty site_readiness, and a RED "no confirmed site" brief. When
