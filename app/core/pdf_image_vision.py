@@ -35,6 +35,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import re
 from contextlib import contextmanager
 from pathlib import Path
@@ -194,6 +195,36 @@ def _vision_reachable() -> bool:
         return False
 
 
+# Circuit breaker for the vision host. Live 2026-09-15, dev volume round:
+# eight compiles hit COMPILE_TIMEOUT_SEC=1500 inside pdf_image_vision. The
+# Mac proxy answered "Read timed out" to every call, and this stage kept
+# sending the next image anyway — up to SOWSMITH_PDF_IMAGE_MAX (40) images,
+# each waiting the full request timeout, twice (gate + describe). A host
+# that has failed several calls in a row will not answer the next one; stop
+# spending the compile's budget on it and say how many images went
+# undescribed. Per compile, like the thumbnail budget.
+_HOST_FAILURES = {"consecutive": 0, "total": 0}
+
+
+def _reset_host_failures() -> None:
+    _HOST_FAILURES["consecutive"] = 0
+    _HOST_FAILURES["total"] = 0
+
+
+def _note_host_failure() -> None:
+    _HOST_FAILURES["consecutive"] += 1
+    _HOST_FAILURES["total"] += 1
+
+
+def _note_host_success() -> None:
+    _HOST_FAILURES["consecutive"] = 0
+
+
+def _host_tripped() -> bool:
+    return _HOST_FAILURES["consecutive"] >= _int_env(
+        "SOWSMITH_PDF_IMAGE_MAX_CONSECUTIVE_FAILURES", 3)
+
+
 def _ollama_vision_direct(
     image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int,
 ) -> str:
@@ -218,9 +249,12 @@ def _ollama_vision_direct(
     try:
         r = requests.post(f"{host}/api/generate", json=payload, timeout=120)
         if r.status_code != 200:
+            _note_host_failure()
             return ""
+        _note_host_success()
         return r.json().get("response", "") or ""
     except Exception as e:
+        _note_host_failure()
         logger.warning("pdf_image_vision ollama call failed: %s", e)
         return ""
 
@@ -1138,6 +1172,7 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     if not enabled() or not atoms:
         return []
     _reset_thumb_budget()  # the thumbnail allowance is PER COMPILE
+    _reset_host_failures()  # so is the vision-host circuit breaker
     try:
         if not _vision_reachable():
             logger.info("pdf_image_vision: no vision endpoint; abstaining")
@@ -1155,8 +1190,34 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     out: list[EvidenceAtom] = []
     processed = 0
     seen_hashes: set[str] = set()
-    for marker, pdf_name, page_index, region_ref, saved_path, caption in _iter_image_markers(atoms):
+    # Time budget for the whole stage. Dev volume round 2026-09-16 00:14Z,
+    # eight compiles in flight: the vision host answered every call, but
+    # slowly (up to the 120 s request timeout each, gate then describe, up
+    # to 40 images), and three compiles sat in this stage for more than ten
+    # minutes on the way to the 1500 s compile ceiling. A slow host is not a
+    # failed host, so the breaker above never trips; the budget does. Once
+    # spent, the remaining images are left undescribed and one WARNING says
+    # how many. Default 480 s; 0 disables.
+    budget_s = _float_env("SOWSMITH_PDF_IMAGE_BUDGET_SEC", 480.0)
+    t_stage = time.monotonic()
+    markers = list(_iter_image_markers(atoms))
+    for idx, (marker, pdf_name, page_index, region_ref, saved_path, caption) in enumerate(markers):
         if processed >= max_images:
+            break
+        if _host_tripped():
+            logger.warning(
+                "pdf_image_vision: vision host failed %d call(s) in a row; "
+                "leaving %d of %d image(s) undescribed this compile",
+                _HOST_FAILURES["consecutive"], len(markers) - idx, len(markers),
+            )
+            break
+        spent = time.monotonic() - t_stage
+        if budget_s > 0 and processed > 0 and spent >= budget_s:
+            logger.warning(
+                "pdf_image_vision: stage spent %.0f s of its %.0f s budget; "
+                "leaving %d of %d image(s) undescribed this compile",
+                spent, budget_s, len(markers) - idx, len(markers),
+            )
             break
         crop = _load_crop(saved_path)
         if len(crop) < min_bytes:
