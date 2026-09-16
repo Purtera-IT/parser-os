@@ -157,3 +157,49 @@ def test_batch_endpoint_returns_aligned_vectors(monkeypatch, _embed_endpoint_rea
     assert out == [[1.0, 0.0], [0.0, 1.0]]
     assert er._BATCH_ENDPOINT_OK is True
     er._BATCH_ENDPOINT_OK = None
+
+
+# ── one cache, two backends ───────────────────────────────────────────
+
+
+def test_azure_backend_keys_the_cache_by_the_azure_model(fresh_cache, monkeypatch):
+    """Dev 2026-09-16: the worker answered from azure (1536-d) but the cache was
+    keyed by the Ollama model, so texts embedded earlier on the Mac Studio
+    (4096-d) came back for azure queries and the feedback store compared
+    vectors of two lengths. The key must name the backend that answers."""
+    calls: list[list[str]] = []
+    monkeypatch.setenv("SOWSMITH_EMBED_BACKEND", "ollama")
+    monkeypatch.setattr(er, "_embed_uncached", lambda texts: (calls.append(list(texts)) or [[1.0, 2.0, 3.0, 4.0] for _ in texts]))
+    assert er.embed_texts(["Label all connections"]).shape == (1, 4)
+    monkeypatch.setenv("SOWSMITH_EMBED_BACKEND", "azure")
+    monkeypatch.setenv("AZURE_OPENAI_EMBED_MODEL", "text-embedding-3-small")
+    monkeypatch.setattr(er, "_embed_uncached", lambda texts: (calls.append(list(texts)) or [[1.0, 2.0, 3.0] for _ in texts]))
+    out = er.embed_texts(["Label all connections"])
+    assert out.shape == (1, 3), "the azure query must not be served the Ollama vector"
+    assert calls == [["Label all connections"], ["Label all connections"]]
+    assert er._cache_model_key() == "azure:text-embedding-3-small"
+
+
+def test_ollama_cache_key_is_unchanged(monkeypatch):
+    monkeypatch.setenv("SOWSMITH_EMBED_BACKEND", "ollama")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "qwen3-embedding:8b")
+    assert er._cache_model_key() == "qwen3-embedding:8b"
+
+
+def test_a_cached_vector_of_another_dimension_is_re_embedded(fresh_cache, monkeypatch):
+    """A stale entry of the wrong length under the right key (a model that
+    changed its dimension) is re-embedded, never zeroed."""
+    monkeypatch.setenv("SOWSMITH_EMBED_BACKEND", "azure")
+    monkeypatch.setenv("AZURE_OPENAI_EMBED_MODEL", "text-embedding-3-small")
+    cache = ec.get_cache()
+    cache.put_many(er._cache_model_key(), [("stale text", [1.0, 0.0, 0.0, 0.0])])
+    calls: list[list[str]] = []
+    monkeypatch.setattr(er, "_embed_uncached", lambda texts: (calls.append(list(texts)) or [[0.0, 1.0, 0.0] for _ in texts]))
+    out = er.embed_texts(["stale text", "fresh text"])
+    assert out.shape == (2, 3)
+    assert np.allclose(np.linalg.norm(out, axis=1), 1.0), "no zero row"
+    assert ["fresh text"] in calls and ["stale text"] in calls
+    assert er._LAST_EMBED_STATS.get("stale_dim_reembedded") == 1
+    # and the cache now holds the right vector
+    calls.clear()
+    assert er.embed_texts(["stale text"]).shape == (1, 3) and calls == []
