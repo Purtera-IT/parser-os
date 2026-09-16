@@ -282,6 +282,24 @@ def _embed_azure(texts: list[str]) -> list[list[float] | None]:
 def _embed_model() -> str:
     return os.environ.get("OLLAMA_EMBED_MODEL", _DEFAULT_MODEL)
 
+def _cache_model_key() -> str:
+    """The name the persistent cache is keyed under: the model that will
+    actually answer. Under the azure backend that is the azure model, not the
+    local Ollama name.
+
+    Dev, 2026-09-16: the worker moved to the azure backend but the cache was
+    still keyed by the Ollama model, so a text embedded on the Mac Studio
+    (qwen3-embedding, 4096-d) came back from the cache for an azure query
+    (text-embedding-3-small, 1536-d). embed_texts zeroed rows whose dimension
+    differed from the first row's, the feedback store compared zeros to
+    exemplars, and a Deal Kit lesson whose exemplar was the atom's exact text
+    scored nothing. Nobody saw it: the store logs "no hit", not "wrong
+    dimension". The Ollama key is unchanged so a warm local cache stays warm."""
+    if embed_backend() == "azure":
+        _, _, model = _azure_embed_conf()
+        return f"azure:{model}"
+    return _embed_model()
+
 
 def _embed_one(text: str) -> list[float] | None:
     """POST to /api/embeddings. Returns 4096-dim vector or None on failure."""
@@ -413,7 +431,7 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     if not texts:
         return np.zeros((0, _DEFAULT_DIM), dtype=np.float32)
 
-    model = _embed_model()
+    model = _cache_model_key()
     out: list[list[float] | None] = [None] * len(texts)
 
     # 1) cache lookup -------------------------------------------------------
@@ -450,6 +468,28 @@ def embed_texts(texts: list[str]) -> np.ndarray:
                 to_store.append((texts[pos], emb))
         if cache is not None and to_store:
             cache.put_many(model, to_store)
+
+    # A cached vector of another dimension than what the backend answers today
+    # is a stale entry, not an answer. Re-embed those rows rather than zeroing
+    # them (the zero row is exactly the silent failure described above).
+    fetched_dims = {len(v) for v in fetched if v} if miss_idx else set()
+    live_dim = next(iter(fetched_dims)) if len(fetched_dims) == 1 else None
+    if live_dim is None:
+        dims = [len(e) for e in out if e]
+        live_dim = max(set(dims), key=dims.count) if dims else None
+    if live_dim is not None:
+        stale_idx = [i for i, e in enumerate(out) if e and len(e) != live_dim]
+        if stale_idx:
+            refetched = _embed_uncached([texts[i] for i in stale_idx])
+            fixed: list[tuple[str, list[float]]] = []
+            for pos, emb in zip(stale_idx, refetched):
+                ok = bool(emb) and len(emb) == live_dim
+                out[pos] = emb if ok else None
+                if ok:
+                    fixed.append((texts[pos], emb))
+            if cache is not None and fixed:
+                cache.put_many(model, fixed)
+            _LAST_EMBED_STATS["stale_dim_reembedded"] = len(stale_idx)
 
     # 3) assemble + L2-normalize (re-normalizing cached unit vectors is a
     #    no-op; failed rows stay zero and auto-drop in cosine top-K). Dim is
