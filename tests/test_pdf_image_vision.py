@@ -1094,3 +1094,68 @@ def test_budget_zero_disables_the_clock(monkeypatch, tmp_path):
     ]
     piv.process_image_markers(markers)
     assert calls["n"] == 4
+
+
+# ── the image stage runs on the managed endpoint ──────────────────────
+
+
+def test_hosted_vision_is_preferred_over_the_self_hosted_host(monkeypatch, tmp_path):
+    """Dev 2026-09-16: images were read by a model on a Mac Studio over a tailnet.
+    When it slowed down, eight compiles hung to the 1500 s ceiling. The hosted
+    teacher already serves a vision-capable model, so route there."""
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("TEACHER_API_BASE", "https://example.invalid/openai/v1")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    ollama_calls = {"n": 0}
+    monkeypatch.setattr(piv, "_ollama_vision_direct",
+                        lambda *a, **k: ollama_calls.__setitem__("n", ollama_calls["n"] + 1) or "{}")
+    seen = {"n": 0}
+
+    def fake_vision(prompt, image_b64, **kw):
+        seen["n"] += 1
+        assert image_b64, "the image must reach the hosted call"
+        return '{"image_kind": "logo", "has_text": false, "meaningful": false}'
+
+    import app.core.llm_client as lc
+    monkeypatch.setattr(lc, "teacher_api_enabled", lambda: True)
+    monkeypatch.setattr(lc, "complete_vision", fake_vision)
+    piv.process_image_markers([_marker(tmp_path)])
+    assert seen["n"] >= 1, "the hosted endpoint should have been used"
+    assert ollama_calls["n"] == 0, "the self-hosted host must not be called"
+
+
+def test_one_env_var_puts_it_back_on_the_self_hosted_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("TEACHER_API_BASE", "https://example.invalid/openai/v1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_HOSTED_VISION", "0")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    calls = {"n": 0}
+    monkeypatch.setattr(piv, "_ollama_vision_direct",
+                        lambda *a, **k: calls.__setitem__("n", calls["n"] + 1) or
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+    piv.process_image_markers([_marker(tmp_path)])
+    assert calls["n"] >= 1, "rollback must reach the self-hosted host"
+
+
+def test_a_hosted_failure_counts_toward_the_breaker(monkeypatch, tmp_path, caplog):
+    """A hosted endpoint that answers nothing must trip the same circuit breaker,
+    not walk all forty images."""
+    import logging
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("TEACHER_API_BASE", "https://example.invalid/openai/v1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+    import app.core.llm_client as lc
+    monkeypatch.setattr(lc, "teacher_api_enabled", lambda: True)
+    calls = {"n": 0}
+    monkeypatch.setattr(lc, "complete_vision",
+                        lambda *a, **k: calls.__setitem__("n", calls["n"] + 1) or "")
+    markers = [_marker(tmp_path, region=f"page{i}/image1", saved_name=f"i{i}.png", size=5000 + i)
+               for i in range(8)]
+    with caplog.at_level(logging.WARNING, logger="app.core.pdf_image_vision"):
+        out = piv.process_image_markers(markers)
+    assert out == []
+    assert calls["n"] == 3, f"breaker should stop after three empty replies, got {calls['n']}"
