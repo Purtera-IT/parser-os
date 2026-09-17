@@ -99,8 +99,8 @@ def _env_int(name: str, default: int) -> int:
 
 
 def enabled() -> bool:
-    """The stage is opt-in until it has been measured on a full corpus run."""
-    return _env_flag("SOWSMITH_WORK_ORDER")
+    """On by default (PUR-25). Kill switch: SOWSMITH_WORK_ORDER=0 (or false/no/off)."""
+    return _env_flag("SOWSMITH_WORK_ORDER", "1")
 
 
 def _text(atom: Any) -> str:

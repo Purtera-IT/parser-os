@@ -324,9 +324,12 @@ def test_span_admission_leaves_the_minted_task_alone(judge, extractor):
     assert "task" not in WEAK_ATOM_TYPES
 
 
-def test_disabled_by_default(monkeypatch):
+def test_enabled_by_default_with_kill_switch(monkeypatch):
     monkeypatch.delenv("SOWSMITH_WORK_ORDER", raising=False)
-    assert work_order.enabled() is False
+    assert work_order.enabled() is True
+    for off in ("0", "false", "no", "off", ""):
+        monkeypatch.setenv("SOWSMITH_WORK_ORDER", off)
+        assert work_order.enabled() is False
     monkeypatch.setenv("SOWSMITH_WORK_ORDER", "1")
     assert work_order.enabled() is True
 
