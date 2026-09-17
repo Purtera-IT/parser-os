@@ -1,0 +1,951 @@
+{
+  "format_version": 1,
+  "description": "Synthetic A/B/C triples for the PUR-15 transfer gate. A is corrected; B shares the work shape but not the wording, customer or template; C shares A's wording, customer and template but not the work. All names are fictional. Frozen: change only by adding triples with a new id.",
+  "triples": [
+    {
+      "id": "t01_camera_install_hpv",
+      "field": "hours_per_visit",
+      "a": {
+        "deal_id": "SYN-A01",
+        "customer": "Northwind Freight",
+        "document_title": "Northwind SOW v2",
+        "wording": "Install 12 cameras at the warehouse",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Install cameras",
+              "object": "camera",
+              "unit": "camera",
+              "count": 12
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B01",
+        "customer": "Contoso Foods",
+        "document_title": "RFP 2231 security refresh",
+        "wording": "Mount and cable forty security cameras across the new distribution center",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Mount security cameras",
+              "object": "security camera",
+              "unit": "camera",
+              "count": 40,
+              "action": "mount"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C01",
+        "customer": "Northwind Freight",
+        "document_title": "Northwind SOW v2",
+        "wording": "Install 12 cameras at the warehouse",
+        "billing_type": "fixed_fee",
+        "delivery_model": "remote",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Activate camera licenses",
+              "object": "camera license",
+              "unit": "license",
+              "count": 12,
+              "action": "install"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "hours_per_visit",
+        "accepted": 18,
+        "reason_code": "other",
+        "reason_text": "each camera needs a lift and a new home run"
+      },
+      "why_b_same_shape": "same object/unit/delivery, different verb and size",
+      "why_c_different_work": "same sentence; the work is remote licence activation",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t02_ap_swap_after_hours_hpv",
+      "field": "hours_per_visit",
+      "a": {
+        "deal_id": "SYN-A02",
+        "customer": "Fabrikam Retail",
+        "document_title": "Fabrikam wifi refresh",
+        "wording": "Swap out 30 wireless access points overnight",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Replace access points",
+              "object": "wireless access point",
+              "unit": "access point",
+              "count": 30,
+              "action": "replace"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": true,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B02",
+        "customer": "Tailspin Clinics",
+        "document_title": "Scope of work - WAPs",
+        "wording": "Replace the building's 8 WAPs outside business hours",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Replace access points",
+              "object": "access point",
+              "unit": "access point",
+              "count": 8,
+              "action": "replace"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": true,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C02",
+        "customer": "Fabrikam Retail",
+        "document_title": "Fabrikam wifi refresh",
+        "wording": "Swap out 30 wireless access points overnight",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Replace access points",
+              "object": "wireless access point",
+              "unit": "access point",
+              "count": 30,
+              "action": "replace"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": true,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": true
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "hours_per_visit",
+        "accepted": 45,
+        "reason_code": "after_hours",
+        "reason_text": "night work runs slower: escorts and lift restrictions"
+      },
+      "why_b_same_shape": "same object, after hours, onsite",
+      "why_c_different_work": "same sentence; customer supplies and stages the APs",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t03_cable_drops_units",
+      "field": "units",
+      "a": {
+        "deal_id": "SYN-A03",
+        "customer": "Litware Schools",
+        "document_title": "Litware cabling quote",
+        "wording": "Run cabling to 20 AP locations",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Run cable drops",
+              "object": "cable drop",
+              "unit": "AP location",
+              "count": 20,
+              "action": "run"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B03",
+        "customer": "Adatum Health",
+        "document_title": "Adatum structured cabling",
+        "wording": "Pull new Cat6 for 35 access point positions in the east wing",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Pull cable drops",
+              "object": "cable drop",
+              "unit": "AP location",
+              "count": 35,
+              "action": "pull"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C03",
+        "customer": "Litware Schools",
+        "document_title": "Litware cabling quote",
+        "wording": "Run cabling to 20 AP locations",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Patch AP locations",
+              "object": "patch cord",
+              "unit": "AP location",
+              "count": 20,
+              "action": "run"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "units",
+        "accepted": 40,
+        "reason_code": "wrong_unit_count",
+        "reason_text": "two drops per AP location"
+      },
+      "why_b_same_shape": "same object and unit, bigger job",
+      "why_c_different_work": "same sentence; the work is patching existing cable",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t04_pos_rollout_visits",
+      "field": "visits",
+      "a": {
+        "deal_id": "SYN-A04",
+        "customer": "Wide World Importers",
+        "document_title": "WWI POS refresh",
+        "wording": "Refresh POS terminals at 6 stores after close",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Refresh POS terminals",
+              "object": "POS terminal",
+              "unit": "terminal",
+              "count": 24,
+              "action": "refresh"
+            }
+          ],
+          "site_count": 6,
+          "after_hours": true,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B04",
+        "customer": "Coho Winery",
+        "document_title": "Coho register replacement",
+        "wording": "Replace point-of-sale registers overnight across 25 retail locations",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Replace registers",
+              "object": "register",
+              "unit": "register",
+              "count": 75,
+              "action": "replace"
+            }
+          ],
+          "site_count": 25,
+          "after_hours": true,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C04",
+        "customer": "Wide World Importers",
+        "document_title": "WWI POS refresh",
+        "wording": "Refresh POS terminals at 6 stores after close",
+        "billing_type": "fixed_fee",
+        "delivery_model": "remote",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Refresh POS terminals",
+              "object": "POS terminal",
+              "unit": "terminal",
+              "count": 24,
+              "action": "refresh"
+            }
+          ],
+          "site_count": 6,
+          "after_hours": true,
+          "no_onsite_hands": true,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "visits",
+        "accepted": 12,
+        "reason_code": "wrong_site_count",
+        "reason_text": "two nights per store: stage then cut over"
+      },
+      "why_b_same_shape": "multi-site, after hours, onsite; different size",
+      "why_c_different_work": "same sentence; refresh is a remote software push",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t05_laptop_deploy_visits",
+      "field": "visits",
+      "a": {
+        "deal_id": "SYN-A05",
+        "customer": "Proseware",
+        "document_title": "Proseware onboarding",
+        "wording": "Deploy 50 laptops for new hires",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Deploy laptops",
+              "object": "laptop",
+              "unit": "laptop",
+              "count": 50,
+              "action": "deploy"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B05",
+        "customer": "Blue Yonder Air",
+        "document_title": "BYA HQ onboarding",
+        "wording": "Image and hand out 120 notebooks to incoming staff at HQ",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Image notebooks",
+              "object": "notebook",
+              "unit": "notebook",
+              "count": 120,
+              "action": "image"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C05",
+        "customer": "Proseware",
+        "document_title": "Proseware onboarding",
+        "wording": "Deploy 50 laptops for new hires",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Deploy laptops",
+              "object": "laptop",
+              "unit": "laptop",
+              "count": 50,
+              "action": "deploy"
+            }
+          ],
+          "site_count": 4,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "visits",
+        "accepted": 3,
+        "reason_code": "other",
+        "reason_text": "staggered start dates: three trips"
+      },
+      "why_b_same_shape": "single site, onsite, daytime",
+      "why_c_different_work": "same sentence; the hires are spread over four offices",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t06_rack_servers_hpv",
+      "field": "hours_per_visit",
+      "a": {
+        "deal_id": "SYN-A06",
+        "customer": "Humongous Insurance",
+        "document_title": "HI DC expansion",
+        "wording": "Rack and stack 10 servers in the data hall",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Rack servers",
+              "object": "server",
+              "unit": "server",
+              "count": 10,
+              "action": "rack"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B06",
+        "customer": "Lucerne Publishing",
+        "document_title": "Lucerne colo install",
+        "wording": "Install 4 rack servers into the colo cage",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Install rack servers",
+              "object": "rack server",
+              "unit": "server",
+              "count": 4,
+              "action": "install"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C06",
+        "customer": "Humongous Insurance",
+        "document_title": "HI DC expansion",
+        "wording": "Rack and stack 10 servers in the data hall",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Rack servers",
+              "object": "server",
+              "unit": "server",
+              "count": 10,
+              "action": "rack"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": true,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "hours_per_visit",
+        "accepted": 15,
+        "reason_code": "other",
+        "reason_text": "rails and cable management per server"
+      },
+      "why_b_same_shape": "same object, daytime onsite",
+      "why_c_different_work": "same sentence; the work is scheduled in a maintenance window",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t07_badge_readers_units",
+      "field": "units",
+      "a": {
+        "deal_id": "SYN-A07",
+        "customer": "Trey Research",
+        "document_title": "Trey access control",
+        "wording": "Install badge readers on 8 doors",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Install badge readers",
+              "object": "badge reader",
+              "unit": "door",
+              "count": 8,
+              "action": "install"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B07",
+        "customer": "Margie's Travel",
+        "document_title": "Margie's security upgrade",
+        "wording": "Fit access card readers to 14 entry doors",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Fit card readers",
+              "object": "card reader",
+              "unit": "entry door",
+              "count": 14,
+              "action": "fit"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C07",
+        "customer": "Trey Research",
+        "document_title": "Trey access control",
+        "wording": "Install badge readers on 8 doors",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Install door strikes",
+              "object": "door strike",
+              "unit": "door",
+              "count": 8,
+              "action": "install"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "units",
+        "accepted": 16,
+        "reason_code": "wrong_unit_count",
+        "reason_text": "in and out reader per door"
+      },
+      "why_b_same_shape": "same object head noun and unit",
+      "why_c_different_work": "same sentence; the work is electric strikes",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t08_tv_mount_hpv",
+      "field": "hours_per_visit",
+      "a": {
+        "deal_id": "SYN-A08",
+        "customer": "Alpine Ski House",
+        "document_title": "Alpine AV",
+        "wording": "Mount 5 TVs in conference rooms",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Mount TVs",
+              "object": "TV",
+              "unit": "TV",
+              "count": 5,
+              "action": "mount"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B08",
+        "customer": "School of Fine Art",
+        "document_title": "SFA display install",
+        "wording": "Hang 22 flat-panel TVs throughout the office",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Hang TVs",
+              "object": "flat-panel TV",
+              "unit": "TV",
+              "count": 22,
+              "action": "hang"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C08",
+        "customer": "Alpine Ski House",
+        "document_title": "Alpine AV",
+        "wording": "Mount 5 TVs in conference rooms",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Mount TVs",
+              "object": "TV",
+              "unit": "TV",
+              "count": 5,
+              "action": "mount"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": true,
+          "customer_supplies_equipment": true
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "hours_per_visit",
+        "accepted": 10,
+        "reason_code": "other",
+        "reason_text": "in-wall power and blocking"
+      },
+      "why_b_same_shape": "same object, onsite",
+      "why_c_different_work": "same sentence; nobody on site to receive, customer ships units",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t09_desk_phones_units",
+      "field": "units",
+      "a": {
+        "deal_id": "SYN-A09",
+        "customer": "VanArsdel",
+        "document_title": "VanArsdel UC",
+        "wording": "Set up desk phones for 40 users",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Set up desk phones",
+              "object": "desk phone",
+              "unit": "user",
+              "count": 40,
+              "action": "set"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B09",
+        "customer": "Woodgrove Bank",
+        "document_title": "Woodgrove branch phones",
+        "wording": "Provision IP phones for a 90-user branch",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Provision IP phones",
+              "object": "IP phone",
+              "unit": "user",
+              "count": 90,
+              "action": "provision"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C09",
+        "customer": "VanArsdel",
+        "document_title": "VanArsdel UC",
+        "wording": "Set up desk phones for 40 users",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Assign softphone licenses",
+              "object": "softphone license",
+              "unit": "user",
+              "count": 40,
+              "action": "set"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "units",
+        "accepted": 44,
+        "reason_code": "wrong_unit_count",
+        "reason_text": "ten percent spares"
+      },
+      "why_b_same_shape": "same object head noun and unit",
+      "why_c_different_work": "same sentence; the work is softphone licences",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t10_site_survey_visits",
+      "field": "visits",
+      "a": {
+        "deal_id": "SYN-A10",
+        "customer": "Tailwind Health",
+        "document_title": "Tailwind wireless survey",
+        "wording": "Survey wifi at 10 clinics",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Survey wifi",
+              "object": "wifi survey",
+              "unit": "clinic",
+              "count": 10,
+              "action": "survey"
+            }
+          ],
+          "site_count": 10,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B10",
+        "customer": "Relecloud Dental",
+        "document_title": "Relecloud survey SOW",
+        "wording": "Walk 30 medical offices for a wireless site survey",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Walk wireless site surveys",
+              "object": "site survey",
+              "unit": "office",
+              "count": 30,
+              "action": "walk"
+            }
+          ],
+          "site_count": 30,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C10",
+        "customer": "Tailwind Health",
+        "document_title": "Tailwind wireless survey",
+        "wording": "Survey wifi at 10 clinics",
+        "billing_type": "fixed_fee",
+        "delivery_model": "remote",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Survey wifi",
+              "object": "wifi survey",
+              "unit": "clinic",
+              "count": 10,
+              "action": "survey"
+            }
+          ],
+          "site_count": 10,
+          "after_hours": false,
+          "no_onsite_hands": true,
+          "customer_supplies_equipment": false
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "visits",
+        "accepted": 5,
+        "reason_code": "wrong_site_count",
+        "reason_text": "two neighbouring clinics per trip"
+      },
+      "why_b_same_shape": "multi-site, onsite, daytime",
+      "why_c_different_work": "same sentence; predictive survey from floor plans",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    },
+    {
+      "id": "t11_fiber_termination_hpv",
+      "field": "hours_per_visit",
+      "a": {
+        "deal_id": "SYN-A11",
+        "customer": "Fourth Coffee",
+        "document_title": "Fourth Coffee backbone",
+        "wording": "Terminate 200 fiber strands",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Terminate fiber strands",
+              "object": "fiber strand",
+              "unit": "strand",
+              "count": 200,
+              "action": "terminate"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "b": {
+        "deal_id": "SYN-B11",
+        "customer": "Graphic Design Institute",
+        "document_title": "GDI fiber splice",
+        "wording": "Splice 48 fiber strands in the MDF",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Splice fiber strands",
+              "object": "fiber strand",
+              "unit": "strand",
+              "count": 48,
+              "action": "splice"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": false
+        }
+      },
+      "c": {
+        "deal_id": "SYN-C11",
+        "customer": "Fourth Coffee",
+        "document_title": "Fourth Coffee backbone",
+        "wording": "Terminate 200 fiber strands",
+        "billing_type": "fixed_fee",
+        "delivery_model": "onsite",
+        "work_order": {
+          "work_lines": [
+            {
+              "work": "Terminate fiber strands",
+              "object": "fiber strand",
+              "unit": "strand",
+              "count": 200,
+              "action": "terminate"
+            }
+          ],
+          "site_count": 1,
+          "after_hours": false,
+          "no_onsite_hands": false,
+          "customer_supplies_equipment": true
+        }
+      },
+      "correction": {
+        "line_index": 0,
+        "field": "hours_per_visit",
+        "accepted": 50,
+        "reason_code": "other",
+        "reason_text": "0.25 h per strand including test"
+      },
+      "why_b_same_shape": "same object and unit, small vs large job",
+      "why_c_different_work": "same sentence; customer supplies pre-terminated trunks",
+      "expect": {
+        "b_changes": true,
+        "c_unchanged": true
+      }
+    }
+  ]
+}

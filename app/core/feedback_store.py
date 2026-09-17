@@ -43,6 +43,7 @@ import numpy as np
 
 from app.core.decide import Decision, DecisionScope
 from app.core.neural_head import NeuralHead
+from app.core.work_shape import REL_GATE, correction_gate_holds
 
 # Scope tiers, narrowest first. A deal correction overrides a pack correction,
 # which overrides global.
@@ -556,6 +557,10 @@ class FeedbackStore:
                 continue
             if excluded and (c.created_by or "") in excluded:
                 continue
+            # A gated work-shape lesson must never reach a query through a
+            # head fit without its gate; it resolves by exemplar only.
+            if (c.relations or {}).get(REL_GATE):
+                continue
             if c.scope == SCOPE_GLOBAL:
                 visible.append(c)
             elif c.scope == SCOPE_PACK and c.scope_key == scope.pack:
@@ -662,6 +667,9 @@ class FeedbackStore:
                 if c.relation == relation
                 and c.verdict in allowed
                 and condition_holds(c.relations, facts)
+                # A work-shape lesson fires only where the work agrees
+                # (app.core.work_shape); ungated corrections are unaffected.
+                and correction_gate_holds(c.relations, relations)
                 and (not excluded or (c.created_by or "") not in excluded)
             ]
             if not corrs:
