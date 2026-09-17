@@ -1271,7 +1271,7 @@ def compile_project(
     # This stage judges each DOCUMENT for relevance through decide() (so the
     # judgement is correctable), reads what survives together, and mints the
     # resulting work lines as task atoms whose provenance is inherited from the
-    # real atoms they were summarised from. Opt-in: SOWSMITH_WORK_ORDER=1.
+    # real atoms they were summarised from. On by default; SOWSMITH_WORK_ORDER=0 disables.
     with telemetry.stage("work_order", input_count=len(atoms)) as stage:
         _wo_minted = 0
         try:
