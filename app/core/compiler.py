@@ -1510,6 +1510,24 @@ def compile_project(
                 warnings.append(f"WARNING: site_geo_fallback failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=added_geo)
 
+    # PUR-10: work lines minted before site_geo_fallback froze site_count as
+    # None when the only site was a City/ST ZIP header. Re-resolve now that the
+    # fallback physical_site atoms exist; a remaining None carries its reason.
+    try:
+        from app.core import work_order as _wo_sc
+
+        if _wo_sc.enabled():
+            from app.core.work_order_site_count import backfill_work_order_site_count
+
+            _sc_filled = backfill_work_order_site_count(atoms)
+            if _sc_filled:
+                warnings.append(
+                    f"INFO: work_order site_count resolved after site_geo_fallback "
+                    f"on {_sc_filled} work line(s)"
+                )
+    except Exception as exc:
+        warnings.append(f"WARNING: work_order site_count backfill failed: {type(exc).__name__}: {exc}")
+
     # Receipt backfill: source_replay (stage 4) runs before the late
     # atom-creating stages (typed_atom_classification, site_geo_fallback),
     # so any atom *born* after replay carries source_refs but empty
