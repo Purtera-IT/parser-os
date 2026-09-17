@@ -32,6 +32,28 @@ Each script is self-contained — pass `--help` for its own usage.
 | `label_packets.py` | Bulk-applies labels from a YAML to packets that match a query. |
 | `inspect_packets.py` | Pretty-prints packets matching a filter (family, anchor_key prefix, atom_id, …). |
 | `promote_review_to_fixture.py` | Copies a reviewed packet into `tests/fixtures/` as a regression fixture. |
+| `sheet_fallthrough_labels.py` | PUR-51. Walks a local directory of .xlsx/.csv, classifies every sheet, writes `sheet_labels.jsonl/.csv` (fallthrough sheets: headers, column-type profile, row shape, empty `label`) and `fallthrough_report.json`. |
+| `train_sheet_head.py` | PUR-52. Customer-grouped evaluation (per-class accuracy, fallthrough before/after) of the structural sheet head from filled labels; `--out` saves a head. |
+
+### Sheet fallthrough labelling (PUR-21/51/52)
+
+Unrecognised worksheets are now `SheetRole.UNCLASSIFIED` (destination `review`):
+kept as one visible `dropped_sheet` marker (`value.unclassified=true`, flag
+`sheet_unclassified`), never mined as scope. `SHEET_FALLTHROUGH_LEGACY_SCOPE=1`
+restores the old default. A structural head is served only when
+`SHEET_STRUCTURE_HEAD_PATH` (or `app/core/data/sheet_structure_head.json`) exists.
+
+Run by a human on an approved local copy (automation has only run these on synthetic fixtures):
+
+```bash
+python scripts/sheet_fallthrough_labels.py --root /path/to/local/workbooks \
+    --customer-key parent_dir --out ./sheet_labels_out
+# fill `label` in sheet_labels_out/sheet_labels.jsonl (or .csv) with one of:
+# scope | pricing | bill_of_materials | site_list | schedule | contact_list | boilerplate | junk
+python scripts/train_sheet_head.py --labels ./sheet_labels_out/sheet_labels.jsonl \
+    --holdout-customer <unseen_customer_key> --report ./sheet_head_eval.json \
+    --out ./sheet_structure_head.json
+```
 
 ## Experimentation
 
