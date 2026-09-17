@@ -77,3 +77,45 @@ Each script is self-contained — pass `--help` for its own usage.
 If a `scripts/` utility becomes load-bearing, promote it to a CLI
 subcommand under `app/cli.py` and keep the script as a thin wrapper for
 backward compatibility.
+
+## work_order: corpus diff and reproducibility (PUR-46, PUR-31)
+
+Both scripts only compile local deal directories and write local reports; they
+never touch a database or blob store. The only network they use is the LLM
+endpoint already configured in your shell (`TEACHER_API_BASE`, etc.), or none
+with `--stub-llm`. Dry-run first on the synthetic fixture:
+
+```bash
+mkdir -p /tmp/wo_corpus && cp -r tests/fixtures/demo_project /tmp/wo_corpus/
+python scripts/work_order_corpus_diff.py /tmp/wo_corpus --out /tmp/wo_diff --stub-llm
+```
+
+**On dev (human-run).** `DEV_CORPUS` is a local directory with one sub-directory
+per dev deal, laid out as `compile_project` expects. Use the dev teacher
+endpoint, never production credentials. Do not include Marion (see PUR-46).
+
+```bash
+export DEV_CORPUS=~/dev-corpus            # one folder per deal
+export SOWSMITH_WORK_ORDER_SEED=0          # default; pinned for comparability
+export SOWSMITH_WORK_ORDER_CACHE_DB=       # leave EMPTY so on-runs measure the provider, not the cache
+python scripts/work_order_corpus_diff.py "$DEV_CORPUS" \
+    --out reports/work_order_diff_$(date +%Y%m%d) --on-runs 2 --exclude marion
+# PUR-31 spread: ten deals, five runs each
+python scripts/work_order_repro.py --corpus "$DEV_CORPUS" --only DEAL1 DEAL2 ... \
+    --runs 5 --no-cache --out reports/work_order_repro_$(date +%Y%m%d).jsonl
+```
+
+Read `report.md` first, then `summary.json["flagged"]`:
+
+| flag | meaning | action |
+| -- | -- | -- |
+| `lost_atoms` | a flag-off atom is missing with the flag on (stage must be additive) | blocker; script exits 1 |
+| `bad_provenance` | a minted work line has no source ref or points at an unknown artifact | blocker; script exits 1 |
+| `big_atom_delta` | atom count moved > 25% | read by hand |
+| `collapse` | >= 200 atoms but <= 1 work line (Barton Malow shape) | read by hand |
+| `unstable_work_lines` | the two flag-on runs disagreed | compare with the repro spread |
+| `error` | compile raised | investigate |
+
+Still by hand (PUR-46): pick a sample of minted lines from `deals/*.json` and
+open the artifact each one cites; confirm Binghamton is not worse than the
+per-atom path (PUR-25).
