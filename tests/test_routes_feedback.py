@@ -400,6 +400,11 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "site_role": "physical_site",
     # How long a unit of work takes, taught from a finished Deal Kit.
     "hours": "task_hours",
+    # The hours estimate, one head per field (PUR-13). Mirror pending in
+    # purpulse-frontend headCorrections.ts.
+    "estimate_units": "estimate_units",
+    "estimate_visits": "estimate_visits",
+    "estimate_hours_per_visit": "estimate_hours_per_visit",
     # Quote line (parent) or a step inside one (child).
     "task_tier": "task_tier",
     # Whether a document is about the job this deal is named for.
