@@ -798,6 +798,9 @@ class CompileResult(BaseModel):
     ranked_atoms: list[AuthorityRankedAtom] = Field(default_factory=list)
     entity_edges: list[EntityEdge] = Field(default_factory=list)
     compile_capabilities: dict[str, Any] | None = None
+    # PUR-58: set only when an operator selected stages. ``partial=True`` means
+    # some optional stages did NOT run -- never report as a full parse.
+    stage_plan: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod

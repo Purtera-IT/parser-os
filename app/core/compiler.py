@@ -28,6 +28,7 @@ from app.core.entity_resolution import (
 from app.core.quality_metrics import compute_quality
 from app.core.graph_builder import build_edges
 from app.core.ids import stable_id
+from app.core.stage_plan import StagePlan
 from app.core.manifest import (
     build_artifact_fingerprint,
     compute_output_signature,
@@ -465,7 +466,16 @@ def compile_project(
     use_cache: bool = True,
     stage_callback: Callable[..., None] | None = None,
     stage_start_callback: Callable[..., None] | None = None,
+    stages: "list[str] | str | StagePlan | None" = None,
 ) -> CompileResult:
+    """``stages``: optional operator stage selection (PUR-58). ``None`` is a
+    full parse. See :mod:`app.core.stage_plan` for what can be skipped, what is
+    reused (the parse cache) and how partial results are labelled. An invalid
+    plan raises :class:`app.core.stage_plan.StagePlanError` before any work."""
+    _stage_plan = (
+        stages if isinstance(stages, StagePlan)
+        else StagePlan.from_request(stages, use_cache=use_cache)
+    )
     project_dir = project_dir.resolve()
     if not project_dir.exists():
         raise FileNotFoundError(f"Project path does not exist: {project_dir}")
@@ -807,25 +817,26 @@ def compile_project(
     # the gist of the message it replies to. Purely additive: no atom is
     # removed, retyped, or re-id'd here — runs before dedup so the surviving
     # copy of a quoted/duplicated line keeps its thread context.
-    with telemetry.stage("email_threading", input_count=len(atoms)) as stage:
-        thread_summary: dict = {}
-        try:
-            from app.core.email_threading import thread_emails
+    if _stage_plan.runs("email_threading"):
+        with telemetry.stage("email_threading", input_count=len(atoms)) as stage:
+            thread_summary: dict = {}
+            try:
+                from app.core.email_threading import thread_emails
 
-            atoms, thread_summary = thread_emails(atoms, project_id=resolved_project_id)
-            tc = int(thread_summary.get("thread_count", 0))
-            mm = int(thread_summary.get("multi_message_threads", 0))
-            mc = int(thread_summary.get("threaded_message_count", 0))
-            if mc:
+                atoms, thread_summary = thread_emails(atoms, project_id=resolved_project_id)
+                tc = int(thread_summary.get("thread_count", 0))
+                mm = int(thread_summary.get("multi_message_threads", 0))
+                mc = int(thread_summary.get("threaded_message_count", 0))
+                if mc:
+                    warnings.append(
+                        f"INFO: email_threading linked {mc} email(s) into {tc} "
+                        f"thread(s) ({mm} multi-message)"
+                    )
+            except Exception as exc:
                 warnings.append(
-                    f"INFO: email_threading linked {mc} email(s) into {tc} "
-                    f"thread(s) ({mm} multi-message)"
+                    f"WARNING: email_threading failed: {type(exc).__name__}: {exc}"
                 )
-        except Exception as exc:
-            warnings.append(
-                f"WARNING: email_threading failed: {type(exc).__name__}: {exc}"
-            )
-        telemetry.end_stage(stage, output_count=len(atoms))
+            telemetry.end_stage(stage, output_count=len(atoms))
 
     # Quoted-history dedup: in a long thread every reply re-quotes the whole
     # history, so the same sentence is emitted once per reply (the #010045
@@ -834,32 +845,33 @@ def compile_project(
     # original is always kept, only redundant echoes are diverted to the ledger.
     # Runs right after threading so thread membership/order is available and
     # before the generic dedup stages so they operate on the slim set.
-    with telemetry.stage("quoted_history_dedup", input_count=len(atoms)) as stage:
-        try:
-            from app.core.email_threading import dedup_quoted_history
+    if _stage_plan.runs("quoted_history_dedup"):
+        with telemetry.stage("quoted_history_dedup", input_count=len(atoms)) as stage:
+            try:
+                from app.core.email_threading import dedup_quoted_history
 
-            before_qh_atoms = list(atoms)
-            atoms, dropped_qh = dedup_quoted_history(
-                atoms, project_id=resolved_project_id
-            )
-            if dropped_qh:
-                merge_suppressed(
-                    suppressed_atoms,
-                    capture_suppressed(
-                        before_qh_atoms, atoms,
-                        stage="quoted_history_dedup",
-                        reason="quoted email history already present in the thread (authored original kept)",
-                    ),
+                before_qh_atoms = list(atoms)
+                atoms, dropped_qh = dedup_quoted_history(
+                    atoms, project_id=resolved_project_id
                 )
+                if dropped_qh:
+                    merge_suppressed(
+                        suppressed_atoms,
+                        capture_suppressed(
+                            before_qh_atoms, atoms,
+                            stage="quoted_history_dedup",
+                            reason="quoted email history already present in the thread (authored original kept)",
+                        ),
+                    )
+                    warnings.append(
+                        f"INFO: quoted_history_dedup diverted {len(dropped_qh)} "
+                        f"redundant quoted-history atom(s) to the ledger"
+                    )
+            except Exception as exc:
                 warnings.append(
-                    f"INFO: quoted_history_dedup diverted {len(dropped_qh)} "
-                    f"redundant quoted-history atom(s) to the ledger"
+                    f"WARNING: quoted_history_dedup failed: {type(exc).__name__}: {exc}"
                 )
-        except Exception as exc:
-            warnings.append(
-                f"WARNING: quoted_history_dedup failed: {type(exc).__name__}: {exc}"
-            )
-        telemetry.end_stage(stage, output_count=len(atoms))
+            telemetry.end_stage(stage, output_count=len(atoms))
 
     # Register {artifact_id: Path} with the vision module so its leaf
     # fitz.open() calls — invoked from enrich_entities via atom
@@ -912,7 +924,7 @@ def compile_project(
     # SOWSMITH_PDF_IMAGE_VISION is set, so the default path is unchanged.
     try:
         from app.core import pdf_image_vision
-        if pdf_image_vision.enabled():
+        if _stage_plan.runs("pdf_image_vision") and pdf_image_vision.enabled():
             with telemetry.stage("pdf_image_vision", input_count=len(atoms)) as stage:
                 image_atoms = pdf_image_vision.process_image_markers(atoms)
                 if image_atoms:
@@ -1217,37 +1229,38 @@ def compile_project(
     # beside the SD-WAN scope). Judged per document through decide() -- a PM's
     # correction first, then the model -- and only a confident "other job" sets
     # a document aside. Lossless: its atoms go to the suppression ledger.
-    with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
-        _djs_dropped = 0
-        _djs_notes: list[str] = []
-        try:
-            from app.core import document_job_scope as _djs
+    if _stage_plan.runs("document_job_scope"):
+        with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
+            _djs_dropped = 0
+            _djs_notes: list[str] = []
+            try:
+                from app.core import document_job_scope as _djs
 
-            if _djs.enabled():
-                _deal_name = _djs.deal_name_from_manifest(project_dir)
-                _before_djs = list(atoms)
-                atoms, _dropped_djs, _djs_verdicts = _djs.judge_documents(
-                    atoms, deal_name=_deal_name, project_id=resolved_project_id,
-                    project_dir=project_dir,
-                )
-                # Every conversation's verdict goes to the trace, kept or not,
-                # so a brief built from the wrong job can be read back to the
-                # judgement that let it in.
-                _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
-                if _dropped_djs:
-                    merge_suppressed(
-                        suppressed_atoms,
-                        capture_suppressed(
-                            _before_djs, atoms,
-                            stage="document_job_scope",
-                            reason="document describes another job for this customer, not the work this deal is named for",
-                        ),
+                if _djs.enabled():
+                    _deal_name = _djs.deal_name_from_manifest(project_dir)
+                    _before_djs = list(atoms)
+                    atoms, _dropped_djs, _djs_verdicts = _djs.judge_documents(
+                        atoms, deal_name=_deal_name, project_id=resolved_project_id,
+                        project_dir=project_dir,
                     )
-                    _djs_dropped = len(_dropped_djs)
-                warnings.extend(_djs_notes)
-        except Exception as exc:
-            warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
+                    # Every conversation's verdict goes to the trace, kept or not,
+                    # so a brief built from the wrong job can be read back to the
+                    # judgement that let it in.
+                    _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
+                    if _dropped_djs:
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(
+                                _before_djs, atoms,
+                                stage="document_job_scope",
+                                reason="document describes another job for this customer, not the work this deal is named for",
+                            ),
+                        )
+                        _djs_dropped = len(_dropped_djs)
+                    warnings.extend(_djs_notes)
+            except Exception as exc:
+                warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
+            telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
 
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
@@ -1272,41 +1285,42 @@ def compile_project(
     # judgement is correctable), reads what survives together, and mints the
     # resulting work lines as task atoms whose provenance is inherited from the
     # real atoms they were summarised from. Opt-in: SOWSMITH_WORK_ORDER=1.
-    with telemetry.stage("work_order", input_count=len(atoms)) as stage:
-        _wo_minted = 0
-        try:
-            from app.core import work_order as _wo
+    if _stage_plan.runs("work_order"):
+        with telemetry.stage("work_order", input_count=len(atoms)) as stage:
+            _wo_minted = 0
+            try:
+                from app.core import work_order as _wo
 
-            if _wo.enabled():
-                try:
-                    from app.core import document_job_scope as _djs_name
+                if _wo.enabled():
+                    try:
+                        from app.core import document_job_scope as _djs_name
 
-                    _wo_deal = _djs_name.deal_name_from_manifest(project_dir)
-                except Exception:
-                    _wo_deal = ""
-                atoms, _wo_minted, _wo_report = _wo.apply_work_order(
-                    atoms, project_id=resolved_project_id, deal_name=_wo_deal,
-                )
-                if _wo_minted:
-                    warnings.append(
-                        f"INFO: work_order reassembled {len(_wo_report['kept_docs'])} "
-                        f"relevant document(s) into {_wo_minted} work line(s)"
+                        _wo_deal = _djs_name.deal_name_from_manifest(project_dir)
+                    except Exception:
+                        _wo_deal = ""
+                    atoms, _wo_minted, _wo_report = _wo.apply_work_order(
+                        atoms, project_id=resolved_project_id, deal_name=_wo_deal,
                     )
-                for _dropped in _wo_report["dropped_docs"]:
-                    warnings.append(f"INFO: work_order set aside {_dropped}")
-                _wo_summary = _wo_report.get("summary") or {}
-                if _wo_summary.get("one_line_summary"):
-                    warnings.append(
-                        f"INFO: work_order reads the job as: "
-                        f"{_wo_summary['one_line_summary']}"
-                    )
-                if _wo_summary.get("site_count"):
-                    warnings.append(
-                        f"INFO: work_order counts {_wo_summary['site_count']} site(s)"
-                    )
-        except Exception as exc:
-            warnings.append(f"WARNING: work_order failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=_wo_minted)
+                    if _wo_minted:
+                        warnings.append(
+                            f"INFO: work_order reassembled {len(_wo_report['kept_docs'])} "
+                            f"relevant document(s) into {_wo_minted} work line(s)"
+                        )
+                    for _dropped in _wo_report["dropped_docs"]:
+                        warnings.append(f"INFO: work_order set aside {_dropped}")
+                    _wo_summary = _wo_report.get("summary") or {}
+                    if _wo_summary.get("one_line_summary"):
+                        warnings.append(
+                            f"INFO: work_order reads the job as: "
+                            f"{_wo_summary['one_line_summary']}"
+                        )
+                    if _wo_summary.get("site_count"):
+                        warnings.append(
+                            f"INFO: work_order counts {_wo_summary['site_count']} site(s)"
+                        )
+            except Exception as exc:
+                warnings.append(f"WARNING: work_order failed: {type(exc).__name__}: {exc}")
+            telemetry.end_stage(stage, output_count=_wo_minted)
 
     # Geographic fallback: a deal whose only locational anchor is a bare
     # "City, ST ZIP" in a notes file produces zero physical_site atoms,
@@ -1791,31 +1805,33 @@ def compile_project(
     # Learned hours per unit of work, taught from finished Deal Kits
     # (relation task_hours). Store-only, guess-free: a task nobody taught
     # anything like keeps no estimate.
-    with telemetry.stage("task_hours", input_count=len(atoms)) as stage:
-        task_hours_n = 0
-        try:
-            from app.core.task_hours import estimate_task_hours
+    if _stage_plan.runs("task_hours"):
+        with telemetry.stage("task_hours", input_count=len(atoms)) as stage:
+            task_hours_n = 0
+            try:
+                from app.core.task_hours import estimate_task_hours
 
-            task_hours_n = estimate_task_hours(atoms)
-            if task_hours_n:
-                warnings.append(f"INFO: task_hours stamped learned hours on {task_hours_n} task atom(s)")
-        except Exception as exc:
-            warnings.append(f"WARNING: task_hours failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=task_hours_n)
+                task_hours_n = estimate_task_hours(atoms)
+                if task_hours_n:
+                    warnings.append(f"INFO: task_hours stamped learned hours on {task_hours_n} task atom(s)")
+            except Exception as exc:
+                warnings.append(f"WARNING: task_hours failed: {type(exc).__name__}: {exc}")
+            telemetry.end_stage(stage, output_count=task_hours_n)
 
     # The commercial shape finished kits gave this kind of request (billing
     # type, PM/PC hours, travel days; relation commercial_terms). Store-only.
-    with telemetry.stage("commercial_terms", input_count=len(atoms)) as stage:
-        commercial_n = 0
-        try:
-            from app.core.commercial_terms import stamp_commercial_terms
+    if _stage_plan.runs("commercial_terms"):
+        with telemetry.stage("commercial_terms", input_count=len(atoms)) as stage:
+            commercial_n = 0
+            try:
+                from app.core.commercial_terms import stamp_commercial_terms
 
-            commercial_n = stamp_commercial_terms(atoms)
-            if commercial_n:
-                warnings.append(f"INFO: commercial_terms stamped a learned kit shape on {commercial_n} task atom(s)")
-        except Exception as exc:
-            warnings.append(f"WARNING: commercial_terms failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(stage, output_count=commercial_n)
+                commercial_n = stamp_commercial_terms(atoms)
+                if commercial_n:
+                    warnings.append(f"INFO: commercial_terms stamped a learned kit shape on {commercial_n} task atom(s)")
+            except Exception as exc:
+                warnings.append(f"WARNING: commercial_terms failed: {type(exc).__name__}: {exc}")
+            telemetry.end_stage(stage, output_count=commercial_n)
 
     with telemetry.stage("hardware_evidence_backfill", input_count=len(atoms)) as stage:
         hardware_bom_n = 0
@@ -2343,6 +2359,13 @@ def compile_project(
             "atom(s) minted after receipt_backfill"
         )
 
+    if _stage_plan.requested is not None:
+        result.stage_plan = _stage_plan.record()
+        _partial_warning = _stage_plan.warning()
+        if _partial_warning:
+            result.warnings = sorted(set(result.warnings + [_partial_warning]))
+            with telemetry.stage("stage_plan", input_count=0) as stage:
+                telemetry.end_stage(stage, output_count=0, warnings=[_partial_warning])
     output_signature = compute_output_signature(result)
     result.manifest = finalize_manifest(manifest, output_signature)
     with telemetry.stage("quality_gates", input_count=len(result.packets)) as stage:
