@@ -595,6 +595,23 @@ def build_orbitbrief_envelope(
         envelope["site_count_reconciliation"] = reconcile_site_count(
             atoms, int(_sr.get("site_count") or 0)
         )
+        # PUR-62: carry the reasoning + source receipts with the proposed value.
+        try:
+            from app.core.site_count_receipt import build_site_count_receipt
+
+            _site_atoms = [
+                _a for _a in atoms
+                if str(getattr(getattr(_a, "atom_type", None), "value", getattr(_a, "atom_type", ""))) == "physical_site"
+            ]
+            _rcpt = build_site_count_receipt(
+                atoms, envelope["site_count_reconciliation"], site_atoms=_site_atoms
+            )
+            envelope["site_count_reconciliation"]["receipt"] = _rcpt
+            envelope["site_count_receipt"] = _rcpt
+        except Exception as _rc_exc:
+            import logging as _lg_rc
+
+            _lg_rc.getLogger(__name__).warning("site_count_receipt failed: %s", _rc_exc)
     except Exception as _scr_exc:  # never fail a compile over a cross-check
         import logging as _lg_scr
 
