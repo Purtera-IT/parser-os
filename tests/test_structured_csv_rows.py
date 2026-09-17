@@ -124,9 +124,9 @@ def test_cell_fact_emits_exclusion_subatom(tmp_path: Path):
         XlsxParser(),
         tmp_path,
         "scope.csv",
-        "Item,Notes\n"
-        "Camera install,Fire alarm not included\n"
-        "Cabling,Owner provides ceiling access\n",
+        "Item,Description,Qty,Notes\n"
+        "1,Camera install,4,Fire alarm not included\n"
+        "2,Cabling,10,Owner provides ceiling access\n",
     )
     atoms = out if isinstance(out, list) else out.atoms
     exclusions = [a for a in atoms if a.atom_type == AtomType.exclusion]
@@ -143,25 +143,36 @@ def test_cell_fact_emits_risk_subatom_for_eol(tmp_path: Path):
         XlsxParser(),
         tmp_path,
         "scope.csv",
-        "Item,Notes\n"
-        "Switch refresh,EOL hardware in MDF\n",
+        "Item,Description,Qty,Notes\n"
+        "1,Switch refresh,2,EOL hardware in MDF\n",
     )
     atoms = out if isinstance(out, list) else out.atoms
     risks = [a for a in atoms if a.atom_type == AtomType.risk]
     assert any("eol" in (a.raw_text or "").lower() for a in risks)
 
 
-def test_legacy_generic_row_still_emits_scope_item(tmp_path: Path):
-    """A row that doesn't match any structured profile keeps the
-    legacy ``scope_item`` / ``contractual_scope`` / 0.84 behavior."""
+def test_unrecognised_generic_rows_are_held_unclassified_not_scope(tmp_path: Path, monkeypatch):
+    """PUR-52: a sheet nothing recognises no longer defaults to scope_item
+    rows. It is retained as one visible dropped_sheet marker flagged
+    unclassified, carrying its rows."""
+    monkeypatch.setenv("SHEET_STRUCTURE_HEAD_PATH", str(tmp_path / "no_head.json"))
     out = _emit_csv(
-        XlsxParser(),
-        tmp_path,
-        "misc.csv",
-        "Foo,Bar,Baz\n"
-        "1,2,3\n"
-        "4,5,6\n",
+        XlsxParser(), tmp_path, "misc.csv", "Foo,Bar,Baz\n1,2,3\n4,5,6\n",
     )
     atoms = out if isinstance(out, list) else out.atoms
-    scope_items = [a for a in atoms if a.atom_type == AtomType.scope_item]
-    assert len(scope_items) >= 2
+    assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
+    markers = [a for a in atoms if a.atom_type == AtomType.dropped_sheet]
+    assert len(markers) == 1
+    assert markers[0].value["unclassified"] is True
+    assert markers[0].value["row_count"] == 3
+    assert "sheet_unclassified" in markers[0].review_flags
+
+
+def test_legacy_env_restores_generic_scope_rows(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("SHEET_FALLTHROUGH_LEGACY_SCOPE", "1")
+    monkeypatch.setenv("SHEET_STRUCTURE_HEAD_PATH", str(tmp_path / "no_head.json"))
+    out = _emit_csv(
+        XlsxParser(), tmp_path, "misc.csv", "Foo,Bar,Baz\n1,2,3\n4,5,6\n",
+    )
+    atoms = out if isinstance(out, list) else out.atoms
+    assert len([a for a in atoms if a.atom_type == AtomType.scope_item]) >= 2
