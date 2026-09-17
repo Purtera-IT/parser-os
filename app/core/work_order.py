@@ -406,6 +406,16 @@ def apply_work_order(
             "one_line_summary",
         )
     }
+    # PUR-29: propose the Division from the work itself. Flag-gated
+    # (SOWSMITH_DIVISION_PROPOSAL); abstains rather than guessing.
+    try:
+        from app.core.division_proposal import propose_division
+
+        _div = propose_division(work_order)
+        if _div is not None:
+            report["summary"]["division_proposal"] = _div
+    except Exception as exc:  # pragma: no cover
+        logger.warning("division proposal failed: %s", exc)
     atoms, minted = mint_work_line_atoms(
         atoms, work_order, support_pool, project_id=project_id
     )
