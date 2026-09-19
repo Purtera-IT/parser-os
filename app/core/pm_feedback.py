@@ -101,6 +101,19 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # learning rather than inferring from whether an address happens to differ.
     "travel_scope": HeadSpec("travel_scope", "deal", "Does this deal involve travel?",
                              candidates=("travel", "none")),
+    # How the work is BILLED, which is not how it is priced. A fixed-fee deal
+    # and a T&M deal can carry the same number and mean different things: one
+    # caps what the customer pays, the other bills what the technician spends.
+    #
+    # Today this is a hardcoded default (`billing_type: "t_and_m"` at quote
+    # hydrate) that only prefill can override, and only from an
+    # `engagement_model` most envelopes do not carry. Deal 010198 was signed
+    # fixed-fee at $625 and the system still calls it T&M, with no UI to say
+    # otherwise — a value nobody chose, on the field that decides what can be
+    # invoiced. Every Deal Kit states it on page one, so the labels already
+    # exist; nothing was reading them.
+    "billing_type": HeadSpec("billing_type", "deal", "How is this billed?",
+                             candidates=("fixed", "t_and_m", "milestone")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact
