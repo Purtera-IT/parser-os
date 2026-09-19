@@ -62,6 +62,58 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # the BOM.
     "bom_owner":  HeadSpec("bom_owner", "atom", "Who supplies this line",
                            candidates=("we_supply", "customer_furnished")),
+    # `bom_owner` answers this per LINE, which is the wrong grain for the
+    # question the kit actually asks: "does this deal need a Hardware section at
+    # all?" A deal whose only evidence is an email saying we are furnishing the
+    # APs has no BOM lines yet, so a rollup of bom_owner reads "no hardware" and
+    # reads it silently. Deal-scoped so it can fire from prose, and so a PM's
+    # correction lands on the deal rather than on whichever line happened to
+    # exist when they noticed.
+    # THREE verdicts, not two, and matching `bom_owner`'s vocabulary on purpose.
+    #
+    # "none" and "we don't supply it" are different facts and the first version
+    # of this head said both with one word. Deal 010198 involves a Square
+    # register, a kitchen printer and a router — there is plainly hardware in
+    # that job; it is simply the customer's. Labelling it "none" would teach
+    # that a POS install has no hardware, which is false and breaks on the next
+    # deal where we do supply the register.
+    "hardware_scope": HeadSpec("hardware_scope", "deal", "Who supplies the hardware?",
+                               candidates=("we_supply", "customer_furnished", "none")),
+    # Materials are a THIRD category, not a shade of the other two: the
+    # consumables a technician uses up on site — five feet of cable pulled off
+    # the truck. Nobody ordered them, they are on no BOM, and they are not
+    # customer-furnished, so neither `bom_owner` verdict is true of them and
+    # nothing in the registry could express them. The evidence is usually a
+    # sentence about the work ("we'll need to run a short patch"), never a line
+    # item, which is why this is deal-scoped and learned rather than matched.
+    "materials_scope": HeadSpec("materials_scope", "deal", "Tech-supplied consumables?",
+                                candidates=("consumables", "none")),
+    # Expenses are what WE incur on a job and are tracked apart from travel,
+    # which has its own section. On/off only: whether this deal carries any is
+    # the whole question, and a head that answers it is worth more than a
+    # vocabulary invented before anyone has seen a dozen examples.
+    "expenses_scope": HeadSpec("expenses_scope", "deal", "Does this deal carry expenses?",
+                               candidates=("expenses", "none")),
+    # Travel is cost-only in the kit — it carries no sell — so this head does not
+    # change what a customer is charged; it decides whether a cost exists at all.
+    # That makes a wrong "none" flattering rather than alarming, which is the
+    # direction errors hide in, and the reason a person's answer is worth
+    # learning rather than inferring from whether an address happens to differ.
+    "travel_scope": HeadSpec("travel_scope", "deal", "Does this deal involve travel?",
+                             candidates=("travel", "none")),
+    # How the work is BILLED, which is not how it is priced. A fixed-fee deal
+    # and a T&M deal can carry the same number and mean different things: one
+    # caps what the customer pays, the other bills what the technician spends.
+    #
+    # Today this is a hardcoded default (`billing_type: "t_and_m"` at quote
+    # hydrate) that only prefill can override, and only from an
+    # `engagement_model` most envelopes do not carry. Deal 010198 was signed
+    # fixed-fee at $625 and the system still calls it T&M, with no UI to say
+    # otherwise — a value nobody chose, on the field that decides what can be
+    # invoiced. Every Deal Kit states it on page one, so the labels already
+    # exist; nothing was reading them.
+    "billing_type": HeadSpec("billing_type", "deal", "How is this billed?",
+                             candidates=("fixed", "t_and_m", "milestone")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact

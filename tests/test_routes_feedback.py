@@ -375,6 +375,14 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "roster": "site_roster_table",
     "norm": "value_norm",
     "router": "service_routing",
+    # The four section toggles and how the deal is billed. All deal-scope, all
+    # labelled from the Deal Kit itself — every kit states its Division and
+    # Billing Type on page one, and the section totals say what was in scope.
+    "hardware_scope": "hardware_scope",
+    "materials_scope": "materials_scope",
+    "expenses_scope": "expenses_scope",
+    "travel_scope": "travel_scope",
+    "billing_type": "billing_type",
     "facet": "facet",
     "image": "pdf_image_kind",
     # House wording, taught by a PM note ("prefer SLO instead of SLA because
