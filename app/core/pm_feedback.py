@@ -69,8 +69,16 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # reads it silently. Deal-scoped so it can fire from prose, and so a PM's
     # correction lands on the deal rather than on whichever line happened to
     # exist when they noticed.
-    "hardware_scope": HeadSpec("hardware_scope", "deal", "Do we supply hardware?",
-                               candidates=("we_supply", "none")),
+    # THREE verdicts, not two, and matching `bom_owner`'s vocabulary on purpose.
+    #
+    # "none" and "we don't supply it" are different facts and the first version
+    # of this head said both with one word. Deal 010198 involves a Square
+    # register, a kitchen printer and a router — there is plainly hardware in
+    # that job; it is simply the customer's. Labelling it "none" would teach
+    # that a POS install has no hardware, which is false and breaks on the next
+    # deal where we do supply the register.
+    "hardware_scope": HeadSpec("hardware_scope", "deal", "Who supplies the hardware?",
+                               candidates=("we_supply", "customer_furnished", "none")),
     # Materials are a THIRD category, not a shade of the other two: the
     # consumables a technician uses up on site — five feet of cable pulled off
     # the truck. Nobody ordered them, they are on no BOM, and they are not
@@ -80,6 +88,12 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # item, which is why this is deal-scoped and learned rather than matched.
     "materials_scope": HeadSpec("materials_scope", "deal", "Tech-supplied consumables?",
                                 candidates=("consumables", "none")),
+    # Expenses are what WE incur on a job and are tracked apart from travel,
+    # which has its own section. On/off only: whether this deal carries any is
+    # the whole question, and a head that answers it is worth more than a
+    # vocabulary invented before anyone has seen a dozen examples.
+    "expenses_scope": HeadSpec("expenses_scope", "deal", "Does this deal carry expenses?",
+                               candidates=("expenses", "none")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact
