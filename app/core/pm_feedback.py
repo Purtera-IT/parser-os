@@ -94,6 +94,13 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # vocabulary invented before anyone has seen a dozen examples.
     "expenses_scope": HeadSpec("expenses_scope", "deal", "Does this deal carry expenses?",
                                candidates=("expenses", "none")),
+    # Travel is cost-only in the kit — it carries no sell — so this head does not
+    # change what a customer is charged; it decides whether a cost exists at all.
+    # That makes a wrong "none" flattering rather than alarming, which is the
+    # direction errors hide in, and the reason a person's answer is worth
+    # learning rather than inferring from whether an address happens to differ.
+    "travel_scope": HeadSpec("travel_scope", "deal", "Does this deal involve travel?",
+                             candidates=("travel", "none")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact
