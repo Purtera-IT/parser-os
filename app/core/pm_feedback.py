@@ -62,6 +62,24 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # the BOM.
     "bom_owner":  HeadSpec("bom_owner", "atom", "Who supplies this line",
                            candidates=("we_supply", "customer_furnished")),
+    # `bom_owner` answers this per LINE, which is the wrong grain for the
+    # question the kit actually asks: "does this deal need a Hardware section at
+    # all?" A deal whose only evidence is an email saying we are furnishing the
+    # APs has no BOM lines yet, so a rollup of bom_owner reads "no hardware" and
+    # reads it silently. Deal-scoped so it can fire from prose, and so a PM's
+    # correction lands on the deal rather than on whichever line happened to
+    # exist when they noticed.
+    "hardware_scope": HeadSpec("hardware_scope", "deal", "Do we supply hardware?",
+                               candidates=("we_supply", "none")),
+    # Materials are a THIRD category, not a shade of the other two: the
+    # consumables a technician uses up on site — five feet of cable pulled off
+    # the truck. Nobody ordered them, they are on no BOM, and they are not
+    # customer-furnished, so neither `bom_owner` verdict is true of them and
+    # nothing in the registry could express them. The evidence is usually a
+    # sentence about the work ("we'll need to run a short patch"), never a line
+    # item, which is why this is deal-scoped and learned rather than matched.
+    "materials_scope": HeadSpec("materials_scope", "deal", "Tech-supplied consumables?",
+                                candidates=("consumables", "none")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact
