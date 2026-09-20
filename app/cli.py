@@ -25,6 +25,14 @@ def compile(
     calibrator_path: Path | None = typer.Option(None, "--calibrator-path"),
     abstain_threshold: float = typer.Option(0.70, "--abstain-threshold"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable incremental artifact cache reuse"),
+    stages: str | None = typer.Option(
+        None,
+        "--stages",
+        help=(
+            "Comma-separated optional stages to run (PUR-58); others are skipped and the "
+            "result is labelled PARTIAL PARSE. Omit for a full parse."
+        ),
+    ),
     allow_errors: bool = typer.Option(False, "--allow-errors"),
     allow_unverified_receipts: bool = typer.Option(False, "--allow-unverified-receipts"),
     orbitbrief_out: Path | None = typer.Option(
@@ -48,6 +56,15 @@ def compile(
     ),
 ) -> None:
     """Compile a project directory into structured evidence JSON."""
+    stage_plan = None
+    if stages is not None:
+        from app.core.stage_plan import StagePlanError, plan_for_reparse
+
+        try:
+            stage_plan = plan_for_reparse(stages, use_cache=not no_cache)
+        except StagePlanError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=2) from None
     result = compile_project(
         project_dir=project_dir,
         domain_pack=domain_pack,
@@ -56,7 +73,10 @@ def compile(
         use_cache=not no_cache,
         allow_errors=allow_errors,
         allow_unverified_receipts=allow_unverified_receipts,
+        stages=stage_plan,
     )
+    if stage_plan is not None and stage_plan.partial:
+        typer.echo(stage_plan.warning(), err=True)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(result.model_dump_json(indent=2), encoding="utf-8")
     if trace_out is not None and result.trace is not None:
