@@ -171,6 +171,13 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # head: the verdict carries the hours ("hours=3;per=cable drop"); see
     # app.core.task_hours.
     "hours":     HeadSpec("task_hours", "atom", "Task hours", mode="extract"),
+    # PUR-13: the hours ESTIMATE as three named fields, so a correction lands
+    # on how long a visit takes, how many visits, or how many units -- never on
+    # the total, which is unattributable. Verdicts are rates relative to the
+    # deal's own inputs ("rate=0.75"); see app.core.estimator_head.
+    "estimate_units": HeadSpec("estimate_units", "atom", "Units", mode="extract"),
+    "estimate_visits": HeadSpec("estimate_visits", "atom", "Number of visits", mode="extract"),
+    "estimate_hours_per_visit": HeadSpec("estimate_hours_per_visit", "atom", "Hours per visit", mode="extract"),
     # The shape of the kit a request got: billing type, PM/PC hours, travel
     # days. Taught by finished kits on the request line; nothing in the deal's
     # documents states it (commercial_terms).
@@ -311,6 +318,19 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
     scope = SCOPE_GLOBAL if payload.get("scope") == "global" else SCOPE_DEAL
     exemplar = (text if not payload.get("context")
                 else f"{text}\n[ctx] {payload['context']}")
+    # PUR-14: behind SOWSMITH_LESSON_KEY=work_shape, a correction that arrives
+    # with the structured work it was made on is keyed on that work, not on
+    # the sentence. The sentence is kept in `relations` for audit only.
+    shape_relations: dict[str, Any] = {}
+    work_shape_payload = payload.get("workShape") or payload.get("work_shape")
+    if isinstance(work_shape_payload, dict):
+        from app.core import work_shape as _ws
+
+        if _ws.lesson_key_mode() == _ws.MODE_WORK_SHAPE:
+            field_name = str(payload.get("field") or spec.relation)
+            shape = _ws.WorkShape.from_dict(work_shape_payload)
+            exemplar = _ws.key_text(shape, field_name)
+            shape_relations = {**_ws.lesson_relations(shape, field_name), "wording": text}
     now = time.time()
     return Correction(
         id=_cid(head, deal_id, target_id, new_value, scope),
@@ -329,7 +349,11 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
             str(c) for c in (payload.get("candidates") or spec.candidates or []) if str(c).strip()
         ],
         threshold=_threshold_for(head, scope),
-        relations={**dict(payload.get("relations") or {}), _DEALS_KEY: [deal_id] if deal_id else []},
+        relations={
+            **dict(payload.get("relations") or {}),
+            **shape_relations,
+            _DEALS_KEY: [deal_id] if deal_id else [],
+        },
         # The PM's own reason rides with the correction, so wherever it fires
         # the brief can say whose judgment this was and why they made it.
         instruction=(
