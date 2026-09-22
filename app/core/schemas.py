@@ -789,6 +789,10 @@ class CompileResult(BaseModel):
     # sidecar. Each carries a "suppressed:<stage>" review flag and a
     # value["_suppression"] = {stage, reason} marker.
     suppressed_atoms: list[EvidenceAtom] = Field(default_factory=list)
+    # Per text artifact: which source lines became atoms, which were dropped
+    # and which were never read at all. A recall miss otherwise leaves no
+    # trace -- see app/core/text_coverage.py.
+    text_coverage: list[dict[str, Any]] = Field(default_factory=list)
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None
