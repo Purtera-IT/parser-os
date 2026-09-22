@@ -63,3 +63,8 @@ def test_lookup_helpers():
 def test_hint_chips_are_declared():
     keys = [h["key"] for h in REG["context_hints"]]
     assert len(keys) == len(set(keys)) and "own_words" in keys and "neighbor_above" in keys
+
+
+def test_service_packs_are_declared_once():
+    packs = REG["service_packs"]
+    assert len(packs) == len(set(packs)) and "audio_visual" in packs and "other" in packs

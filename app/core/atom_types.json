@@ -644,5 +644,33 @@
    "value_light": false,
    "train_rows": 0
   }
- ]
+ ],
+ "service_packs": [
+  "audio_visual",
+  "low_voltage_cabling",
+  "wireless",
+  "staff_augmentation",
+  "security_camera",
+  "camera_vms_operations",
+  "security_access",
+  "fire_safety",
+  "paging_mass_notification",
+  "das",
+  "electrical",
+  "telecom",
+  "network_maintenance",
+  "building_management_systems",
+  "datacenter",
+  "rack_and_stack",
+  "hardware",
+  "imac",
+  "itad",
+  "data_migration",
+  "msp",
+  "alm",
+  "audit",
+  "professional_services",
+  "other"
+ ],
+ "service_packs_doc": "Deal-level router gold: the labeler's answer to 'what is this deal mainly?'. Ids match Orbitbrief-Core world_model/data/domain_packs.yaml."
 }
