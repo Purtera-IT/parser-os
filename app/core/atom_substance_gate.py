@@ -1311,6 +1311,28 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     all_dropped.extend(d)
     kept, d = drop_unreadable_text(kept)
     all_dropped.extend(d)
+    # Read the facts out of non-scope prose FIRST -- the job's size, a drawing
+    # we do not hold, room to grow on the account -- so the small-talk pass
+    # cannot hide a sentence that was carrying one.
+    try:
+        from app.core.deal_signals import extract_deal_signals
+
+        pid = ""
+        names: list[str] = []
+        for a in kept:
+            pid = pid or str(getattr(a, "project_id", "") or "")
+            v = _atom_value(a)
+            fn = str(v.get("filename") or "")
+            if fn and fn not in names:
+                names.append(fn)
+        for src in kept:
+            for r in list(getattr(src, "source_refs", None) or []):
+                fn = str(getattr(r, "filename", "") or "")
+                if fn and fn not in names:
+                    names.append(fn)
+        kept = kept + extract_deal_signals(kept, project_id=pid, filenames=names)
+    except Exception:
+        pass
     # Relationship talk stays in the record, flagged, out of the labeler and
     # out of the heads: a PM asked to type "Thank you for bringing this our
     # way" is being asked a question with no answer.
