@@ -1567,6 +1567,18 @@ def compile_project(
             except Exception as exc:
                 warnings.append(f"WARNING: party_address_veto failed: {type(exc).__name__}: {exc}")
             atoms = semantic_dedup_atoms(atoms)
+            # A HubSpot note that is a pasted email is the same message, not a
+            # second source. Fold the note copy onto the mail it came from.
+            try:
+                from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
+
+                atoms, _pasted = collapse_pasted_note_duplicates(atoms)
+                if _pasted:
+                    warnings.append(
+                        f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
+                    )
+            except Exception as exc:
+                warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
             # Cross-type pass: the same sentence emitted as raw_table_row +
             # scope_item + service_line + task collapses to the single most-
             # specific type. semantic_dedup keys with atom_type so it can't
