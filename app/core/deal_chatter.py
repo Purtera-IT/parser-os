@@ -34,7 +34,8 @@ _PIPELINE_RE = re.compile(
 _HANDOFF_RE = re.compile(
     r"\b(?:"
     r"sending (?:it|this) (?:over|along)|"
-    r"(?:will|ill|i'll) (?:get back|come back|revert|follow up|circle back)|"
+    r"(?:will|ill|i'll|we'll|we will) (?:get back|come back|revert|follow up|circle back|be in touch)|"
+    r"^will be in touch|"
     r"(?:looping|adding|copying) (?:in |)\w+|"
     r"(?:passing|handing) (?:it|this) (?:to|over)|"
     r"(?:lmk|let me know) if (?:there are |you have |)(?:any |)(?:follow[- ]?up |)questions|"

@@ -79,6 +79,47 @@ def _looks_like_answer(atom: Any) -> bool:
     return len(_text(atom).split()) >= 2
 
 
+#: A question expects a KIND of answer. "Where" wants a place, "how many"
+#: wants a number. Live 010289 proposed an email recipient line as the
+#: location and "Will be in touch." as whether the lock was installed.
+_EXPECTS = (
+    ("where|location|address|site", {"physical_site"}, re.compile(r"\d{2,}\s+\w+|\b[A-Z]{2}\s+\d{5}\b")),
+    ("how many|how much|quantity|number of", {"quantity", "bom_line"}, re.compile(r"\b\d+\b")),
+    ("when|what date|how soon|lead time", {"deadline", "milestone_phase", "lead_time_constraint"},
+     re.compile(r"\b(?:mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\d{1,2}/\d{1,2}|\bweeks?\b|\bdays?\b", re.I)),
+    ("who|contact", {"stakeholder", "signatory"}, re.compile(r"@|\b[A-Z][a-z]+\s+[A-Z][a-z]+\b")),
+)
+
+#: Words that carry no topic.
+_STOP = frozenset("""a an the is are was were be been do does did we you they it this that these those
+of to in on at for with from by and or if as what when where which who whom how any some our your their
+have has had will would can could should please know let me my i us them he she""".split())
+
+
+#: '"Albert Arzate" <albert@rd-systems.com>' -- a recipient, not an answer.
+_ADDRESS_LINE_RE = re.compile(r"^[\"'<]?[\w .,-]+[\"'>]?\s*<[^>]+@[^>]+>\s*$")
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{3,}", text.lower()) if w not in _STOP}
+
+
+def _answers_this_question(question: Any, cand: Any) -> bool:
+    """Does the candidate actually fit the question? A reply's first sentence
+    is usually not the answer -- it is "Thanks" or a recipient line."""
+    q = _text(question).lower()
+    ctype = _type(cand)
+    ctext = _text(cand)
+    # a line that is only an address, a name-and-address, or a header is chrome
+    if _ADDRESS_LINE_RE.match(ctext.strip()):
+        return False
+    for pattern, types, shape in _EXPECTS:
+        if re.search(rf"\b(?:{pattern})\b", q):
+            return ctype in types or bool(shape.search(ctext))
+    # no expectation we can name: demand the answer talk about the question
+    return bool(_content_words(q) & _content_words(ctext))
+
+
 def _pair(question: Any, answer_text: str, *, source: str, answer_atom: Any | None = None) -> None:
     """Join them in place: the question becomes answered, the answer points back."""
     from app.core.schemas import ReviewStatus
@@ -215,6 +256,8 @@ def pair_across_thread(atoms: list[Any]) -> int:
                 if str(cet.get("sender") or "").lower() == asker:
                     continue
                 if _value(cand).get("quoted") or not _looks_like_answer(cand):
+                    continue
+                if not _answers_this_question(atom, cand):
                     continue
                 _pair(atom, _text(cand), source="cross_message", answer_atom=cand)
                 paired += 1
