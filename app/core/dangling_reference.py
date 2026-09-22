@@ -37,6 +37,21 @@ _ATTACHMENT_RE = re.compile(
     re.I,
 )
 
+#: The counterpart is someone we already know: the "earlier" conversation may
+#: predate this deal entirely. AJ had worked with this rep before, so chasing
+#: an email inside 010288 would have found nothing.
+_PRIOR_RELATIONSHIP_RE = re.compile(
+    r"\b(?:"
+    r"as always|like last time|the usual|same as (?:the |)last|"
+    r"(?:we|you|i) (?:have|'ve|) (?:done|run|worked on) (?:a few|several|these|this) (?:of these|before|)|"
+    r"(?:as|like) (?:we|you) know|you(?:'ll| will) remember|"
+    r"(?:our|the) (?:usual|standard) (?:setup|kit|approach)|"
+    r"(?:good|great) (?:working|to work) with you again|"
+    r"(?:discussing|discussed|spoke) (?:earlier|before|previously)"
+    r")\b",
+    re.I,
+)
+
 CONVERSATION = "conversation"
 ATTACHMENT = "attachment"
 
@@ -81,11 +96,16 @@ def find_dangling_references(atoms: list[Any], *, project_id: str, filenames: li
             v = _value(atom)
             said_by = v.get("said_by") if isinstance(v.get("said_by"), dict) else {}
             who = str(said_by.get("name") or said_by.get("email") or "the sender")
-            what = (
-                f"{who} refers to a conversation the deal does not hold — find it or ask what was agreed."
-                if kind == CONVERSATION
-                else f"{who} refers to an attachment the deal does not hold — ask for the file."
-            )
+            prior = bool(_PRIOR_RELATIONSHIP_RE.search(head))
+            if kind == CONVERSATION:
+                what = (
+                    f"{who} refers to a conversation the deal does not hold. They have worked with us before, "
+                    f"so it may predate this deal — ask them what was agreed rather than hunting this thread."
+                    if prior
+                    else f"{who} refers to a conversation the deal does not hold — find it or ask what was agreed."
+                )
+            else:
+                what = f"{who} refers to an attachment the deal does not hold — ask for the file."
             made.append(
                 EvidenceAtom(
                     id=stable_id("atm", project_id, "dangling", kind, text[:120]),
@@ -99,6 +119,7 @@ def find_dangling_references(atoms: list[Any], *, project_id: str, filenames: li
                         "reference_kind": kind,
                         "quote": text[:300],
                         "wants": "chase-conversation" if kind == CONVERSATION else "chase-artifact",
+                        "prior_relationship": prior,
                         "about": "deal",
                         "derived_from": str(getattr(atom, "id", "") or ""),
                     },

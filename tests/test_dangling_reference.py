@@ -46,3 +46,32 @@ def test_plain_prose_and_small_talk_raise_nothing():
     assert find_dangling_references([_atom("They are intending to use a maglock.")], project_id="p") == []
     chat = _atom("As we discussed, thanks again!", {"kind": "email_body_line", "chatter": True})
     assert find_dangling_references([chat], project_id="p") == []
+
+
+def test_a_chase_for_someone_we_know_does_not_send_a_pm_hunting_this_thread():
+    """AJ had worked with this rep before, so the "earlier" conversation
+    predates the deal: hunting 010288 for it would find nothing."""
+    a = _atom("Here are the details for the small job I was discussing earlier.",
+              {"kind": "email_body_line",
+               "said_by": {"name": "Alec Burns", "email": "alecbur@cdw.com", "company": "cdw.com", "side": "theirs"}})
+    made = find_dangling_references([a], project_id="p", filenames=["m.eml"])
+    assert made[0].value["prior_relationship"] is True
+    assert "may predate this deal" in made[0].raw_text
+
+    cold = _atom("Per our call, the riser room is locked after 6pm.")
+    out = find_dangling_references([cold], project_id="p", filenames=["m.eml"])
+    assert out[0].value["prior_relationship"] is False
+    assert "find it or ask what was agreed" in out[0].raw_text
+
+
+def test_no_regex_in_this_module_holds_a_literal_control_character():
+    """Shell escaping turned \b into a literal backspace twice today, and the
+    pattern still compiled -- it just silently matched nothing."""
+    import re as _re
+
+    import app.core.dangling_reference as mod
+
+    for name in dir(mod):
+        obj = getattr(mod, name)
+        if isinstance(obj, _re.Pattern):
+            assert not any(ord(c) < 32 for c in obj.pattern), f"{name} holds a control character"
