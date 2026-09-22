@@ -239,6 +239,15 @@ _THRESHOLD_GLOBAL = 0.82
 # Repeated judgments still relax it one step per deal.
 _HEAD_THRESHOLDS: dict[str, tuple[float, float]] = {
     "gap": (0.82, 0.88),  # (deal, global)
+    # Kit-taught heads judge WORK LINES ("Install 24 Cat6 drops to the APs"), which
+    # vary in count and wording between deals of the same shape. At the default
+    # global bar a lesson fired only on near-verbatim repeats; the kit's own numbers
+    # (qty, per-unit rate) already scale the answer, so the exemplar can afford to
+    # match looser. Measured 2026-09-21 on the 48-store fixture sentences.
+    "hours": (0.70, 0.76),
+    "task_tier": (0.72, 0.78),
+    "commercial": (0.70, 0.76),
+    "bom_owner": (0.72, 0.78),
     # A document lesson names one thread. Two subjects of one deal can sit at
     # 0.7 of each other; a lesson must not reach the neighbouring thread.
     "document_job": (0.90, 0.95),

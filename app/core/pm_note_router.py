@@ -217,6 +217,47 @@ def _normalize_person(name: str) -> str:
     return re.sub(r"[^a-z]+", "_", str(name or "").strip().lower()).strip("_")
 
 
+_MENTION_STOP = frozenset(
+    "the a an and or but of to in on at for with from by as is are was were be been being this that these those "
+    "it its they them their there here than then so if when because since while very really just more most less "
+    "much many some any all each every other another such only also too not no yes we our us you your they he she "
+    "his her him do does did done doing have has had having will would can could should may might must shall "
+    "job jobs work works site sites store stores deal deals task tasks line lines hour hours day days tech techs "
+    "technician technicians crew crews time times per unit units bigger smaller looks like about above below over "
+    "under usual normal standard extra plus minus into onto need needs needed customer asked ask wants want".split()
+)
+_MENTION_WORD = re.compile(r"[a-z][a-z-]{2,}")
+
+
+def _stem_mention(w: str) -> str:
+    for suf in ("ings", "ing", "ies", "es", "s", "ed"):
+        if len(w) > len(suf) + 3 and w.endswith(suf):
+            return w[: -len(suf)] + ("y" if suf == "ies" else "")
+    return w
+
+
+def extract_mentions(words: str, *, limit: int = 4) -> list[str]:
+    """The circumstance in a PM's own words, as stems a work line must mention.
+
+    "Drop ceilings over 14 ft, ladder work" → ["drop", "ceil", "ladder"]. Stop
+    words and the kit's own nouns (job, site, tech…) are dropped so a reason
+    like "bigger job than it looks" yields nothing and the lesson stays
+    unconditional. The stems are matched against the text the head is asked on,
+    so the condition needs no deal facts.
+    """
+    out: list[str] = []
+    for w in _MENTION_WORD.findall(str(words or "").lower()):
+        if w in _MENTION_STOP:
+            continue
+        st = _stem_mention(w)
+        if len(st) < 3 or st in _MENTION_STOP or st in out:
+            continue
+        out.append(st)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def extract_condition(clause: str, facts: dict[str, Any] | None = None) -> dict[str, Any]:
     """"when Chase is assigned" / "Chase quoted this" → a predicate on the deal.
 

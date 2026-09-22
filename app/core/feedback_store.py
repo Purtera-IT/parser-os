@@ -76,6 +76,15 @@ def condition_holds(relations: dict | None, facts: dict | None) -> bool:
     cond = (relations or {}).get("when") or {}
     if not isinstance(cond, dict) or not cond:
         return True
+    # A circumstance in the PM's words: the text being judged must mention it.
+    # Needs no deal facts — the caller passes the text as ``facts["text"]``.
+    mentions = cond.get("mentions")
+    if isinstance(mentions, (list, tuple)) and mentions:
+        text = str((facts or {}).get("text") or "").lower()
+        if not text:
+            return False
+        stems = [str(m).lower() for m in mentions if str(m).strip()]
+        return any(m in text for m in stems)
     field_name = str(cond.get("field") or "").strip()
     if not field_name:
         return True
@@ -657,11 +666,14 @@ class FeedbackStore:
             # rows, re-typed 58 recap lines of the NEXT deal as "task" through
             # the head, before the model ever saw them.
             excluded = set(exclude_created_by or ())
+            # The judged text rides along as a fact, so a `mentions` condition can hold
+            # without the caller knowing the deal's people.
+            facts_with_text = {**(facts or {}), "text": text}
             corrs = [
                 c for c in self.all_corrections(active_only=True)
                 if c.relation == relation
                 and c.verdict in allowed
-                and condition_holds(c.relations, facts)
+                and condition_holds(c.relations, facts_with_text)
                 and (not excluded or (c.created_by or "") not in excluded)
             ]
             if not corrs:
