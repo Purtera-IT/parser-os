@@ -91,3 +91,20 @@ def test_offline_gold_export_folds_in_as_bare_text():
     rows = rows_for_deal(docs[0])
     prov = json.loads(rows[0]["provenance"])
     assert prov["source"] == "offline_gold_labeler" and prov["decide_text_version"] == 0
+
+
+def test_judgments_become_rows_for_their_own_heads():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "conflict", "target_key": "e1", "text": "Cat 6 patch cords || in Building B704",
+         "parser_value": "contradicts", "verdict": "unrelated"},
+        {"head": "site", "target_key": "p1", "text": "columbus afb ms || columbus ms 39710", "verdict": "same_site"},
+        {"head": "gap", "target_key": "g1", "text": "Who is the on-site contact?", "verdict": "valid"},
+        {"head": "gap", "target_key": "g2", "text": "Junk question here", "verdict": "maybe"},
+        {"head": "tier", "target_key": "t", "text": "whatever text", "verdict": "1"},
+    ]})
+    by = {(r["relation"], r["label"]) for r in rows}
+    assert ("edge_relation", "unrelated") in by
+    assert ("same_physical_site", "same_site") in by
+    assert ("gap_valid", "valid") in by
+    assert all(r["label"] != "maybe" for r in rows), "a verdict outside the head's classes is dropped"
+    assert all(r["teacher"] == "human" for r in rows)
