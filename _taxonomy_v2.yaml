@@ -1,0 +1,110 @@
+coarse:
+  commercial:
+  - bom_line
+  - commercial_total
+  - payment_term
+  - pricing_assumption
+  - rate_card
+  - service_line
+  - site_budget
+  compliance:
+  - approval_authority
+  - bonding_insurance
+  - certification
+  - change_order_rule
+  - compliance_classification
+  - compliance_rule
+  - contract_term
+  - submission_req
+  meta:
+  - addendum_qa
+  - approval_decision
+  - deal_metadata
+  - eval_criterion
+  - metadata_requirement
+  - signatory
+  party:
+  - stakeholder
+  site:
+  - physical_site
+  - site_access_restriction
+  - site_attribute
+  - site_infrastructure
+  - site_room_mix
+  timing:
+  - blackout_date_range
+  - deadline
+  - dependency
+  - lead_time_constraint
+  work:
+  - acceptance_criterion
+  - constraint
+  - cutover_step
+  - data_flow_step
+  - deliverable
+  - electrical_acceptance_test
+  - exclusion
+  - integration_checkpoint
+  - milestone_phase
+  - mitigation
+  - requirement
+  - site_access_window
+  - site_implementation_note
+  - system_mapping
+  - task
+  - work_scope_item
+aliases:
+  scope_item: work_scope_item
+  entity: work_scope_item
+  customer_instruction: work_scope_item
+  open_question: work_scope_item
+  action_item: task
+  vendor_line_item: bom_line
+  quantity: work_scope_item
+  exclusion: work_scope_item
+  constraint: constraint
+  risk: risk
+admission:
+- keep
+- boilerplate
+- needs_extractor
+facets:
+  scope_polarity:
+  - in_scope
+  - out_of_scope
+  - optional
+  - assumption
+  - dependency
+  - not_applicable
+  responsibility:
+  - customer
+  - vendor
+  - bidder
+  - unknown
+  amount_kind:
+  - grand_total
+  - subtotal
+  - rate
+  - line_item_total
+  - payment_milestone
+  - budget
+  - tax
+  - freight_shipping
+  - extended_price
+  - not_amount
+  obligation_modality:
+  - mandatory
+  - optional
+  - prohibited
+  - informational
+  - unknown
+  metadata_kind:
+  - identifier
+  - party
+  - date
+  - commercial_ref
+  - system_ref
+  - stage
+  - disclaimer
+  - unknown
+  - not_applicable

@@ -36,7 +36,9 @@ from pathlib import Path
 from typing import Iterable
 
 #: Teacher trust order for dedup: a human beats the pipeline beats the LLM.
-_TEACHER_RANK = {"pm": 3, "human": 3, "pipeline": 2, "llm": 1, "deepseek": 1, "": 0}
+#: "human" (the purpulse atom labeler) outranks "pm": the existing "pm" rows
+#: are pipeline rows re-ranked as PM, not verified human gold.
+_TEACHER_RANK = {"human": 4, "pm": 3, "pipeline": 2, "llm": 1, "deepseek": 1, "": 0}
 
 #: The tasks the backbone trains on. Everything else in the DBs (edge tables,
 #: span work) has its own machinery and is excluded on purpose.

@@ -1,0 +1,17 @@
+[
+  {"name": "prose with block id, section, intro",
+   "atom": {"text": "Mount\n110 TVs", "locator": {"block_id": "blk_1", "lead_in": ["Provider will:"], "section_path": ["SOW", "Install"]}},
+   "expected": "Mount 110 TVs [table: blk_1] [section: SOW > Install] [intro: Provider will:]"},
+  {"name": "xlsx row: header-bound, sheet is the section",
+   "atom": {"text": "Focus room | 6 | z", "structured": {"cells": {"Room Type": "Focus room", "Count": 6, "col_3": "z"}}, "locator": {"sheet": "Rooms", "row": 4}},
+   "expected": "Room Type: Focus room | Count: 6 [table: Rooms r4] [section: Rooms]"},
+  {"name": "total row renders its label bare",
+   "atom": {"text": "Grand Total 458.5", "structured": {"_columns": ["Task", "Hours"], "_row": ["Grand Total", 458.5]}, "locator": {}},
+   "expected": "Grand Total | Hours: 458.5"},
+  {"name": "word boundary: not a total row",
+   "atom": {"text": "x", "structured": {"_columns": ["Task", "Hours"], "_row": ["Safer bidder", 1]}, "locator": {}},
+   "expected": "Task: Safer bidder | Hours: 1"},
+  {"name": "bare text",
+   "atom": {"text": "Customer provides lift", "locator": {"page": 2}},
+   "expected": "Customer provides lift"}
+]

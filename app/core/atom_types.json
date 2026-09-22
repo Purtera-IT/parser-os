@@ -1,0 +1,676 @@
+{
+ "version": "2026-09-21",
+ "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
+ "keep": {
+  "name": "_keep",
+  "desc": "Not a fact worth typing: boilerplate, headers, signatures, table scaffolding, legal footer. The parser should drop or ignore it."
+ },
+ "coarse": [
+  "scope",
+  "site",
+  "commercial",
+  "timeline",
+  "people",
+  "governance",
+  "quality",
+  "risk",
+  "meta"
+ ],
+ "facets": [
+  "SITE",
+  "COMMERCIAL",
+  "WORK",
+  "COMPLIANCE",
+  "PARTY",
+  "TIMING",
+  "META"
+ ],
+ "context_hints": [
+  {
+   "key": "own_words",
+   "label": "The words themselves"
+  },
+  {
+   "key": "section",
+   "label": "Section heading"
+  },
+  {
+   "key": "lead_in",
+   "label": "Intro line above a list"
+  },
+  {
+   "key": "neighbor_above",
+   "label": "Atom above"
+  },
+  {
+   "key": "neighbor_below",
+   "label": "Atom below"
+  },
+  {
+   "key": "table_column",
+   "label": "Table column / header row"
+  },
+  {
+   "key": "doc_type",
+   "label": "What kind of document"
+  },
+  {
+   "key": "other_doc",
+   "label": "Another document in the deal"
+  },
+  {
+   "key": "domain_knowledge",
+   "label": "Industry knowledge"
+  }
+ ],
+ "types": [
+  {
+   "name": "physical_site",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "Authoritative site declaration: site_id + facility name + street address. One per real building / location.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 3082
+  },
+  {
+   "name": "site_attribute",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "A scalar attribute of a site: user count, room count, square feet, priority, floors.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 453
+  },
+  {
+   "name": "site_access_restriction",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "A constraint on access: blackout window, restricted hours, badged escort required, weekend-only cutover, etc.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 9
+  },
+  {
+   "name": "site_room_mix",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "A row from a per-site room-mix table: room type + count + standard build + validation test.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 3
+  },
+  {
+   "name": "site_infrastructure",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "Site-bound infrastructure facts: MDF/IDF id, bandwidth/circuit, cable plant condition.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 1
+  },
+  {
+   "name": "service_line",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A services-row line item: service id + description + unit + qty + unit price + extended cost.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 919
+  },
+  {
+   "name": "bom_line",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A hardware-BOM table row: item id + description + SKU + qty + unit price + extended cost + lead time + serial-capture flag.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 1036
+  },
+  {
+   "name": "payment_term",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "One row of a billing/payment schedule, e.g. '30% at order acceptance'. Each tier is its own atom.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 71
+  },
+  {
+   "name": "commercial_total",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "An aggregate price line: hardware subtotal, services subtotal, freight/logistics, contingency, taxes, grand total. Each is one atom.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 751
+  },
+  {
+   "name": "pricing_assumption",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "An explicit pricing assumption (taxes excluded, hardware substitutions require approval, etc.).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 382
+  },
+  {
+   "name": "site_budget",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "Per-site budget category amount (hardware budget / services budget / logistics estimate per site).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "rate_card",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A priced rate table row: role or service with a bill rate, OT/holiday multiplier, minimum hours.",
+   "label_space": "head",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 287
+  },
+  {
+   "name": "work_scope_item",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A general statement of work to be performed that is not a discrete task, deliverable or requirement.",
+   "label_space": "head",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 322
+  },
+  {
+   "name": "requirement",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A formally numbered requirement (REQ-001 style) with applies-to + owner + verification method.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 867
+  },
+  {
+   "name": "task",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 1372
+  },
+  {
+   "name": "deliverable",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A named deliverable that a phase produces (e.g. 'Network closet readiness checklist').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 270
+  },
+  {
+   "name": "acceptance_criterion",
+   "coarse": "quality",
+   "facet": "WORK",
+   "desc": "A row from an acceptance-criteria table — area + criteria + pass threshold.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 119
+  },
+  {
+   "name": "milestone_phase",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A row from a project phase/milestone table — phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 283
+  },
+  {
+   "name": "cutover_step",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A row from a cutover/runbook checklist — step number + timing relative to cutover + owner + action + evidence required.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 31
+  },
+  {
+   "name": "electrical_acceptance_test",
+   "coarse": "quality",
+   "facet": "WORK",
+   "desc": "A measurable electrical/network acceptance test (Megger, ground resistance, load burn-in, witness/ATP).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 10
+  },
+  {
+   "name": "site_implementation_note",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Site-specific implementation instruction (asset-tag prefix, receiving rule, install rule).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 76
+  },
+  {
+   "name": "site_access_window",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "When a site is accessible — days + hours + escort owner.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 41
+  },
+  {
+   "name": "exclusion",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Negative scope: something explicitly NOT included (\"electrical by others\", \"no patching\").",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 234
+  },
+  {
+   "name": "integration_checkpoint",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A row from a system-to-system integration checkpoint table: checkpoint id + system + expected input/output + owner + due.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 4
+  },
+  {
+   "name": "data_flow_step",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "One step of a data-flow pipeline (source system → sink system, what payload).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "system_mapping",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A field mapping between two systems (e.g. HubSpot dealname → 'OPTBOT Atlanta Office Refresh').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "mitigation",
+   "coarse": "risk",
+   "facet": "WORK",
+   "desc": "A mitigation paired with a specific risk (separate from the risk atom itself).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 3
+  },
+  {
+   "name": "constraint",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A limit on how the work may be done: working hours, noise, dust, union labor, escort required.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 0
+  },
+  {
+   "name": "compliance_rule",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A rule about access, data handling, retention, credential use, or auditing.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 61
+  },
+  {
+   "name": "compliance_classification",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A document/data classification + its allowed and blocked destinations (Confidential, Internal, Mock, Production).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 19
+  },
+  {
+   "name": "approval_authority",
+   "coarse": "people",
+   "facet": "COMPLIANCE",
+   "desc": "A rule that some role/threshold requires a specific approver (e.g. 'CFO signoff required over $1.5M').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 7
+  },
+  {
+   "name": "submission_req",
+   "coarse": "quality",
+   "facet": "COMPLIANCE",
+   "desc": "A required element of the proposal submission: number of copies, file format, required form (SF330, W-9), page limit, sealed-bid labeling, delivery method.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 5
+  },
+  {
+   "name": "change_order_rule",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, after-hours rate.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 44
+  },
+  {
+   "name": "bonding_insurance",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A bonding or insurance requirement: bid bond, performance bond, payment bond, general liability limit, workers comp, professional liability.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 21
+  },
+  {
+   "name": "contract_term",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 90
+  },
+  {
+   "name": "certification",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A certification or credential the provider or its technicians must hold (e.g. BICSI RCDD, OSHA-10, manufacturer cert).",
+   "label_space": "head",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "stakeholder",
+   "coarse": "people",
+   "facet": "PARTY",
+   "desc": "A named person on the deal with their role and email. Synonyms accepted: owner, lead, sponsor, accountable, contact.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 339
+  },
+  {
+   "name": "blackout_date_range",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "A no-work date window (holiday freeze, exec blackout, peak travel exclusion).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 7
+  },
+  {
+   "name": "lead_time_constraint",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "Lead time + expediting policy for an item class (core switches, APs, AV kits, fiber panels, custom millwork).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 11
+  },
+  {
+   "name": "deadline",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "A hard date/time the bidder must meet: proposal/bid due date, questions-due date, pre-bid meeting, site visit. NOT a project phase end (that is milestone_phase).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 50
+  },
+  {
+   "name": "dependency",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "A dependency on a customer-provided input, third party, or infrastructure readiness.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 18
+  },
+  {
+   "name": "deal_metadata",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "Header-level fact about the deal itself: customer name, deal ID, quote/PO/MSA references, contract type, currency, target close date, deal stage.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 1881
+  },
+  {
+   "name": "eval_criterion",
+   "coarse": "quality",
+   "facet": "META",
+   "desc": "A scored evaluation/award criterion with its weight: 'Technical approach 40%', 'Price 30%', 'Past performance 20%'. One per criterion.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 5
+  },
+  {
+   "name": "approval_decision",
+   "coarse": "people",
+   "facet": "META",
+   "desc": "A recorded approval/conditional approval/rejection statement by a named stakeholder.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 5
+  },
+  {
+   "name": "metadata_requirement",
+   "coarse": "governance",
+   "facet": "META",
+   "desc": "A required metadata key/value to set on an object (blob metadata, CRM custom field).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 4
+  },
+  {
+   "name": "signatory",
+   "coarse": "people",
+   "facet": "META",
+   "desc": "A signature-block entry — role + named person who signs.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 13
+  },
+  {
+   "name": "addendum_qa",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "An addendum, amendment, or question-and-answer item issued during the solicitation that modifies or clarifies the original documents.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 5
+  },
+  {
+   "name": "site_allocation",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "Per-site qty breakdown of a single BOM line (e.g. 'HW-001: ATL-HQ:52; ATL-WEST:27; ATL-AIR:15').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "scope_item",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Legacy catch-all for a line of scope. Prefer a finer type; use only when none fits.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "risk",
+   "coarse": "risk",
+   "facet": "WORK",
+   "desc": "A stated risk or concern that could affect delivery, cost or schedule.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "assumption",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Something the proposal assumes to be true (\"customer provides lift\", \"pathways exist\").",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "open_question",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "An unanswered question in the documents that someone must resolve.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "decision",
+   "coarse": "governance",
+   "facet": "META",
+   "desc": "A decision already made and recorded (\"customer chose option B\").",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "action_item",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A to-do assigned to a person, usually from meeting notes or email.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "vendor_line_item",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A vendor quote/BOM line: part, quantity, price.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "customer_instruction",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A direct instruction from the customer about how to do the work.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "quantity",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A bare count of a thing (\"110 TVs\", \"24 drops\") not attached to a line item.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "entity",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A named thing (company, product, person) with no claim attached.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0
+  }
+ ],
+ "service_packs": [
+  "audio_visual",
+  "low_voltage_cabling",
+  "wireless",
+  "staff_augmentation",
+  "security_camera",
+  "camera_vms_operations",
+  "security_access",
+  "fire_safety",
+  "paging_mass_notification",
+  "das",
+  "electrical",
+  "telecom",
+  "network_maintenance",
+  "building_management_systems",
+  "datacenter",
+  "rack_and_stack",
+  "hardware",
+  "imac",
+  "itad",
+  "data_migration",
+  "msp",
+  "alm",
+  "audit",
+  "professional_services",
+  "other"
+ ],
+ "service_packs_doc": "Deal-level router gold: the labeler's answer to 'what is this deal mainly?'. Ids match Orbitbrief-Core world_model/data/domain_packs.yaml."
+}
