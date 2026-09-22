@@ -87,6 +87,12 @@ Only means anything under its label. Show the label, always.
   found only by a human reading the source beside the output.
 * **Guessing is allowed; guessing silently is not.** A cross-message answer,
   a company's role, a proposed type: propose it, mark it, let a human confirm.
+* **A chase item must not send someone hunting where the answer cannot be.**
+  "the small job I was discussing earlier" came from a rep AJ had dealt with
+  before, so the call predates the deal: the item says to ask him, not to
+  search the thread. Knowing WHO we have history with needs a cross-deal party
+  index we do not have yet (crm_deal_contacts is empty), so for now it is read
+  from the words ("as always", "like last time", "discussing earlier").
 * **A judgement a rule cannot make is a head, not a bigger regex.** `about`
   and `wants` are judgements. They ship as labels first, become heads when
   there are enough of them.
@@ -99,5 +105,6 @@ Only means anything under its label. Show the label, always.
 | `wants` | the five values above | depends on what the deal already holds |
 | dangling reference | "as discussed", "attached", "the diagram" → is it here? | the phrase is easy, the resolution is not |
 | speaker role | is cdw.com the reseller, the installer, the manufacturer? | it changes per deal |
+| party history | have we worked with this person before, and on what? | needs an index across deals, not this one |
 
 Related: `_HEAD_LEDGER.md` (what is trained and what is not).
