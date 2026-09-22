@@ -74,7 +74,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
     report = report if report is not None else IngestReport()
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
-    if not deal_id or not labels:
+    if not deal_id or not (labels or doc.get("judgments")):
         report.skip("deal file without deal_id or labels")
         return []
     is_eval = doc.get("purpose") == "eval" or any(lb.get("purpose") == "eval" for lb in labels)
@@ -134,8 +134,48 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
             out.append({**base, "relation": "facet", "label": facet, "label_kind": "facet"})
         else:
             report.skip("no facet (proposed type not in registry yet)")
+    out.extend(_judgment_rows(doc, deal_id, split, report))
     report.rows += len(out)
     return out
+
+
+def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
+    """Conflict / site / site_role / gap / document_job verdicts -> one row each,
+    under the relation that head decides (pm_feedback.HEAD_REGISTRY), so the
+    edge, site, gap and document heads get human gold -- they had none."""
+    from app.core.pm_feedback import HEAD_REGISTRY
+
+    rows: list[dict[str, Any]] = []
+    for j in doc.get("judgments") or []:
+        if not isinstance(j, dict):
+            continue
+        spec = HEAD_REGISTRY.get(str(j.get("head") or ""))
+        verdict = str(j.get("verdict") or "").strip()
+        text = " ".join(str(j.get("text") or "").split())
+        if spec is None or not verdict or len(text) < 3:
+            report.skip("judgment without a known head, verdict or text")
+            continue
+        if spec.candidates and verdict not in spec.candidates:
+            report.skip(f"judgment verdict outside {j.get('head')}'s classes")
+            continue
+        prov = {
+            "source": "purpulse_atom_labeler",
+            "head": j.get("head"),
+            "target_key": j.get("target_key"),
+            "parser_value": j.get("parser_value"),
+            "compile_id": j.get("compile_id"),
+            "note": j.get("note") or "",
+            "labeler": j.get("labeler") or "",
+            "purpose": j.get("purpose") or "train",
+        }
+        rows.append({
+            "relation": spec.relation, "label": verdict, "raw_text": text, "masked_text": text,
+            "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
+            "scope": "deal", "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+            "created_at": j.get("judged_at") or "", "split": split,
+            "provenance": json.dumps(prov, ensure_ascii=False),
+        })
+    return rows
 
 
 def _site_count(v: Any) -> int | None:
