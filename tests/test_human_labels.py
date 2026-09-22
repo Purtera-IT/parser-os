@@ -65,3 +65,29 @@ def test_written_db_feeds_the_multitask_table_and_human_wins_dedup(tmp_path):
     assert types[0].repr_version == 2
     gold = sqlite3.connect(human).execute("SELECT primary_service, declared_site_count FROM deal_gold").fetchall()
     assert gold == [("audio_visual", 3)]
+
+
+def test_stored_decide_text_wins_and_bare_rows_are_version_0():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [
+        _label(decide_text="Mount 110 TVs [table: blk_1] [section: SOW]"),
+        {"label_key": "b", "text": "Customer provides lift", "label_type": "task"},
+    ]})
+    by = [r for r in rows if r["relation"] == "atom_type"]
+    assert by[0]["raw_text"] == "Mount 110 TVs [table: blk_1] [section: SOW]"
+    assert json.loads(by[0]["provenance"])["decide_text_version"] == 2
+    assert by[1]["raw_text"] == "Customer provides lift"
+    assert json.loads(by[1]["provenance"])["decide_text_version"] == 0
+
+
+def test_offline_gold_export_folds_in_as_bare_text():
+    from app.learning.human_labels import docs_from_gold_export
+
+    docs = docs_from_gold_export({"atoms": [
+        {"deal": "d1", "doc": "SOW.pdf", "atom": "Mount 110 TVs", "label": "task", "parser_guess": "scope_item"},
+        {"deal": "d2", "doc": "Q.xlsx", "atom": "65in TV | 110", "label": "bom_line"},
+        {"deal": "d2", "atom": "", "label": "task"},
+    ]}, labeler="pilot")
+    assert {d["deal_id"] for d in docs} == {"d1", "d2"}
+    rows = rows_for_deal(docs[0])
+    prov = json.loads(rows[0]["provenance"])
+    assert prov["source"] == "offline_gold_labeler" and prov["decide_text_version"] == 0

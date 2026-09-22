@@ -86,15 +86,24 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
             report.skip("label without label_type")
             continue
         report.labels += 1
-        text = decide_text(lb)
+        # The labeler stores the exact string the heads are served (computed
+        # server-side from the envelope, pinned to _atom_decide_text by shared
+        # vectors). Rebuilding from fields is the fallback for older rows. A
+        # label with no context at all (offline zip exports) is bare text:
+        # version 0, so a trainer never mistakes it for v2.
+        stored = " ".join(str(lb.get("decide_text") or "").split())
+        text = stored or decide_text(lb)
+        has_context = bool(stored) or any(lb.get(k) for k in ("section", "lead_in", "table_ref"))
+        version = DECIDE_TEXT_VERSION if has_context else 0
         if len(text) < 3:
             report.skip("text too short")
             continue
         coarse = str(lb.get("coarse") or "").strip() or coarse_of(fine)
         facet = KEEP if fine == KEEP else facet_of(fine)
         prov = {
-            "decide_text_version": DECIDE_TEXT_VERSION,
-            "source": "purpulse_atom_labeler",
+            "decide_text_version": version,
+            "source": lb.get("source") or "purpulse_atom_labeler",
+            "correction_id": lb.get("correction_id"),
             "label_key": lb.get("label_key"),
             "atom_id": lb.get("atom_id"),
             "compile_id": lb.get("compile_id"),
@@ -176,3 +185,33 @@ def write_db(docs: Iterable[dict[str, Any]], target: Path) -> IngestReport:
     finally:
         conn.close()
     return report
+
+
+def docs_from_gold_export(payload: dict[str, Any], *, labeler: str = "") -> list[dict[str, Any]]:
+    """Offline zip-labeler exports (``gold_labels*.json``: an ``atoms`` array of
+    ``{deal, doc, atom, label, parser_guess, note, ...}``) -> one deal doc each,
+    in the blob shape ``rows_for_deal`` reads. These carry no context, so their
+    rows are version 0 (bare text) and marked ``source=offline_gold_labeler``."""
+    by_deal: dict[str, list[dict[str, Any]]] = {}
+    for row in payload.get("atoms") or []:
+        if not isinstance(row, dict):
+            continue
+        lab = str(row.get("label") or "").strip()
+        body = str(row.get("atom") or row.get("body") or "").strip()
+        deal = str(row.get("deal") or "").strip()
+        if not (lab and body and deal):
+            continue
+        by_deal.setdefault(deal, []).append({
+            "label_key": None,
+            "text": body,
+            "filename": row.get("doc"),
+            "page": row.get("page"),
+            "label_type": lab,
+            "coarse": row.get("coarse") or None,
+            "parser_type": row.get("parser_guess") or row.get("g") or "",
+            "note": row.get("note") or "",
+            "labeler": labeler,
+            "source": "offline_gold_labeler",
+            "purpose": "train",
+        })
+    return [{"deal_id": d, "labels": labels} for d, labels in by_deal.items()]

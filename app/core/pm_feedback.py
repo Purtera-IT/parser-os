@@ -320,6 +320,11 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
     scope = SCOPE_GLOBAL if payload.get("scope") == "global" else SCOPE_DEAL
     exemplar = (text if not payload.get("context")
                 else f"{text}\n[ctx] {payload['context']}")
+    rel = dict(payload.get("relations") or {})
+    if payload.get("compileId") and not rel.get("compile_id"):
+        rel["compile_id"] = str(payload["compileId"])
+    if target_id and not rel.get("atom_id"):
+        rel["atom_id"] = target_id
     now = time.time()
     return Correction(
         id=_cid(head, deal_id, target_id, new_value, scope),
@@ -338,7 +343,7 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
             str(c) for c in (payload.get("candidates") or spec.candidates or []) if str(c).strip()
         ],
         threshold=_threshold_for(head, scope),
-        relations={**dict(payload.get("relations") or {}), _DEALS_KEY: [deal_id] if deal_id else []},
+        relations={**rel, _DEALS_KEY: [deal_id] if deal_id else []},
         # The PM's own reason rides with the correction, so wherever it fires
         # the brief can say whose judgment this was and why they made it.
         instruction=(
@@ -466,6 +471,25 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
         from app.core.training_log import TEACHER_PM, TrainingRow, log_rows
 
         _deal_id = corr.scope_key if corr.scope == SCOPE_DEAL else ""
+        rel = dict(getattr(corr, "relations", None) or {})
+        _prov_base: dict[str, Any] = {
+            "stage": "pm_correction",
+            "instruction": corr.instruction,
+        }
+        # What the exemplar IS: decide_text_version tells a trainer which
+        # representation the text carries (a v2 row next to v0 rows is out of
+        # distribution unless it says so). The atom labeler also sends its
+        # label_key, hint chips and source so a live correction and the same
+        # label's human-gold row can be joined and deduped.
+        for key in ("decide_text_version", "compile_id", "atom_id", "label_key", "source"):
+            if rel.get(key) in (None, ""):
+                continue
+            try:
+                _prov_base[key] = int(rel[key]) if key == "decide_text_version" else str(rel[key])
+            except (TypeError, ValueError):
+                continue
+        if isinstance(rel.get("hints"), list):
+            _prov_base["hints"] = [str(h) for h in rel["hints"]][:12]
         _rows = [
             TrainingRow(
                 relation=corr.relation,
@@ -478,7 +502,7 @@ def apply_pm_correction(store, payload: dict[str, Any]) -> str:
                 scope_key=corr.scope_key,
                 deal_id=_deal_id,
                 complaint_id=corr.complaint_id,
-                provenance={"stage": "pm_correction", "instruction": corr.instruction},
+                provenance=dict(_prov_base),
             )
             for ex in corr.exemplars
             if ex and ex.strip()

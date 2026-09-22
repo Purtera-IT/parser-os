@@ -2,6 +2,7 @@
 
     python scripts/ingest_human_labels.py                 # from blob
     python scripts/ingest_human_labels.py --dir labels/   # from local JSON files
+    python scripts/ingest_human_labels.py --gold-export ~/Downloads/gold_labels.json  # + old zip exports
 
 Blob: ``orbitbrief-artifacts/_labeling/labels/<deal_id>.json``, written by the
 purpulse atom labeler on every save. Uses AZURE_STORAGE_CONNECTION_STRING, or
@@ -20,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.learning.human_labels import write_db  # noqa: E402
+from app.learning.human_labels import docs_from_gold_export, write_db  # noqa: E402
 
 PREFIX = "_labeling/labels/"
 
@@ -49,11 +50,15 @@ def _dir_docs(path: Path):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", type=Path)
+    ap.add_argument("--gold-export", type=Path, action="append", default=[],
+                    help="also fold in an offline zip-labeler gold_labels*.json (repeatable)")
     ap.add_argument("--out", type=Path, default=Path("_training_human.db"))
     ap.add_argument("--container", default="orbitbrief-artifacts")
     ap.add_argument("--account", default="purpulsedevstg01")
     a = ap.parse_args()
     docs = list(_dir_docs(a.dir) if a.dir else _blob_docs(a.container, a.account))
+    for p in a.gold_export:
+        docs.extend(docs_from_gold_export(json.load(io.open(p, encoding="utf-8")), labeler=p.stem))
     rep = write_db(docs, a.out)
     print(f"deals={rep.deals} labels={rep.labels} rows={rep.rows} "
           f"deal_answers={rep.deal_answers} -> {a.out}")

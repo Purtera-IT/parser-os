@@ -1,0 +1,146 @@
+{
+  "deal_metadata": {
+    "desc": "Header-level fact about the deal itself: customer name, deal ID, quote/PO/MSA references, contract type, currency, target close date, deal stage."
+  },
+  "commercial_total": {
+    "desc": "An aggregate price line: hardware subtotal, services subtotal, freight/logistics, contingency, taxes, grand total. Each is one atom."
+  },
+  "payment_term": {
+    "desc": "One row of a billing/payment schedule, e.g. '30% at order acceptance'. Each tier is its own atom."
+  },
+  "change_order_rule": {
+    "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, after-hours rate."
+  },
+  "physical_site": {
+    "desc": "Authoritative site declaration: site_id + facility name + street address. One per real building / location."
+  },
+  "site_attribute": {
+    "desc": "A scalar attribute of a site: user count, room count, square feet, priority, floors."
+  },
+  "site_access_window": {
+    "desc": "When a site is accessible — days + hours + escort owner."
+  },
+  "site_access_restriction": {
+    "desc": "A constraint on access: blackout window, restricted hours, badged escort required, weekend-only cutover, etc."
+  },
+  "site_infrastructure": {
+    "desc": "Site-bound infrastructure facts: MDF/IDF id, bandwidth/circuit, cable plant condition."
+  },
+  "site_room_mix": {
+    "desc": "A row from a per-site room-mix table: room type + count + standard build + validation test."
+  },
+  "site_implementation_note": {
+    "desc": "Site-specific implementation instruction (asset-tag prefix, receiving rule, install rule)."
+  },
+  "milestone_phase": {
+    "desc": "A row from a project phase/milestone table — phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage."
+  },
+  "task": {
+    "desc": "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devi"
+  },
+  "deliverable": {
+    "desc": "A named deliverable that a phase produces (e.g. 'Network closet readiness checklist')."
+  },
+  "cutover_step": {
+    "desc": "A row from a cutover/runbook checklist — step number + timing relative to cutover + owner + action + evidence required."
+  },
+  "integration_checkpoint": {
+    "desc": "A row from a system-to-system integration checkpoint table: checkpoint id + system + expected input/output + owner + due."
+  },
+  "blackout_date_range": {
+    "desc": "A no-work date window (holiday freeze, exec blackout, peak travel exclusion)."
+  },
+  "stakeholder": {
+    "desc": "A named person on the deal with their role and email. Synonyms accepted: owner, lead, sponsor, accountable, contact."
+  },
+  "approval_authority": {
+    "desc": "A rule that some role/threshold requires a specific approver (e.g. 'CFO signoff required over $1.5M')."
+  },
+  "approval_decision": {
+    "desc": "A recorded approval/conditional approval/rejection statement by a named stakeholder."
+  },
+  "signatory": {
+    "desc": "A signature-block entry — role + named person who signs."
+  },
+  "bom_line": {
+    "desc": "A hardware-BOM table row: item id + description + SKU + qty + unit price + extended cost + lead time + serial-capture flag."
+  },
+  "site_allocation": {
+    "desc": "Per-site qty breakdown of a single BOM line (e.g. 'HW-001: ATL-HQ:52; ATL-WEST:27; ATL-AIR:15')."
+  },
+  "service_line": {
+    "desc": "A services-row line item: service id + description + unit + qty + unit price + extended cost."
+  },
+  "site_budget": {
+    "desc": "Per-site budget category amount (hardware budget / services budget / logistics estimate per site)."
+  },
+  "lead_time_constraint": {
+    "desc": "Lead time + expediting policy for an item class (core switches, APs, AV kits, fiber panels, custom millwork)."
+  },
+  "pricing_assumption": {
+    "desc": "An explicit pricing assumption (taxes excluded, hardware substitutions require approval, etc.)."
+  },
+  "requirement": {
+    "desc": "A formally numbered requirement (REQ-001 style) with applies-to + owner + verification method."
+  },
+  "acceptance_criterion": {
+    "desc": "A row from an acceptance-criteria table — area + criteria + pass threshold."
+  },
+  "electrical_acceptance_test": {
+    "desc": "A measurable electrical/network acceptance test (Megger, ground resistance, load burn-in, witness/ATP)."
+  },
+  "compliance_classification": {
+    "desc": "A document/data classification + its allowed and blocked destinations (Confidential, Internal, Mock, Production)."
+  },
+  "compliance_rule": {
+    "desc": "A rule about access, data handling, retention, credential use, or auditing."
+  },
+  "mitigation": {
+    "desc": "A mitigation paired with a specific risk (separate from the risk atom itself)."
+  },
+  "dependency": {
+    "desc": "A dependency on a customer-provided input, third party, or infrastructure readiness."
+  },
+  "deadline": {
+    "desc": "A hard date/time the bidder must meet: proposal/bid due date, questions-due date, pre-bid meeting, site visit. NOT a project phase end (that is milestone_phase)."
+  },
+  "submission_req": {
+    "desc": "A required element of the proposal submission: number of copies, file format, required form (SF330, W-9), page limit, sealed-bid labeling, delivery method."
+  },
+  "eval_criterion": {
+    "desc": "A scored evaluation/award criterion with its weight: 'Technical approach 40%', 'Price 30%', 'Past performance 20%'. One per criterion."
+  },
+  "bonding_insurance": {
+    "desc": "A bonding or insurance requirement: bid bond, performance bond, payment bond, general liability limit, workers comp, professional liability."
+  },
+  "contract_term": {
+    "desc": "A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference."
+  },
+  "addendum_qa": {
+    "desc": "An addendum, amendment, or question-and-answer item issued during the solicitation that modifies or clarifies the original documents."
+  },
+  "data_flow_step": {
+    "desc": "One step of a data-flow pipeline (source system → sink system, what payload)."
+  },
+  "system_mapping": {
+    "desc": "A field mapping between two systems (e.g. HubSpot dealname → 'OPTBOT Atlanta Office Refresh')."
+  },
+  "metadata_requirement": {
+    "desc": "A required metadata key/value to set on an object (blob metadata, CRM custom field)."
+  },
+  "work_scope_item": {
+    "desc": "Scope / exclusion / optional work statement (v2 umbrella)."
+  },
+  "rate_card": {
+    "desc": "rate_card"
+  },
+  "exclusion": {
+    "desc": "exclusion"
+  },
+  "risk": {
+    "desc": "risk"
+  },
+  "certification": {
+    "desc": "certification"
+  }
+}
