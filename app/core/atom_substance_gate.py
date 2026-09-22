@@ -1333,6 +1333,22 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         kept = kept + extract_deal_signals(kept, project_id=pid, filenames=names)
     except Exception:
         pass
+    # "the small job I was discussing earlier" says there was a call we do not
+    # have. The phrase is easy; noticing it at all is the point.
+    try:
+        from app.core.dangling_reference import find_dangling_references
+
+        _pid = ""
+        _names: list[str] = []
+        for a in kept:
+            _pid = _pid or str(getattr(a, "project_id", "") or "")
+            for r in list(getattr(a, "source_refs", None) or []):
+                fn = str(getattr(r, "filename", "") or "")
+                if fn and fn not in _names:
+                    _names.append(fn)
+        kept = kept + find_dangling_references(kept, project_id=_pid, filenames=_names)
+    except Exception:
+        pass
     # Relationship talk stays in the record, flagged, out of the labeler and
     # out of the heads: a PM asked to type "Thank you for bringing this our
     # way" is being asked a question with no answer.
