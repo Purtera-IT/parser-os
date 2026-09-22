@@ -13,6 +13,8 @@ exact taught masked text), an in-memory training log, and a tripwire
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -26,9 +28,14 @@ _KEEP_TEXT = "miscellaneous note that maps to no taxonomy entry"
 
 
 def _fake_embed(texts: list[str]) -> np.ndarray:
+    """Deterministic across processes. Python's hash() is salted per run
+    (PYTHONHASHSEED), so which bucket a text landed in changed every CI run:
+    test_untaught_atom_reaches_llm failed on 3.11 one run and 3.12 the next,
+    depending on whether the untaught atom happened to land near a taught
+    row."""
     out = np.zeros((len(texts), _D), dtype=np.float32)
     for i, t in enumerate(texts):
-        h = abs(hash(t.lower().strip()))
+        h = int(hashlib.sha256(t.lower().strip().encode("utf-8")).hexdigest()[:16], 16)
         out[i, h % _D] = 1.0
         out[i, (h // _D) % _D] += 0.5
     n = np.linalg.norm(out, axis=1, keepdims=True)
