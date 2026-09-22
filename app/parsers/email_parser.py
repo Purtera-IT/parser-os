@@ -2900,6 +2900,7 @@ class EmailParser(BaseParser):
                     for _s in _site_list:
                         if isinstance(_s.value, dict):
                             _s.value["site_phone"] = re.sub(r"^[A-Za-z]+\s*:\s*", "", _core)
+                            _s.value.setdefault("phone", _s.value["site_phone"])
                     continue
             if location_label is not None:
                 from app.parsers.value_shapes import classify_value as _cv
@@ -2937,6 +2938,9 @@ class EmailParser(BaseParser):
                         if isinstance(_s.value, dict):
                             if _name:
                                 _s.value.setdefault("site_name", _name)
+                                _s.value["facility_name"] = _name
+                                _s.value["name"] = _name
+                                _s.value.setdefault("names", []).insert(0, _name)
                             _s.value["lead_in"] = [location_label]
                     atoms.extend(_sites)
                     location_site_atoms = list(_sites)
