@@ -731,5 +731,55 @@
       "label": "Another vendor"
     }
   ],
-  "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours)."
+  "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours).",
+  "about_doc": "Whose fact is it? The type says WHAT a statement is; this says what it is ABOUT. Only 'deal' reaches the SOW -- 'account' and 'partner' belong in the brief's why-you-should-care, and are lost entirely if a labeler is forced to call them scope. See _LABELING_DOCTRINE.md.",
+  "about": [
+    {
+      "key": "deal",
+      "label": "This job",
+      "desc": "This quote, this scope, this site. The only one that reaches the SOW."
+    },
+    {
+      "key": "account",
+      "label": "The customer relationship",
+      "desc": "True beyond this job: room to grow, who decides, how they buy."
+    },
+    {
+      "key": "partner",
+      "label": "A partner's behaviour",
+      "desc": "How a reseller, vendor or installer works with us -- their drawings, their terms, what they get wrong."
+    },
+    {
+      "key": "internal",
+      "label": "How we work",
+      "desc": "Our own routing and process. Never a deliverable."
+    }
+  ],
+  "wants_doc": "What does this statement want from us? Turns 'there is something we are missing' into a list someone can work. See _LABELING_DOCTRINE.md.",
+  "wants": [
+    {
+      "key": "nothing",
+      "label": "Nothing — it is just true"
+    },
+    {
+      "key": "chase-artifact",
+      "label": "Go get a document",
+      "desc": "It points at a drawing, quote or photo the deal does not hold."
+    },
+    {
+      "key": "chase-conversation",
+      "label": "Find the conversation",
+      "desc": "It refers to a call or thread we do not have (\"as discussed earlier\")."
+    },
+    {
+      "key": "confirm-with-customer",
+      "label": "Ask the customer",
+      "desc": "We cannot price or build it until they answer."
+    },
+    {
+      "key": "decide-internally",
+      "label": "We must decide",
+      "desc": "Nobody else can answer it; it is our call to make."
+    }
+  ]
 }

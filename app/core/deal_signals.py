@@ -136,7 +136,8 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
                 made.append(_new_atom(
                     project_id=project_id, source=atom, atom_type_name="deal_metadata",
                     text=f"The sender calls this a {m.group(0).lower()}.",
-                    value={"kind": "job_scale", "scale": scale, "phrase": m.group(0), "quote": quote},
+                    value={"kind": "job_scale", "scale": scale, "phrase": m.group(0), "quote": quote,
+                           "about": "deal", "wants": "nothing"},
                     confidence=0.72,
                 ))
 
@@ -153,7 +154,8 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
                 made.append(_new_atom(
                     project_id=project_id, source=atom, atom_type_name="dependency",
                     text=f"Obtain the {what} the sender points at — the deal does not hold it.",
-                    value={"kind": "missing_artifact", "artifact_kind": what, "url": url or None, "quote": quote},
+                    value={"kind": "missing_artifact", "artifact_kind": what, "url": url or None, "quote": quote,
+                           "about": "deal", "wants": "chase-artifact"},
                     confidence=0.7,
                 ))
 
@@ -164,7 +166,7 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
                 made.append(_new_atom(
                     project_id=project_id, source=atom, atom_type_name="deal_metadata",
                     text="The sender says this could repeat across more of the customer's sites.",
-                    value={"kind": "expansion_signal", "quote": quote},
+                    value={"kind": "expansion_signal", "quote": quote, "about": "account", "wants": "nothing"},
                     confidence=0.65,
                 ))
 
