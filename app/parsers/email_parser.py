@@ -2941,6 +2941,13 @@ class EmailParser(BaseParser):
                                 _s.value["facility_name"] = _name
                                 _s.value["name"] = _name
                                 _s.value.setdefault("names", []).insert(0, _name)
+                                # strip_unsupported_names deletes a name that
+                                # is absent from the atom's own text, and the
+                                # site atom held the street line alone -- live
+                                # 010289 lost "Nesfield Performance Bethesda".
+                                # The block the author typed IS the evidence.
+                                if _name.lower() not in (_s.raw_text or "").lower():
+                                    _s.raw_text = f"{_name}, {_s.raw_text}"
                             _s.value["lead_in"] = [location_label]
                     atoms.extend(_sites)
                     location_site_atoms = list(_sites)

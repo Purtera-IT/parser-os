@@ -778,9 +778,20 @@ class HubspotNoteParser(BaseParser):
             "staffing": AtomType.requirement,
             "question": AtomType.open_question,
         }.get(shape, AtomType.deal_metadata)
+        extra: dict[str, Any] = {}
+        # "Diagram: <500 characters of Outlook/Proofpoint wrapper>" is the
+        # vendor's drawing (010289). Carry the real URL so the PM sees the
+        # picture instead of a link they cannot read.
+        if re.match(r"^https?://", value.strip()) and " " not in value.strip():
+            from app.core.link_unwrap import is_image_url, unwrap_link
+
+            direct = unwrap_link(value.strip())
+            extra = {"url": direct, "wrapped_url": value.strip() if direct != value.strip() else None}
+            if is_image_url(direct):
+                extra.update({"kind": "note_field_image", "image_url": direct, "media_type": "image"})
         out.append(self._mint_atom(
             project_id=project_id, artifact_id=artifact_id, filename=filename,
-            atom_type=atom_type, text=text, value={**base, "shape": shape, "value": value},
+            atom_type=atom_type, text=text, value={**base, "shape": shape, "value": value, **extra},
             source_ref=source_ref, confidence=0.84 if shape != "other" else 0.8,
             author_affiliation=affiliation,
         ))
