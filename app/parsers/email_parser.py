@@ -842,7 +842,10 @@ CONSTRAINT_PATTERNS = [
 
 # A leading list-bullet glyph / ordinal. Stripped so the atom is the ITEM
 # ("Okta integration"), not the marker ("*   Okta integration").
-_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[*•·▪◦‣o]|[-–—]|\(?\d{1,2}[.)])\s+")
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:(?:[*•·▪◦‣o]|[-–—]|\(?\d{1,2}[.)])\s+|[-–—•*](?=[A-Za-z]))")
+# (the second arm: "-Relay", "-Mag Lock Cable" -- dash typed straight onto the
+# word, no space. Live 010289: those items were not bullets, so the name-shape
+# filter dropped "-Mag Lock Cable" from the club's supply list.)
 
 # A greeting/salutation opener led by a greeting word ("Hi", "Dear", …).
 _GREETING_LEAD_RE = re.compile(
@@ -855,15 +858,42 @@ _GREETING_CLOSE_RE = re.compile(r"\s*[,:\-–—!]+\s*$")
 _IDENTITY_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
 
 
-def _is_identity_only_line(text: str) -> bool:
+def _is_identity_only_line(text: str, *, allow_name: bool = True) -> bool:
     """True for a line that is only a person's name, an email, a phone, or a
-    punctuation fragment around one. Shape only -- no names, no domains."""
+    punctuation fragment around one. Shape only -- no names, no domains.
+
+    ``allow_name=False`` for list bullets: a Title-Case bullet is almost always
+    an item, not a person. Live 010289: "-Mag Lock Cable" matched the name
+    shape and vanished from the club's supply list."""
     from app.parsers.value_shapes import classify_value
 
     core = (text or "").strip().strip(" ;,<>:|-")
     if not core or len(core) > 60:
         return False
-    return bool(_IDENTITY_NAME_RE.match(core)) or classify_value(core) in ("email", "phone")
+    if classify_value(core) in ("email", "phone"):
+        return True
+    return allow_name and bool(_IDENTITY_NAME_RE.match(core))
+
+
+# A label line that introduces the lines under it ("Provided by us:",
+# "Diagram:", "Club responsibilities:"). Not a fact itself: it is the intro
+# line its items are read with. Short, ends in a colon, no sentence inside.
+_LIST_LABEL_RE = re.compile(r"^[A-Za-z][^.!?]{0,60}:\s*$")
+# A label that says the next lines are a place. The block under it ("Nesfield
+# Performance Bethesda / 7832 Wisconsin Ave ... / P: 240...") is a job site,
+# not a person's signature. Live 010289: typed stakeholder, so the deal had
+# no site from the email that answered "Where is this site located?".
+_LOCATION_LABEL_RE = re.compile(
+    r"^(?:site\s+)?(?:location|address|site|job\s*site|site\s+address|ship\s*to|"
+    r"install(?:ation)?\s+(?:address|location|site))\s*:\s*$",
+    re.IGNORECASE,
+)
+# "Provided by us:" / "Supplied by Club/installer:" -> who supplies the items.
+_PROVIDED_BY_RE = re.compile(
+    r"^(?:provided|supplied|furnished|installed|purchased|sourced|done|handled)\s+by\s+(.+?)\s*:\s*$",
+    re.IGNORECASE,
+)
+_WE_WORDS = {"us", "we", "our team", "ourselves", "our side"}
 
 
 # A sign-off phrase that opens the trailing signature block. Everything after
@@ -2816,6 +2846,13 @@ class EmailParser(BaseParser):
         current_section: str | None = None  # "include" | "exclude" | None
         pending_lead_in: list[str] = []
         active_lead_in: list[str] = []
+        # A generic list label ("Provided by us:") is the intro line of the
+        # bullets under it, and says who provides them when it can.
+        list_label: list[str] = []
+        provided_by: dict[str, str] | None = None
+        location_label: str | None = None
+        location_lines: list[str] = []
+        location_site_atoms: list[EvidenceAtom] = []
 
         # One physical line can hold several sentences with different speech
         # acts, and typing the line as a whole makes them fight. The customer
@@ -2845,7 +2882,69 @@ class EmailParser(BaseParser):
             # above still let a trailing "Nick Robateau" (authored, after the
             # body) and a quoted "; Nick Robateau <" reach the vocabulary
             # typer, which stamped them `exclusion` at 0.86.
-            if _is_identity_only_line(cleaned):
+            # A location label and the lines under it are a job site: collect
+            # up to three lines (a name, the street, the city) and read the
+            # address from them together, ahead of every chrome filter below
+            # (the block looks like a contact card). A phone line ends it.
+            if not is_bullet and _LOCATION_LABEL_RE.match(cleaned):
+                location_label = cleaned.rstrip()
+                location_lines = []
+                continue
+            if location_site_atoms:
+                # The line after a found site: its phone belongs to the site.
+                _core = cleaned.strip().strip(" ;,<>:|-")
+                from app.parsers.value_shapes import classify_value as _cv0
+
+                _site_list, location_site_atoms = location_site_atoms, []
+                if _cv0(_core) == "phone" or re.match(r"^[PpTtMmOo](?:hone)?\s*:\s*\+?[\d(]", _core):
+                    for _s in _site_list:
+                        if isinstance(_s.value, dict):
+                            _s.value["site_phone"] = re.sub(r"^[A-Za-z]+\s*:\s*", "", _core)
+                    continue
+            if location_label is not None:
+                from app.parsers.value_shapes import classify_value as _cv
+
+                _core = cleaned.strip().strip(" ;,<>:|-")
+                _is_phone = _cv(_core) == "phone" or bool(re.match(r"^[PpTtMmOo]\s*:\s*\+?[\d(]", _core))
+                if not _is_phone:
+                    location_lines.append(cleaned)
+                # The address parser wants the street first, so the place name
+                # ("Nesfield Performance Bethesda") is tried apart from it: the
+                # newest line alone, then the last two together.
+                _sites = []
+                for _cand in dict.fromkeys(
+                    [location_lines[-1] if location_lines else "", ", ".join(location_lines[-2:])]
+                ):
+                    if not _cand:
+                        continue
+                    _sites = self._site_atoms_from_line(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        cleaned=_cand,
+                        entity_keys=self._extract_entity_keys(_cand),
+                        source_ref=self._build_source_ref(
+                            artifact_id=artifact_id, filename=filename, block=block, line_num=line_num,
+                            lead_in=[location_label],
+                        ),
+                        authority=authority,
+                        confidence=confidence,
+                    )
+                    if _sites:
+                        break
+                if _sites:
+                    _name = location_lines[0] if len(location_lines) > 1 else None
+                    for _s in _sites:
+                        if isinstance(_s.value, dict):
+                            if _name:
+                                _s.value.setdefault("site_name", _name)
+                            _s.value["lead_in"] = [location_label]
+                    atoms.extend(_sites)
+                    location_site_atoms = list(_sites)
+                if _sites or _is_phone or len(location_lines) >= 3:
+                    location_label = None
+                    location_lines = []
+                continue
+            if _is_identity_only_line(cleaned, allow_name=not is_bullet):
                 continue
             # Inside a signature cluster every line is contact chrome (title,
             # org, phone label); the person was already read from it above.
@@ -2916,6 +3015,13 @@ class EmailParser(BaseParser):
             # hygiene continues so per-line locators carry section_path.
             section_for_line = current_section if is_bullet else None
             lead_for_line = list(active_lead_in) if section_for_line else []
+            # Under a generic label, bullets (and short lines, for lists typed
+            # without dashes) are its items and carry it as their intro line.
+            list_item_line = bool(
+                not section_for_line and list_label and (is_bullet or len(cleaned.split()) <= 10)
+            )
+            if list_item_line:
+                lead_for_line = list(list_label)
             section_path = _list_section_path(section_for_line, lead_in=lead_for_line or None)
             source_ref = self._build_source_ref(
                 artifact_id=artifact_id,
@@ -3016,10 +3122,29 @@ class EmailParser(BaseParser):
                     active_lead_in = list(pending_lead_in)
                     pending_lead_in = []
                 continue
+            # 3b) Any other short "Label:" line opens a list: not an atom, the
+            #     intro line of the items beneath. "Provided by us:" also says
+            #     who supplies them -- and "us" is the SENDER's organisation.
+            if not is_bullet and _LIST_LABEL_RE.match(cleaned) and not _PSEUDO_HEADER_RE.match(cleaned):
+                list_label = [cleaned.rstrip()]
+                _pb = _PROVIDED_BY_RE.match(cleaned)
+                if _pb:
+                    _who = _pb.group(1).strip()
+                    provided_by = {
+                        "label": _who,
+                        "party": "sender" if _who.lower() in _WE_WORDS else "named",
+                        "sender": str(block.get("locator_sender") or block.get("sender") or "").strip() or "",
+                    }
+                else:
+                    provided_by = None
+                continue
             # Non-bullet content ends the active list section for following lines.
             if not is_bullet:
                 current_section = None
                 active_lead_in = []
+                if not list_item_line:
+                    list_label = []
+                    provided_by = None
                 # Keep pending lead-in only if the next line may still open a list.
                 if not _is_email_list_framing_lead_in(cleaned):
                     pending_lead_in = []
@@ -3114,6 +3239,11 @@ class EmailParser(BaseParser):
                 if lead_for_line:
                     atom_value["lead_in"] = list(lead_for_line)
                     atom_value["intro"] = lead_for_line[0]
+                if list_item_line:
+                    atom_value["list_item"] = True
+                    atom_value["list_label"] = list_label[0]
+                    if provided_by:
+                        atom_value["provided_by"] = dict(provided_by)
                 if delta_payload and atom_type == AtomType.customer_instruction:
                     atom_value["change_delta"] = delta_payload
                 atoms.append(
@@ -3213,6 +3343,11 @@ class EmailParser(BaseParser):
                 if lead_for_line:
                     baseline_value["lead_in"] = list(lead_for_line)
                     baseline_value["intro"] = lead_for_line[0]
+                if list_item_line:
+                    baseline_value["list_item"] = True
+                    baseline_value["list_label"] = list_label[0]
+                    if provided_by:
+                        baseline_value["provided_by"] = dict(provided_by)
                 atoms.append(
                     EvidenceAtom(
                         id=stable_id(
