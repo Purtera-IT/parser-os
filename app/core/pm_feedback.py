@@ -364,6 +364,13 @@ def _head_of(corr: Correction) -> str:
     return ""
 
 
+def _mentions_of(when: Any) -> list[str]:
+    if not isinstance(when, dict) or set(when.keys()) != {"mentions"}:
+        return []
+    m = when.get("mentions")
+    return [str(x) for x in m if str(x).strip()] if isinstance(m, (list, tuple)) else []
+
+
 def _merge_with_existing(store, corr: Correction) -> Correction:
     """Fold a repeat of the same judgment into the correction it repeats.
 
@@ -408,7 +415,15 @@ def _merge_with_existing(store, corr: Correction) -> Correction:
     # 11 to 4). A merged correction keeps a condition only when every
     # contributor agreed on it.
     if prior_when != new_when:
-        rel.pop("when", None)
+        # Two `mentions` conditions are the same kind of circumstance said
+        # twice ("ladder work" here, "drop ceiling" there): the merged lesson
+        # fires when the text says either. Any other disagreement un-gates.
+        pm = _mentions_of(prior_when)
+        nm = _mentions_of(new_when)
+        if pm and nm:
+            rel["when"] = {"mentions": list(dict.fromkeys([*pm, *nm]))[:8]}
+        else:
+            rel.pop("when", None)
 
     # Deals, as the comment above says -- not exemplars. Eleven different work
     # lines taught from ONE Deal Kit are one deal's judgment, and counting them

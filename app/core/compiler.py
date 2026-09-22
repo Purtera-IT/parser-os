@@ -1751,6 +1751,30 @@ def compile_project(
             warnings.append(f"WARNING: task_tier_classification failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=tier_stamped)
 
+    # Task admission (learning-loop gate): a task a PM removed as "not this
+    # job" taught admission → drop on its own sentence; the next compile of the
+    # same documents must not propose it again. Store-only, guess-free,
+    # lossless (dropped atoms go to the suppression ledger).
+    with telemetry.stage("task_admission", input_count=len(atoms)) as stage:
+        try:
+            from app.core.task_admission import drop_taught_out_tasks
+
+            before_admission = list(atoms)
+            atoms, dropped_tasks = drop_taught_out_tasks(atoms, project_id=resolved_project_id)
+            if dropped_tasks:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_admission, atoms,
+                        stage="task_admission",
+                        reason="a PM taught this line is not this job (admission → drop)",
+                    ),
+                )
+                warnings.append(f"INFO: task_admission dropped {len(dropped_tasks)} task(s) a PM taught out")
+        except Exception as exc:
+            warnings.append(f"WARNING: task_admission failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # Quote-context head seam — classifies the commercial delivery model
     # (configuration-only vs install/buildout vs survey/design) with a promoted
     # neural head when available. Cold start logs a trainable row and uses a
