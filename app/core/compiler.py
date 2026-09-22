@@ -855,6 +855,17 @@ def compile_project(
                     f"INFO: quoted_history_dedup diverted {len(dropped_qh)} "
                     f"redundant quoted-history atom(s) to the ledger"
                 )
+            # Who said it, to whom, for which company. Runs right after
+            # threading, so every downstream stage (and the labeler) can tell
+            # our own account exec from the reseller's rep.
+            try:
+                from app.core.deal_parties import stamp_parties
+
+                _stamped = stamp_parties(atoms)
+                if _stamped:
+                    warnings.append(f"INFO: deal_parties stamped who-said-it on {_stamped} atom(s)")
+            except Exception as exc:
+                warnings.append(f"WARNING: deal_parties failed: {type(exc).__name__}: {exc}")
             # A question and its answer are one fact. Runs after threading so
             # "Where is this site located?" can find the reply that answered
             # it, and after the quoted-history dedup so it pairs with the

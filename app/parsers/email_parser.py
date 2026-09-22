@@ -1417,6 +1417,10 @@ def parse_email_thread_headers(path: Path) -> dict[str, Any]:
         "subject": subject,
         "subject_norm": normalize_email_subject(subject),
         "sender": sender,
+        # Who it was SAID TO. Without this a PM reading an atom cannot tell
+        # whether a promise was made to the customer or muttered internally.
+        "to": [a for a in (str(msg.get("to") or "")).split(",") if a.strip()],
+        "cc": [a for a in (str(msg.get("cc") or "")).split(",") if a.strip()],
         "date_raw": date_raw,
         "date_epoch": date_epoch,
     }

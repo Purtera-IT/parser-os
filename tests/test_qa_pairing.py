@@ -91,3 +91,35 @@ def test_a_question_the_compiler_minted_about_itself_is_never_paired():
               AtomType.open_question, {"kind": "unrecovered_region", "message_index": 0, "line_start": 3})
     a = _atom("Sorry, left that part off.", value=_body(4))
     assert pair_questions_with_answers([q, a]) == 0
+
+
+def _thr(idx, sender):
+    return {"kind": "email_body_line", "email_thread": {"thread_id": "T1", "thread_index": idx, "sender": sender},
+            "message_index": 0, "line_start": idx}
+
+
+def test_a_proposed_answer_has_to_fit_the_question():
+    """First live run: "Where is this site located?" was answered with a
+    recipient line, and "Has the door been installed?" with "Will be in
+    touch." A reply's first sentence is usually not the answer."""
+    from app.core.qa_pairing import _answers_this_question
+
+    q_where = _atom("Where is this site located?", AtomType.open_question, _thr(1, "aj@purtera-it.com"))
+    for text, atom_type, ok in [
+        ("7832 Wisconsin Ave, Bethesda, MD 20814", AtomType.physical_site, True),
+        ('"Albert Arzate" <albert@rd-systems.com>', AtomType.scope_item, False),
+        ("Will be in touch.", AtomType.scope_item, False),
+    ]:
+        assert _answers_this_question(q_where, _atom(text, atom_type, _thr(2, "alec@cdw.com"))) is ok, text
+
+    q_lock = _atom("Has the door been installed with the lock?", AtomType.open_question, _thr(1, "aj@purtera-it.com"))
+    # no question word we can name: the answer has to talk about the question
+    assert _answers_this_question(q_lock, _atom("The door is installed, the lock is not.", value=_thr(2, "a@cdw.com")))
+    assert not _answers_this_question(q_lock, _atom("We can start next week.", value=_thr(2, "a@cdw.com")))
+
+
+def test_a_reply_that_fits_nothing_leaves_the_question_open():
+    q = _atom("Where is this site located?", AtomType.open_question, _thr(1, "aj@purtera-it.com"), artifact="art_1")
+    reply = _atom('"Albert Arzate" <albert@rd-systems.com>', value=_thr(2, "alec@cdw.com"), artifact="art_2")
+    assert pair_across_thread([q, reply]) == 0
+    assert not q.value.get("answered")

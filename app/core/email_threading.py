@@ -363,6 +363,8 @@ def thread_emails(
                 "subject": subject,
                 "subject_norm": (meta.get("subject_norm") or "").strip(),
                 "sender": sender,
+                "to": [str(x).strip() for x in (meta.get("to") or [])][:12],
+                "cc": [str(x).strip() for x in (meta.get("cc") or [])][:12],
                 "date": (meta.get("date_raw") or "").strip(),
                 "gist": gist_by_artifact.get(aid, ""),
             }
