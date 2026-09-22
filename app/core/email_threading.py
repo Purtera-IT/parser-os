@@ -457,9 +457,18 @@ def _message_blocks(atoms: list[EvidenceAtom]) -> dict[int, dict[str, str]]:
 
 def _norm_key(atom: EvidenceAtom) -> str:
     """Collapse key for quoted-history matching: normalized text, whitespace-
-    folded. Quote markers were already stripped at parse time."""
+    folded. Quote markers were already stripped at parse time.
+
+    A list item is keyed under its list label ("provided by us:|relay"): the
+    item alone is often one word, too short to collapse on text, but the
+    same item under the same label is the same fact. Live 010289: the ask's
+    "Relay" came back quoted in 9 replies."""
     txt = (getattr(atom, "normalized_text", "") or getattr(atom, "raw_text", "") or "").strip()
-    return re.sub(r"\s+", " ", txt).lower()
+    key = re.sub(r"\s+", " ", txt).lower()
+    v = atom.value if isinstance(atom.value, dict) else {}
+    if v.get("list_item") and v.get("list_label") and key:
+        return f"{str(v['list_label']).strip().lower()}|{key}"
+    return key
 
 
 # A quoted line this short is too generic to safely collapse on text alone

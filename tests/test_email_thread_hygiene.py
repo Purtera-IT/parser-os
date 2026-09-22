@@ -147,3 +147,48 @@ def test_quoted_headers_go_when_the_original_is_in_the_thread(tmp_path):
     assert any("alec@vendor-partner.example" in t for t in hdr(dropped))
     # AJ's 11:33 message is NOT in the thread -> its quoted header stays (attribution)
     assert any("aj@purtera-it.com" in t for t in hdr(kept))
+
+
+def test_short_quoted_list_items_collapse_to_the_original(tmp_path):
+    # Live 010289: "Relay" came back quoted in nine replies. One word is too
+    # short to collapse on text; under its list label it is the same fact.
+    ask = _eml(tmp_path, "1.eml", ASK, frm="Alec <alec@vendor-partner.example>",
+               date="Wed, 02 Sep 2026 14:38:56 +0000", subject="Access Control", msgid="<m1@x>")
+    quoted = "Got it.\n\n" + "________________________________\nFrom: Alec <alec@vendor-partner.example>\n" \
+        "Sent: Wednesday, September 2, 2026 10:38 AM\nTo: AJ Evans <aj@purtera-it.com>\nSubject: Access Control\n\n" + ASK
+    r1 = _eml(tmp_path, "2.eml", quoted, frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:00:00 +0000", subject="RE: Access Control", msgid="<m2@x>", reply_to="<m1@x>")
+    r2 = _eml(tmp_path, "3.eml", quoted, frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:30:00 +0000", subject="RE: Access Control", msgid="<m4@x>", reply_to="<m2@x>")
+    atoms = _parse(ask) + _parse(r1) + _parse(r2)
+    atoms, _ = thread_emails(atoms, project_id="p")
+    kept, _ = dedup_quoted_history(atoms, project_id="p")
+    assert [a.raw_text for a in kept].count("Relay") == 1
+
+
+def test_a_named_site_keeps_name_and_phone_through_dedup(tmp_path):
+    from app.core.semantic_dedup import _PHYSICAL_SITE_ALLOWED_FIELDS
+
+    atoms = _parse(_eml(tmp_path, "a.eml", ANSWER.replace("Location:\n\n", "Location:\n"), frm="alec@vendor-partner.example",
+                        date="Wed, 02 Sep 2026 16:40:40 +0000", subject="RE: Access Control", msgid="<m3@x>"))
+    site = next(a for a in atoms if a.atom_type.value == "physical_site").value
+    assert site["facility_name"] == site["name"] == "Nesfield Performance Bethesda"
+    assert site["phone"] == "240.652.2808"
+    assert {"site_name", "site_phone", "facility_name", "phone"} <= _PHYSICAL_SITE_ALLOWED_FIELDS
+
+
+def test_a_pasted_note_list_splits_on_inline_dashes(tmp_path):
+    from app.parsers.hubspot_note_parser import HubspotNoteParser
+
+    p = tmp_path / "010289-hs-note-1-The Ask.txt"
+    p.write_text(
+        "HubSpot Note: The Ask\nHubSpot Note ID: 1\nDate: 2026-09-08T14:39:55.273Z\nAuthor: AJ Evans\n"
+        "Author-Email: aj@purtera-it.com\n\nThe Ask Hey AJ, here are the details. Provided by us: -PC with Access Control "
+        "Software -Relay -Local and Remote Extender Provided by Club/installer: -Mag Lock Cable -Power Supply for mag lock\n",
+        encoding="utf-8",
+    )
+    atoms = HubspotNoteParser().parse(p)
+    items = {a.raw_text: (a.value or {}).get("list_label") for a in atoms if (a.value or {}).get("list_item")}
+    assert items.get("Relay") == "Provided by us:"
+    assert items.get("Mag Lock Cable") == "Provided by Club/installer:"
+    assert not any(a.raw_text.startswith("Provided by") for a in atoms)

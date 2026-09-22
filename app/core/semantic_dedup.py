@@ -147,6 +147,8 @@ _PHYSICAL_SITE_ALLOWED_FIELDS: frozenset[str] = frozenset({
     # merge step in entity_extraction._entities_to_atoms. Without
     # this, _clean_physical_site_value silently drops them.
     "names", "aliases",
+    # A named email "Location:" block: the business at the address + its phone.
+    "site_name", "site_phone",
     # Where an inferred site came from and how sure the judge was: the geo
     # fallback and the geo-mention head stamp these so the PM (and the grade)
     # can see the site is inferred; the cleaner must not silently drop them.

@@ -216,6 +216,10 @@ def _split_inline_fields(body: str) -> list[tuple[str, str]]:
     return out
 
 
+# " -Relay" / " -Mag Lock Cable": a dash glued to the item, after a space.
+_INLINE_DASH_ITEM_RE = re.compile(r"(?:^|\s)-(?=[A-Za-z0-9(])")
+
+
 def _split_list_value(value: str) -> list[str]:
     if "\n" in value:
         lines = [ln.strip(" .;") for ln in value.split("\n") if ln.strip(" .;")]
@@ -686,6 +690,11 @@ class HubspotNoteParser(BaseParser):
         _m = _CITY_STATE_ZIP_RE.search(flat)
         if _m and flat[_m.end():].strip(" ,|") and _is_street(flat[: _m.end()]):
             value, remainder = flat[: _m.end()].strip(" ,"), flat[_m.end():].strip(" ,|")
+        # A pasted email loses its line breaks in the note: "Provided by us:
+        # -PC with Access Control Software -Relay -Local and Remote Extender"
+        # (010289). Two or more dash-led items are a bullet list, one per line.
+        if "\n" not in value and len(_INLINE_DASH_ITEM_RE.findall(" " + value)) >= 2:
+            value = "\n".join(p.strip() for p in _INLINE_DASH_ITEM_RE.split(" " + value) if p.strip())
         shape = _field_value_shape(value)
         trailer = ""
         if shape == "list" and "\n" in value:
@@ -759,7 +768,8 @@ class HubspotNoteParser(BaseParser):
                 out.append(self._mint_atom(
                     project_id=project_id, artifact_id=artifact_id, filename=filename,
                     atom_type=AtomType.scope_item, text=item,
-                    value={**base, "kind": "note_field_item", "parent_field": label},
+                    value={**base, "kind": "note_field_item", "parent_field": label,
+                           "list_item": True, "list_label": f"{label}:"},
                     source_ref=source_ref, confidence=0.82, author_affiliation=affiliation,
                 ))
             return out
