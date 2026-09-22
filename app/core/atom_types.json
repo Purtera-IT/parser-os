@@ -643,6 +643,36 @@
    "status": "live",
    "value_light": false,
    "train_rows": 0
+  },
+  {
+   "name": "answered_question",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A question together with its answer, in the same message or a later reply (\"How many doors?\" / \"1 external door\"). The answer is the fact; keep both.",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "internal_question",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A question between people on our own team (routing, who to ask, pricing among ourselves). Never a question for the customer.",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0
+  },
+  {
+   "name": "commitment",
+   "coarse": "governance",
+   "facet": "TIMING",
+   "desc": "Someone promises to do something (\"we will send the floorplan Friday\", \"I will get a conversation going with the owner\").",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0
   }
  ],
  "service_packs": [
@@ -672,5 +702,24 @@
   "professional_services",
   "other"
  ],
- "service_packs_doc": "Deal-level router gold: the labeler's answer to 'what is this deal mainly?'. Ids match Orbitbrief-Core world_model/data/domain_packs.yaml."
+ "service_packs_doc": "Deal-level router gold: the labeler's answer to 'what is this deal mainly?'. Ids match Orbitbrief-Core world_model/data/domain_packs.yaml.",
+ "suppliers": [
+  {
+   "key": "us",
+   "label": "Us (Purtera)"
+  },
+  {
+   "key": "partner",
+   "label": "Partner / reseller"
+  },
+  {
+   "key": "customer",
+   "label": "End customer"
+  },
+  {
+   "key": "third_party",
+   "label": "Another vendor"
+  }
+ ],
+ "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours)."
 }
