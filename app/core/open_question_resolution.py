@@ -125,6 +125,13 @@ def filter_unhelpful_open_questions(atoms: list[Any]) -> tuple[list[Any], list[A
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
+        # A question that HAS its answer is not a gap, it is a fact: "How many
+        # doors - 1 external access point". Dropping it as a non-actionable
+        # question threw the answer away with it (live 010289 lost three).
+        _v = getattr(atom, "value", None)
+        if isinstance(_v, dict) and _v.get("answered") and _v.get("answer"):
+            kept.append(atom)
+            continue
         if is_unhelpful_pm_question(atom):
             val = getattr(atom, "value", None)
             if isinstance(val, dict):
