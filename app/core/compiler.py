@@ -855,6 +855,22 @@ def compile_project(
                     f"INFO: quoted_history_dedup diverted {len(dropped_qh)} "
                     f"redundant quoted-history atom(s) to the ledger"
                 )
+            # A question and its answer are one fact. Runs after threading so
+            # "Where is this site located?" can find the reply that answered
+            # it, and after the quoted-history dedup so it pairs with the
+            # authored original rather than a quoted echo.
+            try:
+                from app.core.qa_pairing import pair_across_thread, pair_questions_with_answers
+
+                _same = pair_questions_with_answers(atoms)
+                _cross = pair_across_thread(atoms)
+                if _same or _cross:
+                    warnings.append(
+                        f"INFO: qa_pairing joined {_same} question(s) to an answer in the same message"
+                        f" and proposed {_cross} answered by a reply"
+                    )
+            except Exception as exc:
+                warnings.append(f"WARNING: qa_pairing failed: {type(exc).__name__}: {exc}")
         except Exception as exc:
             warnings.append(
                 f"WARNING: quoted_history_dedup failed: {type(exc).__name__}: {exc}"
