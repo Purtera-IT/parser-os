@@ -108,3 +108,16 @@ def test_judgments_become_rows_for_their_own_heads():
     assert ("gap_valid", "valid") in by
     assert all(r["label"] != "maybe" for r in rows), "a verdict outside the head's classes is dropped"
     assert all(r["teacher"] == "human" for r in rows)
+
+
+def test_evidence_links_become_human_edges():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "links": [
+        {"from_head": "gap", "from_key": "g1", "from_text": "Who provides the lift?", "to_kind": "atom",
+         "to_text": "Customer provides the lift", "relation": "answers"},
+        {"from_head": "conflict", "from_key": "e1", "from_text": "6 racks", "to_kind": "text",
+         "to_text": "704 racks in building B", "relation": "contradicts"},
+        {"from_head": "type", "from_key": "k", "from_text": "Scope", "to_kind": "atom",
+         "to_text": "Section 3 intro", "relation": "context"},
+    ]})
+    assert [(r["relation"], r["label"]) for r in rows] == [("edge_relation", "supports"), ("edge_relation", "contradicts")]
+    assert rows[0]["raw_text"] == "Who provides the lift? || Customer provides the lift"

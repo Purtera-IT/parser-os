@@ -74,7 +74,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
     report = report if report is not None else IngestReport()
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
-    if not deal_id or not (labels or doc.get("judgments")):
+    if not deal_id or not (labels or doc.get("judgments") or doc.get("links")):
         report.skip("deal file without deal_id or labels")
         return []
     is_eval = doc.get("purpose") == "eval" or any(lb.get("purpose") == "eval" for lb in labels)
@@ -135,8 +135,52 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
         else:
             report.skip("no facet (proposed type not in registry yet)")
     out.extend(_judgment_rows(doc, deal_id, split, report))
+    out.extend(_link_rows(doc, deal_id, split, report))
     report.rows += len(out)
     return out
+
+
+#: A labeler's evidence link -> the edge relation it teaches. "answers" is
+#: support for a question; "context" is not an edge claim, so it trains nothing.
+_LINK_TO_EDGE = {"supports": "supports", "answers": "supports", "contradicts": "contradicts", "same_as": "same_as"}
+
+
+def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
+    """Evidence links the labeler drew (item on screen -> another atom or
+    highlighted text) as human edge rows: the relation-edge head has no gold,
+    and these are exactly the cross-document relations it must learn."""
+    rows: list[dict[str, Any]] = []
+    for k in doc.get("links") or []:
+        if not isinstance(k, dict):
+            continue
+        label = _LINK_TO_EDGE.get(str(k.get("relation") or ""))
+        a = " ".join(str(k.get("from_text") or "").split())
+        b = " ".join(str(k.get("to_text") or "").split())
+        if not label or len(a) < 3 or len(b) < 3:
+            report.skip("link without an edge relation or text")
+            continue
+        text = f"{a} || {b}"
+        prov = {
+            "source": "purpulse_atom_labeler",
+            "kind": "evidence_link",
+            "relation": k.get("relation"),
+            "from_head": k.get("from_head"),
+            "from_key": k.get("from_key"),
+            "to_kind": k.get("to_kind"),
+            "to_atom_id": k.get("to_atom_id"),
+            "to_filename": k.get("to_filename"),
+            "to_page": k.get("to_page"),
+            "labeler": k.get("labeler") or "",
+            "purpose": k.get("purpose") or "train",
+        }
+        rows.append({
+            "relation": "edge_relation", "label": label, "raw_text": text, "masked_text": text,
+            "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
+            "scope": "deal", "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+            "created_at": k.get("created_at") or "", "split": split,
+            "provenance": json.dumps(prov, ensure_ascii=False),
+        })
+    return rows
 
 
 def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
