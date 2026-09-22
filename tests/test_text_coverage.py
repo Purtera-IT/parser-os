@@ -94,3 +94,35 @@ def test_coverage_survives_the_legacy_shape_validator():
         project_dir="/tmp/p", ranked_atoms=[], entity_edges=[], compile_id="c",
     )
     assert r.text_coverage and r.text_coverage[0]["unread_count"] == 1
+
+
+def test_a_line_read_once_for_the_deal_is_not_a_miss_in_every_other_mail(tmp_path):
+    """A signature is captured once on purpose. Looking only at one artifact's
+    atoms made every later copy read as a miss: live 010289 reported 84
+    unread lines, nearly all "Account Executive" and a phone number."""
+    a = tmp_path / "one.eml"
+    b = tmp_path / "two.eml"
+    for p in (a, b):
+        p.write_text(
+            "Where is this site located?\n\nThanks,\n\nAJ Evans\nAccount Executive at PurTera\n"
+            "The riser room is locked after 6pm and the super has the only key.\n",
+            encoding="utf-8",
+        )
+    # the person was read out of mail one only; the constraint out of neither
+    atoms = [_atom("AJ Evans | Account Executive at PurTera | aj@purtera-it.com", artifact="art_a")]
+    rows = build_text_coverage({"art_a": a, "art_b": b}, atoms)
+    unread = {r["artifact_id"]: [x["text"] for x in r["unclaimed"] if x["state"] == "unread"] for r in rows}
+    assert not any("Account Executive" in t for t in unread["art_b"])
+    assert any("riser room" in t for t in unread["art_b"])
+
+
+def test_an_unread_inline_image_says_so(tmp_path):
+    p = tmp_path / "m.eml"
+    p.write_text(
+        "Here is the layout.\n\n[A screenshot of a phone    AI-generated content may be incorrect., Picture, Picture]\n",
+        encoding="utf-8",
+    )
+    row = coverage_for_artifact(p, "art_m", [])
+    states = {x["text"][:20]: x["state"] for x in row["unclaimed"]}
+    assert states.get("[A screenshot of a p") == "image"
+    assert row["image_count"] == 1
