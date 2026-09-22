@@ -450,7 +450,11 @@ def build_orbitbrief_envelope(
         "entities": [_compact_entity(e, atoms_by_artifact, atoms) for e in entities],
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
-        "coverage": {"unrecovered_regions": unrecovered_regions},
+        "coverage": {
+            "unrecovered_regions": unrecovered_regions,
+            # Line-level: what the parser read, dropped, or never touched.
+            "text": list(getattr(compile_result, "text_coverage", None) or []),
+        },
     }
     # When this deal committed to an answer, and the verified events that say so.
     # Present for every deal so a consumer can tell "no cut" (still in discovery,

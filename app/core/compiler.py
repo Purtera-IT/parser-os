@@ -2309,10 +2309,24 @@ def compile_project(
             packet.risk = score_packet_risk(packet, packet_atoms, edges)
         telemetry.end_stage(stage, output_count=len(packets))
 
+    # What did we NOT read? Diff every text artifact against its own atoms, so
+    # a paragraph that produced nothing is visible instead of silent.
+    try:
+        from app.core.text_coverage import build_text_coverage
+
+        _coverage = build_text_coverage(artifact_paths, atoms, suppressed_atoms)
+        _unread = sum(int(r.get("unread_count") or 0) for r in _coverage)
+        if _unread:
+            warnings.append(f"INFO: text_coverage: {_unread} source line(s) produced no atom")
+    except Exception as exc:  # coverage reporting can never fail a compile
+        _coverage = []
+        warnings.append(f"WARNING: text_coverage failed: {type(exc).__name__}: {exc}")
+
     result = CompileResult(
         project_id=resolved_project_id,
         atoms=atoms,
         suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
+        text_coverage=_coverage,
         entities=entities,
         edges=edges,
         packets=packets,
