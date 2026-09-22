@@ -722,6 +722,19 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
     # embedding it drags the prototype off the thing it has to recognise. The
     # nuance belongs in when a lesson fires, not in what it looks like.
     relations = dict(req.relations or {})
+    # The PM's own typed words (the kit sends them apart from the chip label so
+    # a lesson never gates on "bigger"). They become a `mentions` condition: the
+    # lesson fires on work lines that say so, and stays quiet elsewhere.
+    words = relations.pop("words", None)
+    if isinstance(words, str) and words.strip() and not relations.get("when"):
+        try:
+            from app.core.pm_note_router import extract_mentions
+
+            mentions = extract_mentions(words)
+            if mentions:
+                relations["when"] = {"mentions": mentions}
+        except Exception:
+            pass
     if req.rationale and not relations.get("when"):
         try:
             from app.core.pm_note_router import extract_condition
