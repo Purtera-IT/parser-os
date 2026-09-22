@@ -190,7 +190,54 @@ CREATE TABLE IF NOT EXISTS corrections (
     last_fired REAL,
     wrongful_override_count INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS deal_contexts (
+    deal_id TEXT PRIMARY KEY,
+    context TEXT NOT NULL DEFAULT '{}',
+    updated_at REAL NOT NULL DEFAULT 0
+);
 """
+
+
+def _lc(v: Any) -> str:
+    return str(v or "").strip().lower()
+
+
+def context_affinity(taught: dict | None, deal: dict | None) -> tuple[str, float]:
+    """How much the deal a lesson was taught on resembles the deal being judged.
+
+    The Deal Kit sends each lesson with its deal's context (customer, channel,
+    partner, industry, deal type, vendors, kinds of work); the compile knows the
+    context of the deal it is judging. Among lessons that already match the
+    WORK, the one taught for the same customer, then the same partner, then a
+    similar industry / deal type / vendor / kind of work, is the better answer.
+
+    Returns (level, bonus): level is "customer", "partner", "similar" or "",
+    bonus is added to the similarity for RANKING only, never to clear a
+    threshold a lesson did not clear on its own.
+    """
+    if not isinstance(taught, dict) or not isinstance(deal, dict):
+        return "", 0.0
+    if (taught.get("customerId") and taught.get("customerId") == deal.get("customerId")) or (
+        _lc(taught.get("customer")) and _lc(taught.get("customer")) == _lc(deal.get("customer"))
+    ):
+        return "customer", 0.06
+    if (
+        taught.get("channel") == "partner"
+        and deal.get("channel") == "partner"
+        and _lc(taught.get("partner"))
+        and _lc(taught.get("partner")) == _lc(deal.get("partner"))
+    ):
+        return "partner", 0.05
+    shared = 0
+    for k in ("industry", "dealType"):
+        if _lc(taught.get(k)) and _lc(taught.get(k)) == _lc(deal.get(k)):
+            shared += 1
+    for k in ("vendors", "work"):
+        a = {_lc(x) for x in (taught.get(k) or []) if _lc(x)}
+        b = {_lc(x) for x in (deal.get(k) or []) if _lc(x)}
+        if a & b:
+            shared += 1
+    return ("similar", min(0.03, 0.01 * shared)) if shared else ("", 0.0)
 
 _COLUMNS = [
     "id", "relation", "verdict", "scope", "scope_key", "exemplars",
@@ -309,6 +356,29 @@ class FeedbackStore:
             return False
 
     # ── CRUD ─────────────────────────────────────────────────────────
+    def set_deal_context(self, deal_id: str, context: dict) -> None:
+        """Remember who a deal is for and how it is sold (from the Deal Kit)."""
+        if not deal_id or not isinstance(context, dict):
+            return
+        self._conn.execute(
+            "INSERT INTO deal_contexts (deal_id, context, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(deal_id) DO UPDATE SET context = excluded.context, updated_at = excluded.updated_at",
+            (str(deal_id), json.dumps(context, sort_keys=True), time.time()),
+        )
+        self._conn.commit()
+
+    def get_deal_context(self, deal_id: str) -> dict | None:
+        if not deal_id:
+            return None
+        r = self._conn.execute("SELECT context FROM deal_contexts WHERE deal_id = ?", (str(deal_id),)).fetchone()
+        if not r:
+            return None
+        try:
+            ctx = json.loads(r["context"] or "{}")
+        except (TypeError, ValueError):
+            return None
+        return ctx if isinstance(ctx, dict) and ctx else None
+
     def add(self, c: Correction) -> None:
         row = c.to_row()
         placeholders = ",".join("?" for _ in _COLUMNS)
@@ -692,6 +762,42 @@ class FeedbackStore:
             if float(np.linalg.norm(qv)) < 1e-9:  # failed embed → undecided
                 return None
 
+            # 0) SAME CUSTOMER / PARTNER FIRST — when the caller knows the deal's
+            #    context, a lesson that matches the work AND was taught for the
+            #    same customer (then the same partner) answers before anything
+            #    generalised across all deals. It must clear its own threshold;
+            #    the context only decides between lessons that already match.
+            deal_ctx = (facts or {}).get("deal_context") if isinstance(facts, dict) else None
+            if isinstance(deal_ctx, dict) and deal_ctx:
+                visible = [
+                    c for c in corrs
+                    if c.scope == SCOPE_GLOBAL
+                    or (c.scope == SCOPE_DEAL and c.scope_key == (scope.deal_id or ""))
+                    or (c.scope == SCOPE_PACK and c.scope_key == (scope.pack or ""))
+                ]
+                close: tuple[float, float, Correction, str] | None = None
+                for c in visible:
+                    level, bonus = context_affinity((c.relations or {}).get("deal_context"), deal_ctx)
+                    if level not in ("customer", "partner"):
+                        continue
+                    if c.id not in self._proto and c.id not in self._proto_ex:
+                        continue
+                    sc = self._correction_score(c.id, qv)
+                    if sc >= c.threshold and (close is None or sc + bonus > close[0]):
+                        close = (sc + bonus, sc, c, level)
+                if close is not None:
+                    _, sc, c, level = close
+                    self._record_hit(c.id)
+                    who = (c.relations or {}).get("deal_context", {}) or {}
+                    name = who.get("customer") if level == "customer" else who.get("partner")
+                    return Decision(
+                        verdict=c.verdict,
+                        confidence=sc,
+                        source="store",
+                        correction_id=c.id,
+                        rationale=f"matched correction {c.id} (cosine {sc:.3f}), taught for the same {level}{f' ({name})' if name else ''}",
+                    )
+
             # 0) NEURAL HEAD — when this relation has a real decision boundary
             #    (>=2 verdicts), a learned, calibrated, OOD-aware scorer decides
             #    the confident cases (positive AND negative) and abstains on the
@@ -752,8 +858,11 @@ class FeedbackStore:
                     if c.id not in self._proto and c.id not in self._proto_ex:
                         continue
                     score = self._correction_score(c.id, qv)
-                    if score >= c.threshold and (best is None or score > best[0]):
-                        best = (score, c)
+                    # A similar deal (industry, deal type, vendor, kind of work)
+                    # ranks ahead; the bonus never clears a threshold.
+                    _, bonus = context_affinity((c.relations or {}).get("deal_context"), deal_ctx) if isinstance(deal_ctx, dict) else ("", 0.0)
+                    if score >= c.threshold and (best is None or score + bonus > best[0] + best[2]):
+                        best = (score, c, bonus)
                 if best is None and tier_corrs:
                     near = max(
                         (self._correction_score(c.id, qv), c.threshold, c.id)
@@ -769,7 +878,7 @@ class FeedbackStore:
                             relation, len(tier_corrs), tier, near[0], near[1], near[2],
                         )
                 if best is not None:
-                    score, c = best
+                    score, c, _bonus = best
                     self._record_hit(c.id)
                     metric = "max-sim" if self._enable_maxsim else "cosine"
                     return Decision(

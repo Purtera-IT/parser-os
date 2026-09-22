@@ -241,6 +241,12 @@ def decide(
     if store is not None:
         try:
             kwargs = {"exclude_created_by": tuple(exclude_created_by)} if exclude_created_by else {}
+            # Who the deal is for and how it is sold (sent by the Deal Kit): a
+            # lesson from the same customer or partner answers first.
+            get_ctx = getattr(store, "get_deal_context", None)
+            deal_ctx = get_ctx(scope.deal_id) if (get_ctx and scope.deal_id) else None
+            if deal_ctx:
+                kwargs["facts"] = {"deal_context": deal_ctx}
             if not neural_head:
                 kwargs["neural_head"] = False
             hit = store.resolve(
