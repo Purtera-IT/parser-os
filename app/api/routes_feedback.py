@@ -631,6 +631,24 @@ class PMPredictRequest(BaseModel):
     context: str = ""
 
 
+class DealContextRequest(BaseModel):
+    """Who a deal is for and how it is sold (customer, channel, partner, industry,
+    deal type, vendors, kinds of work) — the Deal Kit's DealContext."""
+
+    context: dict = Field(default_factory=dict)
+
+
+@router.post("/{project_id}/feedback/deal-context")
+def feedback_deal_context(project_id: str, req: DealContextRequest) -> dict:
+    """Remember the deal's context, so its compile prefers lessons taught for the
+    same customer or partner (see feedback_store.context_affinity)."""
+    store = _require_store()
+    allowed = {"customer", "customerId", "channel", "partner", "industry", "dealType", "vendors", "work", "countries"}
+    ctx = {k: v for k, v in (req.context or {}).items() if k in allowed}
+    store.set_deal_context(project_id, ctx)
+    return {"deal_id": project_id, "stored": bool(ctx), "context": ctx}
+
+
 @router.post("/{project_id}/feedback/predict")
 def feedback_predict(project_id: str, req: PMPredictRequest) -> dict:
     """What would this head say about these exemplars?
@@ -722,6 +740,13 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
     # embedding it drags the prototype off the thing it has to recognise. The
     # nuance belongs in when a lesson fires, not in what it looks like.
     relations = dict(req.relations or {})
+    # A published lesson carries its deal's context: keep it on the lesson (for
+    # context-aware matching) and remember it as that deal's context.
+    if isinstance(relations.get("deal_context"), dict):
+        try:
+            store.set_deal_context(req.deal_id or project_id, relations["deal_context"])
+        except Exception:
+            pass
     # The PM's own typed words (the kit sends them apart from the chip label so
     # a lesson never gates on "bigger"). They become a `mentions` condition: the
     # lesson fires on work lines that say so, and stays quiet elsewhere.
