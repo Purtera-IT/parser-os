@@ -146,6 +146,13 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
         locs = {loc for loc, _ in per_doc.values()}
         if len(per_doc) < 2 or len(locs) < 2:
             continue
+        # Two spellings of one place are not a disagreement. Live 010289 asked
+        # the PM to confirm "bethesda md 20814" against "wisconsin ave bethesda
+        # md 20814" -- the same site, one copy with the street glued into the
+        # city. A real conflict names a city, state or ZIP the other does not.
+        token_sets = [set(loc.split()) for loc in locs]
+        if all(a <= b or b <= a for a in token_sets for b in token_sets):
+            continue
         reps = [a for _, a in per_doc.values()]
         text = (
             f"Documents disagree on where {street.title()} is: " + " vs ".join(sorted(locs))

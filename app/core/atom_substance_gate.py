@@ -1311,6 +1311,12 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     all_dropped.extend(d)
     kept, d = drop_unreadable_text(kept)
     all_dropped.extend(d)
+    # Relationship talk stays in the record, flagged, out of the labeler and
+    # out of the heads: a PM asked to type "Thank you for bringing this our
+    # way" is being asked a question with no answer.
+    from app.core.deal_chatter import mark_chatter
+
+    mark_chatter(kept)
     return kept, all_dropped
 
 
