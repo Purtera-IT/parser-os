@@ -468,6 +468,58 @@ def _norm_key(atom: EvidenceAtom) -> str:
 _MIN_DEDUP_LEN = 12
 
 
+_ADDR_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+
+def _address(sender: str) -> str:
+    m = _ADDR_RE.search(sender or "")
+    return m.group(0).lower() if m else ""
+
+
+def _minute_stamp(raw: str) -> str:
+    """Day + minute of a send time, in whatever zone it was written.
+
+    A quote shows the recipient's local time ("Wednesday, September 2, 2026
+    10:38 AM") and the original's header shows another zone ("Wed, 02 Sep
+    2026 14:38:56 +0000"): the hour differs, the minute and the date (within
+    a day) do not. ``YYYY-MM-DD|MM`` is matched with the date loosened below.
+    """
+    from datetime import datetime
+    from email.utils import parsedate_to_datetime
+
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    dt = None
+    try:
+        dt = parsedate_to_datetime(raw)
+    except Exception:
+        dt = None
+    if dt is None:
+        for fmt in ("%A, %B %d, %Y %I:%M %p", "%A, %B %d, %Y %H:%M", "%B %d, %Y %I:%M %p", "%m/%d/%Y %I:%M %p"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
+        return ""
+    return f"{dt.date().isoformat()}|{dt.minute:02d}"
+
+
+def _minute_stamps_around(raw: str) -> set[str]:
+    """The original's stamp and its neighbours a day either side: a zone
+    shift can move the date by one, never the minute."""
+    from datetime import date, timedelta
+
+    s = _minute_stamp(raw)
+    if not s:
+        return set()
+    day, minute = s.split("|")
+    d = date.fromisoformat(day)
+    return {f"{(d + timedelta(days=k)).isoformat()}|{minute}" for k in (-1, 0, 1)}
+
+
 def dedup_quoted_history(
     atoms: list[EvidenceAtom], *, project_id: str = ""
 ) -> tuple[list[EvidenceAtom], list[EvidenceAtom]]:
@@ -508,13 +560,39 @@ def dedup_quoted_history(
         if len(key) >= _MIN_DEDUP_LEN:
             authored_keys.setdefault(et["thread_id"], set()).add(key)
 
+    # 1b) The messages that exist in the thread as their OWN email, by sender
+    # and the minute they were sent. A quoted "From: X | Sent: Y" routing
+    # atom exists so attribution survives when the original is missing; when
+    # the original is right here it is pure repetition. Live 010289: 13 of 51
+    # atoms were quoted headers of messages the deal already held.
+    originals: dict[str, set[tuple[str, str]]] = {}
+    for atom in atoms:
+        et = _thread_of(atom)
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if et is None or v.get("kind") != "email_header":
+            continue
+        addr = _address(str(v.get("from") or ""))
+        for stamp in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
+            originals.setdefault(et["thread_id"], set()).add((addr, stamp))
+
     # 2) Walk atoms in thread order; drop a quoted atom whose key matches an
     # authored original OR an earlier-kept quoted copy in the same thread.
     seen_quoted: dict[str, set[str]] = {}
+    seen_headers: dict[str, set[tuple[str, str]]] = {}
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
     for atom in atoms:
         et = _thread_of(atom)
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if et is not None and v.get("kind") == "quoted_message_header":
+            tid = et["thread_id"]
+            key = (_address(str(v.get("sender") or "")), _minute_stamp(str(v.get("sent_at") or "")))
+            if key[0] and key[1] and (key in originals.get(tid, ()) or key in seen_headers.get(tid, ())):
+                dropped.append(atom)
+                continue
+            seen_headers.setdefault(tid, set()).add(key)
+            kept.append(atom)
+            continue
         if et is None or not _is_quoted(atom):
             kept.append(atom)
             continue

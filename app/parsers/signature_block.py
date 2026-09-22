@@ -26,6 +26,12 @@ _LINK_RE = re.compile(r"https?://|www\.|<mailto:|\[cid:", re.I)
 _LABEL_VALUE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z ./&-]{0,24}?)\s*[:：]\s*(.+?)\s*$")
 _SEP_RE = re.compile(r"\s*[|•·]\s*")
 _MAX_GAP = 4
+# Mirrors email_parser._LOCATION_LABEL_RE (kept local: email_parser imports us).
+_LOCATION_LABEL_RE = re.compile(
+    r"^(?:site\s+)?(?:location|address|site|job\s*site|site\s+address|ship\s*to|"
+    r"install(?:ation)?\s+(?:address|location|site))\s*:\s*$",
+    re.IGNORECASE,
+)
 _TITLE_MAX_WORDS = 8
 
 
@@ -115,6 +121,14 @@ def people_from_signature_lines(lines: list[str]) -> list[dict[str, Any]]:
     while i < n:
         name = _name_from(lines[i])
         if not name:
+            i += 1
+            continue
+        # A name under "Location:" / "Address:" is a place, and the lines
+        # after it are its street and phone, not a person's contact card.
+        # Live 010289: "Nesfield Performance Bethesda / 7832 Wisconsin Ave ..."
+        # became a stakeholder.
+        prev = next((_clean(lines[k]) for k in range(i - 1, -1, -1) if _clean(lines[k])), "")
+        if _LOCATION_LABEL_RE.match(prev):
             i += 1
             continue
         rec: dict[str, Any] = {"kind": "person", "name": name}

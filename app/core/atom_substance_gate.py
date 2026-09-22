@@ -806,8 +806,11 @@ def drop_email_non_scope(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
             kept.append(atom)
             continue
         text = _atom_text(atom).strip()
-        # Include/exclude list items are real scope — always keep.
-        if val.get("list_section") in {"include", "exclude"}:
+        # Include/exclude list items are real scope — always keep. So is any
+        # item of a labeled list ("Provided by us:" / "-Relay"): one word
+        # under a label is an item, not chatter. Live 010289: "-Relay" was
+        # dropped as conversational prose from the list it belongs to.
+        if val.get("list_section") in {"include", "exclude"} or val.get("list_item"):
             kept.append(atom)
             continue
         # Label-only lead-in ("Customer specifically said:")
