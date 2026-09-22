@@ -78,3 +78,19 @@ def test_binaries_are_skipped_and_nothing_can_fail_a_compile(tmp_path):
     pdf.write_bytes(b"%PDF-1.4 junk")
     rows = build_text_coverage({"art_pdf": pdf, "art_missing": tmp_path / "gone.eml"}, [])
     assert rows == []
+
+
+def test_coverage_survives_the_legacy_shape_validator():
+    """CompileResult's before-validator rebuilds the payload from a fixed key
+    list when a compatibility field is present -- which silently dropped
+    text_coverage on every real compile while the INFO warning still fired."""
+    from app.core.schemas import CompileResult
+
+    r = CompileResult(
+        project_id="p", atoms=[], entities=[], edges=[], packets=[], warnings=[],
+        text_coverage=[{"artifact_id": "art_m", "lines_total": 3, "lines_claimed": 1,
+                        "unclaimed": [{"line": 2, "text": "unread line", "state": "unread"}],
+                        "unread_count": 1}],
+        project_dir="/tmp/p", ranked_atoms=[], entity_edges=[], compile_id="c",
+    )
+    assert r.text_coverage and r.text_coverage[0]["unread_count"] == 1

@@ -820,6 +820,7 @@ class CompileResult(BaseModel):
                 "packets": data.get("packets", []),
                 "warnings": data.get("warnings", []),
                 "suppressed_atoms": data.get("suppressed_atoms", []),
+                "text_coverage": data.get("text_coverage", []),
                 "manifest": data.get("manifest"),
                 "trace": data.get("trace"),
                 "candidate_summary": data.get("candidate_summary"),
