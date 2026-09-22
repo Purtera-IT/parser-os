@@ -99,6 +99,11 @@ def mark_chatter(atoms: list[Any]) -> int:
         val = getattr(atom, "value", None)
         if not isinstance(val, dict) or val.get("list_item") or val.get("chatter"):
             continue
+        # A sentence a fact was read out of is never small talk, whatever it
+        # sounds like: "Here are the details for the small job" says the job
+        # is small, and hiding it throws that away.
+        if val.get("signals"):
+            continue
         text = getattr(atom, "raw_text", "") or ""
         if not is_chatter(text, entity_keys=list(getattr(atom, "entity_keys", None) or [])):
             continue
