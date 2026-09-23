@@ -56,6 +56,28 @@ def _text(atom: Any) -> str:
     return str(getattr(atom, "raw_text", "") or "")
 
 
+def _reads(atom: Any, key: str, value: Any, *, why: str, confidence: float) -> None:
+    """Record what this atom TELLS US. Not a new atom: nobody said it.
+
+    ``reads`` is the atom's meaning -- the thing Deal Kit reasons with ("a
+    small job" changes how many PMs it plans for) and the thing a head is
+    trained to produce. The rule that found it is scaffolding: it exists to
+    put a first label in front of a human, and a head trained on those labels
+    answers from meaning instead of from a pattern.
+    """
+    val = _value(atom)
+    reads = list(val.get("reads") or [])
+    if any(r.get("key") == key for r in reads):
+        return
+    reads.append({"key": key, "value": value, "why": why, "confidence": confidence, "source": "rule"})
+    val["reads"] = reads
+    atom.value = val
+    flags = list(getattr(atom, "review_flags", None) or [])
+    if SIGNAL_FLAG not in flags:
+        flags.append(SIGNAL_FLAG)
+    atom.review_flags = flags
+
+
 def _mark(atom: Any, signal: str) -> None:
     """Say on the atom that a fact was read out of it, so the small-talk pass
     leaves it alone and the PM can see why it is still here."""
@@ -110,8 +132,13 @@ def _have_artifact(word: str, filenames: list[str]) -> bool:
 
 
 def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[str] | None = None) -> list[Any]:
-    """Read facts out of non-scope prose. Returns atoms to ADD; marks the
-    sentences they came from so the small-talk pass spares them."""
+    """Read what a sentence TELLS US onto the sentence itself.
+
+    Returns the few atoms that are genuinely new WORK (a drawing to go and
+    get), never a restatement of something already said: "the sender calls
+    this a small job" is not a statement anyone made, it is what their
+    sentence means, and it now rides on that sentence as ``reads``.
+    """
     made: list[Any] = []
     seen: set[str] = set()
     names = list(filenames or [])
@@ -131,15 +158,7 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
             scale = "small" if m.group("small") else "large"
             key = f"scale:{scale}"
             _mark(atom, key)
-            if key not in seen:
-                seen.add(key)
-                made.append(_new_atom(
-                    project_id=project_id, source=atom, atom_type_name="deal_metadata",
-                    text=f"The sender calls this a {m.group(0).lower()}.",
-                    value={"kind": "job_scale", "scale": scale, "phrase": m.group(0), "quote": quote,
-                           "about": "deal", "wants": "nothing"},
-                    confidence=0.72,
-                ))
+            _reads(atom, "job_scale", scale, why=m.group(0).lower(), confidence=0.72)
 
         # A picture the sender points at. If the deal does not hold a file by
         # that name, somebody has to go and get it before the job is scoped.
@@ -148,6 +167,7 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
             what = am.group("what").lower()
             key = f"artifact:{what}"
             _mark(atom, key)
+            _reads(atom, "points_at_artifact", what, why=f"names a {what}", confidence=0.7)
             if key not in seen and not _have_artifact(what, names):
                 seen.add(key)
                 url = str(val.get("image_url") or val.get("url") or "")
@@ -161,14 +181,8 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
 
         if _EXPANSION_RE.search(head):
             _mark(atom, "expansion")
-            if "expansion" not in seen:
-                seen.add("expansion")
-                made.append(_new_atom(
-                    project_id=project_id, source=atom, atom_type_name="deal_metadata",
-                    text="The sender says this could repeat across more of the customer's sites.",
-                    value={"kind": "expansion_signal", "quote": quote, "about": "account", "wants": "nothing"},
-                    confidence=0.65,
-                ))
+            _reads(atom, "expansion", True, why="could repeat across more of the customer's sites",
+                   confidence=0.65)
 
     return made
 
