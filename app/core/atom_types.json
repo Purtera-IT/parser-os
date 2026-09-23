@@ -781,5 +781,56 @@
       "label": "We must decide",
       "desc": "Nobody else can answer it; it is our call to make."
     }
+  ],
+  "reads_doc": "What an atom TELLS US. Each key is a learned head: a rule fills it today as a prediction (source=rule, low confidence) purely so a labeler has something to confirm or drop, and the confirmations train the head that replaces the rule. A keyword list cannot make these calls -- it hid a promise naming a deal's decision maker because the words looked like banter. See _LABELING_DOCTRINE.md.",
+  "reads": [
+    {
+      "key": "small_talk",
+      "label": "Just relationship talk",
+      "values": "true/false",
+      "desc": "Thanks, greetings, banter. NOT small talk if it also says anything about the work, promises something, or names a person or a document."
+    },
+    {
+      "key": "job_scale",
+      "label": "How big the sender thinks it is",
+      "values": "small | large",
+      "desc": "Sizing in the customer's own words, before any site visit. Deal Kit plans crew and site time from it."
+    },
+    {
+      "key": "expansion",
+      "label": "Room to grow on this account",
+      "values": "true",
+      "desc": "This job could repeat across more of the customer's sites. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly."
+    },
+    {
+      "key": "commitment",
+      "label": "Somebody undertook to do something",
+      "values": "what was promised",
+      "desc": "A promise with an owner. A promise conditional on OUR answer is a task on us before it is one on them."
+    },
+    {
+      "key": "introduces_party",
+      "label": "Brings in someone not in this thread",
+      "values": "the role",
+      "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Often the only mention of the person who can say yes."
+    },
+    {
+      "key": "chase",
+      "label": "Points at something we do not hold",
+      "values": "conversation | attachment",
+      "desc": "A call or a file the deal does not contain. If we have history with them, ask them rather than hunting the thread."
+    },
+    {
+      "key": "needs_artifact",
+      "label": "A document to go and get",
+      "values": "the kind of document",
+      "desc": "A drawing, floorplan or spec the sender names and the deal does not hold."
+    },
+    {
+      "key": "points_at_artifact",
+      "label": "Names a document",
+      "values": "the kind of document",
+      "desc": "The line refers to a drawing or file, whether or not we hold it."
+    }
   ]
 }

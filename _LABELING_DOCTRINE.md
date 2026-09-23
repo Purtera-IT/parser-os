@@ -135,6 +135,28 @@ Only means anything under its label. Show the label, always.
   and `wants` are judgements. They ship as labels first, become heads when
   there are enough of them.
 
+## Every rule here is a head waiting for labels
+
+The readings on an atom are heads, one per key, listed in
+`app/core/atom_types.json` under `reads`. A regex fills each one TODAY at low
+confidence with `source: "rule"`, for one purpose: to put a guess in front of
+a labeler. Confirmations and drops are the training set; the head replaces the
+rule, and the rule stops deciding anything.
+
+| head | fills today | why a keyword list cannot hold it |
+| --- | --- | --- |
+| `small_talk` | pleasantry/handoff patterns | it hid "I will get a conversation going with the club owner" -- the deal's decision maker -- because the words looked like banter |
+| `job_scale` | "small job", "quick install" | "a one-door retrofit" and "nothing fancy" say the same thing and match nothing |
+| `expansion` | "lead to many more" | the same fact arrives as "they have 40 clubs" |
+| `commitment` | "I will …" | a promise can be a question ("want me to call the owner?") |
+| `introduces_party` | role words after "call/conversation with" | the role is often implied: "I'll talk to Gary, he signs" |
+| `chase` | "as discussed", "see attached" | whether it is missing depends on what the deal holds |
+| `needs_artifact` | a picture word plus a link | "send the drawing over" names no file type |
+
+A drop is worth as much as a confirmation: a rule can only produce positives,
+so "no, that is not small talk" is a label only a human can leave, and it is
+what stops the head inheriting the pattern's blind spots.
+
 ## Heads this implies (not yet built)
 
 | head | decides | why a rule cannot |
