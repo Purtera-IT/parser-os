@@ -24,12 +24,16 @@ def _atom(text: str, value: dict | None = None, atom_type: AtomType = AtomType.d
     )
 
 
-def test_the_job_size_is_a_fact_even_in_a_throwaway_sentence():
+def test_the_job_size_is_what_the_sentence_MEANS_not_a_new_atom():
+    """Nobody said "the sender calls this a small job" -- it is what their
+    sentence means, so it rides on that sentence. A head reads an atom and
+    says what it implies; that is the shape it has to learn."""
     src = _atom(ASK)
     made = extract_deal_signals([src], project_id="p")
-    scale = next(a for a in made if a.value["kind"] == "job_scale")
-    assert scale.value["scale"] == "small"
-    assert scale.value["quote"] == ASK
+    assert made == []  # no sentence invented
+    read = next(r for r in src.value["reads"] if r["key"] == "job_scale")
+    assert read["value"] == "small" and read["source"] == "rule"
+    assert read["why"] == "small job"
     # and the sentence it came from is no longer small talk
     assert src.value["signals"] == ["scale:small"]
     assert mark_chatter([src]) == 0
@@ -39,7 +43,9 @@ def test_a_diagram_we_do_not_hold_becomes_something_to_go_and_get():
     url = DIAGRAM.split(" ", 1)[1]
     src = _atom(DIAGRAM, {"kind": "note_field_image", "media_type": "image", "image_url": url})
     made = extract_deal_signals([src], project_id="p", filenames=["m.eml", "010289-note-The Ask w diagram link.txt"])
+    # a drawing we do not hold is real WORK, so it stays an item of its own
     dep = next(a for a in made if a.value["kind"] == "missing_artifact")
+    assert next(r for r in src.value["reads"] if r["key"] == "points_at_artifact")["value"] == "diagram"
     assert dep.atom_type == AtomType.dependency
     assert dep.value["artifact_kind"] == "diagram" and dep.value["url"] == url
     # a mail NAMED "…diagram link.txt" is not the diagram; a real drawing is
@@ -48,14 +54,15 @@ def test_a_diagram_we_do_not_hold_becomes_something_to_go_and_get():
     assert not [a for a in have if a.value["kind"] == "missing_artifact"]
 
 
-def test_room_to_grow_is_recorded_not_hidden():
+def test_room_to_grow_is_recorded_on_the_line_that_says_it():
     src = _atom(GROW)
-    made = extract_deal_signals([src], project_id="p")
-    assert [a.value["kind"] for a in made] == ["expansion_signal"]
+    assert extract_deal_signals([src], project_id="p") == []
+    assert [r["key"] for r in src.value["reads"]] == ["expansion"]
     assert mark_chatter([src]) == 0
 
 
 def test_pure_courtesy_is_still_small_talk():
     src = _atom("Thank you for bringing this our way.")
     assert extract_deal_signals([src], project_id="p") == []
+    assert not (src.value or {}).get("reads")
     assert mark_chatter([src]) == 1

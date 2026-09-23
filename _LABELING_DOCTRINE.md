@@ -12,6 +12,39 @@ A line torn off its label, its speaker and its message is a fragment, and
 nobody — human or head — can label a fragment. "Relay" means nothing;
 "Provided by us → Relay, said by CDW to us" is a fact.
 
+## What an atom is, and what it is not
+
+An atom is **a statement someone made**, anchored where they said it: a span,
+a speaker, a document, a line.
+
+What an atom MEANS is not another atom. "The sender calls this a small job"
+was minted as a sibling of the sentence it came from -- a card with no
+speaker, no line and nothing in the document to highlight, and a labeler
+correctly asked what it was. The fact was right; the atom was invented.
+
+So a reading rides on the sentence it was read out of, as ``reads``:
+
+```
+atom   "Here are the details for the small job I was discussing earlier."
+reads  job_scale = small          (why: "small job")
+       points_at_artifact = none
+wants  chase-conversation
+```
+
+This is also the shape a head has to learn: **a head reads an atom and says
+what it implies.** Today a regex fills `reads` -- that is scaffolding, and it
+exists only to put a first label in front of a human. A head trained on those
+labels answers from meaning, so "a quick one-door install" lands where no
+pattern of mine would have.
+
+Deal Kit consumes the reading, not the prose: a small job changes how many PMs
+it plans for, which rate card applies, how much site time to assume.
+
+**Work is the exception.** "Go and get the diagram we do not hold" is not a
+restatement of anything -- nobody said it, and it is not what a sentence
+means, it is something to do. Work items stay rows of their own, pointing at
+the atom that caused them.
+
 ## The three questions
 
 A type alone cannot carry what a PM knows when they read a sentence. Three
