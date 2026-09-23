@@ -36,6 +36,24 @@ _ARTIFACT_WORD_RE = re.compile(
     re.I,
 )
 
+#: Someone undertakes to do something. Deal Kit cares who owes what, and a
+#: promise conditional on OUR answer is a task on us before it is one on them.
+_PROMISE_RE = re.compile(
+    r"(?P<who>\bi\b|\bwe\b)\s*(?:'ll|will|shall|am going to|are going to)\s+(?P<what>[a-z][^.,;]{4,80})",
+    re.I,
+)
+
+#: A party who is not in this thread being brought into it: the club owner,
+#: the landlord, the installer. Live 010288's decision maker appears exactly
+#: once, in a sentence a pipeline-chatter rule had hidden.
+_INTRODUCES_RE = re.compile(
+    r"\b(?:conversation|call|intro(?:duction)?|loop(?:ing)? in|put you in touch|speak|talk)\b"
+    r"[^.]{0,40}?\b(?:with|to)\s+(?:the\s+|their\s+|our\s+)?"
+    r"(?P<party>club owner|owner|landlord|tenant|gm\b|general manager|facilities manager|facilities|"
+    r"installer|electrician|architect|director|principal|president|decision maker|end user|client)",
+    re.I,
+)
+
 #: Room to grow on this account: real, worth knowing, never scope.
 _EXPANSION_RE = re.compile(
     r"\b(?:lead to (?:many )?more|more of the same|many more of the same|"
@@ -175,6 +193,18 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
                 _reads(atom, "needs_artifact", what, why=f"names a {what} the deal does not hold",
                        confidence=0.7)
                 _value(atom)["artifact_url"] = url or None
+
+        pm = _PROMISE_RE.search(head)
+        if pm:
+            _mark(atom, "promise")
+            _reads(atom, "commitment", " ".join(pm.group("what").split())[:80],
+                   why=" ".join(pm.group(0).split())[:90], confidence=0.7)
+
+        im = _INTRODUCES_RE.search(head)
+        if im:
+            _mark(atom, "introduces_party")
+            _reads(atom, "introduces_party", im.group("party").lower(),
+                   why="brings someone into the deal who is not in this thread", confidence=0.66)
 
         if _EXPANSION_RE.search(head):
             _mark(atom, "expansion")

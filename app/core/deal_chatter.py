@@ -1,14 +1,15 @@
-"""Relationship talk is not scope.
+"""Relationship talk is a JUDGEMENT, so it is a head, not a rule.
 
-A deal thread is mostly people being people: thanks, banter, pipeline hopes,
-"sending this to my solutions team". Those lines are real — they belong in the
-record and they are evidence of who said what — but they are not statements
-about the work, and a PM asked to label them is being asked a question with no
-answer. Live 010289: 11 of 49 atoms were this.
+A deal thread is mostly people being people, and a PM should not be asked to
+type "Thank you for bringing this our way". But deciding what counts is
+exactly the judgement a pattern cannot make: this module once hid "I will get
+a conversation going with the club owner" -- the sentence naming the deal's
+decision maker -- because it contained the phrase "get a conversation going".
 
-So we mark, never delete. ``mark_chatter`` sets ``chatter`` on the value and
-flags the atom; the labeling walk hides it, the heads skip it, and the audit
-trail still has it.
+So nothing here hides anything any more. The rule leaves a PREDICTION on the
+atom (``reads: small_talk``) that a labeler confirms or drops, and those
+labels train the head that replaces it. Until the head exists, an atom is
+hidden from the queue only when a HUMAN has labeled it ``small_talk``.
 """
 from __future__ import annotations
 
@@ -64,6 +65,17 @@ _SUBSTANCE_RE = re.compile(
 )
 
 
+#: "I will get a conversation going with the club owner" is a PROMISE. It
+#: happens to contain a phrase that also shows up in pipeline chatter, and the
+#: rule hid the sentence that named the deal's decision maker. A first-person
+#: undertaking is never small talk, whatever else it sounds like.
+_PROMISE_RE = re.compile(
+    r"\b(?:i|we)\s*(?:'ll|will|can|shall)\s+\w+|\b(?:i'?ll|we'?ll)\b|"
+    r"\b(?:i|we)\s+(?:am|are)\s+going\s+to\b|\blet me\s+\w+",
+    re.I,
+)
+
+
 def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     """Is this line relationship talk rather than a statement about the work?
 
@@ -79,17 +91,20 @@ def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
             return False
     if _SUBSTANCE_RE.search(t):
         return False
+    if _PROMISE_RE.search(t):
+        return False
     return bool(_PIPELINE_RE.search(t) or _HANDOFF_RE.search(t) or _SOCIAL_RE.match(t))
 
 
 def mark_chatter(atoms: list[Any]) -> int:
-    """Flag relationship talk in place. Returns how many were marked.
+    """Leave a small-talk PREDICTION on prose that reads as relationship talk.
+
+    Returns how many were marked. Nothing is hidden and no type changes: the
+    labeler sees the guess as a chip and has the last word.
 
     Only prose atoms are considered: a list item, a BOM line, a site or a
     person is never chatter, however chatty the sentence around it was.
     """
-    from app.core.schemas import AtomType
-
     prose_types = {"scope_item", "deal_metadata", "customer_instruction"}
     marked = 0
     for atom in atoms:
@@ -98,8 +113,10 @@ def mark_chatter(atoms: list[Any]) -> int:
         if at not in prose_types:
             continue
         val = getattr(atom, "value", None)
-        if not isinstance(val, dict) or val.get("list_item") or val.get("chatter"):
+        if not isinstance(val, dict) or val.get("list_item"):
             continue
+        if any(r.get("key") == "small_talk" for r in val.get("reads") or ()):
+            continue  # already predicted
         # A sentence a fact was read out of is never small talk, whatever it
         # sounds like: "Here are the details for the small job" says the job
         # is small, and hiding it throws that away.
@@ -108,16 +125,15 @@ def mark_chatter(atoms: list[Any]) -> int:
         text = getattr(atom, "raw_text", "") or ""
         if not is_chatter(text, entity_keys=list(getattr(atom, "entity_keys", None) or [])):
             continue
-        val["chatter"] = True
-        val["retagged_from"] = val.get("retagged_from") or at
-        try:
-            atom.atom_type = AtomType.deal_metadata
-        except Exception:
-            atom.atom_type = "deal_metadata"
+        # A prediction, not a verdict: the atom stays in the queue, keeps its
+        # type, and carries the guess for a human to confirm or drop.
+        from app.core.deal_signals import _reads
+
+        _reads(atom, "small_talk", True, why="reads as relationship talk, not a statement about the work",
+               confidence=0.5)
         flags = list(getattr(atom, "review_flags", None) or [])
-        for f in (CHATTER_FLAG, "head_exclude"):
-            if f not in flags:
-                flags.append(f)
+        if CHATTER_FLAG not in flags:
+            flags.append(CHATTER_FLAG)
         atom.review_flags = flags
         marked += 1
     return marked
