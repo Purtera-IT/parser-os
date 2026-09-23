@@ -162,6 +162,31 @@ A drop is worth as much as a confirmation: a rule can only produce positives,
 so "no, that is not small talk" is a label only a human can leave, and it is
 what stops the head inheriting the pattern's blind spots.
 
+## A picture is content
+
+A drawing is not a decoration on an atom -- it is often the only complete
+statement in the document. 010288's door-access diagram says which side the
+reader is on, where the RS232 kit sits and who supplies what, and none of
+that is written in any sentence.
+
+Three things follow, and each one cost a day to learn:
+
+* **Find it wherever it was written.** The parser could see a picture in one
+  shape: a note field whose whole value was a bare link. The same drawing in
+  an email body, or written `Diagram: <link> (rev 1)`, produced nothing.
+  `app/core/linked_pictures.py` now runs over every atom from every parser.
+* **A line carrying a picture is never small talk.** However chatty the words
+  around it are, the line is the only pointer to the drawing.
+* **The picture rides on the sentence, like every other reading.** It is
+  ``image_url`` on the atom whose text names it, plus a ``points_at_artifact``
+  read -- not an atom of its own. Same rule as everything else here.
+
+And the deal should end up HOLDING it. `Diagram:` and a link raises a chase
+item -- *go and get the drawing we do not hold*. The API copies the picture
+into the deal's own storage on first view, which is that chase item being
+worked: it renders with no token, and it survives the vendor deleting the
+file. A link is a promise; a copy is the artifact.
+
 ## Heads this implies (not yet built)
 
 | head | decides | why a rule cannot |
