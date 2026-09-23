@@ -21,9 +21,8 @@ def _atom(text: str, atom_type: AtomType = AtomType.scope_item, value: dict | No
 def test_relationship_talk_is_chatter():
     for t in [
         "Thank you for bringing this our way.",
-        "Sending it over to my solutions team now and will get back to you with follow up questions from them!",
+        "Sending it over to my solutions team now!",
         "If this is a successful implementation, it could lead to many more of the same opportunity.",
-        "If you all would be able to do something like this, I will get a conversation going with the club owner.",
         "Here are the details for the small job I was discussing earlier.",
         "Sorry, left that part off.",
     ]:
@@ -50,8 +49,26 @@ def test_marking_keeps_the_atom_and_spares_list_items():
     ]
     assert mark_chatter(atoms) == 1
     assert len(atoms) == 3  # nothing is deleted
-    assert atoms[0].value["chatter"] is True
-    assert "chatter" in atoms[0].review_flags and "head_exclude" in atoms[0].review_flags
-    assert atoms[0].atom_type.value == "deal_metadata"
+    assert any(r["key"] == "small_talk" for r in atoms[0].value["reads"])
+    assert "chatter" in atoms[0].review_flags
+    assert atoms[0].atom_type.value == "scope_item"  # the rule does not retype
     assert not atoms[1].value.get("chatter") and not atoms[2].value.get("chatter")
     assert mark_chatter(atoms) == 0  # idempotent
+
+
+def test_a_promise_is_never_hidden_as_banter():
+    """The rule hid "I will get a conversation going with the club owner" --
+    the only sentence naming this deal's decision maker -- because it contains
+    a phrase that also shows up in pipeline chatter. A judgement a pattern
+    cannot make is a head, so the rule now only PREDICTS."""
+    promise = _atom("If you all would be able to do something like this, I will get a conversation going with the club owner.")
+    assert not is_chatter(promise.raw_text)
+    assert mark_chatter([promise]) == 0
+
+    banter = _atom("Thank you for bringing this our way.")
+    assert mark_chatter([banter]) == 1
+    # nothing is hidden and nothing is retyped: it is a guess on the card
+    assert banter.atom_type.value == "scope_item"
+    read = next(r for r in banter.value["reads"] if r["key"] == "small_talk")
+    assert read["value"] is True and read["confidence"] <= 0.5
+    assert not banter.value.get("chatter")

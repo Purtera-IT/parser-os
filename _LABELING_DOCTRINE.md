@@ -117,6 +117,11 @@ Only means anything under its label. Show the label, always.
 
 ## What follows from this
 
+* **A rule may predict; only a human may hide.** Small talk is a judgement,
+  so the rule leaves `reads: small_talk` on the card and nothing disappears
+  from the queue until a labeler says `small_talk`. The regex that used to
+  decide hid a promise naming the deal's decision maker, and no one would
+  have known: a hidden atom leaves no trace, a wrong type is visible.
 * **Never filter before extracting.** Read the facts out of a sentence first;
   only what is left over is small talk. We lost the job size, the diagram and
   the account signal by filtering first.
@@ -161,6 +166,7 @@ what stops the head inheriting the pattern's blind spots.
 
 | head | decides | why a rule cannot |
 | --- | --- | --- |
+| `small_talk` | is this relationship talk or a statement about the work? | it hid "I will get a conversation going with the club owner" -- the deal's decision maker -- on the phrase "get a conversation going" |
 | `about` | deal / account / partner / internal | needs to know what the job is |
 | `wants` | the five values above | depends on what the deal already holds |
 | dangling reference | "as discussed", "attached", "the diagram" → is it here? | the phrase is easy, the resolution is not |
