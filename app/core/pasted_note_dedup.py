@@ -8,6 +8,20 @@ the same thing. Live 010289: 6 of 49 atoms were one message counted twice.
 The email is the original: it has a sender, a timestamp and a thread. The note
 copy folds into it and leaves its provenance behind, so "this is also in the
 note AJ pasted" survives without a second card to label.
+
+COPY-OF IS A FACT ABOUT A DOCUMENT, NOT ABOUT A SENTENCE. This matched atom
+by atom once, and a document could come out half folded: live 010288 left
+three of Alec's sentences alone in a file of their own, at the bottom of the
+atom list, attributed to the man who pasted them. Nobody chose that -- it is
+what per-atom matching produces when a few atoms miss, and it is worse than
+either folding the document or keeping it whole.
+
+So the question is asked once per document pair. Above ``FOLD_BAR`` every
+matching atom folds; below ``SEPARATE_BAR`` nothing does; in between the pair
+is reported rather than guessed at, because an ambiguous copy is a card for a
+person and not a coin flip made in private.
+
+See ``_LABELING_DOCTRINE.md`` -> "One message, one record".
 """
 from __future__ import annotations
 
@@ -59,54 +73,130 @@ _MIN_KEY_LEN = 4
 _MIN_CONTAINS_LEN = 40
 
 
-def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
-    """Fold note atoms onto the identical email atom. Returns ``(kept,
-    dropped)``; the email survivor records ``also_in_note``."""
-    by_key: dict[str, Any] = {}
-    for atom in atoms:
-        if not _is_email_atom(atom) or _is_note_atom(atom):
-            continue
-        k = _key(atom)
-        if len(k) >= _MIN_KEY_LEN:
-            by_key.setdefault(k, atom)
+#: Share of a copy's foldable atoms that must be found in the original before
+#: the whole document folds. High: folding a document that merely quotes
+#: another loses a real source.
+FOLD_BAR = 0.8
 
-    # A CRM note pastes the mail UNDER its own title, so its first line reads
-    # "The Ask w diagram link Hey AJ, Here are the details for the small job
-    # I was discussing earlier." -- the same sentence with a prefix glued on,
-    # which an exact key misses. Live 010288 showed it as a second card.
-    def _contained(note_key: str) -> Any | None:
-        if len(note_key) < _MIN_CONTAINS_LEN:
-            return None
-        for key, atom in by_key.items():
-            if len(key) >= _MIN_CONTAINS_LEN and key in note_key:
-                return atom
+#: Below this the two are simply different documents.
+SEPARATE_BAR = 0.4
+
+#: What a document is worth as an original. An email has a sender, a
+#: timestamp and a thread; a note has whoever pasted it. Never decided by
+#: similarity -- that is how the man who pasted a sentence became the man who
+#: said it.
+ORIGINALITY = {"email": 3, "note": 1}
+
+
+def _doc_kind(atoms: list[Any]) -> str:
+    """What a whole document is, by what most of its atoms look like."""
+    mail = sum(1 for a in atoms if _is_email_atom(a) and not _is_note_atom(a))
+    note = sum(1 for a in atoms if _is_note_atom(a))
+    if mail and mail >= note:
+        return "email"
+    return "note" if note else "other"
+
+
+def _foldable(atom: Any) -> bool:
+    return len(_key(atom)) >= _MIN_KEY_LEN
+
+
+def _twin(note_key: str, by_key: dict[str, Any]) -> Any | None:
+    """The original of this line: the same text, or the same text with the
+    note's own title glued on the front (a paste lands under a heading)."""
+    hit = by_key.get(note_key)
+    if hit is not None:
+        return hit
+    if len(note_key) < _MIN_CONTAINS_LEN:
         return None
+    for key, atom in by_key.items():
+        if len(key) >= _MIN_CONTAINS_LEN and key in note_key:
+            return atom
+    return None
 
-    kept: list[Any] = []
-    dropped: list[Any] = []
+
+def _fold(copy_atom: Any, original: Any) -> None:
+    """Record where else this sentence appeared, and keep its evidence."""
+    val = _value(original)
+    notes = list(val.get("also_in_note") or [])
+    ref = str(getattr(copy_atom, "artifact_id", "") or "")
+    if ref and ref not in notes:
+        notes.append(ref)
+    val["also_in_note"] = notes
+    original.value = val
+    try:
+        refs = list(getattr(original, "source_refs", None) or [])
+        for r in list(getattr(copy_atom, "source_refs", None) or []):
+            if r not in refs:
+                refs.append(r)
+        original.source_refs = refs
+    except Exception:
+        pass
+
+
+def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Fold a document that is a copy of another onto the original.
+
+    Returns ``(kept, dropped)``. Each surviving original records
+    ``also_in_note``; a line the copy ADDED keeps its own document and is
+    flagged ``added_when_filed``, because whoever typed it said it.
+    """
+    by_doc: dict[str, list[Any]] = {}
     for atom in atoms:
-        original = by_key.get(_key(atom)) if _is_note_atom(atom) else None
-        if original is None and _is_note_atom(atom):
-            original = _contained(_key(atom))
-        if original is None or original is atom:
-            kept.append(atom)
+        by_doc.setdefault(str(getattr(atom, "artifact_id", "") or ""), []).append(atom)
+
+    kinds = {doc: _doc_kind(items) for doc, items in by_doc.items()}
+    originals = {
+        doc: {_key(a): a for a in items if _foldable(a)}
+        for doc, items in by_doc.items()
+        if ORIGINALITY.get(kinds[doc], 0) > 0
+    }
+
+    folded: set[int] = set()
+    dropped: list[Any] = []
+    for doc, items in by_doc.items():
+        rank = ORIGINALITY.get(kinds[doc], 0)
+        candidates = [a for a in items if _foldable(a)]
+        if not candidates:
             continue
-        val = _value(original)
-        notes = list(val.get("also_in_note") or [])
-        ref = str(getattr(atom, "artifact_id", "") or "")
-        if ref and ref not in notes:
-            notes.append(ref)
-        val["also_in_note"] = notes
-        original.value = val
-        try:
-            refs = list(getattr(original, "source_refs", None) or [])
-            for r in list(getattr(atom, "source_refs", None) or []):
-                if r not in refs:
-                    refs.append(r)
-            original.source_refs = refs
-        except Exception:
-            pass
-        dropped.append(atom)
+
+        # Ask once, per document pair, against every document that outranks
+        # this one as an original.
+        best, best_share, best_pairs = None, 0.0, {}
+        for other, by_key in originals.items():
+            if other == doc or ORIGINALITY.get(kinds[other], 0) <= rank:
+                continue
+            pairs = {id(a): _twin(_key(a), by_key) for a in candidates}
+            pairs = {k: v for k, v in pairs.items() if v is not None}
+            share = len(pairs) / len(candidates)
+            if share > best_share:
+                best, best_share, best_pairs = other, share, pairs
+
+        if best is None or best_share < SEPARATE_BAR:
+            continue
+        if best_share < FOLD_BAR:
+            # Neither one document nor two. Say so; do not split it.
+            for a in items:
+                v = _value(a)
+                v["maybe_copy_of"] = {"document": best, "share": round(best_share, 2)}
+                a.value = v
+            continue
+
+        for a in candidates:
+            original = best_pairs.get(id(a))
+            if original is None or original is a:
+                # The copy said something the original never did: it belongs
+                # to whoever typed it, at this document's time.
+                v = _value(a)
+                v["added_when_filed"] = True
+                v["copy_of_document"] = best
+                a.value = v
+                continue
+            _fold(a, original)
+            folded.add(id(a))
+            dropped.append(a)
+
+    kept = [a for a in atoms if id(a) not in folded]
     return kept, dropped
 
 
