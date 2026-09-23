@@ -1564,6 +1564,30 @@ def compile_project(
     # req_id / sku / email. Drops milestone_phase from 23→6, requirement
     # from 19→5, etc., losslessly (loser fields merged into winner).
     with telemetry.stage("semantic_dedup", input_count=len(atoms)) as stage:
+        # A HubSpot note that is a pasted email is the same message, not a
+        # second source -- and this has to decide it BEFORE any general dedup
+        # does, because a general pass picks a winner by similarity and knows
+        # nothing about which copy is the original.
+        #
+        # Live 010288: AJ pasted Alec's mail into a note six days later. The
+        # email parser emitted all three sentences of one line; semantic_dedup
+        # ran first, collapsed each pair, and kept the NOTE copy. So the note
+        # survived as a second document, its three sentences sat alone at the
+        # bottom of the atom list, and their speaker was AJ -- the man who
+        # pasted them -- instead of Alec, who said them. Whether "we provide
+        # the parts that connect the PC to the relay" meant us or CDW became
+        # unanswerable, and that is a BOM-sized question.
+        try:
+            from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
+
+            atoms, _pasted = collapse_pasted_note_duplicates(atoms)
+            if _pasted:
+                warnings.append(
+                    f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
+
         # A conversation repeats itself; two tellings of one commitment are one
         # commitment. Speech only — two similar lines in a document are two facts.
         from app.core.semantic_dedup import collapse_repeated_speech
@@ -1594,18 +1618,6 @@ def compile_project(
             except Exception as exc:
                 warnings.append(f"WARNING: party_address_veto failed: {type(exc).__name__}: {exc}")
             atoms = semantic_dedup_atoms(atoms)
-            # A HubSpot note that is a pasted email is the same message, not a
-            # second source. Fold the note copy onto the mail it came from.
-            try:
-                from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
-
-                atoms, _pasted = collapse_pasted_note_duplicates(atoms)
-                if _pasted:
-                    warnings.append(
-                        f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
-                    )
-            except Exception as exc:
-                warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
             # Cross-type pass: the same sentence emitted as raw_table_row +
             # scope_item + service_line + task collapses to the single most-
             # specific type. semantic_dedup keys with atom_type so it can't
