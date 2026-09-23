@@ -133,3 +133,14 @@ def test_an_assistants_draft_is_never_gold():
     labelers = {json.loads(r["provenance"]).get("labeler") for r in rows if r["relation"] == "about"}
     assert labelers == {"developer@purtera-it.com"}
     assert not [r for r in rows if r["relation"] == "edge_relation"]
+
+
+def test_a_reading_the_parser_proposed_and_a_human_removed_is_the_negative():
+    # A chip nobody ticked may simply not have been considered. A chip the
+    # parser ticked and the labeler cleared is a decision -- and without it a
+    # presence task has one class and cannot train at all.
+    rows = _rows(reads_set={"job_scale": "small"}, reads_shown=["job_scale", "small_talk"])
+    by = {r["relation"]: r for r in rows}
+    assert by["reads:job_scale"]["label"] == "small"
+    assert by["reads:small_talk"]["label"] == "absent"
+    assert json.loads(by["reads:small_talk"]["provenance"])["removed_by_human"] is True

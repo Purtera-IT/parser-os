@@ -74,6 +74,11 @@ def _closed_read_values() -> dict[str, set[str]]:
 
 CLOSED_READS = _closed_read_values()
 PRESENT = "present"
+#: A reading the parser proposed and a human took off. The only negative we
+#: can state without assuming: a chip nobody ticked may simply not have been
+#: considered, but a chip the parser ticked and the labeler cleared is a
+#: decision. Without it a presence task has one class and cannot train.
+ABSENT = "absent"
 
 
 @dataclass
@@ -214,6 +219,9 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     if not isinstance(reads, dict):
         return rows
     shown = {str(k) for k in (lb.get("reads_shown") or [])}
+    for key in sorted(shown - {str(k) for k in reads}):
+        rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
+                              {"parser_proposed": True, "removed_by_human": True}))
     for key, value in reads.items():
         key = str(key)
         relation = f"reads:{key}"
