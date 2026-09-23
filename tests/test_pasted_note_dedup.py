@@ -37,3 +37,26 @@ def test_two_emails_saying_the_same_thing_are_still_two_sources():
     b = _atom(line, "art_m2", {"kind": "email_body_line", "message_index": 0})
     kept, dropped = collapse_pasted_note_duplicates([a, b])
     assert not dropped and len(kept) == 2
+
+
+def test_a_note_that_glues_its_title_onto_the_mail_is_still_the_same_line():
+    """Live 010288: the note pasted the ask under its own title, so the line
+    read "The Ask w diagram link Hey AJ, Here are the details…" -- the same
+    sentence with a prefix, and it showed as a second card."""
+    line = "Here are the details for the small job I was discussing earlier."
+    mail = _atom(line, "art_mail", {"kind": "email_body_line", "message_index": 0})
+    note = _atom(f"The Ask w diagram link Hey AJ, {line}", "art_note", {"kind": "hubspot_note_body"},
+                 ["hubspot_note_parser"])
+    kept, dropped = collapse_pasted_note_duplicates([mail, note])
+    assert dropped == [note] and kept == [mail]
+    assert mail.value["also_in_note"] == ["art_note"]
+
+
+def test_a_short_line_inside_a_longer_one_is_not_collapsed():
+    # "Relay" appears inside plenty of sentences; only a substantial line is
+    # safe to treat as the same statement.
+    mail = _atom("Relay", "art_mail", {"kind": "email_body_line", "message_index": 0})
+    note = _atom("The club supplies the Relay and the lock", "art_note", {"kind": "hubspot_note_body"},
+                 ["hubspot_note_parser"])
+    kept, dropped = collapse_pasted_note_duplicates([mail, note])
+    assert dropped == [] and len(kept) == 2

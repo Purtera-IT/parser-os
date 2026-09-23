@@ -54,6 +54,10 @@ def _is_email_atom(atom: Any) -> bool:
 #: bill-of-material items, high enough to skip acknowledgements.
 _MIN_KEY_LEN = 4
 
+#: Long enough that one sentence inside another is the same sentence, not a
+#: coincidence of common words.
+_MIN_CONTAINS_LEN = 40
+
 
 def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Fold note atoms onto the identical email atom. Returns ``(kept,
@@ -66,10 +70,24 @@ def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[A
         if len(k) >= _MIN_KEY_LEN:
             by_key.setdefault(k, atom)
 
+    # A CRM note pastes the mail UNDER its own title, so its first line reads
+    # "The Ask w diagram link Hey AJ, Here are the details for the small job
+    # I was discussing earlier." -- the same sentence with a prefix glued on,
+    # which an exact key misses. Live 010288 showed it as a second card.
+    def _contained(note_key: str) -> Any | None:
+        if len(note_key) < _MIN_CONTAINS_LEN:
+            return None
+        for key, atom in by_key.items():
+            if len(key) >= _MIN_CONTAINS_LEN and key in note_key:
+                return atom
+        return None
+
     kept: list[Any] = []
     dropped: list[Any] = []
     for atom in atoms:
         original = by_key.get(_key(atom)) if _is_note_atom(atom) else None
+        if original is None and _is_note_atom(atom):
+            original = _contained(_key(atom))
         if original is None or original is atom:
             kept.append(atom)
             continue
