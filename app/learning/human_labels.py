@@ -155,6 +155,11 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
             "parser_type": lb.get("parser_type"),
             "is_new_type": bool(lb.get("is_new_type")),
             "hints": _as_list(lb.get("hints")),
+            # The exact thing behind each chip: the words, the heading, the
+            # atom above. Nothing trains on these yet -- they are the span
+            # supervision a span head will need, and throwing them away now
+            # means labeling this deal twice later.
+            "hint_refs": [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)][:20],
             "doc_type": lb.get("doc_type"),
             "filename": lb.get("filename"),
             "page": lb.get("page"),

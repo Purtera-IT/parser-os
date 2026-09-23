@@ -144,3 +144,11 @@ def test_a_reading_the_parser_proposed_and_a_human_removed_is_the_negative():
     assert by["reads:job_scale"]["label"] == "small"
     assert by["reads:small_talk"]["label"] == "absent"
     assert json.loads(by["reads:small_talk"]["provenance"])["removed_by_human"] is True
+
+
+def test_the_pointers_a_labeler_clicks_are_kept_for_the_span_head():
+    # Nothing trains on these yet. Dropping them now means labeling the same
+    # deal twice when a span head exists.
+    rows = _rows(hint_refs=[{"hint": "own_words", "kind": "text", "text": "small job"}])
+    prov = json.loads([r for r in rows if r["relation"] == "atom_type"][0]["provenance"])
+    assert prov["hint_refs"][0]["text"] == "small job"
