@@ -65,6 +65,14 @@ from app.learning.head_registry import HeadMeta, HeadRegistry
 # a few thousand well-spread rows more silver adds very little to a kNN head.
 MAX_TRAIN_ROWS = int(os.getenv("RETRAIN_MAX_TRAIN_ROWS", "8000"))
 
+#: Rows a person wrote. "pm" is a correction in natural language; "human" is
+#: somebody sitting in the atom labeler answering a card. Both are scarce,
+#: both are the only thing that can lift a head past the teacher it distills,
+#: and the cap must never spend one to make room for a machine label. This
+#: listed only "pm", so every label written in the labeler was competing with
+#: silver for space.
+GOLD_TEACHERS = frozenset({TEACHER_PM, "human"})
+
 # Relations that must never enter the eval-gated neural retrain loop.
 # ``pdf_image_veto`` rows are review-queue flags (always label='meaningful' by
 # construction) — training on them would invent a nonsense head. Distilled
@@ -76,7 +84,7 @@ NON_TRAINING_RELATIONS = frozenset({
 
 
 def _cap_train_rows(rows: list, limit: int = MAX_TRAIN_ROWS) -> list:
-    """Bound a relation's train set, keeping EVERY PM-gold row.
+    """Bound a relation's train set, keeping EVERY human-written row.
 
     Gold is scarce (single digits) and is the only thing that can lift a head
     past the teacher it distills; silver is abundant and interchangeable. So the
@@ -85,8 +93,8 @@ def _cap_train_rows(rows: list, limit: int = MAX_TRAIN_ROWS) -> list:
     """
     if limit <= 0 or len(rows) <= limit:
         return rows
-    gold = [r for r in rows if getattr(r, "teacher", "") == TEACHER_PM]
-    silver = [r for r in rows if getattr(r, "teacher", "") != TEACHER_PM]
+    gold = [r for r in rows if getattr(r, "teacher", "") in GOLD_TEACHERS]
+    silver = [r for r in rows if getattr(r, "teacher", "") not in GOLD_TEACHERS]
     room = max(0, limit - len(gold))
     silver.sort(key=lambda r: getattr(r, "created_at", 0.0), reverse=True)
     return gold + silver[:room]

@@ -42,13 +42,31 @@ _TEACHER_RANK = {"human": 4, "pm": 3, "pipeline": 2, "llm": 1, "deepseek": 1, ""
 
 #: The tasks the backbone trains on. Everything else in the DBs (edge tables,
 #: span work) has its own machinery and is excluded on purpose.
+def _reads_tasks() -> tuple[str, ...]:
+    """One task per reading in the registry.
+
+    A reading whose values are a fixed set trains as those classes. One whose
+    value is a phrase ("what was promised") trains as presence -- the phrase
+    itself is a span problem and has its own machinery. Either way the
+    negative class is `absent`, and it comes only from a reading the parser
+    proposed and a human removed.
+    """
+    from app.core.atom_type_registry import load_registry
+
+    return tuple(sorted(f"reads:{r.get('key')}" for r in load_registry().get("reads") or []))
+
+
 DEFAULT_TASKS = (
     "atom_type",
     "atom_type_coarse",
     "facet",
     "service_routing",
     "admission",
-)
+    # What a labeler answers beside the type. These reached the database for
+    # weeks and never reached a task, so the backbone learned none of them.
+    "about",
+    "wants",
+) + _reads_tasks()
 
 
 @dataclass(frozen=True)
