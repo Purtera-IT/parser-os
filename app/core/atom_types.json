@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-21",
+  "version": "2026-09-23",
   "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
   "keep": {
     "name": "_keep",
@@ -489,6 +489,16 @@
       "train_rows": 1881
     },
     {
+      "name": "source_caveat",
+      "coarse": "meta",
+      "facet": "META",
+      "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it. \"Note the diagram is labeled by the vendor/Huzzard, and the 'Installer Supplied Components' are not accurate, as we provide several of those pieces.\" It is not scope and must never reach the SOW -- and it must travel with the document it is about, because anything that reads that document without it builds from a legend we already know is wrong.",
+      "label_space": "extractor",
+      "status": "v2",
+      "value_light": false,
+      "train_rows": 0
+    },
+    {
       "name": "eval_criterion",
       "coarse": "quality",
       "facet": "META",
@@ -847,6 +857,12 @@
       "label": "It announces what follows",
       "values": "what the block is",
       "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading."
+    },
+    {
+      "key": "unreliable_part",
+      "label": "Which part of it must not be trusted",
+      "values": "the part, in the document's own words",
+      "desc": "Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
