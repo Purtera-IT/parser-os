@@ -68,3 +68,32 @@ def test_hint_chips_are_declared():
 def test_service_packs_are_declared_once():
     packs = REG["service_packs"]
     assert len(packs) == len(set(packs)) and "audio_visual" in packs and "other" in packs
+
+
+def test_a_type_declares_whether_the_supplier_question_has_an_answer():
+    """The card asked "who supplies or does it?" on EVERY type.
+
+    On a `small_talk`, a `stakeholder` or a `deal_metadata` that is a question
+    the sentence does not ask, and a question nobody can answer still invites
+    an answer. A head trained on cards where every atom was asked everything
+    learns that the axes are independent noise; one trained on cards where
+    `supplier` appears only on supply facts learns the shape of a supply fact.
+    """
+    asks = {t["name"] for t in REG["types"] if t.get("asks_supplier")}
+    assert asks, "some type must ask it"
+    # a thing someone supplies, or work someone does
+    for name in ("bom_line", "service_line", "task", "deliverable", "exclusion", "dependency"):
+        assert name in asks, f"{name} supplies something or is done by somebody"
+    # and the ones where it is meaningless
+    for name in ("small_talk", "stakeholder", "deal_metadata", "open_question", "source_caveat",
+                 "risk", "constraint", "physical_site"):
+        assert name not in asks, f"{name} does not answer 'who supplies it'"
+    assert all("asks_supplier" in t for t in REG["types"]), "every type states its answer"
+
+
+def test_a_role_that_was_never_resolved_is_a_value_not_a_blank():
+    # "Provided by Club/installer" when we ARE the installer means the club or
+    # us. Blank reads as "not answered"; this says the deal does not say.
+    keys = [s["key"] for s in REG["suppliers"]]
+    assert "unresolved" in keys
+    assert keys[:4] == ["us", "partner", "customer", "third_party"], "the existing order is stable"
