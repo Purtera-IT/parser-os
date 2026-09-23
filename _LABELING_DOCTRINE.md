@@ -233,6 +233,84 @@ a type or a `wants` says "blocked on".
 deal that is waiting for a customer and a deal that is sitting in our own
 inbox, and it is the single most useful thing a brief can lead with.
 
+## One message, one record
+
+AJ pasted Alec's mail into a HubSpot note six days later. The deal then held
+the same ask twice, and the fold that exists for exactly this folded most of
+it and left four sentences behind -- so three of Alec's sentences lived alone
+in a file of their own, at the bottom of the atom list, attributed to AJ.
+
+Nobody chose that. It is what per-atom matching produces when a few atoms
+miss: a half-folded document, which is worse than either folding it or
+keeping it whole.
+
+**Copy-of is a fact about a DOCUMENT, not about a sentence.**
+
+### The rules
+
+1. **Measure containment once, per document.** What share of B's atoms have a
+   twin in A? Above the bar, B is a copy of A and everything matching folds.
+   Never some of it.
+
+2. **Originality is ranked, never inferred from similarity.**
+
+   ```
+   email (sender + timestamp + thread) > note > pasted transcript > manual entry
+   ```
+
+   An email is the original because it has a provenance, not because a dedup
+   happened to keep it.
+
+3. **The speaker comes from the original, always.** The person who pasted is
+   not the person who spoke. This one rule is the difference between "we
+   provide the parts that connect the PC to the relay" meaning Purtera and
+   meaning CDW -- a BOM-sized question the parse made unanswerable.
+
+4. **Specific knowledge runs before generic scoring.** Any pass that KNOWS
+   something -- this is a note, this is a paste -- runs before any pass that
+   guesses by similarity. A general dedup picks a winner and knows nothing
+   about which copy is the original.
+
+5. **The copy is acknowledged, never hidden.** The surviving atom carries
+   ``also_in``; the document is listed as a copy of its original. "Did we file
+   it in HubSpot?" stays answerable without a second set of atoms to label.
+   Nothing is deleted.
+
+6. **What the copy ADDED stays, and is marked as added.** A line someone typed
+   while pasting is theirs, at the note's timestamp. It survives as a note
+   atom flagged ``added_when_filed`` -- never mixed silently into the
+   original's content.
+
+7. **A partial copy is reported, not guessed.** Comfortably above the bar,
+   fold. Comfortably below, two documents. In between, say so: "this note is
+   mostly a copy of that email, with 4 lines that are not." An ambiguous case
+   is a card to label, not a coin flip the parser makes in private.
+
+### Why the last one matters most
+
+It makes this the same shape as everything else here: the parser proposes
+``document_copy_of``, a human confirms it, and it becomes gold for a
+document-level head. That relation has no training data anywhere, and it is
+the cheapest kind to produce -- one decision per document pair, obvious to a
+person in two seconds.
+
+The ``same_as`` links between atoms are the sentence-level case of the same
+idea. This is it one level up.
+
+### The deeper fault underneath
+
+A filename is not an identity. In one afternoon a re-parse renamed every
+document in 010288 (``010289-...`` -> ``010288-...``, correcting a project-id
+offset that affects 102 of 347 deals) and broke three separate things that had
+quietly keyed off the name:
+
+* every ``label_key``, so all labels on the deal detached,
+* every ``atom_id``, so links and hint pointers detached with them,
+* every stored blob path, so 11 of 12 documents stopped resolving.
+
+Nothing errored. Identity belongs to content -- a sha, or the text itself --
+and a name is a label on it.
+
 ## A picture is content
 
 A drawing is not a decoration on an atom -- it is often the only complete
