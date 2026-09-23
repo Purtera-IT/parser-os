@@ -132,6 +132,12 @@ class NeuralHead:
         self._radius: float = self.ood_sim         # learned in-distribution floor
         self.trained: bool = False                 # learned projection engaged?
         self.n_train: int = 0
+        #: Width of the vectors this head was fitted on. A head fitted on an
+        #: embedding alone and one fitted on an embedding plus the party
+        #: feature block live in different spaces, and a query from the wrong
+        #: one is not a worse answer -- it is a different question. Recorded
+        #: so `classify` can abstain instead of answering it.
+        self.input_dim: int = 0
 
     # ── geometry ─────────────────────────────────────────────────────
     def _project(self, X: np.ndarray) -> np.ndarray:
@@ -164,6 +170,7 @@ class NeuralHead:
                 return self
             w = self._norm_weights(sample_weight, len(y))
             self.n_train = X.shape[0]
+            self.input_dim = int(X.shape[1])
             self.classes_ = sorted(set(y))
             counts = {c: y.count(c) for c in self.classes_}
 
@@ -323,7 +330,12 @@ class NeuralHead:
             # deciding it on its own calibrated-cosine path, behavior unchanged.
             if self._protos is None or len(self.classes_) < 2 or not candidates:
                 return HeadDecision(verdict=None, route_llm=True, trained=self.trained)
-            q = self._project(np.asarray(query_vec, dtype=np.float32).reshape(1, -1))[0]
+            q = np.asarray(query_vec, dtype=np.float32).reshape(1, -1)
+            # A caller that cannot build the same input this head was fitted on
+            # gets an abstain, never a guess from the wrong space.
+            if self.input_dim and q.shape[1] != self.input_dim:
+                return HeadDecision(verdict=None, route_llm=True, trained=self.trained)
+            q = self._project(q)[0]
             sims = self._protos @ q                              # (K,)
 
             # Calibrated probabilities over ALL trained classes.
@@ -399,6 +411,9 @@ class NeuralHead:
             "radius": float(self._radius),
             "trained": bool(self.trained),
             "n_train": int(self.n_train),
+            # A head saved before this existed reports 0, which means "do not
+            # check" -- exactly its old behaviour.
+            "input_dim": int(self.input_dim),
         }
 
     @classmethod
@@ -421,6 +436,7 @@ class NeuralHead:
         head._radius = float(state.get("radius", head.ood_sim))
         head.trained = bool(state.get("trained", False))
         head.n_train = int(state.get("n_train", 0))
+        head.input_dim = int(state.get("input_dim", 0) or 0)
         return head
 
     def save(self, path: str) -> None:
