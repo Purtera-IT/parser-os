@@ -18,17 +18,74 @@ def _atom(text: str, artifact: str, value: dict, flags: list[str] | None = None)
     )
 
 
-def test_the_note_copy_folds_onto_the_email_it_was_pasted_from():
-    line = "The club/installer will need to source anything beyond the Relay."
-    mail = _atom(line, "art_mail", {"kind": "email_body_line", "message_index": 0})
-    note = _atom(line, "art_note", {"kind": "hubspot_note_body"}, ["hubspot_note_parser"])
-    other = _atom("Cat5e/6 (6 or better recommended)", "art_note", {"kind": "note_field_item"}, ["hubspot_note_parser"])
-    kept, dropped = collapse_pasted_note_duplicates([mail, note, other])
-    assert [a.artifact_id for a in dropped] == ["art_note"]
-    assert mail in kept and other in kept
+LINES = [
+    "The club/installer will need to source anything beyond the Relay.",
+    "Here are the details for the small job I was discussing earlier.",
+    "If this is a successful implementation, it could lead to many more.",
+    "Note the diagram is labeled by the vendor and is not accurate.",
+    "Cat5e/6 (6 or better recommended)",
+]
+
+
+def _thread(lines):
+    return [_atom(t, "art_mail", {"kind": "email_body_line", "message_index": 0}) for t in lines]
+
+
+def _paste(lines):
+    return [_atom(t, "art_note", {"kind": "hubspot_note_body"}, ["hubspot_note_parser"]) for t in lines]
+
+
+def test_a_note_that_is_a_copy_folds_whole():
+    # Copy-of is a fact about a DOCUMENT. All of it folds, or none of it --
+    # a half-folded note is what left three of Alec's sentences alone in a
+    # file of their own, attributed to the man who pasted them.
+    mail, note = _thread(LINES), _paste(LINES)
+    kept, dropped = collapse_pasted_note_duplicates(mail + note)
+    assert len(dropped) == len(LINES), "every line of the copy, not some of them"
+    assert all(a.artifact_id == "art_note" for a in dropped)
+    assert kept == mail
     # the paste is not lost: the mail records where else it appeared
-    assert mail.value["also_in_note"] == ["art_note"]
-    assert any(r.artifact_id == "art_note" for r in mail.source_refs)
+    assert mail[0].value["also_in_note"] == ["art_note"]
+    assert any(r.artifact_id == "art_note" for r in mail[0].source_refs)
+
+
+def test_a_line_the_copy_ADDED_stays_and_says_it_was_added():
+    # Whoever typed it said it, at the note's time. It must not be folded
+    # into the original's content and must not silently disappear.
+    mail = _thread(LINES)
+    note = _paste(LINES + ["AJ: flagged to Trent, he knows the CA installer."])
+    kept, dropped = collapse_pasted_note_duplicates(mail + note)
+    extra = [a for a in kept if a.artifact_id == "art_note"]
+    assert len(extra) == 1
+    assert extra[0].value["added_when_filed"] is True
+    assert extra[0].value["copy_of_document"] == "art_mail"
+    assert len(dropped) == len(LINES)
+
+
+def test_a_document_that_only_half_matches_is_reported_not_guessed():
+    # Neither one document nor two. Splitting it is the disorganised outcome:
+    # some atoms from one file, some from the other, decided by nothing.
+    mail = _thread(LINES)
+    note = _paste(LINES[:2] + ["Unrelated line one here.", "Unrelated line two here.",
+                               "Unrelated line three here."])
+    kept, dropped = collapse_pasted_note_duplicates(mail + note)
+    assert dropped == [], "nothing folds while it is ambiguous"
+    flagged = [a for a in kept if a.value.get("maybe_copy_of")]
+    assert len(flagged) == len(note)
+    assert flagged[0].value["maybe_copy_of"]["document"] == "art_mail"
+    assert 0.3 < flagged[0].value["maybe_copy_of"]["share"] < 0.6
+
+
+def test_the_original_is_ranked_never_chosen_by_similarity():
+    # An email has a sender, a timestamp and a thread. A note has whoever
+    # pasted it. The mail survives whichever order they arrive in.
+    mail, note = _thread(LINES), _paste(LINES)
+    for order in (mail + note, note + mail):
+        for a in order:
+            a.value.pop("also_in_note", None)
+        kept, dropped = collapse_pasted_note_duplicates(list(order))
+        assert all(a.artifact_id == "art_mail" for a in kept)
+        assert all(a.artifact_id == "art_note" for a in dropped)
 
 
 def test_two_emails_saying_the_same_thing_are_still_two_sources():
@@ -44,12 +101,11 @@ def test_a_note_that_glues_its_title_onto_the_mail_is_still_the_same_line():
     read "The Ask w diagram link Hey AJ, Here are the details…" -- the same
     sentence with a prefix, and it showed as a second card."""
     line = "Here are the details for the small job I was discussing earlier."
-    mail = _atom(line, "art_mail", {"kind": "email_body_line", "message_index": 0})
-    note = _atom(f"The Ask w diagram link Hey AJ, {line}", "art_note", {"kind": "hubspot_note_body"},
-                 ["hubspot_note_parser"])
-    kept, dropped = collapse_pasted_note_duplicates([mail, note])
-    assert dropped == [note] and kept == [mail]
-    assert mail.value["also_in_note"] == ["art_note"]
+    mail = _thread(LINES)
+    note = _paste([f"The Ask w diagram link Hey AJ, {LINES[1]}"] + LINES[2:])
+    kept, dropped = collapse_pasted_note_duplicates(mail + note)
+    assert len(dropped) == len(note), "the glued title does not make it a different sentence"
+    assert all(a.artifact_id == "art_mail" for a in kept)
 
 
 def test_a_short_line_inside_a_longer_one_is_not_collapsed():
