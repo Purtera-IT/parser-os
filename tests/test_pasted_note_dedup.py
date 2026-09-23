@@ -168,3 +168,29 @@ def test_the_wrong_order_is_what_produced_a_duplicate_document():
     after, dropped = collapse_pasted_note_duplicates(first)
     if len(first) == 1:
         assert not dropped, "the fold had nothing left to fold: the winner was already chosen"
+
+
+def test_the_fold_runs_before_anything_that_removes_an_atom():
+    """The position is the whole fix, so pin it.
+
+    A note can only be recognised as a copy while the original's atoms are
+    still there to match against. Measured on 010288: 0.90 of the note is
+    found in the mail as parsed, and 0.61 by the time the generic dedup
+    stages have run -- which lands in the "ambiguous, do not guess" band and
+    folds nothing. Twice the fold was moved earlier and twice it was still
+    too late, so this asserts the invariant rather than a position.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "core" / "compiler.py").read_text(encoding="utf-8")
+    fold = src.index('telemetry.stage("pasted_note_dedup"')
+    # email_threading is additive by contract, so the fold may follow it.
+    assert src.index('telemetry.stage("email_threading"') < fold
+    for later in (
+        "quoted_history_dedup",   # drops quoted echoes: removes the mail's copies
+        "duplicate_atom_collapse",
+        "pre_classify_dedup",
+        "semantic_dedup",
+        "substance_gate",
+    ):
+        assert fold < src.index(f'telemetry.stage("{later}"'), f"the fold must run before {later}"

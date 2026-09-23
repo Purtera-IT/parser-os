@@ -827,6 +827,41 @@ def compile_project(
             )
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # A HubSpot note that is a pasted email is the same message, not a second
+    # source -- and the fold has to happen HERE, before the first pass that
+    # removes an atom.
+    #
+    # It ran after the general dedup once, which let a similarity pass pick the
+    # winner and keep the NOTE copy: three of Alec's sentences ended up alone
+    # in a file of their own, attributed to the man who pasted them. Moving it
+    # ahead of semantic_dedup was not enough -- quoted_history_dedup and the
+    # collapse stages run first, and they remove the very email atoms the note
+    # needs to match against. Measured on 010288: 0.90 of the note is found in
+    # the mail as parsed, and only 0.61 by the time the old position was
+    # reached, which put it in the "ambiguous, do not guess" band and folded
+    # nothing.
+    #
+    # email_threading is directly above and is purely additive (no atom is
+    # removed, retyped or re-id'd), so the atoms here are exactly what the
+    # parsers produced, with thread membership stamped on.
+    with telemetry.stage("pasted_note_dedup", input_count=len(atoms)) as stage:
+        try:
+            from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
+
+            before_paste = list(atoms)
+            atoms, _pasted = collapse_pasted_note_duplicates(atoms)
+            if _pasted:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(before_paste, atoms, stage="pasted_note_dedup"),
+                )
+                warnings.append(
+                    f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # Quoted-history dedup: in a long thread every reply re-quotes the whole
     # history, so the same sentence is emitted once per reply (the #010045
     # 9,452-atom flood). Drop a QUOTED echo when the same content already exists
@@ -1564,30 +1599,6 @@ def compile_project(
     # req_id / sku / email. Drops milestone_phase from 23→6, requirement
     # from 19→5, etc., losslessly (loser fields merged into winner).
     with telemetry.stage("semantic_dedup", input_count=len(atoms)) as stage:
-        # A HubSpot note that is a pasted email is the same message, not a
-        # second source -- and this has to decide it BEFORE any general dedup
-        # does, because a general pass picks a winner by similarity and knows
-        # nothing about which copy is the original.
-        #
-        # Live 010288: AJ pasted Alec's mail into a note six days later. The
-        # email parser emitted all three sentences of one line; semantic_dedup
-        # ran first, collapsed each pair, and kept the NOTE copy. So the note
-        # survived as a second document, its three sentences sat alone at the
-        # bottom of the atom list, and their speaker was AJ -- the man who
-        # pasted them -- instead of Alec, who said them. Whether "we provide
-        # the parts that connect the PC to the relay" meant us or CDW became
-        # unanswerable, and that is a BOM-sized question.
-        try:
-            from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
-
-            atoms, _pasted = collapse_pasted_note_duplicates(atoms)
-            if _pasted:
-                warnings.append(
-                    f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
-                )
-        except Exception as exc:
-            warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
-
         # A conversation repeats itself; two tellings of one commitment are one
         # commitment. Speech only — two similar lines in a document are two facts.
         from app.core.semantic_dedup import collapse_repeated_speech
