@@ -76,7 +76,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 3082
+      "train_rows": 3082,
+      "asks_supplier": false
     },
     {
       "name": "site_attribute",
@@ -86,7 +87,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 453
+      "train_rows": 453,
+      "asks_supplier": false
     },
     {
       "name": "site_access_restriction",
@@ -96,7 +98,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 9
+      "train_rows": 9,
+      "asks_supplier": false
     },
     {
       "name": "site_room_mix",
@@ -106,7 +109,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 3
+      "train_rows": 3,
+      "asks_supplier": false
     },
     {
       "name": "site_infrastructure",
@@ -116,7 +120,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 1
+      "train_rows": 1,
+      "asks_supplier": false
     },
     {
       "name": "service_line",
@@ -126,7 +131,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 919
+      "train_rows": 919,
+      "asks_supplier": true
     },
     {
       "name": "bom_line",
@@ -136,7 +142,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 1036
+      "train_rows": 1036,
+      "asks_supplier": true
     },
     {
       "name": "payment_term",
@@ -146,7 +153,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 71
+      "train_rows": 71,
+      "asks_supplier": false
     },
     {
       "name": "commercial_total",
@@ -156,7 +164,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 751
+      "train_rows": 751,
+      "asks_supplier": false
     },
     {
       "name": "pricing_assumption",
@@ -166,7 +175,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 382
+      "train_rows": 382,
+      "asks_supplier": false
     },
     {
       "name": "site_budget",
@@ -176,7 +186,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "rate_card",
@@ -186,7 +197,8 @@
       "label_space": "head",
       "status": "v2",
       "value_light": false,
-      "train_rows": 287
+      "train_rows": 287,
+      "asks_supplier": false
     },
     {
       "name": "work_scope_item",
@@ -196,7 +208,8 @@
       "label_space": "head",
       "status": "v2",
       "value_light": false,
-      "train_rows": 322
+      "train_rows": 322,
+      "asks_supplier": true
     },
     {
       "name": "requirement",
@@ -206,7 +219,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 867
+      "train_rows": 867,
+      "asks_supplier": false
     },
     {
       "name": "task",
@@ -216,7 +230,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 1372
+      "train_rows": 1372,
+      "asks_supplier": true
     },
     {
       "name": "deliverable",
@@ -226,7 +241,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 270
+      "train_rows": 270,
+      "asks_supplier": true
     },
     {
       "name": "acceptance_criterion",
@@ -236,7 +252,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 119
+      "train_rows": 119,
+      "asks_supplier": false
     },
     {
       "name": "milestone_phase",
@@ -246,7 +263,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 283
+      "train_rows": 283,
+      "asks_supplier": false
     },
     {
       "name": "cutover_step",
@@ -256,7 +274,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 31
+      "train_rows": 31,
+      "asks_supplier": true
     },
     {
       "name": "electrical_acceptance_test",
@@ -266,7 +285,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 10
+      "train_rows": 10,
+      "asks_supplier": false
     },
     {
       "name": "site_implementation_note",
@@ -276,7 +296,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 76
+      "train_rows": 76,
+      "asks_supplier": true
     },
     {
       "name": "site_access_window",
@@ -286,7 +307,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 41
+      "train_rows": 41,
+      "asks_supplier": false
     },
     {
       "name": "exclusion",
@@ -296,7 +318,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 234
+      "train_rows": 234,
+      "asks_supplier": true
     },
     {
       "name": "integration_checkpoint",
@@ -306,7 +329,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 4
+      "train_rows": 4,
+      "asks_supplier": false
     },
     {
       "name": "data_flow_step",
@@ -316,7 +340,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "system_mapping",
@@ -326,7 +351,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "mitigation",
@@ -336,7 +362,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 3
+      "train_rows": 3,
+      "asks_supplier": false
     },
     {
       "name": "constraint",
@@ -346,7 +373,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "compliance_rule",
@@ -356,7 +384,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 61
+      "train_rows": 61,
+      "asks_supplier": false
     },
     {
       "name": "compliance_classification",
@@ -366,7 +395,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 19
+      "train_rows": 19,
+      "asks_supplier": false
     },
     {
       "name": "approval_authority",
@@ -376,7 +406,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 7
+      "train_rows": 7,
+      "asks_supplier": false
     },
     {
       "name": "submission_req",
@@ -386,7 +417,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 5
+      "train_rows": 5,
+      "asks_supplier": false
     },
     {
       "name": "change_order_rule",
@@ -396,7 +428,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 44
+      "train_rows": 44,
+      "asks_supplier": false
     },
     {
       "name": "bonding_insurance",
@@ -406,7 +439,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 21
+      "train_rows": 21,
+      "asks_supplier": false
     },
     {
       "name": "contract_term",
@@ -416,7 +450,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 90
+      "train_rows": 90,
+      "asks_supplier": false
     },
     {
       "name": "certification",
@@ -426,7 +461,8 @@
       "label_space": "head",
       "status": "v2",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "stakeholder",
@@ -436,7 +472,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 339
+      "train_rows": 339,
+      "asks_supplier": false
     },
     {
       "name": "blackout_date_range",
@@ -446,7 +483,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 7
+      "train_rows": 7,
+      "asks_supplier": false
     },
     {
       "name": "lead_time_constraint",
@@ -456,7 +494,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 11
+      "train_rows": 11,
+      "asks_supplier": false
     },
     {
       "name": "deadline",
@@ -466,7 +505,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 50
+      "train_rows": 50,
+      "asks_supplier": false
     },
     {
       "name": "dependency",
@@ -476,7 +516,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 18
+      "train_rows": 18,
+      "asks_supplier": true
     },
     {
       "name": "deal_metadata",
@@ -486,7 +527,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 1881
+      "train_rows": 1881,
+      "asks_supplier": false
     },
     {
       "name": "source_caveat",
@@ -496,7 +538,8 @@
       "label_space": "extractor",
       "status": "v2",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "eval_criterion",
@@ -506,7 +549,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 5
+      "train_rows": 5,
+      "asks_supplier": false
     },
     {
       "name": "approval_decision",
@@ -516,7 +560,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 5
+      "train_rows": 5,
+      "asks_supplier": false
     },
     {
       "name": "metadata_requirement",
@@ -526,7 +571,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 4
+      "train_rows": 4,
+      "asks_supplier": false
     },
     {
       "name": "signatory",
@@ -536,7 +582,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 13
+      "train_rows": 13,
+      "asks_supplier": false
     },
     {
       "name": "addendum_qa",
@@ -546,7 +593,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": true,
-      "train_rows": 5
+      "train_rows": 5,
+      "asks_supplier": false
     },
     {
       "name": "site_allocation",
@@ -556,7 +604,8 @@
       "label_space": "head",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "scope_item",
@@ -566,7 +615,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": true
     },
     {
       "name": "risk",
@@ -576,7 +626,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "assumption",
@@ -586,7 +637,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": true
     },
     {
       "name": "open_question",
@@ -596,7 +648,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "decision",
@@ -606,7 +659,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "action_item",
@@ -616,7 +670,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": true
     },
     {
       "name": "vendor_line_item",
@@ -626,7 +681,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": true
     },
     {
       "name": "customer_instruction",
@@ -636,7 +692,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "quantity",
@@ -646,7 +703,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "entity",
@@ -656,7 +714,8 @@
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "answered_question",
@@ -666,7 +725,8 @@
       "label_space": "extractor",
       "status": "v2",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "internal_question",
@@ -676,7 +736,8 @@
       "label_space": "extractor",
       "status": "v2",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "commitment",
@@ -686,7 +747,8 @@
       "label_space": "extractor",
       "status": "v2",
       "value_light": false,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     },
     {
       "name": "small_talk",
@@ -696,7 +758,8 @@
       "label_space": "extractor",
       "status": "v2",
       "value_light": true,
-      "train_rows": 0
+      "train_rows": 0,
+      "asks_supplier": false
     }
   ],
   "service_packs": [
@@ -743,6 +806,11 @@
     {
       "key": "third_party",
       "label": "Another vendor"
+    },
+    {
+      "key": "unresolved",
+      "label": "Named but not resolved",
+      "desc": "The document names a ROLE and not an organisation -- \"Provided by Club/installer\" when we are the installer, so it means the club or us. Leaving it blank reads as \"not answered\"; this says the deal does not say, which is a finding and usually an unpriced cost."
     }
   ],
   "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours).",
@@ -892,5 +960,6 @@
       "key": "context",
       "label": "Background for it"
     }
-  ]
+  ],
+  "asks_supplier_doc": "Does 'who supplies or does it?' have an answer for this type? The card showed that question on EVERY type, so three quarters of the time it invited an answer to a question the sentence does not ask -- and a head trained on those learns the axes are independent noise. Declared here rather than guessed from the type's name."
 }
