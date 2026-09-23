@@ -1346,7 +1346,7 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
                 fn = str(getattr(r, "filename", "") or "")
                 if fn and fn not in _names:
                     _names.append(fn)
-        kept = kept + find_dangling_references(kept, project_id=_pid, filenames=_names)
+        find_dangling_references(kept, project_id=_pid, filenames=_names)
     except Exception:
         pass
     # Relationship talk stays in the record, flagged, out of the labeler and
