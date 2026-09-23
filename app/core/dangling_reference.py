@@ -109,7 +109,10 @@ def find_dangling_references(atoms: list[Any], *, project_id: str, filenames: li
                 kind,
                 why=(
                     f"{who} refers to a conversation the deal does not hold"
-                    + (" and has worked with us before, so it may predate this deal" if prior else "")
+                    # What the words support, not what they imply. "has worked
+                    # with us before" is a claim about history nothing here can
+                    # see, and a head trained on it learns to assert one.
+                    + (" and speaks as if we have talked before" if prior else "")
                     if kind == CONVERSATION
                     else f"{who} refers to an attachment the deal does not hold"
                 ),

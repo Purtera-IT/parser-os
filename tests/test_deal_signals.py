@@ -3,6 +3,8 @@ throwing away -- the job is small, there is a diagram we do not hold, and the
 account has room to grow."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.core.deal_chatter import mark_chatter
 from app.core.deal_signals import extract_deal_signals
 from app.core.schemas import ArtifactType, AtomType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef
@@ -66,3 +68,83 @@ def test_pure_courtesy_is_still_small_talk():
     assert extract_deal_signals([src], project_id="p") == []
     assert not (src.value or {}).get("reads")
     assert mark_chatter([src]) == 1
+
+
+# ---------------------------------------------------------------------------
+# A conditional is the critical path, and an announcement scopes what follows.
+# Both were invisible: one flattened into the type, the other into nothing.
+# ---------------------------------------------------------------------------
+
+def _reads_of(atom, key):
+    for r in (atom.value.get("reads") or []):
+        if r["key"] == key:
+            return r
+    return None
+
+
+def _spoken(text, *, by_side="theirs", by_role="reseller", to_side="ours"):
+    """One atom, said by somebody to somebody -- which is what decides who a
+    conditional falls on. "If YOU all would be able to" means us when a
+    reseller writes it to us and means them when we write it to them."""
+    return SimpleNamespace(
+        raw_text=text,
+        text=text,
+        value={
+            "said_by": {"side": by_side, "role": by_role},
+            "said_to": [{"side": to_side, "role": "internal" if to_side == "ours" else "reseller"}],
+        },
+        project_id="010288",
+    )
+
+
+def test_a_promise_waiting_on_us_says_so():
+    a = _spoken(
+        "If you all would be able to do something like this, I will get a conversation "
+        "going with the club owner."
+    )
+    extract_deal_signals([a], project_id="010288", filenames=[])
+    r = _reads_of(a, "blocked_on")
+    assert r is not None and r["value"] == "us"
+    assert "conditional" in r["why"]
+
+
+def test_the_same_words_from_our_side_wait_on_them():
+    a = _spoken(
+        "If you can confirm the lock type, we will finalise the quote.",
+        by_side="ours", by_role="internal", to_side="theirs",
+    )
+    extract_deal_signals([a], project_id="010288", filenames=[])
+    assert _reads_of(a, "blocked_on")["value"] == "partner"
+
+
+def test_a_sentence_that_merely_contains_if_is_not_blocked_on_anyone():
+    for text in ["Let me know if you want the floorplan.", "They are intending to use a maglock."]:
+        a = _spoken(text)
+        extract_deal_signals([a], project_id="010288", filenames=[])
+        assert _reads_of(a, "blocked_on") is None, text
+
+
+def test_an_announcement_says_what_it_opens():
+    a = _spoken("Here are the details for the small job I was discussing earlier.")
+    extract_deal_signals([a], project_id="010288", filenames=[])
+    r = _reads_of(a, "opens_block")
+    assert r is not None
+    assert r["value"].startswith("the details for the small job")
+
+
+def test_a_line_that_merely_mentions_details_opens_nothing():
+    for text in ["Thanks for the details.", "The details are in the attached quote."]:
+        a = _spoken(text)
+        extract_deal_signals([a], project_id="010288", filenames=[])
+        assert _reads_of(a, "opens_block") is None, text
+
+
+def test_expansion_says_what_would_repeat_not_just_that_it_might():
+    a = _spoken("If this is a successful implementation, it could lead to many more of the same opportunity.")
+    extract_deal_signals([a], project_id="010288", filenames=[])
+    r = _reads_of(a, "expansion")
+    assert r is not None
+    # Not `True`, and not a truncated "lead to many more" either: the thing
+    # that repeats is the half worth having.
+    assert isinstance(r["value"], str)
+    assert r["value"] == "lead to many more of the same opportunity"

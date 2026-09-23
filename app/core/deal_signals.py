@@ -36,6 +36,25 @@ _ARTIFACT_WORD_RE = re.compile(
     re.I,
 )
 
+#: A promise with a condition in front of it. "IF you all would be able to
+#: do something like this, I will get a conversation going with the club
+#: owner" is not a promise he made -- it is a promise waiting on US, and that
+#: is the deal's critical path. Typed `commitment` it reads as the opposite.
+_CONDITIONAL_RE = re.compile(
+    r"\bif\s+(?P<who>you all|you|y'all|your team|we|i|they|the (?:client|customer|owner|club|installer))\b"
+    r"[^.]{0,140}?,\s*(?P<then>i|we)\s*(?:'ll|will|would|can|shall)\b",
+    re.I,
+)
+
+#: A line that announces what follows: "Here are the details for the small
+#: job". Everything under it is one ask, and the readings on it -- how big the
+#: job is, whose job it is -- belong to those atoms, not to the whole thread.
+_OPENS_BLOCK_RE = re.compile(
+    r"^\s*(?:here (?:are|is|'s)|below (?:are|is)|attached (?:are|is)|these are|the following (?:are|is))\s+"
+    r"(?P<what>(?:the\s+|our\s+|my\s+)?[a-z][^.]{0,70})",
+    re.I,
+)
+
 #: Someone undertakes to do something. Deal Kit cares who owes what, and a
 #: promise conditional on OUR answer is a task on us before it is one on them.
 _PROMISE_RE = re.compile(
@@ -149,6 +168,33 @@ def _have_artifact(word: str, filenames: list[str]) -> bool:
     return False
 
 
+def _side_of(party: dict | None) -> str:
+    """`us`, `partner` or `customer` for a party the parser stamped."""
+    if not isinstance(party, dict):
+        return ""
+    if str(party.get("side") or "") == "ours":
+        return "us"
+    role = str(party.get("role") or "").lower()
+    return "partner" if role in {"reseller", "vendor", "manufacturer", "installer"} else "customer"
+
+
+def _blocked_on(value: dict, who: str) -> str:
+    """Whose answer the condition waits on, read from who is speaking to whom.
+
+    "If YOU all would be able to…" means us when a reseller writes it to us,
+    and means them when we write it to them. The words alone cannot say which.
+    """
+    who = who.lower().strip()
+    said_by = value.get("said_by") if isinstance(value.get("said_by"), dict) else None
+    said_to = value.get("said_to") if isinstance(value.get("said_to"), list) else []
+    speaker = _side_of(said_by)
+    listener = _side_of(said_to[0] if said_to and isinstance(said_to[0], dict) else None)
+    if who in {"you", "you all", "y'all", "your team"}:
+        return listener or ("us" if speaker and speaker != "us" else "")
+    if who in {"we", "i"}:
+        return speaker
+    return "customer"
+
 def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[str] | None = None) -> list[Any]:
     """Read what a sentence TELLS US onto the sentence itself.
 
@@ -206,9 +252,31 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
             _reads(atom, "introduces_party", im.group("party").lower(),
                    why="brings someone into the deal who is not in this thread", confidence=0.66)
 
-        if _EXPANSION_RE.search(head):
+        cm = _CONDITIONAL_RE.search(head)
+        if cm:
+            side = _blocked_on(val, cm.group("who"))
+            if side:
+                _reads(atom, "blocked_on", side,
+                       why=f'conditional: "if {cm.group("who").lower()} …, {cm.group("then").lower()} will …"',
+                       confidence=0.62)
+
+        om = _OPENS_BLOCK_RE.match(text.strip())
+        if om:
+            _reads(atom, "opens_block", om.group("what").strip().lower().rstrip(" ,;:"),
+                   why="the line announces what follows; the atoms under it are its detail",
+                   confidence=0.6)
+
+        xm = _EXPANSION_RE.search(head)
+        if xm:
             _mark(atom, "expansion")
-            _reads(atom, "expansion", True, why="could repeat across more of the customer's sites",
+            # WHAT would repeat, in the sender's words. `True` taught a head the
+            # weaker half of its own question, while `commitment` beside it has
+            # always carried what was promised.
+            # The phrase, finished: "lead to many more" on its own drops the
+            # thing that repeats, which is the half worth having.
+            said = head[xm.start():].split(".")[0].split(";")[0].strip().lower()[:90]
+            _reads(atom, "expansion", said or xm.group(0).strip().lower(),
+                   why="the sender says this could repeat across more of their sites",
                    confidence=0.65)
 
     return made

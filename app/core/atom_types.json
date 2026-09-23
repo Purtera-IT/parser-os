@@ -799,8 +799,8 @@
     {
       "key": "expansion",
       "label": "Room to grow on this account",
-      "values": "true",
-      "desc": "This job could repeat across more of the customer's sites. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly."
+      "values": "what would repeat",
+      "desc": "This job could repeat across more of the customer's sites. Say WHAT repeats (\"more clubs, same one-door scope\"), not just that it might. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly."
     },
     {
       "key": "commitment",
@@ -811,8 +811,8 @@
     {
       "key": "introduces_party",
       "label": "Brings in someone not in this thread",
-      "values": "the role",
-      "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Often the only mention of the person who can say yes."
+      "values": "the role, and the name when we have one",
+      "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Write the role alone when nobody named them (\"club owner\") -- that absence IS the finding, because we cannot contact a role."
     },
     {
       "key": "chase",
@@ -831,6 +831,46 @@
       "label": "Names a document",
       "values": "the kind of document",
       "desc": "The line refers to a drawing or file, whether or not we hold it."
+    },
+    {
+      "key": "blocked_on",
+      "label": "It cannot happen until somebody answers",
+      "values": "us | customer | partner",
+      "desc": "The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on US is a task on us before it is one on them. This is the critical path, and it is invisible if the conditional is flattened into the type."
+    },
+    {
+      "key": "opens_block",
+      "label": "It announces what follows",
+      "values": "what the block is",
+      "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading."
+    }
+  ],
+  "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
+  "relations": [
+    {
+      "key": "governs",
+      "label": "Announces / scopes the atoms below",
+      "desc": "From the line that opens a block to every atom it covers. Carries no text of its own."
+    },
+    {
+      "key": "supports",
+      "label": "Backs it up"
+    },
+    {
+      "key": "answers",
+      "label": "Answers the question"
+    },
+    {
+      "key": "contradicts",
+      "label": "Says the opposite"
+    },
+    {
+      "key": "same_as",
+      "label": "The same fact, said twice"
+    },
+    {
+      "key": "context",
+      "label": "Background for it"
     }
   ]
 }

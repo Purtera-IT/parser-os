@@ -162,6 +162,77 @@ A drop is worth as much as a confirmation: a rule can only produce positives,
 so "no, that is not small talk" is a label only a human can leave, and it is
 what stops the head inheriting the pattern's blind spots.
 
+## A label may only use what the head will see
+
+The worst thing in my first four labels was not a wrong value. It was two
+notes citing facts that appear **nowhere in the documents**: that AJ has
+worked with Alec before (Lilli got that by asking him) and that the club
+owner is the decision maker. I tagged those labels `domain_knowledge` as if
+naming the leak excused it.
+
+It does not. A head is trained on the atom and its context. A label decided
+on information that is not in that context teaches the model to assert
+things it has no evidence for -- confidently, because the gold said so.
+
+So:
+
+* `domain_knowledge` means **industry** knowledge: what a maglock is, that
+  Cat6 outruns Cat5e, that a relay is not a lock. It is knowledge any
+  qualified reader brings to the same words.
+* It does **not** mean deal history someone told you. If the fact came from
+  a conversation, it is not a label -- it is either an atom of its own (if
+  someone wrote it down) or it belongs in the cross-deal party index, which
+  does not exist yet (PUR-282).
+* The test: **could a careful stranger, given only this atom, its neighbours,
+  its lead-in and the deal's other documents, reach this label?** If not, the
+  label is contaminated, however true it is.
+
+The same rule kills a subtler cheat. "Chase Alec, he has history with us" is
+a fine instruction and a terrible label, because the head cannot see history.
+"There was a conversation this thread does not contain" is the same finding
+stated from the evidence, and it is learnable.
+
+## Structure is a link, not a new atom
+
+`lead_in` already ties "Relay" to "Provided by us:". Nothing tied "Provided
+by us:" to the line that opened the whole ask:
+
+```
+"Here are the details for the small job I was discussing earlier."   <- announces
+  "Provided by us:"            -> Relay, PC, USB cable, converter, extenders
+  "Provided by Club/installer:" -> mag lock cable, power supply, lock, Cat5e/6
+```
+
+That missing level is why `job_scale: small` was stranded. On its own it is a
+fact about one sentence. Linked, it is a fact about **those ten items** --
+and Deal Kit no longer has to guess whether "small" covers the whole thread,
+which also carries a second question set and another site.
+
+Two pieces, deliberately separate:
+
+* `opens_block` is a **reading** on the announcing line: this line frames what
+  follows. One boolean per line, and a human answers it instantly.
+* `governs` is a **link** from that line to every atom it covers. It carries
+  no text -- which is the whole point. Structure is the one thing the parser
+  may assert about other atoms without minting a sentence nobody said.
+
+A leaf gets its meaning back from the chain: "Anything in Orange" is noise;
+"Provided by us -> Anything in Orange" is a line; "For the small job ->
+provided by us -> anything in orange" is a statement someone can label.
+
+## A conditional is the critical path
+
+> "**If** you all would be able to do something like this, I will get a
+> conversation going with the club owner."
+
+Typed `commitment`, this reads as a promise he made. It is the opposite: it
+is a promise **waiting on us**. The deal's next move is ours, and nothing in
+a type or a `wants` says "blocked on".
+
+`blocked_on: us | customer | partner` says it. It is the difference between a
+deal that is waiting for a customer and a deal that is sitting in our own
+inbox, and it is the single most useful thing a brief can lead with.
+
 ## A picture is content
 
 A drawing is not a decoration on an atom -- it is often the only complete
