@@ -311,6 +311,66 @@ quietly keyed off the name:
 Nothing errored. Identity belongs to content -- a sha, or the text itself --
 and a name is a label on it.
 
+## Who we are is context, never a label
+
+PurTera IT executes multi-site IT deployments -- 350+ locations, programmes of
+50 to 500 sites, technicians dispatched to mount, cable, certify and close out.
+We are the field execution. On most deals **we are the installer**.
+
+That fact resolved a question this deal could not: "Provided by Club/installer"
+means the club or US, so those items may land on our bill of materials. I had
+labelled them `supplier: customer`, by generalising one sentence about the
+client's door work to every use of the word "installer" in the deal -- which
+puts hardware on somebody else's invoice and takes it off our quote.
+
+So the knowledge is useful. WHERE IT GOES is the question, and there are three
+different answers.
+
+**The trained heads: no.** A constant carries no discriminative signal.
+"PurTera deploys IT across multiple sites" would appear identically in every
+atom's context, so it cannot help separate an `exclusion` from a `dependency`
+-- it can only dilute the words that do. Measured this session: a 60-character
+tag inside a 100-character sentence moved a bge-small embedding by 0.003.
+Company context would do that everywhere, forever.
+
+**The LLM stages and the brief: yes.** They reason in language and otherwise
+guess. Ten factual lines -- what we do, that we dispatch crews, what we
+subcontract, our domains -- and no adjectives. See `_WHO_WE_ARE.md`.
+
+**Resolving a role: neither.** "Purtera is the installer ON THIS DEAL" is not a
+company fact. The register says we CAN be the installer; the deal decides
+whether we are, and on the next one the client brings their own. That is a
+resolver -- a role word to an organisation, when the deal's evidence supports
+it -- and it is the same shape as the cross-deal party index (PUR-282).
+
+### The rule
+
+**Company context may inform the model's prose. It must never become a label.**
+
+The moment "we are the installer" is baked into gold rather than into context,
+every label depending on it rots the day the arrangement changes. This is "a
+label may only use what the head will see", pointed at ourselves.
+
+### And capability is not a boolean
+
+The first draft of the register nearly said "we do not do access control". By
+the same afternoon that was false: Chase found a contact and routed the work to
+Albert. What is true is HOW WE FULFIL IT -- in house, subcontracted, or
+declined -- and that changes with a hire. A register that says we cannot would
+teach the heads to decline work we take every week.
+
+### A role word is not a party
+
+The same trap twice in one deal. `introduces_party: "club owner"` is a role
+with no name behind it, and the doctrine already says that absence IS the
+finding. Then "installer" appeared and I resolved it from words that cannot
+resolve it -- twice, in opposite directions.
+
+When a sentence names a ROLE rather than an organisation, the honest label is
+unresolved, and `wants` carries who has to resolve it. An unset supplier on a
+line that says "Club/installer" is not a gap in the labelling. It is the
+labelling.
+
 ## A picture is content
 
 A drawing is not a decoration on an atom -- it is often the only complete
