@@ -88,6 +88,19 @@ class IngestReport:
         self.skipped[why] = self.skipped.get(why, 0) + 1
 
 
+
+#: A labeler name may carry a parenthesised marker saying it is not a person.
+#: Offline zip exports label with a filename and meeting exports with a
+#: person's name, so "not an email" cannot be the test -- the marker is.
+NOT_A_PERSON = ("(assistant)", "(bot)", "(model)")
+
+
+def _is_a_person(labeler: Any) -> bool:
+    """Gold comes from a person. A draft written for one to accept is not."""
+    v = str(labeler or "").strip().lower()
+    return not any(m in v for m in NOT_A_PERSON)
+
+
 def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> list[dict[str, Any]]:
     from app.core.training_log import assign_split
 
@@ -101,6 +114,13 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
     split = "holdout" if is_eval else assign_split(deal_id)
     out: list[dict[str, Any]] = []
     for lb in labels:
+        if not _is_a_person(lb.get("labeler")):
+            # A draft I wrote for a labeler to accept or replace is on the
+            # card on purpose -- and it is not gold. Ingesting it as
+            # teacher="human" would train the heads on the assistant's own
+            # answers and call them a person's.
+            report.skip("labeler is not a person")
+            continue
         fine = str(lb.get("label_type") or "").strip()
         if not fine:
             report.skip("label without label_type")
@@ -237,6 +257,9 @@ def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestRepo
     for k in doc.get("links") or []:
         if not isinstance(k, dict):
             continue
+        if not _is_a_person(k.get("labeler")):
+            report.skip("labeler is not a person")
+            continue
         label = _LINK_TO_EDGE.get(str(k.get("relation") or ""))
         a = " ".join(str(k.get("from_text") or "").split())
         b = " ".join(str(k.get("to_text") or "").split())
@@ -276,6 +299,9 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
     rows: list[dict[str, Any]] = []
     for j in doc.get("judgments") or []:
         if not isinstance(j, dict):
+            continue
+        if not _is_a_person(j.get("labeler")):
+            report.skip("labeler is not a person")
             continue
         spec = HEAD_REGISTRY.get(str(j.get("head") or ""))
         verdict = str(j.get("verdict") or "").strip()

@@ -68,7 +68,7 @@ def _rows(**label):
     doc = {
         "deal_id": "c2a3bdce-53bb-4da6-a840-a5260841685a",
         "purpose": "train",
-        "labels": [{"label_type": "deal_metadata", **THEIRS, **label}],
+        "labels": [{"label_type": "deal_metadata", "labeler": "developer@purtera-it.com", **THEIRS, **label}],
     }
     return rows_for_deal(doc)
 
@@ -109,8 +109,27 @@ def test_a_governs_link_becomes_a_structure_edge():
     doc = {
         "deal_id": "d1", "purpose": "train", "labels": [],
         "links": [{"relation": "governs", "from_text": "Here are the details for the small job",
-                   "to_text": "Provided by us: Relay", "labeler": "x"}],
+                   "to_text": "Provided by us: Relay", "labeler": "developer@purtera-it.com"}],
     }
     rows = rows_for_deal(doc)
     edges = [r for r in rows if r["relation"] == "edge_relation"]
     assert len(edges) == 1 and edges[0]["label"] == "governs"
+
+
+def test_an_assistants_draft_is_never_gold():
+    # A draft written for a labeler to accept or replace sits on the card on
+    # purpose. Ingesting it as teacher="human" would train the heads on the
+    # assistant's own answers and call them a person's.
+    doc = {
+        "deal_id": "d1", "purpose": "train",
+        "labels": [
+            {"label_type": "deal_metadata", "labeler": "claude-code (assistant)", **THEIRS, "about": "account"},
+            {"label_type": "deal_metadata", "labeler": "developer@purtera-it.com", **THEIRS, "about": "account"},
+        ],
+        "links": [{"relation": "governs", "from_text": "Here are the details", "to_text": "Relay",
+                   "labeler": "claude-code (assistant)"}],
+    }
+    rows = rows_for_deal(doc)
+    labelers = {json.loads(r["provenance"]).get("labeler") for r in rows if r["relation"] == "about"}
+    assert labelers == {"developer@purtera-it.com"}
+    assert not [r for r in rows if r["relation"] == "edge_relation"]
