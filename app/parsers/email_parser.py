@@ -1436,8 +1436,9 @@ _SENTENCE_END_RE = re.compile(r"[.?!](?=\s|$)")
 
 def _expand_lines_to_sentences(
     lines: list[str], line_start: int
-) -> list[tuple[int, str]]:
-    """Yield ``(source_line_number, text)`` with prose lines split by sentence.
+) -> list[tuple[int, int, str]]:
+    """Yield ``(source_line_number, sentence_index, text)`` with prose lines
+    split by sentence.
 
     Returns the line unchanged unless every resulting piece is a substantial
     sentence, so a signature, a table row or a greeting never fragments. The
@@ -1446,7 +1447,7 @@ def _expand_lines_to_sentences(
     """
     from app.core.sentences import split_sentences
 
-    out: list[tuple[int, str]] = []
+    out: list[tuple[int, int, str]] = []
     for line_idx, line in enumerate(lines):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
@@ -1459,7 +1460,7 @@ def _expand_lines_to_sentences(
         # one period and two sentences, and counted as one line it was typed
         # as the question and the work in it was never a task.
         if not stripped or "|" in stripped or len(_SENTENCE_END_RE.findall(stripped)) < 2:
-            out.append((line_num, line))
+            out.append((line_num, 0, line))
             continue
         # The quote marker is the line's, not the first sentence's: split the
         # words and put the marker back on every piece.
@@ -1467,13 +1468,17 @@ def _expand_lines_to_sentences(
         try:
             pieces = [p.strip() for p in split_sentences(stripped.lstrip("> ")) if p.strip()]
         except Exception:  # pragma: no cover - never fail a parse over this
-            out.append((line_num, line))
+            out.append((line_num, 0, line))
             continue
         if len(pieces) < 2 or any(len(p) < _MIN_SENTENCE_CHARS for p in pieces):
-            out.append((line_num, line))
+            out.append((line_num, 0, line))
             continue
-        for piece in pieces:
-            out.append((line_num, prefix + piece))
+        # Every piece shares the line it came from, so without its own index
+        # nothing downstream can order them: the envelope's reading-order sort
+        # falls back to the atom id, and live 010288 showed one paragraph's
+        # three sentences back to front.
+        for seq, piece in enumerate(pieces):
+            out.append((line_num, seq, prefix + piece))
     return out
 
 
@@ -2728,6 +2733,7 @@ class EmailParser(BaseParser):
         block: dict[str, Any],
         *,
         line_num: int | None = None,
+        sentence_index: int | None = None,
         section_path: list[str] | None = None,
         lead_in: list[str] | None = None,
     ) -> SourceRef:
@@ -2746,6 +2752,11 @@ class EmailParser(BaseParser):
             "sent_at": block.get("locator_sent_at") or block["sent_at"],
             "quoted": block["quoted"],
         }
+        # Sentences of one line share its number; without this the reading
+        # order sort ties and falls back to the atom id (010288 showed a
+        # paragraph's three sentences back to front).
+        if sentence_index:
+            locator["sentence_index"] = int(sentence_index)
         if section_path:
             locator["section_path"] = list(section_path)
         if lead_in:
@@ -2870,7 +2881,7 @@ class EmailParser(BaseParser):
         #
         # The line number is preserved on every piece, so locators, replay and
         # document order are unchanged; only the granularity of typing moves.
-        for line_num, line in _expand_lines_to_sentences(
+        for line_num, sentence_index, line in _expand_lines_to_sentences(
             block["lines"], int(block["line_start"])
         ):
             raw_cleaned = line.lstrip("> ").strip()
@@ -2929,6 +2940,7 @@ class EmailParser(BaseParser):
                         entity_keys=self._extract_entity_keys(_cand),
                         source_ref=self._build_source_ref(
                             artifact_id=artifact_id, filename=filename, block=block, line_num=line_num,
+                            sentence_index=sentence_index,
                             lead_in=[location_label],
                         ),
                         authority=authority,
@@ -2982,7 +2994,7 @@ class EmailParser(BaseParser):
                         atom_type=AtomType.deal_metadata, raw_text=cleaned,
                         normalized_text=normalize_text(cleaned),
                         value={"text": cleaned, "message_index": block["message_index"], "quoted": block["quoted"], "kind": "email_banner", "line": line_num},
-                        entity_keys=[], source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num)],
+                        entity_keys=[], source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num, sentence_index=sentence_index)],
                         authority_class=AuthorityClass.machine_extractor, confidence=0.5,
                         review_status=ReviewStatus.auto_accepted, review_flags=[], parser_version=self.parser_version,
                     )
@@ -3017,7 +3029,7 @@ class EmailParser(BaseParser):
                                 "source": "email_name_role_list",
                             },
                             entity_keys=[f"stakeholder:{_slug}"],
-                            source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num)],
+                            source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num, sentence_index=sentence_index)],
                             authority_class=authority,
                             confidence=max(confidence, 0.75),
                             review_status=ReviewStatus.auto_accepted,
@@ -3043,6 +3055,7 @@ class EmailParser(BaseParser):
                 filename=filename,
                 block=block,
                 line_num=line_num,
+                sentence_index=sentence_index,
                 section_path=section_path or None,
                 lead_in=lead_for_line or None,
             )

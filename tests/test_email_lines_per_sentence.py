@@ -10,7 +10,7 @@ from app.parsers.email_parser import _expand_lines_to_sentences
 
 
 def _pieces(line):
-    return [t for _, t in _expand_lines_to_sentences([line], 7)]
+    return [t for _, _, t in _expand_lines_to_sentences([line], 7)]
 
 
 def test_a_statement_followed_by_a_question_is_two_atoms():
@@ -24,8 +24,18 @@ def test_a_statement_followed_by_a_question_is_two_atoms():
 
 def test_every_piece_keeps_the_line_it_came_from_and_its_quote_prefix():
     out = _expand_lines_to_sentences(["> Please mount the display on the north wall. Can your tech bring a lift?"], 3)
-    assert [n for n, _ in out] == [3, 3]
-    assert out[0][1].startswith("> Please mount") and out[1][1].startswith("> Can your tech")
+    assert [n for n, _, _ in out] == [3, 3]
+    assert out[0][2].startswith("> Please mount") and out[1][2].startswith("> Can your tech")
+
+
+def test_each_piece_says_where_it_sits_in_the_line():
+    """They share a line number, so without an index of their own the
+    reading-order sort ties and falls back to the atom id -- live 010288 read
+    one paragraph back to front."""
+    out = _expand_lines_to_sentences(["First sentence of the note. Second sentence of the note."], 3)
+    assert [i for _, i, _ in out] == [0, 1]
+    # a line that was never split is position 0, not an index nobody set
+    assert [i for _, i, _ in _expand_lines_to_sentences(["One sentence only."], 3)] == [0]
 
 
 def test_one_sentence_stays_one_line_whatever_it_ends_with():
