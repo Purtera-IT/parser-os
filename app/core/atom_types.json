@@ -492,7 +492,7 @@
       "name": "source_caveat",
       "coarse": "meta",
       "facet": "META",
-      "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it. \"Note the diagram is labeled by the vendor/Huzzard, and the 'Installer Supplied Components' are not accurate, as we provide several of those pieces.\" It is not scope and must never reach the SOW -- and it must travel with the document it is about, because anything that reads that document without it builds from a legend we already know is wrong.",
+      "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it, what it is out of date against. Not scope -- it must never reach the SOW -- and it must travel WITH the document it is about, because anything that reads that document without it builds from something we already know is wrong. Found in 11 deals across the dev corpus, typed scope_item in 9 of them: \"the Dates are incorrect as per the submitted SOW\", \"except as otherwise superseded by terms contained in a mutually executed Master Purchase Agreement\".",
       "label_space": "extractor",
       "status": "v2",
       "value_light": false,
