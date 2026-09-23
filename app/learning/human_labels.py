@@ -24,6 +24,7 @@ from typing import Any, Iterable
 
 from app.core.atom_type_registry import KEEP, coarse_of, facet_of, load_registry
 from app.learning.label_context import context_note, context_text
+from app.learning.label_features import features_for
 
 #: Same representation as typed_atom_classifier.DECIDE_TEXT_VERSION (v2).
 DECIDE_TEXT_VERSION = 2
@@ -160,6 +161,10 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
             # supervision a span head will need, and throwing them away now
             # means labeling this deal twice later.
             "hint_refs": [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)][:20],
+            # Facts a sentence encoder cannot see. Measured: the two
+            # `blocked_on` answers sit at cosine 0.9967 as text, and the best
+            # of six phrasings reached 0.9925. As numbers they come apart.
+            "features": features_for(lb),
             "doc_type": lb.get("doc_type"),
             "filename": lb.get("filename"),
             "page": lb.get("page"),

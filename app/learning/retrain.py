@@ -153,18 +153,40 @@ def fit_candidate(
     """Fit a head on TRAIN rows for one relation. Returns (head, n_train) or
     None when there is nothing to learn from."""
     train = _cap_train_rows(log.rows(relation=relation, split="train"))
-    feats, y, w = [], [], []
+    feats, y, w, blocks = [], [], [], []
     for r in train:
         f = _head_feature(r)
         if f and r.label:
             feats.append(f)
             y.append(r.label)
             w.append(float(r.weight) or 1.0)
+            prov = r.provenance if isinstance(r.provenance, dict) else {}
+            blocks.append(prov.get("features"))
     if not feats or len(set(y)) < 1:
         return None
     X = np.asarray(embed_fn(feats), dtype=np.float32)
+    X = _with_party_features(X, blocks)
     head = NeuralHead(**head_kwargs).fit(X, y, sample_weight=np.asarray(w, dtype=np.float32))
     return head, len(feats)
+
+
+def _with_party_features(X: np.ndarray, blocks: list) -> np.ndarray:
+    """Append the party/structure block when EVERY row carries one.
+
+    All or nothing on purpose. A head's geometry is one space; half the rows
+    at full width and half zero-padded would put "nobody spoke" and "we do not
+    know who spoke" at the same point, which are different claims. Mixed
+    inputs fall back to the embedding alone -- the behaviour before this
+    existed.
+    """
+    from app.learning.label_features import FEATURE_DIM, augment
+
+    if not blocks or any(not isinstance(b, (list, tuple)) or len(b) != FEATURE_DIM for b in blocks):
+        return X
+    try:
+        return augment(X, np.asarray(blocks, dtype=np.float32))
+    except Exception:
+        return X
 
 
 def _is_regression(cand: RelationReport, champ: RelationReport, tol: float) -> bool:

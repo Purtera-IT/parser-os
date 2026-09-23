@@ -56,15 +56,49 @@ DB = os.environ.get("SOWSMITH_TRAINING_LOG_DB", "_training_deepseek.db")
 # bge-base: strong encoder, BERT/WordPiece tokenizer (no sentencepiece gotcha),
 # cheap to serve on CPU at runtime. On an A100 you can afford bge-large via env.
 MODEL = os.environ.get("BASE_MODEL", "BAAI/bge-base-en-v1.5")
-EPOCHS = int(os.environ.get("EPOCHS", "15"))
-BATCH = int(os.environ.get("BATCH", "128"))     # SupCon loves big batches (more negatives)
-K = int(os.environ.get("KNN_K", "15"))
-TEMP = float(os.environ.get("TEMP", "0.07"))
+
+
+def _env(name, default, cast):
+    """`SUPCON_<NAME>` first, then the bare name, then the default.
+
+    The bare names collided with the operating system. On Windows `TEMP` is
+    the temp DIRECTORY, so `float(os.environ["TEMP"])` raised
+    ValueError: could not convert string to float: 'D:\temp' before the
+    trainer read a single row. An unparseable value is treated as absent
+    rather than fatal -- an inherited variable is not a configuration choice.
+    """
+    for key in (f"SUPCON_{name}", name):
+        raw = os.environ.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return cast(raw)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+EPOCHS = _env("EPOCHS", 15, int)
+BATCH = _env("BATCH", 128, int)                 # SupCon loves big batches (more negatives)
+K = _env("KNN_K", 15, int)
+TEMP = _env("TEMP", 0.07, float)
 HOLDOUT = 0.25
 LABEL_MODE = os.environ.get("LABEL_MODE", "unified")
-SIM_FLOOR = float(os.environ.get("SIM_FLOOR", "0.55"))  # OOD gate: top-1 cosine below this -> abstain
-PRIOR_ALPHA = float(os.environ.get("PRIOR_ALPHA", "0.5"))  # class-prior debias in kNN vote (0=raw,1=balanced)
-TARGET_PREC = float(os.environ.get("TARGET_PREC", "0.95"))  # guess-free operating point
+#: Which head this is training. The type decision has a taxonomy behind it
+#: (micro label -> facet, plus the rubric's facet_clean), so it keeps its
+#: mapping. Every other relation a labeler answers -- `about`, `wants`,
+#: `reads:blocked_on` -- is already a closed set of classes, and its label IS
+#: the class. The architecture was never type-specific; only this loader was.
+RELATION = os.environ.get("RELATION", "atom_type")
+IS_TYPE = RELATION == "atom_type"
+#: Artifacts go under the relation so two heads never overwrite each other.
+RUN_DIR = os.environ.get(
+    "RUN_DIR",
+    f"runs/contrastive_{LABEL_MODE}" if IS_TYPE else f"runs/contrastive_{RELATION.replace(':', '_')}",
+)
+SIM_FLOOR = _env("SIM_FLOOR", 0.55, float)  # OOD gate: top-1 cosine below this -> abstain
+PRIOR_ALPHA = _env("PRIOR_ALPHA", 0.5, float)  # class-prior debias in kNN vote (0=raw,1=balanced)
+TARGET_PREC = _env("TARGET_PREC", 0.95, float)  # guess-free operating point
 GATE_BASELINE = 0.82      # LoRA classifier-head ceiling (what kNN must beat)
 FACET_BASELINE = 0.846    # two-model facet agreement ceiling
 
@@ -126,20 +160,25 @@ def load():
     rows = con.execute(
         "SELECT raw_text, COALESCE(masked_text,'') AS m, label, deal_id, "
         f"COALESCE(teacher,'') AS teacher, {fc_sel} AS fc "
-        "FROM training_rows WHERE relation='atom_type' AND label IS NOT NULL "
-        "AND COALESCE(masked_text,raw_text,'')!=''").fetchall()
+        "FROM training_rows WHERE relation=? AND label IS NOT NULL "
+        "AND COALESCE(masked_text,raw_text,'')!=''", (RELATION,)).fetchall()
     con.close()
     by_text = {}  # text -> (class, deal, is_gold) ; gold/clean overrides raw silver
     out = []
     for raw, masked, label, deal, teacher, fc in rows:
-        # Prefer the rubric-cleaned facet (facet_clean) over the raw teacher label.
-        cls = _facet_to_class(fc) if fc else _map(label)
+        # The type decision has a taxonomy behind it; every other relation's
+        # label is already its class.
+        if IS_TYPE:
+            # Prefer the rubric-cleaned facet (facet_clean) over the raw teacher label.
+            cls = _facet_to_class(fc) if fc else _map(label)
+        else:
+            cls = (str(label).strip() or None)
         if cls is None:
             continue
         key = (raw or masked or "").strip()
         if not key:
             continue
-        gold = teacher.lower() in ("pm", "human", "gold") or bool(fc)
+        gold = teacher.lower() in ("pm", "human", "gold") or bool(fc and IS_TYPE)
         prev = by_text.get(key)
         if prev and prev[2] and not gold:
             continue  # keep existing gold over new silver
@@ -297,7 +336,7 @@ def main():
               f"| worst {worst[0]}={worst[1]:.2f} | {tag}", flush=True)
         return acc
 
-    out = f"runs/contrastive_{LABEL_MODE}/best"
+    out = f"{RUN_DIR}/best"
     os.makedirs(out, exist_ok=True)
 
     print("=== epoch 0 (frozen, before contrastive fit) ===")
@@ -335,13 +374,13 @@ def main():
     # (model already saved as the best checkpoint above; just write the kNN store)
     s_emb = model.encode(store_t, batch_size=256, convert_to_numpy=True,
                          normalize_embeddings=True, show_progress_bar=False)
-    np.savez_compressed(f"runs/contrastive_{LABEL_MODE}/store.npz",
+    np.savez_compressed(f"{RUN_DIR}/store.npz",
                         emb=s_emb, y=np.array(store_l), text=np.array(store_t, dtype=object))
-    json.dump({"labels": labels, "k": K, "mode": LABEL_MODE, "sim_floor": SIM_FLOOR,
+    json.dump({"labels": labels, "k": K, "mode": LABEL_MODE, "relation": RELATION, "sim_floor": SIM_FLOOR,
                "target_precision": TARGET_PREC,
                "operating_tau": (op[0] if op else None), "base_model": MODEL},
               open(f"{out}/knn_meta.json", "w"))
-    print(f"saved encoder -> {out} ; kNN store -> runs/contrastive_{LABEL_MODE}/store.npz")
+    print(f"saved encoder -> {out} ; kNN store -> {RUN_DIR}/store.npz")
 
 
 if __name__ == "__main__":
