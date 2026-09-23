@@ -65,15 +65,19 @@ def _text(atom: Any) -> str:
     return " ".join(str(getattr(atom, "raw_text", "") or "").split())
 
 
-def find_dangling_references(atoms: list[Any], *, project_id: str, filenames: list[str] | None = None) -> list[Any]:
-    """One chase item per kind of thing the deal points at and does not hold.
+def find_dangling_references(atoms: list[Any], *, project_id: str, filenames: list[str] | None = None) -> int:
+    """Mark the sentences that point at something the deal does not hold.
 
-    Deliberately one per kind per deal, not per sentence: "as discussed" shows
-    up in six mails of one thread and it is the same missing call.
+    Nothing is minted. "Alecandrich refers to a conversation the deal does not
+    hold" was my sentence, not his -- an atom nobody said, which is the same
+    mistake as "the sender calls this a small job". The reading rides on the
+    line that points at the missing thing, and the deal's chase list is every
+    atom carrying one.
+
+    One per kind per deal: "as discussed" shows up in six mails of one thread
+    and it is the same missing call.
     """
-    from app.core.schemas import AtomType, AuthorityClass, EvidenceAtom, ReviewStatus
-
-    made: list[Any] = []
+    marked = 0
     seen: set[str] = set()
     # An attachment the deal actually holds is not missing. Anything that is
     # not a mail or a note is a document somebody sent us.
@@ -97,43 +101,33 @@ def find_dangling_references(atoms: list[Any], *, project_id: str, filenames: li
             said_by = v.get("said_by") if isinstance(v.get("said_by"), dict) else {}
             who = str(said_by.get("name") or said_by.get("email") or "the sender")
             prior = bool(_PRIOR_RELATIONSHIP_RE.search(head))
-            if kind == CONVERSATION:
-                what = (
-                    f"{who} refers to a conversation the deal does not hold. They have worked with us before, "
-                    f"so it may predate this deal — ask them what was agreed rather than hunting this thread."
-                    if prior
-                    else f"{who} refers to a conversation the deal does not hold — find it or ask what was agreed."
-                )
-            else:
-                what = f"{who} refers to an attachment the deal does not hold — ask for the file."
-            made.append(
-                EvidenceAtom(
-                    id=stable_id("atm", project_id, "dangling", kind, text[:120]),
-                    project_id=project_id,
-                    artifact_id=str(getattr(atom, "artifact_id", "") or ""),
-                    atom_type=AtomType.dependency,
-                    raw_text=what,
-                    normalized_text=what.lower(),
-                    value={
-                        "kind": "dangling_reference",
-                        "reference_kind": kind,
-                        "quote": text[:300],
-                        "wants": "chase-conversation" if kind == CONVERSATION else "chase-artifact",
-                        "prior_relationship": prior,
-                        "about": "deal",
-                        "derived_from": str(getattr(atom, "id", "") or ""),
-                    },
-                    entity_keys=list(getattr(atom, "entity_keys", None) or []),
-                    source_refs=list(getattr(atom, "source_refs", None) or []),
-                    receipts=list(getattr(atom, "receipts", None) or []),
-                    authority_class=AuthorityClass.machine_extractor,
-                    confidence=0.6,
-                    review_status=ReviewStatus.needs_review,
-                    review_flags=["dangling_reference", f"chase:{kind}"],
-                    parser_version=str(getattr(atom, "parser_version", "") or "dangling"),
-                )
+            from app.core.deal_signals import _reads
+
+            _reads(
+                atom,
+                "chase",
+                kind,
+                why=(
+                    f"{who} refers to a conversation the deal does not hold"
+                    + (" and has worked with us before, so it may predate this deal" if prior else "")
+                    if kind == CONVERSATION
+                    else f"{who} refers to an attachment the deal does not hold"
+                ),
+                confidence=0.6,
             )
-    return made
+            val = _value(atom)
+            val["chase"] = {
+                "kind": kind,
+                "prior_relationship": prior,
+                "ask": (
+                    "ask them what was agreed rather than hunting this thread"
+                    if prior and kind == CONVERSATION
+                    else ("find it or ask what was agreed" if kind == CONVERSATION else "ask for the file")
+                ),
+            }
+            atom.value = val
+            marked += 1
+    return marked
 
 
 __all__ = ["find_dangling_references", "CONVERSATION", "ATTACHMENT"]

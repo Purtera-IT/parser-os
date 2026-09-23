@@ -43,15 +43,15 @@ def test_a_diagram_we_do_not_hold_becomes_something_to_go_and_get():
     url = DIAGRAM.split(" ", 1)[1]
     src = _atom(DIAGRAM, {"kind": "note_field_image", "media_type": "image", "image_url": url})
     made = extract_deal_signals([src], project_id="p", filenames=["m.eml", "010289-note-The Ask w diagram link.txt"])
-    # a drawing we do not hold is real WORK, so it stays an item of its own
-    dep = next(a for a in made if a.value["kind"] == "missing_artifact")
-    assert next(r for r in src.value["reads"] if r["key"] == "points_at_artifact")["value"] == "diagram"
-    assert dep.atom_type == AtomType.dependency
-    assert dep.value["artifact_kind"] == "diagram" and dep.value["url"] == url
+    assert made == []  # nothing invented: the reading rides on the line
+    reads = {r["key"]: r["value"] for r in src.value["reads"]}
+    assert reads["points_at_artifact"] == "diagram"
+    assert reads["needs_artifact"] == "diagram"
+    assert src.value["artifact_url"] == url
     # a mail NAMED "…diagram link.txt" is not the diagram; a real drawing is
-    have = extract_deal_signals([_atom(DIAGRAM, {"image_url": url})], project_id="p",
-                                filenames=["BPW061725-Rev-1-Diagram.png"])
-    assert not [a for a in have if a.value["kind"] == "missing_artifact"]
+    held = _atom(DIAGRAM, {"image_url": url})
+    extract_deal_signals([held], project_id="p", filenames=["BPW061725-Rev-1-Diagram.png"])
+    assert not any(r["key"] == "needs_artifact" for r in held.value["reads"])
 
 
 def test_room_to_grow_is_recorded_on_the_line_that_says_it():

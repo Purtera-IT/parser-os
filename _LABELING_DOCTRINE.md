@@ -40,10 +40,15 @@ pattern of mine would have.
 Deal Kit consumes the reading, not the prose: a small job changes how many PMs
 it plans for, which rate card applies, how much site time to assume.
 
-**Work is the exception.** "Go and get the diagram we do not hold" is not a
-restatement of anything -- nobody said it, and it is not what a sentence
-means, it is something to do. Work items stay rows of their own, pointing at
-the atom that caused them.
+**There is no exception.** I first kept "go and get the diagram we do not
+hold" as a row of its own, on the grounds that work is not a restatement. It
+is still a sentence nobody said, and on the card it read as one more invented
+atom. Work is a READING too -- `chase: conversation`, `needs_artifact:
+diagram` -- carried by the line that points at the missing thing. The deal's
+chase list is every atom carrying one, which is a view, not a new atom.
+
+Nothing the parser writes is an atom. If the parser has something to say, it
+says it about a sentence someone said.
 
 ## The three questions
 

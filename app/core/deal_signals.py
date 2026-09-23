@@ -171,13 +171,10 @@ def extract_deal_signals(atoms: list[Any], *, project_id: str, filenames: list[s
             if key not in seen and not _have_artifact(what, names):
                 seen.add(key)
                 url = str(val.get("image_url") or val.get("url") or "")
-                made.append(_new_atom(
-                    project_id=project_id, source=atom, atom_type_name="dependency",
-                    text=f"Obtain the {what} the sender points at — the deal does not hold it.",
-                    value={"kind": "missing_artifact", "artifact_kind": what, "url": url or None, "quote": quote,
-                           "about": "deal", "wants": "chase-artifact"},
-                    confidence=0.7,
-                ))
+                url = str(val.get("image_url") or val.get("url") or "")
+                _reads(atom, "needs_artifact", what, why=f"names a {what} the deal does not hold",
+                       confidence=0.7)
+                _value(atom)["artifact_url"] = url or None
 
         if _EXPANSION_RE.search(head):
             _mark(atom, "expansion")
