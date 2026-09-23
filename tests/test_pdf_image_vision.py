@@ -1055,13 +1055,20 @@ def test_stage_stops_spending_after_its_time_budget(monkeypatch, tmp_path, caplo
     import logging
 
     monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
-    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_BUDGET_SEC", "0.001")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_BUDGET_SEC", "10")
     _mock_reachable(monkeypatch)
     monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
     calls = {"n": 0}
 
+    # A fake clock, not a tiny budget: with a 1ms budget a fast runner finished
+    # the first call inside it and attempted a second, so this test failed on
+    # 3.11 one run and 3.12 the next. Here the first call always takes an hour.
+    clock = {"t": 0.0}
+    monkeypatch.setattr(piv.time, "monotonic", lambda: clock["t"])
+
     def _vlm(*a, **k):
         calls["n"] += 1
+        clock["t"] += 3600.0
         return '{"image_kind": "logo", "has_text": false, "meaningful": false}'
 
     monkeypatch.setattr(piv, "_vlm", _vlm)
