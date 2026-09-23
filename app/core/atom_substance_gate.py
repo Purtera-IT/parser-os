@@ -1311,6 +1311,15 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     all_dropped.extend(d)
     kept, d = drop_unreadable_text(kept)
     all_dropped.extend(d)
+    # A drawing is a drawing wherever it was written: a note field, an email
+    # sentence, a wrapped Outlook link. Find it before anything decides the
+    # line is banter.
+    try:
+        from app.core.linked_pictures import stamp_linked_pictures
+
+        stamp_linked_pictures(kept)
+    except Exception:
+        pass
     # Read the facts out of non-scope prose FIRST -- the job's size, a drawing
     # we do not hold, room to grow on the account -- so the small-talk pass
     # cannot hide a sentence that was carrying one.
