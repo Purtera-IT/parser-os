@@ -47,6 +47,10 @@
       "label": "Atom below"
     },
     {
+      "key": "who_said_it",
+      "label": "Who said it, and to whom"
+    },
+    {
       "key": "table_column",
       "label": "Table column / header row"
     },
