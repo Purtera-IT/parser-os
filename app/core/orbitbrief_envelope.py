@@ -2922,7 +2922,14 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
             line = int(line) if line is not None else 0
         except (TypeError, ValueError):
             line = 0
-        return (when, doc_pos.get(aid, 10**6), pos, page, line, str(getattr(a, "id", "")))
+        # Sentences split from one line share its number. Their own index
+        # breaks the tie; without it this fell through to the atom id, which
+        # is a hash -- live 010288 read one paragraph back to front.
+        try:
+            seq = int(loc.get("sentence_index") or 0)
+        except (TypeError, ValueError):
+            seq = 0
+        return (when, doc_pos.get(aid, 10**6), pos, page, line, seq, str(getattr(a, "id", "")))
 
     return sorted(atoms, key=key)
 

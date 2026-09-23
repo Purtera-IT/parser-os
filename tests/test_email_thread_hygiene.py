@@ -192,3 +192,32 @@ def test_a_pasted_note_list_splits_on_inline_dashes(tmp_path):
     assert items.get("Relay") == "Provided by us:"
     assert items.get("Mag Lock Cable") == "Provided by Club/installer:"
     assert not any(a.raw_text.startswith("Provided by") for a in atoms)
+
+
+def test_sentences_of_one_paragraph_keep_the_order_they_were_written(tmp_path):
+    """Live 010288 showed a paragraph's three sentences back to front. They
+    share a line number, so the reading-order sort tied and fell through to
+    the atom id -- which is a hash."""
+    from app.core.orbitbrief_envelope import _in_reading_order
+
+    body = (
+        "Hey AJ,\n\n"
+        "Here are the details for the small job. If this is a successful implementation, it could lead to "
+        "many more of the same opportunity. If you all would be able to do something like this, I will get "
+        "a conversation going with the club owner.\n\nThanks,\n\nAlec\n"
+    )
+    atoms = _parse(_eml(tmp_path, "ask.eml", body, frm="Alec <alec@vendor-partner.example>",
+                        date="Wed, 02 Sep 2026 14:38:56 +0000", subject="Access Control", msgid="<m1@x>"))
+    ordered = [a.raw_text for a in _in_reading_order(atoms, [{"artifact_id": atoms[0].artifact_id, "authored_at": ""}])]
+    first = next(i for i, t in enumerate(ordered) if t.startswith("Here are the details"))
+    second = next(i for i, t in enumerate(ordered) if t.startswith("If this is a successful"))
+    third = next(i for i, t in enumerate(ordered) if t.startswith("If you all would be able"))
+    assert first < second < third
+
+    # and each one says where it sits, so nothing downstream has to guess
+    seqs = {}
+    for a in atoms:
+        loc = (a.source_refs[0].locator if a.source_refs else {}) or {}
+        if a.raw_text.startswith(("Here are the details", "If this is a successful", "If you all would be")):
+            seqs[a.raw_text[:20]] = loc.get("sentence_index", 0)
+    assert sorted(seqs.values()) == [0, 1, 2]
