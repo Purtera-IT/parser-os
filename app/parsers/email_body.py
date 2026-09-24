@@ -162,6 +162,56 @@ def _body_parts_by_type(msg: Any, content_type: str) -> list[Any]:
     ]
 
 
+#: A line that is nothing but a URL, and a short line that introduces one.
+#: Outlook writes "Diagram:" and the link as separate paragraphs, sometimes
+#: with several empty ones between; the label is then a label with no value and
+#: the URL is a URL with no claim, and BOTH are correctly discarded as not
+#: statements. On deal 010288 that is how the only pointer to the job's wiring
+#: diagram vanished out of the email that delivered it -- it survived solely
+#: because somebody pasted the same link into a note six days later, on one
+#: line, where it parsed.
+#: A line holding one link and nothing else. Outlook's plain-text part
+#: writes a link as the display URL followed by its real target in angle
+#: brackets -- "https://huzzard.com/a.png<https://urldefense.com/v3/__...>"
+#: -- which is still a line that is only a link. The display URL is the
+#: one kept; the wrapper is peeled downstream anyway.
+_ONE_URL = r"<?(https?://[^\s<>\"']+)>?"
+_BARE_URL_LINE_RE = re.compile(
+    r"^\s*" + _ONE_URL + r"\s*(?:<\s*https?://[^\s<>\"']+\s*>)?\s*$", re.I)
+_LABEL_LINE_RE = re.compile(r"^\s*([A-Za-z][\w \-/&()]{0,38}):\s*$")
+#: How far a value may sit from its label. Outlook put five empty paragraphs
+#: between the two on 010288; beyond a short gap they are two separate things.
+_MAX_BLANK_GAP = 8
+
+
+def rejoin_label_and_value(text: str) -> str:
+    """Pull a lone URL back up onto the label line that introduces it.
+
+    Only fires on the exact shape that loses information: a SHORT line ending
+    in a colon and nothing else, then blank lines, then a line holding one URL
+    and nothing else. Prose is untouched -- a sentence that happens to end in a
+    colon is longer than the label pattern allows, and a URL with any words
+    beside it is already a statement and is left alone.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        label = _LABEL_LINE_RE.match(lines[i])
+        if label:
+            j = i + 1
+            while j < len(lines) and not lines[j].strip() and j - i <= _MAX_BLANK_GAP:
+                j += 1
+            url = _BARE_URL_LINE_RE.match(lines[j]) if j < len(lines) else None
+            if url:
+                out.append(f"{label.group(1)}: {url.group(1)}")
+                i = j + 1
+                continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
 def _extract_email_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".eml":
@@ -198,7 +248,7 @@ def _extract_email_text(path: Path) -> str:
     if "<html" in content.lower() or "<table" in content.lower():
         soup = BeautifulSoup(content, "html.parser")
         _flatten_tables_in_place(soup)
-        return soup.get_text(separator="\n", strip=True)
-    return content
+        return rejoin_label_and_value(soup.get_text(separator="\n", strip=True))
+    return rejoin_label_and_value(content)
 
 
