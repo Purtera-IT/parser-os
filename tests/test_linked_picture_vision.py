@@ -331,3 +331,57 @@ def test_a_part_and_its_colour_do_not_collide_with_the_email_s_own_line():
     # `page` stays untouched -- the walk sorts on it, and position came from
     # the line that pointed at the drawing.
     assert "page" not in loc
+
+
+# ── not every picture in a deal is a wiring diagram ──────────────────
+
+
+@pytest.mark.parametrize("text,want", [
+    ("4x", True), ("8x", True), ("25 m", True), ("(82 ft)", True),
+    ("13 mm (1/2 in)", True), ("38.1 mm (1.5 in)", True),
+    # What the rule exists to keep out: OCR reading arrowheads and tick marks.
+    ("1", False), ("0", False), ("E", False), ("-", False), ("", False),
+    ("Sealing Washers", False),
+])
+def test_what_counts_as_a_printed_figure(text, want):
+    """A count belongs to the part above it. A bare digit is an arrowhead."""
+    assert lpv._is_a_figure(text) is want
+
+
+def test_a_count_joins_its_part_even_when_its_ink_cannot_be_measured():
+    """"4x" is twelve pixels by nine -- too little ink to measure a hue, so it
+    reads None beside a label that reads orange. Requiring the colours to match
+    kept every quantity on a contents page off its part."""
+    lines = [
+        {"content": "Sealing Washers", "polygon": poly(398, 550, 474, 562)},
+        {"content": "4x", "polygon": poly(431, 563, 443, 572)},
+    ]
+    assert lpv.merge_wrapped_labels(lines, [30, None]) == [[0, 1]]
+
+
+def test_a_stray_figure_with_no_part_above_it_is_not_a_line_item():
+    lines = [{"content": "4x", "polygon": poly(431, 563, 443, 572)}]
+    groups = lpv.merge_wrapped_labels(lines, [None])
+    text = lpv._label_text(lines[groups[0][0]]["content"])
+    assert not lpv._is_a_label(text)
+
+
+def test_a_contents_page_puts_its_parts_under_its_own_printed_heading():
+    """A schematic keys parts to a colour. A "What's In The Box" page has no
+    legend at all and one heading over everything -- read with the schematic's
+    assumptions its parts come out as "the sheet does not say who supplies
+    them", which is backwards: a contents page says the vendor supplies all of
+    them, and says how many."""
+    read = {
+        "is_drawing": True, "kind": "kit_contents", "section": "What's In The Box",
+        "title": "FLAT HIGH PERFORMANCE KIT", "drawing_ref": "", "vendor": "STARLINK",
+        "legend": [],
+        "components": [
+            {"label": "Sealing Washers 4x", "means": "What's In The Box"},
+            {"label": "Starlink Cable 25 m (82 ft)", "means": "What's In The Box"},
+        ],
+        "notes": [], "connections": [],
+    }
+    parts = {x["text"]: x["lead"] for x in lpv.statements(read) if x["kind"] == "component"}
+    assert parts == {"Sealing Washers 4x": "What's In The Box:",
+                     "Starlink Cable 25 m (82 ft)": "What's In The Box:"}

@@ -180,32 +180,48 @@ def fetch_picture(url: str) -> tuple[bytes, str] | None:
 
 # ── asking the model what each printed line IS ──────────────────────
 
-PROMPT = """Below are the text lines OCR read off an engineering or installation drawing
-attached to a sales deal, numbered in reading order. Say what role each line plays.
+PROMPT = """Below are the text lines OCR read off a picture attached to a sales deal,
+numbered in reading order. Say what kind of picture it is and what role each line plays.
 
 Return ONLY a JSON object:
 
 {
-  "is_drawing": true|false,     // false if this is a logo, photo, signature or screenshot
-  "vendor": "",                 // whose drawing it is, if a line says so
-  "drawing_ref": "",            // the drawing/sheet number and revision, verbatim ("" if none)
+  "kind": "",                   // one of: schematic | kit_contents | photo | other
+  "is_drawing": true|false,     // false for a photo, logo, signature or screenshot
+  "vendor": "",                 // whose sheet it is, if a line says so
+  "drawing_ref": "",            // sheet number and revision, verbatim ("" if none)
+  "section": "",                // the printed heading the parts sit under, verbatim,
+                                // when the page groups them under one ("What's In The Box").
+                                // Leave "" on a schematic: its colour legend does this.
   "roles": {"0": "role", ...},  // EVERY line index -> exactly one role, see below
+  "parts": [                    // one per line whose role is "component"
+    {"line": 0, "quantity": "", "spec": ""}
+  ],
   "connections": [              // only where the drawn line is unambiguous
     {"from": "", "to": "", "via": ""}
   ]
 }
 
+The kinds:
+  "schematic"     a diagram of how parts connect: wiring, plumbing, a rack elevation
+  "kit_contents"  a parts / packing page: what ships in a box, usually with counts
+  "photo"         a photograph of a product or a site
+  "other"         anything else -- a floorplan, a screenshot, a chart
+
 The roles:
   "title"      part of the title block -- what this sheet depicts
   "legend"     a key entry: it defines what a colour or symbol on the sheet MEANS
                ("Huzzard supplied Components", "by others", "existing")
-  "component"  a label naming a physical part, cable or device drawn on the sheet
+  "component"  a label naming a physical part, cable or device
   "note"       a note, callout, list heading or list item printed on the sheet
   "brand"      a company name, logo text, web address or sheet footer
   "decoration" an arrow, stray character or anything carrying no meaning
 
 Rules:
   * Every index in the list below must appear exactly once in "roles".
+  * "quantity" and "spec" must be text PRINTED ON THE PAGE, copied exactly
+    ("4x", "8x", "25 m (82 ft)", "38.1 mm (1.5 in)"). Leave them "" rather than
+    working one out, converting a unit, or assuming a count of one.
   * Use the line's own words for "from"/"to"/"via" in connections.
   * Do NOT report colours. You are not being asked what colour anything is.
   * Leave a field "" and a list [] rather than guessing at a revision or a vendor.
@@ -258,6 +274,18 @@ def _is_a_label(text: str) -> bool:
     return letters >= 2 and len(stripped) >= 3
 
 
+#: A printed figure: a count ("4x"), a length ("25 m", "38.1 mm"), a converted
+#: one in brackets ("(82 ft)", "13 mm (1/2 in)"). A digit on its own is not
+#: one -- that is the arrowhead OCR reads as "1" -- so a unit, an x or a
+#: bracket has to be there too.
+_FIGURE_RE = re.compile(r"^[\s(]*\d[\d.,/]*\s*(?:x|[a-z]{1,4}\b|\))", re.I)
+
+
+def _is_a_figure(text: str) -> bool:
+    t = _clean(text)
+    return bool(t) and len(t) <= 24 and bool(_FIGURE_RE.match(t))
+
+
 def _label_text(text: str) -> str:
     return _BULLET.sub("", _clean(text)).strip()
 
@@ -303,7 +331,16 @@ def merge_wrapped_labels(lines: list[dict[str, Any]],
         x0, _y0, x1, y1 = _box(line["polygon"])
         height = max(1.0, y1 - _y0)
         for j in range(i + 1, len(lines)):
-            if j in used or hues[j] != hues[i]:
+            if j in used:
+                continue
+            # A COUNT DOES NOT HAVE TO MATCH THE COLOUR IT SITS UNDER. "4x" is
+            # twelve pixels by nine -- too little ink to measure a hue at all,
+            # so it reads as None beside a label that reads as orange, and the
+            # colour check kept every quantity on a contents page off its part.
+            # Nothing classifies a figure by colour; only labels are keyed to
+            # the legend. So a figure joins the label above it on geometry
+            # alone.
+            if hues[j] != hues[i] and not _is_a_figure(lines[j]["content"]):
                 continue
             nx0, ny0, nx1, ny1 = _box(lines[j]["polygon"])
             gap = ny0 - y1
@@ -349,6 +386,31 @@ def _joined_notes(notes: list[str]) -> list[str]:
 
 #: What the sheet says, as the labeller wants it: a line, the heading it sits
 #: under, and the readings the parser proposes for it.
+def _norm_fig(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "").lower())
+
+
+def _printed(extras: dict[int, tuple[str, str]], group: list[int],
+             keep: list[int], lines: list[dict[str, Any]]) -> tuple[str, str]:
+    """The quantity and spec the model read here, kept only if the page prints them.
+
+    A count is the one thing on a parts page that costs money to get wrong,
+    and a model asked for one will happily supply "1". So a figure survives
+    only when it appears in the OCR of the very lines it was read from.
+    """
+    qty = spec = ""
+    seen = _norm_fig(" ".join(lines[keep[x]]["content"] for x in group))
+    for g in group:
+        got = extras.get(keep[g])
+        if not got:
+            continue
+        if got[0] and _norm_fig(got[0]) in seen:
+            qty = qty or got[0]
+        if got[1] and _norm_fig(got[1]) in seen:
+            spec = spec or got[1]
+    return qty, spec
+
+
 def _said(kind: str, text: str, atom_type: AtomType, *,
           lead: str = "", reads: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {"kind": kind, "text": text, "type": atom_type,
@@ -392,7 +454,13 @@ def statements(read: dict[str, Any]) -> list[dict[str, Any]]:
         if not label:
             continue
         if means:
-            # The part is the line; the colour is the heading it sits under.
+            # The part is the line; what the sheet groups it under is the
+            # heading. A count and a size belong ON the line, the way a parts
+            # page prints them.
+            # The count and the size are already in the label: they are
+            # printed under the name on the page and merged into it here. The
+            # model's own reading of them is kept as a cross-check in the
+            # atom's value, never spliced into the words.
             out.append(_said("component", label, AtomType.deal_metadata, lead=f"{means}:"))
             continue
         sentence = (f"The drawing shows {label}, in no colour the legend defines -- "
@@ -468,9 +536,25 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
 
     # OCR reads arrowheads and leader dashes as "1", "E" and "-". Drop them
     # before merging, or a stray dash under a label becomes part of its name.
-    keep = [i for i, ln in enumerate(lines) if _is_a_label(ln["content"])]
+    keep = [i for i, ln in enumerate(lines)
+            if _is_a_label(ln["content"]) or _is_a_figure(ln["content"])]
     kept = [lines[i] for i in keep]
     hues = [inkmod.ink_hue(image, ln["polygon"]) for ln in kept]
+
+    # A schematic keys its parts to a colour; a contents page prints one
+    # heading over all of them. Either way a part ends up under what the sheet
+    # itself calls it, never under a phrase this code invented.
+    printed_section = _clean(got.get("section"))
+    kind = _clean(got.get("kind")).lower() or ("schematic" if references else "other")
+    extras: dict[int, tuple[str, str]] = {}
+    for row in got.get("parts") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            extras[int(row.get("line"))] = (_clean(row.get("quantity")),
+                                            _clean(row.get("spec")))
+        except (TypeError, ValueError):
+            continue
 
     components: list[dict[str, str]] = []
     notes: list[str] = []
@@ -479,7 +563,8 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
         if head in legend_idx:
             continue
         text = _label_text(" ".join(kept[g]["content"] for g in group))
-        if not text:
+        # A figure that found no label to join is a stray number, not a part.
+        if not text or not _is_a_label(text):
             continue
         # WHAT MAKES A COMPONENT IS THE INK, NOT THE MODEL. A label printed in
         # a legend colour is a part the sheet assigns to a company; that is
@@ -488,14 +573,22 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
         # from component to note between two runs of the same image. The
         # measurement does not drift.
         hit = inkmod.classify(image, kept[group[0]]["polygon"], references)
+        qty, spec = _printed(extras, group, keep, lines)
         if hit is not None:
-            components.append({"label": text, "means": hit[1]})
+            components.append({"label": text, "means": hit[1], "qty": qty, "spec": spec})
+        elif role_of(head) == "component" and printed_section:
+            # No colour to key on, but the page says what these are: parts on
+            # a contents sheet sit under its printed heading.
+            components.append({"label": text, "means": printed_section,
+                               "qty": qty, "spec": spec})
         elif role_of(head) == "note":
             notes.append(_note_text(text))
 
     title = " ".join(ln["content"] for i, ln in enumerate(lines) if role_of(i) == "title")
     return {
         "is_drawing": True,
+        "kind": kind,
+        "section": printed_section,
         "title": title,
         "drawing_ref": got.get("drawing_ref") or "",
         "vendor": got.get("vendor") or "",
