@@ -485,8 +485,15 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
     }
 
 
+#: How far below the link a reading sits. Fractional so the whole set lands
+#: between the line that pointed at the drawing and whatever the sender wrote
+#: next, however many readings there are.
+_LINE_STEP = 0.001
+
+
 def _emit(*, source: Any, url: str, fact_kind: str, text: str,
-          atom_type: AtomType, confidence: float) -> EvidenceAtom | None:
+          atom_type: AtomType, confidence: float,
+          ordinal: int = 0) -> EvidenceAtom | None:
     text = (text or "").strip()
     if not text:
         return None
@@ -494,12 +501,28 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
     refs = getattr(source, "source_refs", None) or []
     filename = (getattr(refs[0], "filename", "") if refs else "") or ""
     atom_id = stable_id("atm", artifact_id, VERSION, url, fact_kind, text[:80])
+
+    # WHERE THE SENDER PUT IT. A locator carrying only the image URL scores
+    # zero on every key the labeller sorts by -- page, block, line -- so the
+    # readings sorted above the message that sent them. They inherit the
+    # position of the line that pointed at the drawing and fan out just below
+    # it, keeping the order `statements` produced: what the sheet is, how to
+    # read it, what it assigns, what else is printed on it.
+    at = dict(getattr(refs[0], "locator", None) or {}) if refs else {}
+    line = at.get("line_start")
+    here: dict[str, Any] = {"image_url": url, "extraction": VERSION, "fact_kind": fact_kind}
+    for key in ("message_index", "page", "block_index", "sender", "sent_at", "quoted"):
+        if key in at:
+            here[key] = at[key]
+    if isinstance(line, (int, float)):
+        here["line_start"] = here["line_end"] = line + (ordinal + 1) * _LINE_STEP
+
     src = SourceRef(
         id=stable_id("src", atom_id),
         artifact_id=artifact_id,
         artifact_type=ArtifactType.image,
         filename=filename,
-        locator={"image_url": url, "extraction": VERSION, "fact_kind": fact_kind},
+        locator=here,
         extraction_method=VERSION,
         parser_version=VERSION,
     )
@@ -587,9 +610,9 @@ def atoms_from_linked_pictures(atoms: Iterable[Any]) -> list[EvidenceAtom]:
                 continue
 
             made = 0
-            for fact_kind, text, atom_type in statements(read):
+            for ordinal, (fact_kind, text, atom_type) in enumerate(statements(read)):
                 atom = _emit(source=source, url=url, fact_kind=fact_kind, text=text,
-                             atom_type=atom_type,
+                             atom_type=atom_type, ordinal=ordinal,
                              confidence=_CONFIDENCE.get(fact_kind, 0.5))
                 if atom is not None:
                     out.append(atom)

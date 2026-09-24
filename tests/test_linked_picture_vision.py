@@ -237,6 +237,57 @@ def test_topology_is_not_emitted_by_default(monkeypatch):
     assert "connects Relay to PC via USB" in lpv.statements(read)[0][1]
 
 
+def test_a_reading_sits_where_the_drawing_sits():
+    """An atom belongs where its sender put it.
+
+    These were emitted with a locator holding only the image URL, so every key
+    the labeller sorts by -- page, block, line -- scored zero and all 22 sorted
+    ABOVE Alec's opening sentence. A reader met twenty-two facts about a
+    picture before the message that sent it.
+    """
+    from app.core.schemas import AtomType
+
+    class Ref:
+        filename = "x.eml"
+        locator = {"message_index": 0, "line_start": 45, "line_end": 45,
+                   "sender": "alec@cdw.com", "quoted": False}
+
+    class Src:
+        id, project_id, artifact_id = "atm_src", "p", "art"
+        source_refs = [Ref()]
+
+    made = [
+        lpv._emit(source=Src(), url="https://v/d.png", fact_kind=k, text=t,
+                  atom_type=AtomType.deal_metadata, confidence=0.6, ordinal=i)
+        for i, (k, t) in enumerate([("title", "The drawing is X."),
+                                    ("legend", "Legend A."),
+                                    ("component", "Shows Relay.")])
+    ]
+    lines = [a.source_refs[0].locator["line_start"] for a in made]
+    # Below the line that pointed at the drawing...
+    assert all(x > 45 for x in lines)
+    # ...above whatever the sender wrote next...
+    assert all(x < 46 for x in lines)
+    # ...and in the order the sheet reads.
+    assert lines == sorted(lines)
+    # The message they arrived in is theirs too, so they thread correctly.
+    assert made[0].source_refs[0].locator["message_index"] == 0
+    assert made[0].source_refs[0].locator["sender"] == "alec@cdw.com"
+
+
+def test_a_reading_with_no_position_to_inherit_does_not_invent_one():
+    from app.core.schemas import AtomType
+
+    class Src:
+        id, project_id, artifact_id = "atm_src", "p", "art"
+        source_refs = []
+
+    atom = lpv._emit(source=Src(), url="https://v/d.png", fact_kind="component",
+                     text="Shows Relay.", atom_type=AtomType.deal_metadata,
+                     confidence=0.6, ordinal=3)
+    assert "line_start" not in atom.source_refs[0].locator
+
+
 def test_the_whole_stage_is_a_no_op_when_the_flag_is_off(monkeypatch):
     monkeypatch.delenv("SOWSMITH_LINKED_PICTURE_VISION", raising=False)
     assert lpv.atoms_from_linked_pictures([object()]) == []
