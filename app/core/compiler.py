@@ -968,6 +968,33 @@ def compile_project(
             warnings.extend(replay_warnings)
         telemetry.end_stage(stage, output_count=len(atoms), warnings=replay_warnings)
 
+    # Pictures LINKED from a document rather than embedded in one: a drawing
+    # whose URL is written in an email body or a note. ``pdf_image_vision``
+    # below cannot see these -- it wants a crop saved out of a PDF page -- so
+    # until now the deal held the link and never the contents. Stamp the link
+    # first (idempotent; the substance gate stamps again later for anything
+    # that arrives after this point), then read what it points at.
+    #
+    # It sits HERE, beside the PDF reader, so the atoms it makes go through
+    # every stage the rest of the deal does: entity extraction, typing, dedup.
+    # Emitted later they would be facts nothing else in the compile had seen.
+    try:
+        from app.core import linked_picture_vision
+        if linked_picture_vision.enabled():
+            from app.core.linked_pictures import stamp_linked_pictures
+
+            with telemetry.stage("linked_picture_vision", input_count=len(atoms)) as stage:
+                stamp_linked_pictures(atoms)
+                picture_atoms = linked_picture_vision.atoms_from_linked_pictures(atoms)
+                if picture_atoms:
+                    atoms.extend(picture_atoms)
+                telemetry.end_stage(stage, output_count=len(picture_atoms))
+    except Exception as _lpv_exc:
+        warnings.append(
+            f"WARNING: linked_picture_vision pass failed (non-fatal): "
+            f"{type(_lpv_exc).__name__}: {_lpv_exc}"
+        )
+
     # PDF embedded-image understanding (SEPARATE from schematics). Describes /
     # transcribes raster images the parser saved as image_marker atoms. Purely
     # additive + abstain-first; the whole stage is a no-op unless

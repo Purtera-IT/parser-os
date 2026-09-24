@@ -83,6 +83,56 @@ def extract_text_from_image_bytes(image_bytes: bytes) -> str:
     return ""
 
 
+def read_lines_with_polygons(image_bytes: bytes) -> list[dict[str, Any]]:
+    """Every text line on an image WITH its pixel polygon.
+
+    ``extract_text_from_image_bytes`` throws the geometry away, which is fine
+    for a scanned page and useless for a drawing: on a drawing the position and
+    the COLOUR of a label are what it means. A legend that says "orange means
+    we supply it" can only be applied by someone who can find out what colour a
+    given label is printed in, and that needs the polygon to sample inside.
+
+    Returns ``[{"content": str, "polygon": [x0, y0, ...]}]`` in reading order,
+    or ``[]`` when Doc Intel is not configured or the call fails.
+    """
+    if not doc_intel_available() or not image_bytes:
+        return []
+    try:
+        from azure.ai.documentintelligence import DocumentIntelligenceClient
+        from azure.core.credentials import AzureKeyCredential
+    except ImportError:
+        return []
+
+    try:
+        client = DocumentIntelligenceClient(
+            endpoint=os.environ["AZURE_DOC_INTEL_ENDPOINT"].rstrip("/"),
+            credential=AzureKeyCredential(os.environ["AZURE_DOC_INTEL_KEY"]),
+        )
+        poller = client.begin_analyze_document(
+            model_id="prebuilt-read",
+            body=image_bytes,
+            content_type="application/octet-stream",
+        )
+        result = poller.result()
+        out: list[dict[str, Any]] = []
+        for page in getattr(result, "pages", None) or []:
+            # Doc Intel reports pixel coordinates for a raster input, which is
+            # what makes the polygon directly usable against the image. The SDK
+            # hands back a LengthUnit enum, so match on its value, not str().
+            raw_unit = getattr(page, "unit", "") or ""
+            unit = str(getattr(raw_unit, "value", raw_unit)).lower()
+            if unit and "pixel" not in unit:
+                continue
+            for line in getattr(page, "lines", None) or []:
+                poly = [float(v) for v in (getattr(line, "polygon", None) or [])]
+                content = str(getattr(line, "content", "") or "").strip()
+                if content and len(poly) >= 8:
+                    out.append({"content": content, "polygon": poly})
+        return out
+    except Exception:
+        return []
+
+
 def extract_pdf_pages(pdf_bytes: bytes) -> list[dict[str, Any]]:
     """Run Azure Doc Intel ``prebuilt-layout`` on a full PDF.
 
@@ -153,6 +203,7 @@ def extract_pdf_pages(pdf_bytes: bytes) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "read_lines_with_polygons",
     "doc_intel_available",
     "extract_text_from_image_bytes",
     "extract_pdf_pages",
