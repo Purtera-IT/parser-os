@@ -75,3 +75,74 @@ def test_nothing_else_in_the_message_moves():
 @pytest.mark.parametrize("text", ["", "\n\n\n", "Diagram:", PNG])
 def test_degenerate_input_survives(text):
     rejoin(text)
+
+
+# ── and the line has to survive the chrome filter ───────────────────
+#
+# Rejoining the label to its link is only half the job. `_is_link_only_line`
+# strips the links off a line and calls it mail chrome when one short word is
+# left -- which is exactly what "Diagram: <link>" looks like after stripping.
+# It was written against signature-block brands glued to their own href, and
+# it was eating the pointer to the drawing.
+
+from app.parsers.email_parser import _is_link_only_line as chrome
+
+
+@pytest.mark.parametrize("line", [
+    f"Diagram: {PNG}",
+    "Floorplan: https://example.com/floor.pdf",
+    "Spec: https://example.com/spec.pdf",
+])
+def test_a_named_field_pointing_at_a_document_is_not_chrome(line):
+    """The colon is a sender saying what they are handing over."""
+    assert not chrome(line)
+
+
+@pytest.mark.parametrize("line", [
+    "PurTera-IT.com<https://purtera-it.com>",
+    "Get Outlook for Mac<https://aka.ms/x>",
+    "Report Suspicious<https://us-phishalarm",
+    PNG,
+])
+def test_the_lines_that_rule_exists_to_kill_still_die(line):
+    """No colon: the leftover word is a brand or a button, not a field name."""
+    assert chrome(line)
+
+
+def test_end_to_end_the_email_carries_its_drawing(tmp_path):
+    """The whole path on a message built to 010288's exact shape: the label and
+    the link as separate paragraphs, the link written the way Outlook's
+    plain-text part writes one. The drawing has to reach an atom on the EMAIL,
+    not only on a note somebody pasted days later.
+
+    Built here rather than vendored: the real message carries a customer's
+    address book and tenant ids inside its safelink, and none of that is needed
+    to reproduce the shape.
+    """
+    from app.parsers.email_parser import EmailParser
+
+    nl = "\r\n"
+    wrapped = PNG + "<https://urldefense.com/v3/__https:/huzzard.com/a.png__;!!HUqgN_M!pt$>"
+    body = nl.join([
+        "Hey AJ,", "",
+        "Here are the details for the small job.", "",
+        "Provided by us:", "-Relay", "-Local and Remote Extender", "",
+        "Diagram:", "", "", "",
+        wrapped, "",
+        "-------", "",
+        "Thanks,", "Alec", "",
+    ])
+    head = nl.join([
+        "From: alec@example-reseller.com",
+        "To: aj@example-co.com",
+        "Subject: Access Control",
+        "Content-Type: text/plain; charset=utf-8",
+        "", "",
+    ])
+    eml = tmp_path / "ask.eml"
+    eml.write_text(head + body, encoding="utf-8")
+
+    said = [str(getattr(a, "raw_text", "") or "") for a in EmailParser().parse(eml)]
+    assert any(t.strip().lower().startswith("diagram:") and PNG in t for t in said), said
+    # The bullet list above it is untouched.
+    assert any("Relay" in t for t in said)

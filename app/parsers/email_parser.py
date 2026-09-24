@@ -1627,6 +1627,13 @@ def _is_title_case_banner(text: str) -> bool:
     return caps / len(words) >= 0.8
 
 
+#: "<field name>: <one link>" and nothing else. The colon is what
+#: separates a sender naming an artifact from a signature-block brand
+#: glued to its own href.
+_FIELD_LABEL_LINK_RE = re.compile(
+    r"^[A-Za-z][\w \-/&()]{0,38}:\s+<?(?:https?://|mailto:)\S+", re.I)
+
+
 def _is_link_only_line(text: str) -> bool:
     """True when nothing but links (and the word they wrap) is on the line.
 
@@ -1657,6 +1664,14 @@ def _is_link_only_line(text: str) -> bool:
     rest = _LINK_TOKEN_RE.sub(" ", t).strip(" <>;,|-–—")
     if not rest:
         return True
+    # A NAMED FIELD is not chrome. "Diagram: <link>", "Floorplan: <link>",
+    # "Spec: <link>" -- the colon is a sender saying what they are handing
+    # over, which is a statement about the deal and often the only pointer to
+    # a document the job depends on. The lines this rule exists to kill have
+    # no colon: the leftover word is a brand or a button glued to its href
+    # ("PurTera-IT.com<https://...>", "Get Outlook for Mac<https://aka.ms/>").
+    if _FIELD_LABEL_LINK_RE.match(t):
+        return False
     words = rest.split()
     return len(words) <= 1 and len(rest) <= 40
 
