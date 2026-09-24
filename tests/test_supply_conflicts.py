@@ -139,3 +139,30 @@ def test_headings_that_are_not_about_supply_are_ignored():
 def test_nothing_to_compare_is_not_an_error():
     assert find_supply_conflicts([]) == []
     assert find_supply_conflicts([Atom("a", "Relay", OURS, sender=CDW)]) == []
+
+
+def test_a_drawing_read_onto_an_email_is_still_a_separate_document():
+    """A linked drawing is READ ONTO the mail that carried it, so the vendor's
+    parts list and the reseller's supply list share an artifact id while being
+    two entirely separate statements of who buys what. Comparing by artifact
+    found nothing at all on the real deal."""
+    same = "art_email"
+    email = Atom(same, "Relay", OURS, sender=CDW)
+    drawing = Atom(same, "Relay", INSTALLER, sheet="BPW061725 Rev1")
+    got = find_supply_conflicts([email, drawing])
+    assert [c.value["item"] for c in got] == ["Relay"]
+
+
+def test_a_sheet_speaks_for_its_own_vendor():
+    """"Huzzard supplied Components" on a Huzzard drawing is that document
+    saying "we do", the same as "Provided by us" on a reseller's mail. Without
+    the vendor's name the comparison reads it as a third party and raises a
+    disagreement where a reseller is shipping its vendor's kit."""
+    email = Atom("art_email", "Remote Extender", OURS, sender=CDW)
+    drawing = Atom("art_email", "Remote Extender", VENDOR, sheet="BPW061725 Rev1")
+    drawing.value = {"vendor": "Huzzard"}
+    assert find_supply_conflicts([email, drawing]) == []
+
+    # And with no vendor recorded it is a third party, so the question stands.
+    bare = Atom("art_email", "Remote Extender", VENDOR, sheet="BPW061725 Rev1")
+    assert len(find_supply_conflicts([email, bare])) == 1

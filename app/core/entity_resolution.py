@@ -319,6 +319,26 @@ def collect_stakeholder_alias_groups(atoms: list[EvidenceAtom]) -> list[frozense
     return _coalesce_alias_groups(groups)
 
 
+def _surface(atom) -> str:
+    """Which document inside an artifact a line came off.
+
+    "Intra-doc only" is the rule this dedup is built on, and an artifact id
+    used to be the same thing as a document. A drawing linked from an email is
+    READ ONTO that email, so a vendor's parts list and the reseller's own
+    supply list now share an artifact while being two separate statements of
+    who buys what -- and on 010288 that folded three of the reseller's lines
+    into the vendor's, losing the list the deal is actually quoting from. The
+    sheet separates them: a part read off BPW061725 Rev1 is not a line the
+    sender of the mail typed.
+    """
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        return str(loc.get("sheet") or "")
+    except Exception:
+        return ""
+
+
 def collapse_duplicate_atoms(atoms: list) -> list:
     """v48 — collapse near-duplicate atoms emitted by repeated doc sections.
 
@@ -336,7 +356,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
     for atom in atoms:
         aid = getattr(atom, "artifact_id", None)
         if aid:
-            by_artifact.setdefault(aid, []).append(atom)
+            by_artifact.setdefault(f"{aid}#{_surface(atom)}", []).append(atom)
         else:
             other.append(atom)
     result: list = list(other)

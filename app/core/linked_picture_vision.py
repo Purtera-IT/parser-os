@@ -661,7 +661,7 @@ _LINE_STEP = 0.001
 def _emit(*, source: Any, url: str, fact_kind: str, text: str,
           atom_type: AtomType, confidence: float, ordinal: int = 0,
           lead: str = "", reads: list[dict[str, Any]] | None = None,
-          sheet: str = "") -> EvidenceAtom | None:
+          sheet: str = "", vendor: str = "") -> EvidenceAtom | None:
     text = (text or "").strip()
     if not text:
         return None
@@ -729,6 +729,13 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
             "read_from_image": url,
             "source_atom_id": getattr(source, "id", ""),
             "reads": list(reads or []),
+            # WHO DREW IT. A sheet speaks for its own vendor: "Huzzard
+            # supplied Components" on a Huzzard drawing is that document
+            # saying "we do", the same as "Provided by us" on a reseller's
+            # mail. Without the name here the supply comparison reads it as a
+            # third party and raises a disagreement where a reseller is simply
+            # shipping its vendor's kit.
+            "vendor": vendor,
         },
         entity_keys=[],
         source_refs=[src],
@@ -792,11 +799,12 @@ def atoms_from_linked_pictures(atoms: Iterable[Any]) -> list[EvidenceAtom]:
 
             made = 0
             sheet = _clean(read.get("drawing_ref")) or "drawing"
+            vendor = _clean(read.get("vendor"))
             for ordinal, said in enumerate(statements(read)):
                 atom = _emit(source=source, url=url, fact_kind=said["kind"],
                              text=said["text"], atom_type=said["type"], ordinal=ordinal,
                              lead=said.get("lead") or "", reads=said.get("reads"),
-                             sheet=sheet,
+                             sheet=sheet, vendor=vendor,
                              confidence=_CONFIDENCE.get(said["kind"], 0.5))
                 if atom is not None:
                     out.append(atom)

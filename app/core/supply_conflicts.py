@@ -65,6 +65,19 @@ def _locator(atom: Any) -> dict:
     return loc if isinstance(loc, dict) else {}
 
 
+def _surface(atom: Any) -> str:
+    """Which document a line came off.
+
+    Not the artifact: a drawing linked from an email is READ ONTO that email,
+    so the vendor's parts list and the reseller's supply list share an
+    artifact id while being two entirely separate statements of who buys what.
+    The sheet is what separates them -- an atom read off BPW061725 Rev1 is not
+    a line the sender of the mail typed.
+    """
+    loc = _locator(atom)
+    return f"{getattr(atom, 'artifact_id', '') or ''}#{loc.get('sheet') or ''}"
+
+
 def _heading(atom: Any) -> str:
     """The supply heading this line sits under, if it sits under one."""
     loc = _locator(atom)
@@ -129,7 +142,7 @@ def find_supply_conflicts(atoms: list[Any], documents: dict[str, dict] | None = 
                           ) -> list[EvidenceAtom]:
     """One ``open_question`` per part two documents hand to different companies."""
     docs = documents or {}
-    claims: list[tuple[Any, str, str, str]] = []
+    claims: list[tuple[Any, str, str, str, str]] = []
     for atom in atoms or []:
         try:
             head = _heading(atom)
@@ -138,17 +151,18 @@ def find_supply_conflicts(atoms: list[Any], documents: dict[str, dict] | None = 
             key = _item_key(getattr(atom, "raw_text", "") or "")
             if len(key) < _MIN_ITEM_CHARS:
                 continue
-            claims.append((atom, key, head, side_of(head, _authors(atom, docs))))
+            claims.append((atom, key, head, side_of(head, _authors(atom, docs)),
+                           _surface(atom)))
         except Exception:
             continue
 
     out: list[EvidenceAtom] = []
     seen: set[str] = set()
-    for i, (a1, k1, h1, s1) in enumerate(claims):
-        for a2, k2, h2, s2 in claims[i + 1:]:
+    for i, (a1, k1, h1, s1, f1) in enumerate(claims):
+        for a2, k2, h2, s2, f2 in claims[i + 1:]:
             # One document disagreeing with itself is a drafting problem, not
             # a supply question.
-            if getattr(a1, "artifact_id", None) == getattr(a2, "artifact_id", None):
+            if f1 == f2:
                 continue
             # Both documents claiming the part for their own side is a supply
             # chain (a reseller shipping its vendor's kit), not a conflict.
