@@ -206,6 +206,26 @@ def test_a_component_in_no_legend_colour_says_so_rather_than_guessing():
     assert "does not say who supplies it" in text
 
 
+def test_a_drawing_atom_does_not_claim_to_be_a_link_to_a_picture():
+    """`image_url` on an atom is a RENDER CONTRACT downstream: the labeler
+    replaces the card's text with "Linked image (below)" and draws the picture
+    under it. That is right for "Diagram: https://..." and wrong for a reading
+    taken OUT of a picture -- claiming it made all 22 of 010288's drawing atoms
+    display as "Linked image (below)", the analysis thrown away and the same
+    drawing pasted 23 times down one note. Provenance goes in the locator."""
+    src = type("A", (), {"id": "atm_src", "project_id": "p", "artifact_id": "art",
+                         "source_refs": []})()
+    atom = lpv._emit(source=src, url="https://v.example/d.png", fact_kind="component",
+                     text="The drawing shows Relay, in Installer supplied Components.",
+                     atom_type=__import__("app.core.schemas", fromlist=["AtomType"]).AtomType.deal_metadata,
+                     confidence=0.64)
+    assert "image_url" not in atom.value, "the card would discard this atom's text"
+    assert "media_type" not in atom.value
+    assert atom.value["read_from_image"] == "https://v.example/d.png"
+    # Which picture it came from is still recorded, where provenance belongs.
+    assert atom.source_refs[0].locator["image_url"] == "https://v.example/d.png"
+
+
 def test_topology_is_not_emitted_by_default(monkeypatch):
     """The words come from OCR and the colours from the pixels. Which line runs
     to which is neither -- it is the model tracing wires, and a wrong

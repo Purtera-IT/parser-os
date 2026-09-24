@@ -513,8 +513,17 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
         value={
             "via": "linked_picture_vision",
             "fact_kind": fact_kind,
-            "image_url": url,
-            "media_type": "image",
+            # NOT `image_url`, and the distinction is the whole bug it fixes.
+            # Downstream, `image_url` on an atom means "this LINE IS a link to
+            # a picture": the labeler replaces the card's text with "Linked
+            # image (below)" and renders the picture under it. That is right
+            # for "Diagram: https://..." and exactly wrong here. These atoms
+            # were read OUT OF a picture, so claiming the render contract made
+            # all 22 of them display as "Linked image (below)" -- the analysis
+            # thrown away and the same drawing pasted 23 times down one note.
+            # Which picture it came from is provenance, and provenance lives in
+            # the SourceRef locator below.
+            "read_from_image": url,
             "source_atom_id": getattr(source, "id", ""),
         },
         entity_keys=[],
