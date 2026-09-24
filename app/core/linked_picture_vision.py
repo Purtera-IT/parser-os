@@ -347,35 +347,56 @@ def _joined_notes(notes: list[str]) -> list[str]:
     return out
 
 
-def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
-    """(fact_kind, sentence, type) for everything the drawing states.
+#: What the sheet says, as the labeller wants it: a line, the heading it sits
+#: under, and the readings the parser proposes for it.
+def _said(kind: str, text: str, atom_type: AtomType, *,
+          lead: str = "", reads: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {"kind": kind, "text": text, "type": atom_type,
+            "lead": lead, "reads": reads or []}
+
+
+def statements(read: dict[str, Any]) -> list[dict[str, Any]]:
+    """Everything the drawing states, in the order the sheet reads.
 
     A legend entry is a statement about how the sheet must be READ, so it is
-    kept separate from the components it governs: when a legend turns out to be
-    wrong -- as this one did -- the atom that is wrong has to be nameable on
-    its own.
+    kept separate from the components it governs: when a legend turns out to
+    be wrong -- as this one did -- the atom that is wrong has to be nameable
+    on its own. It also becomes the HEADING those components sit under, which
+    is what turns eighteen loose cards into two bills of materials.
     """
-    out: list[tuple[str, str, AtomType]] = []
+    out: list[dict[str, Any]] = []
     title = _clean(read.get("title"))
     ref, vendor = _clean(read.get("drawing_ref")), _clean(read.get("vendor"))
     if title or ref:
         bits = [b for b in (title, ref and f"drawing {ref}", vendor and f"by {vendor}") if b]
-        out.append(("title", "The drawing is " + ", ".join(bits) + ".", AtomType.deal_metadata))
+        out.append(_said("title", "The drawing is " + ", ".join(bits) + ".",
+                         AtomType.deal_metadata))
 
+    counts: dict[str, int] = {}
+    for comp in read.get("components") or []:
+        m = _clean(comp.get("means"))
+        if m:
+            counts[m] = counts.get(m, 0) + 1
     for meaning in read.get("legend") or []:
-        out.append(("legend",
-                    f"The drawing's legend has an entry for {meaning}.",
-                    AtomType.deal_metadata))
+        n = counts.get(meaning, 0)
+        out.append(_said(
+            "legend", f"The drawing's legend has an entry for {meaning}.",
+            AtomType.deal_metadata,
+            reads=[{"key": "opens_block",
+                    "value": f"the {n} parts on this drawing printed as {meaning}",
+                    "why": "a legend entry is the heading its colour puts every part under",
+                    "confidence": 0.8, "source": "rule"}] if n else []))
 
     for comp in read.get("components") or []:
         label, means = _clean(comp.get("label")), _clean(comp.get("means"))
         if not label:
             continue
         if means:
-            sentence = f"The drawing shows {label}, in the colour its legend calls {means}."
-        else:
-            sentence = (f"The drawing shows {label}, in no colour the legend defines -- "
-                        f"the sheet does not say who supplies it.")
+            # The part is the line; the colour is the heading it sits under.
+            out.append(_said("component", label, AtomType.deal_metadata, lead=f"{means}:"))
+            continue
+        sentence = (f"The drawing shows {label}, in no colour the legend defines -- "
+                    f"the sheet does not say who supplies it.")
         # NOT bom_line, and the reason is arithmetic. On 010288 the email
         # carries ten supply lines and eight of them are drawn on this sheet
         # too -- Relay, Power Supply, Mag/Electric Lock, the PC, the USB cable.
@@ -385,10 +406,11 @@ def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
         # drawing shows. A PM who decides it is also a line we quote can retype
         # it, and the two can be tied with same_as -- which is the relation
         # that exists for one fact said twice.
-        out.append(("component", sentence, AtomType.deal_metadata))
+        out.append(_said("component", sentence, AtomType.deal_metadata))
 
     for text in read.get("notes") or []:
-        out.append(("note", f"Printed on the drawing: {_clean(text)}", AtomType.scope_item))
+        out.append(_said("note", f"Printed on the drawing: {_clean(text)}",
+                         AtomType.scope_item))
 
     # TOPOLOGY IS OFF BY DEFAULT, and this is the one place the stage declines
     # to say what it saw. Every other fact here is anchored: the words come
@@ -404,9 +426,10 @@ def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
             if not a or not b:
                 continue
             via = _clean(row.get("via"))
-            out.append(("connection",
-                        f"The drawing connects {a} to {b}" + (f" via {via}" if via else "") + ".",
-                        AtomType.scope_item))
+            out.append(_said("connection",
+                             f"The drawing connects {a} to {b}"
+                             + (f" via {via}" if via else "") + ".",
+                             AtomType.scope_item))
     return out
 
 
@@ -492,8 +515,9 @@ _LINE_STEP = 0.001
 
 
 def _emit(*, source: Any, url: str, fact_kind: str, text: str,
-          atom_type: AtomType, confidence: float,
-          ordinal: int = 0) -> EvidenceAtom | None:
+          atom_type: AtomType, confidence: float, ordinal: int = 0,
+          lead: str = "", reads: list[dict[str, Any]] | None = None,
+          sheet: str = "") -> EvidenceAtom | None:
     text = (text or "").strip()
     if not text:
         return None
@@ -516,6 +540,18 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
             here[key] = at[key]
     if isinstance(line, (int, float)):
         here["line_start"] = here["line_end"] = line + (ordinal + 1) * _LINE_STEP
+    # The heading this line sits under -- the legend colour, for a part.
+    if lead:
+        here["lead_in"] = [lead]
+        here["section_path"] = [lead.rstrip(":")]
+    # WHICH SURFACE IT CAME OFF. A label key is deal + file + page + text, and
+    # the sheet's part names collide with the email's own ("Relay", "Mag Lock
+    # Cable"). The drawing is a different page of the same message, so saying
+    # so keeps the two "Relay" lines distinguishable. It goes in `sheet` and
+    # not `page` deliberately: the walk sorts on `page`, and these already
+    # have their position from the line above.
+    if sheet:
+        here["sheet"] = sheet
 
     src = SourceRef(
         id=stable_id("src", atom_id),
@@ -548,6 +584,7 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
             # the SourceRef locator below.
             "read_from_image": url,
             "source_atom_id": getattr(source, "id", ""),
+            "reads": list(reads or []),
         },
         entity_keys=[],
         source_refs=[src],
@@ -610,10 +647,13 @@ def atoms_from_linked_pictures(atoms: Iterable[Any]) -> list[EvidenceAtom]:
                 continue
 
             made = 0
-            for ordinal, (fact_kind, text, atom_type) in enumerate(statements(read)):
-                atom = _emit(source=source, url=url, fact_kind=fact_kind, text=text,
-                             atom_type=atom_type, ordinal=ordinal,
-                             confidence=_CONFIDENCE.get(fact_kind, 0.5))
+            sheet = _clean(read.get("drawing_ref")) or "drawing"
+            for ordinal, said in enumerate(statements(read)):
+                atom = _emit(source=source, url=url, fact_kind=said["kind"],
+                             text=said["text"], atom_type=said["type"], ordinal=ordinal,
+                             lead=said.get("lead") or "", reads=said.get("reads"),
+                             sheet=sheet,
+                             confidence=_CONFIDENCE.get(said["kind"], 0.5))
                 if atom is not None:
                     out.append(atom)
                     made += 1
