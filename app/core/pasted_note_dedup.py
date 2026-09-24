@@ -30,7 +30,16 @@ from typing import Any
 
 #: The note's own scaffolding (``note_id=…``, a field label) is not a paste of
 #: anything; only body prose and list items can be duplicates of a mail line.
-_NOTE_KINDS = ("hubspot_note_body", "note_field_item", "note_field")
+_NOTE_KINDS = ("hubspot_note_body", "note_field_item", "note_field", "note_field_image")
+
+#: A document's own scaffolding: the note header the CRM wrote, a quoted
+#: routing header. Nobody pasted these from anywhere, so they are neither a
+#: copy nor evidence that the rest is not one -- they must stay out of the
+#: share on BOTH sides. Counting them is how a note whose body duplicates an
+#: email entirely still scored 1/2 and outlived the thing it copied.
+_PLUMBING_KINDS = (
+    "hubspot_note_meta", "quoted_message_header", "email_header", "conversation_meta",
+)
 
 
 def _type_of(atom: Any) -> str:
@@ -49,6 +58,26 @@ def _key(atom: Any) -> str:
     sentence."""
     t = getattr(atom, "normalized_text", "") or getattr(atom, "raw_text", "") or ""
     return re.sub(r"[^a-z0-9]+", " ", str(t).lower()).strip()
+
+
+def _link_key(atom: Any) -> str:
+    """The document a line points at, with every gateway peeled off.
+
+    One picture reached 010288 twice: bare in the email Alec sent, and wrapped
+    in a safelink inside the note AJ pasted -- 700 characters of Outlook and
+    Proofpoint around the same PNG. By text they are two unrelated strings, so
+    the note never looked like a copy. By destination they are one fact.
+    """
+    t = str(getattr(atom, "raw_text", "") or getattr(atom, "normalized_text", "") or "")
+    m = re.search(r"https?://[^\s<>\"']+", t)
+    if not m:
+        return ""
+    try:
+        from app.core.link_unwrap import unwrap_link
+
+        return str(unwrap_link(m.group(0)) or "").strip().lower()
+    except Exception:
+        return ""
 
 
 def _is_note_atom(atom: Any) -> bool:
@@ -98,19 +127,32 @@ def _doc_kind(atoms: list[Any]) -> str:
 
 
 def _foldable(atom: Any) -> bool:
+    """Whether this line can be somebody's copy of another line.
+
+    A document's own scaffolding cannot: nobody pasted the CRM's note header
+    in from an email, so it is not a copy -- and, just as importantly, it is
+    not evidence that the rest of the document is not one.
+    """
+    if str(_value(atom).get("kind") or "") in _PLUMBING_KINDS:
+        return False
     return len(_key(atom)) >= _MIN_KEY_LEN
 
 
-def _twin(note_key: str, by_key: dict[str, Any]) -> Any | None:
-    """The original of this line: the same text, or the same text with the
-    note's own title glued on the front (a paste lands under a heading)."""
+def _twin(note_key: str, by_key: dict[str, Any], link_key: str = "") -> Any | None:
+    """The original of this line: the same text, the same text with the note's
+    own title glued on the front (a paste lands under a heading), or the same
+    document pointed at through a different gateway."""
     hit = by_key.get(note_key)
     if hit is not None:
         return hit
+    if link_key:
+        hit = by_key.get("\x00link:" + link_key)
+        if hit is not None:
+            return hit
     if len(note_key) < _MIN_CONTAINS_LEN:
         return None
     for key, atom in by_key.items():
-        if len(key) >= _MIN_CONTAINS_LEN and key in note_key:
+        if len(key) >= _MIN_CONTAINS_LEN and not key.startswith("\x00link:") and key in note_key:
             return atom
     return None
 
@@ -134,6 +176,19 @@ def _fold(copy_atom: Any, original: Any) -> None:
         pass
 
 
+def _index(items: list[Any]) -> dict[str, Any]:
+    """A document's foldable lines, by text AND by what they link to."""
+    out: dict[str, Any] = {}
+    for a in items:
+        if not _foldable(a):
+            continue
+        out.setdefault(_key(a), a)
+        link = _link_key(a)
+        if link:
+            out.setdefault("\x00link:" + link, a)
+    return out
+
+
 def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Fold a document that is a copy of another onto the original.
 
@@ -147,7 +202,7 @@ def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[A
 
     kinds = {doc: _doc_kind(items) for doc, items in by_doc.items()}
     originals = {
-        doc: {_key(a): a for a in items if _foldable(a)}
+        doc: _index(items)
         for doc, items in by_doc.items()
         if ORIGINALITY.get(kinds[doc], 0) > 0
     }
@@ -166,7 +221,7 @@ def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[A
         for other, by_key in originals.items():
             if other == doc or ORIGINALITY.get(kinds[other], 0) <= rank:
                 continue
-            pairs = {id(a): _twin(_key(a), by_key) for a in candidates}
+            pairs = {id(a): _twin(_key(a), by_key, _link_key(a)) for a in candidates}
             pairs = {k: v for k, v in pairs.items() if v is not None}
             share = len(pairs) / len(candidates)
             if share > best_share:
