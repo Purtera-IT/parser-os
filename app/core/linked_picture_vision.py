@@ -180,32 +180,48 @@ def fetch_picture(url: str) -> tuple[bytes, str] | None:
 
 # ── asking the model what each printed line IS ──────────────────────
 
-PROMPT = """Below are the text lines OCR read off an engineering or installation drawing
-attached to a sales deal, numbered in reading order. Say what role each line plays.
+PROMPT = """Below are the text lines OCR read off a picture attached to a sales deal,
+numbered in reading order. Say what kind of picture it is and what role each line plays.
 
 Return ONLY a JSON object:
 
 {
-  "is_drawing": true|false,     // false if this is a logo, photo, signature or screenshot
-  "vendor": "",                 // whose drawing it is, if a line says so
-  "drawing_ref": "",            // the drawing/sheet number and revision, verbatim ("" if none)
+  "kind": "",                   // one of: schematic | kit_contents | photo | other
+  "is_drawing": true|false,     // false for a photo, logo, signature or screenshot
+  "vendor": "",                 // whose sheet it is, if a line says so
+  "drawing_ref": "",            // sheet number and revision, verbatim ("" if none)
+  "section": "",                // the printed heading the parts sit under, verbatim,
+                                // when the page groups them under one ("What's In The Box").
+                                // Leave "" on a schematic: its colour legend does this.
   "roles": {"0": "role", ...},  // EVERY line index -> exactly one role, see below
+  "parts": [                    // one per line whose role is "component"
+    {"line": 0, "quantity": "", "spec": ""}
+  ],
   "connections": [              // only where the drawn line is unambiguous
     {"from": "", "to": "", "via": ""}
   ]
 }
 
+The kinds:
+  "schematic"     a diagram of how parts connect: wiring, plumbing, a rack elevation
+  "kit_contents"  a parts / packing page: what ships in a box, usually with counts
+  "photo"         a photograph of a product or a site
+  "other"         anything else -- a floorplan, a screenshot, a chart
+
 The roles:
   "title"      part of the title block -- what this sheet depicts
   "legend"     a key entry: it defines what a colour or symbol on the sheet MEANS
                ("Huzzard supplied Components", "by others", "existing")
-  "component"  a label naming a physical part, cable or device drawn on the sheet
+  "component"  a label naming a physical part, cable or device
   "note"       a note, callout, list heading or list item printed on the sheet
   "brand"      a company name, logo text, web address or sheet footer
   "decoration" an arrow, stray character or anything carrying no meaning
 
 Rules:
   * Every index in the list below must appear exactly once in "roles".
+  * "quantity" and "spec" must be text PRINTED ON THE PAGE, copied exactly
+    ("4x", "8x", "25 m (82 ft)", "38.1 mm (1.5 in)"). Leave them "" rather than
+    working one out, converting a unit, or assuming a count of one.
   * Use the line's own words for "from"/"to"/"via" in connections.
   * Do NOT report colours. You are not being asked what colour anything is.
   * Leave a field "" and a list [] rather than guessing at a revision or a vendor.
@@ -258,6 +274,18 @@ def _is_a_label(text: str) -> bool:
     return letters >= 2 and len(stripped) >= 3
 
 
+#: A printed figure: a count ("4x"), a length ("25 m", "38.1 mm"), a converted
+#: one in brackets ("(82 ft)", "13 mm (1/2 in)"). A digit on its own is not
+#: one -- that is the arrowhead OCR reads as "1" -- so a unit, an x or a
+#: bracket has to be there too.
+_FIGURE_RE = re.compile(r"^[\s(]*\d[\d.,/]*\s*(?:x|[a-z]{1,4}\b|\))", re.I)
+
+
+def _is_a_figure(text: str) -> bool:
+    t = _clean(text)
+    return bool(t) and len(t) <= 24 and bool(_FIGURE_RE.match(t))
+
+
 def _label_text(text: str) -> str:
     return _BULLET.sub("", _clean(text)).strip()
 
@@ -303,7 +331,16 @@ def merge_wrapped_labels(lines: list[dict[str, Any]],
         x0, _y0, x1, y1 = _box(line["polygon"])
         height = max(1.0, y1 - _y0)
         for j in range(i + 1, len(lines)):
-            if j in used or hues[j] != hues[i]:
+            if j in used:
+                continue
+            # A COUNT DOES NOT HAVE TO MATCH THE COLOUR IT SITS UNDER. "4x" is
+            # twelve pixels by nine -- too little ink to measure a hue at all,
+            # so it reads as None beside a label that reads as orange, and the
+            # colour check kept every quantity on a contents page off its part.
+            # Nothing classifies a figure by colour; only labels are keyed to
+            # the legend. So a figure joins the label above it on geometry
+            # alone.
+            if hues[j] != hues[i] and not _is_a_figure(lines[j]["content"]):
                 continue
             nx0, ny0, nx1, ny1 = _box(lines[j]["polygon"])
             gap = ny0 - y1
@@ -347,35 +384,138 @@ def _joined_notes(notes: list[str]) -> list[str]:
     return out
 
 
-def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
-    """(fact_kind, sentence, type) for everything the drawing states.
+#: What the sheet says, as the labeller wants it: a line, the heading it sits
+#: under, and the readings the parser proposes for it.
+#: How much wider than its own word spacing a gap has to be before it is a
+#: gutter between two cells rather than a space inside one. Measured on the
+#: Starlink contents page: spaces run 3-5px, the column gutter 18px.
+GUTTER_RATIO = 2.5
+
+
+def split_across_cells(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cut any OCR line that reaches across a grid gutter.
+
+    A contents page puts its parts in a grid, and OCR reads across it: two
+    cells at the same height come back as one line, and everything stacked
+    under both lands on the single part that results. Words inside a cell sit
+    a space apart and the gutter is several times that, so the page says where
+    the cut goes.
+    """
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        words = line.get("words") or []
+        if len(words) < 2:
+            out.append(line)
+            continue
+        spans = [(min(w["polygon"][0::2]), max(w["polygon"][0::2])) for w in words]
+        gaps = [spans[i + 1][0] - spans[i][1] for i in range(len(spans) - 1)]
+        inside = sorted(g for g in gaps if g > 0)
+        typical = inside[len(inside) // 2] if inside else 0.0
+        ys = line["polygon"][1::2]
+        height = max(ys) - min(ys)
+        # A gutter is wide against the line's OWN spacing and against its text
+        # height, so a single wide space in prose does not cut a sentence up.
+        floor = max(typical * GUTTER_RATIO, height * 0.8)
+        cuts = [i for i, g in enumerate(gaps) if g > floor] if typical else []
+        if not cuts:
+            out.append(line)
+            continue
+        start = 0
+        for cut in cuts + [len(words) - 1]:
+            part = words[start:cut + 1]
+            start = cut + 1
+            if not part:
+                continue
+            pxs = [v for w in part for v in w["polygon"][0::2]]
+            pys = [v for w in part for v in w["polygon"][1::2]]
+            out.append({
+                "content": " ".join(w["content"] for w in part),
+                "polygon": [min(pxs), min(pys), max(pxs), min(pys),
+                            max(pxs), max(pys), min(pxs), max(pys)],
+                "words": part,
+            })
+    return out
+
+
+def _norm_fig(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "").lower())
+
+
+def _printed(extras: dict[int, tuple[str, str]], group: list[int],
+             keep: list[int], lines: list[dict[str, Any]]) -> tuple[str, str]:
+    """The quantity and spec the model read here, kept only if the page prints them.
+
+    A count is the one thing on a parts page that costs money to get wrong,
+    and a model asked for one will happily supply "1". So a figure survives
+    only when it appears in the OCR of the very lines it was read from.
+    """
+    qty = spec = ""
+    seen = _norm_fig(" ".join(lines[keep[x]]["content"] for x in group))
+    for g in group:
+        got = extras.get(keep[g])
+        if not got:
+            continue
+        if got[0] and _norm_fig(got[0]) in seen:
+            qty = qty or got[0]
+        if got[1] and _norm_fig(got[1]) in seen:
+            spec = spec or got[1]
+    return qty, spec
+
+
+def _said(kind: str, text: str, atom_type: AtomType, *,
+          lead: str = "", reads: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {"kind": kind, "text": text, "type": atom_type,
+            "lead": lead, "reads": reads or []}
+
+
+def statements(read: dict[str, Any]) -> list[dict[str, Any]]:
+    """Everything the drawing states, in the order the sheet reads.
 
     A legend entry is a statement about how the sheet must be READ, so it is
-    kept separate from the components it governs: when a legend turns out to be
-    wrong -- as this one did -- the atom that is wrong has to be nameable on
-    its own.
+    kept separate from the components it governs: when a legend turns out to
+    be wrong -- as this one did -- the atom that is wrong has to be nameable
+    on its own. It also becomes the HEADING those components sit under, which
+    is what turns eighteen loose cards into two bills of materials.
     """
-    out: list[tuple[str, str, AtomType]] = []
+    out: list[dict[str, Any]] = []
     title = _clean(read.get("title"))
     ref, vendor = _clean(read.get("drawing_ref")), _clean(read.get("vendor"))
     if title or ref:
         bits = [b for b in (title, ref and f"drawing {ref}", vendor and f"by {vendor}") if b]
-        out.append(("title", "The drawing is " + ", ".join(bits) + ".", AtomType.deal_metadata))
+        out.append(_said("title", "The drawing is " + ", ".join(bits) + ".",
+                         AtomType.deal_metadata))
 
+    counts: dict[str, int] = {}
+    for comp in read.get("components") or []:
+        m = _clean(comp.get("means"))
+        if m:
+            counts[m] = counts.get(m, 0) + 1
     for meaning in read.get("legend") or []:
-        out.append(("legend",
-                    f"The drawing's legend has an entry for {meaning}.",
-                    AtomType.deal_metadata))
+        n = counts.get(meaning, 0)
+        out.append(_said(
+            "legend", f"The drawing's legend has an entry for {meaning}.",
+            AtomType.deal_metadata,
+            reads=[{"key": "opens_block",
+                    "value": f"the {n} parts on this drawing printed as {meaning}",
+                    "why": "a legend entry is the heading its colour puts every part under",
+                    "confidence": 0.8, "source": "rule"}] if n else []))
 
     for comp in read.get("components") or []:
         label, means = _clean(comp.get("label")), _clean(comp.get("means"))
         if not label:
             continue
         if means:
-            sentence = f"The drawing shows {label}, in the colour its legend calls {means}."
-        else:
-            sentence = (f"The drawing shows {label}, in no colour the legend defines -- "
-                        f"the sheet does not say who supplies it.")
+            # The part is the line; what the sheet groups it under is the
+            # heading. A count and a size belong ON the line, the way a parts
+            # page prints them.
+            # The count and the size are already in the label: they are
+            # printed under the name on the page and merged into it here. The
+            # model's own reading of them is kept as a cross-check in the
+            # atom's value, never spliced into the words.
+            out.append(_said("component", label, AtomType.deal_metadata, lead=f"{means}:"))
+            continue
+        sentence = (f"The drawing shows {label}, in no colour the legend defines -- "
+                    f"the sheet does not say who supplies it.")
         # NOT bom_line, and the reason is arithmetic. On 010288 the email
         # carries ten supply lines and eight of them are drawn on this sheet
         # too -- Relay, Power Supply, Mag/Electric Lock, the PC, the USB cable.
@@ -385,10 +525,11 @@ def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
         # drawing shows. A PM who decides it is also a line we quote can retype
         # it, and the two can be tied with same_as -- which is the relation
         # that exists for one fact said twice.
-        out.append(("component", sentence, AtomType.deal_metadata))
+        out.append(_said("component", sentence, AtomType.deal_metadata))
 
     for text in read.get("notes") or []:
-        out.append(("note", f"Printed on the drawing: {_clean(text)}", AtomType.scope_item))
+        out.append(_said("note", f"Printed on the drawing: {_clean(text)}",
+                         AtomType.scope_item))
 
     # TOPOLOGY IS OFF BY DEFAULT, and this is the one place the stage declines
     # to say what it saw. Every other fact here is anchored: the words come
@@ -404,9 +545,10 @@ def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
             if not a or not b:
                 continue
             via = _clean(row.get("via"))
-            out.append(("connection",
-                        f"The drawing connects {a} to {b}" + (f" via {via}" if via else "") + ".",
-                        AtomType.scope_item))
+            out.append(_said("connection",
+                             f"The drawing connects {a} to {b}"
+                             + (f" via {via}" if via else "") + ".",
+                             AtomType.scope_item))
     return out
 
 
@@ -420,7 +562,7 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
     from app.core import linked_picture_ink as inkmod
     from app.core.doc_intel_ocr import read_lines_with_polygons
 
-    lines = read_lines_with_polygons(body)
+    lines = split_across_cells(read_lines_with_polygons(body))
     if not lines:
         logger.info("linked_picture_vision: no OCR lines; abstaining")
         return None
@@ -445,9 +587,25 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
 
     # OCR reads arrowheads and leader dashes as "1", "E" and "-". Drop them
     # before merging, or a stray dash under a label becomes part of its name.
-    keep = [i for i, ln in enumerate(lines) if _is_a_label(ln["content"])]
+    keep = [i for i, ln in enumerate(lines)
+            if _is_a_label(ln["content"]) or _is_a_figure(ln["content"])]
     kept = [lines[i] for i in keep]
     hues = [inkmod.ink_hue(image, ln["polygon"]) for ln in kept]
+
+    # A schematic keys its parts to a colour; a contents page prints one
+    # heading over all of them. Either way a part ends up under what the sheet
+    # itself calls it, never under a phrase this code invented.
+    printed_section = _clean(got.get("section"))
+    kind = _clean(got.get("kind")).lower() or ("schematic" if references else "other")
+    extras: dict[int, tuple[str, str]] = {}
+    for row in got.get("parts") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            extras[int(row.get("line"))] = (_clean(row.get("quantity")),
+                                            _clean(row.get("spec")))
+        except (TypeError, ValueError):
+            continue
 
     components: list[dict[str, str]] = []
     notes: list[str] = []
@@ -456,7 +614,8 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
         if head in legend_idx:
             continue
         text = _label_text(" ".join(kept[g]["content"] for g in group))
-        if not text:
+        # A figure that found no label to join is a stray number, not a part.
+        if not text or not _is_a_label(text):
             continue
         # WHAT MAKES A COMPONENT IS THE INK, NOT THE MODEL. A label printed in
         # a legend colour is a part the sheet assigns to a company; that is
@@ -465,14 +624,22 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
         # from component to note between two runs of the same image. The
         # measurement does not drift.
         hit = inkmod.classify(image, kept[group[0]]["polygon"], references)
+        qty, spec = _printed(extras, group, keep, lines)
         if hit is not None:
-            components.append({"label": text, "means": hit[1]})
+            components.append({"label": text, "means": hit[1], "qty": qty, "spec": spec})
+        elif role_of(head) == "component" and printed_section:
+            # No colour to key on, but the page says what these are: parts on
+            # a contents sheet sit under its printed heading.
+            components.append({"label": text, "means": printed_section,
+                               "qty": qty, "spec": spec})
         elif role_of(head) == "note":
             notes.append(_note_text(text))
 
     title = " ".join(ln["content"] for i, ln in enumerate(lines) if role_of(i) == "title")
     return {
         "is_drawing": True,
+        "kind": kind,
+        "section": printed_section,
         "title": title,
         "drawing_ref": got.get("drawing_ref") or "",
         "vendor": got.get("vendor") or "",
@@ -492,8 +659,9 @@ _LINE_STEP = 0.001
 
 
 def _emit(*, source: Any, url: str, fact_kind: str, text: str,
-          atom_type: AtomType, confidence: float,
-          ordinal: int = 0) -> EvidenceAtom | None:
+          atom_type: AtomType, confidence: float, ordinal: int = 0,
+          lead: str = "", reads: list[dict[str, Any]] | None = None,
+          sheet: str = "") -> EvidenceAtom | None:
     text = (text or "").strip()
     if not text:
         return None
@@ -516,6 +684,18 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
             here[key] = at[key]
     if isinstance(line, (int, float)):
         here["line_start"] = here["line_end"] = line + (ordinal + 1) * _LINE_STEP
+    # The heading this line sits under -- the legend colour, for a part.
+    if lead:
+        here["lead_in"] = [lead]
+        here["section_path"] = [lead.rstrip(":")]
+    # WHICH SURFACE IT CAME OFF. A label key is deal + file + page + text, and
+    # the sheet's part names collide with the email's own ("Relay", "Mag Lock
+    # Cable"). The drawing is a different page of the same message, so saying
+    # so keeps the two "Relay" lines distinguishable. It goes in `sheet` and
+    # not `page` deliberately: the walk sorts on `page`, and these already
+    # have their position from the line above.
+    if sheet:
+        here["sheet"] = sheet
 
     src = SourceRef(
         id=stable_id("src", atom_id),
@@ -548,6 +728,7 @@ def _emit(*, source: Any, url: str, fact_kind: str, text: str,
             # the SourceRef locator below.
             "read_from_image": url,
             "source_atom_id": getattr(source, "id", ""),
+            "reads": list(reads or []),
         },
         entity_keys=[],
         source_refs=[src],
@@ -610,10 +791,13 @@ def atoms_from_linked_pictures(atoms: Iterable[Any]) -> list[EvidenceAtom]:
                 continue
 
             made = 0
-            for ordinal, (fact_kind, text, atom_type) in enumerate(statements(read)):
-                atom = _emit(source=source, url=url, fact_kind=fact_kind, text=text,
-                             atom_type=atom_type, ordinal=ordinal,
-                             confidence=_CONFIDENCE.get(fact_kind, 0.5))
+            sheet = _clean(read.get("drawing_ref")) or "drawing"
+            for ordinal, said in enumerate(statements(read)):
+                atom = _emit(source=source, url=url, fact_kind=said["kind"],
+                             text=said["text"], atom_type=said["type"], ordinal=ordinal,
+                             lead=said.get("lead") or "", reads=said.get("reads"),
+                             sheet=sheet,
+                             confidence=_CONFIDENCE.get(said["kind"], 0.5))
                 if atom is not None:
                     out.append(atom)
                     made += 1

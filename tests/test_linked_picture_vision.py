@@ -177,11 +177,20 @@ def test_a_component_says_who_the_legend_assigns_it_to():
         ],
         "notes": [], "connections": [],
     }
-    said = {kind: text for kind, text, _t in lpv.statements(read)}
-    assert "BPW061725 Rev1" in said["title"]
-    texts = [t for _k, t, _ in lpv.statements(read)]
-    assert "The drawing shows Relay, in the colour its legend calls Installer supplied Components." in texts
-    assert "The drawing shows Couplers, in the colour its legend calls Huzzard supplied Components." in texts
+    said = {x["kind"]: x for x in lpv.statements(read)}
+    assert "BPW061725 Rev1" in said["title"]["text"]
+
+    # The colour is the HEADING and the part is the LINE, so the drawing's
+    # supply list renders in the same shape as the email's own -- which is
+    # what makes the four disagreements between them visible at a glance.
+    parts = {x["text"]: x["lead"] for x in lpv.statements(read) if x["kind"] == "component"}
+    assert parts == {"Relay": "Installer supplied Components:",
+                     "Couplers": "Huzzard supplied Components:"}
+
+    # A legend entry announces how many parts its colour covers.
+    legend = [x for x in lpv.statements(read) if x["kind"] == "legend"]
+    opens = {r["key"] for x in legend for r in x["reads"]}
+    assert opens == {"opens_block"}
 
 
 def test_a_part_on_a_vendor_drawing_is_not_a_line_on_our_bill():
@@ -194,7 +203,8 @@ def test_a_part_on_a_vendor_drawing_is_not_a_line_on_our_bill():
 
     read = {"is_drawing": True, "components": [
         {"label": "Relay", "means": "Installer supplied Components"}]}
-    kind, _text, atom_type = lpv.statements(read)[0]
+    said = lpv.statements(read)[0]
+    kind, atom_type = said["kind"], said["type"]
     assert kind == "component"
     assert atom_type is not AtomType.bom_line
     assert atom_type is AtomType.deal_metadata
@@ -202,8 +212,10 @@ def test_a_part_on_a_vendor_drawing_is_not_a_line_on_our_bill():
 
 def test_a_component_in_no_legend_colour_says_so_rather_than_guessing():
     read = {"is_drawing": True, "components": [{"label": "Door", "means": ""}]}
-    text = lpv.statements(read)[0][1]
-    assert "does not say who supplies it" in text
+    said = lpv.statements(read)[0]
+    assert "does not say who supplies it" in said["text"]
+    # With no colour there is no heading to sit under, and none is invented.
+    assert said["lead"] == ""
 
 
 def test_a_drawing_atom_does_not_claim_to_be_a_link_to_a_picture():
@@ -234,7 +246,7 @@ def test_topology_is_not_emitted_by_default(monkeypatch):
     monkeypatch.delenv("SOWSMITH_LINKED_PICTURE_TOPOLOGY", raising=False)
     assert lpv.statements(read) == []
     monkeypatch.setenv("SOWSMITH_LINKED_PICTURE_TOPOLOGY", "1")
-    assert "connects Relay to PC via USB" in lpv.statements(read)[0][1]
+    assert "connects Relay to PC via USB" in lpv.statements(read)[0]["text"]
 
 
 def test_a_reading_sits_where_the_drawing_sits():
@@ -291,3 +303,122 @@ def test_a_reading_with_no_position_to_inherit_does_not_invent_one():
 def test_the_whole_stage_is_a_no_op_when_the_flag_is_off(monkeypatch):
     monkeypatch.delenv("SOWSMITH_LINKED_PICTURE_VISION", raising=False)
     assert lpv.atoms_from_linked_pictures([object()]) == []
+
+
+def test_a_part_and_its_colour_do_not_collide_with_the_email_s_own_line():
+    """"Relay" is a line in Alec's supply list AND a label on his vendor's
+    drawing. A label key is deal + file + page + text, and both now live in
+    the same file -- so the sheet supplies the page. Without it the two are
+    one card and half the comparison disappears."""
+    from app.core.schemas import AtomType
+
+    class Ref:
+        filename = "ask.eml"
+        locator = {"message_index": 0, "line_start": 45}
+
+    class Src:
+        id, project_id, artifact_id = "s", "p", "art"
+        source_refs = [Ref()]
+
+    atom = lpv._emit(source=Src(), url="https://v/d.png", fact_kind="component",
+                     text="Relay", atom_type=AtomType.deal_metadata, confidence=0.6,
+                     ordinal=0, lead="Installer supplied Components:",
+                     sheet="BPW061725 Rev1")
+    loc = atom.source_refs[0].locator
+    assert loc["sheet"] == "BPW061725 Rev1"
+    assert loc["lead_in"] == ["Installer supplied Components:"]
+    assert loc["section_path"] == ["Installer supplied Components"]
+    # `page` stays untouched -- the walk sorts on it, and position came from
+    # the line that pointed at the drawing.
+    assert "page" not in loc
+
+
+# ── not every picture in a deal is a wiring diagram ──────────────────
+
+
+@pytest.mark.parametrize("text,want", [
+    ("4x", True), ("8x", True), ("25 m", True), ("(82 ft)", True),
+    ("13 mm (1/2 in)", True), ("38.1 mm (1.5 in)", True),
+    # What the rule exists to keep out: OCR reading arrowheads and tick marks.
+    ("1", False), ("0", False), ("E", False), ("-", False), ("", False),
+    ("Sealing Washers", False),
+])
+def test_what_counts_as_a_printed_figure(text, want):
+    """A count belongs to the part above it. A bare digit is an arrowhead."""
+    assert lpv._is_a_figure(text) is want
+
+
+def test_a_count_joins_its_part_even_when_its_ink_cannot_be_measured():
+    """"4x" is twelve pixels by nine -- too little ink to measure a hue, so it
+    reads None beside a label that reads orange. Requiring the colours to match
+    kept every quantity on a contents page off its part."""
+    lines = [
+        {"content": "Sealing Washers", "polygon": poly(398, 550, 474, 562)},
+        {"content": "4x", "polygon": poly(431, 563, 443, 572)},
+    ]
+    assert lpv.merge_wrapped_labels(lines, [30, None]) == [[0, 1]]
+
+
+def test_a_stray_figure_with_no_part_above_it_is_not_a_line_item():
+    lines = [{"content": "4x", "polygon": poly(431, 563, 443, 572)}]
+    groups = lpv.merge_wrapped_labels(lines, [None])
+    text = lpv._label_text(lines[groups[0][0]]["content"])
+    assert not lpv._is_a_label(text)
+
+
+def test_a_contents_page_puts_its_parts_under_its_own_printed_heading():
+    """A schematic keys parts to a colour. A "What's In The Box" page has no
+    legend at all and one heading over everything -- read with the schematic's
+    assumptions its parts come out as "the sheet does not say who supplies
+    them", which is backwards: a contents page says the vendor supplies all of
+    them, and says how many."""
+    read = {
+        "is_drawing": True, "kind": "kit_contents", "section": "What's In The Box",
+        "title": "FLAT HIGH PERFORMANCE KIT", "drawing_ref": "", "vendor": "STARLINK",
+        "legend": [],
+        "components": [
+            {"label": "Sealing Washers 4x", "means": "What's In The Box"},
+            {"label": "Starlink Cable 25 m (82 ft)", "means": "What's In The Box"},
+        ],
+        "notes": [], "connections": [],
+    }
+    parts = {x["text"]: x["lead"] for x in lpv.statements(read) if x["kind"] == "component"}
+    assert parts == {"Sealing Washers 4x": "What's In The Box:",
+                     "Starlink Cable 25 m (82 ft)": "What's In The Box:"}
+
+
+def words(*items):
+    """(text, x0, x1) -> the word shape Doc Intel returns."""
+    return [{"content": t, "polygon": poly(x0, 100, x1, 112)} for t, x0, x1 in items]
+
+
+def test_two_grid_cells_on_one_baseline_are_cut_apart():
+    """A contents page lays parts out in a grid and OCR reads across it: two
+    cells at the same height come back as one line, and everything stacked
+    under both lands on the single part that results. Words inside a cell sit
+    a space apart; the gutter is several times that."""
+    line = {
+        "content": "Machine Screws Socket Head Bolts",
+        "polygon": poly(398, 100, 567, 112),
+        "words": words(("Machine", 398, 437), ("Screws", 441, 474),
+                       ("Socket", 492, 524), ("Head", 528, 550), ("Bolts", 554, 567)),
+    }
+    got = lpv.split_across_cells([line])
+    assert [g["content"] for g in got] == ["Machine Screws", "Socket Head Bolts"]
+
+
+def test_ordinary_spacing_is_never_a_gutter():
+    """Otherwise a sentence with one wide space in it gets chopped up."""
+    line = {
+        "content": "Access Control Barcode Reader",
+        "polygon": poly(200, 100, 380, 112),
+        "words": words(("Access", 200, 244), ("Control", 249, 296),
+                       ("Barcode", 301, 350), ("Reader", 355, 380)),
+    }
+    assert [g["content"] for g in lpv.split_across_cells([line])] == [
+        "Access Control Barcode Reader"]
+
+
+def test_a_line_with_no_word_boxes_survives_untouched():
+    line = {"content": "Relay", "polygon": poly(0, 0, 40, 12)}
+    assert lpv.split_across_cells([line]) == [line]
