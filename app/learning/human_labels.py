@@ -258,12 +258,23 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
 #: small job" over the ten supply lines under it). It is the one structural
 #: relation a person can draw instantly and no rule gets right, so it is the
 #: cheapest gold in the labeler.
+#: Every relation a labeler can draw is its own edge class.  Two of these were
+#: wrong: `answers` was folded into `supports`, and `context` was dropped
+#: entirely -- so a deal could teach that one atom backs another up, but never
+#: that an atom CLOSES a question or merely sits behind it.  That is the
+#: distinction a reply has to carry: "they are intending to use a maglock"
+#: answers "do we know the type of lock?", while "I am not sure if it is
+#: already installed" is only context for "has the door been installed?".
+#: Collapsing the two teaches a head to close a question on any reply at all.
+#: The head builds its prototypes from whatever classes the rows contain, so a
+#: class with too few examples is simply not learned yet, not an error.
 _LINK_TO_EDGE = {
     "governs": "governs",
     "supports": "supports",
-    "answers": "supports",
+    "answers": "answers",
     "contradicts": "contradicts",
     "same_as": "same_as",
+    "context": "context",
 }
 
 

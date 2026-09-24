@@ -119,5 +119,23 @@ def test_evidence_links_become_human_edges():
         {"from_head": "type", "from_key": "k", "from_text": "Scope", "to_kind": "atom",
          "to_text": "Section 3 intro", "relation": "context"},
     ]})
-    assert [(r["relation"], r["label"]) for r in rows] == [("edge_relation", "supports"), ("edge_relation", "contradicts")]
+    assert [(r["relation"], r["label"]) for r in rows] == [
+        ("edge_relation", "answers"),
+        ("edge_relation", "contradicts"),
+        ("edge_relation", "context"),
+    ]
     assert rows[0]["raw_text"] == "Who provides the lift? || Customer provides the lift"
+
+
+def test_an_answer_and_a_deferral_are_different_edges():
+    """A reply that closes a question and a reply that does not are the whole
+    point of drawing the link. `answers` used to be folded into `supports` and
+    `context` was dropped, so both replies below produced the same row -- or no
+    row -- and a head could only learn that some atom relates to a question."""
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "links": [
+        {"from_head": "type", "from_key": "a", "from_text": "They are intending to use a maglock.",
+         "to_kind": "atom", "to_text": "Do we know the type of lock?", "relation": "answers"},
+        {"from_head": "type", "from_key": "b", "from_text": "I am not sure if it is already installed",
+         "to_kind": "atom", "to_text": "Has the door been installed with the lock?", "relation": "context"},
+    ]})
+    assert [r["label"] for r in rows] == ["answers", "context"]
