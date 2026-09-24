@@ -83,6 +83,13 @@ def extract_text_from_image_bytes(image_bytes: bytes) -> str:
     return ""
 
 
+def _inside(polygon: list[float], box: tuple[float, float, float, float]) -> bool:
+    """True when a word's centre falls inside a line's box."""
+    xs, ys = polygon[0::2], polygon[1::2]
+    cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+    return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
+
+
 def read_lines_with_polygons(image_bytes: bytes) -> list[dict[str, Any]]:
     """Every text line on an image WITH its pixel polygon.
 
@@ -123,11 +130,25 @@ def read_lines_with_polygons(image_bytes: bytes) -> list[dict[str, Any]]:
             unit = str(getattr(raw_unit, "value", raw_unit)).lower()
             if unit and "pixel" not in unit:
                 continue
+            words = []
+            for w in getattr(page, "words", None) or []:
+                wp = [float(v) for v in (getattr(w, "polygon", None) or [])]
+                wc = str(getattr(w, "content", "") or "").strip()
+                if wc and len(wp) >= 8:
+                    words.append({"content": wc, "polygon": wp})
             for line in getattr(page, "lines", None) or []:
                 poly = [float(v) for v in (getattr(line, "polygon", None) or [])]
                 content = str(getattr(line, "content", "") or "").strip()
-                if content and len(poly) >= 8:
-                    out.append({"content": content, "polygon": poly})
+                if not content or len(poly) < 8:
+                    continue
+                # Words are matched to their line by geometry rather than by
+                # span offsets: the boxes are unambiguous and the offsets are
+                # one more thing to get wrong.
+                xs, ys = poly[0::2], poly[1::2]
+                box = (min(xs), min(ys), max(xs), max(ys))
+                mine = [w for w in words if _inside(w["polygon"], box)]
+                mine.sort(key=lambda w: min(w["polygon"][0::2]))
+                out.append({"content": content, "polygon": poly, "words": mine})
         return out
     except Exception:
         return []

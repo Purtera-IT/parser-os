@@ -386,6 +386,57 @@ def _joined_notes(notes: list[str]) -> list[str]:
 
 #: What the sheet says, as the labeller wants it: a line, the heading it sits
 #: under, and the readings the parser proposes for it.
+#: How much wider than its own word spacing a gap has to be before it is a
+#: gutter between two cells rather than a space inside one. Measured on the
+#: Starlink contents page: spaces run 3-5px, the column gutter 18px.
+GUTTER_RATIO = 2.5
+
+
+def split_across_cells(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cut any OCR line that reaches across a grid gutter.
+
+    A contents page puts its parts in a grid, and OCR reads across it: two
+    cells at the same height come back as one line, and everything stacked
+    under both lands on the single part that results. Words inside a cell sit
+    a space apart and the gutter is several times that, so the page says where
+    the cut goes.
+    """
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        words = line.get("words") or []
+        if len(words) < 2:
+            out.append(line)
+            continue
+        spans = [(min(w["polygon"][0::2]), max(w["polygon"][0::2])) for w in words]
+        gaps = [spans[i + 1][0] - spans[i][1] for i in range(len(spans) - 1)]
+        inside = sorted(g for g in gaps if g > 0)
+        typical = inside[len(inside) // 2] if inside else 0.0
+        ys = line["polygon"][1::2]
+        height = max(ys) - min(ys)
+        # A gutter is wide against the line's OWN spacing and against its text
+        # height, so a single wide space in prose does not cut a sentence up.
+        floor = max(typical * GUTTER_RATIO, height * 0.8)
+        cuts = [i for i, g in enumerate(gaps) if g > floor] if typical else []
+        if not cuts:
+            out.append(line)
+            continue
+        start = 0
+        for cut in cuts + [len(words) - 1]:
+            part = words[start:cut + 1]
+            start = cut + 1
+            if not part:
+                continue
+            pxs = [v for w in part for v in w["polygon"][0::2]]
+            pys = [v for w in part for v in w["polygon"][1::2]]
+            out.append({
+                "content": " ".join(w["content"] for w in part),
+                "polygon": [min(pxs), min(pys), max(pxs), min(pys),
+                            max(pxs), max(pys), min(pxs), max(pys)],
+                "words": part,
+            })
+    return out
+
+
 def _norm_fig(text: str) -> str:
     return re.sub(r"\s+", "", str(text or "").lower())
 
@@ -511,7 +562,7 @@ def read_picture(body: bytes, mime: str) -> dict[str, Any] | None:
     from app.core import linked_picture_ink as inkmod
     from app.core.doc_intel_ocr import read_lines_with_polygons
 
-    lines = read_lines_with_polygons(body)
+    lines = split_across_cells(read_lines_with_polygons(body))
     if not lines:
         logger.info("linked_picture_vision: no OCR lines; abstaining")
         return None
