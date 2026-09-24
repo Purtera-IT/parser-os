@@ -184,6 +184,22 @@ def test_a_component_says_who_the_legend_assigns_it_to():
     assert "The drawing shows Couplers, in the colour its legend calls Huzzard supplied Components." in texts
 
 
+def test_a_part_on_a_vendor_drawing_is_not_a_line_on_our_bill():
+    """On 010288 the email carries ten supply lines and eight of them are drawn
+    on this sheet too. As bom_line these would sit beside the email's under
+    different wording, and anything summing a bill of materials counts them
+    twice. The atom says what it is -- a statement about a vendor's drawing --
+    and a PM can promote it."""
+    from app.core.schemas import AtomType
+
+    read = {"is_drawing": True, "components": [
+        {"label": "Relay", "means": "Installer supplied Components"}]}
+    kind, _text, atom_type = lpv.statements(read)[0]
+    assert kind == "component"
+    assert atom_type is not AtomType.bom_line
+    assert atom_type is AtomType.deal_metadata
+
+
 def test_a_component_in_no_legend_colour_says_so_rather_than_guessing():
     read = {"is_drawing": True, "components": [{"label": "Door", "means": ""}]}
     text = lpv.statements(read)[0][1]

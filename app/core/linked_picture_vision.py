@@ -376,7 +376,16 @@ def statements(read: dict[str, Any]) -> list[tuple[str, str, AtomType]]:
         else:
             sentence = (f"The drawing shows {label}, in no colour the legend defines -- "
                         f"the sheet does not say who supplies it.")
-        out.append(("component", sentence, AtomType.bom_line))
+        # NOT bom_line, and the reason is arithmetic. On 010288 the email
+        # carries ten supply lines and eight of them are drawn on this sheet
+        # too -- Relay, Power Supply, Mag/Electric Lock, the PC, the USB cable.
+        # Typed as bom_line these would sit beside the email's, under different
+        # wording, and anything that sums a bill of materials would count them
+        # twice. The atom says what it is: a statement about what a vendor's
+        # drawing shows. A PM who decides it is also a line we quote can retype
+        # it, and the two can be tied with same_as -- which is the relation
+        # that exists for one fact said twice.
+        out.append(("component", sentence, AtomType.deal_metadata))
 
     for text in read.get("notes") or []:
         out.append(("note", f"Printed on the drawing: {_clean(text)}", AtomType.scope_item))
