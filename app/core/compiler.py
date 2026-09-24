@@ -995,6 +995,35 @@ def compile_project(
             f"{type(_lpv_exc).__name__}: {_lpv_exc}"
         )
 
+    # Who supplies what, where two documents disagree. This needs BOTH supply
+    # tables to exist, so it runs straight after the drawing has been read.
+    #
+    # On 010288 the email states outright that the vendor drawing is wrong --
+    # "the 'Installer Supplied Components' are not accurate, as we provide
+    # several of those pieces" -- and never says which several. Answering that
+    # meant reading eighteen labels off a picture and laying them against a
+    # ten-line list by hand. Both are atoms with a heading now.
+    try:
+        from app.core import supply_conflicts
+
+        with telemetry.stage("supply_conflicts", input_count=len(atoms)) as stage:
+            # No document table needed: every atom carries its own sender and,
+            # for a drawing, the sheet it came off, which is what decides
+            # whether a heading names the document's own side.
+            asked = supply_conflicts.find_supply_conflicts(atoms)
+            if asked:
+                atoms.extend(asked)
+                warnings.append(
+                    f"INFO: supply_conflicts raised {len(asked)} question(s) where two "
+                    f"documents hand the same part to different companies"
+                )
+            telemetry.end_stage(stage, output_count=len(asked))
+    except Exception as _sc_exc:
+        warnings.append(
+            f"WARNING: supply_conflicts pass failed (non-fatal): "
+            f"{type(_sc_exc).__name__}: {_sc_exc}"
+        )
+
     # PDF embedded-image understanding (SEPARATE from schematics). Describes /
     # transcribes raster images the parser saved as image_marker atoms. Purely
     # additive + abstain-first; the whole stage is a no-op unless
