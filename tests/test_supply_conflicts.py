@@ -166,3 +166,30 @@ def test_a_sheet_speaks_for_its_own_vendor():
     # And with no vendor recorded it is a third party, so the question stands.
     bare = Atom("art_email", "Remote Extender", VENDOR, sheet="BPW061725 Rev1")
     assert len(find_supply_conflicts([email, bare])) == 1
+
+
+def test_a_vendors_part_never_collapses_the_reseller_s_own_line():
+    """`cross_type_dedup_atoms` groups by text alone: "Relay" typed bom_line by
+    the mail and deal_metadata by the sheet read onto it is one group spanning
+    two types, and the loser is dropped. They are not one sentence emitted
+    twice -- they are two companies each claiming to buy the part, which is the
+    disagreement the deal turns on. On 010288 this deleted four lines of the
+    list being quoted from."""
+    from app.core.semantic_dedup import _cross_type_text_key
+
+    class R:
+        def __init__(self, sheet=None):
+            self.locator = {"sheet": sheet} if sheet else {}
+
+    class A:
+        def __init__(self, text, sheet=None):
+            self.raw_text = text
+            self.source_refs = [R(sheet)]
+
+    typed = A("Relay connecting the controller")
+    drawn = A("Relay connecting the controller", sheet="BPW061725 Rev1")
+    assert _cross_type_text_key(typed) != _cross_type_text_key(drawn)
+    # Two lines off the SAME sheet still share a key -- that is what the stage
+    # is for.
+    other = A("Relay connecting the controller", sheet="BPW061725 Rev1")
+    assert _cross_type_text_key(drawn) == _cross_type_text_key(other)
