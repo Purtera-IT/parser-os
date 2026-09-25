@@ -1563,6 +1563,22 @@ def _emit_scope_constraint_atoms(
         )
 
 
+# Atom types the generic / block row emitters produce for ANY table. On an
+# UNCLASSIFIED sheet these are not evidence that anything recognised the rows.
+_UNRECOGNISED_ROW_TYPES = frozenset({"scope_item", "raw_table_row", "dropped_sheet"})
+
+
+def _is_typed_recognition(atom: Any) -> bool:
+    """True when a typed recogniser (not the generic row emitter) produced it."""
+    at = getattr(getattr(atom, "atom_type", None), "value", getattr(atom, "atom_type", ""))
+    if at in _UNRECOGNISED_ROW_TYPES:
+        return False
+    val = getattr(atom, "value", None)
+    if isinstance(val, dict) and val.get("kind") == "cell_fact":
+        return False  # sub-atom of a generic row
+    return True
+
+
 class XlsxParser(BaseParser):
     parser_name = parser_name
     parser_version = parser_version
@@ -3181,8 +3197,11 @@ class XlsxParser(BaseParser):
             "not this deal's content",
             "empty": "empty sheet - no data",
             "instructions": "instructions / cover / terms - no deal data",
+            "unclassified": "unrecognised sheet kind - held for review, not mined as scope",
         }.get(role, "backing data, not deal content")
-        marker_text = f"[skipped: {why}] '{sheet_name}', {len(rows)} rows"
+        unclassified = role == "unclassified"
+        tag = "unclassified" if unclassified else "skipped"
+        marker_text = f"[{tag}: {why}] '{sheet_name}', {len(rows)} rows"
         atom_id = stable_id("atm", artifact_id, "dropped_sheet", sheet_name)
         src = SourceRef(
             id=stable_id("src", atom_id),
@@ -3205,6 +3224,8 @@ class XlsxParser(BaseParser):
                 "row_count": len(rows),
                 "rows": capped,
                 "_suppression": {"stage": "sheet_router", "reason": reason},
+                "sheet_role": role,
+                "unclassified": unclassified,
             },
             entity_keys=[],
             source_refs=[src],
@@ -3214,7 +3235,8 @@ class XlsxParser(BaseParser):
             confidence_raw=0.0,
             calibrated_confidence=0.0,
             review_status=ReviewStatus.needs_review,
-            review_flags=["suppressed:sheet_router"],
+            review_flags=["suppressed:sheet_router"]
+            + (["sheet_unclassified"] if unclassified else []),
             parser_version=self.parser_version,
         )
 
@@ -3228,6 +3250,7 @@ class XlsxParser(BaseParser):
         rows: list[list[Any]],
         hidden_cols: set[int] | None = None,
         styles: list[list[tuple[str | None, bool]]] | None = None,
+        _review_pass: bool = False,
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
@@ -3242,6 +3265,57 @@ class XlsxParser(BaseParser):
         #     scope_truth stays clean while pricing still surfaces.
         #   • SCOPE      → fall through to normal row mining.
         classification = classify_sheet(sheet_name, rows)
+        # REVIEW (UNCLASSIFIED, PUR-52): the classifier recognised nothing.
+        # Such a sheet is never mined by the generic / block row emitters (the
+        # path that turned a customer export into 48,321 scope items). It may
+        # still be positively recognised below by a typed recogniser (the
+        # canonical header detector, named structured CSVs, site-roster or
+        # ops-sheet profiles); otherwise its rows are retained on the visible
+        # dropped_sheet marker with value.unclassified=True.
+        review_only = (
+            classification.destination is SheetDestination.REVIEW and not _review_pass
+        )
+        if review_only and _detect_header(rows).header_idx >= 0:
+            review_only = False  # canonical scope header: a positive match
+
+        def _unclassified_marker() -> list[EvidenceAtom]:
+            return [
+                self._dropped_sheet_marker(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    rows=rows,
+                    reason=getattr(classification, "reason", "") or "unclassified",
+                    role=SheetRole.UNCLASSIFIED.value,
+                )
+            ]
+
+        if review_only:
+            # Let the typed row recognisers look at it. If any of them
+            # positively recognises the rows (support_entitlement, risk,
+            # asset_record, site_roster, ...), that recognition stands. Generic
+            # scope_item / raw_table_row output alone is NOT recognition.
+            probe = self._parse_sheet_rows(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=filename,
+                artifact_type=artifact_type,
+                sheet_name=sheet_name,
+                rows=rows,
+                hidden_cols=hidden_cols,
+                styles=styles,
+                _review_pass=True,
+            )
+            if any(_is_typed_recognition(a) for a in probe):
+                return probe
+            if not probe:
+                # Nothing to hold (e.g. a header-only sheet): keep the
+                # pre-existing zero-atom behaviour so coverage gates still fire.
+                return []
+            return _unclassified_marker()
+
         if classification.destination is SheetDestination.DROP:
             # Retained-suppression: instead of vanishing, a DROP-classified
             # sheet is emitted as ONE marker atom carrying its rows, stamped

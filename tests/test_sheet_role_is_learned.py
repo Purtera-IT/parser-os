@@ -102,21 +102,25 @@ def test_it_generalises_to_the_same_report_on_another_deal(taught) -> None:
     assert classify_sheet("SSRS-SL-CUS001-CustomerOut", other).role is SheetRole.REFERENCE
 
 
-def test_an_unseen_sheet_still_gets_the_old_default(taught) -> None:
-    """Adding knowledge must not remove any. A sheet nothing has judged behaves
-    exactly as it did before."""
+def test_an_unseen_scope_sheet_is_still_scope(taught) -> None:
+    """Adding knowledge must not remove any. A sheet with a real scope header
+    is a positive match, not a fallthrough."""
     rows = [["Site", "Device", "Qty"], ["HQ", "IP Camera", "12"]]
     c = classify_sheet("Site Roster", rows)
-    assert c.reason == "default_scope"
+    assert c.reason == "scope_data_header"
     assert c.role is SheetRole.SCOPE
+    assert not c.is_fallthrough
 
 
-def test_it_degrades_open_with_no_store() -> None:
-    """A classifier that failed closed on an unreachable store would silently
-    stop mining every spreadsheet on the deal."""
+def test_it_degrades_open_with_no_store(monkeypatch) -> None:
+    """No store must not stop the classifier; an unrecognised sheet abstains
+    explicitly (PUR-52) instead of defaulting to SCOPE."""
+    monkeypatch.setenv("SHEET_STRUCTURE_HEAD_PATH", "/nonexistent/head.json")
     set_store(None)
     assert learned_sheet_role("anything", EXPORT_ROWS) is None
-    assert classify_sheet("SSRS-SL-CUS001-CustomerOut", EXPORT_ROWS).reason == "default_scope"
+    c = classify_sheet("SSRS-SL-CUS001-CustomerOut", EXPORT_ROWS)
+    assert c.role is SheetRole.UNCLASSIFIED
+    assert c.is_fallthrough
 
 
 def test_a_verdict_outside_the_roles_is_ignored(taught) -> None:
@@ -128,11 +132,12 @@ def test_a_verdict_outside_the_roles_is_ignored(taught) -> None:
         )
     )
     c = classify_sheet("SSRS-SL-CUS001-CustomerOut", EXPORT_ROWS)
-    assert c.role in (SheetRole.REFERENCE, SheetRole.SCOPE)
+    assert c.role in (SheetRole.REFERENCE, SheetRole.UNCLASSIFIED)
     assert "not_a_role" not in c.reason
 
 
 def test_the_head_is_registered_with_a_closed_vocabulary() -> None:
     spec = HEAD_REGISTRY["sheet"]
     assert spec.relation == "sheet_role"
-    assert set(spec.candidates) == {r.value for r in SheetRole}
+    # UNCLASSIFIED is the abstention state, never a verdict a PM teaches.
+    assert set(spec.candidates) == {r.value for r in SheetRole} - {"unclassified"}

@@ -20,6 +20,7 @@ The single public entry point is :func:`classify_sheet`.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -36,6 +37,9 @@ class SheetRole(str, Enum):
     REFERENCE = "reference"  # named-range / lookup / "do not edit" helper data
     CATALOG = "catalog"  # master price book — no order quantities populated
     FINANCIAL_SUMMARY = "financial_summary"  # internal deal economics, not scope
+    # Explicit abstention (PUR-21/52): no rule, no PM judgment and no confident
+    # structural head recognised the sheet. Used to silently default to SCOPE.
+    UNCLASSIFIED = "unclassified"
 
 
 class SheetDestination(str, Enum):
@@ -49,6 +53,9 @@ class SheetDestination(str, Enum):
     SCOPE = "scope"  # mine as scope/BOM/asset/site atoms (the real work)
     COMMERCIAL = "commercial"  # emit as typed commercial atoms (pricing visible)
     DROP = "drop"  # pure backing-data / empty / cover noise — emit nothing
+    # Unrecognised sheet: rows are retained on a visible marker for review and
+    # labelling, never mined as scope.
+    REVIEW = "review"
 
 
 # Role → destination. SCOPE is mined as scope; rate cards, catalogs and
@@ -63,7 +70,18 @@ _ROLE_DESTINATION: dict[SheetRole, SheetDestination] = {
     SheetRole.EMPTY: SheetDestination.DROP,
     SheetRole.INSTRUCTIONS: SheetDestination.DROP,
     SheetRole.REFERENCE: SheetDestination.DROP,
+    SheetRole.UNCLASSIFIED: SheetDestination.REVIEW,
 }
+
+# How a classification was reached. ``fallthrough`` means nothing positively
+# recognised the sheet; it is what the PUR-51 labelling script collects.
+MATCH_POSITIVE = "positive"
+MATCH_LEARNED = "learned"
+MATCH_HEAD = "structural_head"
+MATCH_FALLTHROUGH = "fallthrough"
+
+# Escape hatch: restore the pre-PUR-52 behaviour (fallthrough -> SCOPE).
+LEGACY_SCOPE_ENV = "SHEET_FALLTHROUGH_LEGACY_SCOPE"
 
 
 @dataclass
@@ -73,11 +91,16 @@ class SheetClassification:
     reason: str
     confidence: float
     signals: dict[str, Any] = field(default_factory=dict)
+    match: str = MATCH_POSITIVE
+
+    @property
+    def is_fallthrough(self) -> bool:
+        return self.match == MATCH_FALLTHROUGH
 
     @property
     def destination(self) -> SheetDestination:
         """Routing bucket derived from role (see :data:`_ROLE_DESTINATION`)."""
-        return _ROLE_DESTINATION.get(self.role, SheetDestination.SCOPE)
+        return _ROLE_DESTINATION.get(self.role, SheetDestination.REVIEW)
 
 
 # ── Name-based hints ────────────────────────────────────────────────
@@ -350,7 +373,13 @@ def learned_sheet_role(sheet_name: str, rows: list[list[Any]], *, store: Any = N
         return None
 
 
-def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassification:
+def classify_sheet(
+    sheet_name: str,
+    rows: list[list[Any]],
+    *,
+    use_structural_head: bool = True,
+    use_learned_store: bool = True,
+) -> SheetClassification:
     """Classify a worksheet by role for atom-emission gating.
 
     ``rows`` is the raw matrix (list of row lists, cells may be ``None``)
@@ -511,35 +540,98 @@ def classify_sheet(sheet_name: str, rows: list[list[Any]]) -> SheetClassificatio
             signals={"nonblank_rows": nb_rows, "max_row_width": max_row_width},
         )
 
-    # Nothing matched. Before defaulting, ask whether a PM has ever judged this
-    # KIND of sheet — 45% of real sheets reach this branch, so the default is
-    # doing most of the classifying, and it defaults to the bucket that feeds
-    # the SOW.
-    learned = learned_sheet_role(sheet_name, rows)
+    # Nothing matched a non-scope rule. Before abstaining, ask whether a PM
+    # has ever judged this KIND of sheet — 45% of real sheets reached this
+    # branch, and it used to default to the bucket that feeds the SOW.
+    learned = learned_sheet_role(sheet_name, rows) if use_learned_store else None
     if learned is not None:
         try:
             role = SheetRole(str(learned.verdict))
         except ValueError:
             role = None
-        if role is not None:
+        if role is not None and role is not SheetRole.UNCLASSIFIED:
             return SheetClassification(
                 role=role,
-                suppress=_ROLE_DESTINATION.get(role) is SheetDestination.DROP,
+                suppress=_ROLE_DESTINATION.get(role) is not SheetDestination.SCOPE,
                 reason=f"learned_sheet_role:{getattr(learned, 'correction_id', '') or 'pm'}",
                 confidence=float(getattr(learned, "confidence", 0.0) or 0.8),
                 signals={"has_data_header": has_data_header, "learned": True},
+                match=MATCH_LEARNED,
             )
 
-    # Default: treat as a real scope/BOM/asset table.
+    # Positive BOM match: an order-quantity column that is actually filled
+    # (the complement of the empty-order-qty catalog rule above).
+    if oq is not None:
+        data = [r for r in rows if any(str(c or "").strip() for c in r)]
+        filled = sum(1 for r in data[1:] if oq < len(r) and str(r[oq] or "").strip())
+        if data[1:] and filled / len(data[1:]) >= 0.5:
+            return SheetClassification(
+                role=SheetRole.SCOPE, suppress=False, reason="order_qty_filled",
+                confidence=0.75, signals={"order_qty_filled_fraction": round(filled / len(data[1:]), 3)},
+            )
+
+    # Positive scope match: a header row carrying the scope/BOM/asset/site
+    # vocabulary the row parsers key on.
+    if has_data_header:
+        return SheetClassification(
+            role=SheetRole.SCOPE, suppress=False, reason="scope_data_header",
+            confidence=0.8, signals={"has_data_header": True},
+        )
+
+    # Structural head (headers / column types / row shape; never the name).
+    # No trained head, or low confidence -> abstain.
+    pred = structural_sheet_role(rows) if use_structural_head else None
+    if pred is not None:
+        role = SheetRole(pred.role)
+        return SheetClassification(
+            role=role,
+            suppress=_ROLE_DESTINATION.get(role) is not SheetDestination.SCOPE,
+            reason=f"structural_head:{pred.label}",
+            confidence=round(pred.confidence, 4),
+            signals={"has_data_header": False, "head_label": pred.label,
+                     "head_probabilities": pred.probabilities},
+            match=MATCH_HEAD,
+        )
+
+    if os.environ.get(LEGACY_SCOPE_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
+        return SheetClassification(
+            role=SheetRole.SCOPE, suppress=False, reason="default_scope",
+            confidence=0.6, signals={"has_data_header": False},
+            match=MATCH_FALLTHROUGH,
+        )
+
+    # Explicit abstention. Rows are retained on a visible marker, not mined.
     return SheetClassification(
-        role=SheetRole.SCOPE, suppress=False, reason="default_scope",
-        confidence=0.6, signals={"has_data_header": has_data_header},
+        role=SheetRole.UNCLASSIFIED, suppress=True, reason="unclassified:fallthrough",
+        confidence=0.0, signals={"has_data_header": False},
+        match=MATCH_FALLTHROUGH,
     )
+
+
+def structural_sheet_role(rows: list[list[Any]]) -> Any:
+    """Prediction from the trained structural sheet head, or ``None`` (abstain).
+
+    Degrades to abstention: no saved head, unreadable head, anything raised.
+    """
+    try:
+        from app.core.sheet_structure_head import load_head
+
+        head = load_head()
+        if head is None:
+            return None
+        return head.predict_rows(rows)
+    except Exception:
+        return None
 
 
 __all__ = [
     "sheet_exemplar",
     "learned_sheet_role",
+    "structural_sheet_role",
+    "MATCH_POSITIVE",
+    "MATCH_LEARNED",
+    "MATCH_HEAD",
+    "MATCH_FALLTHROUGH",
     "SheetRole",
     "SheetDestination",
     "SheetClassification",
