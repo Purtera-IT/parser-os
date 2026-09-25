@@ -156,7 +156,10 @@ def find_supply_conflicts(atoms: list[Any], documents: dict[str, dict] | None = 
         except Exception:
             continue
 
-    out: list[EvidenceAtom] = []
+    # Group by the two headings that disagree, not by part. Four cards saying
+    # the same sentence about different nouns is both unreadable and unstable:
+    # they are 0.95 similar, and near-duplicate collapse eats them.
+    pairs: dict[tuple[str, str], dict[str, Any]] = {}
     seen: set[str] = set()
     for i, (a1, k1, h1, s1, f1) in enumerate(claims):
         for a2, k2, h2, s2, f2 in claims[i + 1:]:
@@ -169,57 +172,69 @@ def find_supply_conflicts(atoms: list[Any], documents: dict[str, dict] | None = 
             # Both handing it to a third party is agreement.
             if s1 == s2 or not _same_item(k1, k2):
                 continue
-            # ONE QUESTION PER PART, not per pair of lines. A quote line can
-            # name two things at once -- "USB Cable connecting PC to RS232 to
-            # USB converter" matches both the drawing's "USB Cable" and its
-            # "RS232 to USB converter" -- and a PM should be asked about each
-            # part once, not once per way the two documents happen to overlap.
+            # ONE ENTRY PER PART, not per pair of lines. A quote line can name
+            # two things -- "USB Cable connecting PC to RS232 to USB converter"
+            # matches both the drawing's "USB Cable" and its "RS232 to USB
+            # converter" -- and a part is in dispute once.
             ident = k1 if len(k1) <= len(k2) else k2
             if ident in seen:
                 continue
             seen.add(ident)
-            out.append(_ask(a1, a2, h1, h2, s1, ident))
-    return out
+
+            mine, theirs = (a1, h1) if s1 == "self" else (a2, h2)
+            other = (a2, h2) if s1 == "self" else (a1, h1)
+            key = (theirs, other[1])
+            slot = pairs.setdefault(key, {"anchor": mine, "items": []})
+            named = min(((getattr(mine, "raw_text", "") or "").strip(),
+                         (getattr(other[0], "raw_text", "") or "").strip()), key=len)
+            slot["items"].append({
+                "item": named,
+                "claimed_text": (getattr(mine, "raw_text", "") or "").strip(),
+                "assigned_text": (getattr(other[0], "raw_text", "") or "").strip(),
+                "atom_ids": [str(getattr(mine, "id", "")), str(getattr(other[0], "id", ""))],
+            })
+
+    return [_ask(head_self, head_other, slot) for (head_self, head_other), slot in pairs.items()]
 
 
-def _ask(a1: Any, a2: Any, h1: str, h2: str, s1: str, ident: str) -> EvidenceAtom:
-    """The question a PM has to answer, naming both documents' words."""
-    self_atom, self_head = (a1, h1) if s1 == "self" else (a2, h2)
-    other_atom, other_head = (a2, h2) if s1 == "self" else (a1, h1)
-    item = (getattr(self_atom, "raw_text", "") or "").strip()
-    other_item = (getattr(other_atom, "raw_text", "") or "").strip()
-    named = item if len(item) <= len(other_item) else other_item
-    text = (f"Who supplies {named}? One document puts it under \"{self_head}\" and "
-            f"another under \"{other_head}\".")
-    artifact_id = str(getattr(self_atom, "artifact_id", "") or "")
-    atom_id = stable_id("atm", artifact_id, VERSION, ident)
-    refs = getattr(self_atom, "source_refs", None) or []
+def _ask(head_self: str, head_other: str, slot: dict[str, Any]) -> EvidenceAtom:
+    """The question a PM answers once, naming every part in dispute."""
+    anchor = slot["anchor"]
+    items = slot["items"]
+    names = [x["item"] for x in items]
+    listed = ", ".join(names[:-1]) + (" and " if len(names) > 1 else "") + names[-1]
+    count = f"{len(names)} part" + ("s are" if len(names) > 1 else " is")
+    text = (f"{count} claimed by both sides: {listed}. One document puts them under "
+            f"\"{head_self}\" and another under \"{head_other}\". Who supplies them?")
+
+    artifact_id = str(getattr(anchor, "artifact_id", "") or "")
+    atom_id = stable_id("atm", artifact_id, VERSION, head_self, head_other,
+                        "|".join(sorted(names)))
+    refs = getattr(anchor, "source_refs", None) or []
     filename = (getattr(refs[0], "filename", "") if refs else "") or ""
     src = SourceRef(
         id=stable_id("src", atom_id),
         artifact_id=artifact_id,
-        # The question belongs to the document that claimed the part; when
-        # that source carries no type, an email is the honest default --
-        # a supply list is something somebody wrote to somebody.
+        # The question belongs to the document that claimed the parts; when
+        # that source carries no type, an email is the honest default -- a
+        # supply list is something somebody wrote to somebody.
         artifact_type=(getattr(refs[0], "artifact_type", None) if refs else None)
         or ArtifactType.email,
         filename=filename,
-        locator={"extraction": VERSION,
-                 "claims": [{"heading": self_head, "text": item},
-                            {"heading": other_head, "text": other_item}]},
+        locator={"extraction": VERSION, "headings": [head_self, head_other]},
         extraction_method=VERSION,
         parser_version=VERSION,
     )
     return EvidenceAtom(
         id=atom_id,
-        project_id=str(getattr(self_atom, "project_id", "") or ""),
+        project_id=str(getattr(anchor, "project_id", "") or ""),
         artifact_id=artifact_id,
         atom_type=AtomType.open_question,
         raw_text=text,
         normalized_text=text,
-        value={"via": VERSION, "item": named,
-               "claimed_by_sender": self_head, "assigned_elsewhere": other_head,
-               "atom_ids": [str(getattr(a1, "id", "")), str(getattr(a2, "id", ""))]},
+        value={"via": VERSION, "claimed_by_sender": head_self,
+               "assigned_elsewhere": head_other, "items": items,
+               "atom_ids": [i for x in items for i in x["atom_ids"]]},
         entity_keys=[],
         source_refs=[src],
         receipts=[],
