@@ -1589,10 +1589,31 @@ def _cross_type_text_key(atom: Any) -> str:
     cell = _atom_cell_locator(atom)
     if cell:
         return f"{cell}|{norm[:80]}"
+    # The same scoping, for a line read off a picture. A drawing linked from an
+    # email is read ONTO that email, so a vendor's parts list and the
+    # reseller's own supply list end up in one artifact saying the same words:
+    # "Relay" typed bom_line by the mail and deal_metadata by the sheet is a
+    # group spanning two types, and one of them is dropped. They are not one
+    # sentence emitted twice -- they are two companies each claiming to buy the
+    # part, which is the single most valuable disagreement in the deal. On
+    # 010288 this silently deleted four lines of the list being quoted from.
+    sheet = _atom_sheet(atom)
+    if sheet:
+        return f"{sheet}|{norm[:80]}"
     if len(norm) < 8:
         return ""
     # Cap so trailing paraphrase divergence doesn't split a shared fact.
     return norm[:80]
+
+
+def _atom_sheet(atom: Any) -> str:
+    """The drawing a line was read off, or '' for a line somebody typed."""
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        return str(loc.get("sheet") or "")
+    except Exception:
+        return ""
 
 
 def _atom_cell_locator(atom: Any) -> str:
