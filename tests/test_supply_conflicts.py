@@ -65,13 +65,30 @@ def deal():
 
 
 def test_it_finds_the_four_the_email_would_not_name():
-    items = {c.value["item"] for c in find_supply_conflicts(deal())}
-    assert items == {
+    got = find_supply_conflicts(deal())
+    # One question, because the deal has one disagreement -- between the
+    # reseller's own side and the installer's -- and it covers four parts.
+    assert len(got) == 1
+    assert {x["item"] for x in got[0].value["items"]} == {
         "PC with Access Control Software",
         "USB Cable",
         "RS232 to USB converter",
         "Relay",
     }
+
+
+def test_one_card_not_four_near_identical_ones():
+    """Four questions of the form "Who supplies X? One document puts it under
+    ... and another under ..." are 0.95 similar to each other: the boilerplate
+    is most of the sentence. Near-duplicate collapse then eats them, and which
+    ones survive is luck -- on the real deal three of four did. Four cards were
+    the wrong shape anyway: the email says it in one breath, "we provide
+    several of those pieces", and a PM answers it in one."""
+    got = find_supply_conflicts(deal())
+    assert len(got) == 1
+    said = got[0].raw_text
+    assert "4 parts are claimed by both sides" in said
+    assert "Provided by us" in said and "Installer supplied Components" in said
 
 
 def test_it_stays_silent_where_the_two_documents_agree():
@@ -91,21 +108,23 @@ def test_a_reseller_shipping_its_vendors_kit_is_not_a_disagreement():
     assert "Extender" not in said
 
 
-def test_one_question_per_part_not_per_pair_of_lines():
+def test_a_part_is_listed_once_even_when_two_lines_name_it():
     """A quote line can name two things: "USB Cable connecting PC to RS232 to
     USB converter" matches the drawing's "USB Cable" AND its "RS232 to USB
-    converter". A PM is asked about each part once."""
-    got = find_supply_conflicts(deal())
-    assert len(got) == len({c.value["item"] for c in got})
+    converter". Each part appears once in the list."""
+    items = [x["item"] for x in find_supply_conflicts(deal())[0].value["items"]]
+    assert len(items) == len(set(items))
 
 
 def test_the_question_names_both_documents_words():
-    got = [c for c in find_supply_conflicts(deal()) if c.value["item"] == "Relay"][0]
+    got = find_supply_conflicts(deal())[0]
     assert OURS in got.raw_text and INSTALLER in got.raw_text
     assert got.atom_type.value == "open_question"
     assert got.review_status.value == "needs_review"
-    # Both originals are named, so the finding can be traced without prose.
-    assert len(got.value["atom_ids"]) == 2
+    # Every original is named, so the finding can be traced without prose.
+    assert len(got.value["atom_ids"]) == 8
+    relay = [x for x in got.value["items"] if x["item"] == "Relay"][0]
+    assert len(relay["atom_ids"]) == 2
 
 
 @pytest.mark.parametrize("heading,authors,want", [
@@ -150,7 +169,7 @@ def test_a_drawing_read_onto_an_email_is_still_a_separate_document():
     email = Atom(same, "Relay", OURS, sender=CDW)
     drawing = Atom(same, "Relay", INSTALLER, sheet="BPW061725 Rev1")
     got = find_supply_conflicts([email, drawing])
-    assert [c.value["item"] for c in got] == ["Relay"]
+    assert [x["item"] for x in got[0].value["items"]] == ["Relay"]
 
 
 def test_a_sheet_speaks_for_its_own_vendor():
