@@ -161,6 +161,9 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # "<City> Office" — 20%, across 66 deals — and site names account for 74%
     # of every fabricated name in the corpus.
     #
+    # PUR-22/PUR-50: that rule is gone. Names are copied from a document or the
+    # decision abstains (facility_name=None, "site 3 of 7, name unknown"); a
+    # head verdict never composes text. Every name carries `name_source`.
     # Candidates are SiteFacilityDecision's labels in site_facility_head.py.
     # Whether an address is a place where work happens.
     # site_geo_fallback.suppress_vendor_sites asks decide("physical_site") for

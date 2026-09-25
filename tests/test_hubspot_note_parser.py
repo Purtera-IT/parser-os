@@ -69,8 +69,7 @@ def test_parse_hubspot_note_text_handles_headerless_title_body() -> None:
 def test_hubspot_note_parser_extracts_physical_site_with_city(tmp_path: Path) -> None:
     # Header-less address note (the real on-blob shape: company lead-in +
     # "PA15212-5359" with no space before the ZIP) must ingest as a physical_site
-    # atom carrying structured city/state/zip so site_facility_head can derive a
-    # "<City> Office" facility name. Universal: any address-bearing note works.
+    # atom carrying structured city/state/zip for site_facility_head. Universal: any address-bearing note works.
     p = tmp_path / "010058-hs-note-111645120815-GECKO ROBOTICS.txt"
     p.write_text(
         "GECKO ROBOTICS\n\nGECKO ROBOTICS 100 S COMMONS STE 145 PITTSBURGH, PA15212-5359",
@@ -90,9 +89,10 @@ def test_hubspot_note_parser_extracts_physical_site_with_city(tmp_path: Path) ->
     from app.core.site_facility_head import decide_site_facility_label
 
     decision = decide_site_facility_label(site)
-    # The city verbatim; the rule no longer composes "<City> Office", which
-    # invented a name absent from every document. See test_deal_kit_heads.
-    assert decision.facility_name == "Pittsburgh"
+    # No document names this site: the rule abstains instead of composing
+    # "<City> Office" or promoting the city to a name. See test_site_name_abstain.
+    assert decision.facility_name is None
+    assert decision.abstain_reason == "no_document_names_site"
 
 
 def test_parse_hubspot_note_text_splits_headers() -> None:
