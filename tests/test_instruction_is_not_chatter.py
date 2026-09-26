@@ -140,3 +140,19 @@ def test_a_quoted_name_with_an_address_beside_it_is_a_person():
     kept, dropped = drop_contextless_stakeholders(
         [person('("Customer Contact Person")', "Customer Contact Person")])
     assert dropped and not kept
+
+
+def test_an_acknowledgement_is_not_an_instruction():
+    """"Received, thank you!" matched the first cut of the directed-task rule --
+    a capitalised word, a comma, then a lowercase word -- and came back into
+    010288 as an atom. The shape only means something when the word after the
+    address is a verb somebody could be asked to do."""
+    import app.core.atom_substance_gate as G
+
+    assert G._DIRECTED_TASK_RE.match("Received, thank you!") is None
+    assert G._DIRECTED_TASK_RE.match("Thanks, appreciate it") is None
+    assert G._DIRECTED_TASK_RE.match("AJ- get the location") is not None
+    assert G._DIRECTED_TASK_RE.match("TT - clean up aisle Purtera.") is not None
+
+    kept, dropped = G.apply_substance_gate([_Atom("Received, thank you!")])
+    assert dropped, "an acknowledgement is what the gate is for"

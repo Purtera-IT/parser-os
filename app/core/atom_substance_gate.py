@@ -936,8 +936,19 @@ _NECESSITY_RE = re.compile(
 # Grammar, not vocabulary, the same argument _NECESSITY_RE makes above: a name
 # or initials, then a dash/comma/colon, then a lowercase verb, is somebody being
 # given a job.
+# The verb has to be a verb. "addressed, then any lowercase word" also matched
+# "Received, thank you!" -- the acknowledgement this gate exists to remove -- and
+# put it back in the deal as an atom. So the second half is a closed list of
+# things a person can be asked to do.
+_TASK_VERB = (
+    r"get|send|confirm|check|call|email|clean|clear|review|update|add|remove|"
+    r"find|pull|push|ship|install|fix|schedule|book|order|quote|price|verify|"
+    r"ask|follow|let|loop|forward|reach|set|make|take|run|start|finish|hold|"
+    r"keep|bring|give|put|move|sort|handle|cover|close|open|sign|approve"
+)
 _DIRECTED_TASK_RE = re.compile(
-    r"^(?:[A-Z][A-Za-z.]{0,14}|[A-Z]{2,4})\s*[-\u2013\u2014,:]\s*(?:please\s+)?[a-z]{2,}\b"
+    r"^(?:[A-Z][A-Za-z.]{0,14}|[A-Z]{2,4})\s*[-\u2013\u2014,:]\s*"
+    r"(?:please\s+)?(?:" + _TASK_VERB + r")\b"
 )
 
 # "we'll confirm", and the same promise typed without the apostrophe, which is
