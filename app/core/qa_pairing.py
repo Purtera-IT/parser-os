@@ -66,12 +66,33 @@ def _is_question(atom: Any) -> bool:
 _IDENTITY_TYPES = {"stakeholder", "signatory", "entity"}
 
 
+def _names_a_person(atom: Any) -> bool:
+    """An identity atom that carries a reachable person, not a bare recipient.
+
+    `"Albert Arzate" <albert@rd-systems.com>` names somebody and says how to
+    reach them; a To: line repeated in a footer does not. The difference is
+    whether a human was handed over, which is what a "who is the contact"
+    question is asking for.
+    """
+    t = _text(atom)
+    if "@" not in t:
+        return False
+    # a name of at least two words sitting beside the address
+    head = re.split(r"<|\(", t, 1)[0].strip().strip("\"'")
+    return len(head.split()) >= 2
+
+
 def _looks_like_answer(atom: Any) -> bool:
     """A statement that could answer something: not another question, not a
     list item, not chatter, not a signature, and it says something."""
     if _is_question(atom) or _text(atom).endswith("?"):
         return False
-    if _type(atom) in _IDENTITY_TYPES:
+    # Identity atoms are excluded because a recipient line is not an answer --
+    # but `_EXPECTS` declares that a who/contact question expects exactly a
+    # `stakeholder`, so a blanket exclusion here means that question can never
+    # be answered at all. The caller decides: this returns "could be an answer
+    # to something", and `_answers_this_question` decides to WHAT.
+    if _type(atom) in _IDENTITY_TYPES and not _names_a_person(atom):
         return False
     v = _value(atom)
     if v.get("chatter") or v.get("list_item") or str(v.get("kind") or "") in {"person", "email_header", "quoted_message_header"}:

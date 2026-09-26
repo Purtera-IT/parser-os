@@ -37,6 +37,8 @@ authoritative starting points; the PM cockpit renders them directly.
 """
 from __future__ import annotations
 
+import re
+
 from collections import Counter, defaultdict
 from typing import Any
 
@@ -163,6 +165,31 @@ def build_pm_dashboard(
                         current["name"] = owner_v
     seen_stakeholder_slugs: set[str] = set()
 
+    # What the deal already states, in typed atoms. A question asking for one of
+    # these is answered whether or not any linkage caught it: the fact is on the
+    # record and the PM can read it.
+    _have_site = any(
+        (a.atom_type.value if hasattr(a.atom_type, "value") else str(a.atom_type))
+        == "physical_site" for a in atoms
+    )
+    _have_named_contact = any(
+        (a.atom_type.value if hasattr(a.atom_type, "value") else str(a.atom_type))
+        == "stakeholder"
+        and "@" in (a.raw_text or "")
+        and len((a.raw_text or "").split("<")[0].strip().strip('"\'').split()) >= 2
+        for a in atoms
+    )
+
+    def _deal_already_answers(question: str) -> str:
+        """Name the fact the deal holds that makes this question moot."""
+        q = (question or "").lower()
+        if _have_site and re.search(r"\bwhere\b.*\b(site|located|location|address)\b", q):
+            return "the deal states the site"
+        if _have_named_contact and re.search(
+                r"\b(contact|who is|who's|reach)\b", q) and "?" in q:
+            return "the deal names the contact"
+        return ""
+
     for atom in atoms:
         atom_type = atom.atom_type.value if hasattr(atom.atom_type, "value") else str(atom.atom_type)
         value = atom.value if isinstance(atom.value, dict) else {}
@@ -185,7 +212,16 @@ def build_pm_dashboard(
                 or "awaiting ocr" in _lt
                 or (len(_lt) < 25 and ("thought" in _lt or _lt.startswith(("hey ", "hi ", "thanks"))))
             )
-            if not _answered and not _noise:
+            # Purtera asking Purtera is the WORK of getting to a fact, not a
+            # gap in the deal. "Where is this site located?" and "whats that
+            # guys contact out of CA" were both asked and answered inside our
+            # own thread on 010288, and both were sitting at the top of the
+            # PM's blocker list on a deal that holds the address and the
+            # contact. It is tracked as an atom; it is not a question to put to
+            # anybody.
+            _internal = bool(isinstance(value, dict) and value.get("internal_only"))
+            _known = _deal_already_answers(text)
+            if not _answered and not _noise and not _internal and not _known:
                 open_qs.append({
                     "atom_id": atom.id,
                     "artifact_id": atom.artifact_id,
