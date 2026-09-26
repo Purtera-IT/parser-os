@@ -176,3 +176,20 @@ def test_hygiene_is_the_chokepoint_for_job_titles():
         "stakeholder:senior_client_executive",
     ])
     assert got == ["email:alecbur_cdw_com", "stakeholder:alec_burns"]
+
+
+def test_the_llm_pass_is_the_one_that_mattered():
+    """Three guards on the regex path were each verified live and each changed
+    nothing, because a multi-entity LLM pass returns its own stakeholders, is
+    declared authoritative, and DELETES the regex emissions. Guarding the
+    regex path did not merely miss -- its output was replaced.
+
+    The shared rule is the same one; this pins that it is applied to whatever
+    the model answers."""
+    from app.core.entity_extraction import _names_a_job_not_a_person as job
+
+    # What the model returns for "Alec Burns | Senior Client Executive,
+    # Commercial Majors | alecbur@cdw.com".
+    answered = ["Alec Burns", "Senior Client Executive", "Commercial Majors"]
+    kept = [n for n in answered if not job(n.lower().replace(" ", "_"))]
+    assert kept == ["Alec Burns"]

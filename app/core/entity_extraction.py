@@ -5920,8 +5920,22 @@ def _inject_multi_entity_keys(
     stakeholder_entries: list[tuple[str, str]] = []  # (phrase, slug)
     for s in stakeholders:
         name = s.get("name")
-        if isinstance(name, str) and name.strip():
-            stakeholder_entries.append((name.strip(), _slug(name)))
+        if not (isinstance(name, str) and name.strip()):
+            continue
+        slug = _slug(name)
+        # A TITLE IS NOT A NAME, WHOEVER SAYS IT. Asked for the people in
+        # "Alec Burns | Senior Client Executive, Commercial Majors |
+        # alecbur@cdw.com", the model answers with Alec AND with his title,
+        # split on its comma, as two more people. Live 010288: nine
+        # stakeholders for five humans, and on one line the title arrived
+        # without the person at all.
+        #
+        # This pass is declared LLM-authoritative and DELETES the regex
+        # emissions, so the same rule enforced on that path could not help --
+        # its output was replaced by this one's.
+        if _names_a_job_not_a_person(slug):
+            continue
+        stakeholder_entries.append((name.strip(), slug))
 
     # LLM-AUTHORITATIVE for customer + stakeholder when the LLM ran
     # successfully (returned ANY output for any category):
