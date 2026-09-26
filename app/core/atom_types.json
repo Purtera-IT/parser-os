@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-23",
+  "version": "2026-09-25",
   "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
   "keep": {
     "name": "_keep",
@@ -535,6 +535,17 @@
       "coarse": "meta",
       "facet": "META",
       "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it, what it is out of date against. Not scope -- it must never reach the SOW -- and it must travel WITH the document it is about, because anything that reads that document without it builds from something we already know is wrong. Found in 11 deals across the dev corpus, typed scope_item in 9 of them: \"the Dates are incorrect as per the submitted SOW\", \"except as otherwise superseded by terms contained in a mutually executed Master Purchase Agreement\".",
+      "label_space": "extractor",
+      "status": "v2",
+      "value_light": false,
+      "train_rows": 0,
+      "asks_supplier": false
+    },
+    {
+      "name": "legend_entry",
+      "coarse": "meta",
+      "facet": "META",
+      "desc": "The key that makes a document decodable: what a colour, symbol, hatch or abbreviation MEANS on the sheet it is printed on (\"Huzzard supplied Components\", \"orange = existing\", \"hatched = by others\"). Not a fact about the work and never scope -- its content transfers into the parts it governs, each of which names the side it was drawn in. It exists as an atom so a correction can point AT it: on 010288 the sender writes \"the 'Installer Supplied Components' are not accurate\", and a caveat aimed at a whole drawing says only that the drawing is unreliable, while one aimed at a single key says which eighteenth of it to distrust. Distinct from source_caveat, which is the correction rather than the thing corrected.",
       "label_space": "extractor",
       "status": "v2",
       "value_light": false,
