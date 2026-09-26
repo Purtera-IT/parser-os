@@ -343,8 +343,23 @@ def choose_parser(
         # envelope, PM_HANDOFF and the Deal Kit, so the only way to learn it
         # existed is to go and look. UnreadParser emits one marker instead. It
         # never competes for anything -- this is the only place it is reached.
-        from app.parsers.unread_parser import UnreadParser
+        from app.parsers.unread_parser import UnreadParser, worth_claiming
 
+        # ...but only when it would actually produce something. A file too
+        # small to be a document must still route to NONE: that "nothing was
+        # read" signal IS the coverage record, and swallowing it is worse than
+        # losing the file.
+        if not worth_claiming(path):
+            return (
+                None,
+                ParserMatch(
+                    parser_name="none",
+                    confidence=0.0,
+                    reasons=["no_parser_over_threshold"],
+                    artifact_type=_artifact_type_for_path(path),
+                    ),
+                sorted_matches,
+            )
         return (
             UnreadParser(),
             ParserMatch(

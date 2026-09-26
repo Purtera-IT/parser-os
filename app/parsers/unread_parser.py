@@ -48,10 +48,42 @@ from app.parsers.base import BaseParser
 #: not.
 NUL = bytes([0])
 
+#: Below this a text file is not a document, and reading it manufactures atoms
+#: out of filler. The numbers are not invented: `test_contentless_text_still_
+#: reports_no_parser` records that every real deal document measured is at
+#: least 4 non-empty lines and 258 characters, and that saying "I did not read
+#: this" is more honest than producing noise. A 44-character one-liner stays
+#: unread, and a substantial unstructured .txt -- which no parser claims and
+#: which was losing its whole contents -- gets read.
+MIN_DOCUMENT_CHARS = 258
+MIN_DOCUMENT_LINES = 4
+
 #: A line shorter than this is not a statement. Matches multitask_table's floor.
 MIN_LINE = 8
 #: The fallback is not a real parser; it should not flood a deal.
 MAX_LINES = 400
+
+
+def is_a_document(body: str) -> bool:
+    """Enough text to be worth reading, rather than filler."""
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    return len(body.strip()) >= MIN_DOCUMENT_CHARS and len(lines) >= MIN_DOCUMENT_LINES
+
+
+def worth_claiming(path: Path) -> bool:
+    """Would this parser produce anything for the file?
+
+    The router asks before handing the artifact over, because a file this
+    cannot help with must still route to NONE -- that "nothing was read" signal
+    is the coverage record, and swallowing it is worse than losing the file.
+    """
+    body = _as_text(path)
+    if body:
+        return is_a_document(body)
+    try:
+        return path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _as_text(path: Path) -> str:
@@ -141,7 +173,8 @@ class UnreadParser(BaseParser):
         # case this parser was written for. Read it.
         body = _as_text(path)
         if body:
-            return self._lines(project_id, artifact_id, path, body, size)
+            return (self._lines(project_id, artifact_id, path, body, size)
+                    if is_a_document(body) else [])
 
         text = (f"[Unread file] {path.name} — {describe(path)}. "
                 f"{size:,} bytes. Nothing in it reached this deal, so whatever "

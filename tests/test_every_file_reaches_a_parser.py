@@ -32,17 +32,22 @@ from app.parsers.unread_parser import UnreadParser, describe
 
 #: (filename, first bytes) -> the parser that must take it.
 BINARY = bytes([0x8B, 0xD3])
+#: The OLE2 signature a pre-2007 Word or Excel file starts with.
+OLE = bytes([0xD0, 0xCF, 0x11, 0xE0])
 
 ROUTES = [
     ("plan.dwg", b"AC1032" + b"\x00" * 600, "dwg"),
     ("plan.dxf", b"  0\nSECTION\n" + b"x" * 600, "dwg"),
     ("anim.gif", b"GIF89a" + b"x" * 600, "image"),
     ("photo.png", b"\x89PNG\r\n\x1a\n" + b"x" * 600, "image"),
-    ("legacy.doc", b"\xd0\xcf\x11\xe0" + b"x" * 600, "unread"),
-    ("book.xls", b"\xd0\xcf\x11\xe0" + b"x" * 600, "unread"),
+    # Realistic: a pre-2007 Word or Excel file is OLE2 and full of NULs. The
+    # first version of these fixtures was the signature plus 600 `x`, which
+    # decodes cleanly as text -- so the parser read it, correctly, and the test
+    # was asserting against a file that does not exist in the world.
+    ("legacy.doc", OLE + bytes([0]) * 4000, "unread"),
+    ("book.xls", OLE + bytes([0]) * 4000, "unread"),
     ("protected.rpmsg", bytes([0]) + BINARY * 300, "unread"),
-    ("sites.tsv", b"a\tb\nc\td\n", "unread"),
-    ("mystery.xyz", b"x" * 600, "unread"),
+    ("mystery.xyz", bytes([0]) + BINARY * 900, "unread"),
 ]
 
 
@@ -120,3 +125,41 @@ def test_pptx_has_its_dependency_declared():
     text = Path("pyproject.toml").read_bytes()
     deps = tomllib.loads(text.decode())["project"]["dependencies"]
     assert any(d.startswith("python-pptx") for d in deps), deps
+
+
+# --------------------------------------------------------------------------
+# ...but "nothing was read" is itself a signal, and must survive
+# --------------------------------------------------------------------------
+
+def test_filler_too_small_to_be_a_document_still_routes_to_nobody(tmp_path: Path):
+    """The floor, and the reason for it.
+
+    `test_contentless_text_still_reports_no_parser` records a measured
+    position: every real deal document is at least 4 non-empty lines and 258
+    characters, and saying "I did not read this" is more honest than
+    manufacturing atoms out of filler. The first version of UnreadParser read
+    anything that decoded as text and swallowed that signal.
+    """
+    path = tmp_path / "random.txt"
+    path.write_text("just filler words with no structured signals", encoding="utf-8")
+    parser, _, _ = choose_parser(path)
+    assert parser is None
+
+
+def test_a_substantial_unstructured_file_is_read(tmp_path: Path):
+    """The other half. NO parser claims a plain .txt with no structure, so
+    above the floor this is the difference between reading the file and losing
+    its contents to a warning line."""
+    path = tmp_path / "site_notes.txt"
+    path.write_text(
+        "Walkthrough notes from the Penn Plaza visit on the twelfth floor.\n"
+        "The team counted 212 Cat6A drops across one hundred and six workstations.\n"
+        "Six forty-eight port patch panels are to be installed in the IT closet.\n"
+        "Electrical connections will be provided by the landlord, not by us.\n"
+        "The freight elevator is the only route for cable reels and panels.\n",
+        encoding="utf-8",
+    )
+    parser, _, _ = choose_parser(path)
+    assert parser is not None
+    texts = " ".join(a.raw_text for a in parser.parse(path))
+    assert "212 Cat6A drops" in texts
