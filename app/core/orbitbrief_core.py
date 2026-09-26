@@ -88,6 +88,56 @@ def _pm_facts(atoms: list[Any] | None) -> dict[str, Any]:
     return {"owner": people[:40]}
 
 
+
+#: The same topic under two spellings. Grounded in the ids the three streams
+#: actually emit on a live deal, not guessed: the left side is an SRL gap id,
+#: the right the head-start id for the same question.
+_TOPIC_ALIAS = {
+    "kickoff_date": "kickoff",
+    "cutover_date": "golive",
+    "blackout_windows": "blackout",
+    "work_hours": "workhours",
+    "acceptance_criteria": "acceptance",
+    "device_qty_per_site": "device_count",
+    "customer_responsibilities": "customer_deps",
+    "phase_milestones": "phase_milestones",
+}
+
+
+def _question_topic(q: dict[str, Any]) -> str:
+    """What a question is ABOUT, independent of how it is worded.
+
+    Two streams asking "What is the kickoff / project start date?" and "What is
+    the confirmed kickoff / start date?" are one question. Comparing the text
+    says they are two, which is how a PM ended up being asked the same thing
+    three times on a deal with ten emails.
+    """
+    fid = str(q.get("field_id") or "").strip().lower()
+    if fid:
+        return "f:" + _TOPIC_ALIAS.get(fid, fid)
+    return "t:" + " ".join(str(q.get("text") or "").lower().split())
+
+
+def _dedupe_questions(open_qs: list[dict[str, Any]],
+                      covered_topics: set[str]) -> list[dict[str, Any]]:
+    """One per topic, deal-specific wording first, nothing already covered."""
+    # A gap this deal raised beats the standing list; the checklist is last.
+    rank = {"open_question": 0, "generated_gap": 1, "headstart": 2, "checklist": 3}
+    best: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for q in open_qs:
+        key = _question_topic(q)
+        if key in covered_topics:
+            continue
+        cur = best.get(key)
+        if cur is None:
+            best[key] = q
+            order.append(key)
+        elif rank.get(str(q.get("kind") or ""), 9) < rank.get(str(cur.get("kind") or ""), 9):
+            best[key] = q
+    return [best[k] for k in order]
+
+
 def build_pm_dashboard(
     *,
     atoms: list[EvidenceAtom],
@@ -440,6 +490,28 @@ def build_pm_dashboard(
                 open_qs.append(entry)
     except Exception:
         head_start = []
+
+    # One question per topic, and none the deal already answers. Until now the
+    # three streams were deduped on their TEXT, so the same question in two
+    # wordings was asked twice -- and `covered`, computed per topic from the
+    # deal's own words, was applied to the head-start copy while the identical
+    # SRL gap went through untouched.
+    try:
+        _covered = {
+            "f:" + _TOPIC_ALIAS.get(str(h.get("field_id") or "").lower(),
+                                    str(h.get("field_id") or "").lower())
+            for h in head_start if h.get("covered") and h.get("field_id")
+        }
+        _before_q = len(open_qs)
+        open_qs = _dedupe_questions(open_qs, _covered)
+        if len(open_qs) != _before_q:
+            blockers = [b for b in blockers
+                        if b.get("kind") != "open_question"
+                        or any(b.get("atom_id") == q.get("atom_id")
+                               and (b.get("summary") or "")[:60] == (q.get("text") or "")[:60]
+                               for q in open_qs)]
+    except Exception:
+        pass
 
     # Milestones sorted by ISO date.
     milestones.sort(key=lambda m: (m.get("iso") or ""))
