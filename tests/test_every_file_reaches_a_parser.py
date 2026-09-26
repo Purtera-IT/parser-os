@@ -31,6 +31,8 @@ from app.parsers.registry import choose_parser
 from app.parsers.unread_parser import UnreadParser, describe
 
 #: (filename, first bytes) -> the parser that must take it.
+BINARY = bytes([0x8B, 0xD3])
+
 ROUTES = [
     ("plan.dwg", b"AC1032" + b"\x00" * 600, "dwg"),
     ("plan.dxf", b"  0\nSECTION\n" + b"x" * 600, "dwg"),
@@ -38,7 +40,7 @@ ROUTES = [
     ("photo.png", b"\x89PNG\r\n\x1a\n" + b"x" * 600, "image"),
     ("legacy.doc", b"\xd0\xcf\x11\xe0" + b"x" * 600, "unread"),
     ("book.xls", b"\xd0\xcf\x11\xe0" + b"x" * 600, "unread"),
-    ("protected.rpmsg", b"x" * 600, "unread"),
+    ("protected.rpmsg", bytes([0]) + BINARY * 300, "unread"),
     ("sites.tsv", b"a\tb\nc\td\n", "unread"),
     ("mystery.xyz", b"x" * 600, "unread"),
 ]
@@ -57,14 +59,17 @@ def test_nothing_routes_to_none(tmp_path: Path):
     """The invariant, stated once: whatever arrives, somebody holds it."""
     for name in ("a.rpmsg", "b.7z", "c", "d.dmg", "e.wpd", "f.pages"):
         path = tmp_path / name
-        path.write_bytes(b"x" * 100)
+        path.write_bytes(bytes([0]) + BINARY * 100)
         parser, _, _ = choose_parser(path)
         assert parser is not None, f"{name} routed to nobody"
 
 
 def test_the_marker_says_what_arrived_and_why_it_is_missing(tmp_path: Path):
+    """Genuinely binary. A file of 4,211 `x` bytes IS text, and the parser is
+    right to read it rather than call it unreadable -- which is what the first
+    version of this fixture accidentally proved."""
     path = tmp_path / "Signed SOW.rpmsg"
-    path.write_bytes(b"x" * 4211)
+    path.write_bytes(bytes([0, 1, 2]) + BINARY * 2104)
     atom = UnreadParser().parse(path)[0]
     assert "Signed SOW.rpmsg" in atom.raw_text
     assert "encrypted" in atom.raw_text
