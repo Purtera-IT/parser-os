@@ -226,7 +226,14 @@ def test_multitask_assembly_dedups_splits_and_names_what_it_skips(tmp_path) -> N
             # same (task, text) labelled by a PM -> the PM row must win the dedup
             ("atom_type", "exclusion", "Mid-turn jumpers are excluded.", "d1", "train", "pm"),
             ("atom_type", "constraint", "Escort access required at dock.", "d2", "holdout", "llm"),
-            ("edge_relation", "contradicts", "qty 40 vs 56", "d1", "train", "llm"),  # not a backbone task
+            # `edge_relation` IS a backbone task now -- the edge head had no
+            # human gold anywhere and its rows were being written, mirrored,
+            # ingested and then dropped one step from the model. A relation
+            # genuinely outside the backbone is a span or a rationale: a
+            # paragraph where a class belongs.
+            ("edge_relation", "contradicts", "qty 40 vs 56", "d1", "train", "llm"),
+            ("rationale:atom", "a paragraph arguing the label", "some atom text here",
+             "d1", "train", "pm"),  # generative target, not a class
             ("atom_type", "scope_item", "x", "d3", "train", "llm"),  # too short
         ],
     )
@@ -234,16 +241,17 @@ def test_multitask_assembly_dedups_splits_and_names_what_it_skips(tmp_path) -> N
     conn.close()
 
     table = assemble([db])
-    assert len(table.rows) == 2
+    assert len(table.rows) == 3
     winner = next(r for r in table.rows if "jumpers" in r.text)
     assert winner.teacher == "pm", "dedup must keep the most trusted teacher"
     assert table.skipped["duplicate (kept most trusted teacher)"] == 1
-    assert table.skipped["relation edge_relation not a backbone task"] == 1
+    assert any(r.task == "edge_relation" for r in table.rows),         "the edge head has no gold but this; it must reach the backbone"
+    assert table.skipped["relation rationale:atom not a backbone task"] == 1,         "a rationale is a generative target and must never reach a classifier"
     assert table.skipped["text too short"] == 1
     stats = table.per_task()["atom_type"]
     assert stats["train"] == 1 and stats["holdout"] == 1 and stats["pm"] == 1
 
     out = tmp_path / "table.db"
-    assert table.write(out) == 2
+    assert table.write(out) == 3
     n = sqlite3.connect(out).execute("select count(*) from multitask_rows").fetchone()[0]
-    assert n == 2
+    assert n == 3

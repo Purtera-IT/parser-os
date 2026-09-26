@@ -66,7 +66,29 @@ DEFAULT_TASKS = (
     # weeks and never reached a task, so the backbone learned none of them.
     "about",
     "wants",
+    # The judgements. Every one of these heads had NO human gold, and every one
+    # of them was being skipped here as "not a backbone task" -- so the rows
+    # were written, mirrored, ingested, and then dropped one step from the
+    # model. `gap_valid` decides whether a PM is asked a question at all.
+    "gap_valid",
+    "gap_valid_reason",
+    "edge_relation",
+    "document_job",
+    "physical_site",
+    # The reasoning axes. `consumer` is the one that says an atom means nothing
+    # to Deal Kit or the brief; `rejected` is the contrast that teaches a
+    # boundary rather than a point.
+    "consumer",
+    "weight_tier",
+    "decided_by",
+    "rejected",
 ) + _reads_tasks()
+
+#: Not backbone tasks, and deliberately so. A span is an extraction problem and
+#: a rationale is a generative one; admitting either to a classifier would put a
+#: paragraph where a class belongs. They stay in the corpus for the heads that
+#: can use them.
+NON_CLASSIFIER_PREFIXES = ("evidence_span:", "reads_value:", "rationale:")
 
 
 @dataclass(frozen=True)
