@@ -1676,6 +1676,32 @@ def _is_link_only_line(text: str) -> bool:
     return len(words) <= 1 and len(rest) <= 40
 
 
+def _stakeholder_keys(slug: str) -> list[str]:
+    """``["stakeholder:<slug>"]``, unless the slug names a job.
+
+    A signature is "Name | Title | address", and the title is capitalised,
+    sits beside a role cue and passes the same name-shape tests the name does.
+    Live 010288: nine stakeholder entities for five humans -- "executive vice
+    president", "senior client executive", "account executive" and "commercial
+    majors", the second half of a title split on its comma. On one line the
+    title did not accompany the person, it REPLACED them.
+
+    Who the people are lives in the deal roster now. This only has to stop a
+    job being counted as one of them.
+    """
+    slug = str(slug or "").strip()
+    if not slug:
+        return []
+    try:
+        from app.core.entity_extraction import _names_a_job_not_a_person
+
+        if _names_a_job_not_a_person(slug):
+            return []
+    except Exception:
+        pass
+    return [f"stakeholder:{slug}"]
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v1"
@@ -1870,7 +1896,7 @@ class EmailParser(BaseParser):
                                 "source": "email_from_header", "message_index": 0, "quoted": False,
                                 "author": _addr,
                             },
-                            entity_keys=[f"stakeholder:{_slug}"],
+                            entity_keys=_stakeholder_keys(_slug),
                             source_refs=list(header_atom.source_refs),
                             authority_class=AuthorityClass.machine_extractor,
                             confidence=0.8,
@@ -2038,7 +2064,7 @@ class EmailParser(BaseParser):
                         "kind": "person", "name": name, "email": addr,
                         "source": "email_header_display_name", "quoted": True,
                     },
-                    entity_keys=[f"stakeholder:{slug}"],
+                    entity_keys=_stakeholder_keys(slug),
                     source_refs=[src],
                     authority_class=AuthorityClass.machine_extractor,
                     confidence=0.75,
@@ -2836,7 +2862,7 @@ class EmailParser(BaseParser):
                         raw_text=" | ".join(str(v) for v in (_p.get("name"), _p.get("role"), _p.get("email"), _p.get("phone")) if v),
                         normalized_text=normalize_text(str(_p.get("name") or "")),
                         value=_val,
-                        entity_keys=[f"stakeholder:{_slug}"],
+                        entity_keys=_stakeholder_keys(_slug),
                         source_refs=[_src],
                         authority_class=authority,
                         confidence=max(confidence, 0.8),
@@ -3043,7 +3069,7 @@ class EmailParser(BaseParser):
                                 "author": str(block.get("locator_sender") or block.get("sender") or "").strip() or None,
                                 "source": "email_name_role_list",
                             },
-                            entity_keys=[f"stakeholder:{_slug}"],
+                            entity_keys=_stakeholder_keys(_slug),
                             source_refs=[self._build_source_ref(artifact_id=artifact_id, filename=filename, block=block, line_num=line_num, sentence_index=sentence_index)],
                             authority_class=authority,
                             confidence=max(confidence, 0.75),
