@@ -72,6 +72,12 @@ DEFAULT_TASKS = (
     # model. `gap_valid` decides whether a PM is asked a question at all.
     "gap_valid",
     "gap_valid_reason",
+    # ...and the same WHY for the other two judgement heads. 010288 had one
+    # site and twelve documents, all of one class, so nobody noticed these were
+    # missing until 010180 judged 42 documents and a site with a reason each:
+    # 43 rows that reached neither the backbone nor a held-back head.
+    "document_job_reason",
+    "physical_site_reason",
     "edge_relation",
     "document_job",
     "physical_site",
@@ -95,6 +101,11 @@ DEFAULT_TASKS = (
 #: can use them.
 NON_CLASSIFIER_PREFIXES = ("evidence_span:", "evidence_doc:", "reads_value:",
                            "rationale:")
+
+#: The shortest prompt worth training on. Named so an auditor can count the way
+#: `assemble` counts: 44 of deal 010180's rows are atoms like "CDW" and "IT",
+#: and a check that does not apply the same floor reports the filter as a loss.
+MIN_TEXT_CHARS = 8
 
 
 @dataclass(frozen=True)
@@ -183,7 +194,7 @@ def assemble(
     db_paths: Iterable[Path],
     *,
     tasks: tuple[str, ...] = DEFAULT_TASKS,
-    min_text_chars: int = 8,
+    min_text_chars: int = MIN_TEXT_CHARS,
 ) -> MultitaskTable:
     """Gather, dedup, and split-preserve every labelled row for ``tasks``."""
     table = MultitaskTable()

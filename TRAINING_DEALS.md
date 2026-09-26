@@ -234,11 +234,48 @@ beside it, or the key stops being the thing that survives a re-parse.
 | sibling | 010374 — CDW Site Survey Walkthrough FlexTrade NY, the same customer's second site |
 
 Chosen because it fills the four holes 010288 left. Against 010288's 64 atoms and
-12 documents it has ~250 atoms and 25 documents, and it carries the classes
+12 documents it has 275 atoms and 42 documents, and it carries the classes
 010288 had none of: `vendor_line_item` (7), `quantity` (4, including **212**
-workstation drops), `site_access_restriction`, and above all **money** —
-$110,108 of it, which is the first `expenses_scope` and `billing_type` gold we
-will have.
+workstation drops), `site_room_mix`, `site_infrastructure`, and above all
+**money** — $110,108 of it, which is the first `expenses_scope` and
+`billing_type` gold we will have.
+
+### The deal, because the labelling depends on knowing it
+
+**Jul 27 – Aug 7.** CDW (Erick Villalobos) brings PurTera a structured-cabling
+job for FlexTrade's new NYC office. A greenfield buildout: ~106 workstations,
+two Cat6A drops each, 20 office/support drops, 6 AV drops, six 48-port patch
+panels. PurTera returns a **budgetary ROM of ~$110K** (the sheet totals
+$110,108: 212 drops at $51,092, labor at $51,700).
+
+**Aug 18 – Aug 26.** Follow-ups, no movement.
+
+**Sep 24.** *"Lease has been signed for 7 Penn."* Thirteen emails in one day.
+CDW wants a **site survey to turn the ROM into a firm price**, and the money
+terms are stated plainly enough to be gold:
+
+> if we win the total cabling job we won't invoice for survey, but if they
+> don't go with us we'll invoice for the survey **$800**
+
+That is a contingent fee — a `billing_type` boundary 010288 could not teach at
+any price, because 010288 never mentions money at all.
+
+**Five parties, and they are not interchangeable.** FlexTrade is the customer,
+CDW the reseller, **MultiTek** a second installer on the same thread, PurTera
+us, and BR Design Associates / the Feil Organization the architect and landlord
+of the building. An atom's `said_by` matters here in a way it did not on a
+two-party deal.
+
+**Three addresses, and only one is the job.** 7 Penn Plaza Floor 12 Suite 1200
+(12,154 RSF) is where the work happens. **Bell Works, 101 Crawfords Corner
+Road** is FlexTrade's current office. **622 Third Ave, 36th Floor** is a
+different tenant's space study left in the drawing's title block. A `site_role`
+head has never had a case like this.
+
+**What is still open**, and what the walkthrough is for: dates for the
+walkthrough, who meets the engineer onsite, the project timeline, access-point
+count and placement, number of displays, the AV manufacturer, and whether
+PurTera supplies AV equipment or only cables it.
 
 ### Two parser defects fixed BEFORE labelling, and neither against 010180
 
@@ -293,6 +330,69 @@ into a note on any stroke-heavy page.
 Reverted. **The thing worth fixing is the rate card**, because a mangled rate card
 is precisely the `billing_type` gold we have none of.
 
+### What it produced
+
+Compiled on `c43200a3` (both fixes live): 268 atoms across 42 documents, Teams
+chrome 11 → 0, and the budget sheet carrying its money for the first time.
+
+| source | rows |
+|---|---|
+| atom labels (268) | `atom_type` · `atom_type_coarse` · `facet` · `about` · `wants` · `consumer` · `weight_tier` · `decided_by`, 268 each |
+| contrast | `rejected` **129** — every atom where the parser's type was weighed and set aside |
+| edges | `edge_relation` 33 — answers 15, supports 7, contradicts 5, same_as 5, governs 1 |
+| questions | `gap_valid` 71 (**30 valid / 41 invalid**) + `gap_valid_reason` 71 |
+| documents | `document_job` 42 + `document_job_reason` 42 |
+| sites | `physical_site` 1 + `physical_site_reason` 1 |
+| deal | router gold: `low_voltage_cabling`, 1 site, 4,171-char defect note |
+| rationale | `rationale:*` 416 — atom 268, gap 71, document_job 42, edge 33, site_role 1, deal 1 |
+| **total** | **2,950 rows; 1,961 reach the backbone after de-duplication** |
+
+**83,175 characters of reasoning, and `corpus_loss_audit` reports 0 losses** —
+every note on every atom, edge, judgement and the deal itself reaches a row.
+
+Weights: 61 load-bearing, 87 ordinary, 120 slight. Consumers: 77 sow, 39 deal
+kit, 37 brief, 8 corroborates, 107 ignore.
+
+These are written as **`claude-code (assistant)` drafts, not gold.**
+`human_labels` skips a labeler that is not a person on purpose — ingesting the
+assistant's own answers as `teacher="human"` is how a head learns to reproduce
+the model that wrote them, which is exactly what makes the router's 91%
+meaningless. The 2,950 rows above are what these become **once a person accepts
+them**, and until then they are a first pass on the card.
+
+### What the labelling found
+
+- **The parser disagrees on 129 of 268 atoms (48%)**, and lopsidedly:
+  `scope_item` is the dumping ground, supplying 4 payment terms, 3 pricing
+  assumptions, 6 open questions, 5 answered questions and a decision. As
+  parsed, Orbit believes invoicing the customer and cancelling a SOW are both
+  work the job includes.
+- **The walkthrough is committed and blocked on the same evening.** PurTera
+  agrees the week of 5 October at 14:01; CDW's architects put it behind the
+  wireless survey at 21:30 and CDW repeats it at 18:51. Nothing reconciles
+  them, so the deal's next action, as recorded, cannot happen. That is the
+  single most useful thing on 010180.
+- **Three prices, three different things**: $600 what the survey costs us
+  (internal), $800 what we charge if we lose, $3,000 for the wireless survey.
+  A head that reads them as one number has the deal wrong.
+- **The gap head gets its first contrast.** 30 valid of 71 here against 21 of
+  81 on 010288, and the pairs are the point: `Davis-Bacon` and `lift/hoisting`
+  are junk on a suburban gym's single door and **valid** on the 12th floor of a
+  Manhattan tower. 17 of the 41 invalid are `duplicate` — Orbit asks the same
+  gap twice, once from the checklist and once as a headstart question.
+
+### Two defects the guard caught on this deal
+
+- **`document_job_reason` and `physical_site_reason` reached nothing.** 43 rows
+  emitted, ingested, and matched neither the backbone nor a held-back head.
+  010288 had one site and twelve documents of one class, so nobody noticed the
+  WHY fields were unlisted. Fixed in `DEFAULT_TASKS`.
+- **`check_assembled` reported correct de-duplication as loss.** It compared raw
+  row counts, and this deal quotes the same two email headers down a fourteen-
+  message thread — 268 `atom_type` rows are 197 distinct assertions. It now
+  takes a `distinct` count, and `MIN_TEXT_CHARS` is named so an auditor can
+  apply the same floor `assemble` does. Six false alarms, all mine.
+
 ### Known-wrong on 010180, and deliberately left for the labeler
 
 - **41 atoms across 26 deals start with a bare colon** — but from three unrelated
@@ -304,6 +404,20 @@ is precisely the `billing_type` gold we have none of.
   description, so it parses as `Line item — unit price 110,108`. The row-kind
   classifier needs a label in the row and there is none. A labeler marking it as
   the grand total is better gold than a parser guessing.
+- **No span gold.** 010288 contributed 72 `evidence_span` rows because a person
+  pointed at the deciding words on each card. These drafts set `decided_by` —
+  which field settled the label — but no `hint_refs`, so the span ranker gets
+  nothing from this deal. Generating trivial "the whole atom" spans would have
+  been worse than none: that is the ranker's 80.3% baseline, and 268 examples of
+  it would teach it to always return the whole line.
+- **The DWG is parsed and still invisible.** Both drawings now come back
+  `parser=dwg, status=ok` where they were `skipped_no_parser`, and
+  `parser_atom_counts` records the two markers. Neither reaches the envelope's
+  atom list or PM_HANDOFF, and no `dropped[...]` audit line mentions them — so
+  the atom is produced and lost downstream without a trace, which is the same
+  silent-loss shape `corpus_integrity` exists to catch on the learning side.
+  Worth a proper diagnosis before the converter lands, because once the worker
+  image carries LibreDWG 0.14 there will be 60+ atoms taking that path.
 - The sheet's header says **"Unit Price"** over what are plainly line totals —
   212 drops for 51,092 is $241 each, not $51,092 each. Column names are carried
   through verbatim; deciding what the customer meant is a labeler's judgement.
