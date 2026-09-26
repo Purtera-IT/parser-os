@@ -183,6 +183,111 @@ _LABEL_LINE_RE = re.compile(r"^\s*([A-Za-z][\w \-/&()]{0,38}):\s*$")
 #: between the two on 010288; beyond a short gap they are two separate things.
 _MAX_BLANK_GAP = 8
 
+# ---------------------------------------------------------------------------
+# The meeting-invite block
+#
+# Teams, Zoom and Webex append a fixed block of join details to a message, and
+# nothing in it is about the job. Left in, it parses: measured across 461 dev
+# envelopes, 87 atoms on 38 deals came out of one, and the types are the
+# problem rather than the count --
+#
+#   42  scope_item   "Dial in by phone", "Reset dial-in PIN", "Meeting options"
+#   22  raw_utterance
+#   14  deal_metadata
+#    7  constraint   "Find a local number"
+#    2  site_access_restriction
+#
+# So a cabling job at 7 Penn Plaza had a Teams passcode filed as a restriction
+# on getting into the site, six deals were told to "Dial in by phone" as scope,
+# and "Need help?" became an open_question -- Orbit asking the PM the invite's
+# own rhetorical question.
+#
+# It is also the one place a message carries live credentials. A bridge
+# passcode and a dial-in PIN are not facts about a deal and have no business in
+# an artifact, a brief or a training corpus.
+# ---------------------------------------------------------------------------
+
+#: A line that only a join block says. `Passcode:` is deliberately NOT here --
+#: on its own it could be a door code, which is a real site fact. It counts
+#: only once a platform marker has opened a block.
+_INVITE_OPENS_RE = re.compile(
+    r"^\s*(?:"
+    r"microsoft\s+teams\s+(?:meeting|need\s+help)"
+    r"|join\s+(?:zoom\s+meeting|microsoft\s+teams\s+meeting"
+    r"|on\s+a\s+video\s+conferencing\s+device|the\s+meeting\s+now)"
+    r"|dial\s+in\s+by\s+phone"
+    r"|________+\s*microsoft\s+teams"
+    r")\s*[<>|]*\s*$", re.I)
+
+#: Lines that continue a block once one is open.
+_INVITE_CONTINUES_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:meeting\s+id|passcode|phone\s+conference\s+id|tenant\s+key|video\s+id"
+    r"|conference\s+id|access\s+code|webinar\s+id|for\s+organizers)\s*:?"
+    r"|need\s+help\s*\??"
+    r"|find\s+a\s+local\s+number"
+    r"|reset\s+dial-?in\s+pin"
+    r"|meeting\s+options"
+    r"|system\s+reference"
+    r"|more\s+info"
+    r"|one\s+tap\s+mobile"
+    r"|join\s+on\s+a\s+video\s+conferencing\s+device"
+    r"|dial\s+in\s+by\s+phone"
+    r"|microsoft\s+teams\s+meeting"
+    r"|united\s+states(?:,\s*\w[\w .'-]*)?"
+    r"|\+?\d[\d\s().,-]{7,}\#?"                      # a dial-in number
+    r"|[\d][\d\s]{5,}\#?"                            # a bare meeting id
+    r"|[A-Za-z0-9]{6,12}"                            # a bare passcode token
+    r"|[\w.+-]+@\w[\w.-]*\.\w+"                      # tenant key address
+    # "Join: https://teams.microsoft.com/meet/..." -- the label may lead.
+    r"|(?:join|link|url)?\s*:?\s*https?://\S*"
+    r"(?:teams\.microsoft|zoom\.us|webex|meet\.google|gotomeet)\S*"
+    r"|[_=-]{10,}"                                   # the rule Outlook draws
+    r"|\|"
+    r")\s*[<>|]*\s*$", re.I)
+
+#: A block must say at least this many invite-only things before we believe it.
+#: One mention in prose ("I'll send a Teams meeting") is not a block.
+_MIN_INVITE_LINES = 3
+
+
+def strip_meeting_invite(text: str) -> str:
+    """Remove Teams/Zoom/Webex join blocks, keeping everything a person wrote.
+
+    A block opens on a platform marker and runs while the lines keep looking
+    like join details. The first line of real prose closes it, so an agenda or
+    a question written under the invite survives.
+    """
+    lines = text.split("\n")
+    drop: set[int] = set()
+    i = 0
+    while i < len(lines):
+        if not _INVITE_OPENS_RE.match(lines[i]):
+            i += 1
+            continue
+        j = i
+        hits = 0
+        while j < len(lines):
+            line = lines[j]
+            if not line.strip():
+                j += 1
+                continue
+            if _INVITE_CONTINUES_RE.match(line) or _INVITE_OPENS_RE.match(line):
+                hits += 1
+                j += 1
+                continue
+            break
+        if hits >= _MIN_INVITE_LINES:
+            drop.update(range(i, j))
+            # The rule Outlook draws immediately above the block belongs to it.
+            k = i - 1
+            while k >= 0 and not lines[k].strip():
+                k -= 1
+            if k >= 0 and re.fullmatch(r"\s*[_=-]{10,}\s*", lines[k]):
+                drop.add(k)
+        i = max(j, i + 1)
+    return "\n".join(line for n, line in enumerate(lines) if n not in drop)
+
 
 def rejoin_label_and_value(text: str) -> str:
     """Pull a lone URL back up onto the label line that introduces it.
@@ -248,7 +353,8 @@ def _extract_email_text(path: Path) -> str:
     if "<html" in content.lower() or "<table" in content.lower():
         soup = BeautifulSoup(content, "html.parser")
         _flatten_tables_in_place(soup)
-        return rejoin_label_and_value(soup.get_text(separator="\n", strip=True))
-    return rejoin_label_and_value(content)
+        return strip_meeting_invite(
+            rejoin_label_and_value(soup.get_text(separator="\n", strip=True)))
+    return strip_meeting_invite(rejoin_label_and_value(content))
 
 

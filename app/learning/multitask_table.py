@@ -82,13 +82,19 @@ DEFAULT_TASKS = (
     "weight_tier",
     "decided_by",
     "rejected",
+    # Which context field settled the label -- the envelope, the heading, the
+    # atom's own words. Free on every pointer a labeler makes, and the only
+    # part of 56 of 010288's 159 pointers that any head can learn: they name a
+    # structured field, so there is no text on the page to extract.
+    "decided_from",
 ) + _reads_tasks()
 
 #: Not backbone tasks, and deliberately so. A span is an extraction problem and
 #: a rationale is a generative one; admitting either to a classifier would put a
 #: paragraph where a class belongs. They stay in the corpus for the heads that
 #: can use them.
-NON_CLASSIFIER_PREFIXES = ("evidence_span:", "reads_value:", "rationale:")
+NON_CLASSIFIER_PREFIXES = ("evidence_span:", "evidence_doc:", "reads_value:",
+                           "rationale:")
 
 
 @dataclass(frozen=True)
@@ -220,12 +226,21 @@ def assemble(
                     continue
                 split = str(split or "").strip() or _fallback_split(str(deal_id or ""))
                 version = 0
+                target = ""
                 if provenance:
                     try:
                         import json as _json
 
-                        version = int((_json.loads(provenance) or {}).get(
-                            "decide_text_version", 0))
+                        prov = _json.loads(provenance) or {}
+                        version = int(prov.get("decide_text_version", 0))
+                        # What this assertion is ABOUT, when the text does not
+                        # say. An edge row's text is the sentence it comes
+                        # from and its label is the relation, so six edges out
+                        # of one sentence are six identical rows -- and five of
+                        # them were being dropped as duplicates. The target
+                        # atom is the rest of the assertion.
+                        target = str(prov.get("to_label_key")
+                                     or prov.get("to_atom_id") or "")
                     except Exception:  # noqa: BLE001 - malformed provenance == legacy
                         version = 0
                 try:
@@ -238,23 +253,60 @@ def assemble(
                     teacher=str(teacher or ""), source_db=db_path.name,
                     repr_version=version, weight=w,
                 )
-                key = (relation, text)
+                # Identity is the whole assertion, LABEL INCLUDED. Keying on
+                # (relation, text) alone treats a second label as a conflict,
+                # and most of them are not one: an atom is decided by its own
+                # words AND by who said it, it carries several edges, the
+                # labeler points at two spans. On 010288 that dropped 83 of 148
+                # `decided_from` rows -- silently, into a counter that reads
+                # "duplicate", which is the one word that stops anyone looking.
+                #
+                # A real conflict is two TEACHERS on one assertion, and it is
+                # resolved below, after everything is read, because it needs to
+                # know who else spoke about this text.
+                key = (relation, text, label, target)
                 held = best.get(key)
                 if held is None or (
                     _TEACHER_RANK.get(row.teacher.lower(), 0)
                     > _TEACHER_RANK.get(held.teacher.lower(), 0)
                 ):
                     if held is not None:
-                        table.skipped["duplicate (kept most trusted teacher)"] += 1
+                        table.skipped["same assertion, kept most trusted teacher"] += 1
                     best[key] = row
                 else:
-                    table.skipped["duplicate (kept most trusted teacher)"] += 1
+                    table.skipped["same assertion, kept most trusted teacher"] += 1
             conn.close()
         except Exception as exc:  # noqa: BLE001 - one bad DB must not sink the table
             table.skipped[f"{db_path.name}: {type(exc).__name__}"] += 1
 
-    table.rows = list(best.values())
+    table.rows = _resolve_disagreements(list(best.values()), table.skipped)
     return table
+
+
+def _resolve_disagreements(rows: list[TaskRow], skipped: Counter) -> list[TaskRow]:
+    """Where two teachers labelled the same text, the more trusted one wins.
+
+    All of it: a weaker teacher's labels for that text are dropped whole rather
+    than merged, so a human's two answers do not end up standing beside a
+    model's third. Silence from the weaker teacher is not evidence, and mixing
+    them is how a multi-label head learns a union nobody asserted.
+
+    One teacher giving several answers is not a disagreement and is left alone,
+    which is the whole point of doing this here instead of in the key.
+    """
+    ranked: dict[tuple[str, str], int] = {}
+    for r in rows:
+        k = (r.task, r.text)
+        rank = _TEACHER_RANK.get(r.teacher.lower(), 0)
+        if rank > ranked.get(k, -1):
+            ranked[k] = rank
+    kept = []
+    for r in rows:
+        if _TEACHER_RANK.get(r.teacher.lower(), 0) < ranked[(r.task, r.text)]:
+            skipped["overruled by a more trusted teacher"] += 1
+            continue
+        kept.append(r)
+    return kept
 
 
 def _fallback_split(deal_id: str) -> str:

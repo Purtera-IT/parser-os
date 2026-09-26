@@ -20,7 +20,7 @@ from app.core.ids import stable_id
 from app.core.schemas import ArtifactType, AtomType, AuthorityClass, EdgeType, EvidenceAtom, PacketFamily, ReviewStatus, SourceRef
 from app.parsers.quote_parser import normalize_inclusion, parse_quote_quantity
 from app.parsers.xlsx_parser import XlsxParser
-from test_graph_builder import _atom
+from tests.test_graph_builder import _atom
 
 
 def _minimal_source_ref(filename: str = "adversarial_fixture.txt", locator: dict | None = None) -> SourceRef:

@@ -16,7 +16,9 @@ and RELATIONS, which is the grain the losses actually happen at.
 """
 from __future__ import annotations
 
-from app.learning.corpus_integrity import check_admitted, check_fields, check_rows
+from app.learning.corpus_integrity import (
+    check_admitted, check_assembled, check_fields, check_rows, check_spans,
+)
 
 
 def test_a_filled_column_absent_from_the_blob_is_named():
@@ -70,3 +72,49 @@ def test_spans_and_rationales_are_held_back_on_purpose():
          "reads_value:expansion": 1, "rationale:atom": 65},
         ("atom_type",))
     assert out == []
+
+
+def test_a_span_absent_from_its_own_prompt_is_named():
+    """The fifth loss, and the largest: all 159 of 010288's pointers were
+    emitted as spans, but 56 name the envelope or the document type and 21 name
+    another surface. None of that is text on the page the head is holding, so a
+    third of the span supervision was an instruction to invent."""
+    out = check_spans([
+        {"relation": "evidence_span:who_said_it",
+         "label": "alec@cdw.com (reseller, theirs) -> aj@ours",
+         "raw_text": "Mag Lock Cable [section: Provided by Club/installer]"},
+    ])
+    assert len(out) == 1 and "evidence_span:who_said_it" in out[0]
+
+
+def test_a_span_its_prompt_contains_is_quiet():
+    out = check_spans([
+        {"relation": "evidence_span:own_words",
+         "label": "but not the relay to the lock",
+         "raw_text": "we provide the parts that connect the PC to the relay, "
+                     "but not the relay to the lock"},
+    ])
+    assert out == []
+
+
+def test_the_check_only_judges_spans():
+    """A rationale is meant to be words that are not on the page."""
+    out = check_spans([
+        {"relation": "rationale:atom", "label": "this is an argument nobody wrote",
+         "raw_text": "Mag Lock Cable"},
+    ])
+    assert out == []
+
+
+def test_rows_lost_inside_assemble_are_named():
+    """`decided_from`: 148 emitted, 65 reached the table, and the only trace
+    was a counter reading "duplicate"."""
+    out = check_assembled({"decided_from": 148, "atom_type": 65},
+                          {"decided_from": 65, "atom_type": 65},
+                          ("decided_from", "atom_type"))
+    assert len(out) == 1 and "83 lost inside assemble" in out[0]
+
+
+def test_an_intact_assemble_is_quiet():
+    assert check_assembled({"edge_relation": 80}, {"edge_relation": 80},
+                           ("edge_relation",)) == []
