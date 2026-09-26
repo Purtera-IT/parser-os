@@ -720,6 +720,18 @@ def build_orbitbrief_envelope(
 
     envelope["stakeholder_load"] = build_stakeholder_load(atoms=atoms)
 
+    # Who is on this deal, one row each. Headers say the address and the side;
+    # signatures are the only source of a name or a job title. Neither is a
+    # statement anybody made, so they belong in a table rather than as a card
+    # per footer -- and the table has to exist before the footers can be
+    # treated as chrome, or the deal loses the only record of who anybody is.
+    try:
+        from app.core.deal_roster import build_deal_roster
+
+        envelope["deal_roster"] = build_deal_roster(atoms=atoms, documents=documents)
+    except Exception:
+        envelope["deal_roster"] = {"version": "deal_roster_v1", "people": []}
+
     # Deal header / financials / BOM — PM-facing assembly of the
     # structured commercial atoms the xlsx parser emits. Each is omitted
     # when the deal carries no such data, so the envelope shape stays
