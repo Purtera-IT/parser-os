@@ -153,3 +153,26 @@ def test_the_parser_mints_no_stakeholder_key_for_a_job_title():
     assert _stakeholder_keys("commercial_majors") == []
     assert _stakeholder_keys("alec_burns") == ["stakeholder:alec_burns"]
     assert _stakeholder_keys("") == []
+
+
+def test_hygiene_is_the_chokepoint_for_job_titles():
+    """Three producers mint stakeholder keys and the rule was true for all of
+    them: extract_keys, the email parser's four sites, and a third path that
+    adds title keys to an atom already minted with the person's. Every key
+    passes through hygiene before it lands, so the rule lives there."""
+    from app.core.entity_hygiene import filter_entity_keys_for_atom
+
+    class A:
+        raw_text = "Alec Burns | Senior Client Executive, Commercial Majors | alecbur@cdw.com"
+        normalized_text = raw_text
+        value: dict = {}
+        entity_keys: list = []
+        source_refs: list = []
+
+    got = filter_entity_keys_for_atom(A(), [
+        "email:alecbur_cdw_com",
+        "stakeholder:alec_burns",
+        "stakeholder:commercial_majors",
+        "stakeholder:senior_client_executive",
+    ])
+    assert got == ["email:alecbur_cdw_com", "stakeholder:alec_burns"]
