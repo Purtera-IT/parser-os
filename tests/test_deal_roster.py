@@ -140,3 +140,16 @@ def test_the_real_people_survive_extraction():
         "Alec Burns | Senior Client Executive, Commercial Majors | alecbur@cdw.com",
         pack=pack) if k.startswith("stakeholder:")]
     assert got == ["stakeholder:alec_burns"]
+
+
+def test_the_parser_mints_no_stakeholder_key_for_a_job_title():
+    """The guard in extract_keys made no difference on its own: these keys are
+    PARSER-supplied, and the merge deliberately preserves parser keys for a
+    prefix rather than recomputing them. The rule has to be where the key is
+    minted."""
+    from app.parsers.email_parser import _stakeholder_keys
+
+    assert _stakeholder_keys("account_executive") == []
+    assert _stakeholder_keys("commercial_majors") == []
+    assert _stakeholder_keys("alec_burns") == ["stakeholder:alec_burns"]
+    assert _stakeholder_keys("") == []
