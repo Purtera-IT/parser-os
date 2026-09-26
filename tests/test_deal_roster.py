@@ -103,3 +103,40 @@ def test_rubbish_headers_do_not_make_rows(docs):
 def test_nothing_at_all_is_not_an_error():
     r = build_deal_roster(atoms=[], documents=[])
     assert r["people"] == [] and r["by_side"] == {}
+
+
+# ── a job title is not a person ──────────────────────────────────────
+
+
+def test_a_job_title_never_becomes_a_stakeholder():
+    """010288 carried nine "stakeholder" entities for five humans: "executive
+    vice president", "senior client executive", "account executive" and
+    "commercial majors" -- the second half of Alec's title, split on its
+    comma. Anything counting people counted a job."""
+    from app.core.entity_extraction import _names_a_job_not_a_person as job
+
+    for slug in ("executive_vice_president", "senior_client_executive",
+                 "account_executive", "commercial_majors", "director_of_operations"):
+        assert job(slug), slug
+    for slug in ("alec_burns", "trent_torrence", "chase_smith", "linda_park"):
+        assert not job(slug), slug
+
+
+def test_a_single_word_is_left_alone():
+    """A surname is often the only name the corpus has for somebody. Rejecting
+    a bare token would cost more than the occasional stray "director"."""
+    from app.core.entity_extraction import _names_a_job_not_a_person as job
+
+    assert not job("director")
+    assert not job("watkins")
+
+
+def test_the_real_people_survive_extraction():
+    from app.core.entity_extraction import extract_keys
+    from app.domain import get_active_domain_pack
+
+    pack = get_active_domain_pack()
+    got = [k for k in extract_keys(
+        "Alec Burns | Senior Client Executive, Commercial Majors | alecbur@cdw.com",
+        pack=pack) if k.startswith("stakeholder:")]
+    assert got == ["stakeholder:alec_burns"]
