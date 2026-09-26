@@ -345,7 +345,8 @@ chrome 11 → 0, and the budget sheet carrying its money for the first time.
 | sites | `physical_site` 1 + `physical_site_reason` 1 |
 | deal | router gold: `low_voltage_cabling`, 1 site, 4,171-char defect note |
 | rationale | `rationale:*` 416 — atom 268, gap 71, document_job 42, edge 33, site_role 1, deal 1 |
-| **total** | **2,950 rows; 1,961 reach the backbone after de-duplication** |
+| spans | `evidence_span:*` 258 · `decided_from` 274 — **275 pointers over 259 atoms** |
+| **total** | **3,499 rows; 2,169 reach the backbone after de-duplication** |
 
 **83,175 characters of reasoning, and `corpus_loss_audit` reports 0 losses** —
 every note on every atom, edge, judgement and the deal itself reaches a row.
@@ -359,6 +360,38 @@ assistant's own answers as `teacher="human"` is how a head learns to reproduce
 the model that wrote them, which is exactly what makes the router's 91%
 meaningless. The 2,950 rows above are what these become **once a person accepts
 them**, and until then they are a first pass on the card.
+
+### The spans, picked by hand
+
+274 pointers, and the split is the point: **66 are a proper clause of a longer
+atom**, 135 sit on lines short enough that the whole line IS the deciding
+evidence, and 52 are quoted headers or signature blocks where the same is true.
+Only one long atom was mechanically filled and it was corrected.
+
+    payment_term    "we'll invoice for the survey $800"
+                    out of "If they don't go with us we'll invoice for the
+                    survey $800."
+    dependency      "Electrical connections will be provided by the landlord"
+    quantity        "approximately 106 workstations" out of a 200-character
+                    paragraph typed `quantity`
+
+Measured with them, on 189 rankable atoms across both deals:
+
+| | precision@1 | rankable atoms |
+|---|---|---|
+| 010288 alone | 95.1% | 61 |
+| 010180 alone | 89.7% | 146 |
+| **both** | **87.9%** | **189** (baseline 83.6%) |
+
+Combined is lower than either alone, and that is the honest number. 95.1% on 61
+atoms whose features were designed against them was optimistic; 87.9% over two
+deals that disagree is what the design actually reaches. The margin over "always
+return the whole line" narrows from 14.8 points to 4.3, which is the real size
+of what this head knows so far.
+
+One thing did generalise: `silent_under_a_heading` is now the **top** feature
+across both corpora at +4.70. The interaction added to catch "Mag Lock Cable"
+under "Provided by Club/installer" on 010288 is doing the same work on 010180.
 
 ### What the labelling found
 
@@ -404,12 +437,6 @@ them**, and until then they are a first pass on the card.
   description, so it parses as `Line item — unit price 110,108`. The row-kind
   classifier needs a label in the row and there is none. A labeler marking it as
   the grand total is better gold than a parser guessing.
-- **No span gold.** 010288 contributed 72 `evidence_span` rows because a person
-  pointed at the deciding words on each card. These drafts set `decided_by` —
-  which field settled the label — but no `hint_refs`, so the span ranker gets
-  nothing from this deal. Generating trivial "the whole atom" spans would have
-  been worse than none: that is the ranker's 80.3% baseline, and 268 examples of
-  it would teach it to always return the whole line.
 - **The DWG is parsed and still invisible.** Both drawings now come back
   `parser=dwg, status=ok` where they were `skipped_no_parser`, and
   `parser_atom_counts` records the two markers. Neither reaches the envelope's
