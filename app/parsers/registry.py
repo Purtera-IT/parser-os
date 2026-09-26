@@ -93,7 +93,11 @@ def _artifact_type_for_suffix(suffix: str) -> ArtifactType:
         return ArtifactType.pdf
     if suffix == ".pptx":
         return ArtifactType.pptx
-    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
+    # .dwg/.dxf: a CAD drawing is a picture. Mirrors manifest._artifact_type_for_path;
+    # the two maps disagreeing is what made a .dwg an `image` to its parser and a
+    # `txt` to the compiler.
+    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff",
+                  ".tif", ".bmp", ".gif", ".dwg", ".dxf"}:
         return ArtifactType.image
     if suffix in {".html", ".htm", ".xhtml"}:
         return ArtifactType.html
@@ -333,10 +337,18 @@ def choose_parser(
                 ),
                 sorted_matches,
             )
+        # Nothing claimed it and nothing sniffed it -- but a file nobody can
+        # read is still a file that arrived. Returning None here is what makes
+        # it `skipped_no_parser`: present in the manifest and absent from the
+        # envelope, PM_HANDOFF and the Deal Kit, so the only way to learn it
+        # existed is to go and look. UnreadParser emits one marker instead. It
+        # never competes for anything -- this is the only place it is reached.
+        from app.parsers.unread_parser import UnreadParser
+
         return (
-            None,
+            UnreadParser(),
             ParserMatch(
-                parser_name="none",
+                parser_name="unread",
                 confidence=0.0,
                 reasons=["no_parser_over_threshold"],
                 artifact_type=_artifact_type_for_path(path),
