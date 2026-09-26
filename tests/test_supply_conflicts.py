@@ -287,3 +287,43 @@ def test_a_typed_question_is_still_answered_by_the_corpus():
     asked = Typed()
     assert resolve_open_questions([Fact(), asked]) == 1
     assert asked.value.get("answered") is True
+
+
+def test_a_conflict_the_sender_already_settled_is_not_a_question():
+    """010288 asked the PM: "4 parts are claimed by both sides ... Who supplies
+    them?" Nobody needed to answer it. In the same email Alec wrote:
+
+        "Note the diagram is labeled by the vendor/Huzzard, and the 'Installer
+        Supplied Components' are not accurate, as we provide several of those
+        pieces."
+
+    He names the heading, says it is wrong, and says which way. The deal held
+    both the disagreement and its resolution, and the card asked a PM to settle
+    what the sender settled in writing.
+
+    The disagreement still matters -- the `contradicts` edges keep it and the
+    lines keep their suppliers. What goes is the QUESTION.
+    """
+    caveat = Atom(
+        "art_email",
+        'Note the diagram is labeled by the vendor/Huzzard, and the "Installer '
+        "Supplied Components\" are not accurate, as we provide several of those "
+        "pieces.",
+        OURS,
+        sender=CDW,
+    )
+    assert find_supply_conflicts(deal()), "guard: the pair is a conflict without the caveat"
+    assert find_supply_conflicts(deal() + [caveat]) == []
+
+
+def test_a_pair_nobody_disowned_still_asks():
+    """The caveat settles only the heading it names. Two documents disagreeing
+    with nobody overruling either is still a question."""
+    other = Atom(
+        "art_email",
+        'Note the diagram is labeled by the vendor/Huzzard, and the "Huzzard '
+        "supplied Components\" are not accurate.",
+        OURS,
+        sender=CDW,
+    )
+    assert len(find_supply_conflicts(deal() + [other])) == 1

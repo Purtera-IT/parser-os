@@ -138,6 +138,49 @@ def _same_item(a: str, b: str) -> bool:
     return a == b or a in b or b in a
 
 
+#: `the "Installer Supplied Components" are not accurate` -- a heading the
+#: sender disowns in the same breath as naming it. Quoted, because a heading
+#: somebody is overruling is a heading they quote.
+_DISOWNED_RE = re.compile(
+    r"[\"“]\s*(?P<head>[^\"“”]{4,60}?)\s*[\"”]\s*"
+    r"(?:are|is)\s+(?:not\s+(?:accurate|correct|right)|inaccurate|incorrect|wrong)",
+    re.I,
+)
+
+
+def _headings_disowned(atoms: list[Any]) -> set[str]:
+    """Headings somebody in this deal has said outright are wrong.
+
+    "Note the diagram is labeled by the vendor/Huzzard, and the 'Installer
+    Supplied Components' are not accurate, as we provide several of those
+    pieces." The parser reads that as `unreliable_part` naming the heading, and
+    it is the answer to the question this module would otherwise ask.
+    """
+    out: set[str] = set()
+    for atom in atoms or []:
+        # The sentence says it outright, and the parser types it scope_item and
+        # carries no reading for it -- `unreliable_part` is a LABEL, written
+        # after the fact. So the words are what this can use:
+        #   the "Installer Supplied Components" are not accurate
+        for m in _DISOWNED_RE.finditer(str(getattr(atom, "raw_text", "") or "")):
+            out.add(_norm_head(m.group("head")))
+        v = getattr(atom, "value", None)
+        v = v if isinstance(v, dict) else {}
+        named = v.get("unreliable_part")
+        if isinstance(named, str) and named.strip():
+            out.add(_norm_head(named))
+        for r in (v.get("reads") or []):
+            if isinstance(r, dict) and str(r.get("key") or "") == "unreliable_part":
+                val = r.get("value")
+                if isinstance(val, str) and val.strip():
+                    out.add(_norm_head(val))
+    return {h for h in out if h}
+
+
+def _norm_head(text: str) -> str:
+    return " ".join(str(text or "").lower().replace(":", " ").split())
+
+
 def find_supply_conflicts(atoms: list[Any], documents: dict[str, dict] | None = None,
                           ) -> list[EvidenceAtom]:
     """One ``open_question`` per part two documents hand to different companies."""
@@ -194,7 +237,15 @@ def find_supply_conflicts(atoms: list[Any], documents: dict[str, dict] | None = 
                 "atom_ids": [str(getattr(mine, "id", "")), str(getattr(other[0], "id", ""))],
             })
 
-    return [_ask(head_self, head_other, slot) for (head_self, head_other), slot in pairs.items()]
+    # A pair one side has publicly disowned is settled, not open. Keep the
+    # `contradicts` edges and the suppliers on the lines; drop the question.
+    disowned = _headings_disowned(atoms)
+    out: list[EvidenceAtom] = []
+    for (head_self, head_other), slot in pairs.items():
+        if _norm_head(head_self) in disowned or _norm_head(head_other) in disowned:
+            continue
+        out.append(_ask(head_self, head_other, slot))
+    return out
 
 
 def _ask(head_self: str, head_other: str, slot: dict[str, Any]) -> EvidenceAtom:
