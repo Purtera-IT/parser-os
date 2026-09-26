@@ -3821,7 +3821,16 @@ def _emit_person_from_contact(text: str) -> set[str]:
         slug = _slug_simple(name)
         if slug and "_" in slug and _looks_like_real_person(name):
             keys.add(f"stakeholder:{slug}")
-    return keys
+    # A CONTACT ANCHOR FINDS THE TITLE AS WELL AS THE PERSON. A signature
+    # is "Name | Title | address", and scanning back from the address for
+    # capitalised words reaches both. Live 010288: this returned
+    # alec_burns, senior_client_executive and commercial_majors -- the
+    # second half of one title, split on its comma.
+    #
+    # This emitter runs at the END of enrich_atoms, after entity hygiene,
+    # which is why the same rule enforced there never saw these.
+    return {k for k in keys
+            if not _names_a_job_not_a_person(k[len('stakeholder:'):])}
 
 
 # Names that pass the capitalized-pattern test but are clearly NOT
