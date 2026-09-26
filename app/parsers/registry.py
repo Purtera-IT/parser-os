@@ -26,6 +26,7 @@ def _ensure_defaults() -> None:
     if _DEFAULTS_REGISTERED:
         return
     from app.parsers.docx_parser import DocxParser
+    from app.parsers.dwg_parser import DwgParser
     from app.parsers.email_parser import EmailParser
     from app.parsers.image_parser import ImageParser
     from app.parsers.json_parser import JsonParser
@@ -64,6 +65,7 @@ def _ensure_defaults() -> None:
         OdsParser(),
         VsdxParser(),
         MppParser(),
+        DwgParser(),
         OrbitBriefPdfParser(),
     ]:
         register_parser(parser)

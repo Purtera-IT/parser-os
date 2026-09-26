@@ -26,6 +26,11 @@ dependencies = [
   "opencv-python-headless>=4.9",
   "Pillow>=10.0",
   "pypdfium2>=4.30",
+  # CAD. Reads DXF natively; a DWG reaches it through a converter (LibreDWG's
+  # dwg2dxf, or the ODA File Converter) that the image must provide. Without
+  # one a drawing still arrives as a marker plus its embedded preview, which
+  # is strictly better than the `skipped_no_parser` it gets today.
+  "ezdxf>=1.4",
   # v45.2: explicit deps that were transitively present in parser-os-service
   # but missed when packaging parser-os into a fresh image (e.g. parser-os-worker).
   # Domain pack loader (app/domain/loader.py) and pack router use PyYAML.
