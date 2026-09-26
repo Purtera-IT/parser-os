@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-25",
+  "version": "2026-09-26",
   "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
   "keep": {
     "name": "_keep",
@@ -942,6 +942,12 @@
       "label": "Which part of it must not be trusted",
       "values": "the part, in the document's own words",
       "desc": "Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies."
+    },
+    {
+      "key": "situational",
+      "label": "Matters here, generalises nowhere",
+      "values": "what it is doing on this deal",
+      "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
