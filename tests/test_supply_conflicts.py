@@ -212,3 +212,78 @@ def test_a_vendors_part_never_collapses_the_reseller_s_own_line():
     # is for.
     other = A("Relay connecting the controller", sheet="BPW061725 Rev1")
     assert _cross_type_text_key(drawn) == _cross_type_text_key(other)
+
+
+def test_the_card_is_not_answered_by_the_parts_it_disputes():
+    """The card was created on every compile of 010288 and surfaced in none.
+
+    Not a dedup. ``resolve_open_questions`` marks a question answered when a
+    fact atom shares an answer-bearing entity key with it -- sound for a
+    question somebody typed, backwards for one the system wrote. By the time
+    the card reaches that stage enrich_entities has given it the device keys of
+    the parts it names, and the BOM lines own those same keys because they are
+    what the card was built FROM. So it is always answered, and the quality
+    filter deletes anything answered as noise: the card is destroyed precisely
+    because the deal contains the parts it is disputing.
+
+    Isolation tests kept passing because they handed the filter a fresh card.
+    This runs the stage in its real order: keys on, resolve, then filter.
+    """
+    from app.core.open_question_resolution import (
+        filter_unhelpful_open_questions,
+        resolve_open_questions,
+    )
+
+    card = find_supply_conflicts(deal())[0]
+
+    class Fact:
+        """A BOM line for one of the disputed parts, as the corpus holds it."""
+
+        atom_type = "bom_line"
+        value: dict = {}
+        entity_keys = ["device:workstation"]
+        review_flags: list = []
+        review_status = None
+        raw_text = "PC with Access Control Software"
+
+    # What enrich_entities hands the stage: "PC with Access Control Software"
+    # in the card's own text becomes device:workstation.
+    card.entity_keys = ["device:workstation"]
+
+    stream = [Fact(), card]
+    resolve_open_questions(stream)
+    assert card.value.get("answered") is not True, (
+        "a question built from the BOM lines is not answered by them"
+    )
+
+    kept, dropped = filter_unhelpful_open_questions(stream)
+    assert card in kept
+    assert card not in dropped
+
+
+def test_a_typed_question_is_still_answered_by_the_corpus():
+    """The exemption is for generated questions only. "What size TVs?" really
+    is answered by the display atom two inches away, and that behaviour is the
+    reason the stage exists -- widening the exemption to every open_question
+    would put the vendor FAQs back in front of the PM."""
+    from app.core.open_question_resolution import resolve_open_questions
+
+    class Typed:
+        atom_type = "open_question"
+        value: dict = {}
+        entity_keys = ["device:workstation"]
+        review_flags: list = []
+        review_status = None
+        raw_text = "Which PC are we using?"
+
+    class Fact:
+        atom_type = "bom_line"
+        value: dict = {}
+        entity_keys = ["device:workstation"]
+        review_flags: list = []
+        review_status = None
+        raw_text = "PC with Access Control Software"
+
+    asked = Typed()
+    assert resolve_open_questions([Fact(), asked]) == 1
+    assert asked.value.get("answered") is True

@@ -232,7 +232,10 @@ def _ask(head_self: str, head_other: str, slot: dict[str, Any]) -> EvidenceAtom:
         atom_type=AtomType.open_question,
         raw_text=text,
         normalized_text=text,
-        value={"via": VERSION, "claimed_by_sender": head_self,
+        # Declares itself generated so open-question resolution does not
+        # "answer" it with the very BOM lines it was built from.
+        value={"kind": "supply_conflict",
+               "via": VERSION, "claimed_by_sender": head_self,
                "assigned_elsewhere": head_other, "items": items,
                "atom_ids": [i for x in items for i in x["atom_ids"]]},
         entity_keys=[],

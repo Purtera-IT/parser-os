@@ -51,6 +51,28 @@ _ANSWER_BEARING_PREFIXES: tuple[str, ...] = (
 ANSWERED_FLAG = "answered_in_corpus"
 NOISE_FLAG = "not_pm_actionable_question"
 
+# Questions the system generated from the evidence, rather than lifted from a
+# literal "?" somebody typed. The resolution below -- a question is answered
+# when a fact atom shares an answer-bearing key with it -- is written for the
+# typed kind, and runs backwards on a generated one: a supply-conflict card is
+# built FROM the BOM lines it names, so it always shares their device keys, so
+# it was always marked answered and deleted as noise. Live 010288: the card
+# naming four parts claimed by both sides was created every compile and
+# surfaced in none.
+GENERATED_QUESTION_KINDS: frozenset[str] = frozenset({
+    "visual_page_marker",
+    "generated_gap",
+    "headstart",
+    "supply_conflict",
+})
+
+
+def _is_generated_question(atom: Any) -> bool:
+    """True when the system wrote this question, so the corpus cannot answer it."""
+    val = getattr(atom, "value", None)
+    return isinstance(val, dict) and val.get("kind") in GENERATED_QUESTION_KINDS
+
+
 _TRANSCRIPT_SPEAKER_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\s*\[\d{1,2}:\d{2}\]")
 _UNHELPFUL_QUESTION_RE = re.compile(
     r"\b("
@@ -93,10 +115,10 @@ def is_unhelpful_pm_question(atom: Any) -> bool:
     """True when a literal question is transcript/dialogue noise, not a PM gap."""
     if _atom_type_str(atom) != "open_question":
         return False
+    if _is_generated_question(atom):
+        return False
     val = getattr(atom, "value", None) or {}
     if isinstance(val, dict):
-        if val.get("kind") == "visual_page_marker":
-            return False
         if val.get("answered") is True:
             return True
     text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
@@ -169,8 +191,7 @@ def resolve_open_questions(atoms: list[Any]) -> int:
     for atom in atoms:
         if _atom_type_str(atom) != "open_question":
             continue
-        val = getattr(atom, "value", None) or {}
-        if isinstance(val, dict) and val.get("kind") == "visual_page_marker":
+        if _is_generated_question(atom):
             continue
         q_keys = _answer_bearing_keys(getattr(atom, "entity_keys", None))
         if not q_keys or q_keys.isdisjoint(answered_keys):
