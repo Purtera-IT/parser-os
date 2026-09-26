@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -200,7 +201,16 @@ def text_entities(dxf_path: Path) -> list[dict[str, Any]]:
                 except Exception:  # noqa: BLE001 - a label without a point is still a label
                     continue
             layer = str(getattr(entity.dxf, "layer", "") or "")
-            out.append({"text": text, "layer": layer, "x": x, "y": y, "kind": kind})
+            height = 0.0
+            for attr in ("height", "char_height"):
+                try:
+                    height = float(getattr(entity.dxf, attr))
+                    if height:
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+            out.append({"text": text, "layer": layer, "x": x, "y": y,
+                        "kind": kind, "height": height})
     return out
 
 
@@ -208,6 +218,145 @@ def is_apparatus(layer: str) -> bool:
     """True when the layer is about the sheet rather than the building."""
     name = layer.strip().lower()
     return any(part in _APPARATUS_LAYERS for part in name.replace("-", " ").split())
+
+
+def rows_from_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Put a drawing's text back into the rows a person reads.
+
+    A schedule on a sheet is laid out, not tabulated: the label sits at one x
+    and its count at another, and they are one fact only because they share a
+    y. Read entity by entity, 7 Penn Plaza's program table arrives as 26 loose
+    strings -- "EXECUTIVE OFFICE", "PRIVATE OFFICE", ... and separately "2",
+    "2", "106" -- and 106 of nothing is not a quantity.
+
+    Grouped by layer and y and ordered by x it is the room schedule:
+
+        EXECUTIVE OFFICE 2
+        PRIVATE OFFICE 2
+        5'-0" WORKSTATIONS 106
+        12 PERSON BOARD ROOM 1
+        IT CLOSET 1
+
+    which is the count the deal is priced on: 106 workstations at two Cat6A
+    drops each is the 212 the quote bills for.
+
+    Repeats within a row are collapsed. A title block carries its template and
+    its instance at the same point, so "PROGRAM SUMMARY" arrives twice.
+    """
+    buckets: dict[tuple[str, float], list[dict[str, Any]]] = {}
+    for entity in entities:
+        buckets.setdefault((entity["layer"], round(entity["y"], 1)), []).append(entity)
+    out: list[dict[str, Any]] = []
+    for (layer, y), group in buckets.items():
+        group.sort(key=lambda e: e["x"])
+        # Across every run on this line, not within one: a title block prints
+        # its template and its filled-in instance at almost the same point, so
+        # "PROGRAM SUMMARY" arrives twice a hair apart and the gap split puts
+        # the two copies in different runs.
+        seen: set[str] = set()
+        for run in _split_on_wide_gaps(group):
+            parts: list[str] = []
+            for entity in run:
+                key = entity["text"].strip().lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                parts.append(entity["text"])
+            if not parts:
+                continue
+            out.append({
+                "text": " ".join(parts),
+                "layer": layer,
+                "x": run[0]["x"],
+                "y": y,
+                "kind": run[0]["kind"],
+                "height": run[0].get("height", 0.0),
+                "parts": len(parts),
+            })
+    out.sort(key=lambda r: (r["layer"], -r["y"]))
+    return _stack_wrapped_labels(out)
+
+
+#: How far below a label its second line sits, in text heights. A wrapped line
+#: is one line-height down, so the window is tight: 7 Penn Plaza prints
+#: "WOMEN'S" over "RESTROOM", and read line by line the deal learns it has two
+#: restrooms called RESTROOM. Loosened to 25 it also swallowed "COAT" into
+#: "STORAGE", which are two different rooms a few feet apart.
+_STACK_GAP_HEIGHTS = 3.0
+#: ...and how far it may drift sideways. A wrapped line is near-flush.
+_STACK_DRIFT_HEIGHTS = 1.5
+
+
+def _stack_wrapped_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join a label that wrapped onto a second line back into one label."""
+    merged: list[dict[str, Any]] = []
+    for row in rows:
+        if merged:
+            previous = merged[-1]
+            height = row.get("height") or previous.get("height") or 0.0
+            same_column = abs(row["x"] - previous["x"]) <= _STACK_DRIFT_HEIGHTS * height
+            close_below = 0 < previous["y"] - row["y"] <= _STACK_GAP_HEIGHTS * height
+            if (height and same_column and close_below
+                    and row["layer"] == previous["layer"]
+                    and row["parts"] == 1 and previous["parts"] == 1):
+                previous["text"] = f"{previous['text']} {row['text']}"
+                previous["parts"] += 1
+                continue
+        merged.append(row)
+    return merged
+
+
+#: How far apart two strings can sit and still be one row, in characters. A
+#: schedule's label and its count are a few characters apart; the sheet's next
+#: panel is tens. On 7 Penn Plaza's program table "IT CLOSET" and "1" sit 3.3
+#: units apart at 0.11 text height -- 30 characters -- while "KEY PLAN" is
+#: another 16 units away in a different panel, and joined naively it became
+#: "IT CLOSET 1 KEY PLAN".
+_ROW_GAP_CHARS = 60.0
+
+
+def _split_on_wide_gaps(group: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """One y is not one row when the sheet puts two panels on the same line."""
+    runs: list[list[dict[str, Any]]] = [[group[0]]] if group else []
+    for previous, entity in zip(group, group[1:]):
+        height = previous.get("height") or entity.get("height") or 0.0
+        gap = entity["x"] - previous["x"]
+        if height and gap > _ROW_GAP_CHARS * height:
+            runs.append([entity])
+        else:
+            runs[-1].append(entity)
+    return runs
+
+
+#: A title block that still carries the study it was copied from. BR Design's
+#: SP-6 for 7 Penn Plaza prints "PRELIMINARY SPACE STUDY: JOELE FRANK" and
+#: "622 THIRD AVE | 36TH FLOOR" beside its own unfilled placeholders, and an
+#: xref path into a third project. Read as facts those put the job at the wrong
+#: address for the wrong client, so they are flagged rather than published.
+_TEMPLATE_MARKERS = (
+    "street address", "tenant name", "xx floor", "xx.xx.", "project no",
+    "drawn by", "scale:", "approval:", "name: date:",
+    "layout for space planning purposes only",
+    # The architect's own masthead and marketing, printed on every sheet they
+    # issue. Not a fact about this building.
+    "design associates", "for complete listing", "nothing beats",
+    "director of commercial leasing", "associate director",
+)
+
+
+def is_template_leftover(text: str) -> bool:
+    """True when the line is the drawing's own stationery or a stale copy.
+
+    A file path is always stationery: `G:\\69401 - Elise AI\\ARCH\\...` is an
+    xref into a different project and names a client this deal has never heard
+    of.
+    """
+    low = text.strip().lower()
+    if not low:
+        return True
+    if re.search(r"[a-z]:\\|\\\\[a-z]", low) or low.count("\\") >= 2:
+        return True
+    return any(marker in low for marker in _TEMPLATE_MARKERS)
 
 
 class DwgParser(BaseParser):
@@ -293,7 +442,9 @@ class DwgParser(BaseParser):
                     warnings.append(f"dwg: {Path(converter).name} produced no DXF")
 
         labels = text_entities(dxf_path) if dxf_path else []
-        building = [x for x in labels if not is_apparatus(x["layer"])]
+        rows = rows_from_entities([x for x in labels if not is_apparatus(x["layer"])])
+        building = [r for r in rows if not is_template_leftover(r["text"])]
+        stationery = [r for r in rows if is_template_leftover(r["text"])]
 
         for label in building:
             atoms.append(self._make_atom(
@@ -308,8 +459,13 @@ class DwgParser(BaseParser):
                     "x": label["x"],
                     "y": label["y"],
                     "entity": label["kind"],
+                    "parts": label.get("parts", 1),
                 },
             ))
+        if stationery:
+            warnings.append(
+                f"dwg: {len(stationery)} title-block lines withheld as the "
+                f"drawing's own stationery or a stale copy")
 
         # ...and a marker either way, so the drawing is never invisible. This is
         # the whole complaint: today a .dwg is `skipped_no_parser` and the PM

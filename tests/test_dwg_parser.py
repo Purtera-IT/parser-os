@@ -168,3 +168,124 @@ def test_it_is_registered():
     from app.parsers.registry import get_registered_parsers
 
     assert any(p.capability.parser_name == "dwg" for p in get_registered_parsers())
+
+
+# --------------------------------------------------------------------------
+# A schedule is laid out, not tabulated
+# --------------------------------------------------------------------------
+
+def test_a_schedule_row_is_one_fact():
+    """7 Penn Plaza's program table puts its labels at one x and its counts at
+    another. Entity by entity it is 26 loose strings, and 106 of nothing is not
+    a quantity -- 106 workstations at two Cat6A drops each is the 212 the quote
+    bills for."""
+    from app.parsers.dwg_parser import rows_from_entities
+
+    rows = rows_from_entities([
+        {"text": "5'-0\" WORKSTATIONS", "layer": "TEMPLATE TEXT", "x": 0.8,
+         "y": 7.2, "kind": "MTEXT", "height": 0.11},
+        {"text": "106", "layer": "TEMPLATE TEXT", "x": 4.1, "y": 7.2,
+         "kind": "MTEXT", "height": 0.11},
+    ])
+    assert [r["text"] for r in rows] == ['5\'-0" WORKSTATIONS 106']
+
+
+def test_a_far_away_panel_is_not_part_of_the_row():
+    """"KEY PLAN" sits on the same line as "IT CLOSET 1" and 16 units away, and
+    joined naively the row read "IT CLOSET 1 KEY PLAN"."""
+    from app.parsers.dwg_parser import rows_from_entities
+
+    rows = rows_from_entities([
+        {"text": "IT CLOSET", "layer": "T", "x": 0.8, "y": 5.1, "kind": "MTEXT",
+         "height": 0.11},
+        {"text": "1", "layer": "T", "x": 4.1, "y": 5.1, "kind": "MTEXT",
+         "height": 0.11},
+        {"text": "KEY PLAN", "layer": "T", "x": 20.3, "y": 5.1, "kind": "MTEXT",
+         "height": 0.11},
+    ])
+    assert sorted(r["text"] for r in rows) == ["IT CLOSET 1", "KEY PLAN"]
+
+
+def test_a_title_block_prints_itself_twice():
+    """Template and filled-in instance sit a hair apart, so "PROGRAM SUMMARY"
+    arrives twice -- and once the row is split on the wide gap, the two copies
+    land in different runs, so the de-duplication has to span the whole line."""
+    from app.parsers.dwg_parser import rows_from_entities
+
+    rows = rows_from_entities([
+        {"text": "PROGRAM SUMMARY", "layer": "T", "x": 20.0, "y": 4.3,
+         "kind": "MTEXT", "height": 0.11},
+        {"text": "PROGRAM SUMMARY", "layer": "T", "x": 20.05, "y": 4.3,
+         "kind": "MTEXT", "height": 0.11},
+    ])
+    assert [r["text"] for r in rows] == ["PROGRAM SUMMARY"]
+
+
+def test_a_wrapped_room_tag_is_one_room():
+    """The plan prints "WOMEN'S" over "RESTROOM"; read line by line the deal
+    learns it has a room called RESTROOM."""
+    from app.parsers.dwg_parser import rows_from_entities
+
+    rows = rows_from_entities([
+        {"text": "WOMEN'S", "layer": "ROOM-TAG", "x": 100.0, "y": 50.0,
+         "kind": "TEXT", "height": 4.0},
+        {"text": "RESTROOM", "layer": "ROOM-TAG", "x": 100.5, "y": 44.0,
+         "kind": "TEXT", "height": 4.0},
+    ])
+    assert [r["text"] for r in rows] == ["WOMEN'S RESTROOM"]
+
+
+def test_two_rooms_near_each_other_stay_two_rooms():
+    """COAT and STORAGE are a few feet apart on the same plan. A window loose
+    enough to catch every wrapped label swallowed these into one room, so the
+    window is tight and some wrapped labels stay split. A split label is
+    visible and a labeler can join it; a merged one invents a room."""
+    from app.parsers.dwg_parser import rows_from_entities
+
+    rows = rows_from_entities([
+        {"text": "COAT", "layer": "ROOM-TAG", "x": 100.0, "y": 90.0,
+         "kind": "TEXT", "height": 4.0},
+        {"text": "STORAGE", "layer": "ROOM-TAG", "x": 126.0, "y": 34.0,
+         "kind": "TEXT", "height": 4.0},
+    ])
+    assert sorted(r["text"] for r in rows) == ["COAT", "STORAGE"]
+
+
+# --------------------------------------------------------------------------
+# The drawing is a template somebody else's job was drawn on
+# --------------------------------------------------------------------------
+
+def test_another_tenants_study_is_not_this_deals_address():
+    """BR Design's SP-6 for 7 Penn Plaza still prints "PRELIMINARY SPACE STUDY:
+    JOELE FRANK" and "622 THIRD AVE | 36TH FLOOR" in its title block, beside
+    its own unfilled placeholders. Read as facts they put the job at the wrong
+    address for the wrong client."""
+    from app.parsers.dwg_parser import is_template_leftover
+
+    assert is_template_leftover("STREET ADDRESS | XX FLOOR") is True
+    assert is_template_leftover("DATE: XX.XX.22") is True
+    assert is_template_leftover("PROJECT NO: 29009") is True
+    assert is_template_leftover("SCALE: 1/16\" = 1' | DRAWN BY: RA") is True
+
+
+def test_an_xref_into_another_project_is_not_a_fact():
+    r"""G:\69401 - Elise AI\ARCH\... names a client this deal has never heard
+    of."""
+    from app.parsers.dwg_parser import is_template_leftover
+
+    assert is_template_leftover(r"G:\69401 - Elise AI\ARCH\FROM OTHERS\PDF\x.pdf") is True
+
+
+def test_the_architects_masthead_is_not_a_fact_about_the_building():
+    from app.parsers.dwg_parser import is_template_leftover
+
+    assert is_template_leftover("BR DESIGN ASSOCIATES, LLC 630 NINTH AVENUE") is True
+    assert is_template_leftover("NOTHING BEATS 72 YEARS OF STABILITY") is True
+
+
+def test_a_real_room_is_not_a_leftover():
+    from app.parsers.dwg_parser import is_template_leftover
+
+    assert is_template_leftover("IT CLOSET 1") is False
+    assert is_template_leftover("7 PENN PLAZA") is False
+    assert is_template_leftover("Floor 12 | Suite 1200 | 12,154 RSF") is False
