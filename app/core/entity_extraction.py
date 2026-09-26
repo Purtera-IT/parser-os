@@ -3917,6 +3917,39 @@ def _emit_site_code_keys(text: str) -> set[str]:
     return keys
 
 
+#: Words that name a job or a function rather than a human. A stakeholder slug
+#: built only out of these is a title that wandered into the people list.
+_ROLE_ONLY_TOKENS: frozenset[str] = frozenset({
+    "chief", "executive", "officer", "president", "vice", "senior", "junior",
+    "principal", "associate", "assistant", "deputy", "acting", "interim",
+    "director", "manager", "lead", "head", "supervisor", "coordinator",
+    "specialist", "analyst", "engineer", "architect", "consultant",
+    "administrator", "representative", "agent", "owner", "sponsor",
+    "approver", "delegate", "reviewer", "signatory", "stakeholder", "contact",
+    "ceo", "cfo", "cto", "cio", "ciso", "coo", "vp", "svp", "evp", "pm",
+    "account", "sales", "operations", "solutions", "technical", "field",
+    "service", "services", "client", "customer", "commercial", "majors",
+    "national", "regional", "global", "enterprise", "strategic", "partner",
+    "channel", "inside", "outside", "business", "development", "marketing",
+    "finance", "procurement", "delivery", "product", "program", "project",
+    "of", "and", "the", "for",
+})
+
+
+def _names_a_job_not_a_person(slug: str) -> bool:
+    """True when a stakeholder slug is made only of title words.
+
+    "senior_client_executive" is a job. "alec_burns" is not. A single token is
+    left alone -- a surname on its own is a person the corpus often only knows
+    by one name, and rejecting it would cost more than the occasional bare
+    "director".
+    """
+    tokens = [t for t in str(slug or "").split("_") if t]
+    if len(tokens) < 2:
+        return False
+    return all(t in _ROLE_ONLY_TOKENS for t in tokens)
+
+
 def extract_keys(
     text: str,
     *,
@@ -4056,6 +4089,14 @@ def extract_keys(
         site_keys_kept.add(k)
     keys = {k for k in keys if not k.startswith("site:")} | site_keys_kept
 
+    # A ROLE WORD IS NOT A PARTY. Several branches above can mint a
+    # stakeholder key, and a job title is capitalised, sits beside a role cue
+    # and passes more than one of their name-shape tests. Enforcing it once
+    # here catches every branch: on 010288 this is the difference between five
+    # people and nine, and on one line between "AJ Evans" and nobody.
+    keys = {k for k in keys
+            if not (isinstance(k, str) and k.startswith("stakeholder:")
+                    and _names_a_job_not_a_person(k[len("stakeholder:"):]))}
     return sorted(keys)
 
 
