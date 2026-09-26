@@ -56,10 +56,18 @@ def test_two_questions_and_two_answers_pair_in_order():
     assert q1.value["proposed_type"] == "answered_question"
     assert q1.value["answer"] == A1
     assert q2.value["answer"] == A2
-
-    # and the answers point back, so neither side is orphaned on the card
     assert a1.value["answers_question"] == Q1
     assert a2.value["answers_question"] == Q2
+
+    # ONE atom per pair, the way the unsplit form already is. Line 108 of this
+    # same email is "How many doors - 1 external access point [front door]" --
+    # a single atom, a single row. Leaving the answer standing as well would
+    # put the same words on the card twice: once inside the question, once as a
+    # loose line with nothing visibly tying it back.
+    assert q1.raw_text == f"{Q1} - {A1}"
+    assert q2.raw_text == f"{Q2} - {A2}"
+    assert a1.value["absorbed_into"] == q1.id
+    assert a2.value["absorbed_into"] == q2.id
 
 
 def test_the_maglock_pair_is_the_one_word_overlap_could_not_find():
@@ -72,6 +80,7 @@ def test_the_maglock_pair_is_the_one_word_overlap_could_not_find():
     atoms = _line()
     assert pair_within_one_line(atoms) == 2
     assert atoms[1].value["answer"] == A2
+    assert atoms[1].raw_text.endswith(A2)
 
 
 def test_interleaved_is_left_alone():

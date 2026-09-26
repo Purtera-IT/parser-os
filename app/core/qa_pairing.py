@@ -277,8 +277,45 @@ def pair_within_one_line(atoms: list[Any]) -> int:
             continue
         for q, a in zip(qs, rest):
             _pair(q, _text(a), source="same_line_split", answer_atom=a)
+            _absorb(q, a)
             paired += 1
     return paired
+
+
+def _absorb(question: Any, answer: Any) -> None:
+    """Fold the answer into the question so the pair is ONE atom.
+
+    The unsplit form of this shape -- "How many doors - 1 external access point
+    [front door]" -- is a single atom, and a reader sees one row saying one
+    thing. Leaving the answer standing as well would put the same words on the
+    card twice: once inside the question and once as a loose line with nothing
+    visibly tying it back.
+
+    The answer is marked rather than dropped here; the compiler moves it to the
+    suppression ledger, so it stays auditable the way every other removal on
+    this deal does.
+    """
+    qt, at = _text(question), _text(answer)
+    merged = f"{qt} - {at}"
+    for attr in ("raw_text", "normalized_text"):
+        if getattr(question, attr, None) is not None:
+            setattr(question, attr, merged)
+    # The answer's keys describe the fact, and the fact now lives here.
+    try:
+        qk = list(getattr(question, "entity_keys", None) or [])
+        for k in list(getattr(answer, "entity_keys", None) or []):
+            if k not in qk:
+                qk.append(k)
+        question.entity_keys = qk
+    except Exception:
+        pass
+    qv = _value(question)
+    qv["merged_answer_atom_id"] = str(getattr(answer, "id", "") or "")
+    question.value = qv
+    av = _value(answer)
+    av["absorbed_into"] = str(getattr(question, "id", "") or "")
+    av["absorbed_reason"] = "answer merged into its question on the same line"
+    answer.value = av
 
 
 def pair_across_thread(atoms: list[Any]) -> int:

@@ -916,6 +916,23 @@ def compile_project(
                 # two rules cannot see inside one line, so this runs before
                 # them and marks those questions answered.
                 _inline = pair_within_one_line(atoms)
+                if _inline:
+                    # The answer is now part of its question's text. Keeping the
+                    # fragment as well would show the same words twice.
+                    _absorbed = [a for a in atoms
+                                 if (getattr(a, "value", None) or {}).get("absorbed_into")]
+                    if _absorbed:
+                        _before_abs = list(atoms)
+                        atoms = [a for a in atoms
+                                 if not (getattr(a, "value", None) or {}).get("absorbed_into")]
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(
+                                _before_abs, atoms,
+                                stage="qa_pairing_merge",
+                                reason="answer merged into its question on the same line",
+                            ),
+                        )
                 _same = pair_questions_with_answers(atoms)
                 _cross = pair_across_thread(atoms)
                 if _inline or _same or _cross:
