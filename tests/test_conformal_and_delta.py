@@ -244,7 +244,12 @@ def test_multitask_assembly_dedups_splits_and_names_what_it_skips(tmp_path) -> N
     assert len(table.rows) == 3
     winner = next(r for r in table.rows if "jumpers" in r.text)
     assert winner.teacher == "pm", "dedup must keep the most trusted teacher"
-    assert table.skipped["duplicate (kept most trusted teacher)"] == 1
+    # Two teachers asserting the SAME label on the same text: one assertion, and
+    # the trusted teacher keeps it. The counter used to be called "duplicate",
+    # which is what hid a different case for weeks -- two labels from ONE
+    # labeler, which is usually two truths and not a conflict at all. See
+    # tests/test_multitask_assemble.py.
+    assert table.skipped["same assertion, kept most trusted teacher"] == 1
     assert any(r.task == "edge_relation" for r in table.rows),         "the edge head has no gold but this; it must reach the backbone"
     assert table.skipped["relation rationale:atom not a backbone task"] == 1,         "a rationale is a generative target and must never reach a classifier"
     assert table.skipped["text too short"] == 1

@@ -731,6 +731,55 @@ def _material_heuristics(description: str, material_spec: str, notes: str) -> di
     return out
 
 
+def _fmt_amount(value: Any, currency: str | None) -> str:
+    """A number the way the sheet meant it, with its currency if it stated one."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return ""
+    body = f"{n:,.2f}".rstrip("0").rstrip(".") if n % 1 else f"{int(n):,}"
+    return f"{currency} {body}" if currency else body
+
+
+def _money_tail(qty_obj: dict[str, Any], up_money: dict[str, Any],
+                ext_money: dict[str, Any], *, already: bool) -> str:
+    """The quantity and the money, in the atom's own text.
+
+    They were in `structured` and nowhere else. The text is what the substance
+    gate reads, what a labeler sees, what the heads train on and what reaches a
+    brief -- so on deal 010180 the Deal Kit showed "Cat 6A patch panels,
+    48-port" with no quantity and no price, and the deal's whole budgetary
+    number, $110,108, never became an atom at all.
+
+    The parser had the figures the whole time: `parse_money_cell("51092")`
+    returns `unit_price_amount=51092.0`. The old text only appended money when
+    the row had explicit Currency AND Amount columns, which is the
+    multi-currency BOM shape; an ordinary sheet of bare numbers printed
+    nothing. That path is left exactly as it was and this one fills the gap.
+
+    Column names are carried through rather than interpreted: 010180's header
+    says "Unit Price" over what are plainly line totals (212 drops for 51,092),
+    and deciding which it really means is a labeler's judgement, not a parser's.
+    """
+    parts: list[str] = []
+    qty = qty_obj.get("quantity")
+    raw_qty = str(qty_obj.get("quantity_raw") or "").strip()
+    if qty is not None:
+        parts.append(f"qty {_fmt_amount(qty, None) or raw_qty}")
+    elif raw_qty:
+        parts.append(f"qty {raw_qty}")
+    if not already:
+        unit = _fmt_amount(up_money.get("unit_price_amount"), up_money.get("currency"))
+        if unit:
+            parts.append(f"unit price {unit}")
+        ext = _fmt_amount(ext_money.get("extended_price_amount")
+                          or ext_money.get("unit_price_amount"),
+                          ext_money.get("currency"))
+        if ext:
+            parts.append(f"extended {ext}")
+    return (" — " + ", ".join(parts)) if parts else ""
+
+
 def _price_math_mismatch(
     qty_obj: dict[str, Any],
     up_money: dict[str, Any],
@@ -1847,7 +1896,9 @@ class QuoteParser(BaseParser):
                 (f"Line item {part_number} {description}".strip()
                  + (f" at {site_id_value}" if site_id_value else "")
                  + (f" [{region_value}]" if region_value else "")
-                 + (f" {currency_value} {amount_value}".strip() if (currency_value and amount_value) else "")).strip(),
+                 + (f" {currency_value} {amount_value}".strip() if (currency_value and amount_value) else "")
+                 + _money_tail(qty_obj, up_money, ext_money,
+                               already=bool(currency_value and amount_value))).strip(),
                 vli_value,
                 0.88 if not flags else 0.72,
                 flags,
@@ -1913,8 +1964,13 @@ class QuoteParser(BaseParser):
             if os.environ.get("SOWSMITH_DROP_QUANTITY_ATOM") != "1":
                 append_atom(
                     AtomType.quantity,
+                    # Name what is being counted. A part number when the sheet
+                    # has one, and the description when it does not -- 010180's
+                    # Item column is blank on every data row, so this atom read
+                    # "Quantity 212" and 212 of nothing is not a fact.
                     (f"Quantity {qty_obj.get('quantity_raw') or quantity_raw}"
-                     + (f" {part_number}" if part_number else "")
+                     + (f" {part_number}" if part_number
+                        else (f" {description}" if description else ""))
                      + (f" at {site_id_value}" if site_id_value else "")).strip(),
                     qval,
                     0.88 if not qty_obj.get("uncertain") else 0.7,

@@ -25,6 +25,7 @@ from typing import Any, Iterable
 from app.core.atom_type_registry import KEEP, coarse_of, facet_of, load_registry
 from app.learning.label_context import context_note, context_text
 from app.learning.label_features import features_for
+from app.learning.span_ranker import best_locatable, pointer_kind
 
 #: Same representation as typed_atom_classifier.DECIDE_TEXT_VERSION (v2).
 DECIDE_TEXT_VERSION = 2
@@ -244,6 +245,10 @@ def _rationale_row(kind: str, prompt: str, note: str, base: dict[str, Any],
     }
 
 
+def _norm(s: Any) -> str:
+    return " ".join(str(s or "").split()).lower()
+
+
 def _axis_row(relation: str, label_value: str, lb: dict[str, Any], base: dict[str, Any],
               prov: dict[str, Any], kind: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """One row, served the context THIS head needs and nothing else."""
@@ -285,6 +290,20 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     # head trained to produce it can run at inference -- pointing at evidence
     # needs the document, not the note. It is also the only kind of answer a
     # person can audit at a glance.
+    #
+    # Three destinations, not one. Measured on 010288: of 159 pointers, 82 are
+    # words in the atom or the context printed beside it, 21 name another atom,
+    # and 56 are the envelope or the document type. All 159 were being emitted
+    # as `evidence_span`, so a third of the span supervision asked a head to
+    # locate text that is nowhere on the page it is holding -- which is how a
+    # span head learns to invent one.
+    #
+    #   evidence_span  the ranker can find these.
+    #   evidence_doc   real words on another surface: retrieval, not extraction.
+    #   decided_from   WHICH context field settled it. Free on every pointer,
+    #                  learnable from all 159, and the answer to "why did you
+    #                  say that" that a person can read.
+    seen_fields: set[str] = set()
     for ref in (lb.get("hint_refs") or []):
         if not isinstance(ref, dict):
             continue
@@ -292,10 +311,52 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
         hint = str(ref.get("hint") or "").strip()
         if len(span) < 8 or not hint:
             continue
-        rows.append(_axis_row(f"evidence_span:{hint}", span, lb, base, prov,
-                              "span", {"span_kind": ref.get("kind"),
-                                       "span_atom_id": ref.get("atomId"),
-                                       "span_filename": ref.get("filename")}))
+        where = {"span_kind": ref.get("kind"),
+                 "span_atom_id": ref.get("atomId"),
+                 "span_filename": ref.get("filename")}
+        kind = pointer_kind(ref, lb)
+        if kind == "span":
+            # A pointer is usually a selection and occasionally a paraphrase.
+            # "the two headings in dispute: ..." names words that ARE on the
+            # page, in a sentence the labeler rewrote -- and a span head given
+            # the rewrite is being taught to produce text its prompt does not
+            # contain. Snap those to the words as written; leave an exact
+            # selection exactly as the labeler made it, since it is the more
+            # precise of the two.
+            prompt = context_text(f"evidence_span:{hint}", lb)
+            if _norm(span) not in _norm(prompt):
+                snapped = best_locatable(span, lb, prompt)
+                if snapped is None:
+                    rows.append(_axis_row("rationale:evidence", span, lb, base,
+                                          prov, "generative", where))
+                    continue
+                where = {**where, "span_as_written_by_labeler": span}
+                span = snapped
+            rows.append(_axis_row(f"evidence_span:{hint}", span, lb, base, prov,
+                                  "span", where))
+        elif kind == "other_atom":
+            rows.append(_axis_row(f"evidence_doc:{hint}", span, lb, base, prov,
+                                  "retrieval", where))
+        elif kind == "prose":
+            # The hint says "section" and the words are the labeler's own --
+            # "the two headings in dispute: ...". Argument, not a selection, so
+            # it goes where the argument goes rather than teaching a span head
+            # to produce text that is not on the page.
+            rows.append(_axis_row("rationale:evidence", span, lb, base, prov,
+                                  "generative", where))
+        elif kind == "field":
+            # `decided_from` above records WHICH field settled it, and that is
+            # the learnable part. But the rendering is not only a field: 56 of
+            # 010288's pointers are these, and among their 12 distinct texts
+            # are "purtera-it.com (internal, ours) -- internal only, never
+            # leaves our org" and "'us' in this list is the reseller, not us".
+            # That is an argument about the envelope, and keeping only the
+            # word `who_said_it` throws it away.
+            rows.append(_axis_row("rationale:evidence", span, lb, base, prov,
+                                  "generative", where))
+        if hint not in seen_fields:
+            seen_fields.add(hint)
+            rows.append(_axis_row("decided_from", hint, lb, base, prov, "axis", {}))
 
     # The argument itself, as a target. The prompt is what the labeler was
     # looking at; the label is what they concluded and why.

@@ -1,6 +1,6 @@
 """What Postgres holds, what the blob carries, what the corpus admits.
 
-Four times in one day a field was written correctly and silently dropped one
+Seven times in one day a field was written correctly and silently dropped one
 step later:
 
   * `doc.judgments = []` stubbed in the mirror -- 94 verdicts written and lost;
@@ -9,16 +9,25 @@ step later:
     stopped;
   * the judgment `reason` the same way;
   * `DEFAULT_TASKS` never listed the judgement heads, so 892 of 1,241 rows were
-    dropped one step from the model.
+    dropped one step from the model;
+  * every one of 159 evidence pointers was emitted as a span, and 87 of them
+    name a structured field or another surface -- so a third of the span
+    supervision asked a head to produce words that are not on the page it
+    holds, which is how a span head learns to invent one;
+  * `assemble` keyed its dedupe on (relation, text), so a labeler's second
+    answer read as a contradiction and `decided_from` lost 83 of 148 rows;
+  * ...and an edge's target lives in its provenance, so the six atoms one
+    sentence governs were six identical rows, five of them discarded.
 
-Every one of those produced perfect data that arrived nowhere, and nothing
-complained. Counting rows would have caught none of them: the rows were all
-there, with a field missing or a relation unlisted.
+Every one produced perfect data that arrived nowhere, and nothing complained.
+Counting rows would have caught none of them: the rows were all there, with a
+field missing, a relation unlisted, a label its own prompt did not contain, or
+a duplicate that was not one.
 
-So this compares the three stages FIELD BY FIELD and RELATION BY RELATION, and
-names what falls between them. It is cheap enough to run on every deal after
-labelling, and it is the only check that fails when somebody adds a column and
-forgets the mapper.
+So this compares the stages FIELD BY FIELD, RELATION BY RELATION and ROW BY
+ROW, and names what falls between them. It is cheap enough to run on every deal
+after labelling, and it is the only check that fails when somebody adds a
+column and forgets the mapper.
 """
 from __future__ import annotations
 
@@ -34,7 +43,7 @@ _NOT_SUPERVISION = frozenset({
 
 #: Relations held back from the classifier on purpose. A span is an extraction
 #: problem and a rationale is a generative one.
-_HELD_BACK = ("evidence_span:", "reads_value:", "rationale:")
+_HELD_BACK = ("evidence_span:", "evidence_doc:", "reads_value:", "rationale:")
 
 
 @dataclass
@@ -96,6 +105,59 @@ def check_rows(blob_counts: dict[str, int], row_relations: dict[str, int],
                        if k == relation_prefix or k.startswith(relation_prefix))
         if not produced:
             out.append(f"{n} {kind} in the blob produced no {relation_prefix}* row")
+    return out
+
+
+def check_spans(rows: list[dict[str, Any]]) -> list[str]:
+    """A span head can only point at words it is holding.
+
+    The fifth silent loss of the day, and the largest. All 159 of 010288's
+    pointers were emitted as `evidence_span`, but 56 of them name a structured
+    field -- the envelope, the document type -- and 21 name another surface.
+    Neither is text on the page the head is given, so a third of the span
+    supervision was an instruction to produce words that are not there, which
+    is exactly how a span head learns to invent one.
+
+    Nothing counted this. The rows were present, the relations were listed, and
+    the field check passed, because the loss was INSIDE a row: a label that its
+    own prompt does not contain.
+    """
+    out: list[str] = []
+    bad = [r for r in rows
+           if str(r.get("relation") or "").startswith("evidence_span:")
+           and _norm(r.get("label")) not in _norm(r.get("raw_text"))]
+    if bad:
+        shown = ", ".join(sorted({str(r.get("relation")) for r in bad})[:4])
+        out.append(f"{len(bad)} evidence_span rows point at words absent from "
+                   f"their own prompt ({shown})")
+    return out
+
+
+def _norm(s: Any) -> str:
+    return " ".join(str(s or "").split()).lower()
+
+
+def check_assembled(emitted: dict[str, int], assembled: dict[str, int],
+                    backbone_tasks: tuple[str, ...]) -> list[str]:
+    """A backbone relation must reach the table with every row it emitted.
+
+    The seam past every other check here: the rows leave `human_labels`
+    complete, the relation IS a backbone task, and the loss happens inside
+    `assemble`, in a counter whose name is the one word that stops anyone
+    looking -- "duplicate".
+
+    Two of them on 010288. `decided_from` lost 83 of 148 because the key was
+    (relation, text) and a second label read as a conflict, when an atom is
+    genuinely decided by its own words AND by who said it. `edge_relation` lost
+    5 of 80 because an edge's target lives in its provenance, so six edges out
+    of one sentence were six identical rows.
+    """
+    out: list[str] = []
+    for task in sorted(backbone_tasks):
+        was, now = emitted.get(task, 0), assembled.get(task, 0)
+        if was and now < was:
+            out.append(f"{task}: {was} rows emitted, {now} reached the table "
+                       f"({was - now} lost inside assemble)")
     return out
 
 
