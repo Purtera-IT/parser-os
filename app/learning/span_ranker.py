@@ -108,9 +108,32 @@ def pointer_kind(ref: dict[str, Any], label: dict[str, Any] | None = None) -> st
 
 
 def _locatable(want: str, label: dict[str, Any]) -> bool:
-    """Are these words on offer among the atom's candidates at all?"""
+    """Are these words on the page at all?
+
+    A VERBATIM SUBSTRING IS ALWAYS LOCATABLE, and that case has to be checked
+    first. The overlap test below is for paraphrases, and applied to a real
+    highlight it rejects the normal one: five words selected out of a
+    thirty-word sentence score 0.38 against the only candidate that contains
+    them, because F1 charges the candidate for the twenty-five words the
+    selection left out. `I'm fine doing it free` is quite obviously in "I'm
+    fine doing it free and I can tell Rich, just need to be careful how you
+    handle site surveys pro-bono going forward" -- it is simply not a clause
+    the splitter produces.
+
+    Ranking still uses argmax over F1, so a short span keeps competing on its
+    merits. This only decides whether the pointer is a span at all.
+    """
     if len(want) < MIN_SPAN:
         return False
+    low = _clean(want).lower()
+    haystack = " | ".join(
+        [_clean(label.get("text")).lower()]
+        + [_clean(x).lower() for key in ("lead_in", "section",
+                                         "neighbors_above", "neighbors_below")
+           for x in (label.get(key) or [])]
+    )
+    if low in haystack:
+        return True
     cands = candidates_for(label)
     return bool(cands) and max(_overlap(c.text, want) for c in cands) >= MIN_OVERLAP
 

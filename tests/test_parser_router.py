@@ -113,10 +113,35 @@ def test_kickoff_transcript_routes_transcript(tmp_path: Path) -> None:
 
 
 def test_random_txt_produces_warning_no_crash(tmp_path: Path) -> None:
+    """A 44-character one-liner is not a document, and reading it would
+    manufacture atoms out of filler. `UnreadParser` has a floor -- 4 non-empty
+    lines and 258 characters, the size below which no real deal document was
+    measured -- and under it the artifact still routes to NONE so the "nothing
+    was read" signal survives. See test_unstructured_text_above_the_floor_is_read
+    for the other half."""
     artifact = tmp_path / "random.txt"
     artifact.write_text("just filler words with no structured signals", encoding="utf-8")
     result = compile_project(tmp_path, allow_errors=True)
     assert any("No parser matched artifact" in warning for warning in result.warnings)
+
+
+def test_unstructured_text_above_the_floor_is_read(tmp_path: Path) -> None:
+    """NO parser claims a plain .txt with no structure -- not one, at any
+    confidence -- so a substantial unstructured text file was losing its whole
+    contents and a warning line was all that survived. Above the floor it is
+    read."""
+    artifact = tmp_path / "site_notes.txt"
+    artifact.write_text(
+        "Walkthrough notes from the Penn Plaza visit on the twelfth floor.\n"
+        "The team counted 212 Cat6A drops across one hundred and six workstations.\n"
+        "Six forty-eight port patch panels are to be installed in the IT closet.\n"
+        "Electrical connections will be provided by the landlord, not by us.\n"
+        "The freight elevator is the only route for cable reels and panels.\n",
+        encoding="utf-8",
+    )
+    result = compile_project(tmp_path, allow_errors=True)
+    texts = " ".join(a.raw_text for a in result.atoms)
+    assert "212 Cat6A drops" in texts
 
 
 def test_compile_trace_includes_parser_routing(tmp_path: Path) -> None:

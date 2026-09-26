@@ -138,8 +138,17 @@ def _norm(s: Any) -> str:
 
 
 def check_assembled(emitted: dict[str, int], assembled: dict[str, int],
-                    backbone_tasks: tuple[str, ...]) -> list[str]:
-    """A backbone relation must reach the table with every row it emitted.
+                    backbone_tasks: tuple[str, ...],
+                    distinct: dict[str, int] | None = None) -> list[str]:
+    """A backbone relation must reach the table with every DISTINCT row it emits.
+
+    `distinct` counts assertions rather than rows -- same relation, same text,
+    same label, same target counted once. Pass it whenever rows can legitimately
+    repeat, because otherwise this check reports correct de-duplication as loss:
+    010180 quotes the same two email headers down a fourteen-message thread, so
+    268 atom_type rows are 197 distinct assertions, and the 71 that collapse are
+    not a defect. Without it this fired on six relations at once and every one
+    was a false alarm.
 
     The seam past every other check here: the rows leave `human_labels`
     complete, the relation IS a backbone task, and the loss happens inside
@@ -154,10 +163,13 @@ def check_assembled(emitted: dict[str, int], assembled: dict[str, int],
     """
     out: list[str] = []
     for task in sorted(backbone_tasks):
-        was, now = emitted.get(task, 0), assembled.get(task, 0)
+        was = (distinct or {}).get(task, emitted.get(task, 0))
+        now = assembled.get(task, 0)
         if was and now < was:
-            out.append(f"{task}: {was} rows emitted, {now} reached the table "
-                       f"({was - now} lost inside assemble)")
+            raw = emitted.get(task, 0)
+            extra = f" ({raw} rows, {was} distinct)" if raw != was else ""
+            out.append(f"{task}: {was} assertions emitted, {now} reached the "
+                       f"table ({was - now} lost inside assemble){extra}")
     return out
 
 

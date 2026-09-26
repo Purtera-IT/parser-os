@@ -47,6 +47,9 @@ from app.parsers.base import BaseParser
 _IMAGE_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".heic", ".heif",
     ".webp", ".tiff", ".tif", ".bmp",
+    # .gif was missing, so an animated or single-frame GIF in an intake routed
+    # to no parser at all and vanished. Pillow reads it like any other image.
+    ".gif",
 }
 
 

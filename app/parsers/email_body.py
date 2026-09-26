@@ -80,6 +80,55 @@ def _looks_like_layout_table(rows: list[list[str]]) -> bool:
     return contact * 3 >= len(cells)
 
 
+#: Tags that mean "this text continues", not "new line". `get_text` puts a
+#: separator at EVERY element boundary, so each of these splits a sentence
+#: wherever a mail client wrapped a word in markup.
+_INLINE_TAGS = (
+    "a", "b", "strong", "i", "em", "u", "sup", "sub", "small", "span",
+    "font", "abbr", "code", "mark", "s", "strike", "big", "tt", "label",
+)
+
+
+def _unwrap_inline_in_place(soup: BeautifulSoup) -> int:
+    """Dissolve inline markup so a sentence stays one line.
+
+    `soup.get_text(separator="\\n")` inserts a newline at every element
+    boundary, which is right for `<p>` and `<tr>` and wrong for everything a
+    mail client uses to style part of a sentence. Measured on deal 010180's
+    call notes, one message alone:
+
+        <b>Layout & Technical Requirements</b>: The team discussed...
+            -> "Layout & Technical Requirements" + ": The team discussed..."
+               a heading asserting nothing, and a sentence with no subject
+
+        Suite 1316, 3<sup>rd</sup> Floor
+            -> "Suite 1316, 3" + "rd" + "Floor"
+
+        <a href="mailto:...">LS Srinivas</a> &lt;ls.srinivas@flextrade.com&gt;
+            -> "LS Srinivas <" + "ls.srinivas@flextrade.com" + ">"
+
+    41 atoms across 26 deals start on a bare colon from the first shape alone,
+    and the halves do not merely read badly -- they do not survive. Two of
+    010180's four never reached the envelope: the entire Security & Access
+    Control discussion, and the sentence carrying "two Ethernet connections per
+    workstation", which is the multiplier its $110,108 is built on.
+
+    Unwrapping keeps the text and drops the tag, so the separator has nothing
+    to break on. Block-level tags are untouched.
+    """
+    unwrapped = 0
+    for name in _INLINE_TAGS:
+        for tag in soup.find_all(name):
+            tag.unwrap()
+            unwrapped += 1
+    # `unwrap` alone changes nothing: it drops the tag and leaves the text as
+    # separate strings, and `get_text(separator=...)` joins EVERY string, not
+    # every element. `smooth` merges the adjacent strings back into one, which
+    # is the half that actually repairs the sentence.
+    soup.smooth()
+    return unwrapped
+
+
 def _flatten_tables_in_place(soup: BeautifulSoup) -> int:
     """Rewrite each data ``<table>`` as one line per ``<tr>``, cells joined by ``|``.
 
@@ -317,6 +366,58 @@ def rejoin_label_and_value(text: str) -> str:
     return "\n".join(out)
 
 
+#: A heading that lost its colon to the markup. Short, no terminal punctuation,
+#: and not already a sentence -- the shape of a `<b>` run, not of prose.
+_BARE_HEADING_RE = re.compile(r"^\s*([A-Z][\w &/,'()-]{2,60})\s*$")
+#: ...and the body that follows it, which the separator left starting on a colon.
+_ORPHANED_BODY_RE = re.compile(r"^\s*:\s*(\S.*)$")
+
+
+def rejoin_split_heading(text: str) -> str:
+    """Put `<b>Heading</b>: body` back together.
+
+    BeautifulSoup's ``get_text(separator="\\n")`` inserts a newline between an
+    element and the text after it, so a bold heading and the sentence it
+    introduces arrive as two lines:
+
+        Layout & Technical Requirements
+        : The team discussed the office layout, including 106 workstations...
+
+    Both halves are then worthless. The heading is a noun phrase that asserts
+    nothing and gets typed `scope_item` -- so "Security & Access Control"
+    becomes work the job includes -- and the body is a sentence with no
+    subject, starting on a bare colon.
+
+    Worse, the body is then an orphan, and on deal 010180 two of the four did
+    not survive the run to the envelope at all: the whole Security & Access
+    Control discussion, and the sentence carrying "Cat 6A cabling, two Ethernet
+    connections per workstation", which is the multiplier the deal's $110,108
+    is built on. Rejoined, each is one statement under its own heading, and the
+    heading becomes the lead_in it always was.
+
+    This is the mirror of `rejoin_label_and_value`, which handles `Label:` on
+    one line and its value on the next. Same defect, opposite side of the
+    colon.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        heading = _BARE_HEADING_RE.match(lines[i])
+        if heading:
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            body = _ORPHANED_BODY_RE.match(lines[j]) if j < len(lines) else None
+            if body:
+                out.append(f"{heading.group(1).strip()}: {body.group(1).strip()}")
+                i = j + 1
+                continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
 def _extract_email_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".eml":
@@ -352,9 +453,13 @@ def _extract_email_text(path: Path) -> str:
         content = read_text(path)
     if "<html" in content.lower() or "<table" in content.lower():
         soup = BeautifulSoup(content, "html.parser")
+        # Inline markup first: a table cell's contents must be whole before the
+        # table is flattened, or the cell is split and then joined by "|".
+        _unwrap_inline_in_place(soup)
         _flatten_tables_in_place(soup)
-        return strip_meeting_invite(
-            rejoin_label_and_value(soup.get_text(separator="\n", strip=True)))
-    return strip_meeting_invite(rejoin_label_and_value(content))
+        return strip_meeting_invite(rejoin_split_heading(
+            rejoin_label_and_value(soup.get_text(separator="\n", strip=True))))
+    return strip_meeting_invite(rejoin_split_heading(
+        rejoin_label_and_value(content)))
 
 

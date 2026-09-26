@@ -56,7 +56,14 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.transcript if "transcript" in path.name.lower() else ArtifactType.txt
     if suffix == ".pptx":
         return ArtifactType.pptx
-    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"}:
+    # A CAD drawing is a picture, not a text file. Without this a .dwg fell
+    # through to ArtifactType.txt while `dwg_parser` declared `image` on its
+    # source refs, and the marker atom it emits -- the one that tells a PM the
+    # floor plan was in the intake at all -- never reached the envelope. The
+    # image parsers' markers do reach it (133 atoms across 31 deals), and this
+    # is the difference between them.
+    if suffix in {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tiff",
+                  ".tif", ".bmp", ".dwg", ".dxf"}:
         return ArtifactType.image
     if suffix in {".html", ".htm", ".xhtml"}:
         return ArtifactType.html
