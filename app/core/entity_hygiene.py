@@ -88,6 +88,33 @@ def _atom_text_blob(atom: Any) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _drop_job_titles(keys: list[str]) -> list[str]:
+    """Remove ``stakeholder:*`` keys that name a job rather than a human.
+
+    A signature is "Name | Title | address" and the title is capitalised, sits
+    beside a role cue, and passes the same name-shape tests the name does. On
+    010288 that produced "executive vice president", "senior client
+    executive", "account executive" and "commercial majors" -- the second half
+    of one title, split on its comma -- so the deal carried nine stakeholders
+    for five humans and anything counting people counted jobs.
+
+    It is enforced here because three producers mint these keys and the rule
+    was true for all of them: whatever route a key takes, it passes through
+    hygiene before it lands.
+    """
+    try:
+        from app.core.entity_extraction import _names_a_job_not_a_person
+    except Exception:
+        return keys
+    out = []
+    for k in keys:
+        if isinstance(k, str) and k.startswith("stakeholder:"):
+            if _names_a_job_not_a_person(k[len("stakeholder:"):]):
+                continue
+        out.append(k)
+    return out
+
+
 def filter_entity_keys_for_atom(atom: Any, keys: Iterable[str]) -> list[str]:
     """Return a sorted, de-duplicated list of entity keys with bogus
     ``site:*`` keys removed.
@@ -98,7 +125,7 @@ def filter_entity_keys_for_atom(atom: Any, keys: Iterable[str]) -> list[str]:
     product/framework tokens with no positive tokens.
     """
     kept, _dropped = _filter_with_audit(atom, keys, blob=_atom_text_blob(atom))
-    return kept
+    return _drop_job_titles(kept)
 
 
 def filter_entity_keys_with_audit(
