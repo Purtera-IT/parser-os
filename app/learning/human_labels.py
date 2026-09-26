@@ -177,7 +177,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
         }
         base = {
             "raw_text": text, "masked_text": text, "teacher": HUMAN_TEACHER,
-            "weight": 1.0, "confidence": 1.0, "scope": "deal", "scope_key": deal_id,
+            "weight": _row_weight(lb), "confidence": 1.0, "scope": "deal", "scope_key": deal_id,
             "deal_id": deal_id, "project_id": deal_id,
             "created_at": lb.get("labeled_at") or "", "split": split,
             "provenance": json.dumps(prov, ensure_ascii=False),
@@ -194,6 +194,20 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
     out.extend(_link_rows(doc, deal_id, split, report))
     report.rows += len(out)
     return out
+
+
+
+#: What a row is worth to a head. `retrain.py` has always passed `weight` into
+#: NeuralHead.fit as sample_weight; every row ever written carried 1.0, so the
+#: mechanism was wired to a constant.
+#:
+#: load_bearing -- get it wrong and the quote, the scope or the site is wrong.
+#: slight       -- true, and nothing downstream turns on it.
+_TIER_WEIGHT = {"load_bearing": 3.0, "ordinary": 1.0, "slight": 0.3}
+
+
+def _row_weight(lb: dict[str, Any]) -> float:
+    return _TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0)
 
 
 def _axis_row(relation: str, label_value: str, lb: dict[str, Any], base: dict[str, Any],
@@ -220,14 +234,54 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     them, and the training rows stopped at the type.
     """
     rows: list[dict[str, Any]] = []
-    for axis in ("about", "wants"):
+    for axis in ("about", "wants", "consumer", "weight_tier", "decided_by"):
         v = str(lb.get(axis) or "").strip()
         if v:
             rows.append(_axis_row(axis, v, lb, base, prov, "judgment"))
 
+    # The contrast, as its own row. A trainer joins these to the atom_type rows
+    # on `label_key` in the provenance and gets (anchor, positive, negative):
+    # "Relay under 'Provided by us' is a bom_line and specifically NOT the
+    # deal_metadata its twin on the sheet is." Left empty where nothing else was
+    # ever in the running -- a false contrast teaches a boundary that is not there.
+    # The spans the labeler pointed at. 56 of 65 notes on 010288 quote the
+    # deciding words verbatim, and hint_refs already hold them structured, each
+    # tagged with the hint that says WHY it mattered. A quotation is not prose:
+    # it is a pointer at the part of the document that settled the label, and a
+    # head trained to produce it can run at inference -- pointing at evidence
+    # needs the document, not the note. It is also the only kind of answer a
+    # person can audit at a glance.
+    for ref in (lb.get("hint_refs") or []):
+        if not isinstance(ref, dict):
+            continue
+        span = " ".join(str(ref.get("text") or "").split())
+        hint = str(ref.get("hint") or "").strip()
+        if len(span) < 8 or not hint:
+            continue
+        rows.append(_axis_row(f"evidence_span:{hint}", span, lb, base, prov,
+                              "span", {"span_kind": ref.get("kind"),
+                                       "span_atom_id": ref.get("atomId"),
+                                       "span_filename": ref.get("filename")}))
+
+    rejected = str(lb.get("rejected") or "").strip()
+    if rejected and rejected != str(lb.get("label_type") or "").strip():
+        rows.append(_axis_row("rejected", rejected, lb, base, prov, "judgment",
+                              {"chosen": lb.get("label_type"),
+                               "contrastive_pair": True}))
+
     reads = lb.get("reads_set")
     if not isinstance(reads, dict):
         return rows
+    # Readings the labeler CONSIDERED and ruled out. The reading that nearly
+    # fitted is the best negative there is -- "blocked_on is for a conditional
+    # whose gate is a person; this one's gate is an outcome" teaches the
+    # boundary in a way no positive example can, and until now there was
+    # nowhere to put it, so it lived in prose and taught nothing.
+    for key, why in (lb.get("rejected_reads") or {}).items():
+        rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
+                              {"considered_and_rejected": True,
+                               "why_not": str(why or "")}))
+
     shown = {str(k) for k in (lb.get("reads_shown") or [])}
     for key in sorted(shown - {str(k) for k in reads}):
         rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
@@ -244,11 +298,18 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
             rows.append(_axis_row(relation, v, lb, base, prov, "judgment",
                                   {"parser_proposed": key in shown}))
         else:
-            # A phrase is not a class. What is learnable today is that the
-            # atom carries one; the phrase itself waits for a span head.
+            # A phrase is not a class, so the PRESENT row teaches only that the
+            # atom carries one -- "is there expansion?", which is the weaker
+            # half of the reading's own question. The phrase is the answer, and
+            # it is a span of the atom, so it goes out as one: `expansion`
+            # carries WHAT would repeat -- "lead to many more of the same
+            # opportunity" -- and a head can now be asked to produce it.
             phrase = "" if value is True else str(value or "").strip()
             rows.append(_axis_row(relation, PRESENT, lb, base, prov, "judgment",
                                   {"value": phrase, "parser_proposed": key in shown}))
+            if len(phrase) >= 8:
+                rows.append(_axis_row(f"reads_value:{key}", phrase, lb, base, prov,
+                                      "span", {"parser_proposed": key in shown}))
     return rows
 
 
@@ -351,6 +412,22 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
             "labeler": j.get("labeler") or "",
             "purpose": j.get("purpose") or "train",
         }
+        # The verdict, and separately WHY. A head told "invalid" sixty times
+        # with no reason learns to distrust a tone of voice; told that this one
+        # is answered, that one a duplicate and forty-five the right question
+        # about the wrong size of job, it can learn the rule -- and that the
+        # same question is VALID on a rollout.
+        reason = str(j.get("reason") or "").strip()
+        if reason:
+            rows.append({
+                "relation": f"{spec.relation}_reason", "label": reason,
+                "raw_text": text, "masked_text": text,
+                "label_kind": "judgment", "teacher": HUMAN_TEACHER,
+                "weight": 1.0, "confidence": 1.0, "scope": "deal",
+                "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+                "created_at": j.get("judged_at") or "", "split": split,
+                "provenance": json.dumps({**prov, "verdict": verdict}, ensure_ascii=False),
+            })
         rows.append({
             "relation": spec.relation, "label": verdict, "raw_text": text, "masked_text": text,
             "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,

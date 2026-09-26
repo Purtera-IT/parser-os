@@ -46,6 +46,20 @@ HEAD_CONTEXT: dict[str, tuple[str, ...]] = {
     # What does it want from us? Who is asking, and what follows it -- an ask
     # with its answer underneath wants nothing.
     "wants": V2_PARTS + ("from", "below"),
+    # Who READS this atom downstream. What kind of statement it is decides
+    # most of it, and who said it decides the rest: the same sentence from a
+    # reseller is evidence and from our own staff is coordination.
+    "consumer": V2_PARTS + ("doc", "from"),
+    # How much this row should count. Importance is not in the words -- it is
+    # in what hangs off them, so the list underneath matters.
+    "weight_tier": V2_PARTS + ("below", "doc"),
+    # The label this could credibly have been. Same string the type head sees,
+    # deliberately: the contrast is only useful if both sides are judged on the
+    # same evidence.
+    "rejected": V2_PARTS,
+    # Which hint settled it -- a question about the evidence, so it needs all
+    # of the evidence.
+    "decided_by": V2_PARTS + ("doc", "from", "above", "below"),
     # A conditional's gate is a person, and the parties name them.
     "reads:blocked_on": ("from",),
     # An announcement is only an announcement if something follows.

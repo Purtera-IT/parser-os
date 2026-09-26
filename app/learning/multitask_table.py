@@ -83,6 +83,11 @@ class TaskRow:
     #: A trainer must not mix versions blindly -- a head fit on v0 rows and
     #: served v2 decide-text is silently out of distribution.
     repr_version: int = 0
+    #: What this row is worth. `load_bearing` labels -- the exclusion that draws
+    #: the supply boundary, the site, the conflict -- count for more than a
+    #: throwaway aside, and until the column was selected here every row arrived
+    #: at the backbone worth the same.
+    weight: float = 1.0
 
 
 @dataclass
@@ -171,10 +176,14 @@ def assemble(
                 conn.close()
                 continue
             cols = {r[1] for r in conn.execute("PRAGMA table_info(training_rows)")}
-            wanted = ["relation", "label", "raw_text", "deal_id", "split", "teacher", "provenance"]
+            # `weight` was written on every row and never selected here, so the
+            # tiering only ever reached retrain.py: a load-bearing label and a
+            # throwaway one arrived at the backbone worth exactly the same.
+            wanted = ["relation", "label", "raw_text", "deal_id", "split", "teacher",
+                      "provenance", "weight"]
             select = ", ".join(c if c in cols else "''" for c in wanted)
             cursor = conn.execute(f"SELECT {select} FROM training_rows")
-            for relation, label, raw_text, deal_id, split, teacher, provenance in cursor:
+            for relation, label, raw_text, deal_id, split, teacher, provenance, weight in cursor:
                 relation = str(relation or "")
                 if relation not in tasks:
                     table.skipped[f"relation {relation} not a backbone task"] += 1
@@ -197,11 +206,15 @@ def assemble(
                             "decide_text_version", 0))
                     except Exception:  # noqa: BLE001 - malformed provenance == legacy
                         version = 0
+                try:
+                    w = float(weight) if weight not in (None, "") else 1.0
+                except (TypeError, ValueError):
+                    w = 1.0
                 row = TaskRow(
                     task=relation, text=text, label=label,
                     deal_id=str(deal_id or ""), split=split,
                     teacher=str(teacher or ""), source_db=db_path.name,
-                    repr_version=version,
+                    repr_version=version, weight=w,
                 )
                 key = (relation, text)
                 held = best.get(key)
