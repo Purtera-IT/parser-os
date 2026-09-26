@@ -112,11 +112,26 @@ def test_kickoff_transcript_routes_transcript(tmp_path: Path) -> None:
     assert match.parser_name == "transcript"
 
 
-def test_random_txt_produces_warning_no_crash(tmp_path: Path) -> None:
+def test_unstructured_text_is_read_rather_than_dropped(tmp_path: Path) -> None:
+    """This used to assert a "No parser matched artifact" warning, and the
+    warning was the whole outcome: NO parser claims a plain .txt with no
+    structure -- not one, at any confidence -- so the file's contents were lost
+    and a line in the warnings list was all that survived.
+
+    `UnreadParser` now reads anything that decodes as text. The words reach the
+    deal, badly modelled but present, and a specialised parser claiming the
+    file later supersedes it entirely. A file nobody has modelled beats a file
+    nobody has read."""
     artifact = tmp_path / "random.txt"
-    artifact.write_text("just filler words with no structured signals", encoding="utf-8")
+    artifact.write_text(
+        "just filler words with no structured signals\n"
+        "212 Cat6A drops at 7 Penn Plaza\n",
+        encoding="utf-8",
+    )
     result = compile_project(tmp_path, allow_errors=True)
-    assert any("No parser matched artifact" in warning for warning in result.warnings)
+    texts = " ".join(a.raw_text for a in result.atoms)
+    assert "212 Cat6A drops at 7 Penn Plaza" in texts
+    assert not any("No parser matched artifact" in w for w in result.warnings)
 
 
 def test_compile_trace_includes_parser_routing(tmp_path: Path) -> None:
