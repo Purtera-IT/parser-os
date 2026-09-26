@@ -108,3 +108,35 @@ def test_a_real_signature_still_reads_as_before():
     assert got["name"] == "Chase Smith"
     assert got["role"] == "Director of Operations"
     assert got["email"] == "chase@purtera-it.com"
+
+
+def test_a_quoted_name_with_an_address_beside_it_is_a_person():
+    """Chase asked Trent for the access-control contact out of CA. Trent answered
+    with `"Albert Arzate" <albert@rd-systems.com>`, and the deal's only
+    third-party contact appeared in no atom and no roster row.
+
+    It was deleted for being quoted. The rule is right about contracts, where
+    '("Customer Contact Person")' is a defined term rather than a human -- but
+    Outlook hands a colleague's contact over in exactly the same quotes, with the
+    address sitting next to the name. The address is what separates the two.
+    """
+    from app.core.atom_substance_gate import drop_contextless_stakeholders
+    from app.core.schemas import AtomType
+
+    def person(text, name):
+        a = _Atom(text, AtomType.stakeholder)
+        a.value = {"name": name, "kind": "email_body_line"}
+        return a
+
+    for text in (
+        '"Albert Arzate" <albert@rd-systems.com>',
+        '"Albert Arzate" <albert@rd-systems.com<mailto:albert@rd-systems.com>>',
+        "Albert Arzate <albert@rd-systems.com>",
+    ):
+        kept, dropped = drop_contextless_stakeholders([person(text, "Albert Arzate")])
+        assert kept and not dropped, text
+
+    # The thing the rule was written for still goes: quotes, and nothing else.
+    kept, dropped = drop_contextless_stakeholders(
+        [person('("Customer Contact Person")', "Customer Contact Person")])
+    assert dropped and not kept

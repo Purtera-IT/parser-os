@@ -472,7 +472,19 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             # FRA NewBold Corporation carlpai@cdw.com CDW Technologies LLC
             # Drafted By", an OCR'd header line) marks an organisation too.
             or (len(_nm_any.split()) >= 3 and _CORP_WORD_RE.search(_nm_any))
-            or re.search(r"[“\"']\s*" + re.escape(_nm_any) + r"\s*[”\"']", text)
+            # A quoted name is a DEFINED TERM only when nothing else in the
+            # line makes it a person. Outlook hands a colleague's contact over
+            # as `"Albert Arzate" <albert@rd-systems.com>` -- same quotes, real
+            # human, address sitting right beside the name. A contract's
+            # '("Customer Contact Person")' has no address, which is what
+            # separates the two. Live 010288: Chase asked Trent for the access
+            # control contact out of CA, Trent answered with exactly that line,
+            # and the deal's only third-party contact was deleted for being
+            # quoted -- no atom, no roster row, nowhere.
+            or (
+                re.search(r"[“\"']\s*" + re.escape(_nm_any) + r"\s*[”\"']", text)
+                and not (_EMAIL_RE.search(text) or has_phone(text))
+            )
         ):
             dropped.append(atom)
             continue
