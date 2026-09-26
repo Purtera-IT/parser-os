@@ -914,6 +914,29 @@ _NECESSITY_RE = re.compile(
     re.I,
 )
 
+# ── an instruction aimed at a colleague is coordination, not chatter ──
+# "AJ- get the location and well confirm if we can do it." carries no deal noun,
+# no digit and no second capital, because the only proper noun in it is the
+# person being told to do something and that is the FIRST word -- which the
+# prose test skips. Live 010288: every copy was deleted and the sentence the
+# deal turns on reached the envelope in no form at all.
+#
+# Grammar, not vocabulary, the same argument _NECESSITY_RE makes above: a name
+# or initials, then a dash/comma/colon, then a lowercase verb, is somebody being
+# given a job.
+_DIRECTED_TASK_RE = re.compile(
+    r"^(?:[A-Z][A-Za-z.]{0,14}|[A-Z]{2,4})\s*[-\u2013\u2014,:]\s*(?:please\s+)?[a-z]{2,}\b"
+)
+
+# "we'll confirm", and the same promise typed without the apostrophe, which is
+# how it arrived: "well confirm if we can do it".
+_WE_WILL_RE = re.compile(
+    r"\bwe(?:'|\u2019)?ll\s+[a-z]{2,}\b|"
+    r"\bwell\s+(?:confirm|check|send|get|let|review|call|quote|price|verify|"
+    r"follow|update|schedule|order)\b",
+    re.I,
+)
+
 
 def _is_conversational_prose(text: str, entity_keys: list[str]) -> bool:
     if _has_deal_substance(text, entity_keys):
@@ -925,6 +948,9 @@ def _is_conversational_prose(text: str, entity_keys: list[str]) -> bool:
     # whatever the nouns are. Live 010300 dropped the customer's capacity
     # requirement as banter.
     if _NECESSITY_RE.search(text):
+        return False
+    # Somebody being told to do something, or promising to do it.
+    if _DIRECTED_TASK_RE.match(text) or _WE_WILL_RE.search(text):
         return False
     words = text.split()
     if not words or len(words) > 14:

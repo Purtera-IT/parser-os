@@ -56,6 +56,32 @@ def _side_of(domain: str, ours: set[str]) -> str:
     return "ours" if any(o and o in d for o in ours) else "theirs"
 
 
+_QUOTED_CONTACT_RE = re.compile(r'^\s*"([^"]{2,60})\"\s*<\s*([^<>\s]+@[^<>\s]+?)\s*>')
+
+
+def _read_quoted_contact(text: str) -> dict[str, str]:
+    """``"Albert Arzate" <albert@rd-systems.com>`` -> name AND address.
+
+    A contact handed over in the body of a mail arrives in this shape, not as a
+    footer, so the signature reader returned the address and dropped the name --
+    and the deal's only third-party contact would have shown as a bare mailbox.
+    """
+    # Outlook writes every address twice, addr<mailto:addr>, which puts an
+    # angle bracket inside the angle brackets -- and the mailto form is the one
+    # the compile actually sees. Unwrap before matching.
+    flat = re.sub(r"<mailto:[^<>]*>", "", str(text or ""))
+    m = _QUOTED_CONTACT_RE.match(flat)
+    if not m:
+        return {}
+    name = " ".join(m.group(1).split())
+    email = m.group(2).strip().lower()
+    # Outlook writes the address twice: addr<mailto:addr>.
+    email = email.split("<mailto:")[0].strip().rstrip(">")
+    if not _EMAIL_RE.fullmatch(email):
+        return {}
+    return {"name": name, "email": email}
+
+
 def read_signature(text: str) -> dict[str, str]:
     """name / role / phone / email from one signature block, or {}.
 
@@ -64,6 +90,10 @@ def read_signature(text: str) -> dict[str, str]:
     than guessed at: a half-read title on a person record is worse than none,
     because it looks like knowledge.
     """
+    got = _read_quoted_contact(text)
+    if got:
+        return got
+
     out: dict[str, str] = {}
     chunks = _parts(text)
     if not chunks:
