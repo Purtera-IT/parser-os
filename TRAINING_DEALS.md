@@ -45,7 +45,15 @@ is burned and there is nothing clean to measure with. Leave some alone.
 | documents | `document_job` 12 (all `this_deal`) |
 | sites | `site_role` 1 (`job_site`) |
 | deal | router gold: `security_access`, 1 site, 2,675-char defect note |
-| **total** | **1,005 rows** |
+| rationale | `rationale:*` 236 — atom 65, gap 81, edge 76, document_job 12, site_role 1, deal 1 |
+| **total** | **1,241 rows** |
+
+Every note written on this deal reaches a row: 65 of 65 atom notes, 94 of 94
+judgment notes, 79 of 80 link notes (the last is the card's own boilerplate),
+161 of 161 evidence spans. 137,000 characters of argument are carried as
+generative targets under `rationale:*`, which `multitask_table` does not list
+as a backbone task — so a classifier skips them untouched and a generative head
+has all of it.
 
 Weights: 3.0 × load-bearing, 1.0 × ordinary, 0.3 × slight.
 

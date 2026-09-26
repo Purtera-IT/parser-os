@@ -192,6 +192,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
         out.extend(_axis_rows(lb, base, prov, report))
     out.extend(_judgment_rows(doc, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
+    out.extend(deal_rationale_rows(doc, deal_id, split))
     report.rows += len(out)
     return out
 
@@ -208,6 +209,39 @@ _TIER_WEIGHT = {"load_bearing": 3.0, "ordinary": 1.0, "slight": 0.3}
 
 def _row_weight(lb: dict[str, Any]) -> float:
     return _TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0)
+
+
+
+#: Notes the card writes on a labeler's behalf. They say when something was
+#: drawn, never why, and a rationale target built from one teaches the model to
+#: produce filler.
+_EMPTY_NOTES = frozenset({
+    "drawn while labelling the whole deal",
+    "drawn while labelling",
+    "",
+})
+
+
+def _rationale_row(kind: str, prompt: str, note: str, base: dict[str, Any],
+                   prov: dict[str, Any], weight: float = 1.0) -> dict[str, Any]:
+    """One (what was in front of me) -> (what I argued) pair.
+
+    The label is a paragraph, which no classifier can use and every generative
+    head can. Kept under its own relation so the backbone builder skips it: a
+    task it does not list is a task it ignores, which is exactly the behaviour
+    wanted here.
+    """
+    prompt = " ".join(str(prompt or "").split())
+    return {
+        **base,
+        "relation": f"rationale:{kind}",
+        "label": str(note or "").strip(),
+        "raw_text": prompt,
+        "masked_text": prompt,
+        "label_kind": "rationale",
+        "weight": weight,
+        "provenance": json.dumps(prov, ensure_ascii=False),
+    }
 
 
 def _axis_row(relation: str, label_value: str, lb: dict[str, Any], base: dict[str, Any],
@@ -262,6 +296,20 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
                               "span", {"span_kind": ref.get("kind"),
                                        "span_atom_id": ref.get("atomId"),
                                        "span_filename": ref.get("filename")}))
+
+    # The argument itself, as a target. The prompt is what the labeler was
+    # looking at; the label is what they concluded and why.
+    note = str(lb.get("note") or "").strip()
+    if len(note) >= 40:
+        chose = " | ".join(x for x in (
+            f"type={lb.get('label_type')}",
+            f"about={lb.get('about')}" if lb.get("about") else "",
+            f"wants={lb.get('wants')}" if lb.get("wants") else "",
+            f"supplier={lb.get('supplier')}" if lb.get("supplier") else "",
+        ) if x)
+        rows.append(_rationale_row(
+            "atom", f"{context_text('atom_type', lb)}\nCHOSE: {chose}",
+            note, base, prov, _row_weight(lb)))
 
     rejected = str(lb.get("rejected") or "").strip()
     if rejected and rejected != str(lb.get("label_type") or "").strip():
@@ -370,6 +418,21 @@ def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestRepo
             "labeler": k.get("labeler") or "",
             "purpose": k.get("purpose") or "train",
         }
+        # 22,650 characters across eighty edges on 010288, and the row said
+        # "contradicts" without a word about why THESE two. The edge head has
+        # no gold anywhere; it was getting the thinnest version of the richest
+        # reasoning on the deal.
+        knote = str(k.get("note") or "").strip()
+        # A length floor cannot tell "this line cannot be read without it" (35
+        # characters, an argument) from "drawn while labelling the whole deal"
+        # (36, the card's default). Name the boilerplate instead.
+        if len(knote) >= 24 and knote.lower() not in _EMPTY_NOTES:
+            rows.append(_rationale_row(
+                "edge", f"{text}\nRELATION: {label}", knote, {
+                    "teacher": HUMAN_TEACHER, "confidence": 1.0, "scope": "deal",
+                    "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+                    "created_at": k.get("created_at") or "", "split": split,
+                }, prov))
         rows.append({
             "relation": "edge_relation", "label": label, "raw_text": text, "masked_text": text,
             "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
@@ -428,6 +491,16 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
                 "created_at": j.get("judged_at") or "", "split": split,
                 "provenance": json.dumps({**prov, "verdict": verdict}, ensure_ascii=False),
             })
+        jnote = str(j.get("note") or "").strip()
+        if len(jnote) >= 40:
+            rows.append(_rationale_row(
+                str(j.get("head") or "judgment"),
+                f"{text}\nVERDICT: {verdict}" + (f" ({reason})" if reason else ""),
+                jnote, {
+                    "teacher": HUMAN_TEACHER, "confidence": 1.0, "scope": "deal",
+                    "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+                    "created_at": j.get("judged_at") or "", "split": split,
+                }, prov))
         rows.append({
             "relation": spec.relation, "label": verdict, "raw_text": text, "masked_text": text,
             "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
@@ -485,6 +558,30 @@ def write_db(docs: Iterable[dict[str, Any]], target: Path) -> IngestReport:
     finally:
         conn.close()
     return report
+
+
+def deal_rationale_rows(doc: dict[str, Any], deal_id: str, split: str) -> list[dict[str, Any]]:
+    """The deal-level answer, argued. "What the parser got wrong across the
+    whole deal" is the only place a labeler writes about the deal rather than
+    about a line, and it reached `deal_gold`, which the backbone builder does
+    not read."""
+    rows: list[dict[str, Any]] = []
+    for ans in doc.get("deal_answers") or []:
+        if not isinstance(ans, dict) or not _is_a_person(ans.get("labeler")):
+            continue
+        note = str(ans.get("note") or "").strip()
+        if len(note) < 40:
+            continue
+        prompt = (f"DEAL {deal_id}\n"
+                  f"PRIMARY SERVICE: {ans.get('primary_service')}\n"
+                  f"SITES: {ans.get('declared_site_count')}")
+        rows.append(_rationale_row("deal", prompt, note, {
+            "teacher": HUMAN_TEACHER, "confidence": 1.0, "scope": "deal",
+            "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+            "created_at": ans.get("answered_at") or "", "split": split,
+        }, {"source": "purpulse_atom_labeler", "head": "router",
+            "labeler": ans.get("labeler") or ""}))
+    return rows
 
 
 def docs_from_gold_export(payload: dict[str, Any], *, labeler: str = "") -> list[dict[str, Any]]:
