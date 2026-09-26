@@ -193,3 +193,36 @@ def test_the_llm_pass_is_the_one_that_mattered():
     answered = ["Alec Burns", "Senior Client Executive", "Commercial Majors"]
     kept = [n for n in answered if not job(n.lower().replace(" ", "_"))]
     assert kept == ["Alec Burns"]
+
+
+def test_no_producer_turns_a_signature_into_a_job():
+    """Five producers mint stakeholder keys and the rule was true for all of
+    them. This runs the lot over the real signatures and asserts the result
+    rather than any one path -- four separate fixes each passed their own test
+    and changed nothing about the compiled deal."""
+    from app.core.entity_extraction import (
+        _emit_person_from_contact,
+        _emit_stakeholders,
+        extract_keys,
+    )
+    from app.core.entity_hygiene import filter_entity_keys_for_atom
+    from app.domain import get_active_domain_pack
+
+    pack = get_active_domain_pack()
+    titles = {"commercial_majors", "senior_client_executive", "account_executive",
+              "executive_vice_president", "director_of_operations"}
+
+    for text in SIGS:
+        class A:
+            raw_text = text
+            normalized_text = text
+            value: dict = {}
+            entity_keys: list = []
+            source_refs: list = []
+
+        keys = (set(extract_keys(text, pack=pack))
+                | _emit_person_from_contact(text)
+                | _emit_stakeholders(text))
+        keys = set(filter_entity_keys_for_atom(A(), sorted(keys)))
+        got = {k.split(":", 1)[1] for k in keys if k.startswith("stakeholder:")}
+        assert not (got & titles), (text, sorted(got))
