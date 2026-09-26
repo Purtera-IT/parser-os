@@ -225,6 +225,62 @@ def pair_questions_with_answers(atoms: list[Any]) -> int:
     return paired
 
 
+def pair_within_one_line(atoms: list[Any]) -> int:
+    """Pair a line that asks k times and then answers k times, in order.
+
+    The parser can split one source line into several atoms. When it does, the
+    inline rule has nothing left to match and the next-line rule refuses to look
+    sideways, so a line like
+
+        "Has the door been installed with the lock? Do we know the type of
+        lock? - Defer to client ... They are intending to use a maglock."
+
+    yields two questions nobody ever answers. Live 010288.
+
+    Only the unambiguous shape is taken: every question first, every answer
+    after, and the same number of each. Anything interleaved, lopsided or
+    chattier than that is left for a human -- guessing which half of a line
+    answers which question is the judgement a head should learn, not a rule.
+    """
+    paired = 0
+    body_kinds = {"email_body_line", "hubspot_note_body", "note_field",
+                  "note_field_item", "email_context"}
+    groups: dict[tuple, list[Any]] = {}
+    for a in atoms:
+        v = _value(a)
+        if str(v.get("kind") or "") not in body_kinds:
+            continue
+        loc = getattr(a, "locator", None)
+        loc = loc if isinstance(loc, dict) else {}
+        line = v.get("line", v.get("line_start", loc.get("line_start")))
+        if not isinstance(line, int):
+            continue
+        msg = v.get("message_index", loc.get("message_index"))
+        key = (str(getattr(a, "artifact_id", "") or ""),
+               int(msg) if isinstance(msg, int) else 0, line)
+        groups.setdefault(key, []).append(a)
+
+    for group in groups.values():
+        if len(group) < 4:          # one Q and one A on a line is rule 1's job
+            continue
+        flags = [_is_question(a) for a in group]
+        qs = [a for a, q in zip(group, flags) if q]
+        rest = [a for a, q in zip(group, flags) if not q]
+        if len(qs) < 2 or len(qs) != len(rest):
+            continue
+        # every question before every answer -- "Q Q A A", not "Q A Q A"
+        if any(flags[i] for i in range(len(flags))[len(qs):]):
+            continue
+        if not all(_looks_like_answer(a) for a in rest):
+            continue
+        if any(_value(q).get("answered") for q in qs):
+            continue
+        for q, a in zip(qs, rest):
+            _pair(q, _text(a), source="same_line_split", answer_atom=a)
+            paired += 1
+    return paired
+
+
 def pair_across_thread(atoms: list[Any]) -> int:
     """A question answered by a LATER message in the same thread. Proposed, not
     asserted: it lands needs_review for a PM to confirm."""
@@ -265,4 +321,4 @@ def pair_across_thread(atoms: list[Any]) -> int:
     return paired
 
 
-__all__ = ["pair_questions_with_answers", "pair_across_thread"]
+__all__ = ["pair_questions_with_answers", "pair_across_thread", "pair_within_one_line"]

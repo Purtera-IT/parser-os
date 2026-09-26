@@ -906,13 +906,22 @@ def compile_project(
             # it, and after the quoted-history dedup so it pairs with the
             # authored original rather than a quoted echo.
             try:
-                from app.core.qa_pairing import pair_across_thread, pair_questions_with_answers
+                from app.core.qa_pairing import (
+                    pair_across_thread,
+                    pair_questions_with_answers,
+                    pair_within_one_line,
+                )
 
+                # First: a line the parser split into several atoms. The other
+                # two rules cannot see inside one line, so this runs before
+                # them and marks those questions answered.
+                _inline = pair_within_one_line(atoms)
                 _same = pair_questions_with_answers(atoms)
                 _cross = pair_across_thread(atoms)
-                if _same or _cross:
+                if _inline or _same or _cross:
                     warnings.append(
-                        f"INFO: qa_pairing joined {_same} question(s) to an answer in the same message"
+                        f"INFO: qa_pairing joined {_inline} question(s) to an answer on the same"
+                        f" split line, {_same} in the same message"
                         f" and proposed {_cross} answered by a reply"
                     )
             except Exception as exc:
