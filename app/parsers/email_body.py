@@ -448,6 +448,8 @@ _NOTES_HEADING = re.compile(
 #: ("…for conference rooms. 2:01"). It is not a time the job cares about,
 #: and left on it becomes part of the last sentence's atom.
 _CALL_OFFSET = re.compile(r"[\s ]*\d{1,2}:\d{2}[\s ]*$")
+#: The same offset anywhere in the text, for counting them.
+_CALL_OFFSET_ANY = re.compile(r"[\s\u00a0]\d{1,2}:\d{2}[\s\u00a0]*$", re.M)
 #: End of sentence: a full stop, ? or !, followed by space and a capital.
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\s ]+(?=[A-Z0-9])")
 
@@ -464,6 +466,23 @@ def _is_prose(body: str) -> bool:
     if not text.endswith((".", "!", "?")):
         return False
     return len(text.split()) >= _MIN_PROSE_WORDS
+
+
+def reads_as_call_notes(text: str) -> bool:
+    """Does this body carry recording offsets -- is it notes from a call?
+
+    The offsets themselves are not facts about the job: "2:01" is a position in
+    a recording, and left on the end of a sentence it becomes part of that
+    sentence's atom. But they are evidence ABOUT the document, and dropping
+    them silently threw that away.
+
+    A document that is somebody's notes from a call is weaker evidence than a
+    signed SOW -- nobody agreed to it, it is one person's summary -- and it
+    says a recording exists that the deal does not hold, which is the `chase`
+    reading. Two or more offsets, because one stray time of day is a time of
+    day.
+    """
+    return len(_CALL_OFFSET_ANY.findall(text or "")) >= 2
 
 
 def split_notes_entries(text: str) -> str:

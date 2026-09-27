@@ -897,10 +897,18 @@ _SECTION_HEADING_LABEL = re.compile(
 
 
 def _label_takes_sentences(label: list[str] | None) -> bool:
-    """Is this label a section heading, whose items are whole sentences?"""
+    """Is the INNERMOST label a section heading, whose items are sentences?
+
+    The last element, not the first. Labels nest -- "Notes below:" opens the
+    block and "Layout & Technical Requirements:" opens the paragraph inside it
+    -- and the one that decides how long an item may be is the nearest one.
+    Reading label[0] asked "Notes below:" whether its items are sentences, got
+    no for a two-word generic opener, and left the whole notes block with no
+    pointers at all.
+    """
     if not label:
         return False
-    return bool(_SECTION_HEADING_LABEL.match(str(label[0]).strip()))
+    return bool(_SECTION_HEADING_LABEL.match(str(label[-1]).strip()))
 
 
 def _reads_as_list_item(line: str, label: list[str] | None = None) -> bool:
@@ -3259,7 +3267,12 @@ class EmailParser(BaseParser):
             #     rooms became bare fragments, and the substance gate took them.
             if not is_bullet and _is_email_list_framing_lead_in(cleaned):
                 pending_lead_in = [cleaned.rstrip()]
-                list_label = [cleaned.rstrip()]
+                # Nests inside an open label, exactly as 3b does. A framing
+                # lead-in reaches this branch first, so without the same rule
+                # here "Layout & Technical Requirements:" replaced "Notes
+                # below:" and the outer pointer was gone before 3b ever saw it.
+                list_label = ([list_label[0], cleaned.rstrip()] if list_label
+                              else [cleaned.rstrip()])
                 provided_by = None
                 continue
             # 3) List-section header ("Include:"/"Exclude:") — not an atom; the
@@ -3282,7 +3295,21 @@ class EmailParser(BaseParser):
             #     intro line of the items beneath. "Provided by us:" also says
             #     who supplies them -- and "us" is the SENDER's organisation.
             if not is_bullet and _LIST_LABEL_RE.match(cleaned) and not _PSEUDO_HEADER_RE.match(cleaned):
-                list_label = [cleaned.rstrip()]
+                # A label arriving while one is OPEN nests inside it. Which is
+                # outer needs no semantics: the one already open is the one
+                # that opened the block. "Notes below:" governs the whole
+                # block; "Layout & Technical Requirements:" governs the
+                # sentences under it; "Sequence & Coordination:" replaces that
+                # heading and leaves "Notes below:" standing.
+                #
+                # Replacing the outer with the inner threw away the thing that
+                # says which block a fact came from: live 010180, section and
+                # intro both read "Layout & Technical Requirements" and "Notes
+                # below:" appeared nowhere. Two levels, because a third has not
+                # turned up in the corpus and a breadcrumb nobody can read is
+                # not context.
+                list_label = ([list_label[0], cleaned.rstrip()] if list_label
+                              else [cleaned.rstrip()])
                 _pb = _PROVIDED_BY_RE.match(cleaned)
                 if _pb:
                     _who = _pb.group(1).strip()
