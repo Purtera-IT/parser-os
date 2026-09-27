@@ -68,8 +68,24 @@ def test_stated_date_and_participants_win_over_the_ulid(tmp_path: Path) -> None:
 
 def test_small_talk_loses_its_type_and_filler_is_dropped(tmp_path: Path) -> None:
     atoms = TranscriptParser().parse_artifact("p", "art_ff", _write(tmp_path, _CALL))
+    from app.core.atom_substance_gate import LOW_SUBSTANCE_FLAG
+
     kept, dropped = apply_substance_gate(atoms)
-    texts = {a.raw_text for a in kept}
+    # Filler is demoted, not deleted -- which is what this module's own
+    # transcript passes have always done ("the words are kept, the claim is
+    # withdrawn", `dropped` always empty). What was deleting "Yeah." was a
+    # DOCUMENT pass running before them, and that is a real loss: a "Yeah."
+    # straight after a question is the answer to it, and an `answers` edge on
+    # that pair now closes the question on the next compile. Delete the answer
+    # and the question stays open forever.
+    #
+    # The protection this test exists for is unchanged and asserted directly
+    # below: filler must not keep a substantive type.
+    filler = {a.raw_text: a for a in kept if a.raw_text in ("Yeah.", "Okay.")}
+    for text, atom in filler.items():
+        assert LOW_SUBSTANCE_FLAG in atom.review_flags, f"{text} kept with no verdict on it"
+        assert atom.atom_type in (AtomType.deal_metadata, AtomType.raw_utterance),             f"{text} survived as {atom.atom_type}"
+    texts = {a.raw_text for a in kept if LOW_SUBSTANCE_FLAG not in a.review_flags}
     assert "Yeah." not in texts and "Okay." not in texts
     typed = {a.raw_text: a.atom_type for a in kept if a.atom_type != AtomType.raw_utterance and (a.value or {}).get("kind") != "transcript_header"}
     assert "And they play Youngstown State, right?" not in typed

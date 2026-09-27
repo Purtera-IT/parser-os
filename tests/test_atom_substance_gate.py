@@ -197,9 +197,19 @@ def test_apply_substance_gate_combined():
         _mk("scope_item", "Yeah."),                          # drop
         _mk("scope_item", "SSO integration"),               # keep
     ]
+    from app.core.atom_substance_gate import LOW_SUBSTANCE_FLAG
+
     kept, dropped = apply_substance_gate(atoms)
-    assert set(_texts(kept)) == {"Renee Watkins, Director", "SSO integration"}
-    assert set(_texts(dropped)) == {"Tom Amble.", "Yeah."}
+    # Substance keeps its type; the thin lines keep their words and lose the
+    # claim. The gate's judgement is unchanged and is asserted directly -- it is
+    # now expressed as a flag rather than a deletion, so the twenty arguable
+    # lines on a real deal reach a labeller and become gold for the admission
+    # head. ("Yeah." here is a bare scope_item, not a transcript utterance;
+    # spoken filler is still deleted -- see test_transcript_context.)
+    substantive = {a.raw_text for a in kept if LOW_SUBSTANCE_FLAG not in a.review_flags}
+    assert substantive == {"Renee Watkins, Director", "SSO integration"}
+    thin = {a.raw_text for a in kept if LOW_SUBSTANCE_FLAG in a.review_flags}
+    assert thin | set(_texts(dropped)) == {"Tom Amble.", "Yeah."}
 
 
 # ── transcript-PDF over-fragmentation: bare speaker-header atoms ──

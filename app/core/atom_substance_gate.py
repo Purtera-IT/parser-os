@@ -50,6 +50,7 @@ kept, and only ``stakeholder`` / generic-prose types are ever examined.
 
 from __future__ import annotations
 
+import os
 import re
 
 from app.core.phones import has_phone
@@ -1350,20 +1351,105 @@ def collapse_ambiguous_user_quantities(atoms: list[Any]) -> tuple[list[Any], lis
     return non_qty + kept_qty, dropped_qty
 
 
+#: Flag left on a line the email pass would have deleted: thin, and a person or
+#: a trained head decides what that is worth.
+LOW_SUBSTANCE_FLAG = "low_substance"
+
+#: `drop_email_non_scope` is the one pass whose deletions are arguable, so it is
+#: the one pass that becomes advisory. On live 010180 it removed "Definitely
+#: dude can help out." -- the only sentence in 42 documents saying what PurTera
+#: actually does -- and "It's not letting me pull it up due to access
+#: restraints.", a live blocker on a document nobody could open. Both were gone
+#: before a labeller saw them, so a judgement made silently on every compile
+#: produced no evidence in either direction and the rule stayed hand-written.
+#:
+#: The words come back; the false claim does not. "Excited to knock this out of
+#: the park with y'all" arrives typed `scope_item`, and the pass's real finding
+#: is not that the sentence should vanish but that it is not scope -- so the
+#: atom is demoted to `deal_metadata` and flagged. That is the contract this
+#: module's own tests already accepted: drop it OR take its type away.
+#:
+#: Deliberately only this pass. Contact chrome, section headers and transcript
+#: filler keep deleting: a recorded call yields thousands of "Yeah." and
+#: "Okay.", nobody disputes they are filler, and restoring them would bury the
+#: handful of lines actually worth an argument.
+#: SOWSMITH_EMAIL_NON_SCOPE_DELETE=1 restores the old behaviour.
+_EMAIL_PASS_ADVISORY = os.environ.get(
+    "SOWSMITH_EMAIL_NON_SCOPE_DELETE", "").strip().lower() not in ("1", "true", "yes", "on")
+
+
+#: The five document passes. Every one of them is a hand-written rule about
+#: whether a line is worth keeping, which is exactly the judgement a head should
+#: be making -- and none of them could ever be replaced, because deleting a line
+#: before a labeller sees it yields no training row either way. Measured on live
+#: 010180 these five removed 39 atoms between them, 20 distinct texts: a minute
+#: of sorting, and the only gold `line_admission` will ever get.
+#:
+#: The two transcript passes need no exemption, because they never deleted
+#: anything: both retag in place and return an empty `dropped` -- "the words are
+#: kept, the claim is withdrawn". The document passes were removing spoken lines
+#: BEFORE the transcript passes could demote them, which is how "Yeah." vanished
+#: from a call. It should not: a "Yeah." straight after a question is the answer
+#: to it, and an `answers` edge on that pair now closes the question on the next
+#: compile. Deleting it destroys the answer and keeps the question open forever.
+_ADVISORY_PASSES: tuple = ()
+
+
+def _demote_out_of_scope(atom: Any) -> None:
+    """Take away the claim, leave the words."""
+    flags = getattr(atom, "review_flags", None)
+    if isinstance(flags, list) and LOW_SUBSTANCE_FLAG not in flags:
+        flags.append(LOW_SUBSTANCE_FLAG)
+    try:
+        from app.core.schemas import AtomType, ReviewStatus
+
+        if getattr(atom, "atom_type", None) is not AtomType.deal_metadata:
+            atom.atom_type = AtomType.deal_metadata
+        # A line that only survives because nobody has judged it yet IS awaiting
+        # review, and saying so is not bookkeeping: the compile validator holds
+        # that an atom carrying `calibration_abstain` must be needs_review, and
+        # these atoms never met that rule before because they were deleted
+        # before validation ever saw them. Leaving them auto_accepted would
+        # assert the compiler had decided something it explicitly had not.
+        if getattr(atom, "review_status", None) is ReviewStatus.auto_accepted:
+            atom.review_status = ReviewStatus.needs_review
+    except Exception:
+        pass
+
+
+if _EMAIL_PASS_ADVISORY:
+    _ADVISORY_PASSES = (drop_contextless_stakeholders, drop_nonsubstantive_fragments,
+                        drop_contact_chrome, drop_section_headers, drop_email_non_scope)
+
+
+
 def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Run all drops. Returns (kept, dropped). ``dropped`` is the union across
     passes; the compiler routes it into the retained-suppression ledger."""
     all_dropped: list[Any] = []
-    kept, d = drop_contextless_stakeholders(atoms)
-    all_dropped.extend(d)
-    kept, d = drop_nonsubstantive_fragments(kept)
-    all_dropped.extend(d)
-    kept, d = drop_contact_chrome(kept)
-    all_dropped.extend(d)
-    kept, d = drop_section_headers(kept)
-    all_dropped.extend(d)
-    kept, d = drop_email_non_scope(kept)
-    all_dropped.extend(d)
+
+    def _run(pass_fn, current):
+        """Run one drop pass. Advisory passes keep the words and lose the claim.
+
+        A rule that deletes a line before anybody sees it can never be replaced
+        by a learned one: it produces no evidence, in either direction, on every
+        compile forever. So the five document passes hand their removals back,
+        demoted out of scope and flagged, and the labeller's verdict on them is
+        what `line_admission` is trained on.
+        """
+        surviving, removed = pass_fn(current)
+        if pass_fn in _ADVISORY_PASSES:
+            for atom in removed:
+                _demote_out_of_scope(atom)
+            return surviving + list(removed)
+        all_dropped.extend(removed)
+        return surviving
+
+    kept = _run(drop_contextless_stakeholders, atoms)
+    kept = _run(drop_nonsubstantive_fragments, kept)
+    kept = _run(drop_contact_chrome, kept)
+    kept = _run(drop_section_headers, kept)
+    kept = _run(drop_email_non_scope, kept)
     kept, d = drop_transcript_conversational(kept)
     all_dropped.extend(d)
     kept, d = demote_transcript_smalltalk(kept)

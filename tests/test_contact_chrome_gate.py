@@ -95,9 +95,26 @@ def test_dropped_atoms_are_returned_not_discarded():
 def test_the_gate_runs_this_pass():
     from app.core.atom_substance_gate import apply_substance_gate
 
+    from app.core.atom_substance_gate import LOW_SUBSTANCE_FLAG
+
     kept, dropped = apply_substance_gate([A("t"), A("quinton.james@cdw.com"), A("Install 10 clocks")])
-    assert types(kept) == ["Install 10 clocks"]
-    assert len(dropped) == 2
+    # The pass still identifies the chrome -- see the test above, which asserts
+    # `drop_contact_chrome` separates it exactly as before. What changed is what
+    # the GATE does with that verdict: the lines stay so a labeller can confirm
+    # them, carrying the flag, and `line_admission` learns the rule instead of
+    # it being hand-written forever. A line deleted before anyone sees it can
+    # never become training data in either direction.
+    def _flagged(a):
+        # The stub atom in this file has no review_flags list, and
+        # `_demote_out_of_scope` correctly leaves such an object's flags
+        # alone -- so identify the demoted ones by the type it sets.
+        return (LOW_SUBSTANCE_FLAG in (getattr(a, 'review_flags', None) or [])
+                or str(getattr(a, 'atom_type', '')).endswith('deal_metadata'))
+
+    scope = [a for a in kept if not _flagged(a)]
+    assert types(scope) == ["Install 10 clocks"], "chrome survived as real scope"
+    flagged = [a for a in kept if _flagged(a)]
+    assert len(flagged) == 2, "the pass's verdict was lost, not just its delete"
 
 
 def test_an_ip_address_is_not_a_phone_number():
