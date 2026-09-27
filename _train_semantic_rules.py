@@ -33,6 +33,24 @@ from pathlib import Path
 
 import numpy as np
 
+#: Rules whose threshold is NOT adopted from a training run, however well it
+#: scores. A rule here decides a path that already has a measured deterministic
+#: implementation, so a threshold fitted to the rule's own hand-written
+#: prototypes is not evidence enough to take that path over.
+#:
+#: `list_item_under_label` earned its place on 2026-09-27: leave-one-out f1
+#: went 0.692 -> 0.938 at threshold 0.25, the same-files-twice impact gate
+#: reported +0/-0, and the suite then failed two pinned behaviours -- prose
+#: stopped closing a list, and "Security & Access Control" lost the heading
+#: that governs it. The gate was uninformative rather than reassuring: it
+#: counts atoms surviving the substance gate, and what this rule moves is which
+#: heading an atom is read with.
+#:
+#: Remove a name from here once its threshold is fitted on real labelled
+#: decisions from the rule log rather than on the examples it ships with.
+HOLD_BACK: frozenset[str] = frozenset({"list_item_under_label"})
+
+
 REGISTRY = Path(os.environ.get(
     "SOWSMITH_RULE_THRESHOLDS",
     str(Path(__file__).resolve().parent / "models" / "semantic_rule_thresholds.json"),
@@ -175,8 +193,9 @@ def main() -> int:
         cur_preds = [1 if (bp >= cur and bp > bn) else 0 for bp, bn, _ in scored]
         cur_f1 = _f1([lab for _, _, lab in scored], cur_preds)
         new_t, new_f1 = _best_threshold(scored)
-        adopt = new_f1 >= cur_f1 + 1e-9 and new_t is not None
-        flag = "ADOPT" if adopt else "keep "
+        held = rule.name in HOLD_BACK
+        adopt = new_f1 >= cur_f1 + 1e-9 and new_t is not None and not held
+        flag = "HELD " if held else "ADOPT" if adopt else "keep "
         print(f"  {rule.name:26} cur thr={cur:.2f} f1={cur_f1:.3f}  ->  "
               f"best thr={new_t:.2f} f1={new_f1:.3f}  [{flag}]  (n={len(scored)})")
         if adopt:

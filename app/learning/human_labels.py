@@ -372,6 +372,36 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
             "atom", f"{context_text('atom_type', lb)}\nCHOSE: {chose}",
             note, base, prov, _row_weight(lb)))
 
+    # ADMISSION: should this text have been an atom at all?
+    #
+    # The one axis a labeler cannot teach by judging what is on screen. An atom
+    # exists only where the parser admitted it, so every ordinary label is a
+    # positive and the boundary has one side. Two rows fix that, and both come
+    # from things a labeler already does:
+    #
+    #   origin=labeler  they highlighted text the parser made no atom of, so
+    #                   the admission decision was WRONG to skip it.
+    #   _keep           the parser made an atom and a person said it is not a
+    #                   fact -- boilerplate, a header, table scaffolding --
+    #                   so it was wrong to admit it.
+    #
+    # Measured 2026-09-27 before this existed: 65 rule decisions joined to
+    # labels across two deals, 65 positives, 0 negatives. `origin` was written
+    # on every row and read by nothing.
+    # The vocabulary is the one HEAD_REGISTRY["admission"] already declares and
+    # PM corrections already write: ("keep", "drop"). Note the collision of
+    # names -- the label TYPE `_keep` means "not a fact worth typing", and the
+    # admission verdict `keep` means "this is work this deal quotes". A `_keep`
+    # label is therefore admission `drop`.
+    origin = str(lb.get("origin") or "").strip().lower()
+    label_type = str(lb.get("label_type") or "").strip()
+    if origin == "labeler":
+        rows.append(_axis_row("admission", "keep", lb, base, prov, "judgment",
+                              {"parser_missed": True, "origin": "labeler"}))
+    elif label_type == KEEP:
+        rows.append(_axis_row("admission", "drop", lb, base, prov, "judgment",
+                              {"parser_admitted_a_non_fact": True}))
+
     rejected = str(lb.get("rejected") or "").strip()
     if rejected and rejected != str(lb.get("label_type") or "").strip():
         rows.append(_axis_row("rejected", rejected, lb, base, prov, "judgment",
