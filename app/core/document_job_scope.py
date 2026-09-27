@@ -79,6 +79,47 @@ _ARRIVED_WITH = timedelta(minutes=2)
 _SUBJECT_PREFIX_RE = re.compile(r"^(?:(?:re|fw|fwd|aw|wg|sv|vs)\s*:\s*|[#\[\]()0-9._/-]+\s+)+")
 
 
+#: A drawing is titled by the BUILDING, never by the job.
+_DRAWING_SUFFIXES = (".dwg", ".dxf", ".rvt", ".skp",
+                     ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".heic")
+#: A drawing sheet number ("SP-6", "A-101", "E1.2") in the filename. Architects
+#: name sheets this way whoever the tenant is.
+_SHEET_NUMBER_RE = re.compile(r"(?:^|[_\s-])[A-Z]{1,2}-?\d{1,3}(?:\.\d+)?(?:-\d+)?(?=[_\s.-]|$)")
+
+
+def is_drawing(filenames: list[str]) -> bool:
+    """Is this bundle a drawing set rather than a conversation?
+
+    The judge is asked to compare the WORK, because customer, vendor, people
+    and dates are shared by every job a customer has. A drawing gives it no
+    work to compare -- a floorplan is lines and a title block -- so the model
+    falls back on the one thing it was told not to trust: the name. And a
+    drawing's name is the BUILDING's, never the deal's.
+
+    Live 010180 ("CDW FlexTrade Cabling", 7 Penn Plaza 12th floor). Its own
+    floorplans arrived as ``07.21.26_FEIL ORGANIZATION_7 PENN PLAZA_12 FL_
+    SP-6.pdf`` and the matching ``.dwg`` -- Feil is the landlord, as the title
+    block on every architectural sheet names the building's owner. Against the
+    deal name the judge read "another job" at 0.95 and set aside 56 atoms: the
+    entire drawing set for the floor being cabled, on the deal whose scope IS
+    that floor. That is also why no DWG atom has ever reached an envelope.
+
+    The trade is deliberate and asymmetric. Setting aside the deal's own
+    floorplan is silent and removes the scope; carrying one extra drawing is
+    visible and a PM can say so. A drawing that truly belongs to another job
+    is still judged and still reported in the trace -- it just is not deleted
+    on the strength of a name.
+    """
+    names = [str(f or "") for f in filenames if f]
+    if not names:
+        return False
+    return all(
+        n.lower().endswith(_DRAWING_SUFFIXES)
+        or (n.lower().endswith(".pdf") and bool(_SHEET_NUMBER_RE.search(Path(n).stem.upper())))
+        for n in names
+    )
+
+
 def enabled() -> bool:
     return os.environ.get("SOWSMITH_DOCUMENT_JOB_SCOPE", "1").strip().lower() not in ("0", "false", "no", "off")
 
@@ -446,6 +487,13 @@ def judge_documents(
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
         other = verdict == "other_job" and (source == "store" or conf >= floor)
+        # A drawing is never removed on the model's word alone (see is_drawing).
+        # A PM's taught verdict still removes it -- a person looking at the
+        # sheet knows which job it is, and the model looking at its title
+        # block does not.
+        drawing_spared = bool(other and source != "store" and is_drawing(filenames))
+        if drawing_spared:
+            other = False
         n_atoms = sum(len(d_) for d_ in docs)
         verdicts.append({
             "bundle": b["title"], "filename": filenames[0], "filenames": filenames,
@@ -453,6 +501,7 @@ def judge_documents(
             "verdict": "other_job" if other else "this_deal", "model_verdict": verdict,
             "confidence": round(conf, 3), "source": source, "atoms": n_atoms,
             "correction_id": getattr(d, "correction_id", None),
+            "drawing_spared": drawing_spared,
         })
         if other:
             for doc_atoms in docs:
@@ -476,6 +525,10 @@ def verdict_note(v: dict[str, Any]) -> str:
     how = f"{v['model_verdict'] or 'undecided'} {v['confidence']:.2f} {v['source']}"
     if v["verdict"] == "other_job":
         return f"INFO: document_job_scope set aside {what}; {how}"
+    if v.get("drawing_spared"):
+        return (f"INFO: document_job_scope kept {what}; {how} "
+                f"— a drawing is titled by the building, not the job, so a "
+                f"model verdict does not remove it")
     return f"INFO: document_job_scope kept {what}; {how}"
 
 

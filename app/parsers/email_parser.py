@@ -879,6 +879,29 @@ def _is_identity_only_line(text: str, *, allow_name: bool = True) -> bool:
 # "Diagram:", "Club responsibilities:"). Not a fact itself: it is the intro
 # line its items are read with. Short, ends in a colon, no sentence inside.
 _LIST_LABEL_RE = re.compile(r"^[A-Za-z][^.!?]{0,60}:\s*$")
+#: How long a line under a label can be and still read as one of its items
+#: rather than as prose that ended the list. Eight of 010180's floorplan rooms
+#: are one or two words ("Board room", "Print/copy areas"); the longest thing
+#: measured in a dashless list on this corpus was nine.
+_LIST_ITEM_MAX_WORDS = 10
+
+
+def _reads_as_list_item(line: str) -> bool:
+    """Is this dashless line one of the label's items, or prose that ended it?
+
+    Two things separate them, and neither needs the wording. An item is short,
+    and an item is a fragment -- "Board room", "Print/copy areas". A sentence
+    closes with terminal punctuation, and ten words is easily a sentence
+    ("That is everything we agreed on the call yesterday."), so length alone
+    let prose keep a list open. Bullets are exempt: a dash already said it is
+    an item, full stop or not.
+    """
+    text = (line or "").strip()
+    if not text or text.endswith((".", "!", "?")):
+        return False
+    return len(text.split()) <= _LIST_ITEM_MAX_WORDS
+
+
 # A label that says the next lines are a place. The block under it ("Nesfield
 # Performance Bethesda / 7832 Wisconsin Ave ... / P: 240...") is a job site,
 # not a person's signature. Live 010289: typed stakeholder, so the deal had
@@ -3081,12 +3104,24 @@ class EmailParser(BaseParser):
                     continue
             # Bullets inherit the active Include/Exclude header; compute before
             # hygiene continues so per-line locators carry section_path.
-            section_for_line = current_section if is_bullet else None
+            # A list typed without dashes is still a list -- "Included:" over
+            # eight bare room names is how people write in email, and serving
+            # only bullets left those names context-free. Live 010180: eight
+            # site_room_mix facts ("Board room", "IT room/closet") were the
+            # floorplan, and the substance gate deleted every one.
+            section_for_line = (
+                current_section
+                if is_bullet
+                or (current_section and _reads_as_list_item(cleaned))
+                else None
+            )
             lead_for_line = list(active_lead_in) if section_for_line else []
             # Under a generic label, bullets (and short lines, for lists typed
             # without dashes) are its items and carry it as their intro line.
             list_item_line = bool(
-                not section_for_line and list_label and (is_bullet or len(cleaned.split()) <= 10)
+                not section_for_line
+                and list_label
+                and (is_bullet or _reads_as_list_item(cleaned))
             )
             if list_item_line:
                 lead_for_line = list(list_label)
@@ -3174,19 +3209,29 @@ class EmailParser(BaseParser):
                 continue
             # 2b) Framing lead-in above Include/Exclude — connective tissue,
             #     not a standalone atom. Hold until the list header arrives.
+            #     It also opens a list in its own right: most framing lead-ins
+            #     are never followed by an "Include:" header at all, and until
+            #     they armed `list_label` too the held line was simply dropped
+            #     and its items left context-free. Live 010180: "The floorplan
+            #     includes:" over eight room names -- the lead-in vanished, the
+            #     rooms became bare fragments, and the substance gate took them.
             if not is_bullet and _is_email_list_framing_lead_in(cleaned):
                 pending_lead_in = [cleaned.rstrip()]
+                list_label = [cleaned.rstrip()]
+                provided_by = None
                 continue
             # 3) List-section header ("Include:"/"Exclude:") — not an atom; the
             #    items beneath inherit its polarity + any pending lead-in.
             if _INCLUDE_LABEL_RE.match(cleaned):
                 current_section = "include"
+                list_label = []          # the section now labels the items
                 if pending_lead_in:
                     active_lead_in = list(pending_lead_in)
                     pending_lead_in = []
                 continue
             if _EXCLUDE_LABEL_RE.match(cleaned):
                 current_section = "exclude"
+                list_label = []
                 if pending_lead_in:
                     active_lead_in = list(pending_lead_in)
                     pending_lead_in = []
@@ -3207,10 +3252,14 @@ class EmailParser(BaseParser):
                 else:
                     provided_by = None
                 continue
-            # Non-bullet content ends the active list section for following lines.
+            # Non-bullet content ends the active list section for following
+            # lines -- unless this line was itself read as one of that
+            # section's items, in which case the list is still open and the
+            # item after it belongs to the same header.
             if not is_bullet:
-                current_section = None
-                active_lead_in = []
+                if not section_for_line:
+                    current_section = None
+                    active_lead_in = []
                 if not list_item_line:
                     list_label = []
                     provided_by = None
