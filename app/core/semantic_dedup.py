@@ -1574,6 +1574,54 @@ _CROSS_TYPE_DEFAULT_PRIORITY = 3
 _CROSS_TYPE_STRIP_RE = re.compile(r"[$£€]|\b\d[\d,.]*\b|[^a-z0-9\s]")
 
 
+def _not_at_the_cost_of_the_words(winner: Any, members: list[Any]) -> Any:
+    """Never trade a sentence for a type.
+
+    The group key is the first 80 characters, capped so "trailing paraphrase
+    divergence doesn't split a shared fact". That is right for two tellings of
+    one fact. It is wrong when one member's text strictly CONTAINS another's:
+    that is not paraphrase, it is a truncation, and picking the winner on type
+    priority alone throws the rest of the sentence away.
+
+    Live 010180. One notes paragraph produced two atoms sharing their first 80
+    characters --
+
+        quantity  (150 ch) "Layout & Technical Requirements: The team discussed
+                            the office layout, including 106 workstations,
+                            conference rooms, phone rooms, IT room, and pantry."
+        exclusion (317 ch) the same, and then "CAD drawings and plans were
+                            shared for review. The setup will require Cat 6A
+                            cabling, two Ethernet connections per workstation,
+                            and AV work for conference rooms."
+
+    ``quantity`` outranks ``exclusion``, so the deal lost the cabling
+    specification, the drop count per workstation and the AV scope -- and the
+    atom that survived read as though the paragraph stopped at "pantry".
+
+    A wrong type is recoverable: a head relabels it, a PM corrects it. Deleted
+    words are not. So when a loser contains the winner, the loser wins; the
+    type can be argued about afterwards, on evidence that still exists.
+    """
+    text = _norm_for_containment(winner)
+    if not text:
+        return winner
+    fuller = [
+        m for m in members
+        if m is not winner
+        and len(_norm_for_containment(m)) > len(text)
+        and text in _norm_for_containment(m)
+    ]
+    if not fuller:
+        return winner
+    return max(fuller, key=lambda a: (len(_norm_for_containment(a)),
+                                      _cross_type_priority(a), _rank(a)))
+
+
+def _norm_for_containment(atom: Any) -> str:
+    raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
+    return re.sub(r"\s+", " ", str(raw).lower()).strip()
+
+
 def _cross_type_text_key(atom: Any) -> str:
     raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
     norm = _CROSS_TYPE_STRIP_RE.sub(" ", str(raw).lower())
@@ -1707,6 +1755,7 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
             survivors.update(id(m) for m in members)
             continue
         winner = max(members, key=lambda a: (_cross_type_priority(a), _rank(a)))
+        winner = _not_at_the_cost_of_the_words(winner, members)
         for loser in members:
             if loser is winner:
                 continue
