@@ -269,10 +269,18 @@ _INVITE_OPENS_RE = re.compile(
     r")\s*[<>|]*\s*$", re.I)
 
 #: Lines that continue a block once one is open.
-_INVITE_CONTINUES_RE = re.compile(
+#: One thing a join block says. Matched against each `|`-separated SEGMENT of
+#: a line, not the whole line, because the block is laid out as a table: after
+#: inline markup is unwrapped the row flattener joins its cells, so "Need help?"
+#: and "System reference" arrive as one line and a label arrives with its value
+#: ("Passcode: jz7o5CE9") rather than on a line of its own. The first version
+#: of this anchored on the whole line and stopped matching the moment the text
+#: extraction improved -- which put a bridge passcode back into deal 010180.
+_INVITE_SEGMENT_RE = re.compile(
     r"^\s*(?:"
     r"(?:meeting\s+id|passcode|phone\s+conference\s+id|tenant\s+key|video\s+id"
-    r"|conference\s+id|access\s+code|webinar\s+id|for\s+organizers)\s*:?"
+    r"|conference\s+id|access\s+code|webinar\s+id|for\s+organizers|where|when"
+    r"|join|dial-?in)\s*:.*"
     r"|need\s+help\s*\??"
     r"|find\s+a\s+local\s+number"
     r"|reset\s+dial-?in\s+pin"
@@ -284,16 +292,28 @@ _INVITE_CONTINUES_RE = re.compile(
     r"|dial\s+in\s+by\s+phone"
     r"|microsoft\s+teams\s+meeting"
     r"|united\s+states(?:,\s*\w[\w .'-]*)?"
-    r"|\+?\d[\d\s().,-]{7,}\#?"                      # a dial-in number
-    r"|[\d][\d\s]{5,}\#?"                            # a bare meeting id
-    r"|[A-Za-z0-9]{6,12}"                            # a bare passcode token
-    r"|[\w.+-]+@\w[\w.-]*\.\w+"                      # tenant key address
-    # "Join: https://teams.microsoft.com/meet/..." -- the label may lead.
-    r"|(?:join|link|url)?\s*:?\s*https?://\S*"
-    r"(?:teams\.microsoft|zoom\.us|webex|meet\.google|gotomeet)\S*"
-    r"|[_=-]{10,}"                                   # the rule Outlook draws
-    r"|\|"
-    r")\s*[<>|]*\s*$", re.I)
+    # A dial-in number, optionally followed by where it rings: after the
+    # unwrap "+1 847-371-3000,,25104158#" and "United States, Libertyville"
+    # arrive on one line.
+    r"|\+?\d[\d\s().,-]{7,}\#?(?:\s+[A-Z][\w .'-]*(?:,\s*[\w .'-]+)?)?"
+    r"|[\d][\d\s]{5,}\#?"
+    r"|[A-Za-z0-9]{6,12}"
+    r"|[\w.+-]+@\w[\w.-]*\.\w+"
+    r"|https?://\S*(?:teams\.microsoft|zoom\.us|webex|meet\.google|gotomeet)\S*"
+    r"|[_=-]{10,}"
+    r")\s*[<>]?\s*$", re.I)
+
+
+def _is_invite_line(line: str) -> bool:
+    """True when every cell on the line is a join detail."""
+    parts = [p.strip() for p in line.split("|")]
+    parts = [p for p in parts if p]
+    if not parts:
+        # A line of nothing but separators is layout the block drew, not
+        # content -- it must not end the run.
+        return bool(line.strip())
+    return all(_INVITE_SEGMENT_RE.match(p) for p in parts)
+
 
 #: A block must say at least this many invite-only things before we believe it.
 #: One mention in prose ("I'll send a Teams meeting") is not a block.
@@ -321,7 +341,7 @@ def strip_meeting_invite(text: str) -> str:
             if not line.strip():
                 j += 1
                 continue
-            if _INVITE_CONTINUES_RE.match(line) or _INVITE_OPENS_RE.match(line):
+            if _is_invite_line(line) or _INVITE_OPENS_RE.match(line):
                 hits += 1
                 j += 1
                 continue
