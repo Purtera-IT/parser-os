@@ -132,14 +132,52 @@ def test_a_dashless_list_under_an_explicit_header_inherits_it(header, section):
 
 def test_prose_still_closes_the_list():
     """The guard on the above: a real sentence ends the list, and what follows
-    it is not swept in as an item."""
+    it is not swept in as an item.
+
+    Length is what says so, not the full stop. An item ends with a full stop
+    as often as not -- 010180's own survey list is "Measure cabling pathways."
+    and "Verify distances." -- so reading punctuation as the boundary broke
+    that list at its first item and the gate took ten scope statements. A
+    sentence is simply longer than anything anyone writes as a list item.
+    """
     body = ("Included:\n"
             "Executive offices\n"
-            "That is everything we agreed on the call yesterday afternoon.\n"
+            "That is everything we agreed on the call with Octavian yesterday "
+            "afternoon, and nothing else is in scope for this phase.\n"
             "Board room\n")
     found = _by_text(_parse(body))
     assert _value(found["Executive offices"]).get("list_section") == "include"
     assert _value(found["Board room"]).get("list_section") is None
+
+
+def test_an_item_may_end_with_a_full_stop():
+    """Verbatim from 010180. These are items of the list above them, and they
+    all end with a full stop."""
+    body = ("The immediate requested scope is:\n"
+            "Onsite walkthrough of 7 Penn Plaza.\n"
+            "Measure cabling pathways.\n"
+            "Verify distances.\n"
+            "Review construction status.\n")
+    found = _by_text(_parse(body))
+    for item in ("Measure cabling pathways.", "Verify distances.",
+                 "Review construction status."):
+        value = _value(found[item])
+        assert value.get("list_item") is True, item
+        assert value.get("list_label") == "The immediate requested scope is:", item
+
+
+def test_the_survey_objectives_survive_the_gate():
+    """What the regression actually cost: ten scope statements deleted, having
+    previously survived under a label from a different section."""
+    body = ("The immediate requested scope is:\n"
+            "Measure cabling pathways.\n"
+            "Verify distances.\n"
+            "Determine drop locations.\n")
+    atoms = _parse(body)
+    kept, dropped = apply_substance_gate(atoms)
+    lost = [a.raw_text for a in dropped if a.raw_text.strip().startswith(
+        ("Measure", "Verify", "Determine"))]
+    assert lost == [], f"gate deletes {lost}"
 
 
 def test_a_labelled_list_still_works_without_a_framing_verb():
