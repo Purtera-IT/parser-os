@@ -438,6 +438,89 @@ def rejoin_split_heading(text: str) -> str:
     return "\n".join(out)
 
 
+#: A call-notes heading: a short Title-Case noun phrase, no verb, the kind a
+#: notetaker writes over a paragraph. "Layout & Technical Requirements",
+#: "Sequence & Coordination", "Security & Access Control".
+_NOTES_HEADING = re.compile(
+    r"^(?P<head>[A-Z][A-Za-z]*(?:[ ](?:&|and|of|/|[A-Z][A-Za-z]*)){1,5})"
+    r":[ 	]+(?P<body>\S.*)$")
+#: The offset into a call recording a notetaker leaves on the end of an entry
+#: ("…for conference rooms. 2:01"). It is not a time the job cares about,
+#: and left on it becomes part of the last sentence's atom.
+_CALL_OFFSET = re.compile(r"[\s ]*\d{1,2}:\d{2}[\s ]*$")
+#: End of sentence: a full stop, ? or !, followed by space and a capital.
+_SENTENCE_END = re.compile(r"(?<=[.!?])[\s ]+(?=[A-Z0-9])")
+
+
+#: A heading's body is PROSE: it ends like a sentence and it is long enough to
+#: be one. Six words, because "CAD drawings and plans were shared for review."
+#: is eight and nothing shorter has turned up as a notes sentence.
+_MIN_PROSE_WORDS = 6
+
+
+def _is_prose(body: str) -> bool:
+    """Is what follows the colon a paragraph, or a value?"""
+    text = (body or "").strip()
+    if not text.endswith((".", "!", "?")):
+        return False
+    return len(text.split()) >= _MIN_PROSE_WORDS
+
+
+def split_notes_entries(text: str) -> str:
+    """One heading, one paragraph, several facts -- give each fact its own line.
+
+    A call-notes email arrives as one line per section:
+
+        Notes below:
+        Layout & Technical Requirements: The team discussed the office layout,
+        including 106 workstations, conference rooms, phone rooms, IT room, and
+        pantry. CAD drawings and plans were shared for review. The setup will
+        require Cat 6A cabling, two Ethernet connections per workstation, and AV
+        work for conference rooms. 2:01
+
+    Left whole that is ONE atom, and it is three different facts of three
+    different types: a room mix, a document exchange, and a cabling
+    specification. Typed as any one of them it is wrong about the other two, and
+    a head asked to learn from it learns that a room count and a Cat 6A spec are
+    the same kind of thing. The heading is also swallowed into the text, so the
+    thing that says WHICH section a fact belongs to is not available as context.
+
+    So: the heading goes onto its own line, where the parser already reads a
+    short `Label:` line as the intro its items are read with, and each sentence
+    of the body becomes a line of its own. The recording offset on the end is
+    dropped -- it times a moment in a call, not anything about the job.
+
+    Conservative: only fires on a heading-shaped label with a multi-sentence
+    body, so "Passcode: jz7o5CE9" and "Total workstation drops: 212." are left
+    exactly as they are.
+    """
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        match = _NOTES_HEADING.match(line.strip())
+        if match is None:
+            out.append(line)
+            continue
+        body = _CALL_OFFSET.sub("", match.group("body")).strip()
+        if not _is_prose(body):
+            # A label with a VALUE, not a heading over a paragraph:
+            # "Meeting ID: 228 859 003 479 315", "Direct: (732) 982-0189",
+            # "Total workstation drops: 212." Splitting those would tear a
+            # label off its value, which is the defect this file already
+            # exists to undo.
+            out.append(line)
+            continue
+        sentences = [s.strip() for s in _SENTENCE_END.split(body) if s.strip()]
+        if not sentences:
+            out.append(line)
+            continue
+        # The heading goes on its own line even when the body is ONE sentence:
+        # it is the pointer that says which section the fact belongs to, and a
+        # fact with one sibling deserves it as much as a fact with three.
+        out.append(f"{match.group('head')}:")
+        out.extend(sentences)
+    return "\n".join(out)
+
+
 def _extract_email_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".eml":
@@ -477,9 +560,9 @@ def _extract_email_text(path: Path) -> str:
         # table is flattened, or the cell is split and then joined by "|".
         _unwrap_inline_in_place(soup)
         _flatten_tables_in_place(soup)
-        return strip_meeting_invite(rejoin_split_heading(
-            rejoin_label_and_value(soup.get_text(separator="\n", strip=True))))
-    return strip_meeting_invite(rejoin_split_heading(
-        rejoin_label_and_value(content)))
+        return split_notes_entries(strip_meeting_invite(rejoin_split_heading(
+            rejoin_label_and_value(soup.get_text(separator="\n", strip=True)))))
+    return split_notes_entries(strip_meeting_invite(rejoin_split_heading(
+        rejoin_label_and_value(content))))
 
 

@@ -2579,6 +2579,24 @@ def compile_project(
             persistence_hook(result)
             telemetry.end_stage(stage, output_count=1)
 
+    # The rule-decision log goes to blob before the container is recycled. It
+    # is the only record of the decisions where a rule did NOT fire, and those
+    # are the negatives nothing else can supply: an atom exists only when the
+    # rule fired, so labelling alone yields positives and nothing else
+    # (measured: 65 rows, 65 positives, across 010180 and 010288). Gated on
+    # SOWSMITH_RULE_LOG + SOWSMITH_FEEDBACK_BLOB; best-effort, and a failure
+    # here must never fail a compile that has already succeeded.
+    try:
+        _rule_log = os.environ.get("SOWSMITH_RULE_LOG")
+        if _rule_log:
+            from app.core import feedback_blob as _fb
+
+            _n = _fb.upload_rule_decisions(str(result.compile_id or "compile"), _rule_log)
+            if _n:
+                warnings.append(f"INFO: mirrored {_n} rule decision(s) to blob for threshold training")
+    except Exception:  # pragma: no cover - never break a finished compile
+        pass
+
     packet_family_counts = Counter(packet.family.value for packet in result.packets)
     result.trace = telemetry.build_trace(
         artifact_count=len(artifacts),

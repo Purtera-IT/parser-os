@@ -142,6 +142,65 @@ def sync_into_store(store: "FeedbackStore") -> int:
 _TRAIN_PREFIX = "_feedback/training_rows/"
 
 
+#: One blob per compile, so two workers running at once cannot interleave lines
+#: into one another's file.
+_RULE_PREFIX = "_feedback/rule-decisions/"
+
+
+def upload_rule_decisions(run_id: str, path) -> int:
+    """Mirror a compile's rule-decision log to blob. Best-effort, returns rows.
+
+    The log is the only record of the decisions where a rule did NOT fire, and
+    those are the negatives the threshold trainer has no other source for: an
+    atom exists only when the rule fired, so labelling alone yields positives
+    and nothing else (measured: 65 rows, 65 positives, on 010180 + 010288).
+
+    Written to blob rather than left where it lands, because the worker's
+    filesystem is ephemeral and this exact mistake has already cost one corpus
+    -- compiles logged training rows to /tmp for weeks and uploaded none of
+    them.
+    """
+    cc = _container_client()
+    if cc is None:
+        return 0
+    try:
+        from pathlib import Path as _P
+
+        src = _P(str(path))
+        if not src.exists():
+            return 0
+        data = src.read_bytes()
+        if not data.strip():
+            return 0
+        cc.upload_blob(name=f"{_RULE_PREFIX}{run_id}.jsonl", data=data, overwrite=True)
+        return len([ln for ln in data.decode("utf-8", "replace").splitlines() if ln.strip()])
+    except Exception:
+        return 0
+
+
+def download_rule_decisions(into) -> int:
+    """Pull every compile's rule decisions into one local JSONL. Returns rows."""
+    cc = _container_client()
+    if cc is None:
+        return 0
+    try:
+        from pathlib import Path as _P
+
+        dest = _P(str(into))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        rows = 0
+        with dest.open("w", encoding="utf-8") as fh:
+            for blob in cc.list_blobs(name_starts_with=_RULE_PREFIX):
+                text = cc.download_blob(blob.name).readall().decode("utf-8", "replace")
+                for line in text.splitlines():
+                    if line.strip():
+                        fh.write(line + "\n")
+                        rows += 1
+        return rows
+    except Exception:
+        return 0
+
+
 def upload_training_rows(correction_id: str, rows) -> bool:
     """Mirror the gold TrainingRows for one correction to blob. Best-effort."""
     cc = _container_client()
