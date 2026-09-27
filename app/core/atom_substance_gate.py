@@ -508,6 +508,20 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
             # else (an address, a phone) says otherwise. Live 010300 round
             # 28: "Site Assessments" appeared in the stakeholder table.
             if _nm and _all_common_words(_nm):
+                # ...unless the atom's TEXT is a sentence, in which case the
+                # name is the typer's invention and the sentence is content.
+                # Live 010180: a 236-character scope paragraph -- "Security &
+                # Access Control: The team discussed implementing a new
+                # security system, likely using their own swipe card system
+                # similar to Great Neck, and considered whether to include
+                # badge readers at the suite entry doors" -- was typed
+                # stakeholder with name "Great Neck", a place mentioned inside
+                # it. Two ordinary words, so this rule deleted the paragraph,
+                # and the deal lost its whole access-control scope. The three
+                # branches below already ask this question; this one did not.
+                if _retype_sentence(atom, text):
+                    kept.append(atom)
+                    continue
                 dropped.append(atom)
                 continue
             # No name in the record AND no name shape in the text: a role
