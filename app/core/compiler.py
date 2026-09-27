@@ -67,6 +67,26 @@ from app.parsers.parser_router import choose_parser
 LOW_CONFIDENCE_FLOOR = 0.50
 
 
+def _a_shade_less_than(parent: Any, field: str, *, drop: float = 0.05,
+                       floor: float = 0.5, absent: float = 0.8) -> float:
+    """A split child is a shade less certain than the paragraph it came from.
+
+    ``getattr(parent, field, 0.8)`` looks like it handles a missing value and
+    does not: the attribute EXISTS on every atom and is routinely ``None``
+    before calibration runs. ``None - 0.05`` raised, the whole prose_list_split
+    stage was caught by its own `except`, and the compile carried on with one
+    warning and no splitting at all -- so a paragraph holding six stakeholders
+    stayed one atom. Live 010180 (compile cmp_135c10268e527d45):
+
+        WARNING: prose_list_split failed: TypeError: unsupported operand
+                 type(s) for -: 'NoneType' and 'float'
+    """
+    value = getattr(parent, field, None)
+    if value is None:
+        value = absent
+    return max(floor, float(value) - drop)
+
+
 def _dropped_atom_notes(stage: str, dropped: list[Any], *, cap: int = 60) -> list[str]:
     """One trace line per atom a stage removed, so a live compile explains
     what it threw away (live 010300: two scanned clauses vanished with no
@@ -1207,9 +1227,9 @@ def compile_project(
                         source_refs=_srcs,
                         receipts=[],
                         authority_class=getattr(parent, "authority_class", _Auth.contractual_scope),
-                        confidence=max(0.5, getattr(parent, "confidence", 0.8) - 0.05),
-                        confidence_raw=max(0.5, getattr(parent, "confidence_raw", 0.8) - 0.05),
-                        calibrated_confidence=max(0.5, getattr(parent, "calibrated_confidence", 0.8) - 0.05),
+                        confidence=_a_shade_less_than(parent, "confidence"),
+                        confidence_raw=_a_shade_less_than(parent, "confidence_raw"),
+                        calibrated_confidence=_a_shade_less_than(parent, "calibrated_confidence"),
                         review_status=_Rev.auto_accepted,
                         review_flags=[],
                         parser_version="prose_split_v50",
