@@ -1323,6 +1323,33 @@ def _value_key(atom: Any) -> tuple | None:
             return (atype, appr, dec)
         return None
     if atype == "deal_metadata":
+        # A quoted message header is identified by the MESSAGE it heads, not by
+        # the file that happened to quote it. 33 of 010180's 38 documents are
+        # replies carrying the whole thread, so the July-27 header was minted 33
+        # times -- 75 header atoms for 11 real messages, a quarter of the deal's
+        # envelope. They escaped dedup by accident, not by policy: this branch
+        # looks for `field_name`/`value` and a quoted header carries neither, so
+        # the key came back None and the atom was never a candidate. Quoted
+        # BODY lines already collapse across documents (204 atoms, 201 distinct),
+        # which is the behaviour this restores rather than invents.
+        #
+        # Sender and timestamp exactly as recorded, with no name normalisation.
+        # "Erick Villalobos" at 11:11 and "Erick Villalobos
+        # <erick.villalobos@cdw.com>" at 11:12 are a minute apart on this very
+        # deal; folding a display name into an addressed one would merge two
+        # messages on a guess. Both fields required -- a header with no
+        # timestamp keeps its old behaviour and stays out of dedup, because
+        # keying on the sender alone would collapse every undated message that
+        # person ever sent into one.
+        #
+        # Nothing is lost: `_merge_atom_metadata` unions source_refs, so the
+        # surviving atom still records each of the 33 files that quoted it.
+        if _norm_key(val.get("kind")) == "quoted_message_header":
+            sender = _first("sender")
+            sent_at = _first("sent_at")
+            if sender and sent_at:
+                return (atype, "quoted_message_header", sender, sent_at)
+            return None
         key = _first("field_name", "value")
         return (atype, key) if key else None
     if atype == "commercial_total":

@@ -188,9 +188,30 @@ def build_orbitbrief_envelope(
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
 
+    # A document's atoms are the ones that CITE it, not only the ones minted
+    # while reading it. Dedup collapses duplicates across documents and the
+    # winner keeps every loser's source_ref, so grouping by the scalar
+    # `artifact_id` alone drops a collapsed atom out of every document but the
+    # winner's -- the atom still names those files, and they no longer name it.
+    #
+    # `_originating_sender` already documents that it scopes its walk to "THIS
+    # document's own refs" because dedup merges across documents; grouping by
+    # the scalar id is what stopped those refs ever arriving. Live 010180: 9
+    # atoms already span several artifacts (a signature block is one fact
+    # quoted in 33 replies), and once quoted message headers collapse the same
+    # way, reading `originated_by` off the scalar id changed the answer on 30
+    # of 42 documents -- the deal-010215 misattribution, reintroduced by a
+    # dedup pass rather than by a cleaner.
     atoms_by_artifact: dict[str, list[EvidenceAtom]] = defaultdict(list)
     for atom in atoms:
-        atoms_by_artifact[atom.artifact_id].append(atom)
+        cites = {str(atom.artifact_id or "")}
+        for ref in (getattr(atom, "source_refs", None) or []):
+            aid = str(getattr(ref, "artifact_id", "") or "")
+            if aid:
+                cites.add(aid)
+        for aid in cites:
+            if aid:
+                atoms_by_artifact[aid].append(atom)
 
     # A6 graceful degradation: build a per-file outcome index from the
     # manifest's parser_routing so each document carries its own
