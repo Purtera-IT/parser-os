@@ -1567,6 +1567,24 @@ def compile_project(
             resolved_q = resolve_open_questions(atoms)
             if resolved_q:
                 warnings.append(f"INFO: open_question_resolution flagged {resolved_q} already-answered question(s)")
+            # ...and the ones a teacher closed. Key overlap cannot see an answer
+            # that names nothing in common with its question -- "the notes I
+            # sent over, that has everything" answers "another way of sharing
+            # the recording?" and shares not one entity with it. Live 010180:
+            # that question is still needs_review on every compile, two months
+            # after the customer withdrew it, and a labeler had already linked
+            # the pair.
+            try:
+                from app.core.taught_answers import resolve_taught_answers
+
+                _taught_q = resolve_taught_answers(atoms, project_id=resolved_project_id)
+                if _taught_q:
+                    warnings.append(
+                        f"INFO: open_question_resolution closed {_taught_q} question(s) a teacher "
+                        f"had already answered"
+                    )
+            except Exception as exc:
+                warnings.append(f"WARNING: taught_answers failed: {type(exc).__name__}: {exc}")
             before_q_filter = list(atoms)
             atoms, dropped_noise_q = filter_unhelpful_open_questions(atoms)
             if dropped_noise_q:
