@@ -3424,11 +3424,20 @@ class EmailParser(BaseParser):
                     atom_value["list_section"] = section_for_line
                     atom_value["section_header"] = _list_section_label(section_for_line)
                 if lead_for_line:
-                    atom_value["lead_in"] = list(lead_for_line)
-                    atom_value["intro"] = lead_for_line[0]
+                    # Two fields, two questions. `section_path` is the
+                    # breadcrumb -- WHERE in the document this sits, outermost
+                    # first. `lead_in` / `intro` is the NEAREST line the fact is
+                    # read with, and only that one.
+                    #
+                    # Both carried the whole list and `intro` took [0], so
+                    # Section and Intro said the same thing twice: on 010180
+                    # both read "Layout & Technical Requirements" and the atom
+                    # gained nothing from having two fields.
+                    atom_value["lead_in"] = [lead_for_line[-1]]
+                    atom_value["intro"] = lead_for_line[-1]
                 if list_item_line:
                     atom_value["list_item"] = True
-                    atom_value["list_label"] = list_label[0]
+                    atom_value["list_label"] = list_label[-1]  # the nearest label, as `intro` is
                     if provided_by:
                         atom_value["provided_by"] = dict(provided_by)
                 if delta_payload and atom_type == AtomType.customer_instruction:
@@ -3528,11 +3537,20 @@ class EmailParser(BaseParser):
                     baseline_value["list_section"] = section_for_line
                     baseline_value["section_header"] = _list_section_label(section_for_line)
                 if lead_for_line:
-                    baseline_value["lead_in"] = list(lead_for_line)
-                    baseline_value["intro"] = lead_for_line[0]
+                    # Two fields, two questions. `section_path` is the
+                    # breadcrumb -- WHERE in the document this sits, outermost
+                    # first. `lead_in` / `intro` is the NEAREST line the fact is
+                    # read with, and only that one.
+                    #
+                    # Both carried the whole list and `intro` took [0], so
+                    # Section and Intro said the same thing twice: on 010180
+                    # both read "Layout & Technical Requirements" and the atom
+                    # gained nothing from having two fields.
+                    baseline_value["lead_in"] = [lead_for_line[-1]]
+                    baseline_value["intro"] = lead_for_line[-1]
                 if list_item_line:
                     baseline_value["list_item"] = True
-                    baseline_value["list_label"] = list_label[0]
+                    baseline_value["list_label"] = list_label[-1]  # the nearest label, as `intro` is
                     if provided_by:
                         baseline_value["provided_by"] = dict(provided_by)
                 atoms.append(
