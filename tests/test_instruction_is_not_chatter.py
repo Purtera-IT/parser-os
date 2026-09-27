@@ -154,5 +154,21 @@ def test_an_acknowledgement_is_not_an_instruction():
     assert G._DIRECTED_TASK_RE.match("AJ- get the location") is not None
     assert G._DIRECTED_TASK_RE.match("TT - clean up aisle Purtera.") is not None
 
+    # The gate no longer DELETES email prose that is not scope; it keeps the
+    # sentence and takes away the claim. That change is deliberate: the same
+    # pass was removing "Definitely dude can help out." -- the only line in 42
+    # documents saying what PurTera does -- before any labeller saw it, so a
+    # judgement made on every compile produced no evidence in either direction.
+    #
+    # What this test protects is unchanged and is asserted directly: an
+    # acknowledgement must not survive as scope. It is now demoted to
+    # deal_metadata and flagged instead of vanishing, and `line_admission`
+    # learns from the flag rather than the rule being hand-tuned forever.
     kept, dropped = G.apply_substance_gate([_Atom("Received, thank you!")])
-    assert dropped, "an acknowledgement is what the gate is for"
+    survivor = next((a for a in kept if a.raw_text == "Received, thank you!"), None)
+    assert dropped or survivor is not None, "the acknowledgement vanished entirely"
+    if survivor is not None:
+        assert str(survivor.atom_type).endswith("deal_metadata"), \
+            "an acknowledgement must not survive as scope"
+        assert G.LOW_SUBSTANCE_FLAG in survivor.review_flags, \
+            "kept without the gate's verdict attached, so nothing can learn from it"

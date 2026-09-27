@@ -1192,6 +1192,23 @@ def build_packets(
         roster_atom_ids = {a.id for a in atoms if a.atom_type == AtomType.physical_site}
         atoms = [a for a in atoms if a.id not in roster_atom_ids]
         edges = [e for e in edges if e.from_atom_id not in roster_atom_ids and e.to_atom_id not in roster_atom_ids]
+    # The substance gate no longer deletes the lines it dislikes; it demotes
+    # them out of scope and flags them `low_substance`, so a labeller can judge
+    # them and `line_admission` can learn the distinction instead of it staying
+    # a hand-written rule forever. Right for the envelope, wrong for a packet:
+    # an unjudged pleasantry has no business governing scope on its way to a
+    # SOW, whatever type it now carries.
+    #
+    # Same treatment as the physical_site roster above: keep them in the
+    # envelope, exclude them from packet candidate scans. A human or a trained
+    # head promoting one clears the flag, and it packetizes from then on.
+    low_substance = {a.id for a in atoms
+                     if "low_substance" in (getattr(a, "review_flags", None) or [])}
+    if low_substance:
+        atoms = [a for a in atoms if a.id not in low_substance]
+        edges = [e for e in edges
+                 if e.from_atom_id not in low_substance and e.to_atom_id not in low_substance]
+
     atom_by_id = {a.id: a for a in atoms}
     packets: list[EvidencePacket] = []
     consumed_by_conflict_or_exclusion: set[str] = set()
