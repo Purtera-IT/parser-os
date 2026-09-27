@@ -157,3 +157,25 @@ def test_two_different_sentences_sharing_a_prefix_are_not_merged_away():
     # point is that the survivor is chosen by priority, not by discarding a
     # superset. Neither text contains the other, so the old rule applies.
     assert len(out) == 1
+
+
+def test_a_table_row_does_not_beat_its_typed_sibling():
+    """The subtlety that makes containment alone the wrong rule.
+
+    A `raw_table_row` contains its typed sibling too:
+
+        raw_table_row  "ESTIMATED TOTAL FEES | $21,560.00"
+        service_line   "ESTIMATED TOTAL FEES"
+
+    and here the TYPED atom must win — the extra text is a money column whose
+    value already lives in the atom's `value`, not a sentence. Getting this
+    wrong broke `test_estimated_total_collapses_despite_money_tokens`, which is
+    how the first version of the guard was caught. So the loser must add
+    WORDS, measured with the cell bars, money and bare numbers stripped out.
+    """
+    out = cross_type_dedup_atoms([
+        _atom("ESTIMATED TOTAL FEES | $21,560.00", AtomType.raw_table_row, ident="a"),
+        _atom("ESTIMATED TOTAL FEES", AtomType.service_line, ident="b"),
+    ])
+    assert len(out) == 1
+    assert out[0].atom_type == AtomType.service_line

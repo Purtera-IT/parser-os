@@ -1575,32 +1575,40 @@ _CROSS_TYPE_STRIP_RE = re.compile(r"[$£€]|\b\d[\d,.]*\b|[^a-z0-9\s]")
 
 
 def _not_at_the_cost_of_the_words(winner: Any, members: list[Any]) -> Any:
-    """Never trade a sentence for a type.
+    """Never trade a SENTENCE for a type.
 
     The group key is the first 80 characters, capped so "trailing paraphrase
     divergence doesn't split a shared fact". That is right for two tellings of
-    one fact. It is wrong when one member's text strictly CONTAINS another's:
-    that is not paraphrase, it is a truncation, and picking the winner on type
-    priority alone throws the rest of the sentence away.
+    one fact and wrong when a loser's text contains the winner's AND says more
+    in words: that is a truncation, and choosing on type priority throws the
+    rest of the sentence away.
 
-    Live 010180. One notes paragraph produced two atoms sharing their first 80
-    characters --
+    Live 010180. One notes paragraph produced two atoms sharing 80 characters:
 
-        quantity  (150 ch) "Layout & Technical Requirements: The team discussed
-                            the office layout, including 106 workstations,
-                            conference rooms, phone rooms, IT room, and pantry."
+        quantity  (150 ch) "Layout & Technical Requirements: ... IT room, and
+                            pantry."
         exclusion (317 ch) the same, and then "CAD drawings and plans were
                             shared for review. The setup will require Cat 6A
                             cabling, two Ethernet connections per workstation,
                             and AV work for conference rooms."
 
-    ``quantity`` outranks ``exclusion``, so the deal lost the cabling
-    specification, the drop count per workstation and the AV scope -- and the
-    atom that survived read as though the paragraph stopped at "pantry".
+    ``quantity`` outranks ``exclusion``, so the deal lost its cabling
+    specification, its drops per workstation and its AV scope, and the atom
+    that survived read as though the paragraph stopped at "pantry".
 
-    A wrong type is recoverable: a head relabels it, a PM corrects it. Deleted
-    words are not. So when a loser contains the winner, the loser wins; the
-    type can be argued about afterwards, on evidence that still exists.
+    Containment alone is NOT enough, which is the whole subtlety. A table's
+    ``raw_table_row`` contains its typed sibling too --
+
+        raw_table_row  "ESTIMATED TOTAL FEES | $21,560.00"
+        service_line   "ESTIMATED TOTAL FEES"
+
+    -- and there the typed atom must win: the extra text is a money column
+    whose value already lives in its ``value``, not a sentence. So the loser
+    has to add WORDS. ``_adds_a_sentence`` measures the remainder with the
+    table scaffolding removed.
+
+    A wrong type is recoverable: a head relabels it, a PM corrects it, the
+    words are still there to argue about. Deleted words are not.
     """
     text = _norm_for_containment(winner)
     if not text:
@@ -1608,13 +1616,32 @@ def _not_at_the_cost_of_the_words(winner: Any, members: list[Any]) -> Any:
     fuller = [
         m for m in members
         if m is not winner
-        and len(_norm_for_containment(m)) > len(text)
         and text in _norm_for_containment(m)
+        and _adds_a_sentence(_norm_for_containment(m), text)
     ]
     if not fuller:
         return winner
     return max(fuller, key=lambda a: (len(_norm_for_containment(a)),
                                       _cross_type_priority(a), _rank(a)))
+
+
+#: What a table row adds that is not prose: cell bars, money, bare numbers.
+_SCAFFOLD_RE = re.compile(r"[|$€£]|\d[\d,.]*|[^\w\s'-]")
+#: How many words of prose a truncated twin must be missing before the fuller
+#: wording outranks the better type. "| Per Hour" is two; 010180's missing
+#: specification is twenty-five.
+_MIN_ADDED_WORDS = 5
+
+
+def _adds_a_sentence(fuller: str, contained: str) -> bool:
+    """Does ``fuller`` say something ``contained`` does not, in words?"""
+    remainder = fuller.replace(contained, " ", 1)
+    remainder = _SCAFFOLD_RE.sub(" ", remainder)
+    words = [w for w in remainder.split() if len(w) > 1 and any(c.isalpha() for c in w)]
+    if len(words) < _MIN_ADDED_WORDS:
+        return False
+    # Prose, not a shouted heading continued across cells.
+    return any(w.islower() for w in words)
 
 
 def _norm_for_containment(atom: Any) -> str:
