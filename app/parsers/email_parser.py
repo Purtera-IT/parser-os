@@ -1511,8 +1511,20 @@ def _expand_lines_to_sentences(
     return out
 
 
+#: Outlook's header fields as they arrive in a "save as text" or quoted block.
+#: `when` and `where` are a CALENDAR INVITE's two extra fields and belong here
+#: with the rest: Outlook writes them directly under `Subject:`. Left out, live
+#: 010180 parsed "When: Monday, July 27, 2026 2:00 PM-3:00 PM (UTC-05:00)
+#: Eastern Time" as a scope `constraint` -- a July calendar slot constraining a
+#: cabling job -- and "Where: Microsoft Teams Meeting" as an `open_question`, so
+#: Orbit would ask a PM where a meeting from July was held.
+#:
+#: `strip_meeting_invite` already knows both words, but it only reads them once
+#: a platform marker has OPENED a join block, and Outlook puts this pair above
+#: the block, not inside it.
 _PSEUDO_HEADER_RE = re.compile(
-    r"^(from|sent|date|to|cc|bcc|subject|reply-to|importance|attachments)"
+    r"^(from|sent|date|to|cc|bcc|subject|reply-to|importance|attachments"
+    r"|when|where)"
     r"\s*:\s*(.*)$",
     re.IGNORECASE,
 )

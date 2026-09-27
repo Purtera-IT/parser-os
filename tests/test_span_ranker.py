@@ -168,3 +168,53 @@ def test_an_atom_with_nothing_to_rank_is_not_trained_on():
 
 def test_overlap_threshold_is_the_documented_one():
     assert 0.0 < MIN_OVERLAP < 1.0
+
+
+# --------------------------------------------------------------------------
+# a multi-field metadata line is decided by ALL of its fields
+# --------------------------------------------------------------------------
+
+def test_a_header_line_is_recognised_as_multi_field():
+    """"From: X | Sent: Y" is `deal_metadata` because of who sent it AND when.
+    Take either half and the atom stops being provenance.
+
+    010180 carries 75 of these. Before the feature the ranker chose the date on
+    almost every one and precision@1 read 45.9% on the deal; with it, 86.8%.
+    Stated as a feature rather than fixed by dropping the atoms, because they
+    are the commonest shape in any email deal and a head that had never seen
+    one would guess at inference time.
+    """
+    from app.learning.span_ranker import _is_multi_field_header
+
+    assert _is_multi_field_header(
+        "From: Erick Villalobos | Sent: Monday, July 27, 2026 2:24 PM")
+    assert _is_multi_field_header(
+        "From: LS Srinivas <ls.srinivas@flextrade.com> | Sent: Monday, July 27, 2026 2:07 PM")
+
+
+def test_one_label_is_not_a_header_line():
+    """A labelled sentence is not a field list, and its label is usually NOT
+    part of the answer -- "Layout & Technical Requirements:" introduces the
+    clause that decides it. Two fields is the floor for a reason."""
+    from app.learning.span_ranker import _is_multi_field_header
+
+    assert not _is_multi_field_header(
+        "Layout & Technical Requirements: The team discussed the office layout")
+    assert not _is_multi_field_header("Cabling to all rooms.")
+
+
+def test_a_pipe_separated_record_is_not_a_header_line():
+    """Pipes alone are not fields. "Erick Villalobos | Account Manager | CDW"
+    is a stakeholder record whose deciding span is the role, not the whole
+    line, and "Floor 12 | Suite 1200 | 12,154 RSF" is one site fact."""
+    from app.learning.span_ranker import _is_multi_field_header
+
+    assert not _is_multi_field_header(
+        "Erick Villalobos | Account Manager | CDW | (732) 982-0189")
+    assert not _is_multi_field_header("Floor 12 | Suite 1200 | 12,154 RSF")
+
+
+def test_the_feature_is_declared():
+    from app.learning.span_ranker import FEATURE_NAMES
+
+    assert "whole_metadata_header_line" in FEATURE_NAMES

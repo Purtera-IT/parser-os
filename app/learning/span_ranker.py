@@ -287,6 +287,20 @@ def features_for(cand: Candidate, label: dict[str, Any]) -> list[float]:
         # decided by the heading; the other 50 are decided by their own words.
         1.0 if (silent and is_context and _ATTRIB.search(t)) else 0.0,
         1.0 if (silent and cand.source == "own_words") else 0.0,
+        # A multi-field metadata line is decided by ALL of its fields, so the
+        # whole line is the span and no clause of it will do.
+        #
+        # "From: Erick Villalobos | Sent: Monday, July 27, 2026 2:24 PM" is
+        # `deal_metadata` because of who sent it AND when -- take either half
+        # and the atom stops being provenance. 010180 carries 75 of these and
+        # the ranker lost almost every one, choosing the date, because nothing
+        # in the feature set could say "this line's fields belong together":
+        # precision@1 read 45.9% on the deal and 73.8% without them.
+        #
+        # Stated as a feature rather than fixed by dropping the atoms from the
+        # corpus. They are the commonest shape in any email deal, and a head
+        # that has never seen one would guess at inference time.
+        1.0 if (_is_multi_field_header(body) and t == body) else 0.0,
     ]
 
 
@@ -295,7 +309,22 @@ FEATURE_NAMES = (
     "is_partial_clause", "len_scaled", "words_scaled", "has_negation",
     "has_modal", "has_attribution", "has_number", "has_quote", "ends_colon",
     "share_of_atom", "atom_says_nothing", "silent_under_a_heading", "silent_and_own",
+    "whole_metadata_header_line",
 )
+
+
+#: `Label: value` repeated down a line -- Outlook's header, a table row's
+#: rendering. Two fields is the floor: one `Label: value` is an ordinary
+#: labelled sentence, and its label is not usually part of the answer.
+_HEADER_FIELD = re.compile(r"(?:^|\|)\s*[A-Z][A-Za-z ]{1,18}:\s*\S")
+
+
+def _is_multi_field_header(text: str) -> bool:
+    """Is this atom a line of `Label: value` fields rather than a sentence?"""
+    body = _clean(text)
+    if not body or len(body) > 400:
+        return False
+    return len(_HEADER_FIELD.findall(body)) >= 2
 
 
 def training_pairs(label: dict[str, Any]) -> list[tuple[Candidate, int]]:

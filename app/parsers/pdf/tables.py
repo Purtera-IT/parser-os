@@ -20,6 +20,7 @@ from app.parsers.pdf._shared import _looks_like_form_field
 from app.parsers.pdf._shared import _looks_like_page_footer
 from app.parsers.pdf._shared import _make_atom
 from app.parsers.pdf._shared import _table_rows_repaired
+from app.parsers.pdf.page_kind import _page_is_a_drawing
 from pathlib import Path
 from typing import Any
 import re
@@ -106,6 +107,11 @@ def _fitz_generic_table_fallback(
         return []
     try:
         for page_index, page in enumerate(doc):
+            # A floor plan is nothing but ruled lines, so the table finder
+            # reads its walls as a grid and splits every room name that
+            # crosses one. See page_kind._page_is_a_drawing.
+            if _page_is_a_drawing(page):
+                continue
             try:
                 tables_finder = page.find_tables()
             except Exception:
