@@ -444,6 +444,16 @@ def reads_as_list_item(text: str, *, fallback: Callable[[str], bool] | None = No
     if len(t.split()) > 40:      # nothing anyone writes as a list item
         return False
     if not is_trained("list_item_under_label"):
+        # SHADOW: ask the rule anyway so the decision is logged, then ignore it
+        # and return the caller's deterministic answer. Without this the rule
+        # can never bootstrap -- it is not consulted because it is not trained,
+        # and it is not trained because nothing consulted it, so nothing logged.
+        # The logged row also carries what the rule WOULD have said next to what
+        # the count did, which is the pair a threshold is fitted on.
+        try:
+            list_item_rule().fires(t)
+        except Exception:
+            pass
         return (fallback or list_item_lexical)(t)
     return list_item_rule().fires(t)
 
