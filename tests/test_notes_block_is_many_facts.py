@@ -120,3 +120,60 @@ def test_every_fact_carries_the_heading_that_governs_it():
                 (a.value.get("list_label") for a in atoms if a.value.get("list_item"))}
     assert any(str(k).startswith("Layout & Technical Requirements") for k in governed)
     assert any(str(k).startswith("Security & Access Control") for k in governed)
+
+
+# --------------------------------------------------------------------------
+# Two pointers, two questions
+# --------------------------------------------------------------------------
+
+def test_the_two_pointer_fields_do_not_say_the_same_thing():
+    """`Section` is the breadcrumb -- WHERE in the document a fact sits,
+    outermost first. `Intro` is the NEAREST line it is read with.
+
+    Live 010180, before this: both read "Layout & Technical Requirements".
+    "Notes below:" appeared in neither, so nothing recorded that these facts
+    came out of call notes at all, and the second field earned its place by
+    repeating the first.
+    """
+    atoms = _parse(NOTES)
+    seen = 0
+    for atom in atoms:
+        value = atom.value
+        if not value.get("list_item"):
+            continue
+        locator = atom.source_refs[0].locator if atom.source_refs else {}
+        path = locator.get("section_path") or []
+        intro = value.get("intro")
+        if not path or not intro:
+            continue
+        seen += 1
+        assert path[0] == "Notes below", path
+        assert intro.rstrip(":") == path[-1], (intro, path)
+        assert intro.rstrip(":") != path[0], "intro repeats the outer pointer"
+        # The nearest line only -- a lead_in carrying the whole breadcrumb is
+        # the breadcrumb, and there is already a field for that.
+        assert value.get("lead_in") == [intro]
+    assert seen >= 2
+
+
+def test_the_outer_pointer_survives_a_new_heading():
+    """"Sequence & Coordination:" replaces the heading and leaves "Notes
+    below:" standing. Which of two labels is outer needs no semantics, only
+    order: the one already open is the one that opened the block."""
+    body = (
+        "Notes below:\n"
+        "Layout & Technical Requirements: The team discussed the office layout, "
+        "including 106 workstations. CAD drawings were shared for review.\n"
+        "Sequence & Coordination: Electrical connections will be provided by the "
+        "landlord. The GC will dictate the schedule.\n"
+    )
+    paths = set()
+    for atom in _parse(body):
+        if not atom.value.get("list_item"):
+            continue
+        locator = atom.source_refs[0].locator if atom.source_refs else {}
+        path = locator.get("section_path") or []
+        if path:
+            paths.add(tuple(path))
+    assert ("Notes below", "Layout & Technical Requirements") in paths
+    assert ("Notes below", "Sequence & Coordination") in paths
