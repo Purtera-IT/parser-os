@@ -889,17 +889,23 @@ _LIST_ITEM_MAX_WORDS = 10
 def _reads_as_list_item(line: str) -> bool:
     """Is this dashless line one of the label's items, or prose that ended it?
 
-    Two things separate them, and neither needs the wording. An item is short,
-    and an item is a fragment -- "Board room", "Print/copy areas". A sentence
-    closes with terminal punctuation, and ten words is easily a sentence
-    ("That is everything we agreed on the call yesterday."), so length alone
-    let prose keep a list open. Bullets are exempt: a dash already said it is
-    an item, full stop or not.
+    Length, and only length. Terminal punctuation looks like the better
+    discriminator and is not: people end list items with full stops all the
+    time. 010180's survey list is written
+
+        The immediate requested scope is:
+        Onsite walkthrough of 7 Penn Plaza.
+        Measure cabling pathways.
+        Verify distances.
+
+    and reading the first full stop as "the list ended" broke the chain at
+    item one -- the label never reached the rest, and the substance gate took
+    ten real scope statements. (They had been surviving on a stale
+    ``Still undefined:`` label leaked from a section far above, which is worse
+    than losing them: the list they were read with was the wrong one.)
     """
     text = (line or "").strip()
-    if not text or text.endswith((".", "!", "?")):
-        return False
-    return len(text.split()) <= _LIST_ITEM_MAX_WORDS
+    return bool(text) and len(text.split()) <= _LIST_ITEM_MAX_WORDS
 
 
 # A label that says the next lines are a place. The block under it ("Nesfield
