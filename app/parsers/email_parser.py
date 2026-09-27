@@ -879,33 +879,55 @@ def _is_identity_only_line(text: str, *, allow_name: bool = True) -> bool:
 # "Diagram:", "Club responsibilities:"). Not a fact itself: it is the intro
 # line its items are read with. Short, ends in a colon, no sentence inside.
 _LIST_LABEL_RE = re.compile(r"^[A-Za-z][^.!?]{0,60}:\s*$")
-#: How long a line under a label can be and still read as one of its items
-#: rather than as prose that ended the list. Eight of 010180's floorplan rooms
-#: are one or two words ("Board room", "Print/copy areas"); the longest thing
-#: measured in a dashless list on this corpus was nine.
+
+
+#: Ten words for an ordinary label, thirty under a section heading whose items
+#: are whole sentences. Numbers, and they are the WRONG SHAPE for the question
+#: -- "Verify distances." and "Thanks, let me know if you need anything else."
+#: are both short and only one is an item. They stay because the thing meant to
+#: replace them has not been trained yet; see `semantic_rules.is_trained`.
 _LIST_ITEM_MAX_WORDS = 10
+_NOTES_ITEM_MAX_WORDS = 40   # matches the rule's structural prefilter
+#: A call-notes section heading: a short Title-Case noun phrase, no verb --
+#: "Layout & Technical Requirements", "Wireless & Site Survey". What follows
+#: one is a paragraph of full sentences, not the one- and two-word items that
+#: sit under "Rooms:" or "Provided by us:".
+_SECTION_HEADING_LABEL = re.compile(
+    r"^[A-Z][A-Za-z]*(?:[ ](?:&|and|of|/|[A-Z][A-Za-z]*)){1,5}:?$")
 
 
-def _reads_as_list_item(line: str) -> bool:
-    """Is this dashless line one of the label's items, or prose that ended it?
+def _label_takes_sentences(label: list[str] | None) -> bool:
+    """Is this label a section heading, whose items are whole sentences?"""
+    if not label:
+        return False
+    return bool(_SECTION_HEADING_LABEL.match(str(label[0]).strip()))
 
-    Length, and only length. Terminal punctuation looks like the better
-    discriminator and is not: people end list items with full stops all the
-    time. 010180's survey list is written
 
-        The immediate requested scope is:
-        Onsite walkthrough of 7 Penn Plaza.
-        Measure cabling pathways.
-        Verify distances.
+def _reads_as_list_item(line: str, label: list[str] | None = None) -> bool:
+    """Is this line one of the label's items, or prose that ended the list?
 
-    and reading the first full stop as "the list ended" broke the chain at
-    item one -- the label never reached the rest, and the substance gate took
-    ten real scope statements. (They had been surviving on a stale
-    ``Still undefined:`` label leaked from a section far above, which is worse
-    than losing them: the list they were read with was the wrong one.)
+    A JUDGMENT, and it is asked of `semantic_rules.reads_as_list_item` -- but
+    that rule only DECIDES once its threshold has been fitted from data. Until
+    then it hands back to the word count below, because a rule seeded with
+    prototypes I wrote by hand is not a learned thing: it scored "Erick offered
+    a Cisco-funded wireless site survey to determine access point needs" as NOT
+    an item, sitting it nearer "I'll listen to this over and get back to you"
+    than the positives. The count got that right.
+
+    So the number is the fallback and the rule is the target, and the switch
+    between them is `is_trained`, not a code edit. What closes the gap is the
+    SOWSMITH_RULE_LOG being on in production and its rows being joined to the
+    labels a reviewer gives the resulting atoms.
     """
-    text = (line or "").strip()
-    return bool(text) and len(text.split()) <= _LIST_ITEM_MAX_WORDS
+    from app.core.semantic_rules import reads_as_list_item  # noqa: PLC0415
+
+    cap = _NOTES_ITEM_MAX_WORDS if _label_takes_sentences(label) else _LIST_ITEM_MAX_WORDS
+
+    def _count(text: str) -> bool:
+        t = (text or "").strip()
+        return bool(t) and len(t.split()) <= cap
+
+    return reads_as_list_item(line, fallback=_count)
 
 
 # A label that says the next lines are a place. The block under it ("Nesfield
@@ -3136,10 +3158,12 @@ class EmailParser(BaseParser):
             lead_for_line = list(active_lead_in) if section_for_line else []
             # Under a generic label, bullets (and short lines, for lists typed
             # without dashes) are its items and carry it as their intro line.
+            # `list_label` short-circuits, so the rule is consulted only for
+            # lines that actually sit under an open label.
             list_item_line = bool(
                 not section_for_line
                 and list_label
-                and (is_bullet or _reads_as_list_item(cleaned))
+                and (is_bullet or _reads_as_list_item(cleaned, list_label))
             )
             if list_item_line:
                 lead_for_line = list(list_label)

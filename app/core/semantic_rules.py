@@ -339,6 +339,115 @@ def is_framing_lead_in(text: str) -> bool:
     return lead_in_rule().fires(t)
 
 
+def is_trained(name: str) -> bool:
+    """Has this rule's threshold been fitted from data, or is it my guess?
+
+    A SemanticRule seeded with hand-written prototypes is not a learned thing.
+    It is a regex with a cosine on top, and it carries the seeder's blind spots
+    with none of a regex's predictability -- plus a dependency on an embedder
+    that is often unreachable, in which case the lexical fallback decides and
+    the "semantic" rule is the fallback wearing a hat.
+
+    So a rule earns the decision by being trained: `_train_semantic_rules.py`
+    fits the threshold leave-one-out against the rule's examples PLUS the
+    human-labelled decisions in the SOWSMITH_RULE_LOG, and adopts it only if it
+    beats the current threshold's F1. Until that has happened and written a
+    registry entry, callers should keep whatever deterministic rule they had.
+    """
+    try:
+        ent = _load_threshold_registry().get(name)
+        return isinstance(ent, dict) and isinstance(ent.get("threshold"), (int, float))
+    except Exception:
+        return False
+
+
+def list_item_lexical(text: str) -> bool:
+    """Offline net for the item judgment: short enough to be an item.
+
+    A word count is what this decision used to be, whole -- ten words for an
+    ordinary label, thirty under a section heading. It is kept HERE, as the
+    fallback, because a number is an honest last resort and a dishonest
+    judgment: "Verify distances." and "Thanks, let me know if you need
+    anything else." are both short, and only one of them is an item.
+    """
+    words = (text or "").split()
+    return 1 <= len(words) <= 30
+
+
+def list_item_rule() -> "SemanticRule":
+    """Is this line one of the items under the label above it, or the prose
+    that ended the list?
+
+    The structural part -- that there IS a label above, and that this line sits
+    under it -- is segmentation, and the parser knows it. What the parser does
+    NOT know is whether a line is a fact the list is enumerating or a sentence
+    that has moved on, and that is a judgment about meaning. It was a word
+    count, which is why "The setup will require Cat 6A cabling, two Ethernet
+    connections per workstation, and AV work for conference rooms" (18 words,
+    an item) and "That is everything we agreed on the call yesterday" (10
+    words, not one) were separated by counting.
+
+    The threshold here is trainable through the eval-gated registry without a
+    code edit, which is the point: the number stops being the decision.
+    """
+    r = _RULE_CACHE.get("list_item_under_label")
+    if r is None:
+        r = SemanticRule(
+            name="list_item_under_label",
+            positives=[
+                # notes sentences -- full clauses that are each one fact
+                "The team discussed the office layout, including 106 workstations, conference rooms, phone rooms, IT room, and pantry.",
+                "CAD drawings and plans were shared for review.",
+                "The setup will require Cat 6A cabling, two Ethernet connections per workstation, and AV work for conference rooms.",
+                "Electrical connections will be provided by the landlord, with furniture vendors handling workstation hookups.",
+                "The GC will dictate the schedule for cabling installation, which typically takes four to six weeks.",
+                "The survey should be conducted after construction is complete.",
+                "Wireless access points will require Ethernet cabling.",
+                # bare items under a plain label
+                "Board room", "Executive offices", "Print/copy areas", "IT room/closet",
+                "Measure cabling pathways.", "Verify distances.", "Determine drop locations.",
+                "Cabling to all rooms.", "Two drops per room.",
+                "24 Cat6A drops in the IT closet",
+            ],
+            negatives=[
+                # the list is over: closings, pleasantries, questions back
+                "That is everything we agreed on the call yesterday afternoon, and nothing else is in scope for this phase.",
+                "Thanks, let me know if you need anything else.",
+                "Looking forward to speaking with you,",
+                "Appreciate you thinking of us.",
+                "I'll listen to this over, get some good notes on it, and get it to my team and I'll get back with you.",
+                "Can you try listening to the recording below, and see if we can get budgetary numbers together?",
+                "Hi Pat,",
+                "Please see the attached and let me know your thoughts.",
+            ],
+            threshold=0.62,
+            lexical_fallback=list_item_lexical,
+        )
+        _RULE_CACHE["list_item_under_label"] = r
+    return r
+
+
+def reads_as_list_item(text: str, *, fallback: Callable[[str], bool] | None = None) -> bool:
+    """Structural prefilter (bounds what we embed) + the item rule.
+
+    Falls back to ``fallback`` -- the caller's own deterministic rule -- until
+    this rule has a TRAINED threshold. Seeded prototypes decide nothing: mine
+    scored "Erick offered a Cisco-funded wireless site survey to determine
+    access point needs" as NOT an item, because it sits nearer the negative
+    "I'll listen to this over ... and I'll get back with you" than the
+    positives -- both are somebody offering to do something. The word count it
+    replaced got that line right.
+    """
+    t = (text or "").strip()
+    if not t or len(t) > 400:
+        return False
+    if len(t.split()) > 40:      # nothing anyone writes as a list item
+        return False
+    if not is_trained("list_item_under_label"):
+        return (fallback or list_item_lexical)(t)
+    return list_item_rule().fires(t)
+
+
 def operative_date_rule() -> "SemanticRule":
     """Is a date OPERATIVE (deadline / milestone / effective / award / timeline)
     versus a decorative cover-letterhead date? Judge the date's CONTEXT
