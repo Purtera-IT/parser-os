@@ -108,6 +108,7 @@ from app.parsers.pdf.site_roster import (  # noqa: E402
 
 # Moved to app.parsers.pdf.tables. Re-exported so every existing import keeps working;
 # this module stays the single public entry point for PDF parsing.
+from app.parsers.pdf.page_kind import _page_is_a_drawing
 from app.parsers.pdf.tables import (  # noqa: E402
     _FCHK_NUM_RE,
     _MEAS_ID_RE,
@@ -2018,6 +2019,23 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             seen_metadata.add(key)
             document_metadata.append(entry)
 
+    # Which pages are drawings rather than pages with a table on them. Measured
+    # here, once, from the PDF itself, so every consumer reads the same answer
+    # instead of guessing from block shapes.
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        with fitz.open(str(pdf_path)) as _d:
+            for _p in pages:
+                try:
+                    _page = _d[int(_p.get("page", 0))]
+                except Exception:
+                    continue
+                if _page_is_a_drawing(_page):
+                    _p["is_drawing"] = True
+    except Exception:
+        pass
+
     return {
         "schema_version": STRUCTURED_SCHEMA_VERSION,
         "source": {
@@ -2215,6 +2233,8 @@ def atoms_from_structured_doc(
         page_index = int(page.get("page", 0))
         sections = page.get("sections", []) or []
         _is_ocr_page = bool(page.get("ocr_text"))
+        if page.get("is_drawing"):
+            _mark_blocks_on_a_drawing(sections)
         for _atom in _atoms_for_sections(
             sections=sections,
             section_path=[],
@@ -2475,6 +2495,24 @@ def _split_long_paragraph(text: str, *, min_chars: int = 600, min_sentences: int
         parts.append(buf)
     parts = [p for p in parts if len(p) >= 12]
     return parts if len(parts) >= min_sentences else []
+
+
+#: Set on every block of a page `build_structured_document` measured as a
+#: drawing, so `_atoms_for_block` can leave its walls alone. A flag on the block
+#: rather than an argument, because the three call sites are nested two deep and
+#: none of them needs to know.
+_ON_A_DRAWING = "_on_a_drawing"
+
+
+def _mark_blocks_on_a_drawing(sections: list[dict[str, Any]]) -> None:
+    """Stamp `_ON_A_DRAWING` on every block under `sections`, recursively."""
+    for section in sections or []:
+        if not isinstance(section, dict):
+            continue
+        for block in section.get("blocks") or []:
+            if isinstance(block, dict):
+                block[_ON_A_DRAWING] = True
+        _mark_blocks_on_a_drawing(section.get("subsections") or [])
 
 
 def _atoms_for_block(
@@ -2795,6 +2833,20 @@ def _atoms_for_block(
     if kind == "table":
         columns = list(block.get("columns") or [])
         rows = list(block.get("rows") or [])
+        if block.get(_ON_A_DRAWING):
+            # A floor plan is nothing but ruled lines, so the segmenter reads
+            # its walls as a grid, and every room name that crosses a wall is
+            # split across two cells. Rendered as a row that becomes
+            # "RECEPT: ION | col_4: COPY | col_5: PRINT/ COPY" -- a sentence
+            # claiming RECEPT is a field and ION is its value.
+            #
+            # Measured on 010180's SP-6 sheet: 26 of the page's 43 atoms came
+            # from these grids and every one was wreckage, while all 12 `note`
+            # blocks were clean ("12 PERSON BOARD ROOM", "Floor 12 | Suite 1200
+            # | 12,154 RSF"). The page text layer carries every room name whole
+            # and the room schedule with its counts, so nothing is lost by
+            # leaving the walls alone.
+            return
         sample_cells: list[str] = []
         for row in rows[:5]:
             if isinstance(row, dict):
@@ -3732,6 +3784,8 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
     try:
         with fitz.open(str(pdf_path)) as doc:
             page = doc[page_index]
+            if _page_is_a_drawing(page):
+                return [], []
             try:
                 finder = page.find_tables(strategy="lines")
             except Exception:
