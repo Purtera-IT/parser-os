@@ -64,6 +64,47 @@ def lines(text):
     return [ln.strip() for ln in strip(text).split("\n") if ln.strip()]
 
 
+#: The SAME block after the inline-markup fix (#227): the row flattener joins
+#: its cells, so labels arrive with their values and two cells arrive on one
+#: line. The first matcher anchored on the whole line and silently stopped
+#: working the moment the text extraction improved -- putting the passcode back
+#: into deal 010180. Both shapes are pinned now.
+TEAMS_FLATTENED = """Looking forward to speaking with you,
+________________________________________________________________________________
+Microsoft Teams meeting
+Join: https://teams.microsoft.com/meet/228859003479315?p=3inkejx3nncDpjv8g2
+Meeting ID: 228 859 003 479 315
+Passcode: jz7o5CE9
+Need help? | System reference
+Dial in by phone
++1 847-371-3000,,25104158# United States, Libertyville
+Find a local number
+Phone conference ID: 251 041 58#
+Join on a video conferencing device
+Tenant key: cdw@m.webex.com
+Video ID: 119 856 328 6
+More info
+For organizers: Meeting options | Reset dial-in PIN
+________________________________________________________________________________
+The contents of this email are intended only for the recipient(s) listed above.
+"""
+
+
+def test_the_flattened_block_goes_too():
+    """A regression that actually happened: improving the text extraction broke
+    the stripper, and a bridge passcode came back."""
+    assert lines(TEAMS_FLATTENED) == [
+        "Looking forward to speaking with you,",
+        "The contents of this email are intended only for the recipient(s) listed above.",
+    ]
+
+
+def test_the_credentials_are_gone_from_the_flattened_shape():
+    out = strip(TEAMS_FLATTENED)
+    for secret in ("jz7o5CE9", "251 041 58#", "25104158#", "228 859 003 479 315"):
+        assert secret not in out
+
+
 def test_the_whole_teams_block_goes():
     out = lines(TEAMS)
     assert out == [
