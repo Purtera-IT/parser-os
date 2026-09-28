@@ -126,6 +126,25 @@ def _demote(atom: Any, sheet: str) -> None:
         pass
 
 
+#: One line asking the PM for what the OCR could not give. Emitted in place of
+#: the export's rows, so the sheet is not silently absent from the workspace.
+ASK_THE_PM = (
+    "{sheet}: this deal also carries a PDF export of this sheet. Its text was "
+    "read by OCR and is not worth keeping as facts -- {n} fragments like "
+    "{examples}. The drawing itself parsed, and what it states is above. If "
+    "there is anything on this sheet the drawing did not give us, describe it "
+    "here."
+)
+
+
+def withhold_export_rows(atoms: list[Any], sheet: str, rows: list[Any]) -> Any:
+    """The one atom that replaces an export's OCR fragments."""
+    examples = ", ".join(
+        repr(re.sub(r"\s+", " ", str(getattr(a, "raw_text", "") or "")).strip()[:22])
+        for a in rows[:3]) or "(none)"
+    return ASK_THE_PM.format(sheet=sheet, n=len(rows), examples=examples)
+
+
 def demote_export_duplicates(atoms: list[Any]) -> list[Any]:
     """Demote a PDF's rows when the same sheet's DWG parsed.
 
@@ -158,3 +177,49 @@ def demote_export_duplicates(atoms: list[Any]) -> list[Any]:
                 _demote(atom, dwg)
                 break
     return atoms
+
+
+def export_rows_to_withhold(atoms: list[Any]) -> dict[str, list[Any]]:
+    """Which atoms are an export's OCR of a sheet we read properly.
+
+    Keyed by the drawing that supersedes them, so a caller can say WHICH sheet
+    each withheld row belonged to.
+
+    Demoting these was the first attempt, and it was not enough. A demoted row
+    still occupies a line in the labeling pane, and on live 010180 twenty-six
+    of them did: "JAN", "ADA RR", "IT", "P: 203.246.1900", "NOTHING BEATS 72
+    YEARS OF STABILITY". None of that reaches a deal kit or a SOW, and an OCR
+    pass over a drawing is not a reading worth keeping at all when the drawing
+    itself parsed -- it is the same sheet, read badly, by the worse of two
+    available methods.
+
+    So they are WITHHELD rather than shown: removed from the accepted set and
+    written to the suppression ledger with the reason, which keeps them
+    auditable and keeps them as training data without asking a PM to read
+    them. The sheet is not silently absent -- one atom asks the PM to describe
+    anything the drawing did not give.
+    """
+    drawings: dict[str, str] = {}
+    for atom in atoms:
+        name = _filename(atom)
+        if name.lower().endswith(_DRAWING_EXT):
+            drawings.setdefault(name, _artifact(atom))
+    if not drawings:
+        return {}
+
+    read: dict[str, int] = {name: 0 for name in drawings}
+    for atom in atoms:
+        name = _filename(atom)
+        if name in read and (getattr(atom, "value", None) or {}).get("kind") != "cad_marker":
+            read[name] += 1
+
+    out: dict[str, list[Any]] = {}
+    for atom in atoms:
+        name = _filename(atom)
+        if not name.lower().endswith(_EXPORT_EXT):
+            continue
+        for dwg in drawings:
+            if read.get(dwg, 0) >= 2 and same_sheet(name, dwg):
+                out.setdefault(dwg, []).append(atom)
+                break
+    return out

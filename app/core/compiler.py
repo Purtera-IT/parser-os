@@ -167,6 +167,69 @@ _NON_ARTIFACT_PATTERNS = (
 )
 
 
+def _deal_state_atom(template: Any, line: Any) -> Any:
+    """One line of where-the-deal-stands, as an atom.
+
+    Copied off a real atom so it inherits the project and an artifact and
+    stays traceable. It carries `why` and `assumption` for the same reason
+    every derived claim does: nobody wrote it, so it has to be arguable.
+    """
+    import copy as _copy
+
+    from app.core.schemas import AtomType, ReviewStatus
+
+    atom = _copy.deepcopy(template)
+    text = f"{line.key.replace('_', ' ')}: {line.value} — {line.why}"
+    atom.raw_text = text
+    if hasattr(atom, "normalized_text"):
+        atom.normalized_text = text.lower()
+    atom.atom_type = AtomType.deal_state
+    atom.review_status = ReviewStatus.needs_review
+    atom.review_flags = ["derived_deal_state"]
+    atom.entity_keys = []
+    atom.value = {
+        "kind": "deal_state",
+        "key": line.key,
+        "state": line.value,
+        "why": line.why,
+        "assumption": line.assumption,
+        "evidence": list(line.evidence or []),
+    }
+    atom.confidence = 0.8
+    if hasattr(atom, "id"):
+        atom.id = stable_id("atm", str(getattr(atom, "project_id", "")),
+                            "deal_state", line.key)
+    return atom
+
+
+def _ask_the_pm_atom(template: Any, text: str) -> Any:
+    """One open question in place of an export's withheld OCR rows.
+
+    Built by copying an atom that WAS there, so it inherits the artifact and
+    source ref and stays traceable to the file it stands for. Without it a
+    sheet whose rows were all withheld would simply be absent, and absent is
+    indistinguishable from never-looked-at.
+    """
+    import copy as _copy
+
+    from app.core.schemas import AtomType, ReviewStatus
+
+    atom = _copy.deepcopy(template)
+    atom.raw_text = text
+    if hasattr(atom, "normalized_text"):
+        atom.normalized_text = text.lower()
+    atom.atom_type = AtomType.open_question
+    atom.review_status = ReviewStatus.needs_review
+    atom.review_flags = ["export_ocr_withheld", "needs_pm_description"]
+    if isinstance(getattr(atom, "value", None), dict):
+        atom.value = {"kind": "ask_the_pm", "reason": "export_ocr_withheld"}
+    atom.confidence = 0.5
+    if hasattr(atom, "id"):
+        atom.id = stable_id("atm", str(getattr(atom, "artifact_id", "")), "ask_the_pm",
+                            text[:80])
+    return atom
+
+
 def _materialize_derived_files(
     artifact: Path,
     derived_files: list[ParserDerivedFile],
@@ -2106,22 +2169,86 @@ def compile_project(
     # parsed properly, so they are demoted to evidence rather than deleted --
     # and left alone entirely when the drawing never converted, because then
     # the export is the only account of the sheet there is.
+    # A PDF export of a sheet whose DRAWING we parsed is the same sheet read
+    # badly, by the worse of two available methods. Demoting its rows was the
+    # first attempt and it was not enough: a demoted row still takes a line in
+    # the labeling pane, and live 010180 had twenty-six of them -- "JAN",
+    # "ADA RR", "P: 203.246.1900", "NOTHING BEATS 72 YEARS OF STABILITY".
+    # None of that reaches a deal kit or a SOW.
+    #
+    # So they are withheld: out of the accepted set, into the suppression
+    # ledger with the reason, which keeps them auditable and keeps them as
+    # training data without asking a PM to read them. One atom takes their
+    # place and asks the PM for anything the drawing did not give.
     with telemetry.stage("drawing_pairs", input_count=len(atoms)) as _dp:
-        _demoted = 0
+        _withheld = 0
         try:
-            from app.core.drawing_pairs import SUPERSEDED_FLAG, demote_export_duplicates
+            from app.core.drawing_pairs import (
+                export_rows_to_withhold,
+                withhold_export_rows,
+            )
 
-            demote_export_duplicates(atoms)
-            _demoted = sum(1 for a in atoms
-                           if SUPERSEDED_FLAG in (getattr(a, "review_flags", None) or []))
-            if _demoted:
+            by_sheet = export_rows_to_withhold(atoms)
+            if by_sheet:
+                before_pairs = list(atoms)
+                drop = {id(a) for rows in by_sheet.values() for a in rows}
+                atoms = [a for a in atoms if id(a) not in drop]
+                _withheld = len(drop)
+                for sheet, rows in by_sheet.items():
+                    ask = withhold_export_rows(before_pairs, sheet, rows)
+                    template = rows[0]
+                    atoms.append(_ask_the_pm_atom(template, ask))
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_pairs, atoms,
+                        stage="drawing_pairs",
+                        reason=("OCR of a PDF export of a sheet whose drawing parsed — "
+                                "the same sheet read by the worse of two methods"),
+                    ),
+                )
                 warnings.append(
-                    f"INFO: drawing_pairs demoted {_demoted} atom(s) from a PDF export "
-                    f"of a sheet whose drawing was read directly"
+                    f"INFO: drawing_pairs withheld {_withheld} OCR row(s) from PDF "
+                    f"export(s) of {len(by_sheet)} sheet(s) parsed from the drawing"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: drawing_pairs failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(_dp, output_count=_demoted)
+        telemetry.end_stage(_dp, output_count=_withheld)
+
+    # Where the deal STANDS, as a handful of lines instead of forty atoms.
+    #
+    # A mailbox carries two kinds of sentence and only one belongs in a deal
+    # kit. "Two Cat6A drops per workstation" is content. "Can you provide
+    # availability for the walkthrough" is the deal moving -- and on live
+    # 010180 that traffic was 43 of 252 non-rejected atoms, competing for a
+    # PM's attention with the two numbers that decide the job.
+    #
+    # The consolidation also carries a gate: a price its own authors call
+    # budgetary, with no completed survey on the record, must not become a
+    # firm SOW. 010180's $110,108 came from a solutions architect listening to
+    # a call recording; nobody from PurTera had been on site.
+    with telemetry.stage("deal_state", input_count=len(atoms)) as _ds:
+        _state_lines = 0
+        try:
+            from app.core.deal_state import read_deal_state
+
+            state = read_deal_state(atoms)
+            if state.lines:
+                template = atoms[0] if atoms else None
+                for line in state.lines:
+                    if template is None:
+                        break
+                    atoms.append(_deal_state_atom(template, line))
+                _state_lines = len(state.lines)
+                blocks = state.get("blocks")
+                if blocks is not None:
+                    warnings.append(
+                        "INFO: deal_state — price basis is "
+                        f"{state.get('price_basis').value}; {blocks.value}"
+                    )
+        except Exception as exc:
+            warnings.append(f"WARNING: deal_state failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(_ds, output_count=_state_lines)
 
     with telemetry.stage("substance_gate", input_count=len(atoms)) as stage:
         gate_dropped = 0

@@ -152,6 +152,9 @@ class AtomType(str, Enum):
     #: in atom_types.json and "A drawing is measured, not listed" in
     #: _LABELING_DOCTRINE.md.
     derived_finding = "derived_finding"
+    #: Where the deal STANDS, as opposed to what it contains. See
+    #: `app/core/deal_state.py`.
+    deal_state = "deal_state"
     site_room_mix = "site_room_mix"
     site_implementation_note = "site_implementation_note"
 
