@@ -1867,6 +1867,92 @@ def _cross_type_priority(atom: Any) -> int:
     return _CROSS_TYPE_PRIORITY.get(_atom_type_value(atom), _CROSS_TYPE_DEFAULT_PRIORITY)
 
 
+def _utterance_key(atom) -> str:
+    """The exact span an atom was read from: artifact, message, lines, text.
+
+    Two atoms with this key equal are not two readings of one fact -- they are
+    ONE line of ONE email, emitted twice under different types.
+    """
+    ref = (getattr(atom, "source_refs", None) or [None])[0]
+    loc = (getattr(ref, "locator", None) or {}) if ref else {}
+    if not isinstance(loc, dict):
+        loc = {}
+    span = (
+        str(getattr(atom, "artifact_id", "") or ""),
+        str(getattr(ref, "filename", "") or "") if ref else "",
+        str(loc.get("message_index", "")),
+        str(loc.get("line_start", "")),
+        str(loc.get("line_end", "")),
+    )
+    if not any(span[2:]):
+        return ""          # no span to compare -- the exception does not apply
+    text = re.sub(r"\s+", " ", str(getattr(atom, "raw_text", "") or "")).strip().lower()
+    if not text:
+        return ""
+    return "|".join(span) + "|" + text
+
+
+def _same_utterance_as_a_question(atoms: list[Any]) -> set[int]:
+    """Non-question atoms that are the SAME LINE as a question in this batch.
+
+    The passthrough below exists because a question is a distinct speech act:
+    "MDF badge access?" and a constraint saying "MDF badge access" are two
+    things, and collapsing them drops the only type that drives the
+    missing_info packet. That reasoning holds when the two atoms come from
+    DIFFERENT places.
+
+    It does not hold when they are the same line. Live 010180 carried
+
+        Would we need to have a walkthrough on the site? For 010180. This one
+        we put budgetary numbers together for. Could do a site survey charge
+        them a few hundred bucks ...
+
+    twice -- once `constraint`, once `open_question` -- from one email, message
+    0, line 1, same sender, same second. There is no separate declarative
+    statement to protect; there is one sentence typed twice, and a PM reading
+    the deal saw it twice.
+
+    The question wins, because it is the one that ends in "?" and the one that
+    keeps the ask open.
+
+    A DECISION is deliberately not included, and the first version of this
+    which included it was wrong. The demo deal's kickoff line
+
+        Confirmed, West Wing will be treated as excluded pending written
+        confirmation
+
+    is one line emitted as both `decision` and `exclusion`, and those ARE two
+    facts: the exclusion says what is out of scope, the decision says somebody
+    committed to it on the call, and they feed different packet families.
+    Folding them deleted the exclusion and the scope_exclusion packet stopped
+    forming at all -- four tests caught it.
+
+    A question is not like that. When the line reads as a question, a
+    non-question atom over the same words adds no second fact; it is the same
+    sentence mistyped. So the text has to actually ask something.
+    """
+    by_span: dict[str, list[Any]] = {}
+    for atom in atoms:
+        key = _utterance_key(atom)
+        if key:
+            by_span.setdefault(key, []).append(atom)
+    drop: set[int] = set()
+    for members in by_span.values():
+        if len(members) < 2:
+            continue
+        asks = [m for m in members if _atom_type_value(m) == "open_question"
+                and "?" in str(getattr(m, "raw_text", "") or "")]
+        if not asks or len(asks) == len(members):
+            continue
+        winner = asks[0]
+        for loser in members:
+            if loser is winner or _atom_type_value(loser) in {"open_question", "decision"}:
+                continue
+            _merge_atom_metadata(winner, loser)
+            drop.add(id(loser))
+    return drop
+
+
 def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
     """Collapse the *same sentence* emitted under multiple atom types.
 
@@ -1882,7 +1968,12 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
     groups: dict[str, list[Any]] = {}
     order: list[str] = []
     passthrough: list[Any] = []
+    # One line of one email, emitted under two types, is not two facts. See
+    # `_same_utterance_as_a_question`.
+    typed_twice = _same_utterance_as_a_question(atoms)
     for atom in atoms:
+        if id(atom) in typed_twice:
+            continue
         # An open_question is a distinct speech act, not a lossy duplicate of a
         # declarative fact. The text key strips punctuation — including the
         # trailing "?" that *makes* it a question — so "MDF badge access?"
