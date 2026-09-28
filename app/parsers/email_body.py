@@ -126,7 +126,72 @@ def _unwrap_inline_in_place(soup: BeautifulSoup) -> int:
     # every element. `smooth` merges the adjacent strings back into one, which
     # is the half that actually repairs the sentence.
     soup.smooth()
+    _collapse_source_newlines_in_place(soup)
     return unwrapped
+
+
+#: Where a newline is real and must survive: preformatted text.
+_PREFORMATTED = ("pre", "textarea", "plaintext")
+
+
+def _collapse_source_newlines_in_place(soup: BeautifulSoup) -> None:
+    """A newline INSIDE a text node is whitespace, not a line break.
+
+    Unwrapping the inline tags is only half the repair, because a mail client
+    also breaks its source markup wherever it likes. Outlook sent 010180 this:
+
+        Are there any specific days the week of the 5
+        <sup>th</sup>&nbsp;they want to do the walkthrough?
+
+    The `<sup>` is unwrapped and smoothed back into one string -- and that
+    string still contains the newline the markup had before the tag. The
+    separator then splits on it anyway, and the deal got
+
+        "Are there any specific days the week of the 5"   (scope_item)
+        "th they want to do the walkthrough?"             (open_question)
+
+    Two fragments, neither of which asks anything, from a question that is
+    still open: nobody has said which days the customer wants.
+
+    HTML has always said this newline is whitespace -- it is only a line break
+    in `<pre>`. Collapsing it here means block tags remain the only thing that
+    starts a new line, which is what the separator was meant to express.
+    """
+    for node in list(soup.find_all(string=True)):
+        if "\n" not in node and "\r" not in node:
+            continue
+        if any(p.name in _PREFORMATTED for p in node.parents if p.name):
+            continue
+        collapsed = re.sub(r"\s+", " ", str(node))
+        if collapsed != str(node):
+            node.replace_with(collapsed)
+    _rejoin_ordinals_in_place(soup)
+
+
+#: "5" and "th" that a `<sup>` split, once the tag is gone. Anchored on a digit
+#: so only an ordinal suffix is ever joined.
+_SPLIT_ORDINAL = re.compile(r"(?<=\d)\s+(st|nd|rd|th)\b", re.I)
+
+
+def _rejoin_ordinals_in_place(soup: BeautifulSoup) -> None:
+    """Put the "th" back on the "5".
+
+    Collapsing the source newline keeps the sentence whole, which is the part
+    that matters. It still leaves the space that stood before the `<sup>`:
+
+        the week of the 5 th they want to do the walkthrough?
+
+    The author wrote "5th" -- the message's own text/plain alternative says so
+    -- and a PM reading "the 5 th" sees a parse artifact and trusts the atom
+    less. Only ever joins a suffix that follows a digit.
+    """
+    for node in list(soup.find_all(string=True)):
+        text = str(node)
+        if not _SPLIT_ORDINAL.search(text):
+            continue
+        if any(p.name in _PREFORMATTED for p in node.parents if p.name):
+            continue
+        node.replace_with(_SPLIT_ORDINAL.sub(r"\1", text))
 
 
 def _flatten_tables_in_place(soup: BeautifulSoup) -> int:
