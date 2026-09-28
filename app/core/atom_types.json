@@ -124,6 +124,17 @@
       "asks_supplier": false
     },
     {
+      "name": "derived_finding",
+      "coarse": "quality",
+      "facet": "SITE",
+      "desc": "A statement nobody wrote: counted, measured or noticed-to-be-absent by the parser from an artifact's own structure -- 106 workstations counted as CAD block inserts, 828 ft of new partition summed from linework, a telecom layer noticed missing. Carries what it assumed and what it decides, because a derived claim has to be arguable.",
+      "label_space": "head",
+      "status": "live",
+      "value_light": false,
+      "train_rows": 0,
+      "asks_supplier": false
+    },
+    {
       "name": "service_line",
       "coarse": "commercial",
       "facet": "COMMERCIAL",

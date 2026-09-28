@@ -116,9 +116,16 @@ def test_a_counted_row_survives_a_bare_room_tag():
 
 
 def test_two_tags_of_the_same_room_both_survive():
-    """SP-6 carries two PANTRY tags while its schedule counts one -- the kind of
-    disagreement a drawing exists to surface. Keyed on text alone the second tag
-    vanished and the drawing silently agreed with its own count."""
+    """Two tags naming the same room in different places are two rooms.
+
+    SP-6 does this with EXECUTIVE OFFICE, HUDDLE, PRIVATE OFFICE and RESTROOM,
+    each tagged twice on ROOM-TAG at different baselines. Keyed on text alone
+    the second tag vanished, and a plan that shows two of something read as
+    showing one -- so a schedule row could never be checked against its tags.
+
+    (An earlier version of this docstring said SP-6 carried two PANTRY tags.
+    It carries one. Counted across all four layouts, the second "PANTRY" was
+    the schedule ROW "PANTRY 1", not a tag.)"""
     from app.core.semantic_dedup import cross_type_dedup_atoms
 
     out = cross_type_dedup_atoms([
@@ -138,3 +145,30 @@ def test_one_entity_typed_twice_still_collapses():
         _CadAtom("quantity", "IT CLOSET 1", y=104.0),
     ])
     assert len(out) == 1
+
+
+# ------------------------------------------------- the render is looked at
+
+def test_the_render_is_sized_for_a_screen():
+    """ezdxf's auto-sized page describes the sheet in REAL-WORLD units, and for
+    SP-6 that is `width="27.1mm"` -- about 102 px. An `<img>` takes its
+    intrinsic size from those attributes and a `max-width` rule only caps a
+    picture, never grows one, so the floor plan would have arrived as an
+    unreadable hundred-pixel thumbnail with every line in it technically
+    present."""
+    from app.parsers.dwg_parser import _RENDER_WIDTH_PX, _sized_for_a_screen
+
+    tiny = ('<svg xmlns="http://www.w3.org/2000/svg" width="27.1mm" '
+            'height="21.1mm" viewBox="0 0 1000000 778598"><g/></svg>')
+    out = _sized_for_a_screen(tiny)
+    assert f'width="{_RENDER_WIDTH_PX}"' in out
+    assert 'height="1557"' in out          # the viewBox's aspect, preserved
+    assert 'viewBox="0 0 1000000 778598"' in out
+
+
+def test_a_render_without_a_viewbox_is_left_alone():
+    """Resizing by an aspect ratio that is not there would invent one."""
+    from app.parsers.dwg_parser import _sized_for_a_screen
+
+    plain = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="8mm"/>'
+    assert _sized_for_a_screen(plain) == plain

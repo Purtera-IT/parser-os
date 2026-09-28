@@ -308,6 +308,13 @@ PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
         AtomType.cutover_validation,
         AtomType.conditional_support_boundary,
         AtomType.quote_status,
+        # A statement nobody wrote: counted, measured or noticed-to-be-absent
+        # by the parser from an artifact's own structure. Non-anchor because a
+        # packet is built around what a SOURCE says, and anchoring one on a
+        # derived claim would let the parser's own arithmetic seed scope —
+        # "106 workstations drawn" belongs beside the sentence that asserts
+        # 106, as the check on it, not in place of it.
+        AtomType.derived_finding,
         # Schematic atoms — surfaced via the drawing/legend views.
         AtomType.schematic_legend,
         AtomType.schematic_detection_target_set,
