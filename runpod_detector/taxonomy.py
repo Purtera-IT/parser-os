@@ -36,6 +36,12 @@ MICRO_TO_FACET: dict[str, str] = {
     "site_access_restriction": "SITE",  # [R]
     "site_room_mix": "SITE",            # [R]
     "site_infrastructure": "SITE",      # [R]
+    # Counted, measured or noticed-to-be-absent by the parser from an
+    # artifact's own structure -- 106 workstations counted as CAD block
+    # inserts, a telecom layer noticed missing. SITE because what it
+    # describes is the place: its size, its contents, its reach.
+    "derived_finding": "SITE",          # [N] parser-derived
+
     # --- COMMERCIAL ---
     "service_line": "COMMERCIAL",       # [R][D]
     "bom_line": "COMMERCIAL",           # [R][D]
