@@ -300,6 +300,11 @@ class FeedbackStore:
         # individual-exemplar embedding cache backs the fits.
         self._heads: dict[str, NeuralHead] = {}
         self._ex_vec: dict[str, np.ndarray] = {}  # exemplar text -> vector
+        # The corrections table, memoised until a write. See `all_corrections`
+        # and `_relations_present` for why: a resolve read the whole table
+        # twice, and most resolves are for a relation nothing was ever taught.
+        self._corrections_cache: dict[bool, list[Correction]] = {}
+        self._relations_cache: frozenset[str] | None = None
         self._enable_head = True
         # NATURAL-LANGUAGE LEARNING: a correction's free-text ``instruction`` is
         # the PM's expert advice ("an airport concourse is the site itself, not a
@@ -390,12 +395,53 @@ class FeedbackStore:
         self._conn.commit()
         self._proto_dirty = True
         self._heads.clear()
+        self._invalidate_corrections_cache()
 
     def all_corrections(self, *, active_only: bool = True) -> list[Correction]:
+        """Every stored correction, memoised per (active_only) until a write.
+
+        This is a full table read plus a `Correction.from_row` for every row,
+        and `resolve()` called it TWICE on every decision -- once to filter,
+        once to build the "0 of N survived" log line. On the dev store that is
+        886 row deserialisations per decide().
+
+        `sheet_role` is asked once per sheet of every spreadsheet in a deal,
+        and there is not one `sheet_role` correction in the store, so every one
+        of those calls paid the full cost to arrive at a guaranteed None. It
+        showed up as `parse_artifacts` being slow, which is where the real time
+        on a 45-document deal was going.
+
+        Invalidated by `add` and `set_status`, the only two writes that change
+        what a resolve can see. `_record_hit` bumps a counter and deliberately
+        does not: it cannot change any verdict, and invalidating on it would
+        clear the cache on every successful match.
+        """
+        key = bool(active_only)
+        cached = self._corrections_cache.get(key)
+        if cached is not None:
+            return cached
         q = "SELECT * FROM corrections"
         if active_only:
             q += " WHERE status = 'active'"
-        return [Correction.from_row(r) for r in self._conn.execute(q)]
+        rows = [Correction.from_row(r) for r in self._conn.execute(q)]
+        self._corrections_cache[key] = rows
+        return rows
+
+    def _relations_present(self) -> frozenset[str]:
+        """Which relations any ACTIVE correction actually carries.
+
+        A relation absent here can never produce a hit, so `resolve` can stop
+        before it touches the store at all.
+        """
+        if self._relations_cache is None:
+            self._relations_cache = frozenset(
+                str(c.relation) for c in self.all_corrections(active_only=True)
+            )
+        return self._relations_cache
+
+    def _invalidate_corrections_cache(self) -> None:
+        self._corrections_cache.clear()
+        self._relations_cache = None
 
     def get(self, correction_id: str) -> Correction | None:
         r = self._conn.execute(
@@ -426,6 +472,7 @@ class FeedbackStore:
         self._conn.commit()
         self._proto_dirty = True
         self._heads.clear()
+        self._invalidate_corrections_cache()
 
     def _record_hit(self, correction_id: str) -> None:
         self._conn.execute(
@@ -718,6 +765,14 @@ class FeedbackStore:
         try:
             if not text or not candidates:
                 return None
+            # Nothing was ever taught for this relation, so no correction can
+            # possibly fire. Answer before the reachability probe and before
+            # reading the table -- `sheet_role` is asked once per sheet of
+            # every spreadsheet on a deal and has never had a single
+            # correction, and each of those calls was reading and
+            # deserialising all 443 rows twice to reach a guaranteed None.
+            if relation not in self._relations_present():
+                return None
             if not self._reachable():
                 # The embedder is how this store compares anything. Unreachable
                 # means every lookup abstains, which from outside is identical
@@ -739,8 +794,11 @@ class FeedbackStore:
             # The judged text rides along as a fact, so a `mentions` condition can hold
             # without the caller knowing the deal's people.
             facts_with_text = {**(facts or {}), "text": text}
+            # Read the table ONCE. The log line below recomputed it, so every
+            # decision that found nothing paid for the whole table twice.
+            stored = self.all_corrections(active_only=True)
             corrs = [
-                c for c in self.all_corrections(active_only=True)
+                c for c in stored
                 if c.relation == relation
                 and c.verdict in allowed
                 and condition_holds(c.relations, facts_with_text)
@@ -750,7 +808,7 @@ class FeedbackStore:
                 _log.info(
                     "store.resolve(%s): 0 of %d stored correction(s) survived "
                     "relation/verdict/condition filtering (candidates=%s)",
-                    relation, len(self.all_corrections(active_only=True)), sorted(allowed),
+                    relation, len(stored), sorted(allowed),
                 )
                 return None
             self._ensure_protos(corrs)
