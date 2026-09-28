@@ -92,3 +92,35 @@ def test_an_atom_with_no_span_is_untouched():
     for x in (a, b):
         x.source_refs[0].locator = {}
     assert len(cross_type_dedup_atoms([a, b])) == 2
+
+
+def test_a_decision_and_an_exclusion_on_one_line_are_two_facts():
+    """The narrowing that the first version of this got wrong.
+
+    The demo deal's kickoff line is emitted as BOTH decision and exclusion:
+
+        Confirmed, West Wing will be treated as excluded pending written
+        confirmation
+
+    Those are not one fact typed twice. The exclusion says what is out of
+    scope; the decision says somebody committed to it on the call, and they
+    feed different packet families. Folding them deleted the exclusion and the
+    scope_exclusion packet stopped forming at all.
+    """
+    line = ("Confirmed, West Wing will be treated as excluded pending written "
+            "confirmation")
+    out = cross_type_dedup_atoms([
+        _Atom("decision", line),
+        _Atom("exclusion", line),
+    ])
+    assert len(out) == 2
+
+
+def test_a_statement_that_does_not_ask_is_not_collapsed():
+    """The atom has to actually be a question. Without a "?" there is nothing
+    to say the constraint is the mistyped one rather than the question."""
+    out = cross_type_dedup_atoms([
+        _Atom("constraint", "MDF badge access is required"),
+        _Atom("open_question", "MDF badge access is required"),
+    ])
+    assert len(out) == 2

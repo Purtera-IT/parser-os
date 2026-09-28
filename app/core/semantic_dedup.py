@@ -1914,6 +1914,22 @@ def _same_utterance_as_a_question(atoms: list[Any]) -> set[int]:
 
     The question wins, because it is the one that ends in "?" and the one that
     keeps the ask open.
+
+    A DECISION is deliberately not included, and the first version of this
+    which included it was wrong. The demo deal's kickoff line
+
+        Confirmed, West Wing will be treated as excluded pending written
+        confirmation
+
+    is one line emitted as both `decision` and `exclusion`, and those ARE two
+    facts: the exclusion says what is out of scope, the decision says somebody
+    committed to it on the call, and they feed different packet families.
+    Folding them deleted the exclusion and the scope_exclusion packet stopped
+    forming at all -- four tests caught it.
+
+    A question is not like that. When the line reads as a question, a
+    non-question atom over the same words adds no second fact; it is the same
+    sentence mistyped. So the text has to actually ask something.
     """
     by_span: dict[str, list[Any]] = {}
     for atom in atoms:
@@ -1924,7 +1940,8 @@ def _same_utterance_as_a_question(atoms: list[Any]) -> set[int]:
     for members in by_span.values():
         if len(members) < 2:
             continue
-        asks = [m for m in members if _atom_type_value(m) in {"open_question", "decision"}]
+        asks = [m for m in members if _atom_type_value(m) == "open_question"
+                and "?" in str(getattr(m, "raw_text", "") or "")]
         if not asks or len(asks) == len(members):
             continue
         winner = asks[0]
