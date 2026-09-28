@@ -143,10 +143,26 @@ def _mint_provenance_atom(
                 site_addr = parsed_addr
                 break
     if site_addr is not None:
+        # A postal area is not a building.
+        #
+        # This keyed the site on city_state_zip, so 010288's
+        # "Nesfield Performance Bethesda, 7832 Wisconsin Ave, Bethesda, MD
+        # 20814" became `site:bethesda_md_20814` -- and the two things that
+        # identify the place, the facility name and the street, were both
+        # thrown away by the line that had them in hand.
+        #
+        # That is worse than it looks. A fragmented site is visibly wrong; a
+        # confidently-wrong canonical looks right, and `bethesda md 20814`
+        # cannot be told apart from any other building in that ZIP, so the
+        # next Bethesda deal would MERGE into this one.
+        #
+        # The street is what names a building, and the branch above already
+        # requires one, so it is always here. City and state stay for the case
+        # of the same street name in two towns.
         slug = re.sub(
             r"[^a-z0-9]+",
             "_",
-            f"{site_addr.city}_{site_addr.state}_{site_addr.zip or site_addr.street_address}".lower(),
+            f"{site_addr.street_address}_{site_addr.city}_{site_addr.state}".lower(),
         ).strip("_")
         display = (
             f"{site_addr.street_address}, {site_addr.city}, "

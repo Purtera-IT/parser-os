@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
@@ -228,6 +229,76 @@ def _ask_the_pm_atom(template: Any, text: str) -> Any:
         atom.id = stable_id("atm", str(getattr(atom, "artifact_id", "")), "ask_the_pm",
                             text[:80])
     return atom
+
+
+#: How many artifacts to parse at once. The work is almost entirely WAITING --
+#: a blob download, an OCR round trip to Document Intelligence, a vision call
+#: that is allowed 90 seconds -- so threads, not processes, and a count well
+#: above the core count.
+#:
+#: 0 or 1 disables the prefetch entirely and the compile behaves exactly as it
+#: did before: the loop below computes each parse inline.
+PARSE_WORKERS = int(os.environ.get("SOWSMITH_PARSE_WORKERS", "8"))
+
+
+def _prefetch_parses(
+    plan: "list[tuple[str, Any, Any]]",
+    *,
+    project_id: str,
+    domain_pack: Any,
+    workers: int,
+) -> "dict[str, Any]":
+    """Parse artifacts concurrently, keyed by artifact_id.
+
+    The compile spent 881 of its 1500 seconds in `parse_artifacts` on a
+    68-document deal -- 13 seconds apiece, almost none of it computing. The
+    loop was strictly sequential, so 68 network round trips happened one after
+    another and the deal died before the stages that use the atoms ever ran.
+
+    This does NOT restructure that loop, deliberately. The loop keeps its
+    order, its accumulators, its per-artifact error handling and its cache
+    writes; it simply finds the expensive call already done. Anything this
+    misses -- a parser that raised here, a prefetch that was skipped -- the
+    loop computes inline exactly as before, so the worst case is the old
+    behaviour rather than a gap.
+
+    ORDER IS NOT AFFECTED, which is the point that matters most. Results are
+    returned in a dict and consumed by the caller in the artifacts' own order,
+    never in completion order. Atom ordering feeds `label_key`, and a
+    completion-ordered parse would re-key every atom on every compile -- which
+    would silently detach every label ever written.
+    """
+    out: dict[str, Any] = {}
+    if workers <= 1 or len(plan) < 2:
+        return out
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _one(artifact_id: str, parser: Any, path: Any):
+        return parser.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        )
+
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=min(workers, len(plan)),
+                            thread_name_prefix="parse") as pool:
+        futures = {pool.submit(_one, aid, p, path): aid for aid, p, path in plan}
+        for fut in as_completed(futures):
+            aid = futures[fut]
+            try:
+                out[aid] = fut.result()
+            except Exception:  # noqa: BLE001 - the loop will retry inline and report
+                logging.getLogger(__name__).warning(
+                    "prefetch parse failed for %s; the compile will parse it inline",
+                    aid, exc_info=True,
+                )
+    logging.getLogger(__name__).info(
+        "Prefetched %d/%d parse(s) on %d worker(s) in %.1fs",
+        len(out), len(plan), workers, time.time() - started,
+    )
+    return out
 
 
 def _materialize_derived_files(
@@ -631,6 +702,50 @@ def compile_project(
 
     parse_warnings: list[str] = []
     parse_errors: list[str] = []
+    # Warm the expensive per-artifact call concurrently. The loop below is
+    # unchanged -- same order, same accumulators, same error handling -- it
+    # just finds the parse already done. Anything missed here it computes
+    # inline, so the worst case is the behaviour this replaced.
+    _prefetched: dict[str, Any] = {}
+    if PARSE_WORKERS > 1 and len(artifacts) > 1:
+        _plan: list[tuple[str, Any, Any]] = []
+        for _art in artifacts:
+            try:
+                _rel = str(_art.relative_to(project_dir)).replace("\\", "/")
+                _aid = stable_id("art", resolved_project_id, _rel)
+                _p, _m, _ = choose_parser(_art, domain_pack=resolved_domain_pack)
+                if _p is None:
+                    continue
+                # Skip what the cache already holds. Without this a warm
+                # re-compile would parse every artifact concurrently and then
+                # throw all of it away, which is slower than the sequential
+                # path it replaced -- the prefetch has to respect the same
+                # cache the loop consults, or it is not an optimisation.
+                if use_cache:
+                    _pv = f"{_p.capability.parser_version}+code{_parser_code_fingerprint()}"
+                    if load_cached_artifact_result(
+                        artifact_id=_aid,
+                        sha256=compute_artifact_sha256(_art),
+                        parser_name=_m.parser_name,
+                        parser_version=_pv,
+                        domain_pack_id=resolved_domain_pack.pack_id,
+                        domain_pack_version=resolved_domain_pack.version,
+                    ) is not None:
+                        continue
+                _plan.append((_aid, _p, _art))
+            except Exception:  # noqa: BLE001 - planning must not break the compile
+                continue
+        if _plan:
+            try:
+                _prefetched = _prefetch_parses(
+                    _plan, project_id=resolved_project_id,
+                    domain_pack=resolved_domain_pack, workers=PARSE_WORKERS,
+                )
+            except Exception:  # noqa: BLE001 - fall back to the sequential path
+                logging.getLogger(__name__).warning(
+                    "parse prefetch unavailable; parsing inline", exc_info=True)
+                _prefetched = {}
+
     with telemetry.stage("parse_artifacts", input_count=len(artifacts)) as stage:
         for artifact in artifacts:
             relative_name = str(artifact.relative_to(project_dir)).replace("\\", "/")
@@ -717,12 +832,17 @@ def compile_project(
                         reused_artifact_ids.append(artifact_id)
                         cache_hit = True
                     else:
-                        parser_result = parser.parse_artifact_full(
-                            project_id=resolved_project_id,
-                            artifact_id=artifact_id,
-                            path=artifact,
-                            domain_pack=resolved_domain_pack,
-                        )
+                        # Warmed in parallel above when possible; identical
+                        # object either way, and computed here if the prefetch
+                        # skipped it or raised. See `_prefetch_parses`.
+                        parser_result = _prefetched.pop(artifact_id, None)
+                        if parser_result is None:
+                            parser_result = parser.parse_artifact_full(
+                                project_id=resolved_project_id,
+                                artifact_id=artifact_id,
+                                path=artifact,
+                                domain_pack=resolved_domain_pack,
+                            )
                         parsed_atoms = list(parser_result.atoms)
                         parsed_candidates = list(parser_result.candidates)
                         per_artifact_warnings.extend(parser_result.warnings)
