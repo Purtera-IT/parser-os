@@ -1819,14 +1819,35 @@ def _atom_sheet(atom: Any) -> str:
 def _atom_cell_locator(atom: Any) -> str:
     """Return 'artifact:table:row' for a table/sheet-cell atom, else '' (prose).
 
-    Covers both shapes: docx tables (``table_index``) and xlsx sheets
-    (``sheet`` + ``row``/``row_index``), so identical-looking rows from
-    different cells/sites/sheets never collapse into one another.
+    Covers three shapes: docx tables (``table_index``), xlsx sheets (``sheet``
+    + ``row``/``row_index``) and CAD drawings (``layer`` + ``y``), so
+    identical-looking rows from different cells/sites/sheets never collapse
+    into one another.
     """
     for ref in (getattr(atom, "source_refs", None) or []):
         loc = getattr(ref, "locator", None) or {}
         if not isinstance(loc, dict):
             continue
+        # A drawing has the same structure under different names: the layer is
+        # the table and a baseline is the row -- which is exactly how
+        # `rows_from_entities` buckets text entities, on (layer, round(y, 1)).
+        #
+        # Without this a CAD atom keyed on its text alone, and the key strips
+        # quantities: "PRIVATE OFFICE 01" and "PRIVATE OFFICE 2" became one key
+        # and live 010180 kept one row of a schedule that listed both. The two
+        # PANTRY tags in different rooms went the same way, so a drawing that
+        # contradicts its own count was made to agree with it.
+        #
+        # Read here rather than written into the locator by the parser: eleven
+        # other call sites read `locator["sheet"]`, and one of them treats it as
+        # a VENDOR. A layer is not a spreadsheet tab.
+        if loc.get("kind") == "cad_drawing" and loc.get("y") is not None:
+            try:
+                band = round(float(loc["y"]), 1)
+            except (TypeError, ValueError):
+                band = loc["y"]
+            layer = loc.get("layer") or "drawing"
+            return f"{getattr(atom, 'artifact_id', '') or ''}:{layer}:y{band}"
         row = loc.get("row")
         if row is None:
             row = loc.get("row_index")

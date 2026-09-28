@@ -265,7 +265,15 @@ def test_another_tenants_study_is_not_this_deals_address():
     assert is_template_leftover("STREET ADDRESS | XX FLOOR") is True
     assert is_template_leftover("DATE: XX.XX.22") is True
     assert is_template_leftover("PROJECT NO: 29009") is True
-    assert is_template_leftover("SCALE: 1/16\" = 1' | DRAWN BY: RA") is True
+
+    # The scale line used to be asserted here too, and it does not belong in a
+    # test about addresses: "SCALE: 1/16\" = 1'" states the drawing's RATIO,
+    # which is the only thing that turns the sheet into distances -- and drop
+    # distance is exactly what the site walk on this deal exists to establish.
+    # It was withheld because "scale:" was a blanket marker. A scale that
+    # states no ratio still is one.
+    assert is_template_leftover("SCALE: NTS | DRAWN BY:") is True
+    assert is_template_leftover("SCALE: 1/16\" = 1' | DRAWN BY: RA") is False
 
 
 def test_an_xref_into_another_project_is_not_a_fact():

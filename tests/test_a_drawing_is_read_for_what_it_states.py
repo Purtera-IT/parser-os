@@ -1,0 +1,140 @@
+"""Three things a drawing says that were being thrown away.
+
+The CAD parse on 010180 recovered 65 labels and lost the three facts that
+change what a quote means:
+
+    EXECUTIVE OFFICE 2   the schedule's count, collapsed into the bare room tag
+    RECEPTION 01         the same
+    OPTION A             the sheet is one of two layouts
+    SCALE: 1/16" = 1'    the only thing turning the sheet into distances
+
+None was a converter problem. Each was a filter that is right in general and
+wrong on a drawing's program summary.
+"""
+from __future__ import annotations
+
+import pytest
+
+from app.parsers.dwg_parser import is_template_leftover, names_a_layout_option
+
+
+# ---------------------------------------------------------------- the scale
+
+def test_a_scale_that_states_a_ratio_is_a_fact():
+    """Distance is what the site walk exists to establish on a cabling job, and
+    the ratio is the only thing that turns this sheet into distances."""
+    assert not is_template_leftover('SCALE: 1/16" = 1\' | DRAWN BY: RA')
+    assert not is_template_leftover('SCALE: 1/8" = 1\'-0"')
+    assert not is_template_leftover("Scale 1:100")
+
+
+def test_a_scale_that_states_none_is_still_stationery():
+    """The marker was not wrong, only too broad. "NTS" is title-block
+    furniture and so is the paper size."""
+    assert is_template_leftover("SCALE: NTS | DRAWN BY:")
+    assert is_template_leftover('1/8" SCALE: 24 X 36 PAPER SIZE')
+
+
+def test_the_rest_of_the_stationery_is_untouched():
+    for line in ("PROJECT NO: XXXXX", "STREET ADDRESS | XX FLOOR",
+                 "PRELIMINARY SPACE STUDY | TENANT NAME", "APPROVAL:",
+                 "BR DESIGN ASSOCIATES, LLC  630 NINTH AVENUE"):
+        assert is_template_leftover(line), line
+
+
+# --------------------------------------------------------------- the option
+
+def test_an_option_label_is_recognised():
+    """010180's sheet carries these on DEFPOINTS -- AutoCAD's non-plotting
+    layer, which the apparatus filter drops as construction marks. If the sheet
+    is Option A then its room schedule is a proposal, and 106 workstations is a
+    proposal rather than a count: a different thing to price."""
+    assert names_a_layout_option("OPTION A")
+    assert names_a_layout_option("OFFICE OPTION A")
+    assert names_a_layout_option("OFFICE OPTION B")
+
+
+def test_it_does_not_fire_on_ordinary_words():
+    """A rule that catches "optional extras" would drag furniture notes back in
+    with it."""
+    for line in ("RECEPTION", "DM-DEMO RED HIDDEN", "optional extras",
+                 "OPTIONS", "MECH. RM"):
+        assert not names_a_layout_option(line), line
+
+
+# --------------------------------------------------------------- the counts
+#
+# These go through `cross_type_dedup_atoms` rather than a helper, because the
+# fix is not a new rule about counts -- it is giving a drawing the structural
+# identity the dedup key already scopes tables by. The layer is the table, a
+# baseline is the row.
+
+
+class _Ref:
+    def __init__(self, layer, y):
+        # Exactly what `DwgParser._make_atom` writes -- no injected sheet/row.
+        self.locator = {"kind": "cad_drawing", "layer": layer, "x": 0.0, "y": y}
+
+
+class _CadAtom:
+    def __init__(self, atom_type, text, layer="TEMPLATE TEXT", y=0.0):
+        self.atom_type = atom_type
+        self.raw_text = self.text = text
+        self.confidence = 0.85
+        self.artifact_id = "art:sp6"
+        self.source_refs = [_Ref(layer, y)]
+        self.receipts = []
+        self.entity_keys = []
+        self.review_flags = []
+
+
+def test_two_schedule_rows_are_not_one_row():
+    """The cross-type key strips quantities, so "PRIVATE OFFICE 01" and
+    "PRIVATE OFFICE 2" reduce to the same text. On live 010180 that collapsed a
+    schedule that listed both into a schedule that listed one. Different
+    baselines are different rows."""
+    from app.core.semantic_dedup import cross_type_dedup_atoms
+
+    out = cross_type_dedup_atoms([
+        _CadAtom("quantity", "PRIVATE OFFICE 01", y=140.0),
+        _CadAtom("quantity", "PRIVATE OFFICE 2", y=132.5),
+    ])
+    assert {a.raw_text for a in out} == {"PRIVATE OFFICE 01", "PRIVATE OFFICE 2"}
+
+
+def test_a_counted_row_survives_a_bare_room_tag():
+    """The row that says HOW MANY sits on the program-summary layer; the tag
+    that says WHICH is placed on the plan. They are different cells, so the
+    count is not discarded in favour of the label."""
+    from app.core.semantic_dedup import cross_type_dedup_atoms
+
+    out = cross_type_dedup_atoms([
+        _CadAtom("quantity", "EXECUTIVE OFFICE 2", layer="TEMPLATE TEXT", y=120.0),
+        _CadAtom("site_room_mix", "EXECUTIVE OFFICE", layer="ROOM-TAG", y=64.25),
+    ])
+    assert len(out) == 2
+
+
+def test_two_tags_of_the_same_room_both_survive():
+    """SP-6 carries two PANTRY tags while its schedule counts one -- the kind of
+    disagreement a drawing exists to surface. Keyed on text alone the second tag
+    vanished and the drawing silently agreed with its own count."""
+    from app.core.semantic_dedup import cross_type_dedup_atoms
+
+    out = cross_type_dedup_atoms([
+        _CadAtom("site_room_mix", "PANTRY", layer="ROOM-TAG", y=88.0),
+        _CadAtom("site_room_mix", "PANTRY", layer="ROOM-TAG", y=41.75),
+    ])
+    assert len(out) == 2
+
+
+def test_one_entity_typed_twice_still_collapses():
+    """The narrowing has to stay narrow. Two types emitted off the SAME text
+    entity share a layer and a baseline, so they are one cell and still fold."""
+    from app.core.semantic_dedup import cross_type_dedup_atoms
+
+    out = cross_type_dedup_atoms([
+        _CadAtom("scope_item", "IT CLOSET 1", y=104.0),
+        _CadAtom("quantity", "IT CLOSET 1", y=104.0),
+    ])
+    assert len(out) == 1

@@ -344,6 +344,24 @@ _TEMPLATE_MARKERS = (
 )
 
 
+#: A scale that states a ratio: `1/16" = 1'`, `1:100`. Not `NTS`.
+_STATED_SCALE = re.compile(r'\d\s*/\s*\d+\s*"?\s*=|\b1\s*:\s*\d{2,}')
+
+#: `OPTION A`, `OFFICE OPTION B` -- a named alternative layout.
+_OPTION_LABEL = re.compile(r"\boption\s+[A-Za-z0-9]\b", re.I)
+
+
+def names_a_layout_option(text: str) -> bool:
+    """True when the line names one of the drawing's alternative layouts.
+
+    SP-6 draws OPTION A and OPTION B on DEFPOINTS, a construction layer
+    `is_apparatus` withholds wholesale -- so the deal never learned that the
+    architect had offered two plans, which is the first thing a PM pricing off
+    the sheet has to know.
+    """
+    return bool(_OPTION_LABEL.search(text or ""))
+
+
 def is_template_leftover(text: str) -> bool:
     """True when the line is the drawing's own stationery or a stale copy.
 
@@ -356,6 +374,12 @@ def is_template_leftover(text: str) -> bool:
         return True
     if re.search(r"[a-z]:\\|\\\\[a-z]", low) or low.count("\\") >= 2:
         return True
+    # "scale:" is a stationery marker, and it should not be when the line
+    # actually states a RATIO. The ratio is the only thing that turns the sheet
+    # into distances, and drop length is what the site walk on 010180 exists to
+    # settle. `SCALE: NTS` and a bare `SCALE:` stay stationery.
+    if _STATED_SCALE.search(low):
+        return False
     return any(marker in low for marker in _TEMPLATE_MARKERS)
 
 
@@ -442,7 +466,10 @@ class DwgParser(BaseParser):
                     warnings.append(f"dwg: {Path(converter).name} produced no DXF")
 
         labels = text_entities(dxf_path) if dxf_path else []
-        rows = rows_from_entities([x for x in labels if not is_apparatus(x["layer"])])
+        rows = rows_from_entities([
+            x for x in labels
+            if not is_apparatus(x["layer"]) or names_a_layout_option(x.get("text") or "")
+        ])
         building = [r for r in rows if not is_template_leftover(r["text"])]
         stationery = [r for r in rows if is_template_leftover(r["text"])]
 
