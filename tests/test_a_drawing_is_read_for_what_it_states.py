@@ -116,9 +116,16 @@ def test_a_counted_row_survives_a_bare_room_tag():
 
 
 def test_two_tags_of_the_same_room_both_survive():
-    """SP-6 carries two PANTRY tags while its schedule counts one -- the kind of
-    disagreement a drawing exists to surface. Keyed on text alone the second tag
-    vanished and the drawing silently agreed with its own count."""
+    """Two tags naming the same room in different places are two rooms.
+
+    SP-6 does this with EXECUTIVE OFFICE, HUDDLE, PRIVATE OFFICE and RESTROOM,
+    each tagged twice on ROOM-TAG at different baselines. Keyed on text alone
+    the second tag vanished, and a plan that shows two of something read as
+    showing one -- so a schedule row could never be checked against its tags.
+
+    (An earlier version of this docstring said SP-6 carried two PANTRY tags.
+    It carries one. Counted across all four layouts, the second "PANTRY" was
+    the schedule ROW "PANTRY 1", not a tag.)"""
     from app.core.semantic_dedup import cross_type_dedup_atoms
 
     out = cross_type_dedup_atoms([

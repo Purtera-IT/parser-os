@@ -2101,6 +2101,28 @@ def compile_project(
     # re-type atoms late in the pipeline; running here ensures sign-off name
     # fragments ("Tom Amble.") and salutations re-classified as stakeholder are
     # caught. Lossless: dropped atoms go to the suppression ledger.
+    # A sheet that arrived as both DWG and PDF is ONE sheet read twice. The
+    # export's OCR rows ("JAN", "ADA RR") are a worse reading of a drawing we
+    # parsed properly, so they are demoted to evidence rather than deleted --
+    # and left alone entirely when the drawing never converted, because then
+    # the export is the only account of the sheet there is.
+    with telemetry.stage("drawing_pairs", input_count=len(atoms)) as _dp:
+        _demoted = 0
+        try:
+            from app.core.drawing_pairs import SUPERSEDED_FLAG, demote_export_duplicates
+
+            demote_export_duplicates(atoms)
+            _demoted = sum(1 for a in atoms
+                           if SUPERSEDED_FLAG in (getattr(a, "review_flags", None) or []))
+            if _demoted:
+                warnings.append(
+                    f"INFO: drawing_pairs demoted {_demoted} atom(s) from a PDF export "
+                    f"of a sheet whose drawing was read directly"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: drawing_pairs failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(_dp, output_count=_demoted)
+
     with telemetry.stage("substance_gate", input_count=len(atoms)) as stage:
         gate_dropped = 0
         _gate_notes: list[str] = []

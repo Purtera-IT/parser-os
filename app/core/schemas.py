@@ -147,6 +147,11 @@ class AtomType(str, Enum):
     site_access_window = "site_access_window"
     site_access_restriction = "site_access_restriction"
     site_infrastructure = "site_infrastructure"
+    #: A statement nobody wrote: counted, measured or noticed-to-be-
+    #: absent from an artifact's own structure. See `derived_finding`
+    #: in atom_types.json and "A drawing is measured, not listed" in
+    #: _LABELING_DOCTRINE.md.
+    derived_finding = "derived_finding"
     site_room_mix = "site_room_mix"
     site_implementation_note = "site_implementation_note"
 

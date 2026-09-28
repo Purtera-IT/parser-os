@@ -1,982 +1,993 @@
 {
-  "version": "2026-09-26",
-  "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
-  "keep": {
-    "name": "_keep",
-    "desc": "Not a fact worth typing: boilerplate, headers, signatures, table scaffolding, legal footer. The parser should drop or ignore it."
+ "version": "2026-09-26",
+ "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
+ "keep": {
+  "name": "_keep",
+  "desc": "Not a fact worth typing: boilerplate, headers, signatures, table scaffolding, legal footer. The parser should drop or ignore it."
+ },
+ "coarse": [
+  "scope",
+  "site",
+  "commercial",
+  "timeline",
+  "people",
+  "governance",
+  "quality",
+  "risk",
+  "meta"
+ ],
+ "facets": [
+  "SITE",
+  "COMMERCIAL",
+  "WORK",
+  "COMPLIANCE",
+  "PARTY",
+  "TIMING",
+  "META"
+ ],
+ "context_hints": [
+  {
+   "key": "own_words",
+   "label": "The words themselves"
   },
-  "coarse": [
-    "scope",
-    "site",
-    "commercial",
-    "timeline",
-    "people",
-    "governance",
-    "quality",
-    "risk",
-    "meta"
-  ],
-  "facets": [
-    "SITE",
-    "COMMERCIAL",
-    "WORK",
-    "COMPLIANCE",
-    "PARTY",
-    "TIMING",
-    "META"
-  ],
-  "context_hints": [
-    {
-      "key": "own_words",
-      "label": "The words themselves"
-    },
-    {
-      "key": "section",
-      "label": "Section heading"
-    },
-    {
-      "key": "lead_in",
-      "label": "Intro line above a list"
-    },
-    {
-      "key": "neighbor_above",
-      "label": "Atom above"
-    },
-    {
-      "key": "neighbor_below",
-      "label": "Atom below"
-    },
-    {
-      "key": "who_said_it",
-      "label": "Who said it, and to whom"
-    },
-    {
-      "key": "table_column",
-      "label": "Table column / header row"
-    },
-    {
-      "key": "doc_type",
-      "label": "What kind of document"
-    },
-    {
-      "key": "other_doc",
-      "label": "Another document in the deal"
-    },
-    {
-      "key": "domain_knowledge",
-      "label": "Industry knowledge"
-    }
-  ],
-  "types": [
-    {
-      "name": "physical_site",
-      "coarse": "site",
-      "facet": "SITE",
-      "desc": "Authoritative site declaration: site_id + facility name + street address. One per real building / location.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 3082,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_attribute",
-      "coarse": "site",
-      "facet": "SITE",
-      "desc": "A scalar attribute of a site: user count, room count, square feet, priority, floors.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 453,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_access_restriction",
-      "coarse": "site",
-      "facet": "SITE",
-      "desc": "A constraint on access: blackout window, restricted hours, badged escort required, weekend-only cutover, etc.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 9,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_room_mix",
-      "coarse": "site",
-      "facet": "SITE",
-      "desc": "A row from a per-site room-mix table: room type + count + standard build + validation test.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 3,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_infrastructure",
-      "coarse": "site",
-      "facet": "SITE",
-      "desc": "Site-bound infrastructure facts: MDF/IDF id, bandwidth/circuit, cable plant condition.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 1,
-      "asks_supplier": false
-    },
-    {
-      "name": "service_line",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "A services-row line item: service id + description + unit + qty + unit price + extended cost.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 919,
-      "asks_supplier": true
-    },
-    {
-      "name": "bom_line",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "A hardware-BOM table row: item id + description + SKU + qty + unit price + extended cost + lead time + serial-capture flag.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 1036,
-      "asks_supplier": true
-    },
-    {
-      "name": "payment_term",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "One row of a billing/payment schedule, e.g. '30% at order acceptance'. Each tier is its own atom.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 71,
-      "asks_supplier": false
-    },
-    {
-      "name": "commercial_total",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "An aggregate price line: hardware subtotal, services subtotal, freight/logistics, contingency, taxes, grand total. Each is one atom.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 751,
-      "asks_supplier": false
-    },
-    {
-      "name": "pricing_assumption",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "An explicit pricing assumption (taxes excluded, hardware substitutions require approval, etc.).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 382,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_budget",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "Per-site budget category amount (hardware budget / services budget / logistics estimate per site).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "rate_card",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "A priced rate table row: role or service with a bill rate, OT/holiday multiplier, minimum hours.",
-      "label_space": "head",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 287,
-      "asks_supplier": false
-    },
-    {
-      "name": "work_scope_item",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A general statement of work to be performed that is not a discrete task, deliverable or requirement.",
-      "label_space": "head",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 322,
-      "asks_supplier": true
-    },
-    {
-      "name": "requirement",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A formally numbered requirement (REQ-001 style) with applies-to + owner + verification method.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 867,
-      "asks_supplier": false
-    },
-    {
-      "name": "task",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 1372,
-      "asks_supplier": true
-    },
-    {
-      "name": "deliverable",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A named deliverable that a phase produces (e.g. 'Network closet readiness checklist').",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 270,
-      "asks_supplier": true
-    },
-    {
-      "name": "acceptance_criterion",
-      "coarse": "quality",
-      "facet": "WORK",
-      "desc": "A row from an acceptance-criteria table — area + criteria + pass threshold.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 119,
-      "asks_supplier": false
-    },
-    {
-      "name": "milestone_phase",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A row from a project phase/milestone table — phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 283,
-      "asks_supplier": false
-    },
-    {
-      "name": "cutover_step",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A row from a cutover/runbook checklist — step number + timing relative to cutover + owner + action + evidence required.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 31,
-      "asks_supplier": true
-    },
-    {
-      "name": "electrical_acceptance_test",
-      "coarse": "quality",
-      "facet": "WORK",
-      "desc": "A measurable electrical/network acceptance test (Megger, ground resistance, load burn-in, witness/ATP).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 10,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_implementation_note",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "Site-specific implementation instruction (asset-tag prefix, receiving rule, install rule).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 76,
-      "asks_supplier": true
-    },
-    {
-      "name": "site_access_window",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "When a site is accessible — days + hours + escort owner.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 41,
-      "asks_supplier": false
-    },
-    {
-      "name": "exclusion",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "Negative scope: something explicitly NOT included (\"electrical by others\", \"no patching\").",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 234,
-      "asks_supplier": true
-    },
-    {
-      "name": "integration_checkpoint",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A row from a system-to-system integration checkpoint table: checkpoint id + system + expected input/output + owner + due.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 4,
-      "asks_supplier": false
-    },
-    {
-      "name": "data_flow_step",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "One step of a data-flow pipeline (source system → sink system, what payload).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "system_mapping",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A field mapping between two systems (e.g. HubSpot dealname → 'OPTBOT Atlanta Office Refresh').",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "mitigation",
-      "coarse": "risk",
-      "facet": "WORK",
-      "desc": "A mitigation paired with a specific risk (separate from the risk atom itself).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 3,
-      "asks_supplier": false
-    },
-    {
-      "name": "constraint",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A limit on how the work may be done: working hours, noise, dust, union labor, escort required.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "compliance_rule",
-      "coarse": "governance",
-      "facet": "COMPLIANCE",
-      "desc": "A rule about access, data handling, retention, credential use, or auditing.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 61,
-      "asks_supplier": false
-    },
-    {
-      "name": "compliance_classification",
-      "coarse": "governance",
-      "facet": "COMPLIANCE",
-      "desc": "A document/data classification + its allowed and blocked destinations (Confidential, Internal, Mock, Production).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 19,
-      "asks_supplier": false
-    },
-    {
-      "name": "approval_authority",
-      "coarse": "people",
-      "facet": "COMPLIANCE",
-      "desc": "A rule that some role/threshold requires a specific approver (e.g. 'CFO signoff required over $1.5M').",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 7,
-      "asks_supplier": false
-    },
-    {
-      "name": "submission_req",
-      "coarse": "quality",
-      "facet": "COMPLIANCE",
-      "desc": "A required element of the proposal submission: number of copies, file format, required form (SF330, W-9), page limit, sealed-bid labeling, delivery method.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 5,
-      "asks_supplier": false
-    },
-    {
-      "name": "change_order_rule",
-      "coarse": "governance",
-      "facet": "COMPLIANCE",
-      "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, after-hours rate.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 44,
-      "asks_supplier": false
-    },
-    {
-      "name": "bonding_insurance",
-      "coarse": "governance",
-      "facet": "COMPLIANCE",
-      "desc": "A bonding or insurance requirement: bid bond, performance bond, payment bond, general liability limit, workers comp, professional liability.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 21,
-      "asks_supplier": false
-    },
-    {
-      "name": "contract_term",
-      "coarse": "governance",
-      "facet": "COMPLIANCE",
-      "desc": "A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 90,
-      "asks_supplier": false
-    },
-    {
-      "name": "certification",
-      "coarse": "governance",
-      "facet": "COMPLIANCE",
-      "desc": "A certification or credential the provider or its technicians must hold (e.g. BICSI RCDD, OSHA-10, manufacturer cert).",
-      "label_space": "head",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "stakeholder",
-      "coarse": "people",
-      "facet": "PARTY",
-      "desc": "A named person on the deal with their role and email. Synonyms accepted: owner, lead, sponsor, accountable, contact.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 339,
-      "asks_supplier": false
-    },
-    {
-      "name": "blackout_date_range",
-      "coarse": "timeline",
-      "facet": "TIMING",
-      "desc": "A no-work date window (holiday freeze, exec blackout, peak travel exclusion).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 7,
-      "asks_supplier": false
-    },
-    {
-      "name": "lead_time_constraint",
-      "coarse": "timeline",
-      "facet": "TIMING",
-      "desc": "Lead time + expediting policy for an item class (core switches, APs, AV kits, fiber panels, custom millwork).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 11,
-      "asks_supplier": false
-    },
-    {
-      "name": "deadline",
-      "coarse": "timeline",
-      "facet": "TIMING",
-      "desc": "A hard date/time the bidder must meet: proposal/bid due date, questions-due date, pre-bid meeting, site visit. NOT a project phase end (that is milestone_phase).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 50,
-      "asks_supplier": false
-    },
-    {
-      "name": "dependency",
-      "coarse": "timeline",
-      "facet": "TIMING",
-      "desc": "A dependency on a customer-provided input, third party, or infrastructure readiness.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 18,
-      "asks_supplier": true
-    },
-    {
-      "name": "deal_metadata",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "Header-level fact about the deal itself: customer name, deal ID, quote/PO/MSA references, contract type, currency, target close date, deal stage.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 1881,
-      "asks_supplier": false
-    },
-    {
-      "name": "source_caveat",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it, what it is out of date against. Not scope -- it must never reach the SOW -- and it must travel WITH the document it is about, because anything that reads that document without it builds from something we already know is wrong. Found in 11 deals across the dev corpus, typed scope_item in 9 of them: \"the Dates are incorrect as per the submitted SOW\", \"except as otherwise superseded by terms contained in a mutually executed Master Purchase Agreement\".",
-      "label_space": "extractor",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "legend_entry",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "The key that makes a document decodable: what a colour, symbol, hatch or abbreviation MEANS on the sheet it is printed on (\"Huzzard supplied Components\", \"orange = existing\", \"hatched = by others\"). Not a fact about the work and never scope -- its content transfers into the parts it governs, each of which names the side it was drawn in. It exists as an atom so a correction can point AT it: on 010288 the sender writes \"the 'Installer Supplied Components' are not accurate\", and a caveat aimed at a whole drawing says only that the drawing is unreliable, while one aimed at a single key says which eighteenth of it to distrust. Distinct from source_caveat, which is the correction rather than the thing corrected.",
-      "label_space": "extractor",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "eval_criterion",
-      "coarse": "quality",
-      "facet": "META",
-      "desc": "A scored evaluation/award criterion with its weight: 'Technical approach 40%', 'Price 30%', 'Past performance 20%'. One per criterion.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 5,
-      "asks_supplier": false
-    },
-    {
-      "name": "approval_decision",
-      "coarse": "people",
-      "facet": "META",
-      "desc": "A recorded approval/conditional approval/rejection statement by a named stakeholder.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 5,
-      "asks_supplier": false
-    },
-    {
-      "name": "metadata_requirement",
-      "coarse": "governance",
-      "facet": "META",
-      "desc": "A required metadata key/value to set on an object (blob metadata, CRM custom field).",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 4,
-      "asks_supplier": false
-    },
-    {
-      "name": "signatory",
-      "coarse": "people",
-      "facet": "META",
-      "desc": "A signature-block entry — role + named person who signs.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 13,
-      "asks_supplier": false
-    },
-    {
-      "name": "addendum_qa",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "An addendum, amendment, or question-and-answer item issued during the solicitation that modifies or clarifies the original documents.",
-      "label_space": "head",
-      "status": "live",
-      "value_light": true,
-      "train_rows": 5,
-      "asks_supplier": false
-    },
-    {
-      "name": "site_allocation",
-      "coarse": "site",
-      "facet": "SITE",
-      "desc": "Per-site qty breakdown of a single BOM line (e.g. 'HW-001: ATL-HQ:52; ATL-WEST:27; ATL-AIR:15').",
-      "label_space": "head",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "scope_item",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "Legacy catch-all for a line of scope. Prefer a finer type; use only when none fits.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": true
-    },
-    {
-      "name": "risk",
-      "coarse": "risk",
-      "facet": "WORK",
-      "desc": "A stated risk or concern that could affect delivery, cost or schedule.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "assumption",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "Something the proposal assumes to be true (\"customer provides lift\", \"pathways exist\").",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": true
-    },
-    {
-      "name": "open_question",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "An unanswered question in the documents that someone must resolve.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "decision",
-      "coarse": "governance",
-      "facet": "META",
-      "desc": "A decision already made and recorded (\"customer chose option B\").",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "action_item",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A to-do assigned to a person, usually from meeting notes or email.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": true
-    },
-    {
-      "name": "vendor_line_item",
-      "coarse": "commercial",
-      "facet": "COMMERCIAL",
-      "desc": "A vendor quote/BOM line: part, quantity, price.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": true
-    },
-    {
-      "name": "customer_instruction",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A direct instruction from the customer about how to do the work.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "quantity",
-      "coarse": "scope",
-      "facet": "WORK",
-      "desc": "A bare count of a thing (\"110 TVs\", \"24 drops\") not attached to a line item.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "entity",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "A named thing (company, product, person) with no claim attached.",
-      "label_space": "extractor",
-      "status": "live",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "answered_question",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "A question together with its answer, in the same message or a later reply (\"How many doors?\" / \"1 external door\"). The answer is the fact; keep both.",
-      "label_space": "extractor",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "internal_question",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "A question between people on our own team (routing, who to ask, pricing among ourselves). Never a question for the customer.",
-      "label_space": "extractor",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "commitment",
-      "coarse": "governance",
-      "facet": "TIMING",
-      "desc": "Someone promises to do something (\"we will send the floorplan Friday\", \"I will get a conversation going with the owner\").",
-      "label_space": "extractor",
-      "status": "v2",
-      "value_light": false,
-      "train_rows": 0,
-      "asks_supplier": false
-    },
-    {
-      "name": "small_talk",
-      "coarse": "meta",
-      "facet": "META",
-      "desc": "Relationship talk that carries no fact about the work: thanks, greetings, banter, \"sending this to my team\". If the line ALSO says something about the job (its size, a document we need, a promise), it is not small talk.",
-      "label_space": "extractor",
-      "status": "v2",
-      "value_light": true,
-      "train_rows": 0,
-      "asks_supplier": false
-    }
-  ],
-  "service_packs": [
-    "audio_visual",
-    "low_voltage_cabling",
-    "wireless",
-    "staff_augmentation",
-    "security_camera",
-    "camera_vms_operations",
-    "security_access",
-    "fire_safety",
-    "paging_mass_notification",
-    "das",
-    "electrical",
-    "telecom",
-    "network_maintenance",
-    "building_management_systems",
-    "datacenter",
-    "rack_and_stack",
-    "hardware",
-    "imac",
-    "itad",
-    "data_migration",
-    "msp",
-    "alm",
-    "audit",
-    "professional_services",
-    "other"
-  ],
-  "service_packs_doc": "Deal-level router gold: the labeler's answer to 'what is this deal mainly?'. Ids match Orbitbrief-Core world_model/data/domain_packs.yaml.",
-  "suppliers": [
-    {
-      "key": "us",
-      "label": "Us (Purtera)"
-    },
-    {
-      "key": "partner",
-      "label": "Partner / reseller"
-    },
-    {
-      "key": "customer",
-      "label": "End customer"
-    },
-    {
-      "key": "third_party",
-      "label": "Another vendor"
-    },
-    {
-      "key": "unresolved",
-      "label": "Named but not resolved",
-      "desc": "The document names a ROLE and not an organisation -- \"Provided by Club/installer\" when we are the installer, so it means the club or us. Leaving it blank reads as \"not answered\"; this says the deal does not say, which is a finding and usually an unpriced cost."
-    }
-  ],
-  "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours).",
-  "about_doc": "Whose fact is it? The type says WHAT a statement is; this says what it is ABOUT. Only 'deal' reaches the SOW -- 'account' and 'partner' belong in the brief's why-you-should-care, and are lost entirely if a labeler is forced to call them scope. See _LABELING_DOCTRINE.md.",
-  "about": [
-    {
-      "key": "deal",
-      "label": "This job",
-      "desc": "This quote, this scope, this site. The only one that reaches the SOW."
-    },
-    {
-      "key": "account",
-      "label": "The customer relationship",
-      "desc": "True beyond this job: room to grow, who decides, how they buy."
-    },
-    {
-      "key": "partner",
-      "label": "A partner's behaviour",
-      "desc": "How a reseller, vendor or installer works with us -- their drawings, their terms, what they get wrong."
-    },
-    {
-      "key": "internal",
-      "label": "How we work",
-      "desc": "Our own routing and process. Never a deliverable."
-    }
-  ],
-  "wants_doc": "What does this statement want from us? Turns 'there is something we are missing' into a list someone can work. See _LABELING_DOCTRINE.md.",
-  "wants": [
-    {
-      "key": "nothing",
-      "label": "Nothing — it is just true"
-    },
-    {
-      "key": "chase-artifact",
-      "label": "Go get a document",
-      "desc": "It points at a drawing, quote or photo the deal does not hold."
-    },
-    {
-      "key": "chase-conversation",
-      "label": "Find the conversation",
-      "desc": "It refers to a call or thread we do not have (\"as discussed earlier\")."
-    },
-    {
-      "key": "confirm-with-customer",
-      "label": "Ask the customer",
-      "desc": "We cannot price or build it until they answer."
-    },
-    {
-      "key": "decide-internally",
-      "label": "We must decide",
-      "desc": "Nobody else can answer it; it is our call to make."
-    }
-  ],
-  "reads_doc": "What an atom TELLS US. Each key is a learned head: a rule fills it today as a prediction (source=rule, low confidence) purely so a labeler has something to confirm or drop, and the confirmations train the head that replaces the rule. A keyword list cannot make these calls -- it hid a promise naming a deal's decision maker because the words looked like banter. See _LABELING_DOCTRINE.md.",
-  "reads": [
-    {
-      "key": "small_talk",
-      "label": "Just relationship talk",
-      "values": "true/false",
-      "desc": "Thanks, greetings, banter. NOT small talk if it also says anything about the work, promises something, or names a person or a document."
-    },
-    {
-      "key": "job_scale",
-      "label": "How big the sender thinks it is",
-      "values": "small | large",
-      "desc": "Sizing in the customer's own words, before any site visit. Deal Kit plans crew and site time from it."
-    },
-    {
-      "key": "expansion",
-      "label": "Room to grow on this account",
-      "values": "what would repeat",
-      "desc": "This job could repeat across more of the customer's sites. Say WHAT repeats (\"more clubs, same one-door scope\"), not just that it might. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly."
-    },
-    {
-      "key": "commitment",
-      "label": "Somebody undertook to do something",
-      "values": "what was promised",
-      "desc": "A promise with an owner. A promise conditional on OUR answer is a task on us before it is one on them."
-    },
-    {
-      "key": "introduces_party",
-      "label": "Brings in someone not in this thread",
-      "values": "the role, and the name when we have one",
-      "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Write the role alone when nobody named them (\"club owner\") -- that absence IS the finding, because we cannot contact a role."
-    },
-    {
-      "key": "chase",
-      "label": "Points at something we do not hold",
-      "values": "conversation | attachment",
-      "desc": "A call or a file the deal does not contain. If we have history with them, ask them rather than hunting the thread."
-    },
-    {
-      "key": "needs_artifact",
-      "label": "A document to go and get",
-      "values": "the kind of document",
-      "desc": "A drawing, floorplan or spec the sender names and the deal does not hold."
-    },
-    {
-      "key": "points_at_artifact",
-      "label": "Names a document",
-      "values": "the kind of document",
-      "desc": "The line refers to a drawing or file, whether or not we hold it."
-    },
-    {
-      "key": "blocked_on",
-      "label": "It cannot happen until somebody answers",
-      "values": "us | customer | partner",
-      "desc": "The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on US is a task on us before it is one on them. This is the critical path, and it is invisible if the conditional is flattened into the type."
-    },
-    {
-      "key": "opens_block",
-      "label": "It announces what follows",
-      "values": "what the block is",
-      "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading."
-    },
-    {
-      "key": "unreliable_part",
-      "label": "Which part of it must not be trusted",
-      "values": "the part, in the document's own words",
-      "desc": "Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies."
-    },
-    {
-      "key": "situational",
-      "label": "Matters here, generalises nowhere",
-      "values": "what it is doing on this deal",
-      "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing."
-    }
-  ],
-  "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
-  "relations": [
-    {
-      "key": "governs",
-      "label": "Announces / scopes the atoms below",
-      "desc": "From the line that opens a block to every atom it covers. Carries no text of its own."
-    },
-    {
-      "key": "supports",
-      "label": "Backs it up"
-    },
-    {
-      "key": "answers",
-      "label": "Answers the question"
-    },
-    {
-      "key": "contradicts",
-      "label": "Says the opposite"
-    },
-    {
-      "key": "same_as",
-      "label": "The same fact, said twice"
-    },
-    {
-      "key": "context",
-      "label": "Background for it"
-    }
-  ],
-  "asks_supplier_doc": "Does 'who supplies or does it?' have an answer for this type? The card showed that question on EVERY type, so three quarters of the time it invited an answer to a question the sentence does not ask -- and a head trained on those learns the axes are independent noise. Declared here rather than guessed from the type's name."
+  {
+   "key": "section",
+   "label": "Section heading"
+  },
+  {
+   "key": "lead_in",
+   "label": "Intro line above a list"
+  },
+  {
+   "key": "neighbor_above",
+   "label": "Atom above"
+  },
+  {
+   "key": "neighbor_below",
+   "label": "Atom below"
+  },
+  {
+   "key": "who_said_it",
+   "label": "Who said it, and to whom"
+  },
+  {
+   "key": "table_column",
+   "label": "Table column / header row"
+  },
+  {
+   "key": "doc_type",
+   "label": "What kind of document"
+  },
+  {
+   "key": "other_doc",
+   "label": "Another document in the deal"
+  },
+  {
+   "key": "domain_knowledge",
+   "label": "Industry knowledge"
+  }
+ ],
+ "types": [
+  {
+   "name": "physical_site",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "Authoritative site declaration: site_id + facility name + street address. One per real building / location.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 3082,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_attribute",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "A scalar attribute of a site: user count, room count, square feet, priority, floors.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 453,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_access_restriction",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "A constraint on access: blackout window, restricted hours, badged escort required, weekend-only cutover, etc.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 9,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_room_mix",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "A row from a per-site room-mix table: room type + count + standard build + validation test.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 3,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_infrastructure",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "Site-bound infrastructure facts: MDF/IDF id, bandwidth/circuit, cable plant condition.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 1,
+   "asks_supplier": false
+  },
+  {
+   "name": "derived_finding",
+   "coarse": "quality",
+   "facet": "SITE",
+   "desc": "A statement nobody wrote: counted, measured or noticed-to-be-absent by the parser from an artifact's own structure -- 106 workstations counted as CAD block inserts, 828 ft of new partition summed from linework, a telecom layer noticed missing. Carries what it assumed and what it decides, because a derived claim has to be arguable.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "service_line",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A services-row line item: service id + description + unit + qty + unit price + extended cost.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 919,
+   "asks_supplier": true
+  },
+  {
+   "name": "bom_line",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A hardware-BOM table row: item id + description + SKU + qty + unit price + extended cost + lead time + serial-capture flag.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 1036,
+   "asks_supplier": true
+  },
+  {
+   "name": "payment_term",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "One row of a billing/payment schedule, e.g. '30% at order acceptance'. Each tier is its own atom.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 71,
+   "asks_supplier": false
+  },
+  {
+   "name": "commercial_total",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "An aggregate price line: hardware subtotal, services subtotal, freight/logistics, contingency, taxes, grand total. Each is one atom.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 751,
+   "asks_supplier": false
+  },
+  {
+   "name": "pricing_assumption",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "An explicit pricing assumption (taxes excluded, hardware substitutions require approval, etc.).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 382,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_budget",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "Per-site budget category amount (hardware budget / services budget / logistics estimate per site).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "rate_card",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A priced rate table row: role or service with a bill rate, OT/holiday multiplier, minimum hours.",
+   "label_space": "head",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 287,
+   "asks_supplier": false
+  },
+  {
+   "name": "work_scope_item",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A general statement of work to be performed that is not a discrete task, deliverable or requirement.",
+   "label_space": "head",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 322,
+   "asks_supplier": true
+  },
+  {
+   "name": "requirement",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A formally numbered requirement (REQ-001 style) with applies-to + owner + verification method.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 867,
+   "asks_supplier": false
+  },
+  {
+   "name": "task",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 1372,
+   "asks_supplier": true
+  },
+  {
+   "name": "deliverable",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A named deliverable that a phase produces (e.g. 'Network closet readiness checklist').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 270,
+   "asks_supplier": true
+  },
+  {
+   "name": "acceptance_criterion",
+   "coarse": "quality",
+   "facet": "WORK",
+   "desc": "A row from an acceptance-criteria table — area + criteria + pass threshold.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 119,
+   "asks_supplier": false
+  },
+  {
+   "name": "milestone_phase",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A row from a project phase/milestone table — phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 283,
+   "asks_supplier": false
+  },
+  {
+   "name": "cutover_step",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A row from a cutover/runbook checklist — step number + timing relative to cutover + owner + action + evidence required.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 31,
+   "asks_supplier": true
+  },
+  {
+   "name": "electrical_acceptance_test",
+   "coarse": "quality",
+   "facet": "WORK",
+   "desc": "A measurable electrical/network acceptance test (Megger, ground resistance, load burn-in, witness/ATP).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 10,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_implementation_note",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Site-specific implementation instruction (asset-tag prefix, receiving rule, install rule).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 76,
+   "asks_supplier": true
+  },
+  {
+   "name": "site_access_window",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "When a site is accessible — days + hours + escort owner.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 41,
+   "asks_supplier": false
+  },
+  {
+   "name": "exclusion",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Negative scope: something explicitly NOT included (\"electrical by others\", \"no patching\").",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 234,
+   "asks_supplier": true
+  },
+  {
+   "name": "integration_checkpoint",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A row from a system-to-system integration checkpoint table: checkpoint id + system + expected input/output + owner + due.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 4,
+   "asks_supplier": false
+  },
+  {
+   "name": "data_flow_step",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "One step of a data-flow pipeline (source system → sink system, what payload).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "system_mapping",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A field mapping between two systems (e.g. HubSpot dealname → 'OPTBOT Atlanta Office Refresh').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "mitigation",
+   "coarse": "risk",
+   "facet": "WORK",
+   "desc": "A mitigation paired with a specific risk (separate from the risk atom itself).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 3,
+   "asks_supplier": false
+  },
+  {
+   "name": "constraint",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A limit on how the work may be done: working hours, noise, dust, union labor, escort required.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "compliance_rule",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A rule about access, data handling, retention, credential use, or auditing.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 61,
+   "asks_supplier": false
+  },
+  {
+   "name": "compliance_classification",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A document/data classification + its allowed and blocked destinations (Confidential, Internal, Mock, Production).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 19,
+   "asks_supplier": false
+  },
+  {
+   "name": "approval_authority",
+   "coarse": "people",
+   "facet": "COMPLIANCE",
+   "desc": "A rule that some role/threshold requires a specific approver (e.g. 'CFO signoff required over $1.5M').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 7,
+   "asks_supplier": false
+  },
+  {
+   "name": "submission_req",
+   "coarse": "quality",
+   "facet": "COMPLIANCE",
+   "desc": "A required element of the proposal submission: number of copies, file format, required form (SF330, W-9), page limit, sealed-bid labeling, delivery method.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 5,
+   "asks_supplier": false
+  },
+  {
+   "name": "change_order_rule",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, after-hours rate.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 44,
+   "asks_supplier": false
+  },
+  {
+   "name": "bonding_insurance",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A bonding or insurance requirement: bid bond, performance bond, payment bond, general liability limit, workers comp, professional liability.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 21,
+   "asks_supplier": false
+  },
+  {
+   "name": "contract_term",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 90,
+   "asks_supplier": false
+  },
+  {
+   "name": "certification",
+   "coarse": "governance",
+   "facet": "COMPLIANCE",
+   "desc": "A certification or credential the provider or its technicians must hold (e.g. BICSI RCDD, OSHA-10, manufacturer cert).",
+   "label_space": "head",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "stakeholder",
+   "coarse": "people",
+   "facet": "PARTY",
+   "desc": "A named person on the deal with their role and email. Synonyms accepted: owner, lead, sponsor, accountable, contact.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 339,
+   "asks_supplier": false
+  },
+  {
+   "name": "blackout_date_range",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "A no-work date window (holiday freeze, exec blackout, peak travel exclusion).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 7,
+   "asks_supplier": false
+  },
+  {
+   "name": "lead_time_constraint",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "Lead time + expediting policy for an item class (core switches, APs, AV kits, fiber panels, custom millwork).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 11,
+   "asks_supplier": false
+  },
+  {
+   "name": "deadline",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "A hard date/time the bidder must meet: proposal/bid due date, questions-due date, pre-bid meeting, site visit. NOT a project phase end (that is milestone_phase).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 50,
+   "asks_supplier": false
+  },
+  {
+   "name": "dependency",
+   "coarse": "timeline",
+   "facet": "TIMING",
+   "desc": "A dependency on a customer-provided input, third party, or infrastructure readiness.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 18,
+   "asks_supplier": true
+  },
+  {
+   "name": "deal_metadata",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "Header-level fact about the deal itself: customer name, deal ID, quote/PO/MSA references, contract type, currency, target close date, deal stage.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 1881,
+   "asks_supplier": false
+  },
+  {
+   "name": "source_caveat",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it, what it is out of date against. Not scope -- it must never reach the SOW -- and it must travel WITH the document it is about, because anything that reads that document without it builds from something we already know is wrong. Found in 11 deals across the dev corpus, typed scope_item in 9 of them: \"the Dates are incorrect as per the submitted SOW\", \"except as otherwise superseded by terms contained in a mutually executed Master Purchase Agreement\".",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "legend_entry",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "The key that makes a document decodable: what a colour, symbol, hatch or abbreviation MEANS on the sheet it is printed on (\"Huzzard supplied Components\", \"orange = existing\", \"hatched = by others\"). Not a fact about the work and never scope -- its content transfers into the parts it governs, each of which names the side it was drawn in. It exists as an atom so a correction can point AT it: on 010288 the sender writes \"the 'Installer Supplied Components' are not accurate\", and a caveat aimed at a whole drawing says only that the drawing is unreliable, while one aimed at a single key says which eighteenth of it to distrust. Distinct from source_caveat, which is the correction rather than the thing corrected.",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "eval_criterion",
+   "coarse": "quality",
+   "facet": "META",
+   "desc": "A scored evaluation/award criterion with its weight: 'Technical approach 40%', 'Price 30%', 'Past performance 20%'. One per criterion.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 5,
+   "asks_supplier": false
+  },
+  {
+   "name": "approval_decision",
+   "coarse": "people",
+   "facet": "META",
+   "desc": "A recorded approval/conditional approval/rejection statement by a named stakeholder.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 5,
+   "asks_supplier": false
+  },
+  {
+   "name": "metadata_requirement",
+   "coarse": "governance",
+   "facet": "META",
+   "desc": "A required metadata key/value to set on an object (blob metadata, CRM custom field).",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 4,
+   "asks_supplier": false
+  },
+  {
+   "name": "signatory",
+   "coarse": "people",
+   "facet": "META",
+   "desc": "A signature-block entry — role + named person who signs.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 13,
+   "asks_supplier": false
+  },
+  {
+   "name": "addendum_qa",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "An addendum, amendment, or question-and-answer item issued during the solicitation that modifies or clarifies the original documents.",
+   "label_space": "head",
+   "status": "live",
+   "value_light": true,
+   "train_rows": 5,
+   "asks_supplier": false
+  },
+  {
+   "name": "site_allocation",
+   "coarse": "site",
+   "facet": "SITE",
+   "desc": "Per-site qty breakdown of a single BOM line (e.g. 'HW-001: ATL-HQ:52; ATL-WEST:27; ATL-AIR:15').",
+   "label_space": "head",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "scope_item",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Legacy catch-all for a line of scope. Prefer a finer type; use only when none fits.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": true
+  },
+  {
+   "name": "risk",
+   "coarse": "risk",
+   "facet": "WORK",
+   "desc": "A stated risk or concern that could affect delivery, cost or schedule.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "assumption",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "Something the proposal assumes to be true (\"customer provides lift\", \"pathways exist\").",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": true
+  },
+  {
+   "name": "open_question",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "An unanswered question in the documents that someone must resolve.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "decision",
+   "coarse": "governance",
+   "facet": "META",
+   "desc": "A decision already made and recorded (\"customer chose option B\").",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "action_item",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A to-do assigned to a person, usually from meeting notes or email.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": true
+  },
+  {
+   "name": "vendor_line_item",
+   "coarse": "commercial",
+   "facet": "COMMERCIAL",
+   "desc": "A vendor quote/BOM line: part, quantity, price.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": true
+  },
+  {
+   "name": "customer_instruction",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A direct instruction from the customer about how to do the work.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "quantity",
+   "coarse": "scope",
+   "facet": "WORK",
+   "desc": "A bare count of a thing (\"110 TVs\", \"24 drops\") not attached to a line item.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "entity",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A named thing (company, product, person) with no claim attached.",
+   "label_space": "extractor",
+   "status": "live",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "answered_question",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A question together with its answer, in the same message or a later reply (\"How many doors?\" / \"1 external door\"). The answer is the fact; keep both.",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "internal_question",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "A question between people on our own team (routing, who to ask, pricing among ourselves). Never a question for the customer.",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "commitment",
+   "coarse": "governance",
+   "facet": "TIMING",
+   "desc": "Someone promises to do something (\"we will send the floorplan Friday\", \"I will get a conversation going with the owner\").",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": false,
+   "train_rows": 0,
+   "asks_supplier": false
+  },
+  {
+   "name": "small_talk",
+   "coarse": "meta",
+   "facet": "META",
+   "desc": "Relationship talk that carries no fact about the work: thanks, greetings, banter, \"sending this to my team\". If the line ALSO says something about the job (its size, a document we need, a promise), it is not small talk.",
+   "label_space": "extractor",
+   "status": "v2",
+   "value_light": true,
+   "train_rows": 0,
+   "asks_supplier": false
+  }
+ ],
+ "service_packs": [
+  "audio_visual",
+  "low_voltage_cabling",
+  "wireless",
+  "staff_augmentation",
+  "security_camera",
+  "camera_vms_operations",
+  "security_access",
+  "fire_safety",
+  "paging_mass_notification",
+  "das",
+  "electrical",
+  "telecom",
+  "network_maintenance",
+  "building_management_systems",
+  "datacenter",
+  "rack_and_stack",
+  "hardware",
+  "imac",
+  "itad",
+  "data_migration",
+  "msp",
+  "alm",
+  "audit",
+  "professional_services",
+  "other"
+ ],
+ "service_packs_doc": "Deal-level router gold: the labeler's answer to 'what is this deal mainly?'. Ids match Orbitbrief-Core world_model/data/domain_packs.yaml.",
+ "suppliers": [
+  {
+   "key": "us",
+   "label": "Us (Purtera)"
+  },
+  {
+   "key": "partner",
+   "label": "Partner / reseller"
+  },
+  {
+   "key": "customer",
+   "label": "End customer"
+  },
+  {
+   "key": "third_party",
+   "label": "Another vendor"
+  },
+  {
+   "key": "unresolved",
+   "label": "Named but not resolved",
+   "desc": "The document names a ROLE and not an organisation -- \"Provided by Club/installer\" when we are the installer, so it means the club or us. Leaving it blank reads as \"not answered\"; this says the deal does not say, which is a finding and usually an unpriced cost."
+  }
+ ],
+ "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours).",
+ "about_doc": "Whose fact is it? The type says WHAT a statement is; this says what it is ABOUT. Only 'deal' reaches the SOW -- 'account' and 'partner' belong in the brief's why-you-should-care, and are lost entirely if a labeler is forced to call them scope. See _LABELING_DOCTRINE.md.",
+ "about": [
+  {
+   "key": "deal",
+   "label": "This job",
+   "desc": "This quote, this scope, this site. The only one that reaches the SOW."
+  },
+  {
+   "key": "account",
+   "label": "The customer relationship",
+   "desc": "True beyond this job: room to grow, who decides, how they buy."
+  },
+  {
+   "key": "partner",
+   "label": "A partner's behaviour",
+   "desc": "How a reseller, vendor or installer works with us -- their drawings, their terms, what they get wrong."
+  },
+  {
+   "key": "internal",
+   "label": "How we work",
+   "desc": "Our own routing and process. Never a deliverable."
+  }
+ ],
+ "wants_doc": "What does this statement want from us? Turns 'there is something we are missing' into a list someone can work. See _LABELING_DOCTRINE.md.",
+ "wants": [
+  {
+   "key": "nothing",
+   "label": "Nothing — it is just true"
+  },
+  {
+   "key": "chase-artifact",
+   "label": "Go get a document",
+   "desc": "It points at a drawing, quote or photo the deal does not hold."
+  },
+  {
+   "key": "chase-conversation",
+   "label": "Find the conversation",
+   "desc": "It refers to a call or thread we do not have (\"as discussed earlier\")."
+  },
+  {
+   "key": "confirm-with-customer",
+   "label": "Ask the customer",
+   "desc": "We cannot price or build it until they answer."
+  },
+  {
+   "key": "decide-internally",
+   "label": "We must decide",
+   "desc": "Nobody else can answer it; it is our call to make."
+  }
+ ],
+ "reads_doc": "What an atom TELLS US. Each key is a learned head: a rule fills it today as a prediction (source=rule, low confidence) purely so a labeler has something to confirm or drop, and the confirmations train the head that replaces the rule. A keyword list cannot make these calls -- it hid a promise naming a deal's decision maker because the words looked like banter. See _LABELING_DOCTRINE.md.",
+ "reads": [
+  {
+   "key": "small_talk",
+   "label": "Just relationship talk",
+   "values": "true/false",
+   "desc": "Thanks, greetings, banter. NOT small talk if it also says anything about the work, promises something, or names a person or a document."
+  },
+  {
+   "key": "job_scale",
+   "label": "How big the sender thinks it is",
+   "values": "small | large",
+   "desc": "Sizing in the customer's own words, before any site visit. Deal Kit plans crew and site time from it."
+  },
+  {
+   "key": "expansion",
+   "label": "Room to grow on this account",
+   "values": "what would repeat",
+   "desc": "This job could repeat across more of the customer's sites. Say WHAT repeats (\"more clubs, same one-door scope\"), not just that it might. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly."
+  },
+  {
+   "key": "commitment",
+   "label": "Somebody undertook to do something",
+   "values": "what was promised",
+   "desc": "A promise with an owner. A promise conditional on OUR answer is a task on us before it is one on them."
+  },
+  {
+   "key": "introduces_party",
+   "label": "Brings in someone not in this thread",
+   "values": "the role, and the name when we have one",
+   "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Write the role alone when nobody named them (\"club owner\") -- that absence IS the finding, because we cannot contact a role."
+  },
+  {
+   "key": "chase",
+   "label": "Points at something we do not hold",
+   "values": "conversation | attachment",
+   "desc": "A call or a file the deal does not contain. If we have history with them, ask them rather than hunting the thread."
+  },
+  {
+   "key": "needs_artifact",
+   "label": "A document to go and get",
+   "values": "the kind of document",
+   "desc": "A drawing, floorplan or spec the sender names and the deal does not hold."
+  },
+  {
+   "key": "points_at_artifact",
+   "label": "Names a document",
+   "values": "the kind of document",
+   "desc": "The line refers to a drawing or file, whether or not we hold it."
+  },
+  {
+   "key": "blocked_on",
+   "label": "It cannot happen until somebody answers",
+   "values": "us | customer | partner",
+   "desc": "The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on US is a task on us before it is one on them. This is the critical path, and it is invisible if the conditional is flattened into the type."
+  },
+  {
+   "key": "opens_block",
+   "label": "It announces what follows",
+   "values": "what the block is",
+   "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading."
+  },
+  {
+   "key": "unreliable_part",
+   "label": "Which part of it must not be trusted",
+   "values": "the part, in the document's own words",
+   "desc": "Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies."
+  },
+  {
+   "key": "situational",
+   "label": "Matters here, generalises nowhere",
+   "values": "what it is doing on this deal",
+   "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing."
+  }
+ ],
+ "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
+ "relations": [
+  {
+   "key": "governs",
+   "label": "Announces / scopes the atoms below",
+   "desc": "From the line that opens a block to every atom it covers. Carries no text of its own."
+  },
+  {
+   "key": "supports",
+   "label": "Backs it up"
+  },
+  {
+   "key": "answers",
+   "label": "Answers the question"
+  },
+  {
+   "key": "contradicts",
+   "label": "Says the opposite"
+  },
+  {
+   "key": "same_as",
+   "label": "The same fact, said twice"
+  },
+  {
+   "key": "context",
+   "label": "Background for it"
+  }
+ ],
+ "asks_supplier_doc": "Does 'who supplies or does it?' have an answer for this type? The card showed that question on EVERY type, so three quarters of the time it invited an answer to a question the sentence does not ask -- and a head trained on those learns the axes are independent noise. Declared here rather than guessed from the type's name."
 }

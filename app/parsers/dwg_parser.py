@@ -54,6 +54,7 @@ from app.core.schemas import (
     SourceRef,
 )
 from app.domain.schemas import DomainPack
+from app.parsers.dwg_geometry import SheetReading, read_the_sheet
 from app.parsers.base import BaseParser
 
 _DWG_EXTENSIONS = {".dwg", ".dxf"}
@@ -383,6 +384,47 @@ def is_template_leftover(text: str) -> bool:
     return any(marker in low for marker in _TEMPLATE_MARKERS)
 
 
+def render_svg(dxf_path: Path, layout_name: str | None = None) -> str | None:
+    """The sheet as vector, so a PM can actually look at the drawing.
+
+    A DWG embeds a thumbnail in its header and the parser already extracts it,
+    but it is 256x139 -- enough to prove a file is a drawing, useless for
+    reading one. Live 010180 showed "07.22.26_...SP-6.dwg can't be previewed
+    inline. Label from the atom text on the right." beside a deal whose whole
+    scope came off that sheet.
+
+    ezdxf renders the DXF we already converted, so this costs one more pass
+    over a file that is open anyway: ~1 MB and about two seconds for SP-6, and
+    it zooms, which a raster thumbnail does not.
+
+    Prefers the paper-space layout a human would plot -- that is the sheet,
+    with its plan, schedule and title block composed -- and falls back to model
+    space, which is everything the file holds, side by side.
+    """
+    try:
+        import ezdxf  # noqa: PLC0415
+        from ezdxf.addons.drawing import Frontend, RenderContext, layout, svg  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - no renderer is not an error here
+        return None
+    try:
+        doc = ezdxf.readfile(str(dxf_path))
+        target = None
+        if layout_name:
+            target = doc.layouts.get(layout_name)
+        if target is None:
+            # The sheet a draughtsman plots, rather than the model space they
+            # work in: it is the one arrangement meant to be read.
+            sheets = [l for l in doc.layouts if getattr(l, "name", "") != "Model"]
+            named = [l for l in sheets if not l.name.upper().startswith("PDF")]
+            target = (named or sheets or [doc.modelspace()])[0]
+        backend = svg.SVGBackend()
+        Frontend(RenderContext(doc), backend).draw_layout(target)
+        return backend.get_string(
+            layout.Page(0, 0, layout.Units.inch, layout.Margins.all(0.2)))
+    except Exception:  # noqa: BLE001 - a picture is a bonus, not the parse
+        return None
+
+
 class DwgParser(BaseParser):
     parser_name = "dwg"
     parser_version = "dwg_parser_v1"
@@ -455,6 +497,9 @@ class DwgParser(BaseParser):
         elif not is_dxf:
             warnings.append("dwg: no embedded preview in this drawing")
 
+        # (the vector render of the sheet itself happens once the DXF exists,
+        # below -- the thumbnail above is 256x139 and cannot be read)
+
         # The text, if anything here can reach it.
         dxf_path: Path | None = path if is_dxf else None
         converter = None
@@ -465,6 +510,17 @@ class DwgParser(BaseParser):
                 if dxf_path is None:
                     warnings.append(f"dwg: {Path(converter).name} produced no DXF")
 
+        if dxf_path is not None:
+            sheet_svg = render_svg(dxf_path)
+            if sheet_svg:
+                derived.append(ParserDerivedFile(
+                    relative_path=f"{path.stem}.sheet.svg",
+                    content_kind="text",
+                    content_text=sheet_svg,
+                ))
+            else:
+                warnings.append("dwg: could not render the sheet to SVG")
+
         labels = text_entities(dxf_path) if dxf_path else []
         rows = rows_from_entities([
             x for x in labels
@@ -472,6 +528,32 @@ class DwgParser(BaseParser):
         ])
         building = [r for r in rows if not is_template_leftover(r["text"])]
         stationery = [r for r in rows if is_template_leftover(r["text"])]
+
+        # The sheet READ, not listed. Eleven derived findings -- 106 desks
+        # counted as blocks, 828 ft of new partition measured, the telecom
+        # layer noticed to be absent -- in place of twenty-three room words
+        # that each decide nothing. The tags stay as atoms below: they are the
+        # evidence these rest on, not the finding.
+        reading = self._read_sheet(dxf_path)
+        for finding in (reading.findings if reading else []):
+            atoms.append(self._make_atom(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                text=finding.headline + " -- " + finding.detail,
+                # Not site_infrastructure: a derived claim is not a site fact,
+                # and typing it as one hides that nobody wrote it.
+                atom_type=AtomType.derived_finding,
+                value_extra={
+                    "kind": "cad_finding",
+                    "finding": finding.kind,
+                    "value": finding.value,
+                    "headline": finding.headline,
+                    "decides": finding.decides,
+                    "assumption": finding.assumption,
+                },
+                confidence=0.9,
+            ))
 
         for label in building:
             atoms.append(self._make_atom(
@@ -528,6 +610,22 @@ class DwgParser(BaseParser):
             },
         ))
         return ParserOutput(atoms=atoms, derived_files=derived, warnings=warnings)
+
+    def _read_sheet(self, dxf_path: Path | None) -> SheetReading | None:
+        """Derive what the sheet decides, or say nothing.
+
+        Wrapped because a drawing that cannot be measured -- no closet tag, no
+        declared units, an ezdxf that will not open it -- must cost the parse
+        nothing. The tags are still atoms either way.
+        """
+        if dxf_path is None:
+            return None
+        try:
+            import ezdxf  # noqa: PLC0415
+
+            return read_the_sheet(ezdxf.readfile(str(dxf_path)))
+        except Exception:  # noqa: BLE001 - a derivation is a bonus, not the job
+            return None
 
     def _make_atom(
         self,

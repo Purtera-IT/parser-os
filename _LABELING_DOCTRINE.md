@@ -162,6 +162,77 @@ A drop is worth as much as a confirmation: a rule can only produce positives,
 so "no, that is not small talk" is a label only a human can leave, and it is
 what stops the head inheriting the pattern's blind spots.
 
+## A drawing is measured, not listed
+
+A room tag is not an atom worth having. "PANTRY" names a room the PM already
+knew about: it decides nothing, prices nothing, and cannot be wrong. SP-6
+produced twenty-three of them and they buried the two numbers on the sheet
+that actually move money.
+
+What earns an atom from a drawing is **derived** — counted, measured, or
+noticed to be absent:
+
+| derived | from | what it decides |
+| --- | --- | --- |
+| 106 workstations | 106 `5' DESK` block inserts | confirms, geometrically, the 106 the whole quote rests on |
+| 828 ft new partition | linework on layers whose role is partition/new | how much construction is really happening |
+| 3 displays vs 6 AV drops priced | block inserts | AV scope against AV price |
+| 10 NIC regions | hatch layers marked not-in-contract | scope somebody else owns |
+| no telecom layer | the ABSENCE of an E or T discipline | this sheet cannot give tray runs — ask for a T-series now |
+| furthest room 139 ft link | tag coordinates + `$INSUNITS` + Manhattan routing | past 90 m a Cat6A drop fails certification and the fix is a second closet |
+| 480V 3Ø 130KVA | the sheet's own text | whether existing switchgear carries new load |
+| 11 dimensioned lengths | `DIMENSION` entities | the most reliable distance a sheet carries |
+
+The room tags stay as atoms. They become the **evidence** a finding rests on,
+not findings themselves.
+
+### Three rules a drawing finding must obey
+
+**1. Say what it assumed.** Every `Finding` carries `assumption` beside
+`decides`. A reviewer argues with the assumption instead of reverse-engineering
+it, and a head gets a stable surface to predict into.
+
+**2. Derive by role, never by name.** `AR-WALL-N` is one architect's spelling;
+the standard says `A-WALL-N` and other firms ship `A-WALL-NEWW`. Matching the
+literal name finds nothing on the next deal and reports *no new partition*
+rather than *I could not tell* — a confident zero, which is the worst answer
+available. `app/parsers/cad_layers.py` reads the NCS grammar
+(`[Discipline]-[Major]-[Minor]-[Status]`) and answers by role.
+
+**3. An absence is only a finding when the file can be read.** A drawing that
+does not follow the standard omits nothing; it merely cannot be read, and
+those are different answers. `has_discipline` returns `None`, not `False`,
+below `STANDARD_FRACTION`. This rule exists because two of a conveyor
+drawing's seventy-five junk layers parsed as a discipline by coincidence —
+enough, before the gate, to report "no telecom or electrical information"
+about a **Motor Control Panel** drawing.
+
+### The export is not a second opinion
+
+A sheet that arrives as both DWG and PDF is one sheet read twice. The DWG gave
+62 atoms with coordinates and the program summary; the PDF gave twelve room
+words off an OCR pass, and both sat in the workspace looking equally
+authoritative. `app/core/drawing_pairs.py` demotes the export's rows —
+demotes, never deletes, the same rule the substance gate follows — and leaves
+them alone entirely when the drawing never converted, because then the export
+is the only account of the sheet there is.
+
+### The head this is waiting for
+
+| head | fills today | why a list cannot hold it |
+| --- | --- | --- |
+| `block_category` | regex families on block names (`DESK\|WORKSTATION`, `TV\|MONITOR`) | block names are free text per firm. This corpus holds `5' DESK` and also `eqklwmew`, `FDKSJ` and `zw$5C48`. `\bTV\b` already failed to match `70TV`, because there is no word boundary between two word characters. There is no standard to lean on, so this is learned or it is guessed |
+
+The name-independent signal to train against, and the fallback when the head
+abstains: **a block inserted ~100 times on a repeating grid is workstations
+whatever it is called.** Count and spacing do not care about vocabulary.
+
+Harvest with `python -m app.learning.harvest_cad_blocks` (see that module for
+the corpus scan and the labelling columns). Four CAD files exist in the corpus
+today, so this head waits on volume — but the harvest runs on every new
+drawing from now on, so the set grows without anybody remembering to collect
+it.
+
 ## A label may only use what the head will see
 
 The worst thing in my first four labels was not a wrong value. It was two
