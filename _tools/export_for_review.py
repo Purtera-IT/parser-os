@@ -112,11 +112,39 @@ def main() -> None:
     except Exception:                                   # bundle is still usable
         label_key = lambda *a: ""
 
+    # The parser records why it decided each atom -- confidence, the rule or
+    # stage that produced it, the receipts tying it to a span, and in
+    # `decision_provenance` a plain-language rationale. A review that cannot see
+    # any of that can only say an atom looks wrong; with it, a reviewer can say
+    # WHICH step was wrong, which is the difference between a complaint and a bug
+    # report. Indexed by atom id and folded onto the envelope's atoms below.
+    prov = {}
+    for a in res.get("atoms") or []:
+        aid = a.get("id") or a.get("atom_id")
+        if not aid:
+            continue
+        prov[aid] = {
+            "confidence": a.get("confidence"),
+            "calibrated_confidence": a.get("calibrated_confidence"),
+            "authority_class": a.get("authority_class"),
+            "review_status": a.get("review_status"),
+            "review_flags": a.get("review_flags") or [],
+            "parser_version": a.get("parser_version"),
+            "decision_provenance": a.get("decision_provenance"),
+            "normalized_text": a.get("normalized_text"),
+            "value": a.get("value"),
+            "source_refs": [{"filename": s.get("filename"),
+                             "artifact_type": s.get("artifact_type"),
+                             "locator": s.get("locator")}
+                            for s in (a.get("source_refs") or [])],
+            "receipt_count": len(a.get("receipts") or []),
+        }
+
     live = collections.defaultdict(list)
     for a in env.get("atoms") or []:
         loc = a.get("locator") or {}
         text = " ".join(str(a.get("text") or "").split())
-        live[a.get("artifact_id")].append({
+        row = {
             "atom_id": a.get("id"),
             "label_key": label_key(DEAL, name(a.get("artifact_id")), loc.get("page"), text),
             "type": a.get("atom_type"),
@@ -124,7 +152,9 @@ def main() -> None:
             "section": a.get("section_path") or [],
             "entity_keys": a.get("entity_keys") or [],
             "page": loc.get("page"),
-        })
+        }
+        row["how_it_was_produced"] = prov.get(a.get("id")) or {}
+        live[a.get("artifact_id")].append(row)
 
     dropped = collections.defaultdict(list)
     for a in res.get("suppressed_atoms") or []:
@@ -182,9 +212,26 @@ def main() -> None:
             md.append("\n### Extracted\n")
             for a in entry["atoms"]:
                 sec = " > ".join(a["section"]) if a["section"] else ""
+                h = a.get("how_it_was_produced") or {}
                 md.append(f"- **`{a['type']}`**{f' _(§{sec})_' if sec else ''} — {a['text']}"
                           + (f"  \n  `keys:` {', '.join(a['entity_keys'])}"
                              if a["entity_keys"] else ""))
+                bits = []
+                if h.get("confidence") is not None:
+                    bits.append(f"conf {h['confidence']}")
+                if h.get("review_status"):
+                    bits.append(str(h["review_status"]))
+                if h.get("authority_class"):
+                    bits.append(str(h["authority_class"]))
+                if h.get("parser_version"):
+                    bits.append(str(h["parser_version"]))
+                for f in h.get("review_flags") or []:
+                    bits.append(f"flag:{f}")
+                if bits:
+                    md.append(f"  \n  `{' · '.join(bits)}`")
+                dp = h.get("decision_provenance") or {}
+                if isinstance(dp, dict) and dp.get("rationale"):
+                    md.append(f"  \n  _why:_ {dp['rationale']}")
         if entry["dropped"]:
             md.append("\n### Read, then dropped\n")
             for a in entry["dropped"]:
