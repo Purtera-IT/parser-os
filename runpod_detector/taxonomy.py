@@ -41,6 +41,10 @@ MICRO_TO_FACET: dict[str, str] = {
     # inserts, a telecom layer noticed missing. SITE because what it
     # describes is the place: its size, its contents, its reach.
     "derived_finding": "SITE",          # [N] parser-derived
+    # --- META ---
+    # Where the deal stands rather than what it contains: the step it
+    # waits on, and whether its price has been checked against the site.
+    "deal_state": "META",               # [N] parser-derived
 
     # --- COMMERCIAL ---
     "service_line": "COMMERCIAL",       # [R][D]
