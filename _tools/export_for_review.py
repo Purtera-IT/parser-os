@@ -33,17 +33,51 @@ from azure.storage.blob import BlobServiceClient
 HERE = Path(__file__).parent
 
 
+#: The storage account the artifacts container lives in, for the signed-in path.
+ACCOUNT_URL = os.environ.get(
+    "BLOB_ACCOUNT_URL", "https://purpulsedevstg01.blob.core.windows.net")
+CONTAINER = "orbitbrief-artifacts"
+
+
 def _container():
-    """Blob credential, from the environment first so a reviewer can hold a
-    read-only SAS URL instead of the account connection string."""
+    """Where to read blobs from, in order of least privilege held by the reader.
+
+    1. ``BLOB_SAS_URL`` -- a container SAS. What a reviewer should be given: it
+       can be issued read-only, given an expiry, and revoked.
+    2. An Azure identity (``az login``, managed identity, service principal) via
+       ``DefaultAzureCredential``. No secret changes hands at all.
+    3. ``BLOB_CONN`` or the local ``.bloburl`` -- the account connection string,
+       which carries the account key. Full rights, no expiry, cannot be revoked
+       without rotating the key. Last resort, and never given to a reviewer.
+
+    On (2): a subscription role such as Contributor is NOT enough. Blob reads go
+    through the data plane and need a data role -- Storage Blob Data Reader. An
+    identity holding only Contributor authenticates fine and then fails every
+    read with 403, which reads like a bad credential rather than a missing role.
+    That has already cost this project a day once.
+    """
     sas = os.environ.get("BLOB_SAS_URL")
     if sas:
         from azure.storage.blob import ContainerClient
         return ContainerClient.from_container_url(sas)
-    conn = os.environ.get("BLOB_CONN") or (HERE / ".bloburl").read_text(
-        encoding="utf-8").strip()
-    return BlobServiceClient.from_connection_string(conn).get_container_client(
-        "orbitbrief-artifacts")
+
+    conn = os.environ.get("BLOB_CONN")
+    if not conn and (HERE / ".bloburl").is_file():
+        conn = (HERE / ".bloburl").read_text(encoding="utf-8").strip()
+    if conn:
+        return BlobServiceClient.from_connection_string(conn).get_container_client(
+            CONTAINER)
+
+    try:
+        from azure.identity import DefaultAzureCredential
+    except ImportError:
+        raise SystemExit(
+            "No blob credential. Set BLOB_SAS_URL to a container SAS, or "
+            "`pip install azure-identity` and `az login` with the Storage Blob "
+            "Data Reader role on the storage account.")
+    return BlobServiceClient(
+        ACCOUNT_URL, credential=DefaultAzureCredential()).get_container_client(
+            CONTAINER)
 
 
 DEAL = os.environ.get("DEAL") or ""
