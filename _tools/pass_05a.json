@@ -1,0 +1,90 @@
+{
+ "document": "010237-hs-email-115208628622.eml",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_ba984c9dcdb334a160a5",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "partner",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Thank you, Suresh."
+     }
+    ],
+    "entity_keys": [],
+    "note": "Acknowledgement by name. No claim about the work -- the whole document is a courtesy reply to the quote, which is why it produced three atoms and no facts."
+   }
+  },
+  {
+   "labelKey": "lbl_cdff567c89014c07cad7",
+   "fields": {
+    "label_type": "stakeholder",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "us",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Trent Torrence"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Executive Vice President of Sales"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "t@purtera-it.com"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Outbound email, purtera-it.com -> NMC, 19 Aug 2026"
+     }
+    ],
+    "entity_keys": [
+     "stakeholder:trent_torrence",
+     "email:t_purtera_it_com",
+     "party:purtera",
+     "role:evp_sales"
+    ],
+    "note": "The only place in the deal that gives Trent a title, and it changes how his messages read: an EVP of Sales relaying customer requirements is speaking commercially, not technically. That matters for the atom where he answers the coverage question with Worktime - 8am- 5pm and drops the six days -- the person who lost the sixth day was the one carrying the commercial relationship, not an engineer reading the SLA. He is also the author of all three HubSpot notes, so this is the identity behind the filer on every internal record in the deal."
+   }
+  },
+  {
+   "labelKey": "lbl_6780926c15c43d183e0e",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "slight",
+    "about": "partner",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "working with us on this one"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Outbound email, purtera-it.com -> NMC, 19 Aug 2026"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "party:purtera",
+     "relationship:goodwill"
+    ],
+    "note": "Relationship talk, kept rather than rejected because of what it sits next to: this is the only outbound message in the deal and it is a thank-you, sent the day the pricing arrived after two chases. It says nothing about scope and belongs nowhere near the SOW, but it is a small true fact about how the partnership is being handled, which is what about:partner is for."
+   }
+  }
+ ]
+}

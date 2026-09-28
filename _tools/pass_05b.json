@@ -1,0 +1,158 @@
+{
+ "document": "010237-hs-note-115206809191-Have another oppty for you all. This one lengthier one (6months.).txt",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_436924ce1a2ff40befe0",
+   "fields": {
+    "label_type": "open_question",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "chase-conversation",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Preliminary ask"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "what other high level and specifics needed"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "HubSpot note filed by Trent Torrence (internal) -- the filer is not necessarily the speaker"
+     }
+    ],
+    "entity_keys": [
+     "party:purtera",
+     "service:ams",
+     "process:discovery"
+    ],
+    "note": "Labels the entire ask as preliminary, which is the frame everything downstream inherits: the six months, the one resource and the AMS scope all arrive inside a message that says up front it is not the full picture. chase-conversation because it explicitly invites a further exchange about what else is needed, and the deal contains no record of that exchange happening -- the next thing that arrives is an RFI."
+   }
+  },
+  {
+   "labelKey": "lbl_f4b45cdf3301d6726435",
+   "fields": {
+    "label_type": "task",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Need a AMS(Application management services) resource"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "next 6 months"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "HubSpot note filed by Trent Torrence (internal) -- the filer is not necessarily the speaker"
+     }
+    ],
+    "entity_keys": [
+     "platform:workato",
+     "service:ams",
+     "quantity:6",
+     "term:6_months",
+     "quantity:1"
+    ],
+    "note": "The earliest statement of the deal, and word for word the same sentence that appears in the email thread -- the same ask travelling by two routes, which is why the fold between note and email matters on this deal. Kept as the note copy because the note is dated 19:25 and is the record HubSpot holds. One resource, six months, Workato AMS: the three facts the whole 121,518.99 rests on were fixed in this line before any document existed."
+   }
+  },
+  {
+   "labelKey": "lbl_c01bbf01db075be25d82",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "ordinary",
+    "about": "account",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Have another oppty for you all."
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "HubSpot note filed by Trent Torrence (internal) -- the filer is not necessarily the speaker"
+     }
+    ],
+    "entity_keys": [
+     "party:purtera",
+     "relationship:repeat_business"
+    ],
+    "note": "Another says there is a prior stream of work with the same counterparty, and for you all says the sender is not us. This is the account signal on the deal -- the reason it exists at all -- and by the doctrine it must reach the brief and never the SOW. It is also the clearest sign the note is filed content rather than authored content: an internal note whose text addresses PurTera in the second person was written by somebody else and pasted in."
+   }
+  },
+  {
+   "labelKey": "lbl_33136dd5eb8ecda11eeb",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "This one lengthier one (6months.)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "HubSpot note filed by Trent Torrence (internal) -- the filer is not necessarily the speaker"
+     }
+    ],
+    "entity_keys": [
+     "term:6_months",
+     "quantity:6",
+     "relationship:repeat_business"
+    ],
+    "note": "Sizes this deal against the unnamed previous one -- lengthier, six months. It is the job_scale reading of the doctrine worked example in its natural habitat: a throwaway clause carrying a fact that changes how many months of resource get planned. The comparison also implies the earlier engagement was shorter, which is a fact about the account that exists nowhere else."
+   }
+  },
+  {
+   "labelKey": "lbl_b553be83d4bd61fee228",
+   "fields": {
+    "label_type": "commitment",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "chase-conversation",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "provide some time slots next week"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Lorena and I"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "HubSpot note filed by Trent Torrence (internal) -- the filer is not necessarily the speaker"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "stakeholder:lorena",
+     "process:discovery",
+     "role:unresolved"
+    ],
+    "note": "Offers a discovery call with the end customer and names Lorena, a person who appears nowhere else in the deal and whose organisation is never stated. By the doctrine a role word is not a party and a name without an affiliation must stay unresolved -- the and I places her alongside the sender, who is not us, so she is most likely on the counterparty side, and most likely is not a label. What is learnable is the gap: a discovery call with the customer was offered and the deal holds no record of it ever happening, so the requirements were fixed entirely through a questionnaire that came back with two non-answers and a corrupted cell."
+   }
+  }
+ ]
+}

@@ -1,0 +1,1664 @@
+{
+ "document": "NMC-SLA-Purtera IT-Workato_Middleware-v.1",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_386caa3ce9d08c57333f",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P1"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "1 hour"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "severity:p1",
+     "service:incident_support",
+     "party:nmc",
+     "system:servicenow"
+    ],
+    "note": "The P1 row of the service-level table, complete: severity, its definition, the response target (1 hour) and the resolution target (4 hours). Load-bearing because these four rows are the only measurable commitment in the engagement -- a managed service with no deliverable is judged entirely on whether it hit these. They also do not match what the customer asked for in the RFI, which answered P1-1, P2-2-4, P3-4-8, P4-8-16 hours; the SLA moved P3 and P4 onto business days, which is a materially weaker commitment nobody appears to have flagged back."
+   }
+  },
+  {
+   "labelKey": "lbl_e17bc9872b9505c385ed",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P2"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "4 hours"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "severity:p2",
+     "service:incident_support",
+     "party:nmc",
+     "system:servicenow"
+    ],
+    "note": "The P2 row of the service-level table, complete: severity, its definition, the response target (4 hours) and the resolution target (8 hours). Load-bearing because these four rows are the only measurable commitment in the engagement -- a managed service with no deliverable is judged entirely on whether it hit these. They also do not match what the customer asked for in the RFI, which answered P1-1, P2-2-4, P3-4-8, P4-8-16 hours; the SLA moved P3 and P4 onto business days, which is a materially weaker commitment nobody appears to have flagged back."
+   }
+  },
+  {
+   "labelKey": "lbl_5d79fc0fd2f6f829fd7e",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P3"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "8 hours"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "severity:p3",
+     "service:incident_support",
+     "party:nmc",
+     "system:servicenow"
+    ],
+    "note": "The P3 row of the service-level table, complete: severity, its definition, the response target (8 hours) and the resolution target (2 business days). Load-bearing because these four rows are the only measurable commitment in the engagement -- a managed service with no deliverable is judged entirely on whether it hit these. They also do not match what the customer asked for in the RFI, which answered P1-1, P2-2-4, P3-4-8, P4-8-16 hours; the SLA moved P3 and P4 onto business days, which is a materially weaker commitment nobody appears to have flagged back."
+   }
+  },
+  {
+   "labelKey": "lbl_113029723e94f7c37fee",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P4"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "24 hours"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "severity:p4",
+     "service:incident_support",
+     "party:nmc",
+     "system:servicenow"
+    ],
+    "note": "The P4 row of the service-level table, complete: severity, its definition, the response target (24 hours) and the resolution target (5 business days). Load-bearing because these four rows are the only measurable commitment in the engagement -- a managed service with no deliverable is judged entirely on whether it hit these. They also do not match what the customer asked for in the RFI, which answered P1-1, P2-2-4, P3-4-8, P4-8-16 hours; the SLA moved P3 and P4 onto business days, which is a materially weaker commitment nobody appears to have flagged back."
+   }
+  },
+  {
+   "labelKey": "lbl_dc21adf6ddb9d940e505",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "4 hours"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A second, lossier read of the P2 row that the complete row already carries. It keeps the severity description and one number but drops the severity code and the second number, so the surviving figure cannot be told from a response target or a resolution target -- the one thing the row exists to distinguish. Rejected as table scaffolding rather than kept as a fact, and typed _keep rather than left as the parser bom_line: a bill-of-materials type on an SLA response target would teach a BOM head that service levels are hardware lines."
+   }
+  },
+  {
+   "labelKey": "lbl_cf18ba8cac9a268fb304",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "24 hours"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A second, lossier read of the P4 row that the complete row already carries. It keeps the severity description and one number but drops the severity code and the second number, so the surviving figure cannot be told from a response target or a resolution target -- the one thing the row exists to distinguish. Rejected as table scaffolding rather than kept as a fact, and typed _keep rather than left as the parser bom_line: a bill-of-materials type on an SLA response target would teach a BOM head that service levels are hardware lines."
+   }
+  },
+  {
+   "labelKey": "lbl_869ed55e27753cb5ea26",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "1 hour"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A second, lossier read of the P1 row that the complete row already carries. It keeps the severity description and one number but drops the severity code and the second number, so the surviving figure cannot be told from a response target or a resolution target -- the one thing the row exists to distinguish. Rejected as table scaffolding rather than kept as a fact, and typed _keep rather than left as the parser bom_line: a bill-of-materials type on an SLA response target would teach a BOM head that service levels are hardware lines."
+   }
+  },
+  {
+   "labelKey": "lbl_995ebabb65f03624c253",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "8 hours"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A second, lossier read of the P3 row that the complete row already carries. It keeps the severity description and one number but drops the severity code and the second number, so the surviving figure cannot be told from a response target or a resolution target -- the one thing the row exists to distinguish. Rejected as table scaffolding rather than kept as a fact, and typed _keep rather than left as the parser bom_line: a bill-of-materials type on an SLA response target would teach a BOM head that service levels are hardware lines."
+   }
+  },
+  {
+   "labelKey": "lbl_2ece701cd11162fd17e7",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "The Customer provides timely administrative access to the Workato workspace"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Assumptions"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "platform:workato",
+     "access:admin",
+     "risk:onboarding_delay"
+    ],
+    "note": "The precondition the whole engagement sits on: without admin access to the workspace and the integrated systems there is no service to deliver, only a resource we are paying 16,000 a month for. It is a dependency rather than an assumption because it names who must act, and the RFI answer on access was only Admin- tech support, which does not say the access is arranged. On a fixed monthly cost an access delay is pure margin loss -- we pay NMC whether or not the customer has let them in."
+   }
+  },
+  {
+   "labelKey": "lbl_8521a3c2800b406196e5",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Document Version"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "v1.1"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "artifact:sla",
+     "version:v1_1",
+     "party:nmc"
+    ],
+    "note": "Version 1.1, not 1.0 -- there was an earlier draft of this SLA that the deal does not hold. Worth keeping because the thread shows the SLA was still being finalised on 10 August (Could you please help us with the below points so we can finalize the SLA) and the answers given then are what changed between the versions."
+   }
+  },
+  {
+   "labelKey": "lbl_8b6811ab3c036b1ca494",
+   "fields": {
+    "label_type": "constraint",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "8 hours per day, 5 days per week (8x5)"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "8:00 AM to 5:00 PM EST"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Package"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "quantity:40",
+     "quantity:8",
+     "quantity:5",
+     "coverage:weekday_business_hours",
+     "party:nmc",
+     "service:managed_services"
+    ],
+    "note": "The coverage we actually committed to, and it is not the coverage we bought. This says 8:00 AM to 5:00 PM; NMC Option 1, the option the Deal Kit costs at 16,000 a month, covers 9:00 AM to 5:00 PM. It is also five days where the customer RFI answer asked for six. Both gaps point the same way -- we promised more hours than we purchased -- and the with additional weekend coverage tail is what makes the shortfall billable at 125 an hour rather than merely uncovered. Typed constraint, not site_access_window: there is no site on a 100% remote engagement."
+   }
+  },
+  {
+   "labelKey": "lbl_5898a3fe098f39d15c15",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Provisioning of administrative access to the Workato workspace"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Transition and Onboarding"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "platform:workato",
+     "access:admin",
+     "phase:onboarding"
+    ],
+    "note": "The onboarding half of the access dependency: the same requirement stated as a task with a deadline rather than as a standing assumption. Kept separately because this one sits inside the onboarding checklist, and the SLA says the service-level clock only starts once onboarding completes -- so this line, not the assumption, is what gates the commencement date the six-month term is measured from."
+   }
+  },
+  {
+   "labelKey": "lbl_6df1be2112ee774b8eb6",
+   "fields": {
+    "label_type": "assumption",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "decide-internally",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Resolution targets assume the necessary monitoring and alerting is in place"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Assumptions"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "scope:monitoring",
+     "phase:onboarding",
+     "risk:scope_creep"
+    ],
+    "note": "A conditional that quietly adds unpriced work. The customer answered the monitoring RFI question with ?? -- literally two question marks, the only non-answer in the questionnaire -- so the where it is not branch is the likely one, and this line then commits us to standing up monitoring and alerting during onboarding at no stated cost. decide-internally because we can size it before commencement; nobody needs to ask the customer to know the RFI never answered it."
+   }
+  },
+  {
+   "labelKey": "lbl_9621462a1a912ceb6623",
+   "fields": {
+    "label_type": "change_order_rule",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Any change to the scope, coverage, service levels"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Project Change Procedure"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "process:change_request",
+     "scope:governance"
+    ],
+    "note": "The clause that makes every coverage mismatch on this deal recoverable instead of absorbed. It names coverage explicitly, so the 9:00-versus-8:00 gap and the fifth versus sixth day are change-request territory rather than free. It is the single most useful sentence in the SLA for protecting the 21% margin, and it is worth nothing unless somebody notices the gaps before they are consumed."
+   }
+  },
+  {
+   "labelKey": "lbl_4e33b24a246f106e8b80",
+   "fields": {
+    "label_type": "contract_term",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Support is provided remotely."
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Assumptions"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "delivery:remote",
+     "party:nmc",
+     "service:managed_services"
+    ],
+    "note": "The second independent statement that this engagement is remote, after the quote Service Type: 100% Remote and before the Work Order Remote / Remote location table. Three sources, no dissent -- and the deal was still priced on PS-L3-ENG-LABOR-ONSITE. Kept as contract_term rather than the parser scope_item because being remote is a term of how the service is delivered, not an item of work performed."
+   }
+  },
+  {
+   "labelKey": "lbl_88cab3f4a583a2c22594",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "ongoing Level 2 (L2) application management and support services"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Overview"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "support_level:l2",
+     "platform:workato",
+     "service:ams"
+    ],
+    "note": "The scope sentence, and the strongest of the four places the record says L2. The deal was coded PS-L3-ENG-LABOR-ONSITE in the Deal Kit. The honest counter-reading is that the code may describe the RESOURCE grade rather than the service tier -- the engineer NMC proposed has 17 years and an architect title, which is plausibly L3 -- but the service being sold is L2 here, in the customer own RFI answer, and in the Service Package, and no reading of any document supports ONSITE."
+   }
+  },
+  {
+   "labelKey": "lbl_f0d7eb96e9dee34d3fd0",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Knowledge transfer from the Customer or the outgoing team"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Transition and Onboarding"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "phase:onboarding",
+     "scope:knowledge_transfer",
+     "risk:incumbent_handover"
+    ],
+    "note": "Names an outgoing team, which is the only trace in the whole deal that this is a takeover from an incumbent rather than a greenfield engagement. That matters for pricing: a handover that does not happen lands as discovery effort on a fixed monthly cost. The customer answered yes to knowledge transfer in the RFI without saying from whom or for how long, so the duration remains unknown."
+   }
+  },
+  {
+   "labelKey": "lbl_31d284c65d7f30c1bb1b",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Review of existing documentation"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Transition and Onboarding"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "phase:onboarding",
+     "artifact:runbook",
+     "artifact:recipe_inventory"
+    ],
+    "note": "The documentation the onboarding depends on. The customer answered the corresponding RFI question with a bare yes, which asserts the documents exist but says nothing about whether they are current -- and this line requires a review plus confirmation of monitoring, so a yes that turns out to be stale converts directly into onboarding days we did not price."
+   }
+  },
+  {
+   "labelKey": "lbl_106115f82845788fa183",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Establishment of the ServiceNow queues"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Transition and Onboarding"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "system:servicenow",
+     "phase:onboarding",
+     "scope:escalation_path"
+    ],
+    "note": "ServiceNow is the customer tool, so the queues, severity definitions and escalation contacts are all theirs to create. Until they exist the SLA cannot be measured at all -- every target in the table is defined as measured on incidents logged through ServiceNow -- which makes this the one onboarding item that gates the service levels rather than merely the service."
+   }
+  },
+  {
+   "labelKey": "lbl_460fb10a1eaea82ff266",
+   "fields": {
+    "label_type": "payment_term",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "decide-internally",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "The weekly 40 hours will be fixed/static"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "variable based on actual consumption"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Package"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "quantity:40",
+     "price:125",
+     "service:weekend_support",
+     "commercial:variable_cost"
+    ],
+    "note": "The clearest statement of the deal financial shape and the reason its margin is not what the Deal Kit says. Fixed plus variable: 40 hours static, weekends at 125 an hour on consumption. The Deal Kit models only the static half -- Materials, Lift and Miscellaneous are all zero -- so every weekend hour is margin erosion against a total margin of 25,323.99. Typed payment_term rather than the parser change_order_rule because it describes how the invoice is computed, not when a change request is needed."
+   }
+  },
+  {
+   "labelKey": "lbl_29af771dfa2d852d2cc8",
+   "fields": {
+    "label_type": "exclusion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "outside the Workato platform and the named integration"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Out of Scope"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:out_of_scope",
+     "platform:workato",
+     "system:sap"
+    ],
+    "note": "The boundary that makes the SAP integration the named integration and everything around it somebody else problem. Load-bearing because the RFI established the integration touches ERP and procurement across three environments, so a failure will routinely originate outside Workato -- and this line plus the best-effort assumption is what stops those becoming our SLA breaches."
+   }
+  },
+  {
+   "labelKey": "lbl_4c06114d5ecb977532a7",
+   "fields": {
+    "label_type": "assumption",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "best-effort in nature for issues whose root cause lies outside"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Assumptions"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "scope:best_effort",
+     "platform:workato",
+     "risk:sla_breach"
+    ],
+    "note": "The qualifier that converts a firm-looking resolution table into a conditional one. Read with the P1 row, the four-hour resolution target is only firm when the fault is inside Workato -- and middleware faults usually are not. This is the sentence that would decide an SLA credit dispute, and it is the reason the Response Target is described separately as a firm commitment while resolution is not."
+   }
+  },
+  {
+   "labelKey": "lbl_bc8ef2994bcf1549fd08",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Incident management and break-fix support"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "service:break_fix",
+     "service:incident_support",
+     "platform:workato",
+     "system:sap",
+     "party:nmc"
+    ],
+    "note": "The core service line -- what the 16,000 a month is for. Names the SAP integration specifically, which ties the money to the scope boundary two lines down and matches the customer RFI answer Workato- SAP integration. Everything else in Scope of Services is an activity around this one."
+   }
+  },
+  {
+   "labelKey": "lbl_8ffb38fe6de3e87cf763",
+   "fields": {
+    "label_type": "contract_term",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Recurring monthly managed service"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Package"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:nmc",
+     "service:managed_services",
+     "option:1",
+     "commercial:monthly_billing"
+    ],
+    "note": "The SLA declares itself Option 1 -- a recurring monthly managed service -- which directly contradicts the covering email describing this same attachment as being for the Staff Augmentation option, and contradicts the signed Work Order, which sells a staff augmentation priced on 1,008 estimated hours. Three documents, two engagement models, and the difference decides whether we owe a service level or a person. It has to be asked rather than inferred, which is why confirm-with-customer."
+   }
+  },
+  {
+   "labelKey": "lbl_c0dc565f2b24b6ac5df3",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Resolution Target is the time to restore service"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "service:incident_support",
+     "party:nmc",
+     "scope:best_effort"
+    ],
+    "note": "Defines the second column of the severity table and immediately weakens it: restore service, best-effort where the root cause is elsewhere. Kept as its own atom because the four severity rows are unreadable without it -- a bare 4 hours means nothing until you know it measures restoration and not a fix, and is a target and not a guarantee."
+   }
+  },
+  {
+   "labelKey": "lbl_89b8b96a683845f05267",
+   "fields": {
+    "label_type": "change_order_rule",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Development of new integrations, recipes, or connectors"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Out of Scope"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:out_of_scope",
+     "scope:development",
+     "process:change_request",
+     "platform:workato"
+    ],
+    "note": "Excludes new development and routes it to the change procedure, which is the correct commercial answer to the customer RFI reply Break fix initially, but new -- an answer that says development is coming without saying when or how much. This line is what makes that future work billable rather than expected, so it protects the margin on a fixed monthly deal whose scope the customer has already signalled will grow."
+   }
+  },
+  {
+   "labelKey": "lbl_c76688bd34521314220a",
+   "fields": {
+    "label_type": "exclusion",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Physical activities such as racking, stacking, and cabling."
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Out of Scope"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:out_of_scope",
+     "scope:physical_work"
+    ],
+    "note": "Boilerplate for a 100% remote software engagement -- nobody was going to rack anything for a Workato support contract. Kept rather than rejected because it is a real exclusion in a real Out of Scope list, but slight: it removes no work anyone expected, and on this deal it is the one exclusion that decides nothing."
+   }
+  },
+  {
+   "labelKey": "lbl_575cb55bce07ef38ac89",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Monitoring and triage of recipe failures"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "service:monitoring",
+     "service:triage",
+     "platform:workato",
+     "party:nmc"
+    ],
+    "note": "Monitoring as a service activity, which sits awkwardly beside the assumption that monitoring and alerting is already in place and will be set up during onboarding if not. This line says we watch; that one says the watching infrastructure may not exist. The customer answered the monitoring RFI question with ??, so the gap is real."
+   }
+  },
+  {
+   "labelKey": "lbl_1b762b914b7c08c23ef7",
+   "fields": {
+    "label_type": "exclusion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "The service scope is break-fix and incident support"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Enhancement and Development Work"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:break_fix",
+     "scope:out_of_scope",
+     "scope:development"
+    ],
+    "note": "The scope stated as a negative, and the cleanest sentence to put in front of a customer who answered Break fix initially, but new. It is load-bearing because on a fixed monthly managed service the only way to lose money on scope is to absorb enhancement work as if it were support, and this is the line that says we do not."
+   }
+  },
+  {
+   "labelKey": "lbl_c100fd96f082454ab1ba",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "single point of contact"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Assumptions"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "role:spoc",
+     "risk:resolution_delay"
+    ],
+    "note": "A named single point of contact, which the deal does not have: the RFI never asked for one and no customer-side individual appears anywhere in the pre-quote record. Every person named on this deal works for NMC or PurTera. On an engagement whose resolution targets depend on customer input, an unnamed SPOC is a live gap rather than a formality."
+   }
+  },
+  {
+   "labelKey": "lbl_13e21c8f436020b55233",
+   "fields": {
+    "label_type": "contract_term",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "does not compete with, the incident support commitment"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Enhancement and Development Work"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:development",
+     "service:incident_support",
+     "party:nmc"
+    ],
+    "note": "Ring-fences the support commitment from enhancement work, so a busy development month cannot be offered as an excuse for a missed severity target. It is the protective twin of the exclusion above -- that one keeps enhancement out of the price, this one keeps it out of the capacity."
+   }
+  },
+  {
+   "labelKey": "lbl_70313068faf5efbdb39a",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "August 19, 2026"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "date:2026_08_19",
+     "artifact:sla",
+     "party:nmc"
+    ],
+    "note": "Dates the SLA to 19 August, the day before the quote. That ordering is what makes this deal an as-of compile that can see the SLA at all: the manifest cut is 20 August 15:09:40, and every document authored after it -- the Deal Kit, the Work Order -- is held out. This line is how a reader can tell the SLA is inside the cut."
+   }
+  },
+  {
+   "labelKey": "lbl_9a89e507332940066537",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Workato Middleware Application Management Services (AMS)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "platform:workato",
+     "service:ams",
+     "artifact:sla"
+    ],
+    "note": "The project name, and the only place the acronym AMS is expanded in a document rather than an email. Typed deal_metadata rather than the parser task: a title names the engagement, it is not labour anyone performs, and typing it task would put a document header into the work a Deal Kit prices."
+   }
+  },
+  {
+   "labelKey": "lbl_a301739e969392405764",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "two applications: ERP and procurement"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "development, test, and production"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "quantity:2",
+     "system:erp",
+     "system:procurement",
+     "platform:workato",
+     "environment:dev_test_prod"
+    ],
+    "note": "The only sizing statement in the engagement: two applications, three environments. It matches the customer RFI answers exactly -- 2 integrated applications, ERP and procuremnt, all 3 environments -- which makes it the one place the SLA demonstrably consumed the questionnaire rather than restating a template. Load-bearing because two applications is the closest thing this deal has to a quantity, and the 15 incidents a week the customer estimated has to be serviced across all three environments."
+   }
+  },
+  {
+   "labelKey": "lbl_a96c7a6610254a9adc4b",
+   "fields": {
+    "label_type": "contract_term",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Support Level: Level 2 (L2)"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Package"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "support_level:l2",
+     "party:nmc",
+     "service:managed_services"
+    ],
+    "note": "L2 stated as a package term rather than prose, which makes it the most citable of the four L2 statements and the one that most directly contradicts the PS-L3 rate code the Deal Kit priced under. Typed contract_term rather than the parser deal_metadata: the support tier is what we are contractually obliged to staff, not a header fact about the deal."
+   }
+  },
+  {
+   "labelKey": "lbl_4a79d4dcd26652ee32d0",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "third-party vendors where a fix depends on a system outside"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "party:third_party",
+     "scope:coordination",
+     "risk:resolution_delay"
+    ],
+    "note": "Commits us to coordinate with parties we have no contract with and cannot compel. Read beside the best-effort assumption this is the operational half of the same idea: the assumption protects the target, this line describes the work of chasing someone else vendor while the clock runs. Unbudgeted on a fixed monthly service."
+   }
+  },
+  {
+   "labelKey": "lbl_6e424596178eb3806b77",
+   "fields": {
+    "label_type": "change_order_rule",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "handled as a separate request outside the service levels"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Enhancement and Development Work"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:development",
+     "process:change_request",
+     "party:nmc"
+    ],
+    "note": "The procedural mechanism behind the enhancement exclusion: separate request, outside the service levels. Kept distinct from the exclusion itself because an exclusion says what is not included and this says what happens instead -- and on a deal where the customer has already said new work is coming, the what-happens-instead is the part that has to be quoted."
+   }
+  },
+  {
+   "labelKey": "lbl_f0b2140812009be84260",
+   "fields": {
+    "label_type": "milestone_phase",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "a short onboarding period will be completed"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Transition and Onboarding"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "phase:onboarding",
+     "party:nmc",
+     "risk:commencement_slip"
+    ],
+    "note": "Establishes that the engagement has two phases and that the service levels do not apply in the first one. Short is not a duration, and the Work Order six-month term runs from a commencement date at the end of it -- so an onboarding that drifts either delays revenue or eats into the six months we sold. The deal contains no estimate of how long it takes and nobody asked."
+   }
+  },
+  {
+   "labelKey": "lbl_468041bd3acfc747f5cf",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Incident Logging: ServiceNow (Customer-provided)"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Package"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "system:servicenow",
+     "party:customer",
+     "scope:tooling"
+    ],
+    "note": "The customer supplies the ticketing system, which the RFI confirms independently. That is convenient commercially -- no tooling cost falls on us -- and it is also a dependency, because every SLA target is measured on tickets in their system, so we cannot evidence our own performance without access they control. Typed dependency rather than the parser site_implementation_note: there is no site."
+   }
+  },
+  {
+   "labelKey": "lbl_5f5351e6505250c41944",
+   "fields": {
+    "label_type": "exclusion",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Project management or major upgrade"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Out of Scope"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:out_of_scope",
+     "scope:project_management"
+    ],
+    "note": "Excludes project management, which is quietly consistent with the Deal Kit: its PMO line carries 0 revenue against 195 of cost, so PM on this engagement is unpriced on our side and out of scope on the supplier side. Whoever ends up running it is doing it for nothing, and this is the line that says NMC will not."
+   }
+  },
+  {
+   "labelKey": "lbl_4a39ef03667fbf4d1df4",
+   "fields": {
+    "label_type": "contract_term",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Service Term: 6 months from the service commencement date"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Package"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "quantity:6",
+     "term:6_months",
+     "party:nmc",
+     "phase:onboarding"
+    ],
+    "note": "Six months, but measured from the commencement date rather than signature -- which the quote Project Duration: 6 months does not say and the Work Order fixed dates of 14 Sep to 14 Mar do not allow for. If onboarding runs long the supplier six months and the customer six months stop being the same six months, and we are the ones holding both ends. That gap between a relative term and two absolute dates is the finding."
+   }
+  },
+  {
+   "labelKey": "lbl_b017b3e519da1de07106",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "apply from the agreed service commencement date"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Transition and Onboarding"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "phase:onboarding",
+     "service:incident_support",
+     "risk:commencement_slip"
+    ],
+    "note": "Says explicitly that the severity table is dormant until onboarding ends, which is what makes the undefined length of onboarding a commercial fact rather than a scheduling detail. It is also the line that defines agreed service commencement date -- a date nobody has agreed anywhere in this deal."
+   }
+  },
+  {
+   "labelKey": "lbl_42b6dc9ca15a4098c802",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "incidents logged through ServiceNow"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "system:servicenow",
+     "service:incident_support",
+     "party:customer"
+    ],
+    "note": "Scopes the SLA to tickets in the customer system: an incident raised by phone, email or a hallway conversation is outside the measured set. Combined with the customer owning ServiceNow, this means neither party can measure the service without the other -- and it is the reason establishing the queues is an onboarding gate rather than a convenience."
+   }
+  },
+  {
+   "labelKey": "lbl_845db2d974d495173bda",
+   "fields": {
+    "label_type": "deliverable",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Regular service review"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "service:service_review",
+     "party:nmc",
+     "scope:governance"
+    ],
+    "note": "The only recurring artefact the engagement produces, and the only place service-level attainment gets reported. Typed deliverable rather than service_line because it names a thing handed over on a cadence rather than an activity performed continuously. Regular is undefined -- monthly and quarterly are both regular, and they are different amounts of work on a six-month deal."
+   }
+  },
+  {
+   "labelKey": "lbl_1af6697e60bc18205517",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Root-cause analysis for recurring issues"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "service:rca",
+     "platform:workato",
+     "party:nmc"
+    ],
+    "note": "RCA with recommendations, which is the boundary between support and consulting and is included here at no separate charge. Worth keeping because recommendations to improve integration stability is exactly the work that turns into the new development the exclusions push out to a change request -- this service line is how that pipeline gets generated."
+   }
+  },
+  {
+   "labelKey": "lbl_d0036c4983807a6dbebb",
+   "fields": {
+    "label_type": "exclusion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Workato platform licensing"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Out of Scope"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:out_of_scope",
+     "platform:workato",
+     "scope:licensing",
+     "party:customer"
+    ],
+    "note": "Licensing stays with the customer, which is why the Deal Kit Materials line is legitimately zero on a platform engagement -- there is no software to resell. Load-bearing because on a middleware deal the licence is usually the largest number, and its absence from our quote is correct rather than an omission."
+   }
+  },
+  {
+   "labelKey": "lbl_74a136c8d3242928e061",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Where automated failure alerting is not yet in place"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "scope:monitoring",
+     "service:incident_support",
+     "party:nmc"
+    ],
+    "note": "Moves the start of the clock from when the failure happened to when somebody noticed, wherever alerting is missing -- and the customer answered the alerting question with ??. So on the most likely reading of this deal, the resolution targets are measured from human detection for at least the first part of the term. That is a large, quiet softening of the only commitment the engagement makes."
+   }
+  },
+  {
+   "labelKey": "lbl_36b19b86573972b509df",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "This is a firm commitment."
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Service Levels (SLA)"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "service:incident_support",
+     "party:nmc",
+     "severity:all"
+    ],
+    "note": "The one unqualified promise in the document. Response is firm; resolution is best-effort and, where alerting is missing, measured from detection. So the whole enforceable surface of this managed service is the response column -- 1, 4, 8 and 24 hours. Anyone reading the severity table as four firm targets is reading it wrong, and this sentence is why."
+   }
+  },
+  {
+   "labelKey": "lbl_ab8bcad12355ec3ec342",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Logging, tracking, and updating of all incidents"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Scope of Services"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "system:servicenow",
+     "service:incident_support",
+     "party:nmc"
+    ],
+    "note": "The administrative half of incident management, in the customer tool. Kept separate from break-fix because it is the activity that produces the evidence the SLA is measured on -- if this is done badly the service can be delivered well and still fail its targets on the record."
+   }
+  },
+  {
+   "labelKey": "lbl_00aa498703389d582b9f",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "maintains valid Workato licensing and vendor support"
+     },
+     {
+      "hint": "section",
+      "kind": "text",
+      "text": "Assumptions"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "NMC Service Level Agreement v1.1, 19 Aug 2026 -- the supplier SLA attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "platform:workato",
+     "scope:licensing",
+     "risk:platform_lapse"
+    ],
+    "note": "The operational twin of the licensing exclusion: that one says we do not sell it, this says the service fails without it. On a six-month term a licence or vendor-support lapse would stop us delivering while we still owe NMC 16,000 a month, which is the asymmetry worth carrying into the brief."
+   }
+  }
+ ]
+}

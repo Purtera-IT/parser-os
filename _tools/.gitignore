@@ -1,0 +1,7 @@
+# Credentials. These are live secrets -- a Postgres password and an Azure
+# storage key -- and they must never reach the repository.
+.pgurl
+.bloburl
+# Generated per deal by walk_180.py; rebuild it, do not carry it.
+walk_*.json
+__pycache__/
