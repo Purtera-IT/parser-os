@@ -254,3 +254,192 @@ def test_the_person_who_edited_the_row_is_not_the_site_contact():
     assert contact_supply(roles, {"Modified By": 9}, 5448) is None
     # A genuine per-site contact varies with the site.
     assert contact_supply(roles, {"Modified By": 4000}, 5448) is not None
+
+
+# ── what 118 real spreadsheets from the corpus found ─────────────────────
+#
+# Everything above was written from one deal's workbook. These came from
+# running the branch against the actual corpus, where each one was a wrong
+# answer on a real customer's file.
+
+
+def test_a_stale_dimension_does_not_make_a_small_sheet_an_export():
+    """000062 CALC reports 1,048,568 rows -- Excel's maximum -- for a sheet
+    holding a couple of hundred. Measured by the grid rather than by
+    records, a hand-built estimate of Location / Room / Capacity /
+    Hardware looked like a machine export, was summarised away, and its
+    commercial totals went with it."""
+    real = [["Location", "Room", "Capacity", "Hardware"]] + \
+           [[f"Amsterdam-{i}", "Arctic Ocean", "3", "X30"] for i in range(80)]
+    phantom = real + [[] for _ in range(20000)]
+    assert not is_bulk_export(phantom, header_index(phantom))
+    # and the sheet still reads as itself
+    assert header_index(phantom) == 0
+
+
+def test_a_side_note_does_not_steal_the_header():
+    """An estimate sheet carried "Total hardware by region" out to the right
+    of its fifth data row, making that row wider than the header. Taking
+    the widest row, the sheet was read as having no header at all."""
+    g = [["Location", "Room", "Capacity", "Hardware"]]
+    for i in range(30):
+        row = [f"Amsterdam-{i}", f"Room {i}", str(i % 9 + 1),
+               ["X30", "X50", "X70"][i % 3]]
+        if i == 4:
+            row += ["", "", "Total hardware by region", "AMER - 146"]
+        g.append(row)
+    assert header_index(g) == 0
+    assert has_header(g, header_index(g))
+
+
+def test_an_address_written_the_way_most_of_the_world_writes_it():
+    """Burgstrasse 9, Gammel Gugvej 39, Via Roma 12. Every rule here was
+    first written from American examples, and a global datacenter list
+    declared no sites at all."""
+    vals = [f"{s} {n}" for n, s in enumerate(
+        ["Burgstrasse", "Gammel Gugvej", "Via Roma", "Rue Lafayette",
+         "Torshojvej", "Keizersgracht", "Calle Mayor", "Bahnhofstrasse"] * 8, 1)]
+    r = classify("STREET_ADDR", vals, many_valued=True)
+    assert r is not None and r.name in ("street", "full_address")
+
+
+def test_a_product_line_is_not_a_street():
+    """"InTouch 9000" is the same shape as "Burgstrasse 9". Trusting that
+    shape alone made a device-model column the street of a site address on
+    a deal for 1,563 time clocks."""
+    r = classify("Device Type", ["InTouch 9000"] * 60, many_valued=False)
+    assert r is None or r.name != "street"
+
+
+def test_a_whole_address_in_one_cell_still_answers_where():
+    """A column called STREET_ADDR holding "Burgstrasse 9 RAEREN Liege
+    Belgium 4730" has no city column to pair with, and never will."""
+    vals = [f"{s} {i} TOWN{i % 40} Denmark DK-{9000 + i % 40}"
+            for i, s in enumerate(["Gammel Gugvej", "Torshojvej"] * 60)]
+    g = [["SPACE", "STREET_ADDR"]] + [[f"DK{i}", v] for i, v in enumerate(vals)]
+    prof = profile_grid("Site List", g, 0)
+    sups, _ = supplies(prof, g, 0)
+    site = next(s for s in sups if s.what == "site_address")
+    assert site.columns == {"address": "STREET_ADDR"}
+    assert site.notes, "a one-column address cannot be split, and must say so"
+
+
+def test_a_rack_code_is_not_a_town():
+    """SPACE holds BEWA16, DKNO3, DKCE1 -- one per row. Taken as the city it
+    made every row its own site, which is the one number a site count
+    exists to avoid being."""
+    g = [["METRO", "SPACE", "Address", "Zip"]]
+    for i in range(300):
+        g.append([f"M{i % 20}", f"RACK{i}", f"{i} Main St", f"{10000 + i % 20}"])
+    prof = profile_grid("sites", g, 0)
+    sups, _ = supplies(prof, g, 0)
+    site = next((s for s in sups if s.what == "site_address"), None)
+    if site:
+        assert site.columns.get("locality") != "SPACE"
+
+
+def test_a_column_that_varies_inside_one_door_is_not_part_of_the_address():
+    """Two clocks at 5500 Audubon Dr are in the same town and the same
+    state. They are not in the same firmware state. That is the whole
+    difference, and no amount of looking at the values of one column can
+    see it."""
+    g = [["Address", "City", "Firmware Status", "Zip"]]
+    for i in range(400):
+        g.append([f"{i % 50} Main Street", f"TOWN{i % 50}",
+                  "Current" if i % 2 else "Update Available",
+                  f"{20000 + i % 50}"])
+    prof = profile_grid("devices", g, 0)
+    sups, _ = supplies(prof, g, 0)
+    site = next(s for s in sups if s.what == "site_address")
+    assert "Firmware Status" not in site.columns.values()
+    assert site.distinct == 50, "50 doors, not 400 devices"
+
+
+def test_ok_is_not_a_region():
+    """"OK" is two uppercase letters over 87% of a device list."""
+    vals = ["OK"] * 80 + ["ERROR"] * 10 + ["CRITICAL"] * 10
+    r = classify("Status", vals)
+    assert r is None or r.name != "region"
+
+
+def test_the_address_columns_do_not_also_each_count_the_places():
+    """URI's analysis reported 2,095 places for ADDRESS1 and 240 for
+    DISTRICT DESCRIPTION side by side, and a reader cannot choose."""
+    g = [["Address", "City", "Zip"]]
+    for i in range(400):
+        g.append([f"{i % 50} Main Street", f"TOWN{i % 50}", f"{20000 + i % 50}"])
+    prof = profile_grid("sites", g, 0)
+    sups, _ = supplies(prof, g, 0)
+    addr = {v for s in sups if s.what == "site_address" for v in s.columns.values()}
+    obs = observe(prof, address_columns=addr)
+    assert not any(o.key.startswith("places:") and o.key.split(":", 1)[1] in addr
+                   for o in obs)
+
+
+def test_a_report_banner_does_not_hide_the_header():
+    """A reporting tool writes the customer, the account number and the
+    filters as single cells before the table starts. Chipotle's order
+    export has its header on row 11, a window of eight rows never reached
+    it, and 15,253 rows stayed at one atom each -- 94,044 of them."""
+    g = [[], ["", "", "", "CHIPOTLE MEXICAN GRILL"], [], [],
+         ["", "", "", "13186519"], [], ["", "", "", "Including Service"],
+         [], ["", "", "", "Invoice Date Range"], [], []]
+    g.append(["", "Customer Code", "Customer Desc", "Contact Name",
+              "Order Date", "Ship To Address Line 1", "Ship To City"])
+    for i in range(300):
+        g.append(["", "13186519", "CHIPOTLE MEXICAN GRILL", f"TX.{i}.CASA",
+                  "2025-01-02", f"{i} Congress Ave", f"TOWN{i % 40}"])
+    assert header_index(g) == 11
+    assert is_bulk_export(g, 11)
+
+
+def test_a_single_cell_row_cannot_name_thirty_nine_columns():
+    """"13186519" sitting alone on row 4 passes every test a header faces,
+    because there is nothing in it to fail. It is a banner."""
+    g = [["", "", "", "13186519"]]
+    g.append(["Serial", "Status", "City", "Zip"])
+    for i in range(300):
+        g.append([f"S{i}", "OK" if i % 2 else "CRITICAL", f"T{i%9}", f"1000{i%9}"])
+    assert header_index(g) == 1
+
+
+def test_a_cost_centre_label_is_not_an_address():
+    """"0010058001 AR Common" is proper nouns with a number in it, like
+    every address is. It opens with a ten-digit account number and carries
+    nothing that places it, and read as a site address it made all 4,927
+    rows of a device list their own site."""
+    vals = [f"00{i:08d} AR Common Services Kitchen" for i in range(80)]
+    r = classify("Name", vals)
+    assert r is None or r.name != "full_address"
+
+
+def test_three_duplicate_serials_are_not_a_question():
+    """One workbook asked thirty questions, nine of them about differences
+    of a fraction of a percent. A PM reading that queue learns to skim it."""
+    rows = [[f"S{i}", "OK"] for i in range(1560)] + [["S1", "OK"]] * 3
+    obs = _read(["Serial Number", "Status"], rows)
+    assert not any(o.key.startswith("duplicate_id:") for o in obs)
+    # ...but a real hole still is one.
+    rows = [[f"S{i}", "OK"] for i in range(400)] + [["", "OK"]] * 300
+    obs = _read(["Serial Number", "Status"], rows)
+    assert any(o.key.startswith("unidentified:") for o in obs)
+
+
+def test_two_sheets_that_both_know_where_the_sites_are():
+    """Sodexo's workbook carries the 1,563 clocks in scope on one sheet,
+    797 addresses, and the corporate cost-centre master on another, 65,902.
+    A SOW builder handed the larger one prices a rollout across every
+    Sodexo site in North America."""
+    from app.core.column_roles import Supply
+    from app.core.sheet_profile import which_site_list
+    q = which_site_list([
+        ("DeviceList", Supply(what="site_address", columns={}, distinct=797)),
+        ("Cost Ctr List", Supply(what="site_address", columns={}, distinct=65902)),
+    ])
+    assert q is not None
+    assert "797" in q.headline and "65,902" in q.headline
+    # Two sheets of a similar size are two views, not a trap.
+    assert which_site_list([
+        ("A", Supply(what="site_address", columns={}, distinct=800)),
+        ("B", Supply(what="site_address", columns={}, distinct=900)),
+    ]) is None

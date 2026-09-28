@@ -108,6 +108,13 @@ _UNNAMED = re.compile(r"^(col|column|unnamed|field)[ _]?\d+$", re.I)
 #: the data the job is counted from.
 MIN_GAP_ROWS = 25
 
+#: ...and it must also be this share of the table. Three duplicate serials
+#: in 1,563 rows is data hygiene; 4,681 rows with no deployment ID out of
+#: 5,448 is the deal. Without a relative floor one workbook asked thirty
+#: questions, nine of them about differences of a fraction of a percent,
+#: and a PM reading that queue learns to skim it.
+MIN_GAP_SHARE = 0.02
+
 #: A column filled on fewer than this share of rows is an annotation a few
 #: people added, not a property of the population. Reporting "3 distinct
 #: values" for a column with 3 values and 1,560 blanks reads as though it
@@ -307,9 +314,21 @@ def _is_money_column(c: "Column") -> bool:
     return not c.is_identifier
 
 
-def observe(prof: SheetProfile) -> list[Observation]:
-    """What this table states, and what it asks. Structural throughout."""
+def observe(
+    prof: SheetProfile, *, address_columns: set[str] | None = None
+) -> list[Observation]:
+    """What this table states, and what it asks. Structural throughout.
+
+    ``address_columns`` names the columns already folded into an assembled
+    site address. A sheet with several place-ish columns otherwise reports
+    several different answers to "how many places does a crew have to
+    reach" -- URI's gave 2,095 for ADDRESS1 and 240 for DISTRICT
+    DESCRIPTION, side by side, and a reader has no way to choose. The
+    assembled address is the better answer, so its parts stop claiming to
+    be one.
+    """
     out: list[Observation] = []
+    address_columns = address_columns or set()
     if prof.rows < 1:
         return out
 
@@ -432,6 +451,7 @@ def observe(prof: SheetProfile) -> list[Observation]:
         # contains the word centre and names a fiscal state, and reading it
         # as geography said a crew had eight places to reach.
         if (_PLACE_NAME.search(c.name) and not _STATUS_NAME.search(c.name)
+                and c.name not in address_columns
                 and c.distinct > 1 and not c.is_identifier
                 and coverage >= MIN_COVERAGE):
             out.append(Observation(
@@ -443,7 +463,7 @@ def observe(prof: SheetProfile) -> list[Observation]:
                 value=c.distinct,
                 decides="Truck rolls, travel and scheduling - usually a larger "
                         "cost than the hardware."))
-            if c.blanks >= MIN_GAP_ROWS:
+            if c.blanks >= MIN_GAP_ROWS and c.blanks >= prof.rows * MIN_GAP_SHARE:
                 out.append(Observation(
                     "question", f"unplaced:{c.name}",
                     f"{c.blanks:,} rows have no {c.name} - where are they?",
@@ -458,8 +478,8 @@ def observe(prof: SheetProfile) -> list[Observation]:
         # there", which stops matching "how many rows" once an export has
         # been appended to twice.
         if c.is_identifier and c.filled >= BULK_ROWS:
-            if c.distinct > 0 and c.distinct < c.filled:
-                dupes = c.filled - c.distinct
+            dupes = c.filled - c.distinct if c.distinct > 0 else 0
+            if dupes >= MIN_GAP_ROWS and dupes >= c.filled * MIN_GAP_SHARE:
                 out.append(Observation(
                     "question", f"duplicate_id:{c.name}",
                     f"{c.name} repeats: {c.filled:,} rows carry only "
@@ -471,7 +491,7 @@ def observe(prof: SheetProfile) -> list[Observation]:
                     value=dupes,
                     decides="The true unit count, and whether a site gets visited "
                             "twice for the same device."))
-            if c.blanks >= MIN_GAP_ROWS:
+            if c.blanks >= MIN_GAP_ROWS and c.blanks >= prof.rows * MIN_GAP_SHARE:
                 out.append(Observation(
                     "question", f"unidentified:{c.name}",
                     f"{c.blanks:,} of {prof.rows:,} rows have no {c.name} - are "
@@ -540,6 +560,41 @@ def subset_question(profiles: list[SheetProfile]) -> list[Observation]:
     return out
 
 
+def which_site_list(
+    named: list[tuple[str, Any]]
+) -> Observation | None:
+    """Two sheets both say where the places are, and disagree wildly.
+
+    Sodexo's workbook carries the 1,563 clocks in scope on one sheet, with
+    797 addresses, and the corporate cost-centre master on another, with
+    65,902. Both are genuine answers to "where are the sites"; only one of
+    them is this job, and a SOW builder handed the larger one would price
+    a rollout across every Sodexo site in North America.
+
+    A supply declares what a sheet CAN answer. Which sheet to ask is a
+    question for a person, and this is where it gets asked.
+    """
+    sites = [(sheet, sup) for sheet, sup in named if sup.what == "site_address"]
+    if len(sites) < 2:
+        return None
+    sites.sort(key=lambda t: t[1].distinct)
+    (small_sheet, small), (big_sheet, big) = sites[0], sites[-1]
+    if big.distinct < small.distinct * 3:
+        return None
+    return Observation(
+        "question", "which_site_list",
+        f"{small_sheet} gives {small.distinct:,} site addresses and "
+        f"{big_sheet} gives {big.distinct:,} - which is this job?",
+        "Both sheets can say where places are, so both will answer a request "
+        "for the site list. One of them is the work in hand and the other is "
+        "the customer's wider estate or a reference table that came along "
+        "with the workbook.",
+        value=[small.distinct, big.distinct],
+        decides="The site list the SOW is written against, and the number of "
+                "visits priced. Taking the larger one prices a rollout across "
+                "sites nobody asked us to visit.")
+
+
 def has_header(rows: list[list[Any]], header_idx: int, sample: int = 400) -> bool:
     """Is the top row a heading, or just the first record?
 
@@ -604,25 +659,79 @@ def _as_number(v: str) -> float | None:
         return None
 
 
-def header_index(rows: list[list[Any]], scan: int = 8) -> int:
+def header_index(rows: list[list[Any]], scan: int = 30) -> int:
     """Which of the leading rows is the header.
 
-    The most populated of the first few non-blank rows. A title, a date
-    stamp or an export banner sits above the header and is narrower than it,
-    which is the whole of the signal and holds for any export from any tool.
+    The most populated of the leading non-blank rows. A title, a date stamp
+    or an export banner sits above the header and is narrower than it, which
+    is the whole of the signal and holds for any export from any tool.
+
+    The window has to be generous. A reporting tool writes the customer
+    name, the account number, the filters applied and the date range as
+    single cells before the table starts -- Chipotle's order export has its
+    header on row 11 -- and a window of eight rows never reached it, so a
+    15,253-row report stayed at one atom per row.
     """
-    best, best_filled, seen = -1, -1, 0
+    candidates: list[tuple[int, int]] = []     # (filled, index)
     for idx, row in enumerate(rows):
         row = row or []
         filled = sum(1 for c in row if str(c or "").strip())
         if not filled:
             continue
-        seen += 1
-        if filled > best_filled:
-            best_filled, best = filled, idx
-        if seen >= scan:
+        candidates.append((filled, idx))
+        if len(candidates) >= scan:
             break
-    return best
+    if not candidates:
+        return -1
+    # Widest first -- a title or a date stamp above the header is narrower
+    # than it. But width alone is not enough: an estimate sheet carried a
+    # side note ("Total hardware by region") out to the right of its FIFTH
+    # data row, making that row wider than the header, and the sheet was
+    # then read as having no header at all. So take the widest row that
+    # still looks like a heading, and fall back to the widest if none does.
+    ordered = sorted(candidates, key=lambda c: (-c[0], c[1]))
+    # A banner cell is not a candidate header however header-like it looks
+    # in isolation: a row holding one value cannot name thirty-nine
+    # columns. Without this, "13186519" on row 4 of a report export beat
+    # the actual header on row 11, because a single-cell row trivially
+    # passes every test there is.
+    widest = ordered[0][0]
+    serious = [(w, i) for w, i in ordered if w >= max(2, widest * 0.5)]
+    for _, idx in serious:
+        if _unbroken(rows[idx]) and has_header(rows, idx):
+            return idx
+    for _, idx in serious:
+        if has_header(rows, idx):
+            return idx
+    return ordered[0][1]
+
+
+def _unbroken(row: list[Any] | None) -> bool:
+    """Is this row a single run of cells, or cells with a gap in them?
+
+    A header names consecutive columns; it has no hole in the middle. A
+    data row with a note written off to the right does: four cells, two
+    empty, then two more. That gap is why the widest row in an estimate
+    sheet was its fifth record rather than its header.
+
+    It matters because the other test -- whether a row's values turn up
+    again in their own columns -- needs columns that repeat, and a sheet
+    whose columns are nearly all unique gives it almost nothing to work
+    with. The gap is visible either way.
+    """
+    cells = [bool(str(c or "").strip()) for c in (row or [])]
+    while cells and not cells[-1]:
+        cells.pop()
+    if not cells:
+        return False
+    first = cells.index(True) if True in cells else 0
+    span = cells[first:]
+    # Not every header is perfectly solid -- a spacer column between two
+    # groups of fields is ordinary, and demanding a flawless run rejected a
+    # thirty-nine column report header over one blank. A data row with a
+    # note off to the right has a hole a tenth of the table wide.
+    holes = sum(1 for c in span if not c)
+    return holes <= max(1, len(span) * 0.08)
 
 
 def is_bulk_export(rows: list[list[Any]], header_idx: int) -> bool:
@@ -635,22 +744,28 @@ def is_bulk_export(rows: list[list[Any]], header_idx: int) -> bool:
     """
     if header_idx < 0:
         return False
-    body = rows[header_idx + 1:]
-    if len(body) < BULK_ROWS:
-        return False
     width = sum(1 for c in (rows[header_idx] or []) if str(c or "").strip())
     if width < 2:
         return False
-    sample, agree, seen = body[:500], 0, 0
-    for r in sample:
+    # Count RECORDS, not the grid. A workbook whose cached <dimension> tag
+    # is stale reports 1,048,568 rows -- Excel's maximum -- for a sheet
+    # holding 238. Measured by the grid, a hand-built estimate of Location /
+    # Room / Capacity / Hardware looked like a machine export and was
+    # summarised away.
+    body, filled_rows, agree = 0, 0, 0
+    for r in rows[header_idx + 1:]:
         r = r or []
         filled = sum(1 for c in r if str(c or "").strip())
         if not filled:
             continue
-        seen += 1
-        if filled >= width * 0.5:
-            agree += 1
-    return seen > 0 and agree >= seen * 0.8
+        body += 1
+        if filled_rows < 500:
+            filled_rows += 1
+            if filled >= width * 0.5:
+                agree += 1
+    if body < BULK_ROWS:
+        return False
+    return filled_rows > 0 and agree >= filled_rows * 0.8
 
 
 def supplies(
@@ -672,7 +787,8 @@ def supplies(
     for c in prof.columns:
         if not c.name.strip() or _UNNAMED.match(c.name.strip()):
             continue
-        r = classify(c.name, c.sample, is_identifier=c.is_identifier)
+        r = classify(c.name, c.sample, is_identifier=c.is_identifier,
+                     many_valued=not c.is_category)
         if r is not None:
             roles[c.name] = r
 
@@ -680,7 +796,12 @@ def supplies(
                 if c.is_identifier and c.filled >= prof.rows * 0.5), None)
     names = [c.name for c in prof.columns]
     out: list[Supply] = []
-    site = site_supply(names, roles, rows, header_idx, key_column=key)
+    site = site_supply(
+        names, roles, rows, header_idx,
+        key_column=key,
+        distinct={c.name: c.distinct for c in prof.columns},
+        samples={c.name: c.sample for c in prof.columns},
+    )
     if site is not None:
         out.append(site)
     contact = contact_supply(
@@ -700,16 +821,16 @@ def supply_observations(sups: list[Supply], sheet: str) -> list[Observation]:
         if sup.what == "site_address":
             out.append(Observation(
                 "finding", "supplies:site_address",
-                f"{sup.distinct:,} distinct site addresses across "
-                f"{sup.rows:,} rows",
+                f"This sheet can supply {sup.distinct:,} distinct site "
+                f"addresses, from {sup.rows:,} rows",
                 "Assembled from "
                 + ", ".join(f"{k} = {v}" for k, v in sup.columns.items())
                 + ". This is the sheet's answer to where the work is: a "
                 "rollout is planned and priced per place, and the row count "
                 "is a device count, not a site count.",
                 value=sup.distinct,
-                decides="The site list the SOW is written against, and the "
-                        "number of visits the job is priced for."))
+                decides="Where the work is, if this is the sheet in scope -- "
+                        "and therefore how many visits the job is priced for."))
             for note in sup.notes:
                 out.append(Observation(
                     "question", f"site_address_gap:{note[:24]}",

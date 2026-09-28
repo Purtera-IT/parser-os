@@ -34,6 +34,7 @@ from app.core.sheet_profile import (
     supplies,
     supply_observations,
     subset_question,
+    which_site_list,
 )
 from app.parsers.base import BaseParser
 from app.parsers.binary_markers import emit_zip_binary_markers
@@ -2018,6 +2019,7 @@ class XlsxParser(BaseParser):
         atoms: list[EvidenceAtom] = []
         sheets: list[dict[str, Any]] = []
         self._sheet_profiles = []
+        self._sheet_supplies = []
 
         # Which sheets will be mined row by row. Reading which rows and
         # columns the author hid, and which cells they styled, means two more
@@ -2067,7 +2069,8 @@ class XlsxParser(BaseParser):
         # list of 1,563 devices beside the full export of 4,927 is the
         # commonest ambiguity a customer's inventory carries, and it stays
         # invisible until two sheets are held up against each other.
-        for _o in subset_question(self._sheet_profiles):
+        _which = which_site_list(self._sheet_supplies)
+        for _o in ([_which] if _which else []) + subset_question(self._sheet_profiles):
             atoms.append(self._reading_atom(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -2077,6 +2080,7 @@ class XlsxParser(BaseParser):
                 o=_o,
             ))
         self._sheet_profiles = []
+        self._sheet_supplies = []
 
         # Roster preference: several sheets in one workbook can all pass the
         # roster gate. Rank them so consumers can prefer the best one. Additive
@@ -3332,6 +3336,11 @@ class XlsxParser(BaseParser):
     #: cross-sheet pass can see what no single sheet can. Reset per workbook.
     _sheet_profiles: list[Any] = []
 
+    #: What each bulk sheet in THIS workbook said it can supply, so the
+    #: cross-sheet pass can notice two sheets answering the same question
+    #: with different numbers. Reset per workbook.
+    _sheet_supplies: list[tuple[str, Any]] = []
+
     def _reads_as_a_table(self, sheet_name: str, rows: list[list[Any]]) -> bool:
         """Will this sheet be read rather than transcribed?
 
@@ -3377,9 +3386,14 @@ class XlsxParser(BaseParser):
         headed = has_header(rows, header_idx)
         prof = profile_grid(sheet_name, rows, header_idx, headed=headed)
         self._sheet_profiles.append(prof)
-        obs = observe(prof)
+        # Supplies first: a column already folded into a site address must
+        # not also answer "how many places" on its own.
         sups, _roles = supplies(prof, rows, header_idx)
-        obs = obs + supply_observations(sups, sheet_name)
+        for _s in sups:
+            self._sheet_supplies.append((sheet_name, _s))
+        _addr = {v for s_ in sups if s_.what == "site_address"
+                 for v in s_.columns.values()}
+        obs = observe(prof, address_columns=_addr) + supply_observations(sups, sheet_name)
         if not obs:
             return []
 
