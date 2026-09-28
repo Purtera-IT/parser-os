@@ -888,6 +888,75 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
     return merged
 
 
+
+#: Words that make a string an ADDRESS rather than a statement. A loser
+#: carrying these is a second telling of the site however long it runs.
+_ADDRESS_WORDS = frozenset({
+    "street", "st", "avenue", "ave", "road", "rd", "boulevard", "blvd", "drive",
+    "dr", "lane", "ln", "way", "plaza", "parkway", "pkwy", "court", "ct",
+    "suite", "ste", "floor", "fl", "unit", "building", "bldg", "park",
+})
+
+#: A finite verb is what separates "Lease has been signed for 7 Penn" from
+#: "Location: Mobis North America Work, 12575 Oakland Park BLvd.". Spelled out
+#: rather than guessed from suffixes: an -s test reads "Mobis" as a verb, which
+#: is how the Highland Park roster lost a collapse it needed.
+_STATEMENT_VERBS = frozenset({
+    "is", "are", "was", "were", "be", "been", "being", "has", "have", "had",
+    "will", "would", "shall", "should", "can", "could", "may", "might", "must",
+    "does", "do", "did", "signed", "provided", "discussed", "required",
+    "requires", "needs", "needed", "includes", "included", "confirmed",
+    "completed", "scheduled", "agreed", "approved", "moved", "moving",
+    "expects", "expected", "plans", "planned",
+})
+
+
+def _states_more_than_the_site(atom: Any, winner: Any) -> bool:
+    """Is this a second telling of the site, or a sentence that merely names it?
+
+    `physical_site` groups collapse on site id, so anything typed physical_site
+    that mentions the building folds into the canonical address atom and its
+    words go with it. That is right for "12575 Oakland Park BLvd, Highland
+    Park, MI 48203" and wrong for "Lease has been signed for 7 Penn" -- a
+    milestone, the only statement of it on the deal, deleted because it named
+    the building.
+
+    Two tests, both deliberately narrow. An address is not protected however
+    many extra words it carries, because a fuller address is still an address.
+    And what earns protection is a finite VERB, from a list rather than a
+    suffix rule: "Mobis" ends in -s and is a company, and reading it as a verb
+    kept a roster variant that had to collapse.
+    """
+    text = _norm_for_containment(atom)
+    other = _norm_for_containment(winner)
+    if not text or len(text) < 12 or text in other:
+        return False
+    words = text.split()
+    extra = set(words) - set(other.split())
+    if len(extra) < 3:
+        return False
+    if extra & _ADDRESS_WORDS:
+        return False                      # a fuller address is still an address
+    return bool(extra & _STATEMENT_VERBS)
+
+
+def _demote_from_site(atom: Any) -> None:
+    """Keep the sentence, drop its claim to be a site declaration."""
+    try:
+        from app.core.schemas import AtomType
+
+        atom.atom_type = AtomType.deal_metadata
+    except Exception:
+        pass
+    value = getattr(atom, "value", None)
+    if isinstance(value, dict):
+        for k in ("id", "site_id"):
+            value.pop(k, None)
+    flags = getattr(atom, "review_flags", None)
+    if isinstance(flags, list) and "kept_over_site_dedup" not in flags:
+        flags.append("kept_over_site_dedup")
+
+
 def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     physical = [a for a in atoms if _atom_type_value(a) == "physical_site"]
     if not physical:
@@ -921,10 +990,26 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             and not _is_authoritative_physical_site_atom(a)
         }
         if name_only_ids:
+            # A name-only atom is an alias when it is a NAME -- "the new office
+            # location". It is not an alias when it is a sentence that happens
+            # to name the building, and removing those deletes the only copy of
+            # a fact. Live 010180: "Lease has been signed for 7 Penn" (the
+            # deal's only milestone) and "7 Penn building in NYC" were both
+            # folded into the address atom as aliases and vanished -- 15 and 30
+            # copies in, nothing out.
+            #
+            # Such an atom keeps its words and loses only its claim to be a
+            # site declaration, which is the trade this module already makes
+            # elsewhere: never trade a sentence for a type.
+            kept_for_words: set[int] = set()
             for alias_atom in [a for a in physical if id(a) in name_only_ids]:
                 target = _pick_alias_merge_target(alias_atom, location_backed)
                 if target is not None:
                     _merge_physical_site_alias_metadata(target, alias_atom)
+                    if _states_more_than_the_site(alias_atom, target):
+                        _demote_from_site(alias_atom)
+                        kept_for_words.add(id(alias_atom))
+            name_only_ids -= kept_for_words
             physical = [a for a in physical if id(a) not in name_only_ids]
             atoms = [
                 a
@@ -1071,6 +1156,19 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             winner.value["site_id"] = canon
             winner.value = _clean_physical_site_value(winner.value)
         for loser in group_sorted[1:]:
+            # Never trade a sentence for a site id. A member that says more
+            # than the winner is not a duplicate address; it is a fact that
+            # happens to name the building, and collapsing it deletes the only
+            # copy. Live 010180: "Lease has been signed for 7 Penn" -- the
+            # deal's only milestone -- folded into the address atom and
+            # vanished, alongside "7 Penn building in NYC".
+            #
+            # It keeps its words and loses the claim to be a site, which is the
+            # same trade the substance gate makes: a wrong type is recoverable,
+            # deleted words are not.
+            if _states_more_than_the_site(loser, winner):
+                _demote_from_site(loser)
+                continue
             _merge_physical_site_values(winner, loser)
             _merge_atom_metadata(winner, loser)
             consumed_ids.add(id(loser))
