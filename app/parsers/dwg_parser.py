@@ -384,6 +384,37 @@ def is_template_leftover(text: str) -> bool:
     return any(marker in low for marker in _TEMPLATE_MARKERS)
 
 
+#: How wide the rendered sheet claims to be, in CSS pixels.
+#:
+#: ezdxf's auto-sized page describes the sheet in REAL-WORLD units, and for
+#: SP-6 that is `width="27.1mm"` -- about 102 px. An `<img>` takes its
+#: intrinsic size from those attributes, and a `max-width` rule only caps a
+#: picture, it never grows one, so a floor plan would have arrived as an
+#: unreadable hundred-pixel thumbnail with every line in it technically
+#: present. The viewBox is what actually carries the geometry; these
+#: attributes only say how big to draw it.
+_RENDER_WIDTH_PX = 2000
+
+
+def _sized_for_a_screen(svg_text: str) -> str:
+    """Give the SVG a screen-sized intrinsic width, keeping its aspect ratio."""
+    box = re.search(r'viewBox="([\d.eE+-]+) +([\d.eE+-]+) +([\d.eE+-]+) +([\d.eE+-]+)"',
+                    svg_text)
+    if not box:
+        return svg_text
+    try:
+        vw, vh = float(box.group(3)), float(box.group(4))
+        if vw <= 0 or vh <= 0:
+            return svg_text
+        height = max(1, round(_RENDER_WIDTH_PX * vh / vw))
+    except (TypeError, ValueError):
+        return svg_text
+    return re.sub(
+        r'(<svg\b[^>]*?)\swidth="[^"]*"\s+height="[^"]*"',
+        lambda m: f'{m.group(1)} width="{_RENDER_WIDTH_PX}" height="{height}"',
+        svg_text, count=1)
+
+
 def render_svg(dxf_path: Path, layout_name: str | None = None) -> str | None:
     """The sheet as vector, so a PM can actually look at the drawing.
 
@@ -419,8 +450,9 @@ def render_svg(dxf_path: Path, layout_name: str | None = None) -> str | None:
             target = (named or sheets or [doc.modelspace()])[0]
         backend = svg.SVGBackend()
         Frontend(RenderContext(doc), backend).draw_layout(target)
-        return backend.get_string(
+        out = backend.get_string(
             layout.Page(0, 0, layout.Units.inch, layout.Margins.all(0.2)))
+        return _sized_for_a_screen(out)
     except Exception:  # noqa: BLE001 - a picture is a bonus, not the parse
         return None
 

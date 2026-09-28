@@ -145,3 +145,30 @@ def test_one_entity_typed_twice_still_collapses():
         _CadAtom("quantity", "IT CLOSET 1", y=104.0),
     ])
     assert len(out) == 1
+
+
+# ------------------------------------------------- the render is looked at
+
+def test_the_render_is_sized_for_a_screen():
+    """ezdxf's auto-sized page describes the sheet in REAL-WORLD units, and for
+    SP-6 that is `width="27.1mm"` -- about 102 px. An `<img>` takes its
+    intrinsic size from those attributes and a `max-width` rule only caps a
+    picture, never grows one, so the floor plan would have arrived as an
+    unreadable hundred-pixel thumbnail with every line in it technically
+    present."""
+    from app.parsers.dwg_parser import _RENDER_WIDTH_PX, _sized_for_a_screen
+
+    tiny = ('<svg xmlns="http://www.w3.org/2000/svg" width="27.1mm" '
+            'height="21.1mm" viewBox="0 0 1000000 778598"><g/></svg>')
+    out = _sized_for_a_screen(tiny)
+    assert f'width="{_RENDER_WIDTH_PX}"' in out
+    assert 'height="1557"' in out          # the viewBox's aspect, preserved
+    assert 'viewBox="0 0 1000000 778598"' in out
+
+
+def test_a_render_without_a_viewbox_is_left_alone():
+    """Resizing by an aspect ratio that is not there would invent one."""
+    from app.parsers.dwg_parser import _sized_for_a_screen
+
+    plain = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="8mm"/>'
+    assert _sized_for_a_screen(plain) == plain
