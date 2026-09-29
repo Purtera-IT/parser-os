@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -2354,6 +2355,32 @@ class DocxParser(BaseParser):
                     size = zf.getinfo(name).file_size
                 except KeyError:  # pragma: no cover
                     size = 0
+
+                # Write the image out, the way the PDF parser does, so the
+                # vision stage has a file to look at. Without a saved_path
+                # `pdf_image_vision._iter_image_markers` skips the marker,
+                # which is why the Kronos DX installation guide arrived in
+                # deal 010264 as 31 "[Image awaiting OCR / vision / OLE
+                # extraction]" atoms typed open_question -- 31 questions in
+                # the PM's queue, and the illustrated steps of the procedure
+                # our technicians follow at ~1,400 clocks left unread. The
+                # text we parse from that document is the narration; the
+                # pictures are the instructions.
+                saved_path: str | None = None
+                if size:
+                    try:
+                        img_root = (
+                            Path(os.environ.get("SOWSMITH_IMAGE_DIR",
+                                                "_extracted_images"))
+                            / re.sub(r"[^A-Za-z0-9._-]+", "_", path.stem)[:80]
+                        )
+                        img_root.mkdir(parents=True, exist_ok=True)
+                        out = img_root / Path(rel).name
+                        with open(out, "wb") as fh:
+                            fh.write(zf.read(name))
+                        saved_path = str(out).replace("\\", "/")
+                    except Exception:
+                        saved_path = None  # degrade to a plain marker
                 marker_text = (
                     f"[{atype.capitalize()} awaiting OCR / vision / OLE extraction] "
                     f"{rel} in {filename} — {size:,} bytes. A vision or embedded-"
@@ -2376,7 +2403,8 @@ class DocxParser(BaseParser):
                     atom_type=AtomType.open_question,
                     raw_text=marker_text,
                     normalized_text=normalize_text(marker_text),
-                    value={"kind": kind, "region_ref": rel, "size_bytes": size},
+                    value={"kind": kind, "region_ref": rel,
+                           "size_bytes": size, "saved_path": saved_path},
                     entity_keys=[],
                     source_refs=[src],
                     receipts=[],

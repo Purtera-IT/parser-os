@@ -73,3 +73,69 @@ def test_evidence_is_capped_but_present():
     out = reconcile_site_count([long], 6)
     assert out["agrees"] is False
     assert len(out["evidence"][0]) <= 240
+
+
+# ── deal 010264: a national estate, and two counts of different things ──
+
+
+class _A:
+    def __init__(self, text):
+        self.raw_text = text
+
+
+def test_a_deal_may_have_more_than_two_hundred_sites():
+    """The ceiling used to be 200, so a nationwide rollout could not state
+    its own size. Deal 010264 says "795 locations" in four documents and
+    the reconciler threw every one away as "a part number or a dollar
+    figure", then reported `stated: 1` and called it agreed."""
+    atoms = [_A("Up to 795 locations throughout the USA, see Exhibits")]
+    assert stated_site_counts(atoms) == [
+        (795, "Up to 795 locations throughout the USA, see Exhibits")]
+    # four digits, and a thousands separator
+    assert stated_site_counts([_A("The outreach to 1500 sites")])[0][0] == 1500
+    assert stated_site_counts(
+        [_A("rolled out to 1,200 stores")])[0][0] == 1200
+
+
+def test_the_only_machine_readable_count_may_be_in_brackets():
+    """The proposal writes "one thousand five hundred (795) United States
+    locations" -- the words and the digits disagree, and only the digits
+    are readable."""
+    out = stated_site_counts(
+        [_A("up to one thousand five hundred (795) United States locations.")])
+    assert out and out[0][0] == 795
+
+
+def test_a_clock_is_not_a_place():
+    """1,500 clocks stand at ~795 locations because ~600 addresses carry
+    more than one. A pattern that reads "1,500 time clocks" as a site count
+    reproduces the error that put "one thousand five hundred (795)
+    locations" into a customer-facing proposal, twice."""
+    assert stated_site_counts([_A("Replace 1,400-1,500 time clocks at "
+                                  "790-800 sites")])[0][0] == 800
+    assert not stated_site_counts([_A("We need to have 10 timeclocks "
+                                      "installed for Marion County")])
+    # ...and a street number is not a count of anything
+    assert not stated_site_counts([_A("1500 LOUISIANA ST | HOUSTON | TX")])
+
+
+def test_documents_that_argue_with_each_other_are_not_reconciled():
+    """Picking the most-repeated claim reports a winner where there is a
+    dispute -- the same silence this module exists to break, moved one
+    level up. On 010264 the corpus says 1500 nine times and 795 six, and
+    those count different things."""
+    atoms = ([_A("The outreach to 1500 sites is expensive")] * 9
+             + [_A("Includes outreach to all 795 locations")] * 6)
+    out = reconcile_site_count(atoms, resolved_sites=1)
+    assert out["stated"] is None
+    assert out["agrees"] is None
+    assert out["rival_counts"] == {1500: 9, 795: 6}
+    assert "disagree" in out["reason"]
+    assert len(out["evidence"]) == 2
+
+    # A small incidental count is not a rival. "Four locations" nine times
+    # is a day's schedule, not a claim about a nationwide estate.
+    atoms = ([_A("The outreach to 1500 sites is expensive")] * 9
+             + [_A("we have four locations that day")] * 9)
+    out = reconcile_site_count(atoms, resolved_sites=1)
+    assert out["stated"] == 1500, "a day's schedule is not a rival claim"
