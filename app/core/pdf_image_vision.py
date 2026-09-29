@@ -149,24 +149,35 @@ def _tokens(s: str, min_len: int = 4) -> set[str]:
 
 
 def _iter_image_markers(atoms: list[Any]):
-    """Yield (atom, pdf_name, page_index, region_ref, saved_path, caption) for
-    every PDF image_marker atom that has a saved crop on disk."""
+    """Yield (atom, doc_name, page_index, region_ref, saved_path, caption) for
+    every image_marker atom that has a saved image on disk -- PDF page
+    images and .docx embedded pictures alike."""
     for a in atoms:
         try:
             val = getattr(a, "value", None) or {}
             if not isinstance(val, dict) or val.get("kind") != "image_marker":
                 continue
             region_ref = str(val.get("region_ref") or "")
-            if not region_ref.startswith("page"):
-                continue  # only PDF page images (page{n}/image{xref})
+            # PDF page images are "page{n}/image{xref}"; a .docx writes its
+            # pictures to "media/imageN.png". Both are pictures in a
+            # document and both are worth reading. Accepting only the first
+            # is why the Kronos DX installation guide -- whose illustrated
+            # steps ARE the procedure -- reached deal 010264 as 31 unread
+            # markers typed open_question.
+            if not (region_ref.startswith("page")
+                    or region_ref.startswith("media/")):
+                continue
             saved = val.get("saved_path")
             if not saved:
                 continue
             refs = getattr(a, "source_refs", None) or []
             pdf_name = (getattr(refs[0], "filename", "") if refs else "") or ""
-            if not pdf_name.lower().endswith(".pdf"):
+            if not pdf_name.lower().endswith((".pdf", ".docx")):
                 continue
             m = re.match(r"page(\d+)/", region_ref)
+            # A .docx has no pages to ground against, so page_index is 0 and
+            # _page_context abstains to empty -- the image is described
+            # without neighbouring text rather than not described at all.
             page_index = int(m.group(1)) if m else 0
             caption = val.get("expected_content") or ""
             yield a, pdf_name, page_index, region_ref, str(saved), str(caption)
