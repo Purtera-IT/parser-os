@@ -1276,8 +1276,26 @@ def _compiled_word_pattern(alias_lower: str) -> "re.Pattern[str]":
 
 
 def _word_match(text_lower: str, alias_lower: str) -> bool:
-    """Word-boundary match for an alias inside a pre-lowercased text."""
+    """Word-boundary match for an alias inside a pre-lowercased text.
+
+    SUBSTRING FIRST, because the regex is the expensive part and almost every
+    alias is absent.
+
+    `enrich_entity_keys` asks this once per alias per atom -- `_emit_vendors`
+    alone walks 121 vendors and their surface forms -- so on one live deal it
+    ran 401,445 times inside a 13.84s stage that is 29% of the whole compile,
+    driving 574,239 `re.search` calls.
+
+    The pattern is `(?<![a-z0-9])` + re.escape(alias) + `(?![a-z0-9])`. The
+    alias is ESCAPED, so it matches literally, which means a match is only
+    possible when the alias appears as a plain substring. `in` is a C-level
+    scan with no compile step and no backtracking, and it is a strict superset
+    of the regex -- so this cannot change an answer, only skip work that was
+    always going to fail.
+    """
     if not alias_lower:
+        return False
+    if alias_lower not in text_lower:
         return False
     return _compiled_word_pattern(alias_lower).search(text_lower) is not None
 
