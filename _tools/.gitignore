@@ -9,3 +9,7 @@ __pycache__/
 # Local run state: label snapshots live in blob, baselines are per-machine.
 _label_backups/
 _baselines/
+
+# Warm-pass output: a 23 MB sqlite cache and the decision log. The cache is
+# meant to be SHIPPED (baked into the image or mounted), not carried in git.
+_rule_harvest/
