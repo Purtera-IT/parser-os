@@ -170,13 +170,21 @@ it, and it made things **worse** (010180: 5 -> 33 calls), so it was reverted.
 What it costs is handled by two guards instead:
 
 * a byte floor -- an image too small to hold text is a signature logo, not
-  content. PDFs are exempt; a small PDF is a page of text. Being re-measured:
-  the first harness set the variable and reloaded `email_parser` between
-  settings, but `_OCR_MIN_BYTES` is read into a module constant at import and
-  the registry holds a parser bound to the ORIGINAL module, so only the first
-  deal was genuinely re-measured. On that deal (4edf04d3, 21 emails) the floor
-  took **88 billed calls to 27**. The harness now runs one setting per
-  process.
+  content. PDFs are exempt; a small PDF is a page of text.
+
+  | deal | emails | billed without the floor | with it |
+  |---|---|---|---|
+  | 4edf04d3 | 235 | 249 | **73** (-71%) |
+  | c065bfc4 | 14 | 9 | **2** (-78%) |
+  | 02557291 | 16 | 2 | **2** (unchanged) |
+
+  The third deal is the one that says the floor is not indiscriminate: where
+  the inline images are real content, it cuts nothing.
+
+  "Billed" here counts calls to `_ocr_image_bytes_uncached`, which only runs on
+  a cache MISS -- so these are the calls Document Intelligence would actually
+  charge for, after deduplication. The cache's own contribution is not
+  separated out by this harness.
 * a sha256 cache with a per-key lock, so the logo repeated down a thread is
   paid for once rather than once per message per worker.
 
