@@ -94,3 +94,60 @@ def test_an_atom_with_nothing_identifying_has_an_empty_identity() -> None:
     assert _identity(_Atom("just words", value={"quantity": 2})) == (), (
         "a quantity is not an identity -- two plates can hold the same count"
     )
+
+
+# ---- numbers are facts ------------------------------------------------------
+#
+# The near-duplicate pass scores with `fuzz.ratio` -- character edit distance
+# -- at 92. That is the wrong instrument for "same fact": too loose on digits,
+# too tight on paraphrase. On live COPPER_001, 39 of 58 near-dup folds dropped
+# an atom whose numbers differed from the survivor's, including the bid
+# deadline:
+#
+#     dropped : ... Bid and "January 10, 2025". The bidder must also ...
+#     survivor: ... Bid and "January 20, 2025". The bidder must also ...
+#
+# 97% of those characters match. The original and the addendum state different
+# deadlines, and folding them deletes one -- and with it any chance of a
+# conflict stage seeing a contradiction, because nothing is left to contradict.
+
+from app.core.entity_resolution import _numbers
+
+
+def _prose(text, conf=0.8):
+    """Long enough and typed to reach the fuzzy pass."""
+    return _Atom(text, atom_type="scope_item", confidence=conf)
+
+
+def test_two_bid_dates_are_not_one_fact() -> None:
+    a = _prose('Structured Cabling - FY2025 USF Bid and "January 10, 2025". '
+               "The bidder must also include all required forms.", conf=0.9)
+    b = _prose('Structured Cabling - FY2025 USF Bid and "January 20, 2025". '
+               "The bidder must also include all required forms.", conf=0.8)
+    kept = collapse_duplicate_atoms([a, b])
+    assert len(kept) == 2, "a deadline was deleted because 97% of the characters matched"
+
+
+def test_a_genuine_reprint_still_folds() -> None:
+    """Same words, same figures: one fact printed twice."""
+    text = ("The contractor shall terminate horizontal cable on a rack mounted "
+            "48-port Category 6 patch panel in the main room.")
+    kept = collapse_duplicate_atoms([_prose(text, conf=0.9), _prose(text, conf=0.5)])
+    assert len(kept) == 1
+
+
+def test_formatting_is_not_a_different_number() -> None:
+    """"1,200" and "1200" are the same quantity and must not block a fold."""
+    assert _numbers("1,200 drops") == _numbers("1200 drops")
+    assert _numbers("2.50") == _numbers("2.5")
+    assert _numbers("January 10, 2025") == ("10", "2025")
+    assert _numbers("no digits here") == ()
+    assert _numbers(None) == ()
+
+
+def test_differing_quantities_never_fold() -> None:
+    a = _prose("Provide and install 10 data drops throughout the east wing of "
+               "the building as shown on the drawings.", conf=0.9)
+    b = _prose("Provide and install 100 data drops throughout the east wing of "
+               "the building as shown on the drawings.", conf=0.8)
+    assert len(collapse_duplicate_atoms([a, b])) == 2

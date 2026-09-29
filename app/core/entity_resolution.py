@@ -386,6 +386,31 @@ def _identity(atom) -> tuple:
     return tuple(ident)
 
 
+
+#: Digits are facts. "10 drops" and "100 drops" are not the same statement,
+#: and neither are two bid dates.
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _numbers(text: str) -> tuple:
+    """Every figure in the text, in order, normalised for separators.
+
+    Thousands separators and trailing decimal zeros are formatting, not
+    different numbers: "1,200" and "1200" are the same quantity, so they must
+    not block a fold that should happen.
+    """
+    out = []
+    for raw in _NUMBER_RE.findall(text or ""):
+        cleaned = raw.replace(",", "")
+        try:
+            value = float(cleaned)
+        except ValueError:
+            out.append(cleaned)
+            continue
+        out.append(str(int(value)) if value.is_integer() else str(value))
+    return tuple(out)
+
+
 def collapse_duplicate_atoms(atoms: list) -> list:
     """v48 — collapse near-duplicate atoms emitted by repeated doc sections.
 
@@ -487,7 +512,26 @@ def collapse_duplicate_atoms(atoms: list) -> list:
                 final.append(atom)
                 continue
             norm = (getattr(atom, "normalized_text", None) or rt).strip().lower()
-            bucket_key = (atype, " ".join(norm.split()[:8]))
+            # THE NUMBERS ARE PART OF THE KEY, so two atoms that state
+            # different figures are never even compared, let alone folded.
+            #
+            # The scorer is `fuzz.ratio` -- character edit distance -- at 92.
+            # That is the wrong instrument for "same fact": it is too loose on
+            # digits and too tight on paraphrase. Measured on live COPPER_001,
+            # 39 of 58 near-duplicate folds dropped an atom whose numbers
+            # differed from the survivor's, including the bid deadline::
+            #
+            #     dropped : ... Bid and "January 10, 2025". The bidder must ...
+            #     survivor: ... Bid and "January 20, 2025". The bidder must ...
+            #
+            # 97% of those characters match. The original and the addendum
+            # state different deadlines, and folding them deletes the one that
+            # matters -- along with any chance of the conflict stages seeing a
+            # contradiction, because there is nothing left to contradict.
+            #
+            # A number in procurement prose is a quantity, a date, a price or a
+            # part. It is the fact, not the noise around it.
+            bucket_key = (atype, " ".join(norm.split()[:8]), _numbers(rt))
             reps = fuzzy_buckets.setdefault(bucket_key, [])
             rt500 = rt[:500]
             is_dup = False
