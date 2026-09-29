@@ -40,6 +40,7 @@ from app.core.schemas import (
     SourceRef,
 )
 from app.domain.schemas import DomainPack
+from app.parsers._pdf_lock import PDF_PARSE_LOCK
 from app.parsers.base import BaseParser
 from app.parsers.binary_markers import region_marker
 
@@ -690,6 +691,23 @@ class OrbitBriefPdfParser(BaseParser):
         return self.parse_artifact("unknown_project", artifact_id, artifact_path)
 
     def parse_artifact(
+        self,
+        project_id: str,
+        artifact_id: str,
+        path: Path,
+        domain_pack: DomainPack | None = None,
+    ) -> ParserOutput:
+        # One PDF through MuPDF at a time. PyMuPDF has a single global
+        # context, so two artifacts parsing at once corrupt each other's
+        # extraction with no exception raised -- the same SOW came out as
+        # 156 atoms serially and 190 / 153 / 157 under four threads. See
+        # `_pdf_lock`. Everything that touches `fitz` for this artifact
+        # happens below, so the whole parse is inside the lock.
+        with PDF_PARSE_LOCK:
+            return self._parse_artifact_locked(
+                project_id, artifact_id, path, domain_pack)
+
+    def _parse_artifact_locked(
         self,
         project_id: str,
         artifact_id: str,

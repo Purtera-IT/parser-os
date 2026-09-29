@@ -231,14 +231,35 @@ def _ask_the_pm_atom(template: Any, text: str) -> Any:
     return atom
 
 
-#: How many artifacts to parse at once. The work is almost entirely WAITING --
-#: a blob download, an OCR round trip to Document Intelligence, a vision call
-#: that is allowed 90 seconds -- so threads, not processes, and a count well
-#: above the core count.
+#: How many artifacts to parse at once.
+#:
+#: Measured on 24 live artifacts, pinned to 4 CPUs to match the worker
+#: container. With OCR stubbed at zero the widths are indistinguishable --
+#: 0.98x to 1.00x, because the reading itself is zip inflate, XML and regex,
+#: and the GIL means more threads cannot make that faster. The entire benefit
+#: is overlapping the Document Intelligence round trip, so with OCR stubbed at
+#: a realistic 1.5s:
+#:
+#:     workers   median      speedup
+#:           1   171.2s        1.00x
+#:           2    87.0s        1.97x
+#:           4    47.0s        3.64x
+#:           8    45.8s        3.74x
+#:
+#: Four takes 97% of the available speedup. The fourth thread is worth 1.4x;
+#: the next four are worth 1.03x between them, because past that the GIL-bound
+#: reading is the floor. Eight costs double the concurrent Document
+#: Intelligence calls -- and 429s there are what latch `_llm_unreachable` and
+#: degrade the rest of a compile -- and double the peak memory, with every
+#: worker holding a decompressed workbook.
+#:
+#: Raising this is safe for CORRECTNESS but not free: a parser that keeps
+#: per-document state on `self` is shared between these threads, because the
+#: registry hands out one instance. See `PerThreadState` in `parsers/base.py`.
 #:
 #: 0 or 1 disables the prefetch entirely and the compile behaves exactly as it
 #: did before: the loop below computes each parse inline.
-PARSE_WORKERS = int(os.environ.get("SOWSMITH_PARSE_WORKERS", "8"))
+PARSE_WORKERS = int(os.environ.get("SOWSMITH_PARSE_WORKERS", "4"))
 
 
 def _prefetch_parses(
@@ -623,6 +644,17 @@ def compile_project(
     project_dir = project_dir.resolve()
     if not project_dir.exists():
         raise FileNotFoundError(f"Project path does not exist: {project_dir}")
+
+    # Decide ONCE whether the embedder serves this compile, before any parser
+    # asks. Probed per rule evaluation it can answer yes for one document and
+    # no for the next, so a deal reads differently depending on which files
+    # happened to be in flight -- see `semantic_rules.semantic_backend_available`.
+    try:
+        from app.core.semantic_rules import reset_semantic_backend
+
+        reset_semantic_backend()
+    except Exception:  # pragma: no cover - never break a compile over this
+        pass
 
     # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
     # No-op otherwise, so default compiles (and the test suite) are unchanged.

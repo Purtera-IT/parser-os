@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import re
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -36,7 +37,7 @@ from app.core.sheet_profile import (
     subset_question,
     which_site_list,
 )
-from app.parsers.base import BaseParser
+from app.parsers.base import BaseParser, PerThreadState
 from app.parsers.binary_markers import emit_zip_binary_markers
 from app.parsers.segmenters import segment_xlsx
 from app.parsers.sheet_classifier import (
@@ -1010,10 +1011,17 @@ class SheetParseModel:
     diagnostics: list[str] = field(default_factory=list)
 
 
-def _header_cell_tokens(cell: Any) -> set[str]:
-    raw = str(cell or "").strip()
-    if not raw:
-        return set()
+@lru_cache(maxsize=8192)
+def _header_cell_tokens_for(raw: str) -> frozenset[str]:
+    """The token set for one header string.
+
+    A spreadsheet repeats its headers: the same dozen column names appear on
+    every candidate row of every sheet, and header detection tries many
+    candidate rows. On the 1.8 MB CDW pricing sheet this ran 2,104,569 times
+    over a handful of distinct strings, driving 2.08 million regex
+    substitutions -- 60% of the file's parse time spent recomputing answers it
+    already had. Pure function of the string, so a cache is exact.
+    """
     lowered = raw.lower()
     tokens: set[str] = {
         normalize_text(raw).strip(".:?"),
@@ -1025,12 +1033,25 @@ def _header_cell_tokens(cell: Any) -> set[str]:
         t = normalize_text(part).strip(".:?! ")
         if t:
             tokens.add(t)
-    return {t for t in tokens if t}
+    return frozenset(t for t in tokens if t)
+
+
+def _header_cell_tokens(cell: Any) -> set[str]:
+    raw = str(cell or "").strip()
+    if not raw:
+        return set()
+    # A fresh set per call: callers are free to mutate what they get back.
+    return set(_header_cell_tokens_for(raw))
 
 
 def _map_canonical_header(cell: Any) -> str | None:
+    # Computed ONCE, not once per alias key. HEADER_ALIASES has dozens of
+    # entries and the token set does not depend on which one is being tested.
+    tokens = _header_cell_tokens(cell)
+    if not tokens:
+        return None
     for key, aliases in HEADER_ALIASES.items():
-        if _header_cell_tokens(cell) & aliases:
+        if tokens & aliases:
             return key
     return None
 
@@ -1575,6 +1596,20 @@ def _emit_scope_constraint_atoms(
 
 
 class XlsxParser(BaseParser):
+    #: Per-WORKBOOK state on a parser the registry SHARES between threads.
+    #: These accumulate through a parse and are drained at the end, so a second
+    #: workbook's reset threw the first one's pending failures away; see
+    #: ``PerThreadState``.
+    _block_detection_failures = PerThreadState()
+    _coverage_backstop_note = PerThreadState()
+    #: Profiles of the bulk sheets read so far in THIS workbook, so the
+    #: cross-sheet pass can see what no single sheet can. Reset per workbook.
+    _sheet_profiles = PerThreadState(list)
+    #: What each bulk sheet in THIS workbook said it can supply, so the
+    #: cross-sheet pass can notice two sheets answering the same question
+    #: with different numbers. Reset per workbook.
+    _sheet_supplies = PerThreadState(list)
+
     parser_name = parser_name
     parser_version = parser_version
     capability = ParserCapability(
@@ -3382,15 +3417,6 @@ class XlsxParser(BaseParser):
     # A table's rows are records, not claims. Set this to 1 to go back to one
     # atom per row -- it is what produced 277,203 atoms from one workbook.
     _ROWS_AS_ATOMS = os.environ.get("SOWSMITH_TABLE_ROWS_AS_ATOMS", "") == "1"
-
-    #: Profiles of the bulk sheets read so far in THIS workbook, so the
-    #: cross-sheet pass can see what no single sheet can. Reset per workbook.
-    _sheet_profiles: list[Any] = []
-
-    #: What each bulk sheet in THIS workbook said it can supply, so the
-    #: cross-sheet pass can notice two sheets answering the same question
-    #: with different numbers. Reset per workbook.
-    _sheet_supplies: list[tuple[str, Any]] = []
 
     def _reads_as_a_table(self, sheet_name: str, rows: list[list[Any]]) -> bool:
         """Will this sheet be read rather than transcribed?

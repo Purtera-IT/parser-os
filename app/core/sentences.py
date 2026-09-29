@@ -21,6 +21,7 @@ library the old regex still runs, so segmentation degrades rather than fails.
 from __future__ import annotations
 
 import re
+import threading
 
 try:  # pragma: no cover - exercised by whichever environment lacks it
     import pysbd as _pysbd
@@ -31,17 +32,52 @@ except Exception:  # pragma: no cover
 #: quality regression and never an exception.
 _NAIVE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
-_segmenter = None
+#: ONE SEGMENTER PER THREAD, never one per process.
+#:
+#: ``pysbd.Segmenter.segment`` is not reentrant. It parks the text on the
+#: instance -- ``self.original_text = text`` -- and then reads it back in
+#: ``sentences_with_char_spans`` to locate each sentence it just produced::
+#:
+#:     re.finditer(re.escape(sent), self.original_text)
+#:
+#: With ``parse_artifacts`` running a thread pool, a second thread overwrites
+#: ``original_text`` while the first is still searching it. The first thread
+#: then looks for ITS sentences inside the OTHER thread's document, finds
+#: nothing, and the inner loop appends nothing -- so the sentence is dropped
+#: from the returned list with no exception and no log line.
+#:
+#: The caller, ``_expand_lines_to_sentences``, keeps the line whole unless it
+#: gets back two or more substantial pieces, so a dropped sentence turns a
+#: paragraph's three atoms into one. Measured on live 010094:
+#:
+#:     serial  192 atoms   "As a follow up, AZ would like to see that attached
+#:                          built out." | "As they know that costs may vary by
+#:                          location..." | "Is this something you may be able
+#:                          to get back to me?"
+#:     4-way   190 atoms   ...all three joined into a single atom
+#:
+#: Atom text is three-quarters of ``label_key``, so this silently detached gold
+#: labels at a rate that depended on thread interleaving -- the same deal
+#: parsed twice did not produce the same atoms. Deal totals across one corpus
+#: went 1298 / 1294 / 1289 at widths 1 / 4 / 8.
+#:
+#: A lock would serialise every split across the pool. A segmenter is cheap to
+#: build and each thread builds at most one, so thread-local state costs a
+#: handful of constructions per compile and restores "same input, same atoms".
+_local = threading.local()
 
 
 def _get_segmenter():
-    """One reusable segmenter. Construction dominates the cost of a split."""
-    global _segmenter
-    if _segmenter is None and _pysbd is not None:
+    """This thread's reusable segmenter. Construction dominates a split."""
+    if _pysbd is None:
+        return None
+    seg = getattr(_local, "segmenter", None)
+    if seg is None:
         # clean=False keeps the text byte-identical to the input, which the
         # callers that build character offsets depend on.
-        _segmenter = _pysbd.Segmenter(language="en", clean=False)
-    return _segmenter
+        seg = _pysbd.Segmenter(language="en", clean=False)
+        _local.segmenter = seg
+    return seg
 
 
 def split_sentences(text: str) -> list[str]:

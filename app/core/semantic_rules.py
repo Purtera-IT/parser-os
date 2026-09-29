@@ -24,10 +24,59 @@ from __future__ import annotations
 
 import json
 import os
+import threading as _threading
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-_PROTO_CACHE: dict[str, object] = {}  # rule-name -> (pos_matrix, neg_matrix)
+_PROTO_CACHE: dict[str, object] = {}
+
+#: ONE backend verdict per compile, not one per rule evaluation.
+#:
+#: ``embedding_endpoint_reachable()`` is a live network probe. Both backends
+#: cache it, but the probe runs OUTSIDE their lock, so the parse pool can have
+#: several threads probing an unhealthy endpoint at once and reaching different
+#: verdicts -- and a TTL expiry flips the answer part-way through a compile.
+#: Either way one document is judged by the embedder and the next by the
+#: lexical fallback, which is how live 01491cca's title line came out as
+#: "SOW - Premise Wiring, Bldg. 704 B-4" parsed alone and "... Bldg. 704"
+#: parsed alongside other files. Same bytes, different atom, different
+#: ``label_key``.
+#:
+#: Resolved once, under a lock, and frozen. Every rule in a compile then agrees
+#: on which path it is taking. ``reset_semantic_backend()`` re-probes, and the
+#: compiler calls it when a compile begins so an outage never outlives one run.
+#:
+#: This makes a compile SELF-consistent. It does not make two compiles on
+#: different days agree: a deal parsed while the embedder is up still reads
+#: differently from the same deal parsed while it is down. Pin
+#: ``SOWSMITH_SEMANTIC_RULES`` to settle that permanently.
+_BACKEND_LOCK = _threading.Lock()
+_BACKEND_VERDICT: bool | None = None
+
+
+def reset_semantic_backend() -> None:
+    """Forget the frozen verdict; the next rule re-probes once."""
+    global _BACKEND_VERDICT
+    with _BACKEND_LOCK:
+        _BACKEND_VERDICT = None
+
+
+def semantic_backend_available() -> bool:
+    """Can the embedder serve this compile? Probed at most once per reset."""
+    global _BACKEND_VERDICT
+    verdict = _BACKEND_VERDICT
+    if verdict is not None:
+        return verdict
+    with _BACKEND_LOCK:
+        if _BACKEND_VERDICT is None:
+            try:
+                from app.core.embedding_retrieval import embedding_endpoint_reachable
+                _BACKEND_VERDICT = bool(embedding_endpoint_reachable())
+            except Exception:
+                _BACKEND_VERDICT = False
+        return _BACKEND_VERDICT
+
+  # rule-name -> (pos_matrix, neg_matrix)
 
 # Longest candidate worth pre-embedding. Rules judge LINES (headings, lead-ins,
 # labels); a multi-KB prose blob is never a rule candidate and would only bloat
@@ -164,11 +213,9 @@ class SemanticRule:
         return os.environ.get("SOWSMITH_SEMANTIC_RULES", "1") == "0"
 
     def _reachable(self) -> bool:
-        try:
-            from app.core.embedding_retrieval import embedding_endpoint_reachable
-            return bool(embedding_endpoint_reachable())
-        except Exception:
-            return False
+        # Frozen for the compile: see `semantic_backend_available`. Asking the
+        # network here, once per rule per atom, let one compile take both paths.
+        return semantic_backend_available()
 
     def _lexical(self, text: str) -> bool:
         return bool(self.lexical_fallback(text)) if self.lexical_fallback else False

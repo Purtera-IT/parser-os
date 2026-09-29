@@ -240,7 +240,7 @@ def _ocr_image_bytes(image_bytes: bytes, notes: list[str]) -> dict[str, Any]:
 
     # One OCR per image, even with eight parsers running.
     #
-    # `parse_artifacts` runs SOWSMITH_PARSE_WORKERS threads (default 8, #247).
+    # `parse_artifacts` runs SOWSMITH_PARSE_WORKERS threads (default 4, #247).
     # A plain check-then-fill lets all eight miss on the same signature logo
     # before any of them fills the cache, and all eight then pay for it -- the
     # cache would turn 16 billed calls into 8 rather than into 1, on the single

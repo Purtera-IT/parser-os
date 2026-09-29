@@ -45,6 +45,24 @@ def _reset_active_domain_pack() -> None:
     set_active_domain_pack(load_domain_pack(None))
 
 
+@pytest.fixture(autouse=True)
+def _reset_semantic_backend() -> None:
+    """Avoid cross-test leakage via the frozen embedder verdict.
+
+    ``semantic_rules`` resolves "can the embedder serve this run" ONCE and
+    holds it, so that one compile cannot take the embedding path for one
+    document and the lexical path for the next. A compile calls
+    ``reset_semantic_backend`` when it starts; a test does not, so without
+    this the first test to probe would decide for every test after it and the
+    suite's result would depend on its order.
+    """
+    from app.core.semantic_rules import reset_semantic_backend
+
+    reset_semantic_backend()
+    yield
+    reset_semantic_backend()
+
+
 @pytest.fixture()
 def demo_project(tmp_path: Path) -> Path:
     root = tmp_path / "repo"

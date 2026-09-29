@@ -25,7 +25,7 @@ from app.core.schemas import (
     ParserCapability,
     ParserMatch,
 )
-from app.parsers.base import BaseParser
+from app.parsers.base import BaseParser, PerThreadState
 from app.parsers.segmenters import segment_docx
 from app.parsers.structured_projection import (
     derived_files_for,
@@ -177,6 +177,13 @@ def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, A
 
 
 class DocxParser(BaseParser):
+    #: Per-DOCUMENT state on a parser the registry SHARES between threads.
+    #: 010237's SLA table took its lead-in from whichever document happened to
+    #: be parsed alongside it; see ``PerThreadState``.
+    _structure_idxs = PerThreadState()
+    _para_lead_in = PerThreadState()
+    _table_lead_in = PerThreadState()
+
     parser_name = "docx"
     parser_version = "docx_parser_v1"
     capability = ParserCapability(

@@ -1,6 +1,6 @@
 """One OCR per distinct image, even with eight parsers running.
 
-`parse_artifacts` runs SOWSMITH_PARSE_WORKERS threads (default 8). A plain
+`parse_artifacts` runs SOWSMITH_PARSE_WORKERS threads (default 4). A plain
 check-then-fill cache lets every thread miss on the same signature logo before
 any of them fills it, so the cache would turn 16 billed Document Intelligence
 calls into 8 rather than into 1 -- on the single largest line of the dev bill.
