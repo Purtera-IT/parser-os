@@ -658,6 +658,41 @@ def _azure_embed_reachable() -> bool:
     return ok
 
 
+
+def cached_embedding(text: str) -> list[float] | None:
+    """This text's vector IF the persistent cache already holds it.
+
+    Never touches the network and never blocks. ``None`` means "not cached",
+    not "unavailable".
+
+    ``SemanticRule.fires`` needs this. It used to ask
+    ``embedding_endpoint_reachable()`` BEFORE embedding anything, which meant
+    a rule took the regex fallback whenever the endpoint was down -- even for
+    a line whose vector was sitting in the cache. The decision therefore moved
+    with the network rather than with the document, and the same deal read
+    differently on a day the embedder was up.
+
+    The vector is content-addressed by ``model || sha256(text)``, so a cached
+    answer is the SAME answer the network would give. Consulting it first
+    makes the decision depend on the text and the model, and on nothing else.
+    The reachability gate still guards the miss path, which is what it was
+    really for: `embed_texts` against a wedged host can block for
+    ``SOWSMITH_EMBED_TIMEOUT`` (180s by default).
+    """
+    t = (text or "").strip()
+    if not t:
+        return None
+    try:
+        from app.core.embedding_cache import get_cache
+
+        cache = get_cache()
+        if cache is None:
+            return None
+        hit = cache.get_many(_cache_model_key(), [t])
+        return hit[0] if hit else None
+    except Exception:  # pragma: no cover - a cache miss must never raise
+        return None
+
 def embedding_endpoint_reachable() -> bool:
     """Can the endpoint actually embed — not merely list models.
 
@@ -687,4 +722,5 @@ __all__ = [
     "retrieve_candidates",
     "get_candidates_for_entity_type",
     "embedding_endpoint_reachable",
+    "cached_embedding",
 ]

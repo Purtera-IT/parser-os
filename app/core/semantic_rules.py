@@ -245,14 +245,32 @@ class SemanticRule:
         text = (text or "").strip()
         if not text:
             return False
-        # offline / disabled -> deterministic lexical fallback (never break a parse)
-        if self._disabled() or not self._reachable():
+        # disabled -> deterministic lexical fallback (never break a parse)
+        if self._disabled():
+            return self._lexical(text)
+        # CACHE BEFORE REACHABILITY.
+        #
+        # This used to ask `_reachable()` first, so a rule took the regex
+        # fallback whenever the endpoint was down -- even for a line whose
+        # vector was already on disk. The decision moved with the NETWORK
+        # rather than with the document, which is why the same deal read
+        # differently depending on whether the embedder happened to be up.
+        #
+        # The cache is content-addressed by model || sha256(text), so a cached
+        # vector is the same vector the endpoint would return and the decision
+        # is identical either way. The reachability gate still guards the MISS
+        # path, which is what it was actually for: embedding an uncached line
+        # against a wedged host blocks for SOWSMITH_EMBED_TIMEOUT (180s).
+        from app.core.embedding_retrieval import cached_embedding, embed_texts
+
+        cached = cached_embedding(text)
+        if cached is None and not self._reachable():
             return self._lexical(text)
         try:
-            from app.core.embedding_retrieval import embed_texts
             np = _np()
             pos, neg = self._protos()
-            q = np.array(embed_texts([text])[0], dtype="float32")
+            q = np.array(cached if cached is not None else embed_texts([text])[0],
+                         dtype="float32")
             qn = float(np.linalg.norm(q))
             # A zero / degenerate embedding means the embedder is
             # reachable-but-broken (returns zeros, no exception). Computing cosine
