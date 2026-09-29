@@ -52,6 +52,8 @@ the pipeline cannot support:
 from __future__ import annotations
 
 import re
+
+from app.core import fold_invariants as _fold
 from typing import Any
 
 from app.core.sentences import split_sentences
@@ -1456,13 +1458,10 @@ def _looks_like_signature_row(text: str) -> bool:
     return has_name or has_party
 
 
-#: A figure a signature row states, commas folded so "2,701,149" and "2701149"
-#: are one number.
-_SIG_FIGURE_RE = re.compile(r"\d[\d,]*")
-
-
-def _sig_figures(text: str) -> set[str]:
-    return {m.replace(",", "") for m in _SIG_FIGURE_RE.findall(text or "") if m.strip("0,")}
+def _sig_figures(text: str):
+    """A figure a signature row states. One definition, shared with every other
+    fold site in the compile: see `app.core.fold_invariants`."""
+    return _fold.figures(text)
 
 
 def merge_signature_rows(atoms: list[Any]) -> int:

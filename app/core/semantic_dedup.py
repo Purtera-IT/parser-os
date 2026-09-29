@@ -55,6 +55,8 @@ from __future__ import annotations
 
 import json as _json
 import re
+
+from app.core import fold_invariants as _fold
 from typing import Any
 
 from app.core.site_evidence_conflict import normalize_address
@@ -1841,50 +1843,18 @@ def _norm_for_containment(atom: Any) -> str:
     return re.sub(r"\s+", " ", str(raw).lower()).strip()
 
 
-#: A figure an atom states, commas and trailing zeros folded so "1,200" and
-#: "1200" are one number and "2.50" and "2.5" are one number.
-_FIGURE_RE = re.compile(r"\d[\d,.]*")
+def _figures(text: str):
+    return _fold.figures(text)
 
 
-def _figures(text: str) -> set[str]:
-    out: set[str] = set()
-    for raw in _FIGURE_RE.findall(text or ""):
-        t = raw.replace(",", "").rstrip(".")
-        if "." in t:
-            t = t.rstrip("0").rstrip(".")
-        if t:
-            out.add(t)
-    return out
-
-
-def _figures_stated(atom: Any) -> set[str]:
+def _figures_stated(atom: Any):
     """Every figure the atom states, in its words OR in its structured value.
 
-    Both halves matter. `_not_at_the_cost_of_the_words` deliberately ignores
-    digits when deciding whether a fuller twin is worth keeping, and its
-    reasoning is right for the case it names: a raw_table_row's trailing
-    "| $21,560.00" is a money column whose amount already lives in the typed
-    sibling's `value`, so the typed atom is not poorer for lacking it in text.
-
-    It stops being right when the typed atom's value does not carry the figure
-    either. Live 010238 collapsed
-
-        raw_table_row  "Effective Date:: Account # | 2022-10-01 00:00:00:
-                        2701149/5698885"
-        signatory      "Effective Date: : Exp"
-
-    on a key that strips digits, and the survivor was the label with the values
-    torn off: the account number, the effective date and the expiry date left
-    the compile and nothing else in the deal stated them.
+    Now one line, because the rule it implements is shared: see
+    `app.core.fold_invariants`, which carries the reasoning and the eight
+    places this was rediscovered by hand.
     """
-    try:
-        blob = (getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
-        val = getattr(atom, "value", None)
-        if isinstance(val, dict):
-            blob = blob + " " + _json.dumps(val, default=str)
-    except Exception:
-        blob = str(getattr(atom, "raw_text", "") or "")
-    return _figures(blob)
+    return _fold.figures_stated(atom)
 
 
 def _cross_type_text_key(atom: Any) -> str:

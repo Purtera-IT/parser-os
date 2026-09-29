@@ -43,6 +43,24 @@ norm = lambda t: " ".join((t or "").split()).lower()
 figs = lambda t: set(re.findall(r"\d+(?:[.,]\d+)*", t or ""))
 
 
+def _blob(atom) -> str:
+    """An atom's words AND its structured value.
+
+    Checking `raw_text` alone reports losses that never happened: a quoted
+    message header is dropped as a duplicate while its timestamp lives on in
+    the survivor's `value.email_thread`, and a site's address survives into
+    `value` under different words. Both showed up as "a figure left the
+    compile" until the value was read too.
+    """
+    import json as _j
+    try:
+        v = _j.dumps(getattr(atom, "value", None) or {}, default=str)
+    except Exception:
+        v = str(getattr(atom, "value", "") or "")
+    return (getattr(atom, "raw_text", "") or "") + " " + v
+
+
+
 def stage_table(deal: str) -> dict:
     """Run one compile and record every SHAPE stage's in/out from telemetry."""
     import app.core.telemetry as TEL
@@ -116,7 +134,7 @@ def main() -> None:
         kept_text = {norm(getattr(x, "raw_text", "")) for x in (got["result"].atoms or [])}
         kept_figs: set[str] = set()
         for x in (got["result"].atoms or []):
-            kept_figs |= figs(getattr(x, "raw_text", ""))
+            kept_figs |= figs(_blob(x))
 
         print("\n=== %s  (%d artifacts) ===" % (deal[:8], got["artifacts"]))
         print("%-30s %8s %8s %9s %10s %9s" % ("stage", "in", "out", "suppressed", "text gone", "figs gone"))

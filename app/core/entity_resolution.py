@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core import fold_invariants as _fold
+
 import logging
 import os
 import re
@@ -346,7 +348,9 @@ def _surface(atom) -> str:
 #: every table row, and keying on them would not dedup a spreadsheet at all.
 #: These name a place or a fixture, so two atoms that disagree on one of them
 #: are two facts, not two copies of one.
-_IDENTITY_FIELDS = ("plate_id", "site", "site_key", "room", "location")
+#: Kept as a name here for the docstring below; the list itself now lives in
+#: `app.core.fold_invariants`, which is where every fold site reads it.
+_IDENTITY_FIELDS = _fold.IDENTITY_FIELDS
 
 
 def _identity(atom) -> tuple:
@@ -371,25 +375,13 @@ def _identity(atom) -> tuple:
     because a merged atom would carry two plate ids and be a third thing that
     was never in the document.
     """
-    value = getattr(atom, "value", None)
-    ident = []
-    if isinstance(value, dict):
-        for field in _IDENTITY_FIELDS:
-            got = value.get(field)
-            if got not in (None, "", [], {}):
-                ident.append(f"{field}={got}")
-    keys = getattr(atom, "entity_keys", None)
-    if keys:
-        # An atom tied to a different entity is about a different thing, and
-        # entity keys are already canonical, so they compare cleanly.
-        ident.extend(sorted(str(k) for k in keys))
-    return tuple(ident)
+    return _fold.identity(atom)
 
 
 
 #: Digits are facts. "10 drops" and "100 drops" are not the same statement,
 #: and neither are two bid dates.
-_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_NUMBER_RE = _fold.FIGURE_RE
 
 
 def _numbers(text: str) -> tuple:
@@ -399,16 +391,7 @@ def _numbers(text: str) -> tuple:
     different numbers: "1,200" and "1200" are the same quantity, so they must
     not block a fold that should happen.
     """
-    out = []
-    for raw in _NUMBER_RE.findall(text or ""):
-        cleaned = raw.replace(",", "")
-        try:
-            value = float(cleaned)
-        except ValueError:
-            out.append(cleaned)
-            continue
-        out.append(str(int(value)) if value.is_integer() else str(value))
-    return tuple(out)
+    return _fold.figures_in_order(text)
 
 
 def collapse_duplicate_atoms(atoms: list) -> list:

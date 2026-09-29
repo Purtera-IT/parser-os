@@ -26,6 +26,24 @@ norm = lambda t: " ".join((t or "").split()).lower()
 figs = lambda t: set(re.findall(r"\d+(?:[.,]\d+)*", t or ""))
 
 
+def _blob(atom) -> str:
+    """An atom's words AND its structured value.
+
+    Checking `raw_text` alone reports losses that never happened: a quoted
+    message header is dropped as a duplicate while its timestamp lives on in
+    the survivor's `value.email_thread`, and a site's address survives into
+    `value` under different words. Both showed up as "a figure left the
+    compile" until the value was read too.
+    """
+    import json as _j
+    try:
+        v = _j.dumps(getattr(atom, "value", None) or {}, default=str)
+    except Exception:
+        v = str(getattr(atom, "value", "") or "")
+    return (getattr(atom, "raw_text", "") or "") + " " + v
+
+
+
 def run(deal: str, max_artifacts: int = 25):
     import app.core.compiler as C
     from azure.storage.blob import BlobServiceClient
@@ -58,7 +76,7 @@ def main() -> None:
         kept_text: set[str] = set()
         for x in (res.atoms or []):
             t = getattr(x, "raw_text", "")
-            kept_figs |= figs(t)
+            kept_figs |= figs(_blob(x))
             kept_text.add(norm(t))
 
         by_stage: dict[str, list] = defaultdict(list)

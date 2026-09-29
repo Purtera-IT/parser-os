@@ -333,3 +333,61 @@ explained.**
 The three real defects survived that same scrutiny, each corroborated
 independently: folds dropping by exactly 81, number-differing folds going
 39 → 0, and receipts hashing identical across a 2.12x speedup.
+
+---
+
+# Re-audited 2026-09-29, because the instrument had a hole
+
+Phase 3 found that four stages were deleting atoms without writing to the
+suppression ledger — and **one of them was `pasted_note_dedup`, which is a
+SHAPE stage.** Its `capture_suppressed` call omitted the required keyword-only
+`reason`, so every invocation raised `TypeError` into the stage's
+`except Exception` and was logged as the stage failing. The call had never once
+run.
+
+This audit reads the ledger. So it had a blind spot, and the conclusions above
+were drawn without knowing it. They had to be re-checked rather than defended.
+
+## The result: the blind spot was real and it cost nothing
+
+Same three deals, on the fixed ledger:
+
+| stage | suppressed | text gone | figures gone |
+|---|---|---|---|
+| `pasted_note_dedup` | **3** (previously invisible) | 0 | 0 |
+| `quoted_history_dedup` | 1743 | 64 | 0 |
+| `duplicate_atom_collapse` | 568 | 0 | 0 |
+| `execution_boilerplate_drop` | 15 | 15 | 0 |
+| the other seven | 0 | 0 | 0 |
+
+`pasted_note_dedup`'s three hidden drops are genuine duplicates: no text and no
+figure left the compile with them. Everything above stands.
+
+`duplicate_atom_collapse` at 568 folds and **zero** losses is the plate-quantity
+fix holding under a wider lens than the one that found it.
+
+## And the instrument had a second hole, which changed a number
+
+The first re-run reported `quoted_history_dedup` losing **15 figures**. It
+loses none. The check compared the dropped atom's digits against the `raw_text`
+of every survivor — and a quoted message header is dropped as a duplicate while
+its timestamp lives on in the survivor's `value.email_thread`. Reading only the
+words made a value that survived look deleted.
+
+This is the same mistake that made PurTera's own banned HQ address look like a
+lost job site in phase 3, and mistake #6 in the list above. Three times now.
+`_shape_full.py`, `_figures_gone.py` and `_phase3_audit.py` now all compare
+against the atom's words **and** its structured value.
+
+With that fixed: **zero figures leave the compile anywhere in phase 2.**
+
+## What `quoted_history_dedup` actually removes
+
+The 64 remaining text-gone atoms were read rather than counted
+(`_tools/_text_gone.py`). Every one is a quoted message header — nine distinct
+messages, each quoted six to nine times across the replies that carry the
+thread. No prose, no scope, no figures, and each message's sender and timestamp
+survive in `value.email_thread` on the atoms that were kept.
+
+That is the stage doing its job, and it is now the third independent time this
+stage has been checked and found correct.
