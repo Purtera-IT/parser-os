@@ -43,6 +43,7 @@ import hashlib
 import io
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,39 @@ _OCR_CACHE: dict[str, dict[str, Any]] = {}
 #: process-global. Past the cap new images are simply not cached rather than
 #: evicting, which keeps the hot set -- the repeated signature images -- resident.
 _OCR_CACHE_MAX = 512
+
+#: One lock per image, created under a small global lock.
+#:
+#: A single global lock around OCR would serialise the whole parse pool for
+#: every picture, including the ones no other thread wants. Per-key means two
+#: different images are still read concurrently and only duplicates wait.
+_OCR_KEY_LOCKS: dict[str, threading.Lock] = {}
+_OCR_LOCKS_GUARD = threading.Lock()
+
+
+def _cache_lock_for(key: str) -> threading.Lock:
+    with _OCR_LOCKS_GUARD:
+        lock = _OCR_KEY_LOCKS.get(key)
+        if lock is None:
+            # Bounded with the cache it guards: a compile that somehow saw more
+            # distinct images than the cache holds should not also accumulate a
+            # lock for each of them forever.
+            if len(_OCR_KEY_LOCKS) > _OCR_CACHE_MAX * 2:
+                _OCR_KEY_LOCKS.clear()
+            lock = _OCR_KEY_LOCKS[key] = threading.Lock()
+        return lock
+
+
+def _reuse(hit: dict[str, Any]) -> dict[str, Any]:
+    """A cached result, copied and marked.
+
+    Deep-copied because callers append to ``notes`` and mutate what they get
+    back; handing out the stored instance would let one artifact's diagnostics
+    surface on the next artifact that embeds the same picture.
+    """
+    cached = copy.deepcopy(hit)
+    cached.setdefault("notes", []).append("ocr result reused for an identical image")
+    return cached
 
 
 # Disable ALL backends with one env var — useful for deterministic CI
@@ -202,12 +236,26 @@ def _ocr_image_bytes(image_bytes: bytes, notes: list[str]) -> dict[str, Any]:
     key = hashlib.sha256(image_bytes).hexdigest()
     hit = _OCR_CACHE.get(key)
     if hit is not None:
-        cached = copy.deepcopy(hit)
-        cached.setdefault("notes", []).append("ocr result reused for an identical image")
-        return cached
-    result = _ocr_image_bytes_uncached(image_bytes, notes)
-    if len(_OCR_CACHE) < _OCR_CACHE_MAX:
-        _OCR_CACHE[key] = copy.deepcopy(result)
+        return _reuse(hit)
+
+    # One OCR per image, even with eight parsers running.
+    #
+    # `parse_artifacts` runs SOWSMITH_PARSE_WORKERS threads (default 8, #247).
+    # A plain check-then-fill lets all eight miss on the same signature logo
+    # before any of them fills the cache, and all eight then pay for it -- the
+    # cache would turn 16 billed calls into 8 rather than into 1, on the single
+    # largest line of the bill.
+    #
+    # The lock is PER KEY, so two different images are still read at the same
+    # time; only threads wanting the SAME picture wait, and they wait for a
+    # result they were going to use anyway.
+    with _cache_lock_for(key):
+        hit = _OCR_CACHE.get(key)          # another thread may have filled it
+        if hit is not None:
+            return _reuse(hit)
+        result = _ocr_image_bytes_uncached(image_bytes, notes)
+        if len(_OCR_CACHE) < _OCR_CACHE_MAX:
+            _OCR_CACHE[key] = copy.deepcopy(result)
     return result
 
 
