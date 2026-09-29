@@ -170,8 +170,13 @@ it, and it made things **worse** (010180: 5 -> 33 calls), so it was reverted.
 What it costs is handled by two guards instead:
 
 * a byte floor -- an image too small to hold text is a signature logo, not
-  content. Measured on 46 live emails across three deals: **99 billed calls
-  become 31, a 69% reduction.** PDFs are exempt; a small PDF is a page of text.
+  content. PDFs are exempt; a small PDF is a page of text. Being re-measured:
+  the first harness set the variable and reloaded `email_parser` between
+  settings, but `_OCR_MIN_BYTES` is read into a module constant at import and
+  the registry holds a parser bound to the ORIGINAL module, so only the first
+  deal was genuinely re-measured. On that deal (4edf04d3, 21 emails) the floor
+  took **88 billed calls to 27**. The harness now runs one setting per
+  process.
 * a sha256 cache with a per-key lock, so the logo repeated down a thread is
   paid for once rather than once per message per worker.
 
