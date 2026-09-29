@@ -223,10 +223,18 @@ the parser words a fact differently. Old tree against new, same files:
 
 | deal | gold labels | resolved BEFORE | resolved AFTER |
 |---|---|---|---|
-| c065bfc4 (010237) | 197 | 63 | 63 |
+| 1bb4a199 | 3,163 | 1,016 | 1,016 |
 | c79db726 | 441 | 244 | 244 |
+| c065bfc4 (010237) | 197 | 63 | 63 |
+| **total** | **3,801** | **1,323** | **1,323** |
 
-No label lost.
+**LOST 0.**
+
+(A label resolving at all depends on the whole compile, not just the parse --
+these runs parse the artifacts and stop, so post-parse stages that reword an
+atom are not represented. That is why the absolute number is not 3,801. The
+figure that matters is that BEFORE and AFTER are the same number, on the same
+files, through the same harness.)
 
 ---
 
