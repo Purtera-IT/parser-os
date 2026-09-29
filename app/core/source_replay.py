@@ -85,6 +85,11 @@ def _cached_max_row(worksheet: Any) -> int:
 def clear_workbook_cache() -> None:  # pragma: no cover — used by tests
     _WORKBOOK_CACHE.clear()
     _MAXROW_CACHE.clear()
+    # Every content cache in this module clears together. A test that resets one
+    # and not the others gets a file it thinks it reloaded and did not, which is
+    # the hardest kind of stale to notice.
+    _DOCX_TEXT_CACHE.clear()
+    _REPLAY_LINES_CACHE.clear()
 
 
 # ────────────── docx whole-document text cache ──────────────
@@ -97,6 +102,22 @@ def clear_workbook_cache() -> None:  # pragma: no cover — used by tests
 # in the file, upgrading "unsupported" to a (lower-precision but real)
 # "verified" provenance receipt. Cache by (path, mtime, size).
 _DOCX_TEXT_CACHE: dict[tuple[str, float, int], str] = {}
+
+# ────────────── replay-lines cache (.eml / .txt / anything read whole) ──────────
+# The same reasoning as the workbook cache above, for the formats it never
+# covered. ``_replay_lines`` is called ONCE PER ATOM, and for email it reads the
+# file and re-extracts the message body every time.
+#
+# Spreadsheets got a cache, .docx got a cache, and email -- the corpus's largest
+# evidence source -- did not. Measured on 010094: source_replay 202s over 2,325
+# atoms drawn from 38 emails totalling 67.6 MB, so a single 3.4 MB message is
+# read and split thousands of times in one compile.
+#
+# Keyed on (path, mtime, size, is_email_atom): the email path and the whole-file
+# path produce DIFFERENT line numbering for the same file, so they cannot share
+# an entry or every email receipt would be verified against the wrong lines.
+_REPLAY_LINES_CACHE: dict[tuple[str, float, int, bool], list[str]] = {}
+_REPLAY_LINES_CACHE_MAX = 32
 
 
 def _docx_full_text(path: Path) -> str:
@@ -571,20 +592,40 @@ def _replay_lines(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> list
     keep being read whole, or this fix breaks the paths that already work.
     """
     is_email_atom = isinstance(source_ref.locator, dict) and "message_index" in source_ref.locator
-    if not is_email_atom:
-        return read_text(path).splitlines()
     try:
-        from app.parsers.email_body import _extract_email_text
-        from app.parsers.email_parser import _split_leading_pseudo_headers
+        st = path.stat()
+        key = (str(path), st.st_mtime, st.st_size, is_email_atom)
+    except OSError:
+        key = None
+    if key is not None:
+        cached = _REPLAY_LINES_CACHE.get(key)
+        if cached is not None:
+            return cached
 
-        text = _extract_email_text(path)
-        if path.suffix.lower() != ".eml":
-            _, text = _split_leading_pseudo_headers(text)
-        return text.splitlines()
-    except Exception:
-        # Never lose a receipt to an import or a malformed message; fall back to
-        # the old behaviour, which is wrong for email but not worse than before.
-        return read_text(path).splitlines()
+    if not is_email_atom:
+        lines = read_text(path).splitlines()
+    else:
+        try:
+            from app.parsers.email_body import _extract_email_text
+            from app.parsers.email_parser import _split_leading_pseudo_headers
+
+            text = _extract_email_text(path)
+            if path.suffix.lower() != ".eml":
+                _, text = _split_leading_pseudo_headers(text)
+            lines = text.splitlines()
+        except Exception:
+            # Never lose a receipt to an import or a malformed message; fall back
+            # to the old behaviour, which is wrong for email but not worse than
+            # before.
+            lines = read_text(path).splitlines()
+
+    if key is not None:
+        _REPLAY_LINES_CACHE[key] = lines
+        if len(_REPLAY_LINES_CACHE) > _REPLAY_LINES_CACHE_MAX:
+            oldest = next(iter(_REPLAY_LINES_CACHE))
+            if oldest != key:
+                _REPLAY_LINES_CACHE.pop(oldest, None)
+    return lines
 
 
 def _verify_line_range(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> EvidenceReceipt:
