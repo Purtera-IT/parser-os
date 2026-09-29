@@ -195,3 +195,40 @@ nothing on either deal tried, and `candidate_adjudication` and
 `supply_conflicts` produced nothing on COPPER. That is not evidence they never
 do — one or two deals cannot tell a dead stage from an inapplicable one, and
 saying which would need the multi-deal profile that nothing currently records.
+
+---
+
+## `pre_classify_dedup` — the biggest dropper, and it is correct
+
+238 atoms on COPPER, more than every other SHAPE stage combined. It collapses
+one sentence emitted under several atom types, keying on a text with money and
+quantities STRIPPED — which is exactly the shape that deleted a bid deadline
+one stage earlier, so it was the obvious place to look next.
+
+Of the 238, 114 pair with a survivor, and **18 have a survivor stating
+different numbers**. All 18 are one shape:
+
+    dropped : ... RFP-250007521 12/5/2024  2 Any other use of this property ...
+    survivor: ... RFP-250007521 12/5/2024 15 Any other use of this property ...
+
+A page footer reprinted on every page, differing only in the page number —
+which the locator already carries. Folding them is right. **No change needed.**
+
+The contrast with the bid-date case is the whole lesson: there the differing
+number WAS the fact, here it is furniture. "Numbers differ" is a good alarm and
+a bad verdict; something has to look at which number.
+
+### A process note
+
+The first pass on this stage reported it dropping **2** atoms, and concluded it
+was clean. That was wrong. `cross_type_dedup_atoms` is called TWICE in a
+compile — `pre_classify_dedup` at compiler:1622 and again at 2019 — and the
+capture wrapper kept only the last call. The suppression ledger said 238 and
+the wrapper said 2; the ledger was right.
+
+That is the fifth measurement error in this audit, after the stale artifact
+cache, the half-empty worktree bisect, the loose fold pairing, and the
+whitespace-exact text comparison. Every one was caught by a second signal
+disagreeing with the first. **When two measurements disagree, neither is
+evidence until the disagreement is explained** — and in this pass the
+instrument was wrong four times out of five, not the code.
