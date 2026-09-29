@@ -1144,10 +1144,21 @@ def compile_project(
 
             before_paste = list(atoms)
             atoms, _pasted = collapse_pasted_note_duplicates(atoms)
-            if _pasted:
+            # Gate on the LIST, not on the helper's report. The two disagreed
+            # on live 010237: three atoms left and `_pasted` was empty, so
+            # nothing reached the ledger. What was removed is the only thing
+            # that decides whether a receipt is owed.
+            if len(atoms) < len(before_paste):
                 merge_suppressed(
                     suppressed_atoms,
-                    capture_suppressed(before_paste, atoms, stage="pasted_note_dedup"),
+                    # `reason` is required and this call never passed it, so
+                    # every invocation raised TypeError into the `except
+                    # Exception` below and was logged as the stage failing.
+                    # The ledger call has never once run.
+                    capture_suppressed(
+                        before_paste, atoms, stage="pasted_note_dedup",
+                        reason="note pasted into the deal folded onto the email it was copied from",
+                    ),
                 )
                 warnings.append(
                     f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
@@ -1780,6 +1791,14 @@ def compile_project(
     # quantity atoms. No LLM, no customer tuning.
     with telemetry.stage("atom_type_sanity", input_count=len(atoms)) as stage:
         sanity_changed = 0
+        # `apply_type_sanity` RETURNS an atom list, and it is shorter than the
+        # one it was given: 37 atoms on live 010238, 293 on 010237. Nothing
+        # recorded that, not even a warning, so those atoms left the compile
+        # with no receipt and every audit that reads the suppression ledger --
+        # which is all of them, including `_tools/_phase3_audit.py` -- was
+        # blind to the stage. One of the 37 was the only atom stating the
+        # deal's account number and its contract effective and expiry dates.
+        _before_ats = list(atoms)
         try:
             from app.core.atom_type_sanity import apply_type_sanity
             # ``artifact_paths`` is the compile's authoritative artifact set
@@ -1796,6 +1815,15 @@ def compile_project(
                 warnings.append(f"INFO: atom_type_sanity demoted {_demoted} non-deliverable quantity atom(s) to pricing_assumption")
             if _surfaced:
                 warnings.append(f"INFO: atom_type_sanity surfaced {_surfaced} headline quantity atom(s) from prose")
+            _ats_gone = capture_suppressed(
+                _before_ats, atoms, stage="atom_type_sanity",
+                reason="atom whose type could not be reconciled with its text",
+            )
+            if _ats_gone:
+                merge_suppressed(suppressed_atoms, _ats_gone)
+                warnings.append(
+                    f"INFO: atom_type_sanity dropped {len(_ats_gone)} atom(s)"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: atom_type_sanity failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=sanity_changed)
@@ -2143,6 +2171,17 @@ def compile_project(
                 )
                 _kept_sh = {id(a) for a in atoms}
                 _sh_notes = _dropped_atom_notes("stakeholder_dedup", [a for a in _before_sh_atoms if id(a) not in _kept_sh])
+                # The notes above are telemetry: they are read by a person
+                # looking at one compile, not by the audits, which read the
+                # suppression ledger. Without this the stage dropped 17 atoms
+                # on live 010237 and the ledger showed none of them.
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        _before_sh_atoms, atoms, stage="stakeholder_dedup",
+                        reason="duplicate stakeholder identity folded into another record",
+                    ),
+                )
         except Exception as exc:
             warnings.append(f"WARNING: stakeholder_dedup failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(atoms), warnings=locals().get("_sh_notes") or [])

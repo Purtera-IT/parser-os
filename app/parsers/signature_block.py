@@ -36,7 +36,16 @@ _TITLE_MAX_WORDS = 8
 
 
 def _clean(line: str) -> str:
-    return re.sub(r"<[^>]*>", "", line).strip(" \t\r\n;,-–—*")
+    # Collapse whitespace runs, which also folds the NON-BREAKING SPACE
+    # Outlook puts between a first and last name. It survived every check
+    # here -- str.split() treats U+00A0 as whitespace and the \s class
+    # matches it -- so it never broke the name SHAPE, it just rode along
+    # into the stored value. Live 010237 filed the names of Tim Penney
+    # and Zach Burdick with U+00A0 in them, which dedup then correctly
+    # folded with the plain-space spellings while keeping the
+    # non-breaking one, so every later match on "Tim Penney" missed a
+    # person the deal had already identified.
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", "", line)).strip(" \t\r\n;,-–—*")
 
 
 def _name_from(line: str) -> str | None:
@@ -58,6 +67,17 @@ def _name_from(line: str) -> str | None:
     return None
 
 
+#: How an email stops talking. Not a job title, however title-shaped.
+_SIGNOFF_RE = re.compile(
+    r"^(thanks?|thank\s+you|thx|many\s+thanks|much\s+appreciated|appreciate\s+it|"
+    r"(kind(est)?|best|warm(est)?)\s+regards?|regards?|cheers|sincerely|"
+    r"best\s+wishes|all\s+the\s+best|yours\s+(truly|sincerely|faithfully)|"
+    r"talk\s+soon|speak\s+soon|looking\s+forward|respectfully|"
+    r"sent\s+from\s+my\s+\w+)\s*[.!]?$",
+    re.IGNORECASE,
+)
+
+
 def _is_titleish(line: str) -> bool:
     core = _clean(line)
     if not core or _EMAIL_RE.search(core) or _PHONE_RE.search(core) or _LINK_RE.search(core):
@@ -68,6 +88,15 @@ def _is_titleish(line: str) -> bool:
     # A sign-off ("Thanks," / "Best regards,") ends with a comma; a title does
     # not. One-word lines are not titles unless they are an all-caps org.
     if line.rstrip().endswith((",", ":")):
+        return False
+    # ...but only when the writer typed the comma. "Thank you" on its own line
+    # is two words with a leading capital and passes every test below, so live
+    # 010237 filed a person whose job title was "Thank you" -- and, because the
+    # cluster began at the line ABOVE the sign-off, that person also took Chase
+    # Smith's email and phone and was named after a document heading. How an
+    # email stops talking is a closed set of phrases, worth naming rather than
+    # guessing at from shape.
+    if _SIGNOFF_RE.match(core):
         return False
     if len(words) == 1 and not core.isupper():
         return False
@@ -150,6 +179,12 @@ def people_from_signature_lines(lines: list[str]) -> list[dict[str, Any]]:
         j = i + 1
         gap = 0
         last_hit = i
+        #: Non-blank lines examined since the name. A signature is routinely
+        #: double-spaced ("Patrick Kelly", "", "Account Executive"), so
+        #: "the line after the name" has to be counted in CONTENT lines --
+        #: measuring it in j made the blank line push the title out of the
+        #: exemption below and the title became the person.
+        content_seen = 0
         while j < n and gap < _MAX_GAP:
             raw = lines[j]
             core = _clean(raw)
@@ -157,8 +192,21 @@ def people_from_signature_lines(lines: list[str]) -> list[dict[str, Any]]:
                 gap += 1
                 j += 1
                 continue
+            content_seen += 1
             if _name_from(raw) and j > i + 1 and (rec.get("email") or phones):
                 break  # next person's signature
+            if (_name_from(raw) and content_seen > 1
+                    and not (rec.get("email") or phones or titles)):
+                # A contact card belongs to the NEAREST name above it. This
+                # cluster has collected nothing -- no title, no address, no
+                # number -- so the line it started on was not a signature, and
+                # letting it run on hands the next person's details to it.
+                # That is how "WIFI Example", a heading, came to own Chase
+                # Smith's address and direct line on live 010237. The line
+                # The first CONTENT line under a name is exempt: that is
+                # where a job title lives, "Sr. Account Manager" is
+                # name-shaped, and a signature is routinely double-spaced.
+                break
             em = _EMAIL_RE.search(core)
             ph = _phones_from(raw)
             if em and not rec.get("email"):

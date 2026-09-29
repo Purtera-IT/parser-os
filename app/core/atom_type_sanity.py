@@ -1456,6 +1456,15 @@ def _looks_like_signature_row(text: str) -> bool:
     return has_name or has_party
 
 
+#: A figure a signature row states, commas folded so "2,701,149" and "2701149"
+#: are one number.
+_SIG_FIGURE_RE = re.compile(r"\d[\d,]*")
+
+
+def _sig_figures(text: str) -> set[str]:
+    return {m.replace(",", "") for m in _SIG_FIGURE_RE.findall(text or "") if m.strip("0,")}
+
+
 def merge_signature_rows(atoms: list[Any]) -> int:
     """One signatory record per PARTY instead of one per table row.
 
@@ -1597,6 +1606,15 @@ def merge_signature_rows(atoms: list[Any]) -> int:
             f"{r['party']}: " + ", ".join(v for v in (r.get("name"), r.get("title"), r.get("signed_at")) if v)
             for r in merged
         )
+        # `keep` is REWRITTEN as the merged record, so it must be a row the
+        # merged record already says everything of -- otherwise whichever row
+        # sorts first loses its own content to the rewrite, which deletes the
+        # account number just as surely as dropping the atom would.
+        _merged_figs = _sig_figures(text)
+        keep = next(
+            (r for r in rows if not (_sig_figures(_atom_text(r)) - _merged_figs)),
+            rows[0],
+        )
         _set_text(keep, text)
         try:
             from app.core.schemas import AtomType as _AT
@@ -1620,7 +1638,30 @@ def merge_signature_rows(atoms: list[Any]) -> int:
             v["title"] = first.get("title")
             v["role"] = first.get("title")
             v["signed_at"] = first.get("signed_at")
-        for a in rows[1:]:
+        # A row may only be folded away when the merged record says everything
+        # it said. The group is every row on the page that LOOKS like a
+        # signature row, and the merged record holds only party, name, title
+        # and signed_at -- so a contract table row sitting on the signature
+        # page went in and nothing of it came out. Live 010238:
+        #
+        #     Effective Date:: Account # | 2022-10-01 00:00:00: 2701149/5698885
+        #     Effective Date:: Exp Date: | 2022-10-01 00:00:00: 2023-10-01 ...
+        #
+        # both matched on their date label, both were deleted, and what
+        # survived read "Effective Date: : Exp" -- the labels with the values
+        # torn off. The deal's account number and its contract effective and
+        # expiry dates left the compile and nothing else stated them.
+        #
+        # The same test decides which row is rewritten AS the merged record,
+        # because `rows[0]` is overwritten in place and can carry figures too.
+        _merged_figs = _sig_figures(text)
+
+        def _fully_said(a: Any) -> bool:
+            return not (_sig_figures(_atom_text(a)) - _merged_figs)
+
+        for a in rows:
+            if a is keep or not _fully_said(a):
+                continue
             try:
                 atoms.remove(a)
                 folded += 1

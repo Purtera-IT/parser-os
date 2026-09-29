@@ -393,6 +393,30 @@ class SemanticLinkCandidate(BaseModel):
     status: Literal["accepted", "needs_review", "rejected"]
 
 
+def _keep_declared_fields(cls: Any, data: dict, out: dict) -> dict:
+    """Carry over any DECLARED field the legacy mapping below did not name.
+
+    The two `from_legacy_shape` validators rebuild the model from a hand-listed
+    set of keys, so a field added to the model afterwards is silently dropped
+    the moment anything round-trips through the legacy shape -- the compile
+    logs success and the value is simply gone.
+
+    `confidence_raw` was one. The artifact cache serialises atoms with
+    `atom_id`, which is what selects this path, so the FIRST compile of a
+    project (fresh parse) and every compile after it (cache read) produced
+    different atoms and therefore different `output_signature`s. Two compiles
+    of one unchanged project did not agree, which is the exact property the
+    determinism work exists to hold.
+
+    Only declared fields are carried: an unknown key in the payload is still
+    ignored, so this cannot smuggle junk into the model.
+    """
+    for name in cls.model_fields:
+        if name not in out and name in data:
+            out[name] = data[name]
+    return out
+
+
 class SourceRef(BaseModel):
     id: str
     artifact_id: str
@@ -500,7 +524,7 @@ class EvidenceAtom(BaseModel):
             if artifact_id is None and source_refs:
                 first_ref = source_refs[0]
                 artifact_id = first_ref.get("artifact_id") if isinstance(first_ref, dict) else first_ref.artifact_id
-            return {
+            out = {
                 "id": data.get("id") or data.get("atom_id", ""),
                 "project_id": data.get("project_id", "unknown_project"),
                 "artifact_id": artifact_id or "unknown_artifact",
@@ -523,6 +547,7 @@ class EvidenceAtom(BaseModel):
                 "predicate": data.get("predicate"),
                 "authority_score": data.get("authority_score", 0.0),
             }
+            return _keep_declared_fields(cls, data, out)
         return data
 
     @field_validator("source_refs")
@@ -683,7 +708,7 @@ class EvidencePacket(BaseModel):
             packet_status = data.get("status", PacketStatus.active)
             if packet_status == "accepted":
                 packet_status = PacketStatus.active
-            return {
+            out = {
                 "id": data.get("id") or data.get("packet_id", ""),
                 "project_id": data.get("project_id", "unknown_project"),
                 "family": data.get("family", PacketFamily.missing_info),
@@ -704,6 +729,7 @@ class EvidencePacket(BaseModel):
                 "topic": data.get("topic"),
                 "atom_ids": data.get("atom_ids", []),
             }
+            return _keep_declared_fields(cls, data, out)
         return data
 
     @model_validator(mode="after")

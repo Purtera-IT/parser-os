@@ -53,6 +53,7 @@ Pure function, no LLM, no I/O.
 """
 from __future__ import annotations
 
+import json as _json
 import re
 from typing import Any
 
@@ -1448,14 +1449,70 @@ def _value_key(atom: Any) -> tuple | None:
             if sender and sent_at:
                 return (atype, "quoted_message_header", sender, sent_at)
             return None
+        # A HubSpot note is identified by its note id, and an email header by
+        # the message it heads. The fallback below keys on `field_name`, which
+        # for these two is a CONSTANT -- every note on the deal carried the key
+        # ("deal_metadata", "hubspot_note_meta") and every message header
+        # ("deal_metadata", "email_metadata"), so each kind collapsed to a
+        # single atom for the whole deal. Live 010237 lost four notes with four
+        # distinct note ids to one, and seven message headers spanning 19
+        # August to 29 September to one: same sender, same subject, different
+        # message.
+        #
+        # Same policy as the quoted-header branch above, deliberately: key on
+        # the identity exactly as recorded, and when it is not recorded return
+        # None and stay out of dedup rather than fold on a guess. A note quoted
+        # or re-synced twice still carries one id, and one message quoted in 33
+        # replies still carries one (sender, date), so what this stage is for
+        # is untouched.
+        kind = _norm_key(val.get("kind"))
+        if kind == "hubspot_note_meta":
+            note = _first("hubspot_note_id")
+            return (atype, kind, note) if note else None
+        if kind == "email_header":
+            who = _first("from", "sender")
+            when = _first("date", "sent_at")
+            return (atype, kind, who, when) if who and when else None
         key = _first("field_name", "value")
         return (atype, key) if key else None
     if atype == "commercial_total":
         cat = _first("category")
-        amt = val.get("amount")
-        if cat:
-            return (atype, cat)
-        return None
+        if not cat:
+            return None
+        # The category is the ROW of a totals block, not the figure. One
+        # category states several: live 010237's labour block is four atoms,
+        #
+        #     Total Labor Revenue: $121,519   metric=revenue
+        #     Total Labor Cost:     $96,000   metric=cost
+        #     Total Labor Margin:   $25,519   metric=margin
+        #     Margin % on Labor:        21%   metric=margin_pct
+        #
+        # and keying on "total labor" alone made all four one atom. Revenue
+        # survived; the cost, the margin and the margin percentage were
+        # deleted -- on a deal whose margin is the reason anyone reads it.
+        #
+        # `amount` was already being read here and then dropped on the floor
+        # (`amt = val.get("amount")`, never used), so the intent was right and
+        # only the return was wrong.
+        #
+        # Both parts are needed. The metric separates revenue from cost. The
+        # amount is the phase-2 invariant -- atoms stating different numbers
+        # are different facts -- and it is what stops two sites' identically
+        # labelled subtotals collapsing into one. Two genuine restatements of
+        # one figure still carry the same number, so they still collapse,
+        # which is what this stage is for.
+        # Whole units, because one figure reaches here rounded two ways: this
+        # very atom carries value=121518.99 beside amount=121519, and a
+        # restatement of the same total picks up whichever the sheet printed.
+        # Keying to the cent split a duplicate back into two.
+        num = val.get("value")
+        if num in (None, ""):
+            num = val.get("amount")
+        try:
+            num = str(int(round(float(num))))
+        except (TypeError, ValueError):
+            num = _norm_key(num) if num else ""
+        return (atype, cat, _first("metric"), num)
     if atype == "lead_time_constraint":
         key = _first("sku", "item_id", "description")
         return (atype, key) if key else None
@@ -1644,7 +1701,17 @@ def _merge_values(winner: Any, loser: Any) -> None:
         wval = wv.get(k)
         if wval is None or wval == "":
             wv[k] = lval
-        elif isinstance(wval, str) and isinstance(lval, str) and len(lval) > len(wval):
+        elif (isinstance(wval, str) and isinstance(lval, str)
+              and len(lval) > len(wval) and wval.strip()
+              and wval.strip().lower() in lval.strip().lower()):
+            # Longer only means "says more" when it says the SAME thing and
+            # more: "Rhonda Sharp" -> "Rhonda Sharp <rhonda.sharp@cdw.com>".
+            # Without the containment test, length alone was authority, and a
+            # placeholder outvoted a person -- live 010180 folded a stakeholder
+            # named "Chase Smith" (11) into one named "WIFI Example" (12) and
+            # kept the placeholder. Seventeen stakeholder names across three
+            # deals were overwritten this way, by a branch whose own docstring
+            # promises it "doesn't override populated winner fields".
             wv[k] = lval
         elif isinstance(wval, (list, tuple)) and isinstance(lval, (list, tuple)):
             # union lists
@@ -1772,6 +1839,52 @@ def _adds_a_sentence(fuller: str, contained: str) -> bool:
 def _norm_for_containment(atom: Any) -> str:
     raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
     return re.sub(r"\s+", " ", str(raw).lower()).strip()
+
+
+#: A figure an atom states, commas and trailing zeros folded so "1,200" and
+#: "1200" are one number and "2.50" and "2.5" are one number.
+_FIGURE_RE = re.compile(r"\d[\d,.]*")
+
+
+def _figures(text: str) -> set[str]:
+    out: set[str] = set()
+    for raw in _FIGURE_RE.findall(text or ""):
+        t = raw.replace(",", "").rstrip(".")
+        if "." in t:
+            t = t.rstrip("0").rstrip(".")
+        if t:
+            out.add(t)
+    return out
+
+
+def _figures_stated(atom: Any) -> set[str]:
+    """Every figure the atom states, in its words OR in its structured value.
+
+    Both halves matter. `_not_at_the_cost_of_the_words` deliberately ignores
+    digits when deciding whether a fuller twin is worth keeping, and its
+    reasoning is right for the case it names: a raw_table_row's trailing
+    "| $21,560.00" is a money column whose amount already lives in the typed
+    sibling's `value`, so the typed atom is not poorer for lacking it in text.
+
+    It stops being right when the typed atom's value does not carry the figure
+    either. Live 010238 collapsed
+
+        raw_table_row  "Effective Date:: Account # | 2022-10-01 00:00:00:
+                        2701149/5698885"
+        signatory      "Effective Date: : Exp"
+
+    on a key that strips digits, and the survivor was the label with the values
+    torn off: the account number, the effective date and the expiry date left
+    the compile and nothing else in the deal stated them.
+    """
+    try:
+        blob = (getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict):
+            blob = blob + " " + _json.dumps(val, default=str)
+    except Exception:
+        blob = str(getattr(atom, "raw_text", "") or "")
+    return _figures(blob)
 
 
 def _cross_type_text_key(atom: Any) -> str:
@@ -2020,10 +2133,59 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
             continue
         winner = max(members, key=lambda a: (_cross_type_priority(a), _rank(a)))
         winner = _not_at_the_cost_of_the_words(winner, members)
-        for loser in members:
-            if loser is winner:
+        # Only a member of a DIFFERENT type is a lossy retyping of the winner's
+        # sentence. A member of the SAME type is an intra-type duplicate, which
+        # is semantic_dedup's job and not this one's -- as the docstring above
+        # has always said.
+        #
+        # That sentence was true of a two-member group and false of every
+        # larger one. The guard at the top of the loop only spares a group in
+        # which EVERY member shares a type, so one stray atom of a second type
+        # joining four emails turned "collapse a retyping" into "keep one atom
+        # and delete the rest". Measured over three live deals that deleted 76
+        # deal_metadata atoms into other deal_metadata atoms, 46 stakeholders
+        # into stakeholders and 18 commercial_totals into commercial_totals --
+        # and `_merge_atom_metadata` carries provenance, NOT `value`, so the
+        # survivor kept its own figures. Eighteen of those folds left a
+        # commercial_total whose `value` and `metric` were not the ones the
+        # deleted atom held, and seventeen left a stakeholder under another
+        # person's name. The key strips digits and cuts at 80 characters, so
+        # two quotes of one thread, or two totals of one table, reach it
+        # identical by construction.
+        winner_type = _atom_type_value(winner)
+        for member in members:
+            if member is winner:
                 continue
-            _merge_atom_metadata(winner, loser)
+            if _atom_type_value(member) == winner_type:
+                survivors.add(id(member))
+                continue
+            # A retyping may not take a FIGURE with it. The group key strips
+            # digits by design, so an atom that dropped the numbers keys
+            # identically to the one that kept them.
+            #
+            # The test is containment, not the figures alone. When the winner's
+            # words ARE the start of the member's -- "ESTIMATED TOTAL FEES"
+            # inside "ESTIMATED TOTAL FEES | $21,560.00" -- the member is the
+            # same sentence with a money column still attached, and the typed
+            # atom must win; that is what this stage is for, and two tests
+            # pin it. When the winner's words are NOT in the member at all,
+            # the two only ever met because the key strips digits, and folding
+            # them is not a retyping. Live 010238 put
+            #
+            #     raw_table_row "Effective Date:: Account # | 2022-10-01
+            #                    00:00:00: 2701149/5698885"
+            #     signatory     "Effective Date: : Exp"
+            #
+            # in one group on that basis and kept the label with the values
+            # torn off it: the account number, the effective date and the
+            # expiry date left the compile, and nothing else in the deal
+            # stated them.
+            if (_figures_stated(member) - _figures_stated(winner)
+                    and _norm_for_containment(winner)
+                    not in _norm_for_containment(member)):
+                survivors.add(id(member))
+                continue
+            _merge_atom_metadata(winner, member)
         survivors.add(id(winner))
 
     # Emit in ORIGINAL input order: each atom survives if it's a passthrough
@@ -2072,7 +2234,25 @@ def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
     for a in atoms:
         if _is_row_blob(a):
             winner = rich_by_cell.get(_atom_cell_locator(a))
-            if winner is not None:
+            # "Richer type at the same cell" is a claim that the classifier
+            # read this row, and the blob therefore adds nothing. It stops
+            # being true when the richer atom does not STATE what the blob
+            # states. `merge_signature_rows` retypes one row of a signature
+            # page to `signatory` and rewrites it as a merged party record, so
+            # on live 010238 the rich atom at cell Lift:r11 read
+            #
+            #     "Effective Date: : Exp"
+            #
+            # while the blob it displaced read
+            #
+            #     "Effective Date:: Account # | 2022-10-01 00:00:00:
+            #      2701149/5698885"
+            #
+            # and the deal's account number and its contract effective and
+            # expiry dates left the compile with nothing else stating them.
+            if winner is not None and not (
+                _figures_stated(a) - _figures_stated(winner)
+            ):
                 _merge_atom_metadata(winner, a)
                 continue
         out.append(a)
