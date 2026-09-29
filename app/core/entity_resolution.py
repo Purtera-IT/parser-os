@@ -339,6 +339,53 @@ def _surface(atom) -> str:
         return ""
 
 
+
+#: Fields that say WHICH THING an atom is about, as opposed to where it sat.
+#:
+#: Deliberately excludes positional keys like sheet and row: those differ for
+#: every table row, and keying on them would not dedup a spreadsheet at all.
+#: These name a place or a fixture, so two atoms that disagree on one of them
+#: are two facts, not two copies of one.
+_IDENTITY_FIELDS = ("plate_id", "site", "site_key", "room", "location")
+
+
+def _identity(atom) -> tuple:
+    """What distinguishes this atom from another with the SAME words.
+
+    `collapse_duplicate_atoms` keeps the higher-confidence copy and drops the
+    other outright -- it does not merge -- so anything the twin held and the
+    survivor lacks leaves the compile silently.
+
+    Measured on live COPPER_001: 4,615 folds, and 81 of them dropped a twin
+    whose identity differed. Every one was an `atom_type=quantity` row, and
+    they read like this::
+
+        "Quantity RJ45 2"   plate AVL 3  -->  folded into plate AVL 2's copy
+        "Quantity Cat6 UTP 2" plate AVL 3 -->  folded into plate AVL 2's copy
+
+    Two plates with the same count produce the same WORDS and are not the same
+    FACT. Folding them deletes one location's cable and jack quantities, and
+    the only trace is an atom count nobody reads.
+
+    Putting this in the dedup key stops the fold. It does not merge them,
+    because a merged atom would carry two plate ids and be a third thing that
+    was never in the document.
+    """
+    value = getattr(atom, "value", None)
+    ident = []
+    if isinstance(value, dict):
+        for field in _IDENTITY_FIELDS:
+            got = value.get(field)
+            if got not in (None, "", [], {}):
+                ident.append(f"{field}={got}")
+    keys = getattr(atom, "entity_keys", None)
+    if keys:
+        # An atom tied to a different entity is about a different thing, and
+        # entity keys are already canonical, so they compare cleanly.
+        ident.extend(sorted(str(k) for k in keys))
+    return tuple(ident)
+
+
 def collapse_duplicate_atoms(atoms: list) -> list:
     """v48 — collapse near-duplicate atoms emitted by repeated doc sections.
 
@@ -394,7 +441,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             if not norm:
                 unique.append(atom)
                 continue
-            norm_key = (_dedup_type(atom), norm.strip().lower())
+            norm_key = (_dedup_type(atom), norm.strip().lower(), _identity(atom))
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)
