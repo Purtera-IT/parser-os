@@ -149,6 +149,39 @@ two are not.
 
 ---
 
+## The email stages, audited on email
+
+`pasted_note_dedup` and `quoted_history_dedup` act on mail, and COPPER_001 is
+PDF-heavy, so on that deal they never fired. Audited on 4edf04d3 (30
+artifacts, 235 emails) instead:
+
+| stage | in → out | dropped | text lost entirely | figures lost |
+|---|---|---|---|---|
+| `pasted_note_dedup` | 2406 → 2406 | 0 | — | — |
+| `dedup_quoted_history` | 2406 → **1203** | 1203 | **13** | **0** |
+| `collapse_duplicate_atoms` | 1210 → 1069 | 141 | **13** | **0** |
+| `drop_execution_boilerplate` | 1069 → 1069 | 0 | — | — |
+
+`dedup_quoted_history` removes HALF the atoms, which is what it is for — a
+twenty-message thread quotes the same paragraph twenty times. The only text
+that leaves the compile entirely is one sender signature line,
+`Zach Burdick | zach_burdick@shi.com`, which the email headers carry anyway.
+No figure is lost by either stage. **Both pass.**
+
+A note on how that number was reached, because the first answer was wrong.
+Comparing dropped text to surviving text EXACTLY reported 72 losses, including
+what looked like a PM naming a reference document::
+
+    I have an example here form the past for a passive survey:  PurTera WiFi
+    Validation - Report.docx
+
+It survives twice. The dropped copy had two spaces after the colon and the
+survivor has one. Whitespace-normalising both sides takes 72 to 13, and the
+13 are all the same signature line. A fold that changes only spacing has not
+deleted anything, and an audit that says otherwise is worse than no audit.
+
+---
+
 ## Next in this phase
 
 1. `confidence_floor` → the calibration head. One magic number currently gates
@@ -157,7 +190,8 @@ two are not.
    the established pattern, removes 5 regexes.
 3. Dedup similarity → an embedding pair-head, with the invariants as gates.
 
-Unaudited so far: `pasted_note_dedup`, `quoted_history_dedup`,
-`prose_list_split`, `candidate_adjudication`, `supply_conflicts`. The last two
-produced nothing on this deal, which is not evidence that they never do — one
-deal cannot tell a dead stage from an inapplicable one.
+Still unexercised: `drop_execution_boilerplate` and `pasted_note_dedup` dropped
+nothing on either deal tried, and `candidate_adjudication` and
+`supply_conflicts` produced nothing on COPPER. That is not evidence they never
+do — one or two deals cannot tell a dead stage from an inapplicable one, and
+saying which would need the multi-deal profile that nothing currently records.
