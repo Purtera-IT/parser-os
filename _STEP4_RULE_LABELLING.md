@@ -119,3 +119,43 @@ embedding cache (step 2, done) underneath it. A real project, not an hour.
   on held-out labels — the same rule as `_eval_gate.py`
 - **a section in the labelling UI**, so the queue is somewhere you already
   look rather than a JSONL on a laptop
+
+---
+
+## The UI section — where it goes, and the one thing blocking it
+
+Traced end to end. The mechanism is ALREADY GENERIC, which makes this much
+smaller than it looked:
+
+| piece | file | what it does |
+|---|---|---|
+| entry point | `DealArtifactsPage.tsx:1891` | `Label atoms →` sets `labelingMode` and opens the modal |
+| host | `AtomQualityAuditModal.tsx:799` | renders the toolbar when `labelingMode && dealId` |
+| the save | `AtomLabelingToolbar.tsx` | `useParserFeedback.mutate({ head: "type", ... })` |
+
+`head` is just a string on the way to `atom_label_judgments`. A rule section
+posts `head: "meeting_section_header"` with the line text, the rule's decision
+as `parser_value` and yours as `verdict`. **No new endpoint, no new table, no
+migration** -- the same route the type corrections already take.
+
+Blocking it: **the parser does not surface its rule decisions**. `fires()`
+logs them to `SOWSMITH_RULE_LOG`, a file on whichever box ran the compile, and
+nothing carries them into the envelope. So a section built today would render
+an empty panel.
+
+The order is therefore:
+
+1. parser-os: carry each atom's rule decisions (rule, best_pos, threshold,
+   decision) through to the envelope, behind a flag so normal compiles do not
+   grow. This is the real work and it is small.
+2. purpulse: a section in `AtomLabelingToolbar` listing those decisions for the
+   selected atom with a yes/no on each, posting `head: "<rule>"`.
+
+Not started, deliberately: shipping an inert panel is worse than shipping
+nothing, and the frontend's `main` deploys to dev, so this belongs on a branch
+with a PR.
+
+Worth knowing while labelling: the OTHER atom UI on that page, `Audit quality
+→`, keeps its verdicts in **localStorage only** -- `useAtomAuditLabels` says
+so in its own header ("never calls an API... no sanctioned mutation endpoint
+today"). `Label atoms →` is the one that reaches Postgres.
