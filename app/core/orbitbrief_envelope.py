@@ -16,6 +16,7 @@ is the only consumer-side contract.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
@@ -145,6 +146,73 @@ def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, 
                     if name and name not in aliases:
                         aliases.append(name)
     return matched, unmatched
+
+
+
+#: How many dropped atoms to carry. The judgment builder caps a head at 150,
+#: so a few hundred is more than a person will work through, and the envelope
+#: does not need to carry thousands of them to be useful.
+_SUPPRESSED_MAX = int(os.environ.get("SOWSMITH_SUPPRESSED_MAX", "300"))
+
+
+def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[dict]:
+    """The atoms the compile dropped, with the stage that dropped them.
+
+    `CompileResult.suppressed_atoms` has recorded every one of these all
+    along -- each carries a ``suppressed:<stage>`` review flag -- and nothing
+    ever carried them to the envelope. So the pipeline knows exactly what it
+    threw away and the person who could say whether it was right never sees
+    it. On one live deal that is 4,591 atoms; on an email-heavy one, 1,203.
+
+    Every drop stage is the same question -- "should this have been kept?" --
+    so they travel under one shape with the stage as a field, rather than a
+    different surface per stage.
+
+    For a FOLD, the survivor matters as much as the casualty: "is this a
+    duplicate" is unanswerable without the thing it was supposedly a duplicate
+    of. Matched on normalised text, which is what the fold keyed on.
+
+    Opt-in via ``SOWSMITH_SUPPRESSED_IN_ENVELOPE=1``. A few hundred extra
+    atoms is not free, and only a labelling run needs them.
+    """
+    if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
+        return []
+    dropped = list(getattr(compile_result, "suppressed_atoms", None) or [])
+    if not dropped:
+        return []
+
+    def norm(atom) -> str:
+        text = getattr(atom, "raw_text", "") or getattr(atom, "text", "") or ""
+        return " ".join(text.split()).lower()
+
+    survivors: dict[str, Any] = {}
+    for atom in kept:
+        survivors.setdefault(norm(atom), atom)
+
+    out: list[dict] = []
+    for atom in dropped[:_SUPPRESSED_MAX]:
+        stage = ""
+        for flag in (getattr(atom, "review_flags", None) or []):
+            if str(flag).startswith("suppressed:"):
+                stage = str(flag).split(":", 1)[1]
+                break
+        survivor = survivors.get(norm(atom))
+        out.append({
+            "id": str(getattr(atom, "id", "") or ""),
+            "artifact_id": str(getattr(atom, "artifact_id", "") or ""),
+            "atom_type": getattr(getattr(atom, "atom_type", None), "value",
+                                 str(getattr(atom, "atom_type", "") or "")),
+            "text": (getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "")[:2000],
+            "stage": stage,
+            "entity_keys": [str(k) for k in (getattr(atom, "entity_keys", None) or [])],
+            # Present only when something with the same words survived -- that
+            # is what makes a fold judgeable.
+            "survivor": None if survivor is None else {
+                "id": str(getattr(survivor, "id", "") or ""),
+                "text": (getattr(survivor, "raw_text", "") or getattr(survivor, "text", "") or "")[:2000],
+            },
+        })
+    return out
 
 
 def build_orbitbrief_envelope(
@@ -471,6 +539,9 @@ def build_orbitbrief_envelope(
         "entities": [_compact_entity(e, atoms_by_artifact, atoms) for e in entities],
         "edges": [_compact_edge(edge) for edge in edges],
         "indexes": indexes,
+        # What the compile THREW AWAY, so a person can say whether it should
+        # have. See `_suppressed_for_review`.
+        "suppressed": _suppressed_for_review(compile_result, atoms),
         "coverage": {
             "unrecovered_regions": unrecovered_regions,
             # Line-level: what the parser read, dropped, or never touched.
