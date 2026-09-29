@@ -12,7 +12,22 @@ from app.core.schemas import AtomType
 from app.parsers.email_parser import EmailParser
 
 # 1x1 PNG
+#: A stand-in for a real inline screenshot. It is padded to a plausible size on
+#: purpose: the email OCR path now has a byte floor (`_OCR_MIN_BYTES`, 3000 —
+#: the same floor the PDF image path always had), because 51% of the images a
+#: real deal sends to billed OCR are under one kilobyte and are spacers, tracking
+#: pixels and social icons that cannot hold readable text.
+#:
+#: The unpadded 1x1 PNG these tests used is 70 bytes. Nothing that small has ever
+#: been a HubSpot order table, so a fixture that size was not exercising the path
+#: it claimed to. The tests monkeypatch the OCR call itself, so only the length
+#: matters here; the padding rides in a tEXt chunk's worth of trailing bytes.
 _TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+) + b"\x00" * 4096
+
+#: The unpadded original, for the test that pins the floor actually firing.
+_SPACER_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
@@ -791,3 +806,49 @@ def test_hardware_backfill_skips_transcript_prose_when_cid_equipment_present() -
     assert bom[0].value.get("sku") == "UBNT-ACCESS-G3-READER"
     assert bom[0].value.get("quantity") == 4
     assert bom[0].value.get("source") == "email_cid_equipment_line"
+
+
+def test_sub_kilobyte_inline_image_is_not_sent_to_ocr(monkeypatch):
+    """A spacer or a social icon must never reach billed OCR.
+
+    Measured on 010094 (forty emails): 434 inline images were sent to Azure
+    Document Intelligence and 225 of them -- 51% -- were under one kilobyte.
+    A 207-byte PNG cannot hold readable text at any resolution, so this is
+    arithmetic rather than a judgement about what the picture depicts.
+    """
+    from app.parsers import email_parser as ep
+
+    calls: list[int] = []
+
+    def _spy(payload, *, content_type=""):
+        calls.append(len(payload))
+        return "SHOULD NOT BE CALLED"
+
+    monkeypatch.setattr(ep, "_ocr_text_from_cid_inline", _spy)
+
+    spacer = {"payload": _SPACER_PNG, "is_image": True,
+              "content_type": "image/png", "text": "alt text survives"}
+    assert ep._ocr_cid_part(spacer) == "alt text survives"
+    assert calls == [], f"OCR was called on a {len(_SPACER_PNG)}-byte image"
+
+
+def test_real_sized_inline_image_still_reaches_ocr(monkeypatch):
+    """The floor must not cost recall on an image that could carry a table."""
+    from app.parsers import email_parser as ep
+
+    monkeypatch.setattr(ep, "_ocr_text_from_cid_inline",
+                        lambda payload, content_type="": "ORDER TABLE TEXT")
+    real = {"payload": b"\x89PNG" + b"\x00" * 60_000, "is_image": True,
+            "content_type": "image/png", "text": ""}
+    assert ep._ocr_cid_part(real) == "ORDER TABLE TEXT"
+
+
+def test_small_pdf_is_exempt_from_the_image_floor(monkeypatch):
+    """A small PDF is a page of text, not an icon -- the floor is image-only."""
+    from app.parsers import email_parser as ep
+
+    monkeypatch.setattr(ep, "_ocr_text_from_cid_inline",
+                        lambda payload, content_type="": "PAGE TEXT")
+    pdf = {"payload": b"%PDF-1.4" + b"\x00" * 400, "is_pdf": True,
+           "content_type": "application/pdf", "text": ""}
+    assert ep._ocr_cid_part(pdf) == "PAGE TEXT"
