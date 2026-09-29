@@ -131,6 +131,37 @@ REGISTRY: dict[str, Calibrated] = {
     # schematics are no longer accepted into Purpulse, and the gate had no
     # production caller (PDF page routing uses pdf.low_text_page /
     # pdf.text_rich_page, which remain deployed and receipted above).
+    "dedup.near_duplicate_ratio": Calibrated(
+        value=0.92,
+        used_at="app.core.entity_resolution.collapse_duplicate_atoms (fuzz.ratio score_cutoff)",
+        derivation=(
+            "Measured, and it barely matters. Across 6,467 candidate buckets "
+            "holding 9,214 atoms on live COPPER_001, sweeping the cutoff from "
+            "80 to 100 changes the outcome by 47 folds -- 1.7%: 2,738 folds at "
+            "80, 2,730 at 92, 2,691 at 100. Between 88 and 97 it moves FOUR. "
+            "2,691 of the 2,730 folds are exact-text matches that clear any "
+            "cutoff, so the bucket key (atom type + first eight normalised "
+            "tokens + the figures in the text) is doing the work and this "
+            "number is riding along. Recorded because a constant that looks "
+            "load-bearing and is not will otherwise be tuned in a crisis."
+        ),
+        corpus_n=9214,
+        derived="2026-09",
+        stale_when=(
+            "the bucket key changes -- widen it and this number starts "
+            "deciding real folds instead of a rounding error; or the scorer "
+            "stops being character edit distance, which is the wrong "
+            "instrument for 'same fact' and the reason a learned key, not a "
+            "learned score, is the upgrade here"
+        ),
+        notes=(
+            "Two invariants sit ABOVE this and are not thresholds: atoms that "
+            "state different numbers never fold (a bid date moved ten days "
+            "and 97% of the characters matched), and atoms with different "
+            "identities never fold (81 per-plate cable quantities were "
+            "deleted because two plates needed the same count)."
+        ),
+    ),
     "router.match_threshold": Calibrated(
         value=0.50,
         used_at="app.parsers.registry.MATCH_THRESHOLD",

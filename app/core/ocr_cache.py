@@ -138,6 +138,48 @@ class OcrCache:
             )
             self._conn.commit()
 
+    def export_rows(self, limit: int = 5000) -> list[dict[str, Any]]:
+        """This container's reads, as rows the blob mirror can carry.
+
+        `fetch_ml.py` downloads this file at boot and nothing ever uploaded it
+        back, so every cold start re-read every picture through a billed
+        service and got a fresh chance to read it differently. See
+        `app.core.cache_blob`.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT key, text, backend, confidence, extra FROM ocr LIMIT ?",
+                (int(limit),),
+            )
+            rows = cur.fetchall()
+        return [
+            {"key": k, "text": t, "backend": b, "confidence": c, "extra": e}
+            for (k, t, b, c, e) in rows
+        ]
+
+    def put_raw(self, *, key: str, text: str, backend: str = "",
+                confidence: float = 0.0, extra: Any = None) -> None:
+        """Insert a row by its KEY, for restoring a mirrored batch.
+
+        `put` hashes the image bytes; a restore has the key and not the bytes,
+        which is the whole point of a content-addressed cache -- the key is
+        enough. An empty read is still never stored.
+        """
+        if not key or not (text or "").strip():
+            return
+        if extra is not None and not isinstance(extra, str):
+            try:
+                extra = json.dumps(extra, ensure_ascii=False)
+            except Exception:
+                extra = None
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO ocr (key, text, backend, confidence, extra) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(key), text, str(backend or ""), float(confidence or 0.0), extra),
+            )
+            self._conn.commit()
+
     def count(self) -> int:
         with self._lock:
             return int(self._conn.execute("SELECT COUNT(*) FROM ocr").fetchone()[0])

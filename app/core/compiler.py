@@ -699,6 +699,18 @@ def compile_project(
     # Cross-container instant learning: pull PM corrections the SERVICE mirrored
     # to blob into this worker's live store so decide() honors them on THIS
     # compile. Gated + best-effort; no-op unless SOWSMITH_FEEDBACK_BLOB is on.
+    # Restore what earlier containers already read. `fetch_ml.py` downloads
+    # /tmp/ml at boot but nothing ever uploaded the OCR cache back, so every
+    # cold start re-read every picture through a billed service -- and got a
+    # fresh chance to read it differently, which is the determinism work
+    # stopping at the container boundary. Gated + best-effort.
+    try:
+        from app.core import cache_blob as _cb
+
+        _cb.sync_ocr_into_cache()
+    except Exception:  # pragma: no cover - a cache restore must never break a compile
+        pass
+
     try:
         from app.core import feedback_blob as _fb
         from app.core.decide import get_store as _get_store
@@ -3047,6 +3059,18 @@ def compile_project(
             project_id=result.project_id,
         )
     except Exception:
+        pass
+
+    # Mirror what this compile read, so the next container starts warm instead
+    # of re-paying Document Intelligence for pictures it has already read. One
+    # immutable blob per batch: three workers can run at once and none can
+    # overwrite another's entries. Gated on SOWSMITH_FEEDBACK_BLOB like the
+    # training-row and correction mirrors.
+    try:
+        from app.core import cache_blob as _cb
+
+        _cb.mirror_ocr()
+    except Exception:  # pragma: no cover - mirroring must never break a compile
         pass
 
     return result
