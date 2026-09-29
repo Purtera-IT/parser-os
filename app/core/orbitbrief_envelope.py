@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core.label_key import label_key as _label_key
 import re
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
@@ -155,6 +157,44 @@ def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, 
 _SUPPRESSED_MAX = int(os.environ.get("SOWSMITH_SUPPRESSED_MAX", "300"))
 
 
+def _emitted_by(atom) -> str:
+    """The most specific thing that claims to have produced this atom.
+
+    A label on a dropped atom is only worth the cost of making it if it can be
+    attributed to whatever produced the atom. Measured over one live deal, the
+    share of an emitter's output that a later stage deletes ranges from 0% to
+    100% -- `xlsx_block_raw_table_row` had 26 atoms kept and 241 deleted -- and
+    without this field none of that is visible to the person labelling.
+    """
+    for receipt in (getattr(atom, "receipts", None) or []):
+        name = str(getattr(receipt, "extractor_name", "") or "")
+        if name:
+            method = str(getattr(receipt, "extraction_method", "") or "")
+            return f"{name}:{method}" if method else name
+    for ref in (getattr(atom, "source_refs", None) or []):
+        name = str(getattr(ref, "extraction_method", "") or "")
+        if name:
+            return name
+    return ""
+
+
+def _where(atom) -> tuple[str, str]:
+    """(filename, page) for an atom, as `label_key` needs them."""
+    for ref in (getattr(atom, "source_refs", None) or []):
+        fname = str(getattr(ref, "filename", "") or "")
+        loc = getattr(ref, "locator", None) or {}
+        page = ""
+        if isinstance(loc, dict):
+            for key in ("page", "page_number", "sheet", "table_index"):
+                got = loc.get(key)
+                if got not in (None, ""):
+                    page = str(got)
+                    break
+        if fname:
+            return fname, page
+    return "", ""
+
+
 def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[dict]:
     """The atoms the compile dropped, with the stage that dropped them.
 
@@ -185,6 +225,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
         text = getattr(atom, "raw_text", "") or getattr(atom, "text", "") or ""
         return " ".join(text.split()).lower()
 
+    _deal_id = str(getattr(compile_result, "project_id", "") or "")
     survivors: dict[str, Any] = {}
     for atom in kept:
         survivors.setdefault(norm(atom), atom)
@@ -197,6 +238,15 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
                 stage = str(flag).split(":", 1)[1]
                 break
         survivor = survivors.get(norm(atom))
+        _fname, _page = _where(atom)
+        try:
+            _lkey = _label_key(
+                _deal_id, _fname,
+                _page or None,
+                getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "",
+            ) if _fname else ""
+        except Exception:
+            _lkey = ""
         out.append({
             "id": str(getattr(atom, "id", "") or ""),
             "artifact_id": str(getattr(atom, "artifact_id", "") or ""),
@@ -204,6 +254,17 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
                                  str(getattr(atom, "atom_type", "") or "")),
             "text": (getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "")[:2000],
             "stage": stage,
+            # Who made it, and a key that survives a reparse. Without the key a
+            # label is tied to this compile: `label_key` is
+            # sha256(deal | filename | page | text), three quarters location
+            # and one quarter the atom's own words, so it re-attaches on any
+            # later compile that still produces the atom. Dropped atoms had
+            # neither field, so a verdict on one could not be joined to
+            # anything afterwards.
+            "emitted_by": _emitted_by(atom),
+            "filename": _fname,
+            "page": _page,
+            "label_key": _lkey,
             "entity_keys": [str(k) for k in (getattr(atom, "entity_keys", None) or [])],
             # Present only when something with the same words survived -- that
             # is what makes a fold judgeable.
