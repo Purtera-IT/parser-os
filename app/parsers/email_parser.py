@@ -2360,7 +2360,13 @@ class EmailParser(BaseParser):
         else:
             targets = referenced or set(inline_parts.keys())
         ocr_by_cid: dict[str, str] = {}
-        for cid in targets:
+        # SORTED, because `targets` is a set and Python randomises string
+        # hashing per process. Iterating it raw emitted this email's OCR atoms
+        # -- and its unresolved-cid markers -- in a different order in every
+        # process, so the same file produced a different envelope reading order
+        # on each compile. Nothing in the in-process determinism harness could
+        # see it: one process shares one hash seed.
+        for cid in sorted(targets):
             part = inline_parts.get(cid)
             if not part:
                 if cid in referenced:

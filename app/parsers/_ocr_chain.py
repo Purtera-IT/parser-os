@@ -253,10 +253,49 @@ def _ocr_image_bytes(image_bytes: bytes, notes: list[str]) -> dict[str, Any]:
         hit = _OCR_CACHE.get(key)          # another thread may have filled it
         if hit is not None:
             return _reuse(hit)
+
+        # Then the PERSISTENT cache. The dict above dies with the container --
+        # minReplicas 0, 300s cooldown -- so without this every cold start
+        # re-reads every picture, and the text a picture produces is the
+        # atom's text and therefore its `label_key`. A gold label should not
+        # depend on which afternoon the page was read on.
+        disk = _persistent_get(image_bytes)
+        if disk is not None:
+            if len(_OCR_CACHE) < _OCR_CACHE_MAX:
+                _OCR_CACHE[key] = copy.deepcopy(disk)
+            return _reuse(disk)
+
         result = _ocr_image_bytes_uncached(image_bytes, notes)
         if len(_OCR_CACHE) < _OCR_CACHE_MAX:
             _OCR_CACHE[key] = copy.deepcopy(result)
+        _persistent_put(image_bytes, result)
     return result
+
+
+def _persistent_get(image_bytes: bytes) -> dict[str, Any] | None:
+    """A previous run's reading of this exact image, or None.
+
+    Best-effort in both directions: a cache that cannot be opened, read or
+    written must never be the reason an artifact fails to parse.
+    """
+    try:
+        from app.core.ocr_cache import get_cache
+
+        cache = get_cache()
+        return cache.get(image_bytes) if cache is not None else None
+    except Exception:  # pragma: no cover - a cache miss must never raise
+        return None
+
+
+def _persistent_put(image_bytes: bytes, result: dict[str, Any]) -> None:
+    try:
+        from app.core.ocr_cache import get_cache
+
+        cache = get_cache()
+        if cache is not None:
+            cache.put(image_bytes, result)
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _ocr_image_bytes_uncached(image_bytes: bytes, notes: list[str]) -> dict[str, Any]:
