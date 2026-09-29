@@ -28,7 +28,7 @@ import threading as _threading
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-_PROTO_CACHE: dict[str, object] = {}
+_PROTO_CACHE: dict[str, object] = {}  # rule-name -> (pos_matrix, neg_matrix)
 
 #: ONE backend verdict per compile, not one per rule evaluation.
 #:
@@ -76,7 +76,6 @@ def semantic_backend_available() -> bool:
                 _BACKEND_VERDICT = False
         return _BACKEND_VERDICT
 
-  # rule-name -> (pos_matrix, neg_matrix)
 
 # Longest candidate worth pre-embedding. Rules judge LINES (headings, lead-ins,
 # labels); a multi-KB prose blob is never a rule candidate and would only bloat
