@@ -160,6 +160,13 @@ This is the shared header path, so `.xlsx` and `.csv` get it too, not just the
 legacy formats. The legacy bridge itself was never the cost: converting
 `.xls` to `.xlsx` through calamine takes **0.65s**.
 
+On the **82.6s** figure for this sheet from earlier in the session: it did not
+reproduce. Profiled on its own the parse was **14.25s**, and it is 3.29s now.
+I do not know what the 82.6s measured -- a loaded machine, a cold run, or time
+that included the blob download -- so treat the 82.6s as unexplained rather
+than as the before-number for this fix. The honest claim is the one the sha256
+comparison supports: same atoms, 3.6x less time.
+
 ### 2.3 OCR
 
 `_ocr_cid_part` OCRs every inline image when the body references no CID,
