@@ -232,3 +232,104 @@ whitespace-exact text comparison. Every one was caught by a second signal
 disagreeing with the first. **When two measurements disagree, neither is
 evidence until the disagreement is explained** — and in this pass the
 instrument was wrong four times out of five, not the code.
+
+---
+
+# The full pass — all eleven stages, three deals
+
+Run as one compile per deal with every stage watched, because one deal cannot
+tell a dead stage from an inapplicable one.
+
+| stage | ran | suppressed | text gone | figures gone |
+|---|---|---|---|---|
+| `quoted_history_dedup` | 3 | 1,486 | 235 | 21 |
+| `duplicate_atom_collapse` | 3 | 639 | 16 | 10 |
+| `execution_boilerplate_drop` | 3 | 15 | 15 | 0 |
+| the other eight | 3 | **0** | 0 | 0 |
+
+**Only three of eleven stages ever remove an atom.** The rest verify
+(`source_replay`), flag without dropping (`confidence_floor`), add
+(`prose_list_split`), restructure (`email_threading`, `table_rollup`), or had
+nothing to act on (`candidate_adjudication` received 0 atoms on all three
+deals, `pasted_note_dedup` and `supply_conflicts` dropped nothing).
+
+## `quoted_history_dedup` — correct, and it took three tries to prove it
+
+It removes HALF the atoms in a mail-heavy deal, so it deserved the scrutiny.
+
+On 010237 it drops **103 of 112 `quoted_message_header` atoms**, and ten
+distinct `sent_at` values appear on no surviving atom — including
+`Thursday, August 6, 2026 10:23 AM`, the customer answer that mattered on that
+deal. That looked like the loss of *when a quoted message was sent*, which
+would break as-of compiles and take the "when" out of "who said what when".
+
+It is not. Every one of those dates survives on
+``value.email_thread.date``, which travels with every atom in the thread
+alongside ``sender``, ``in_reply_to``, ``replied_to`` and ``answered_by``. The
+probe was reading ``value.sent_at`` on the atom — the wrong field.
+
+The stage's own key is ``(sender_address, minute_stamp)`` and it drops a quoted
+header only when the original message is in the deal or an earlier quoted copy
+was already kept. Its comment states the rule exactly: *a quoted routing atom
+exists so attribution survives when the original is missing; when the original
+is right here it is pure repetition.* **No change needed.**
+
+## The 0.92 that turned out not to matter
+
+Dedup's near-duplicate cutoff is the most-cited magic number in the phase.
+Measured across 6,467 candidate buckets holding 9,214 atoms:
+
+| cutoff | folds |
+|---|---|
+| 80 | 2,738 |
+| 90 | 2,730 |
+| **92 (shipped)** | **2,730** |
+| 95 | 2,729 |
+| 100 | 2,691 |
+
+Moving it from 80 to 100 changes the outcome by **47 folds — 1.7%**. Between
+88 and 97 it moves **four**. The number is not load-bearing: the bucket key
+(type + first eight tokens + the figures) does the work, and 2,691 of the 2,730
+folds are exact-text matches that need no threshold at all.
+
+That reframes the head question for this stage. A better similarity SCORE has
+almost nothing to win here, because scoring is not what decides. If dedup is
+ever learned, the thing to learn is the **key** — what makes two atoms the
+same fact — not the distance between two strings.
+
+## What the constants ledger already knows
+
+`app/core/calibration.py` is a self-deriving registry: each constant carries
+its derivation, the corpus size behind it, what makes it stale, and often a
+`re_derive` that recomputes its bounds as the corpus grows. Six constants are
+registered.
+
+None of phase 2's are: `LOW_CONFIDENCE_FLOOR = 0.50`, dedup's `0.92`,
+`max_reps`, the eight-token bucket. The registry's own rule is *"Small is fine;
+hidden is not."* The 0.92 measurement above is the kind of evidence an entry
+needs — and it says the honest entry would record that the number barely
+matters.
+
+---
+
+# On the instrument
+
+Six times in this audit a measurement of mine produced a finding that did not
+survive checking:
+
+1. `cat6_utp` "regression" — a stale 118 MB artifact cache in my working tree
+2. the commit bisect — worktrees with 664 of 1,233 files, reused path
+3. 20 `quantity` + 20 `unit` fold losses — pairing looser than the stage's key
+4. 59 text losses — exact-string compare against a double space
+5. `pre_classify_dedup` "drops 2" — the function is called twice; I kept the
+   last call
+6. ten message dates "lost" — read `value.sent_at`, the date is on
+   `value.email_thread.date`
+
+Each was caught because a second signal disagreed with the first. **When two
+measurements disagree, neither is evidence until the disagreement is
+explained.**
+
+The three real defects survived that same scrutiny, each corroborated
+independently: folds dropping by exactly 81, number-differing folds going
+39 → 0, and receipts hashing identical across a 2.12x speedup.
