@@ -84,7 +84,9 @@ re-opens the document "to keep fitz state isolated from the outer page-loop"
 -- but nothing isolated one artifact from another.
 
 Fixed by serialising PDF parses (`app/parsers/_pdf_lock.py`). Every other
-artifact type still parses in parallel.
+artifact type still parses in parallel, and the corpus says that is nearly all
+of it -- 361 PDFs against 60,642 emails, 662 `.docx` and 559 `.xlsx`. The lock
+covers 0.6% of the artifacts and the other 99.4% keep their overlap.
 
 ### 1.4 Proof
 
@@ -166,6 +168,12 @@ What it costs is handled by two guards instead:
 |---|---|---|---|
 | `.xls` | 1 atom | **4,114 atoms** | CDW pricing sheet: materials, labour, riser breakdown |
 | `.dotx` | 0 atoms | **45 atoms** | TV Install Change Order -- scope and money |
+
+Live corpus counts: 5 `.xls` and 2 `.dotx`. `.xlsb`, `.ods`, `.odt` and `.dotm`
+do not appear at all today, so the bridges cover them defensively rather than
+actively -- and note that a `.ods` would currently be claimed by the existing
+`OdsParser` at 0.95 before the calamine bridge is asked at 0.58. That ordering
+only needs revisiting if one ever arrives.
 
 Both are bridges, not new parsers: convert the unreadable container into the
 readable one and hand it to code that is already tested.
