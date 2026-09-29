@@ -237,3 +237,26 @@ PDF currently pays its Document Intelligence round trips inside the lock.
 Rasterising the page under the lock and OCRing the bytes outside it would give
 scanned PDFs the same overlap every other artifact type already has. It does
 not change any of the correctness reasoning above.
+
+---
+
+## 8. Library upgrades available, deliberately NOT taken
+
+Each of these changes how a file is read, so each needs its own impact run
+(`_tools/_label_impact.py` on both trees, plus a sha256 comparison of every
+atom). I did not take them overnight, because "the parser reads this document
+differently now" is exactly the change that must be looked at before it ships.
+
+| package | installed | available | why it matters |
+|---|---|---|---|
+| PyMuPDF | 1.27.2.3 | 1.28.2 | moves PDF text extraction across the whole corpus |
+| extract-msg | 0.55.0 | 0.56.1 | `.msg` bodies and attachments |
+| openpyxl | 3.1.2 | 3.1.5 | patch-level, lowest risk of the four |
+| lxml | 6.0.2 | 6.1.3 | HTML email bodies |
+| beautifulsoup4 | 4.12.3 | 4.15.0 | HTML email bodies |
+
+PyMuPDF also prints a standing hint on every PDF: *"Consider using the
+pymupdf_layout package for a greatly improved page layout analysis."* That is
+a different extraction strategy rather than a version bump, and the PDFs are
+where the scope lives, so it is worth evaluating properly -- on the gold-label
+corpus, not on a sample.
