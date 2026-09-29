@@ -60,6 +60,13 @@ class EmbeddingCache:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
+        #: Keys this PROCESS computed, so the blob mirror uploads new work
+        #: instead of re-sending the whole file. A warmed cache reaches
+        #: gigabytes; re-uploading it every compile would cost more than the
+        #: embeddings it saves. Restores deliberately do not land here --
+        #: re-uploading what was just downloaded is the same waste wearing a
+        #: different hat.
+        self._fresh: set[str] = set()
         path.parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False: embed_texts may touch the cache from worker
         # threads; the lock below serializes all access.
@@ -108,6 +115,56 @@ class EmbeddingCache:
                 rows,
             )
             self._conn.commit()
+            self._fresh.update(r[0] for r in rows)
+
+    def export_fresh_rows(self, limit: int = 4000) -> list[dict]:
+        """Vectors this process computed, as rows the blob mirror can carry.
+
+        Only what is NEW. `fetch_ml.py` downloads this file at boot and
+        nothing ever uploaded it back, so the cache held whatever was last
+        put there by hand and every compile re-embedded lines it had embedded
+        a hundred times before -- paying Azure twice and, when the endpoint
+        blinked, reading the deal differently.
+        """
+        with self._lock:
+            keys = list(self._fresh)[:int(limit)]
+            if not keys:
+                return []
+            out: list[dict] = []
+            for start in range(0, len(keys), 500):
+                chunk = keys[start:start + 500]
+                ph = ",".join("?" * len(chunk))
+                cur = self._conn.execute(
+                    f"SELECT key, dim, vec FROM embeddings WHERE key IN ({ph})", chunk
+                )
+                for k, dim, blob in cur.fetchall():
+                    out.append({"key": k, "dim": int(dim), "vec": bytes(blob)})
+            return out
+
+    def put_raw_rows(self, rows: list[dict]) -> int:
+        """Restore mirrored vectors by KEY. Returns how many landed.
+
+        The key is sha256(model || text), so a restored vector is the same
+        vector the endpoint would return -- which is what makes re-merging a
+        no-op rather than a conflict. Restored keys are NOT marked fresh.
+        """
+        good = []
+        for row in rows:
+            key = str(row.get("key") or "")
+            vec = row.get("vec")
+            dim = row.get("dim")
+            if not key or not isinstance(vec, (bytes, bytearray)) or not dim:
+                continue
+            good.append((key, int(dim), bytes(vec)))
+        if not good:
+            return 0
+        with self._lock:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO embeddings (key, dim, vec) VALUES (?, ?, ?)",
+                good,
+            )
+            self._conn.commit()
+        return len(good)
 
     def count(self) -> int:
         with self._lock:

@@ -37,8 +37,13 @@ from app.core import ollama_host
 
 logger = logging.getLogger(__name__)
 
+import app.core.ollama_host as _ollama_host
 
-_DEFAULT_HOST = "http://100.114.102.122:11434"
+# The one definition lives in `ollama_host`. Seven modules each kept their
+# own copy of this address, which is seven things to miss when it moves --
+# and the deployed worker has already moved on: it sets OLLAMA_HOST to an
+# Azure proxy, so this is a local-dev last resort, not what runs.
+_DEFAULT_HOST = _ollama_host.FALLBACK_HOST
 _DEFAULT_VISION_MODEL = "qwen2.5vl:7b"
 
 

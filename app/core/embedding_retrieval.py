@@ -49,7 +49,13 @@ logger = logging.getLogger(__name__)
 # OLLAMA EMBEDDING CONFIG
 # ────────────────────────────────────────────────────────────────────
 
-_DEFAULT_HOST = "http://100.114.102.122:11434"
+import app.core.ollama_host as _ollama_host
+
+# The one definition lives in `ollama_host`. Seven modules each kept their
+# own copy of this address, which is seven things to miss when it moves --
+# and the deployed worker has already moved on: it sets OLLAMA_HOST to an
+# Azure proxy, so this is a local-dev last resort, not what runs.
+_DEFAULT_HOST = _ollama_host.FALLBACK_HOST
 _DEFAULT_MODEL = "qwen3-embedding:8b"
 _DEFAULT_DIM = 4096  # qwen3-embedding:8b native dim; only used when no embed succeeds
 _DEFAULT_TIMEOUT = 180  # was 60 — give a cold model load (after an idle unload /

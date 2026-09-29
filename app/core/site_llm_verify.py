@@ -36,7 +36,13 @@ import urllib.request
 from typing import Any
 from app.core import ollama_host
 
-DEFAULT_HOST = "http://100.114.102.122:11434"
+import app.core.ollama_host as _ollama_host
+
+# The one definition lives in `ollama_host`. Seven modules each kept their
+# own copy of this address, which is seven things to miss when it moves --
+# and the deployed worker has already moved on: it sets OLLAMA_HOST to an
+# Azure proxy, so this is a local-dev last resort, not what runs.
+DEFAULT_HOST = _ollama_host.FALLBACK_HOST
 # qwen3:14b is the speed/quality sweet spot. The strict prompt +
 # Python hygiene filter compensate for the 14b model being a step
 # down from 32b. For maximum quality at ~3× the latency, set

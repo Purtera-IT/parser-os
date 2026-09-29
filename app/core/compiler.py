@@ -708,6 +708,7 @@ def compile_project(
         from app.core import cache_blob as _cb
 
         _cb.sync_ocr_into_cache()
+        _cb.sync_embed_into_cache()
     except Exception:  # pragma: no cover - a cache restore must never break a compile
         pass
 
@@ -1257,6 +1258,26 @@ def compile_project(
             f"{type(_vp_exc).__name__}: {_vp_exc}"
         )
 
+    # NOTHING FEEDS THIS LANE, and that is worth saying out loud.
+    #
+    # `CandidateAtom` is constructed in exactly two places: a sandbox
+    # experiment, and `candidates.candidate_from_evidence_atom`, whose only
+    # callers are tests. No parser sets `ParserOutput.candidates`. So this
+    # adjudicates an empty set on every compile -- 0 atoms in, 0.03ms, on
+    # every deal measured.
+    #
+    # The cost is not the 0.03ms, it is downstream:
+    # `active_learning.build_review_queue` reads `rejected_candidates` and
+    # `candidates` alongside `packets`, so TWO of its three inputs are
+    # structurally empty. The queue works off packets and is degraded, not
+    # broken -- but nothing said so, which is how a switched-off feature gets
+    # mistaken for a working one.
+    #
+    # Left in place deliberately rather than deleted. The design is sound (a
+    # parser proposes, an adjudicator accepts or rejects) and the `suppression`
+    # head now surfaces the same class of decision with more context -- what
+    # was dropped, by which stage, and what it was folded INTO. Feed this lane
+    # only if that turns out not to be enough; do not feed it by reflex.
     with telemetry.stage("candidate_adjudication", input_count=len(candidates)) as stage:
         adjudication = adjudicate_candidates(candidates, artifact_paths)
         atoms.extend(adjudication.accepted_atoms)
@@ -3070,6 +3091,7 @@ def compile_project(
         from app.core import cache_blob as _cb
 
         _cb.mirror_ocr()
+        _cb.mirror_embed()
     except Exception:  # pragma: no cover - mirroring must never break a compile
         pass
 

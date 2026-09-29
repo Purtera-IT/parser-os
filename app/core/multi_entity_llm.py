@@ -46,7 +46,13 @@ import urllib.request
 from typing import Any, Callable
 from app.core import ollama_host
 
-DEFAULT_HOST = "http://100.114.102.122:11434"
+import app.core.ollama_host as _ollama_host
+
+# The one definition lives in `ollama_host`. Seven modules each kept their
+# own copy of this address, which is seven things to miss when it moves --
+# and the deployed worker has already moved on: it sets OLLAMA_HOST to an
+# Azure proxy, so this is a local-dev last resort, not what runs.
+DEFAULT_HOST = _ollama_host.FALLBACK_HOST
 DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_TIMEOUT = 360  # v44.4: bumped from 240s — ollama on Mac queues
 # v55: bumped 3→8. LLM calls are I/O-bound; even when Mac Ollama

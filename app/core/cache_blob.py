@@ -197,3 +197,60 @@ def mirror_ocr(limit: int = 5000) -> bool:
     """Upload what this container has read. Called at the end of a compile."""
     rows = export_ocr_rows(limit=limit)
     return upload_rows(OCR, rows) if rows else False
+
+
+# ---- embeddings -------------------------------------------------------------
+#
+# The larger of the two by volume: OCR sees a handful of pictures per deal,
+# the embedder sees every candidate line of every rule. A warmed cache reaches
+# gigabytes, so this mirrors only what the PROCESS computed rather than the
+# whole file -- re-uploading a warm cache would cost more than the embeddings
+# it saves.
+
+
+def sync_embed_into_cache() -> int:
+    """Merge every mirrored embedding batch into the local cache.
+
+    Safe to run repeatedly: the key is sha256(model || text), so a restored
+    vector is the one the endpoint would have returned. The model is IN the
+    key, so swapping embed models can never hand back a stale vector of the
+    wrong dimensionality -- it simply misses and re-embeds.
+    """
+    cc = _container_client()
+    if cc is None:
+        return 0
+    try:
+        from app.core.embedding_cache import get_cache
+    except Exception:
+        return 0
+    cache = get_cache()
+    if cache is None:
+        return 0
+    n = 0
+    for rows in _iter_batches(cc, EMBED):
+        try:
+            n += cache.put_raw_rows(rows)
+        except Exception:
+            continue
+    return n
+
+
+def export_embed_rows(limit: int = 4000) -> list[dict]:
+    """The vectors this process computed."""
+    try:
+        from app.core.embedding_cache import get_cache
+    except Exception:
+        return []
+    cache = get_cache()
+    if cache is None:
+        return []
+    try:
+        return cache.export_fresh_rows(limit=limit)
+    except Exception:
+        return []
+
+
+def mirror_embed(limit: int = 4000) -> bool:
+    """Upload what this compile embedded. Called at the end of a compile."""
+    rows = export_embed_rows(limit=limit)
+    return upload_rows(EMBED, rows) if rows else False
