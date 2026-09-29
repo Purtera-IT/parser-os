@@ -56,7 +56,7 @@ from app.parsers.structured_projection import (
 from app.domain.schemas import DomainPack
 
 parser_name = "xlsx"
-parser_version = "xlsx_parser_v2_1"
+parser_version = "xlsx_parser_v2_2"
 
 # Consumed by parser-os-service `_attachments_status` after compile.
 ARTIFACT_PARSE_ERROR_PREFIX = "artifact_parse_error:"

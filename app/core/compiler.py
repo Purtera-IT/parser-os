@@ -628,6 +628,40 @@ def _parser_code_fingerprint() -> str:
     return h.hexdigest()[:12]
 
 
+
+def _attach_rule_decisions(atoms: "list[Any]") -> int:
+    """Put each atom's SemanticRule decisions into ``value["rule_decisions"]``.
+
+    Matched on the exact text the rule was asked about. A rule judges a LINE,
+    and an atom is usually that line, so an exact match is the honest join --
+    a fuzzy one would attribute a decision to text it was never made about.
+    Atoms with no matching decision simply get nothing.
+
+    Never raises: a labelling aid must not be able to fail a compile.
+    """
+    try:
+        from app.core.semantic_rules import decisions_enabled, decisions_for
+
+        if not decisions_enabled():
+            return 0
+        attached = 0
+        for atom in atoms:
+            text = (getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "").strip()
+            if not text:
+                continue
+            found = decisions_for(text)
+            if not found:
+                continue
+            value = getattr(atom, "value", None)
+            if not isinstance(value, dict):
+                continue
+            value["rule_decisions"] = found
+            attached += 1
+        return attached
+    except Exception:  # pragma: no cover - never break a compile over this
+        return 0
+
+
 def compile_project(
     project_dir: Path,
     project_id: str | None = None,
@@ -650,9 +684,12 @@ def compile_project(
     # no for the next, so a deal reads differently depending on which files
     # happened to be in flight -- see `semantic_rules.semantic_backend_available`.
     try:
-        from app.core.semantic_rules import reset_semantic_backend
+        from app.core.semantic_rules import reset_decisions, reset_semantic_backend
 
         reset_semantic_backend()
+        # And forget the previous compile's rule decisions, so what the
+        # labelling UI shows belongs to THIS run.
+        reset_decisions()
     except Exception:  # pragma: no cover - never break a compile over this
         pass
 
@@ -1001,6 +1038,15 @@ def compile_project(
                 )
             )
         warnings.extend(parse_warnings)
+        # Hang each rule's decision on the atom whose text it judged, so the
+        # labelling UI can show WHY an atom came out the way it did and a
+        # person can say whether the rule was right. Half of these decisions
+        # land within 0.08 of a hand-tuned threshold, and nothing else carries
+        # them off the box that ran the compile.
+        #
+        # Opt-in (`SOWSMITH_RULE_DECISIONS=1`): a normal compile does no work
+        # here and no envelope grows.
+        _attach_rule_decisions(atoms)
         # The loop is done; later stages are not per-file, so stop naming one.
         telemetry.set_stage_item("")
         telemetry.end_stage(

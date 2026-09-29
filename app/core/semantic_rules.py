@@ -162,6 +162,64 @@ def _trained_threshold(name: str, default: float) -> float:
     return default
 
 
+
+#: WHAT EACH RULE DECIDED, so a person can judge it.
+#:
+#: `_log_decision` already writes every decision to `SOWSMITH_RULE_LOG`, but
+#: that is a file on whichever box ran the compile. Nothing carries it to the
+#: envelope, so the labelling UI has nothing to show and the thresholds -- half
+#: of whose decisions land within 0.08 of the boundary -- cannot be judged by
+#: the person best placed to judge them.
+#:
+#: This keeps the same records in memory, keyed by the exact text the rule was
+#: asked about, so the compiler can hang them on the atom that text became.
+#: Off unless `SOWSMITH_RULE_DECISIONS=1`, so a normal compile pays nothing and
+#: no envelope grows.
+_DECISIONS_LOCK = _threading.Lock()
+_DECISIONS: dict[str, list[dict]] = {}
+
+
+def decisions_enabled() -> bool:
+    return os.environ.get("SOWSMITH_RULE_DECISIONS", "").strip() == "1"
+
+
+def reset_decisions() -> None:
+    """Forget the previous compile's decisions."""
+    with _DECISIONS_LOCK:
+        _DECISIONS.clear()
+
+
+def decisions_for(text: str) -> list[dict]:
+    """Every rule decision made about this exact text."""
+    if not text:
+        return []
+    with _DECISIONS_LOCK:
+        return [dict(d) for d in _DECISIONS.get(text.strip(), ())]
+
+
+def _record_decision(name: str, text: str, best_pos: float, best_neg: float,
+                     threshold: float, decision: bool) -> None:
+    if not decisions_enabled():
+        return
+    key = (text or "").strip()
+    if not key:
+        return
+    rec = {
+        "rule": name,
+        "fired": bool(decision),
+        "best_pos": round(float(best_pos), 4),
+        "best_neg": round(float(best_neg), 4),
+        "threshold": round(float(threshold), 4),
+        # How close the call was. The labelling queue is ranked on this,
+        # because a decision that was never in doubt teaches nothing.
+        "margin": round(abs(float(best_pos) - float(threshold)), 4),
+    }
+    with _DECISIONS_LOCK:
+        bucket = _DECISIONS.setdefault(key, [])
+        if not any(b["rule"] == name for b in bucket):
+            bucket.append(rec)
+
+
 def _log_decision(name: str, text: str, best_pos: float, best_neg: float,
                   threshold: float, decision: bool) -> None:
     """Append one rule decision to the feedback log (JSONL) when
@@ -286,6 +344,7 @@ class SemanticRule:
             # log the decision (+ its scores) for the feedback/training loop —
             # no-op unless SOWSMITH_RULE_LOG is set, so prod pays nothing.
             _log_decision(self.name, text, best_pos, best_neg, self.threshold, decision)
+            _record_decision(self.name, text, best_pos, best_neg, self.threshold, decision)
             return decision
         except Exception:
             return self._lexical(text)

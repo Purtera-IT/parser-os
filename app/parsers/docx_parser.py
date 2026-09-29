@@ -185,7 +185,7 @@ class DocxParser(BaseParser):
     _table_lead_in = PerThreadState()
 
     parser_name = "docx"
-    parser_version = "docx_parser_v1"
+    parser_version = "docx_parser_v2"
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,

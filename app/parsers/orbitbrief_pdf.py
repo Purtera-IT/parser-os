@@ -177,7 +177,7 @@ from app.parsers.pdf.images import (  # noqa: E402
 
 
 PARSER_NAME = "orbitbrief_pdf"
-PARSER_VERSION = "orbitbrief_pdf_v3"
+PARSER_VERSION = "orbitbrief_pdf_v4"
 STRUCTURED_SCHEMA_VERSION = "orbitbrief.pdf.structured.v1"
 DERIVED_DIR_SUFFIX = ".derived"
 STRUCTURED_FILENAME = "structured.json"

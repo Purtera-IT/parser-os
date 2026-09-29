@@ -1795,7 +1795,7 @@ def _stakeholder_keys(slug: str) -> list[str]:
 
 class EmailParser(BaseParser):
     parser_name = "email"
-    parser_version = "email_parser_v1"
+    parser_version = "email_parser_v2"
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,
