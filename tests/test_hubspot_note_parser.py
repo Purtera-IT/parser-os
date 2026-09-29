@@ -181,7 +181,16 @@ def test_note_provenance_backfill_remints_address_note_as_physical_site(tmp_path
     assert site.value["state"] == "FL"
     assert site.value["zip"] == "33602"
     assert "hubspot_note_physical_site" in site.review_flags
-    assert "site:tampa_fl_33602" in site.entity_keys
+    # The key names the BUILDING, not the postal area it stands in.
+    #
+    # This asserted `site:tampa_fl_33602`, which is a ZIP code: every building
+    # in downtown Tampa would key to it, and the next deal on a different
+    # Ashley Drive address would merge into this site rather than become its
+    # own. Live 010288 shipped `site:bethesda_md_20814` for "Nesfield
+    # Performance Bethesda, 7832 Wisconsin Ave" -- the facility name and the
+    # street both discarded by the line that had them in hand.
+    assert "site:100_south_ashley_drive_suite_500_tampa_fl" in site.entity_keys
+    assert site.value["zip"] == "33602"   # still carried, just not the identity
 
 
 def test_note_provenance_remints_site_when_deal_metadata_remains(tmp_path: Path) -> None:

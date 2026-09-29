@@ -315,6 +315,9 @@ PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
         # "106 workstations drawn" belongs beside the sentence that asserts
         # 106, as the check on it, not in place of it.
         AtomType.derived_finding,
+        # Where the deal stands is not scope. A packet is what we will
+        # DO; deal_state is whether we are ready to say so.
+        AtomType.deal_state,
         # Schematic atoms — surfaced via the drawing/legend views.
         AtomType.schematic_legend,
         AtomType.schematic_detection_target_set,

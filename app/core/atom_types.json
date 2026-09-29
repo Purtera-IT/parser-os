@@ -135,6 +135,17 @@
       "asks_supplier": false
     },
     {
+      "name": "deal_state",
+      "coarse": "meta",
+      "facet": "META",
+      "desc": "Where the deal stands, derived from its own sentences rather than written by anyone: the step it waits on, who owns that step, and whether its price has been checked against the site. Consolidates the coordination traffic -- scheduling, acknowledgements, chasing -- that moves a deal but never reaches a SOW.",
+      "label_space": "head",
+      "status": "live",
+      "value_light": false,
+      "train_rows": 0,
+      "asks_supplier": false
+    },
+    {
       "name": "service_line",
       "coarse": "commercial",
       "facet": "COMMERCIAL",

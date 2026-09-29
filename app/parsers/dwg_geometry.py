@@ -114,7 +114,8 @@ def feet_per_unit(doc: Any) -> float | None:
 SAME_PLAN_FT = 400.0
 
 
-def one_plan(points: list[Tag], origin: Tag, reach_ft: float = SAME_PLAN_FT) -> list[Tag]:
+def one_plan(points: list[Tag], origin: Tag, ft_per_unit: float,
+             reach_ft: float = SAME_PLAN_FT) -> list[Tag]:
     """Only the points belonging to the SAME drawing as ``origin``.
 
     Model space is not one plan. SP-6 stacks a legend, a test-fit key, the
@@ -132,15 +133,20 @@ def one_plan(points: list[Tag], origin: Tag, reach_ft: float = SAME_PLAN_FT) -> 
     while changed:
         changed = False
         for p in list(pool):
-            if any(abs(p.x - q.x) + abs(p.y - q.y) <= reach_ft / _FT_PER_UNIT_HINT[0]
+            if any(abs(p.x - q.x) + abs(p.y - q.y) <= reach_ft / ft_per_unit
                    for q in taken):
                 taken.append(p); pool.remove(p); changed = True
     return taken
 
 
-#: Set by `cable_reach` so `one_plan` can work in drawing units. A list so the
-#: value is shared without a global statement.
-_FT_PER_UNIT_HINT = [1.0]
+#: There is deliberately no module-level place to stash the units.
+#:
+#: There was: a one-element list, set by `cable_reach` before it called
+#: `one_plan`. It reads as a harmless trick and it is a correctness bug the
+#: moment two drawings are parsed at once -- the second overwrites the first's
+#: scale mid-measurement, and the distances come out wrong SILENTLY, which is
+#: the worst way for a measurement to be wrong. The units are a property of
+#: one drawing, so they travel as an argument.
 
 
 def cable_reach(tags: list[Tag], ft_per_unit: float | None) -> Reach | None:
@@ -157,8 +163,7 @@ def cable_reach(tags: list[Tag], ft_per_unit: float | None) -> Reach | None:
         return None
 
     # Measure inside ONE drawing. See `one_plan`.
-    _FT_PER_UNIT_HINT[0] = ft_per_unit
-    tags = one_plan(tags, closet)
+    tags = one_plan(tags, closet, ft_per_unit)
 
     ranked: list[tuple[str, float, float]] = []
     for t in tags:
@@ -328,11 +333,10 @@ def count_plans(tags: list[Tag], ft_per_unit: float | None) -> int:
     """
     if not tags or not ft_per_unit:
         return 1
-    _FT_PER_UNIT_HINT[0] = ft_per_unit
     remaining = list(tags)
     n = 0
     while remaining:
-        group = one_plan(remaining, remaining[0])
+        group = one_plan(remaining, remaining[0], ft_per_unit)
         ids = {id(g) for g in group}
         remaining = [t for t in remaining if id(t) not in ids]
         n += 1

@@ -25,6 +25,17 @@ from app.core.schemas import (
     ParserCapability,
     ParserMatch,
 )
+from app.core.sheet_profile import (
+    has_header,
+    header_index,
+    is_bulk_export,
+    observe,
+    profile_grid,
+    supplies,
+    supply_observations,
+    subset_question,
+    which_site_list,
+)
 from app.parsers.base import BaseParser
 from app.parsers.binary_markers import emit_zip_binary_markers
 from app.parsers.segmenters import segment_xlsx
@@ -1786,36 +1797,93 @@ class XlsxParser(BaseParser):
         return f"{tabular}_read_error"
 
     @staticmethod
-    def _hidden_dims(path: Path) -> dict[str, tuple[set[int], set[int]]]:
-        """Map sheet title -> (hidden 0-based column indices, hidden 0-based row
-        indices). Author-hidden columns/rows in a deal spreadsheet are helper /
-        formula scaffolding — multipliers, lookup helpers, intermediate math —
-        not deal content (e.g. a Gantt's "Country Multiplier", "Sell Helper",
-        "Cost Helper"). They must not become atoms. Read from a non-read_only
-        load because read_only worksheets don't expose column/row dimensions."""
-        out: dict[str, tuple[set[int], set[int]]] = {}
-        try:
-            wb = load_workbook(path, read_only=False, data_only=True)
-        except Exception:
-            return out
-        try:
-            from openpyxl.utils import column_index_from_string
+    def _hidden_dims(
+        path: Path, wanted: set[str] | None = None
+    ) -> dict[str, tuple[set[int], set[int]]]:
+        """Map sheet title -> (hidden 0-based column indices, hidden 0-based
+        row indices). Author-hidden columns/rows in a deal spreadsheet are
+        helper / formula scaffolding -- multipliers, lookup helpers,
+        intermediate math -- not deal content (e.g. a Gantt's "Country
+        Multiplier", "Sell Helper", "Cost Helper"). They must not become
+        atoms.
 
-            for ws in wb.worksheets:
-                hc = {
-                    column_index_from_string(c) - 1
-                    for c, d in ws.column_dimensions.items()
-                    if d.hidden
+        Read from the sheet markup rather than through a non-read_only
+        ``load_workbook``. Both answer the same question, but the load builds
+        a Python object for every cell in the file in order to reach two
+        attributes on the row and column dimensions: on a 12.8 MB inventory
+        workbook that cost 25 seconds. Hidden-ness is one attribute in the
+        markup, and the ``<cols>`` block sits above ``<sheetData>``, so the
+        columns are answered without reading any rows.
+
+        ``wanted`` limits it to the sheets whose rows will actually become
+        atoms -- nothing else has anything for a hidden flag to mark.
+        """
+        out: dict[str, tuple[set[int], set[int]]] = {}
+        if wanted is not None and not wanted:
+            return out
+        try:
+            import re as _re
+            import zipfile
+            from xml.etree import ElementTree as _ET
+
+            NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+            RID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            PR = "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+            HIDDEN = (b'hidden="1"', b"hidden='1'", b'hidden="true"')
+
+            with zipfile.ZipFile(path) as zf:
+                book = _ET.fromstring(zf.read("xl/workbook.xml"))
+                rels = {
+                    r.get("Id"): (r.get("Target") or "")
+                    for r in _ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+                    if r.tag == PR
                 }
-                hr = {i - 1 for i, d in ws.row_dimensions.items() if d.hidden}
-                out[ws.title] = (hc, hr)
+                members = set(zf.namelist())
+                for sh in book.iter(f"{NS}sheet"):
+                    title = sh.get("name") or ""
+                    if wanted is not None and title not in wanted:
+                        continue
+                    target = rels.get(sh.get(RID) or "") or ""
+                    member = target[1:] if target.startswith("/") else f"xl/{target}"
+                    if member not in members:
+                        continue
+                    hc: set[int] = set()
+                    hr: set[int] = set()
+                    with zf.open(member) as fh:
+                        chunk = fh.read(1 << 18)
+                        while b"<sheetData" not in chunk:
+                            more = fh.read(1 << 18)
+                            if not more:
+                                break
+                            chunk += more
+                        for m in _re.finditer(rb"<col\b[^>]*>",
+                                              chunk.split(b"<sheetData", 1)[0]):
+                            tag = m.group(0)
+                            if not any(h in tag for h in HIDDEN):
+                                continue
+                            lo = _re.search(rb'min="(\d+)"', tag)
+                            hi = _re.search(rb'max="(\d+)"', tag)
+                            if lo and hi:
+                                hc.update(range(int(lo.group(1)) - 1, int(hi.group(1))))
+                        # Hidden ROWS are scattered through sheetData, so they
+                        # cost a scan -- streamed, and only for these sheets.
+                        rest = chunk
+                        while True:
+                            for m in _re.finditer(rb"<row\b[^>]*>", rest):
+                                tag = m.group(0)
+                                if not any(h in tag for h in HIDDEN):
+                                    continue
+                                r = _re.search(rb'r="(\d+)"', tag)
+                                if r:
+                                    hr.add(int(r.group(1)) - 1)
+                            nxt = fh.read(1 << 20)
+                            if not nxt:
+                                break
+                            # a <row ...> tag can straddle a chunk boundary
+                            rest = rest[-512:] + nxt
+                    out[title] = (hc, hr)
         except Exception:
             return out
-        finally:
-            try:
-                wb.close()
-            except Exception:
-                pass
         return out
 
     @staticmethod
@@ -1859,7 +1927,9 @@ class XlsxParser(BaseParser):
         return out
 
     @staticmethod
-    def _sheet_styles(path: Path) -> dict[str, list[list[tuple[str | None, bool]]]]:
+    def _sheet_styles(
+        path: Path, wanted: set[str] | None = None
+    ) -> dict[str, list[list[tuple[str | None, bool]]]]:
         """Map sheet title -> per-cell ``(fill_rgb_or_None, bold)`` grid, aligned
         row/col to the values grid. Cell STYLE is structure the author used to
         group and title regions, and a B2B deal kit leans on it heavily: a dark
@@ -1868,12 +1938,19 @@ class XlsxParser(BaseParser):
         boxes and keep same-fill rows together. Best-effort: any failure yields
         an empty map and the detector falls back to geometry alone."""
         out: dict[str, list[list[tuple[str | None, bool]]]] = {}
+        if wanted is not None and not wanted:
+            return out
         try:
             wb = load_workbook(path, read_only=True)  # styles need no data_only
         except Exception:
             return out
         try:
             for ws in wb.worksheets:
+                # Building a style grid means touching every cell in the
+                # sheet. A sheet that yields a reading rather than rows has
+                # no atoms for a fill colour to group, so it is not built.
+                if wanted is not None and ws.title not in wanted:
+                    continue
                 try:
                     ws.reset_dimensions()
                 except Exception:
@@ -1939,31 +2016,47 @@ class XlsxParser(BaseParser):
         except Exception as exc:
             code = self._tabular_read_error_code(exc, tabular="xlsx")
             return [], [], f"{code}:{type(exc).__name__}:{exc}"
-        hidden = self._hidden_dims(path)
-        styles_by_sheet = self._sheet_styles(path)
         atoms: list[EvidenceAtom] = []
         sheets: list[dict[str, Any]] = []
+        self._sheet_profiles = []
+        self._sheet_supplies = []
+
+        # Which sheets will be mined row by row. Reading which rows and
+        # columns the author hid, and which cells they styled, means two more
+        # full passes over every cell in the file -- 46 of the 70 seconds a
+        # 12.8 MB inventory workbook took. Both exist to annotate PER-ROW
+        # atoms: a collapsed 0-hour line in a hand-built estimate should be
+        # visibly marked as hidden. A sheet that yields a reading instead of
+        # rows has nothing for them to annotate, so it is not scanned -- and
+        # a workbook that is nothing but exports is not scanned at all.
+        _grids: list[tuple[str, list[list[Any]]]] = []
         for sheet in workbook.worksheets:
-            # read_only mode trusts the file's cached <dimension> tag; when that
-            # is missing/stale (common when the source tool didn't update it, or
-            # openpyxl strips a data-validation extension on read) iter_rows can
-            # nondeterministically yield NOTHING. Force a real cell scan so the
-            # parse is deterministic and never silently drops a whole sheet.
+            # read_only mode trusts the file's cached <dimension> tag; when
+            # that is missing/stale (common when the source tool didn't
+            # update it, or openpyxl strips a data-validation extension on
+            # read) iter_rows can nondeterministically yield NOTHING. Force a
+            # real cell scan so the parse is deterministic and never silently
+            # drops a whole sheet.
             try:
                 sheet.reset_dimensions()
             except Exception:
                 pass
-            rows = [list(row) for row in sheet.iter_rows(values_only=True)]
-            hc, hr = hidden.get(sheet.title, (set(), set()))
+            _grids.append((sheet.title, [list(r) for r in sheet.iter_rows(values_only=True)]))
+        _mined = {t for t, r in _grids if not self._reads_as_a_table(t, r)}
+        hidden = self._hidden_dims(path, _mined) if _mined else {}
+        styles_by_sheet = self._sheet_styles(path, _mined) if _mined else {}
+
+        for sheet_title, rows in _grids:
+            hc, hr = hidden.get(sheet_title, (set(), set()))
             sheet_atoms = self._parse_sheet_rows(
                 project_id=project_id,
                 artifact_id=artifact_id,
                 filename=path.name,
                 artifact_type=ArtifactType.xlsx,
-                sheet_name=sheet.title,
+                sheet_name=sheet_title,
                 rows=rows,
                 hidden_cols=hc,
-                styles=styles_by_sheet.get(sheet.title),
+                styles=styles_by_sheet.get(sheet_title),
             )
             # Single chokepoint (path-independent: block / legacy / commercial all
             # funnel here): mark atoms sourced from author-HIDDEN rows so a reviewer
@@ -1971,7 +2064,24 @@ class XlsxParser(BaseParser):
             # dropped (no silent loss) — just visibly tagged.
             sheet_atoms = self._flag_hidden_source_atoms(sheet_atoms, rows, hr)
             atoms.extend(sheet_atoms)
-            sheets.append({"name": sheet.title, "rows": rows})
+            sheets.append({"name": sheet_title, "rows": rows})
+        # Some of what a workbook says is on none of its sheets. A filtered
+        # list of 1,563 devices beside the full export of 4,927 is the
+        # commonest ambiguity a customer's inventory carries, and it stays
+        # invisible until two sheets are held up against each other.
+        _which = which_site_list(self._sheet_supplies)
+        for _o in ([_which] if _which else []) + subset_question(self._sheet_profiles):
+            atoms.append(self._reading_atom(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.xlsx,
+                filename=path.name,
+                sheet_name="",
+                o=_o,
+            ))
+        self._sheet_profiles = []
+        self._sheet_supplies = []
+
         # Roster preference: several sheets in one workbook can all pass the
         # roster gate. Rank them so consumers can prefer the best one. Additive
         # provenance only — no atom is dropped or reordered.
@@ -3218,6 +3328,175 @@ class XlsxParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    # A table's rows are records, not claims. Set this to 1 to go back to one
+    # atom per row -- it is what produced 277,203 atoms from one workbook.
+    _ROWS_AS_ATOMS = os.environ.get("SOWSMITH_TABLE_ROWS_AS_ATOMS", "") == "1"
+
+    #: Profiles of the bulk sheets read so far in THIS workbook, so the
+    #: cross-sheet pass can see what no single sheet can. Reset per workbook.
+    _sheet_profiles: list[Any] = []
+
+    #: What each bulk sheet in THIS workbook said it can supply, so the
+    #: cross-sheet pass can notice two sheets answering the same question
+    #: with different numbers. Reset per workbook.
+    _sheet_supplies: list[tuple[str, Any]] = []
+
+    def _reads_as_a_table(self, sheet_name: str, rows: list[list[Any]]) -> bool:
+        """Will this sheet be read rather than transcribed?
+
+        Asked once up front so the formatting scans can be skipped, and
+        asked again on the row path for real. The two must agree, which is
+        why both go through the same predicates and the same router.
+        """
+        if self._ROWS_AS_ATOMS or not rows:
+            return False
+        if not is_bulk_export(rows, header_index(rows)):
+            return False
+        return classify_sheet(sheet_name, rows).destination is SheetDestination.SCOPE
+
+    def _read_the_table(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+        header_idx: int,
+    ) -> list[EvidenceAtom]:
+        """Read a machine export for what it says, instead of transcribing it.
+
+        A person writing a line in an email is making a CLAIM: it has an
+        author, it can be disputed, and that is what makes it worth an atom
+        somebody labels. A row in a 115,000-row cost-centre export is a
+        RECORD. Nobody asserted it. Turning each one into an atom produced a
+        quarter of a million things shaped like claims, drowning the dozen
+        facts in the workbook that actually decide the job -- and dragging
+        all of them through entity enrichment and classification, which is
+        why this deal could not compile at all rather than merely slowly.
+
+        So the sheet yields what it states (how many, of what kinds, how many
+        places) and what it forces somebody to decide (1,317 of these are
+        LEASED; 489 are CRITICAL; two sheets list the same kind of record and
+        disagree on how many there are). The rows ride along on the shape
+        atom so the sheet is never invisible, and the file itself is in the
+        artifact store.
+        """
+        headed = has_header(rows, header_idx)
+        prof = profile_grid(sheet_name, rows, header_idx, headed=headed)
+        self._sheet_profiles.append(prof)
+        # Supplies first: a column already folded into a site address must
+        # not also answer "how many places" on its own.
+        sups, _roles = supplies(prof, rows, header_idx)
+        for _s in sups:
+            self._sheet_supplies.append((sheet_name, _s))
+        _addr = {v for s_ in sups if s_.what == "site_address"
+                 for v in s_.columns.values()}
+        obs = observe(prof, address_columns=_addr) + supply_observations(sups, sheet_name)
+        if not obs:
+            return []
+
+        header = ([str(c or "").strip() for c in (rows[header_idx] or [])]
+                  if headed else [])
+        sample = [
+            [("" if c is None else str(c).strip()) for c in (r or [])]
+            for r in rows[(header_idx + 1 if headed else header_idx): header_idx + 26]
+        ]
+        extra = {
+            "columns": header,
+            "row_count": prof.rows,
+            "sample_rows": sample,
+            # The retrieval contract: what this sheet can be asked for and
+            # which columns answer it. A lookup or a SOW builder routes on
+            # this instead of on a rule somebody wrote for this workbook.
+            "supplies": [
+                {
+                    "what": s_.what,
+                    "columns": s_.columns,
+                    "distinct": s_.distinct,
+                    "rows": s_.rows,
+                    "key": s_.key,
+                }
+                for s_ in sups
+            ],
+        }
+        return [
+            self._reading_atom(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                filename=filename,
+                sheet_name=sheet_name,
+                o=o,
+                extra=extra if o.key == "table_shape" else None,
+            )
+            for o in obs
+        ]
+
+    def _reading_atom(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        sheet_name: str,
+        o: Any,
+        extra: dict[str, Any] | None = None,
+    ) -> EvidenceAtom:
+        """One reading -- a finding or a question -- as an atom.
+
+        A finding is a claim the parser is making and has to defend, so its
+        text carries what was counted and what it rests on. A question is
+        addressed to a person, so its text is the question and nothing else:
+        a PM reading a queue should not have to strip an explanation off the
+        front of every line to see what is being asked.
+        """
+        is_q = o.kind == "question"
+        atom_id = stable_id("atm", artifact_id, "sheet_reading", sheet_name, o.key)
+        src = SourceRef(
+            id=stable_id("src", atom_id),
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            locator={
+                "sheet": sheet_name,
+                "extraction": "sheet_reading_v1",
+                "section_path": [sheet_name] if sheet_name else [],
+            },
+            extraction_method="sheet_reading_v1",
+            parser_version=self.parser_version,
+        )
+        text = o.headline if is_q else f"{o.headline} -- {o.detail}"
+        value: dict[str, Any] = {
+            "kind": "sheet_question" if is_q else "sheet_finding",
+            "sheet": sheet_name,
+            "finding": o.key,
+            "headline": o.headline,
+            "detail": o.detail,
+            "value": o.value,
+            "decides": o.decides,
+        }
+        if extra:
+            value.update(extra)
+        return EvidenceAtom(
+            id=atom_id,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.open_question if is_q else AtomType.derived_finding,
+            raw_text=text[:4000],
+            normalized_text=text[:4000].lower(),
+            value=value,
+            entity_keys=[],
+            source_refs=[src],
+            receipts=[],
+            authority_class=AuthorityClass.machine_extractor,
+            confidence=0.85,
+            review_status=ReviewStatus.needs_review,
+            parser_version=self.parser_version,
+        )
+
     def _parse_sheet_rows(
         self,
         project_id: str,
@@ -3286,6 +3565,26 @@ class XlsxParser(BaseParser):
                 rows=comm_rows,
                 classification=classification,
             )
+
+        # A machine export is read, not transcribed. This sits after the
+        # role router (a DROP sheet still drops, a rate card still prices)
+        # and before every row-mining path below, because those paths are the
+        # ones that emit an atom per row -- and the atom per row is what
+        # makes a 115,000-row sheet impossible rather than merely slow.
+        if not self._ROWS_AS_ATOMS:
+            _hidx = header_index(rows)
+            if is_bulk_export(rows, _hidx):
+                reading = self._read_the_table(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    rows=rows,
+                    header_idx=_hidx,
+                )
+                if reading:
+                    return reading
 
         # RF1 — explicit fast-path for known structured-row CSVs.
         # Files named asset_inventory / site_list / risk_register /

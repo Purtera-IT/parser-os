@@ -83,6 +83,11 @@ _APPARATUS_LAYERS = frozenset({
 })
 
 
+#: Room tags as atoms in their own right. Off by default: a tag names a room
+#: the PM already knew about, and twenty-three of them bury the findings.
+_TAGS_AS_ATOMS = os.getenv("SOWSMITH_CAD_TAGS_AS_ATOMS", "") == "1"
+
+
 def preview_png(data: bytes) -> bytes | None:
     """The thumbnail a DWG carries in its header, or None.
 
@@ -587,21 +592,55 @@ class DwgParser(BaseParser):
                 confidence=0.9,
             ))
 
-        for label in building:
+        # The room tags. Twenty-three of them on SP-6, and not one decides
+        # anything: "PANTRY" names a room the PM already knew about, prices
+        # nothing, commits nothing and cannot be wrong. As atoms they crowded
+        # out the two numbers on the sheet that move money.
+        #
+        # They are still the EVIDENCE the findings rest on -- a count of
+        # executive offices is only checkable against a count of the tags --
+        # so they ride on one inventory atom, with their layer and position
+        # intact, instead of taking twenty-three lines in a labeling pane.
+        #
+        # SOWSMITH_CAD_TAGS_AS_ATOMS=1 restores the old behaviour for anyone
+        # who needs to label the tags themselves.
+        if _TAGS_AS_ATOMS:
+            for label in building:
+                atoms.append(self._make_atom(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    text=label["text"],
+                    atom_type=AtomType.site_attribute,
+                    value_extra={
+                        "kind": "cad_label",
+                        "layer": label["layer"],
+                        "x": label["x"],
+                        "y": label["y"],
+                        "entity": label["kind"],
+                        "parts": label.get("parts", 1),
+                    },
+                ))
+        elif building:
+            shown = ", ".join(dict.fromkeys(
+                " ".join(str(b["text"]).split()) for b in building))[:300]
             atoms.append(self._make_atom(
                 project_id=project_id,
                 artifact_id=artifact_id,
                 filename=path.name,
-                text=label["text"],
-                atom_type=AtomType.site_attribute,
+                text=(f"The drawing prints {len(building)} labels, which the findings "
+                      f"above are counted and measured from: {shown}"),
+                atom_type=AtomType.derived_finding,
                 value_extra={
-                    "kind": "cad_label",
-                    "layer": label["layer"],
-                    "x": label["x"],
-                    "y": label["y"],
-                    "entity": label["kind"],
-                    "parts": label.get("parts", 1),
+                    "kind": "cad_label_inventory",
+                    "count": len(building),
+                    "labels": [
+                        {"text": b["text"], "layer": b["layer"],
+                         "x": b["x"], "y": b["y"], "entity": b["kind"]}
+                        for b in building
+                    ],
                 },
+                confidence=0.85,
             ))
         if stationery:
             warnings.append(

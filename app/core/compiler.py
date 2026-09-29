@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
@@ -165,6 +166,139 @@ _NON_ARTIFACT_PATTERNS = (
     "_review.",
     ".review.",
 )
+
+
+def _deal_state_atom(template: Any, line: Any) -> Any:
+    """One line of where-the-deal-stands, as an atom.
+
+    Copied off a real atom so it inherits the project and an artifact and
+    stays traceable. It carries `why` and `assumption` for the same reason
+    every derived claim does: nobody wrote it, so it has to be arguable.
+    """
+    import copy as _copy
+
+    from app.core.schemas import AtomType, ReviewStatus
+
+    atom = _copy.deepcopy(template)
+    text = f"{line.key.replace('_', ' ')}: {line.value} — {line.why}"
+    atom.raw_text = text
+    if hasattr(atom, "normalized_text"):
+        atom.normalized_text = text.lower()
+    atom.atom_type = AtomType.deal_state
+    atom.review_status = ReviewStatus.needs_review
+    atom.review_flags = ["derived_deal_state"]
+    atom.entity_keys = []
+    atom.value = {
+        "kind": "deal_state",
+        "key": line.key,
+        "state": line.value,
+        "why": line.why,
+        "assumption": line.assumption,
+        "evidence": list(line.evidence or []),
+    }
+    atom.confidence = 0.8
+    if hasattr(atom, "id"):
+        atom.id = stable_id("atm", str(getattr(atom, "project_id", "")),
+                            "deal_state", line.key)
+    return atom
+
+
+def _ask_the_pm_atom(template: Any, text: str) -> Any:
+    """One open question in place of an export's withheld OCR rows.
+
+    Built by copying an atom that WAS there, so it inherits the artifact and
+    source ref and stays traceable to the file it stands for. Without it a
+    sheet whose rows were all withheld would simply be absent, and absent is
+    indistinguishable from never-looked-at.
+    """
+    import copy as _copy
+
+    from app.core.schemas import AtomType, ReviewStatus
+
+    atom = _copy.deepcopy(template)
+    atom.raw_text = text
+    if hasattr(atom, "normalized_text"):
+        atom.normalized_text = text.lower()
+    atom.atom_type = AtomType.open_question
+    atom.review_status = ReviewStatus.needs_review
+    atom.review_flags = ["export_ocr_withheld", "needs_pm_description"]
+    if isinstance(getattr(atom, "value", None), dict):
+        atom.value = {"kind": "ask_the_pm", "reason": "export_ocr_withheld"}
+    atom.confidence = 0.5
+    if hasattr(atom, "id"):
+        atom.id = stable_id("atm", str(getattr(atom, "artifact_id", "")), "ask_the_pm",
+                            text[:80])
+    return atom
+
+
+#: How many artifacts to parse at once. The work is almost entirely WAITING --
+#: a blob download, an OCR round trip to Document Intelligence, a vision call
+#: that is allowed 90 seconds -- so threads, not processes, and a count well
+#: above the core count.
+#:
+#: 0 or 1 disables the prefetch entirely and the compile behaves exactly as it
+#: did before: the loop below computes each parse inline.
+PARSE_WORKERS = int(os.environ.get("SOWSMITH_PARSE_WORKERS", "8"))
+
+
+def _prefetch_parses(
+    plan: "list[tuple[str, Any, Any]]",
+    *,
+    project_id: str,
+    domain_pack: Any,
+    workers: int,
+) -> "dict[str, Any]":
+    """Parse artifacts concurrently, keyed by artifact_id.
+
+    The compile spent 881 of its 1500 seconds in `parse_artifacts` on a
+    68-document deal -- 13 seconds apiece, almost none of it computing. The
+    loop was strictly sequential, so 68 network round trips happened one after
+    another and the deal died before the stages that use the atoms ever ran.
+
+    This does NOT restructure that loop, deliberately. The loop keeps its
+    order, its accumulators, its per-artifact error handling and its cache
+    writes; it simply finds the expensive call already done. Anything this
+    misses -- a parser that raised here, a prefetch that was skipped -- the
+    loop computes inline exactly as before, so the worst case is the old
+    behaviour rather than a gap.
+
+    ORDER IS NOT AFFECTED, which is the point that matters most. Results are
+    returned in a dict and consumed by the caller in the artifacts' own order,
+    never in completion order. Atom ordering feeds `label_key`, and a
+    completion-ordered parse would re-key every atom on every compile -- which
+    would silently detach every label ever written.
+    """
+    out: dict[str, Any] = {}
+    if workers <= 1 or len(plan) < 2:
+        return out
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _one(artifact_id: str, parser: Any, path: Any):
+        return parser.parse_artifact_full(
+            project_id=project_id,
+            artifact_id=artifact_id,
+            path=path,
+            domain_pack=domain_pack,
+        )
+
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=min(workers, len(plan)),
+                            thread_name_prefix="parse") as pool:
+        futures = {pool.submit(_one, aid, p, path): aid for aid, p, path in plan}
+        for fut in as_completed(futures):
+            aid = futures[fut]
+            try:
+                out[aid] = fut.result()
+            except Exception:  # noqa: BLE001 - the loop will retry inline and report
+                logging.getLogger(__name__).warning(
+                    "prefetch parse failed for %s; the compile will parse it inline",
+                    aid, exc_info=True,
+                )
+    logging.getLogger(__name__).info(
+        "Prefetched %d/%d parse(s) on %d worker(s) in %.1fs",
+        len(out), len(plan), workers, time.time() - started,
+    )
+    return out
 
 
 def _materialize_derived_files(
@@ -568,6 +702,50 @@ def compile_project(
 
     parse_warnings: list[str] = []
     parse_errors: list[str] = []
+    # Warm the expensive per-artifact call concurrently. The loop below is
+    # unchanged -- same order, same accumulators, same error handling -- it
+    # just finds the parse already done. Anything missed here it computes
+    # inline, so the worst case is the behaviour this replaced.
+    _prefetched: dict[str, Any] = {}
+    if PARSE_WORKERS > 1 and len(artifacts) > 1:
+        _plan: list[tuple[str, Any, Any]] = []
+        for _art in artifacts:
+            try:
+                _rel = str(_art.relative_to(project_dir)).replace("\\", "/")
+                _aid = stable_id("art", resolved_project_id, _rel)
+                _p, _m, _ = choose_parser(_art, domain_pack=resolved_domain_pack)
+                if _p is None:
+                    continue
+                # Skip what the cache already holds. Without this a warm
+                # re-compile would parse every artifact concurrently and then
+                # throw all of it away, which is slower than the sequential
+                # path it replaced -- the prefetch has to respect the same
+                # cache the loop consults, or it is not an optimisation.
+                if use_cache:
+                    _pv = f"{_p.capability.parser_version}+code{_parser_code_fingerprint()}"
+                    if load_cached_artifact_result(
+                        artifact_id=_aid,
+                        sha256=compute_artifact_sha256(_art),
+                        parser_name=_m.parser_name,
+                        parser_version=_pv,
+                        domain_pack_id=resolved_domain_pack.pack_id,
+                        domain_pack_version=resolved_domain_pack.version,
+                    ) is not None:
+                        continue
+                _plan.append((_aid, _p, _art))
+            except Exception:  # noqa: BLE001 - planning must not break the compile
+                continue
+        if _plan:
+            try:
+                _prefetched = _prefetch_parses(
+                    _plan, project_id=resolved_project_id,
+                    domain_pack=resolved_domain_pack, workers=PARSE_WORKERS,
+                )
+            except Exception:  # noqa: BLE001 - fall back to the sequential path
+                logging.getLogger(__name__).warning(
+                    "parse prefetch unavailable; parsing inline", exc_info=True)
+                _prefetched = {}
+
     with telemetry.stage("parse_artifacts", input_count=len(artifacts)) as stage:
         for artifact in artifacts:
             relative_name = str(artifact.relative_to(project_dir)).replace("\\", "/")
@@ -654,12 +832,17 @@ def compile_project(
                         reused_artifact_ids.append(artifact_id)
                         cache_hit = True
                     else:
-                        parser_result = parser.parse_artifact_full(
-                            project_id=resolved_project_id,
-                            artifact_id=artifact_id,
-                            path=artifact,
-                            domain_pack=resolved_domain_pack,
-                        )
+                        # Warmed in parallel above when possible; identical
+                        # object either way, and computed here if the prefetch
+                        # skipped it or raised. See `_prefetch_parses`.
+                        parser_result = _prefetched.pop(artifact_id, None)
+                        if parser_result is None:
+                            parser_result = parser.parse_artifact_full(
+                                project_id=resolved_project_id,
+                                artifact_id=artifact_id,
+                                path=artifact,
+                                domain_pack=resolved_domain_pack,
+                            )
                         parsed_atoms = list(parser_result.atoms)
                         parsed_candidates = list(parser_result.candidates)
                         per_artifact_warnings.extend(parser_result.warnings)
@@ -2106,22 +2289,86 @@ def compile_project(
     # parsed properly, so they are demoted to evidence rather than deleted --
     # and left alone entirely when the drawing never converted, because then
     # the export is the only account of the sheet there is.
+    # A PDF export of a sheet whose DRAWING we parsed is the same sheet read
+    # badly, by the worse of two available methods. Demoting its rows was the
+    # first attempt and it was not enough: a demoted row still takes a line in
+    # the labeling pane, and live 010180 had twenty-six of them -- "JAN",
+    # "ADA RR", "P: 203.246.1900", "NOTHING BEATS 72 YEARS OF STABILITY".
+    # None of that reaches a deal kit or a SOW.
+    #
+    # So they are withheld: out of the accepted set, into the suppression
+    # ledger with the reason, which keeps them auditable and keeps them as
+    # training data without asking a PM to read them. One atom takes their
+    # place and asks the PM for anything the drawing did not give.
     with telemetry.stage("drawing_pairs", input_count=len(atoms)) as _dp:
-        _demoted = 0
+        _withheld = 0
         try:
-            from app.core.drawing_pairs import SUPERSEDED_FLAG, demote_export_duplicates
+            from app.core.drawing_pairs import (
+                export_rows_to_withhold,
+                withhold_export_rows,
+            )
 
-            demote_export_duplicates(atoms)
-            _demoted = sum(1 for a in atoms
-                           if SUPERSEDED_FLAG in (getattr(a, "review_flags", None) or []))
-            if _demoted:
+            by_sheet = export_rows_to_withhold(atoms)
+            if by_sheet:
+                before_pairs = list(atoms)
+                drop = {id(a) for rows in by_sheet.values() for a in rows}
+                atoms = [a for a in atoms if id(a) not in drop]
+                _withheld = len(drop)
+                for sheet, rows in by_sheet.items():
+                    ask = withhold_export_rows(before_pairs, sheet, rows)
+                    template = rows[0]
+                    atoms.append(_ask_the_pm_atom(template, ask))
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_pairs, atoms,
+                        stage="drawing_pairs",
+                        reason=("OCR of a PDF export of a sheet whose drawing parsed — "
+                                "the same sheet read by the worse of two methods"),
+                    ),
+                )
                 warnings.append(
-                    f"INFO: drawing_pairs demoted {_demoted} atom(s) from a PDF export "
-                    f"of a sheet whose drawing was read directly"
+                    f"INFO: drawing_pairs withheld {_withheld} OCR row(s) from PDF "
+                    f"export(s) of {len(by_sheet)} sheet(s) parsed from the drawing"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: drawing_pairs failed: {type(exc).__name__}: {exc}")
-        telemetry.end_stage(_dp, output_count=_demoted)
+        telemetry.end_stage(_dp, output_count=_withheld)
+
+    # Where the deal STANDS, as a handful of lines instead of forty atoms.
+    #
+    # A mailbox carries two kinds of sentence and only one belongs in a deal
+    # kit. "Two Cat6A drops per workstation" is content. "Can you provide
+    # availability for the walkthrough" is the deal moving -- and on live
+    # 010180 that traffic was 43 of 252 non-rejected atoms, competing for a
+    # PM's attention with the two numbers that decide the job.
+    #
+    # The consolidation also carries a gate: a price its own authors call
+    # budgetary, with no completed survey on the record, must not become a
+    # firm SOW. 010180's $110,108 came from a solutions architect listening to
+    # a call recording; nobody from PurTera had been on site.
+    with telemetry.stage("deal_state", input_count=len(atoms)) as _ds:
+        _state_lines = 0
+        try:
+            from app.core.deal_state import read_deal_state
+
+            state = read_deal_state(atoms)
+            if state.lines:
+                template = atoms[0] if atoms else None
+                for line in state.lines:
+                    if template is None:
+                        break
+                    atoms.append(_deal_state_atom(template, line))
+                _state_lines = len(state.lines)
+                blocks = state.get("blocks")
+                if blocks is not None:
+                    warnings.append(
+                        "INFO: deal_state — price basis is "
+                        f"{state.get('price_basis').value}; {blocks.value}"
+                    )
+        except Exception as exc:
+            warnings.append(f"WARNING: deal_state failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(_ds, output_count=_state_lines)
 
     with telemetry.stage("substance_gate", input_count=len(atoms)) as stage:
         gate_dropped = 0

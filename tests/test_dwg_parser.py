@@ -89,15 +89,40 @@ def test_the_sheet_is_separated_from_the_building():
     assert is_apparatus("A-WALL") is False
 
 
-def test_only_the_building_becomes_atoms(plan: Path):
+def test_only_the_building_is_read(plan: Path):
+    """The building's labels are kept and the sheet's own furniture is not.
+
+    They are no longer one atom each. A room tag names a room the PM already
+    knew about -- it prices nothing, commits nothing and cannot be wrong --
+    and twenty-three of them on live SP-6 crowded out the two numbers on the
+    sheet that move money. They ride on one inventory atom instead, with
+    layer and position intact, because a count of executive offices is only
+    checkable against a count of the tags.
+    """
+    out = DwgParser().parse(plan)
+    inv = next(a for a in out.atoms
+               if (a.value or {}).get("kind") == "cad_label_inventory")
+    assert {l["text"] for l in inv.value["labels"]} == {
+        "IT CLOSET", "BOARD ROOM", "RECEPTION", "EXECUTIVE OFFICE",
+        "WOMEN'S RESTROOM", "HUDDLE ROOM",
+    }
+    assert all("x" in l and "layer" in l for l in inv.value["labels"])
+    assert out.atoms[0].atom_type.value == "deal_metadata"
+    assert "6 labels recovered" in out.atoms[0].raw_text
+
+
+def test_the_tags_can_still_be_labelled_one_by_one(plan: Path, monkeypatch):
+    """The consolidation is a default, not a wall: anyone labelling the tags
+    themselves sets SOWSMITH_CAD_TAGS_AS_ATOMS=1 and gets them back."""
+    import app.parsers.dwg_parser as mod
+
+    monkeypatch.setattr(mod, "_TAGS_AS_ATOMS", True)
     out = DwgParser().parse(plan)
     labels = [a for a in out.atoms if a.atom_type.value == "site_attribute"]
     assert {a.raw_text for a in labels} == {
         "IT CLOSET", "BOARD ROOM", "RECEPTION", "EXECUTIVE OFFICE",
         "WOMEN'S RESTROOM", "HUDDLE ROOM",
     }
-    assert out.atoms[0].atom_type.value == "deal_metadata"
-    assert "6 labels recovered" in out.atoms[0].raw_text
 
 
 # --------------------------------------------------------------------------
