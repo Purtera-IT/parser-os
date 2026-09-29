@@ -37,6 +37,40 @@ head as the learned potential; every belief update carries the receipt of the
 message that caused it ("quantity became 56 because this rank-90 email
 arrived"). The COPPER contradiction-edge tests are the first fixture.
 
+**GO #6 (suppression head — "should this have been kept?")** — when the
+`suppression` head holds ≥150 judgments across ≥3 deals. Every drop stage asks
+one question, so dedup, boilerplate, rollup and the substance gate all train
+one head; the stage travels as a feature, not a separate head.
+
+*Why it exists:* `CompileResult.suppressed_atoms` recorded every dropped atom
+all along and nothing carried it to the envelope — 4,591 on COPPER_001, 1,203
+on an email-heavy deal, none ever shown to a person. The SHAPE audit found
+three real deletions in there by hand: 81 per-plate cable quantities, 39 folds
+where the numbers differed (including a bid deadline), and one stage
+(`table_rollup`) that turned out correct. Nobody should find the fourth by hand.
+
+*Where the labels come from:* the **Dropped** stage of the labelling workspace.
+A fold carries the survivor it folded into, because "is this a duplicate"
+cannot be answered without the thing it was a duplicate of — so those verdicts
+ARE the dedup pair-head's training set. **There is no separate dedup labelling
+job to remember.**
+
+*Wiring:* parser-os `SOWSMITH_SUPPRESSED_IN_ENVELOPE=1` → Platform-infra
+`suppression` head (PR #373) → purpulse **Dropped** stage (PR #634).
+
+*Gate:* same discipline as `router_eval` — a candidate scoring worse than the
+current hand-written rules on held-out judgments does not promote. And two
+invariants stay as HARD gates whatever the head says: it may never fold atoms
+that state different numbers, or that belong to different places.
+
+**GO #7 (rule thresholds)** — when the `rule` head holds ≥80 judgments per rule
+on the ambiguous band. 15 SemanticRules decide how atoms FORM, their thresholds
+are hand-tuned, and a live harvest put 435 of 847 distinct decisions (51%)
+within 0.08 of their boundary. Tier A fits one number per rule and ships as a
+JSON file — no model at runtime. Labels come from the **Rules** stage
+(Platform-infra PR #370, purpulse PR #630); see `_STEP4_RULE_LABELLING.md`.
+
+
 ## The compound
 
 \#1 + #2 together: a system that knows when it is wrong, with a coverage
