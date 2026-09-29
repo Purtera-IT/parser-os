@@ -123,6 +123,21 @@ Intelligence round trip. Four takes 97% of the available speedup; the next
 four are worth 1.03x between them, and cost double the concurrent OCR calls
 (429s there are what latch `_llm_unreachable`) and double the peak memory.
 
+### 2.1a "Four at a time" is two different things
+
+`SOWSMITH_PARSE_WORKERS=4` is four ARTIFACTS at once inside ONE deal. It is not
+four deals at once.
+
+Four deals in flight together is a replica count: the queue hands one message
+to one worker, so N deals in parallel needs N replicas (or one replica with
+enough CPU to be N workers, which the GIL argues against). Those two numbers
+multiply -- 4 replicas each running 4 parse threads is 16 concurrent Document
+Intelligence calls, and 429s there are what latch `_llm_unreachable` and
+degrade the rest of a compile.
+
+So if the queue UI is set to run four deals at once, the thing to watch is the
+OCR concurrency, not the CPU.
+
 ### 2.2 Spreadsheets got 3.5x faster, with byte-identical output
 
 `_map_canonical_header` called `_header_cell_tokens(cell)` **inside** its loop
