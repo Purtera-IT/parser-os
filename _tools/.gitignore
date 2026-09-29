@@ -5,3 +5,7 @@
 # Generated per deal by walk_180.py; rebuild it, do not carry it.
 walk_*.json
 __pycache__/
+
+# Local run state: label snapshots live in blob, baselines are per-machine.
+_label_backups/
+_baselines/
