@@ -351,7 +351,13 @@ def meeting_section_slug(label: str | None) -> str | None:
     cleaned = normalize_text(label).rstrip(":")
     canonical = _MEETING_SECTION_ALIASES.get(cleaned)
     if not canonical:
-        for display in set(_MEETING_SECTION_ALIASES.values()):
+        # sorted(), because this loop BREAKS on the first match and a set's
+        # iteration order follows the per-process hash seed. Today the 12
+        # display values normalise to 12 distinct forms, so no input can reach
+        # two of them and the order cannot matter -- this changes nothing now.
+        # It stops the thirteenth alias from quietly making the answer depend
+        # on which process asked.
+        for display in sorted(set(_MEETING_SECTION_ALIASES.values())):
             if normalize_text(display) == cleaned:
                 canonical = display
                 break
