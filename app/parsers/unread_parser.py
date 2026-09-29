@@ -110,7 +110,11 @@ _KNOWN = {
     ".rpmsg": "an RMS-encrypted Outlook message; it cannot be opened without "
               "the sender's rights policy, so ask for an unprotected copy",
     ".doc": "legacy Word (pre-2007). Ask for a .docx",
-    ".xls": "legacy Excel (pre-2007). Ask for a .xlsx",
+    # A readable .xls is converted and parsed (legacy_spreadsheet), so one
+    # that arrives HERE could not be opened at all -- corrupt, truncated,
+    # or password-protected. "Ask for a .xlsx" is still the fix, and a PM
+    # can act on it where they cannot act on "unsupported".
+    ".xls": "legacy Excel that could not be opened. Ask for a .xlsx",
     ".tsv": "tab-separated values. Ask for a .csv or .xlsx",
     ".zipx": "an extended ZIP archive",
     ".7z": "a 7-Zip archive",

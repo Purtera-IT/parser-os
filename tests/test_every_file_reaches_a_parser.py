@@ -9,7 +9,11 @@ Measured across 461 dev envelopes:
 
     .dwg    2   AutoCAD drawings           -> dwg_parser
     .json   6   historical                 -> JsonParser claims these at 0.55
-    .xls    2   legacy Excel               -> unread marker
+    .xls    2   legacy Excel               -> XlsxParser via calamine
+                (a .xls that cannot be OPENED still reaches the marker --
+                 claimed at routing time only when a reader can read it,
+                 so an unreadable workbook stays visible instead of
+                 producing zero atoms and no error)
     .rpmsg  2   RMS-encrypted Outlook mail -> unread marker
     .doc    1   legacy Word                -> unread marker
     .gif    1   an image                   -> ImageParser, extension was missing
@@ -163,3 +167,108 @@ def test_a_substantial_unstructured_file_is_read(tmp_path: Path):
     assert parser is not None
     texts = " ".join(a.raw_text for a in parser.parse(path))
     assert "212 Cat6A drops" in texts
+
+
+def test_the_legacy_bridge_only_claims_what_it_can_read(tmp_path: Path):
+    """`can_read` is asked at ROUTING time, and it is honest about failure.
+
+    calamine routes on the EXTENSION, not the content, so a workbook whose name
+    lies about its format fails to open and correctly falls through to the
+    marker rather than being mis-parsed in silence.
+
+    There is no binary .xls fixture in this repo on purpose -- the real one is
+    1.9MB. The live file is covered by the impact run; what belongs here is the
+    boundary: which suffixes the bridge claims, and that an unopenable file is
+    not claimed.
+    """
+    pytest.importorskip("python_calamine")
+    from openpyxl import Workbook
+
+    from app.parsers.legacy_spreadsheet import can_read, needs_conversion
+
+    src = tmp_path / "pricing.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["PART #", "MATERIAL", "QTY"])
+    ws.append(["NX-100", "STATION CABLE", 250])
+    wb.save(src)
+
+    # .xlsx already has a parser; the bridge must not intercept it.
+    assert needs_conversion(src) is False
+    assert can_read(src) is False
+
+    # A convertible suffix over content that does not match it: not claimed.
+    mislabelled = tmp_path / "pricing.ods"
+    mislabelled.write_bytes(src.read_bytes())
+    assert needs_conversion(mislabelled) is True
+    assert can_read(mislabelled) is False, "a lying extension must not be claimed"
+
+
+def test_an_unreadable_legacy_workbook_stays_visible(tmp_path: Path):
+    """The miss must not become silent.
+
+    Claiming every .xls and then failing to open one produces zero atoms and no
+    error: the file lands in the manifest and nowhere else. Routing asks whether
+    a reader can open it BEFORE claiming, so a corrupt workbook keeps its marker.
+    """
+    path = tmp_path / "corrupt.xls"
+    path.write_bytes(OLE + bytes([0]) * 4000)
+    parser, match, _ = choose_parser(path)
+    assert parser.capability.parser_name == "unread", match.reasons
+    atom = parser.parse(path)[0]
+    assert "xlsx" in atom.raw_text, "a PM must be told what to ask for"
+
+
+def test_a_word_template_is_a_word_document(tmp_path: Path):
+    """A change order does not stop being one because it was saved as a template.
+
+    `.dotx` is OOXML identical to `.docx` but for one string in
+    [Content_Types].xml -- `wordprocessingml.template.main+xml` where a document
+    says `document.main+xml`. python-docx refuses on that string alone, so both
+    of the corpus's .dotx files produced nothing. Both are CHANGE ORDERS:
+
+        010195- TV Install Change Order 8.20 v1.dotx
+        00051- Merrill Gardens (Change Order).dotx
+    """
+    import docx
+
+    from app.parsers.word_template import is_word_template, to_docx
+
+    src = tmp_path / "change_order.docx"
+    d = docx.Document()
+    d.add_paragraph("Effective Date: 8.20")
+    d.add_paragraph("Requesting Party: CDW")
+    d.save(src)
+
+    # Re-declare it a template, exactly as Word does when you Save As .dotx.
+    import zipfile
+    tpl = tmp_path / "change_order.dotx"
+    with zipfile.ZipFile(src) as s, zipfile.ZipFile(tpl, "w") as out:
+        for item in s.infolist():
+            data = s.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = data.replace(b"document.main+xml", b"template.main+xml")
+            out.writestr(item, data)
+
+    assert is_word_template(tpl)
+    with pytest.raises(ValueError):
+        docx.Document(str(tpl))          # the defect, pinned
+
+    rewritten = to_docx(tpl)
+    assert rewritten is not None
+    body = "\n".join(p.text for p in docx.Document(str(rewritten)).paragraphs)
+    assert "Requesting Party: CDW" in body
+
+    parser, match, _ = choose_parser(tpl)
+    assert parser.capability.parser_name == "docx", match.reasons
+
+
+def test_a_broken_template_is_not_claimed(tmp_path: Path):
+    """Same rule as the legacy workbook: an unreadable file keeps its marker."""
+    from app.parsers.word_template import can_read
+
+    bad = tmp_path / "corrupt.dotx"
+    bad.write_bytes(b"PK\x03\x04" + bytes([0]) * 2000)
+    assert can_read(bad) is False
+    parser, match, _ = choose_parser(bad)
+    assert parser.capability.parser_name == "unread", match.reasons

@@ -182,7 +182,10 @@ class DocxParser(BaseParser):
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,
-        supported_extensions=[".docx"],
+        supported_extensions=[".docx", ".dotx", ".dotm"],
+        # .dotx/.dotm are Word documents whose content-type string says
+        # "template"; they are rewritten to .docx on entry (word_template).
+        # Both files in the corpus are CHANGE ORDERS.
         supported_artifact_types=[ArtifactType.docx],
         emitted_atom_types=[AtomType.scope_item, AtomType.exclusion, AtomType.constraint, AtomType.assumption, AtomType.open_question],
         supported_domain_packs=["*"],
@@ -193,6 +196,25 @@ class DocxParser(BaseParser):
     def match(self, path: Path, sample_text: str | None, domain_pack: DomainPack | None) -> ParserMatch:
         del sample_text, domain_pack
         suffix = path.suffix.lower()
+        from app.parsers.word_template import TEMPLATE_SUFFIXES, can_read
+
+        if suffix in TEMPLATE_SUFFIXES:
+            # Claimed only if the rewrite actually opens. Claiming every .dotx
+            # and then failing produces zero atoms and no error -- the silent
+            # miss the marker parser exists to prevent.
+            if can_read(path):
+                return ParserMatch(
+                    parser_name=self.parser_name,
+                    confidence=0.94,
+                    reasons=[f"word_template_rewritten:{suffix}"],
+                    artifact_type=ArtifactType.docx,
+                )
+            return ParserMatch(
+                parser_name=self.parser_name,
+                confidence=0.0,
+                reasons=[f"word_template_unreadable:{suffix}"],
+                artifact_type=ArtifactType.docx,
+            )
         confidence = 0.94 if suffix == ".docx" else 0.0
         reasons = ["docx_extension"] if suffix == ".docx" else []
         return ParserMatch(
@@ -231,6 +253,18 @@ class DocxParser(BaseParser):
         domain_pack: DomainPack | None = None,
     ) -> ParserOutput:
         del domain_pack
+
+        # A Word TEMPLATE is a Word document whose content-type string says
+        # "template", and python-docx refuses it on that string alone. Rewrite
+        # that one declaration into a temporary copy and read the copy. The
+        # original is never touched; both files in the corpus are change orders.
+        from app.parsers.word_template import is_word_template, to_docx
+
+        if is_word_template(path):
+            rewritten = to_docx(path)
+            if rewritten is not None:
+                path = rewritten
+
         document = Document(path)
         atoms: list[EvidenceAtom] = []
         # Universal reading-order section map: every paragraph/table learns the

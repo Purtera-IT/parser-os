@@ -14,6 +14,13 @@ dependencies = [
   "sqlmodel>=0.0.16",
   "uvicorn>=0.28",
   "openpyxl>=3.1",
+  # Reads .xls / .xlsb / .ods, which openpyxl cannot open at all -- a
+  # pre-2007 CDW pricing sheet used to fall through to the `unread`
+  # parser for one atom. Also 14x faster than openpyxl on .xlsx in this
+  # corpus (0.9MB book: 0.14s -> 0.01s), which matters because
+  # source_replay calls load_workbook once per spreadsheet atom.
+  # Optional at runtime: without it .xls degrades to today's behaviour.
+  "python-calamine>=0.2",
   "python-docx>=1.1",
   # PptxParser raises "python-pptx is required" without it, and six decks
   # across the dev corpus come back failed_parse for exactly that reason. It

@@ -1580,7 +1580,11 @@ class XlsxParser(BaseParser):
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,
-        supported_extensions=[".xlsx", ".csv"],
+        supported_extensions=[".xlsx", ".csv", ".xls", ".xlsb", ".ods"],
+        # .xls/.xlsb/.ods are converted to .xlsx on entry (see
+        # legacy_spreadsheet). Claimed here so routing sends them to the
+        # spreadsheet parser instead of the `unread` fallback -- a 1.9MB
+        # CDW pricing sheet was yielding one atom saying nobody read it.
         supported_artifact_types=[ArtifactType.xlsx, ArtifactType.csv],
         emitted_atom_types=[
             AtomType.entity,
@@ -1617,6 +1621,35 @@ class XlsxParser(BaseParser):
         suffix = path.suffix.lower()
         confidence = 0.0
         reasons: list[str] = []
+        # A legacy binary workbook is claimed on its extension alone. The
+        # sniffers below open the file with openpyxl, which cannot read .xls at
+        # all, so they stay OOXML-only -- but a pricing sheet saved in 2003 is
+        # still a pricing sheet, and the alternative is the `unread` parser
+        # emitting one atom that says nobody read it.
+        from app.parsers.legacy_spreadsheet import CONVERTIBLE as _LEGACY
+        from app.parsers.legacy_spreadsheet import can_read as _legacy_readable
+
+        if suffix in _LEGACY:
+            # Claimed only if a reader can actually open it. Claiming every
+            # .xls and then failing on one produces zero atoms and no error --
+            # the file lands in the manifest and nowhere else, which is the
+            # silent miss `unread` exists to prevent. An unreadable workbook is
+            # left to `unread`, which says so in an atom somebody can see.
+            if not _legacy_readable(path):
+                reasons.append(f"spreadsheet_extension:{suffix}:unreadable")
+                return ParserMatch(
+                    parser_name=self.parser_name,
+                    confidence=0.0,
+                    reasons=reasons,
+                    artifact_type=ArtifactType.xlsx,
+                )
+            reasons.append(f"spreadsheet_extension:{suffix}:legacy_converted")
+            return ParserMatch(
+                parser_name=self.parser_name,
+                confidence=0.58,
+                reasons=reasons,
+                artifact_type=ArtifactType.xlsx,
+            )
         if suffix in {".xlsx", ".csv"}:
             from app.parsers.spreadsheet_route_signals import (
                 path_roster_schedule_hint,
@@ -1699,6 +1732,24 @@ class XlsxParser(BaseParser):
     ) -> ParserOutput:
         del domain_pack
         suffix = path.suffix.lower()
+
+        # A legacy binary workbook becomes a temporary .xlsx and takes the path
+        # that already works. `.xls` is pre-2007 BIFF and openpyxl cannot open
+        # it at all, so these files used to fall through to the `unread` parser
+        # -- live corpus: five of them, and they are CDW pricing sheets. Teaching
+        # this parser a second file format would mean a second version of sheet
+        # routing, column roles and the quote tie-break; converting means the
+        # tested code reads it.
+        from app.parsers.legacy_spreadsheet import needs_conversion, to_xlsx
+
+        if needs_conversion(path):
+            converted = to_xlsx(path)
+            if converted is not None:
+                path = converted
+                suffix = ".xlsx"
+            # None means no reader is installed or the book is unreadable.
+            # Falling through leaves today's behaviour rather than raising.
+
         if suffix == ".csv":
             atoms, sheets, parse_error = self._parse_csv(
                 project_id=project_id, artifact_id=artifact_id, path=path

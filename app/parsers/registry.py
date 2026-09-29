@@ -79,7 +79,10 @@ def get_registered_parsers() -> list[ArtifactParser]:
 
 def _artifact_type_for_suffix(suffix: str) -> ArtifactType:
     suffix = (suffix or "").lower()
-    if suffix == ".xlsx":
+    # .xls/.xlsb/.ods are converted to .xlsx on entry by the spreadsheet
+    # parser (legacy_spreadsheet), so they are the same artifact type. A
+    # CDW pricing sheet is a pricing sheet whichever decade it was saved in.
+    if suffix in {".xlsx", ".xls", ".xlsb", ".ods"}:
         return ArtifactType.xlsx
     if suffix == ".csv":
         return ArtifactType.csv
